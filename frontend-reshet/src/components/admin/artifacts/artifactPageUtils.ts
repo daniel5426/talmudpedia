@@ -11,10 +11,6 @@ import {
 } from "@/services/artifacts";
 import { ArtifactFormData, createFormDataForKind } from "@/components/admin/artifacts/artifactEditorState";
 
-export function slugify(text: string): string {
-  return text.toLowerCase().replace(/[^a-z0-9_]/g, "_").replace(/__+/g, "_").replace(/^_|_$/g, "");
-}
-
 export function parseObjectJson(text: string, label: string): Record<string, unknown> {
   let parsed: unknown;
   try {
@@ -68,7 +64,6 @@ export function formDataFromArtifact(artifact: Artifact): ArtifactFormData {
     : createFormDataForKind(artifact.kind).source_files;
 
   return {
-    slug: artifact.slug,
     display_name: artifact.display_name,
     description: artifact.description || "",
     kind: artifact.kind,
@@ -93,7 +88,6 @@ export function formDataFromArtifactVersion(version: ArtifactVersion): ArtifactF
     : createFormDataForKind(version.kind).source_files;
 
   return {
-    slug: version.slug,
     display_name: version.display_name,
     description: version.description || "",
     kind: version.kind,
@@ -110,7 +104,7 @@ export function formDataFromArtifactVersion(version: ArtifactVersion): ArtifactF
 }
 
 export function formDataFromDraftSnapshot(
-  artifact: Pick<Artifact, "slug" | "display_name" | "description" | "kind">,
+  artifact: Pick<Artifact, "display_name" | "description" | "kind">,
   snapshot: Record<string, unknown>,
 ): ArtifactFormData {
   const defaultAgentContract = JSON.parse(createFormDataForKind("agent_node").agent_contract) as Record<string, unknown>;
@@ -122,7 +116,6 @@ export function formDataFromDraftSnapshot(
     : createFormDataForKind(kind).source_files;
 
   return {
-    slug: typeof snapshot.slug === "string" ? snapshot.slug : artifact.slug,
     display_name: typeof snapshot.display_name === "string" ? snapshot.display_name : artifact.display_name,
     description: typeof snapshot.description === "string" ? snapshot.description : (artifact.description || ""),
     kind,
@@ -140,7 +133,6 @@ export function formDataFromDraftSnapshot(
 
 export function buildArtifactPayload(formData: ArtifactFormData): ArtifactCreateRequest {
   const payload: ArtifactCreateRequest = {
-    slug: formData.slug,
     display_name: formData.display_name,
     description: formData.description || undefined,
     kind: formData.kind,

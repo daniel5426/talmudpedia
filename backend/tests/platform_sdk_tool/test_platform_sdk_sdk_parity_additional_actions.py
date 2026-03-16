@@ -270,7 +270,6 @@ def _patch_auth(monkeypatch):
         (
             "artifacts.create",
             {
-                "slug": "artifact-a1",
                 "display_name": "Artifact A1",
                 "kind": "tool_impl",
                 "runtime": {

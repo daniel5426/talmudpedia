@@ -291,7 +291,6 @@ def test_artifacts_create_contract_parity(monkeypatch):
                 "tenant_id": "tenant-1",
                 "token": "token",
                 "payload": {
-                    "slug": "demo",
                     "display_name": "Demo Artifact",
                     "description": "artifact create parity",
                     "kind": "tool_impl",
@@ -319,7 +318,7 @@ def test_artifacts_create_contract_parity(monkeypatch):
     assert out["context"]["result"] == {"id": "draft-1"}
     call = fake.artifacts.calls[0]
     assert call["method"] == "create"
-    assert call["spec"]["slug"] == "demo"
+    assert call["spec"]["display_name"] == "Demo Artifact"
     assert call["spec"]["kind"] == "tool_impl"
     assert call["spec"]["runtime"]["entry_module_path"] == "main.py"
     assert call["spec"]["runtime"]["source_files"][0]["path"] == "main.py"

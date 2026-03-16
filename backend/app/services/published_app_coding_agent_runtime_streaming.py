@@ -312,14 +312,51 @@ class PublishedAppCodingAgentRuntimeStreamingMixin:
             await self.db.commit()
 
         def schedule_terminal_revision_finalize() -> None:
+            apps_builder_trace(
+                "runtime_stream.schedule_terminal_revision_finalize_called",
+                domain="coding_agent.runtime",
+                run_id=str(run.id),
+                app_id=str(app.id),
+                has_workspace_writes=bool(getattr(run, "has_workspace_writes", False)),
+                result_revision_id=str(getattr(run, "result_revision_id", None) or "") or None,
+                run_status=run.status.value if hasattr(run.status, "value") else str(run.status),
+            )
             if not bool(getattr(run, "has_workspace_writes", False)):
+                apps_builder_trace(
+                    "runtime_stream.schedule_terminal_revision_finalize_skipped",
+                    domain="coding_agent.runtime",
+                    run_id=str(run.id),
+                    app_id=str(app.id),
+                    reason="no_workspace_writes",
+                )
                 return
             if getattr(run, "result_revision_id", None) is not None:
+                apps_builder_trace(
+                    "runtime_stream.schedule_terminal_revision_finalize_skipped",
+                    domain="coding_agent.runtime",
+                    run_id=str(run.id),
+                    app_id=str(app.id),
+                    reason="result_revision_already_present",
+                    result_revision_id=str(getattr(run, "result_revision_id", None) or "") or None,
+                )
                 return
             if app.id is None or run.id is None:
+                apps_builder_trace(
+                    "runtime_stream.schedule_terminal_revision_finalize_skipped",
+                    domain="coding_agent.runtime",
+                    run_id=str(run.id),
+                    app_id=str(app.id),
+                    reason="missing_app_or_run_id",
+                )
                 return
             from app.services.published_app_coding_run_monitor import PublishedAppCodingRunMonitor
 
+            apps_builder_trace(
+                "runtime_stream.schedule_terminal_revision_finalize_enqueued",
+                domain="coding_agent.runtime",
+                run_id=str(run.id),
+                app_id=str(app.id),
+            )
             asyncio.create_task(
                 PublishedAppCodingRunMonitor._finalize_terminal_scope_detached(
                     app_id=app.id,

@@ -35,7 +35,6 @@ export const DEFAULT_PYTHON_CODE = `async def execute(inputs, config, context):
 `;
 
 export interface ArtifactFormData {
-  slug: string;
   display_name: string;
   description: string;
   kind: ArtifactKind;
@@ -109,7 +108,6 @@ const defaultToolContract = {
 
 export function createFormDataForKind(kind: ArtifactKind): ArtifactFormData {
   return {
-    slug: "",
     display_name: "",
     description: "",
     kind,

@@ -12,6 +12,7 @@ from urllib.parse import urlencode
 
 import httpx
 
+from app.services.apps_builder_trace import apps_builder_trace
 from app.services.published_app_builder_snapshot_filter import (
     BUILDER_SNAPSHOT_IGNORED_FILE_NAMES,
     BUILDER_SNAPSHOT_IGNORED_SUFFIXES,
@@ -55,6 +56,14 @@ _SNAPSHOT_IGNORE_PREFIXES = (
 class SpriteSandboxBackend(PublishedAppSandboxBackend):
     backend_name = "sprite"
     is_remote = True
+
+    @staticmethod
+    def _trace(event: str, **fields: Any) -> None:
+        apps_builder_trace(
+            event,
+            domain="sprite.preview_service",
+            **fields,
+        )
 
     def _api_base(self) -> str:
         return str(self.config.sprite_api_base_url or "https://api.sprites.dev").rstrip("/")
@@ -181,19 +190,51 @@ class SpriteSandboxBackend(PublishedAppSandboxBackend):
         return created
 
     async def _put_service(self, *, sprite_name: str, service_name: str, payload: dict[str, Any]) -> None:
+        self._trace(
+            "sprite.service.put.begin",
+            sprite_name=sprite_name,
+            service_name=service_name,
+            http_port=payload.get("http_port"),
+            cmd=payload.get("cmd"),
+            args=payload.get("args"),
+        )
         await self._request(
             "PUT",
             f"/v1/sprites/{sprite_name}/services/{service_name}",
             json_payload=payload,
             expect_json=False,
         )
+        self._trace(
+            "sprite.service.put.done",
+            sprite_name=sprite_name,
+            service_name=service_name,
+        )
 
     async def _start_service(self, *, sprite_name: str, service_name: str) -> None:
+        self._trace(
+            "sprite.service.start.begin",
+            sprite_name=sprite_name,
+            service_name=service_name,
+        )
         await self._request(
             "POST",
             f"/v1/sprites/{sprite_name}/services/{service_name}/start",
             expect_json=False,
         )
+        self._trace(
+            "sprite.service.start.done",
+            sprite_name=sprite_name,
+            service_name=service_name,
+        )
+
+    async def _get_service(self, *, sprite_name: str, service_name: str) -> dict[str, Any] | None:
+        try:
+            payload = await self._request("GET", f"/v1/sprites/{sprite_name}/services/{service_name}")
+        except PublishedAppSandboxBackendError as exc:
+            if "(404)" in str(exc):
+                return None
+            raise
+        return payload if isinstance(payload, dict) else None
 
     async def _ensure_services(self, *, sprite_name: str) -> None:
         live_workspace_path = self._live_workspace_path()
@@ -209,6 +250,16 @@ class SpriteSandboxBackend(PublishedAppSandboxBackend):
             f"(opencode serve --hostname 0.0.0.0 --port {self._opencode_port()} "
             f"|| npx -y opencode-ai serve --hostname 0.0.0.0 --port {self._opencode_port()})"
         ).strip()
+        self._trace(
+            "sprite.ensure_services.plan",
+            sprite_name=sprite_name,
+            preview_service_name=self._preview_service_name(),
+            preview_port=self._preview_port(),
+            preview_command=preview_command,
+            opencode_service_name=self._opencode_service_name(),
+            opencode_port=self._opencode_port(),
+            opencode_command=opencode_command,
+        )
         await self._put_service(
             sprite_name=sprite_name,
             service_name=self._preview_service_name(),
@@ -220,6 +271,19 @@ class SpriteSandboxBackend(PublishedAppSandboxBackend):
         await self._start_service(
             sprite_name=sprite_name,
             service_name=self._preview_service_name(),
+        )
+        preview_service = await self._get_service(
+            sprite_name=sprite_name,
+            service_name=self._preview_service_name(),
+        )
+        self._trace(
+            "sprite.ensure_services.preview_live_service",
+            sprite_name=sprite_name,
+            service_name=self._preview_service_name(),
+            live_cmd=preview_service.get("cmd") if isinstance(preview_service, dict) else None,
+            live_args=preview_service.get("args") if isinstance(preview_service, dict) else None,
+            live_http_port=preview_service.get("http_port") if isinstance(preview_service, dict) else None,
+            live_state=preview_service.get("state") if isinstance(preview_service, dict) else None,
         )
         await self._put_service(
             sprite_name=sprite_name,

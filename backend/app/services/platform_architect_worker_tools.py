@@ -60,7 +60,6 @@ def _artifact_snapshot_schema() -> dict[str, Any]:
         "type": "object",
         "properties": {
             "kind": {"type": "string", "enum": [item.value for item in ArtifactKind]},
-            "slug": {"type": "string"},
             "display_name": {"type": "string"},
             "description": {"type": "string"},
             "source_files": {
@@ -84,7 +83,7 @@ def _artifact_snapshot_schema() -> dict[str, Any]:
             "rag_contract": {"type": "object"},
             "tool_contract": {"type": "object"},
         },
-        "required": ["kind", "slug", "display_name", "source_files", "entry_module_path"],
+        "required": ["kind", "display_name", "source_files", "entry_module_path"],
         "additionalProperties": False,
     }
 
@@ -94,7 +93,6 @@ def _artifact_draft_seed_schema() -> dict[str, Any]:
         "type": "object",
         "properties": {
             "kind": {"type": "string", "enum": [item.value for item in ArtifactKind]},
-            "slug": {"type": "string"},
             "display_name": {"type": "string"},
             "description": {"type": "string"},
             "entry_module_path": {"type": "string"},

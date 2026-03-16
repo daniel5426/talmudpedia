@@ -11,7 +11,6 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { JsonEditor } from "@/components/ui/json-editor"
 import { Textarea } from "@/components/ui/textarea"
-import { cn } from "@/lib/utils"
 import { ArtifactEditorHeader } from "@/components/admin/artifacts/ArtifactEditorHeader"
 import { ArtifactListView } from "@/components/admin/artifacts/ArtifactListView"
 import { ArtifactTestPanel } from "@/components/admin/artifacts/ArtifactTestPanel"
@@ -19,7 +18,7 @@ import { ArtifactWorkspaceEditor } from "@/components/admin/artifacts/ArtifactWo
 import { ArtifactCodingChatPanel } from "@/features/artifact-coding/ArtifactCodingChatPanel"
 import { useArtifactCodingChat } from "@/features/artifact-coding/useArtifactCodingChat"
 import { ArtifactFormData, createFormDataForKind, initialFormData, RUNTIME_TARGET_OPTIONS } from "@/components/admin/artifacts/artifactEditorState"
-import { buildArtifactPayload, buildArtifactUpdatePayload, buildConvertPayload, contractEditorTitle, formDataFromArtifact, formDataFromDraftSnapshot, formDataFromArtifactVersion, kindLabel, serializeArtifactFormData, slugify, tryParseObject } from "@/components/admin/artifacts/artifactPageUtils"
+import { buildArtifactPayload, buildArtifactUpdatePayload, buildConvertPayload, contractEditorTitle, formDataFromArtifact, formDataFromDraftSnapshot, formDataFromArtifactVersion, kindLabel, serializeArtifactFormData, tryParseObject } from "@/components/admin/artifacts/artifactPageUtils"
 import { Loader2 } from "lucide-react"
 
 type ViewMode = "list" | "create" | "edit"
@@ -50,8 +49,6 @@ export default function ArtifactsPage() {
     const [selectedArtifact, setSelectedArtifact] = useState<Artifact | null>(null)
     const [formData, setFormData] = useState<ArtifactFormData>(initialFormData)
     const [convertTargetKind, setConvertTargetKind] = useState<ArtifactKind>("rag_operator")
-    const [isSlugManuallyEdited, setIsSlugManuallyEdited] = useState(false)
-    const [slugError, setSlugError] = useState<string | null>(null)
     const [activeFilePath, setActiveFilePath] = useState(() => getDefaultActiveFilePath(initialFormData))
     const [sidebarOpen, setSidebarOpen] = useState(true)
     const [artifactChatDraftKey, setArtifactChatDraftKey] = useState("")
@@ -117,8 +114,6 @@ export default function ArtifactsPage() {
         syncSelectedArtifact(fullArtifact)
         setFormData(nextFormData)
         setActiveFilePath(getDefaultActiveFilePath(nextFormData))
-        setIsSlugManuallyEdited(true)
-        setSlugError(null)
         lastWorkingDraftSignatureRef.current = serializeArtifactFormData(nextFormData)
         return fullArtifact
     }, [currentTenant?.slug, syncSelectedArtifact])
@@ -126,10 +121,6 @@ export default function ArtifactsPage() {
     useEffect(() => {
         void fetchArtifacts({ showLoading: true })
     }, [fetchArtifacts])
-
-    const checkSlugCollision = useCallback((slug: string) => {
-        return artifacts.some((artifact) => artifact.slug === slug && artifact.id !== selectedArtifact?.id)
-    }, [artifacts, selectedArtifact?.id])
 
     const savedFormSignature = useMemo(() => {
         if (!selectedArtifact) return null
@@ -157,8 +148,6 @@ export default function ArtifactsPage() {
         setFormData(next)
         setSelectedArtifact(null)
         setActiveFilePath(getDefaultActiveFilePath(next))
-        setIsSlugManuallyEdited(false)
-        setSlugError(null)
         setConvertTargetKind(kind === "agent_node" ? "rag_operator" : "agent_node")
         setViewModeWithUrl("create")
         persistNewDraftKey()
@@ -205,8 +194,6 @@ export default function ArtifactsPage() {
             const nextFormData = formDataFromArtifactVersion(version)
             setFormData(nextFormData)
             setActiveFilePath(getDefaultActiveFilePath(nextFormData))
-            setIsSlugManuallyEdited(true)
-            setSlugError(null)
             setVersionsOpen(false)
         } catch (error) {
             console.error("Failed to load artifact version", error)
@@ -271,24 +258,12 @@ export default function ArtifactsPage() {
 
     const updateFormData = useCallback((field: keyof ArtifactFormData, value: string | ArtifactKind | ArtifactFormData["source_files"]) => {
         setFormData((prev) => {
-            const updated = { ...prev, [field]: value }
-            if (field === "display_name" && !isSlugManuallyEdited) {
-                updated.slug = slugify(String(value))
-            }
-            if (field === "slug") {
-                setIsSlugManuallyEdited(true)
-            }
-            if (field === "slug" || (field === "display_name" && !isSlugManuallyEdited)) {
-                const nextSlug = field === "slug" ? String(value) : slugify(String(value))
-                setSlugError(nextSlug && checkSlugCollision(nextSlug) ? "Slug already exists" : null)
-            }
-            return updated
+            return { ...prev, [field]: value }
         })
-    }, [checkSlugCollision, isSlugManuallyEdited])
+    }, [])
 
     const applyDraftSnapshot = useCallback((snapshot: Record<string, unknown>) => {
         setFormData((prev) => ({
-            slug: typeof snapshot.slug === "string" ? snapshot.slug : prev.slug,
             display_name: typeof snapshot.display_name === "string" ? snapshot.display_name : prev.display_name,
             description: typeof snapshot.description === "string" ? snapshot.description : prev.description,
             kind: (typeof snapshot.kind === "string" ? snapshot.kind : prev.kind) as ArtifactKind,
@@ -315,14 +290,6 @@ export default function ArtifactsPage() {
     const handleSave = async (): Promise<Artifact | null> => {
         if (!formData.display_name.trim()) {
             alert("Please enter a display name")
-            return null
-        }
-        if (!formData.slug.trim()) {
-            alert("Please enter a slug")
-            return null
-        }
-        if (slugError) {
-            alert(slugError)
             return null
         }
         if (selectedArtifact && !hasUnsavedChanges) {
@@ -470,21 +437,6 @@ export default function ArtifactsPage() {
                                 onChange={(e) => updateFormData("display_name", e.target.value)}
                                 className="w-full rounded-md border border-border/40 bg-transparent px-3 py-2 text-sm text-foreground outline-none shadow-none transition-colors hover:border-border focus:border-primary focus:ring-0"
                                 placeholder="e.g. Data Extractor Agent"
-                            />
-                        </div>
-
-                        <div className="group relative">
-                            <div className="mb-2 flex items-center justify-between">
-                                <Label className="text-xs font-medium text-muted-foreground/60 transition-colors group-hover:text-foreground">System Slug</Label>
-                                {slugError && <span className="text-[10px] font-medium text-destructive">{slugError}</span>}
-                            </div>
-                            <input
-                                value={formData.slug}
-                                onChange={(e) => updateFormData("slug", e.target.value)}
-                                className={cn(
-                                    "w-full rounded-md border border-border/40 bg-transparent px-3 py-2 font-mono text-sm text-foreground outline-none shadow-none transition-colors hover:border-border focus:border-primary focus:ring-0",
-                                    slugError && "border-destructive text-destructive"
-                                )}
                             />
                         </div>
 
@@ -687,7 +639,7 @@ export default function ArtifactsPage() {
                 isAgentPanelOpen={artifactCodingChat.isAgentPanelOpen}
                 isPublishing={publishingId === selectedArtifact?.id}
                 isSaving={saving}
-                disableSave={Boolean(slugError)}
+                disableSave={false}
                 showPublish={Boolean(viewMode === "edit" && selectedArtifact?.type === "draft" && selectedArtifact.owner_type === "tenant")}
                 showVersions={Boolean(viewMode === "edit" && selectedArtifact?.id)}
                 versionsOpen={versionsOpen}

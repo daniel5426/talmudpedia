@@ -1,6 +1,6 @@
 # Agent Execution Current State
 
-Last Updated: 2026-03-12
+Last Updated: 2026-03-16
 
 This document describes the current agent execution architecture as implemented in the backend.
 
@@ -86,6 +86,7 @@ Current artifact-specific behavior:
 
 Agent execution integrates with:
 - workload delegation and workload identity
+- tenant API-key authenticated embedded-agent runtime
 - thread service and thread ownership checks
 - usage quota reservation and settlement
 - published app contexts
@@ -99,6 +100,15 @@ Agent execution integrates with:
 - Quota and policy enforcement must happen outside the hot token-stream path where possible.
 - Thread ownership and resume behavior must remain explicit and validated.
 - Trace recording should remain reusable across runtimes, not embedded as ad-hoc debug logging.
+
+## Runtime Surface Split
+
+The current execution core is shared, but the public contracts are intentionally separate:
+- `/agents/{id}/stream` remains the internal/control-plane execution route
+- published apps keep their app-scoped runtime surfaces
+- embedded-agent runtime uses `/public/embed/agents/{agent_id}/*` with tenant API keys and `external_user_id` thread ownership
+
+So the runtime engine is unified below the route/auth layer, while product contracts remain surface-specific.
 
 ## Relationship To Older Docs
 

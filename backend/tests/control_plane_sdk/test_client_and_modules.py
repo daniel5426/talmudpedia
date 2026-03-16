@@ -151,7 +151,6 @@ def test_artifact_create_serialization_uses_canonical_endpoint() -> None:
 
     client.artifacts.create(
         {
-            "slug": "artifact-1",
             "display_name": "Artifact 1",
             "kind": "tool_impl",
             "runtime": {
@@ -168,7 +167,7 @@ def test_artifact_create_serialization_uses_canonical_endpoint() -> None:
     assert call["method"] == "POST"
     assert call["url"].endswith("/admin/artifacts")
     assert call["params"]["tenant_slug"] == "tenant-a"
-    assert call["json"]["slug"] == "artifact-1"
+    assert call["json"]["display_name"] == "Artifact 1"
     assert call["headers"]["X-Idempotency-Key"] == "idem-artifact-create"
 
 

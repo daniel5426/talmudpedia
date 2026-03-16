@@ -66,14 +66,14 @@ def create(
     request_options_builder=request_options,
 ) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]]]:
     missing: List[str] = []
-    for field_name in ("slug", "display_name", "kind", "runtime"):
+    for field_name in ("display_name", "kind", "runtime"):
         if payload.get(field_name) in (None, ""):
             missing.append(field_name)
     if missing:
         return None, [{"error": "missing_fields", "fields": missing}]
 
     if dry_run:
-        return {"status": "skipped", "dry_run": True, "slug": str(payload.get("slug") or "")}, []
+        return {"status": "skipped", "dry_run": True, "display_name": str(payload.get("display_name") or "")}, []
 
     try:
         sdk_client = control_client_factory(client)
@@ -89,12 +89,12 @@ def create(
         return None, [{
             "error": "create_artifact_failed",
             "detail": str(exc),
-            "slug": payload.get("slug"),
+            "display_name": payload.get("display_name"),
             "code": exc.code,
             "http_status": exc.http_status,
         }]
     except Exception as exc:
-        return None, [{"error": "create_artifact_failed", "detail": str(exc), "slug": payload.get("slug")}]
+        return None, [{"error": "create_artifact_failed", "detail": str(exc), "display_name": payload.get("display_name")}]
 
 
 def update(

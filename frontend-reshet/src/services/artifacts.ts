@@ -52,7 +52,6 @@ export interface ToolArtifactContract {
 
 export interface Artifact {
   id: string;
-  slug: string;
   display_name: string;
   description?: string;
   kind: ArtifactKind;
@@ -73,7 +72,6 @@ export interface Artifact {
 }
 
 export interface ArtifactCreateRequest {
-  slug: string;
   display_name: string;
   description?: string;
   kind: ArtifactKind;
@@ -169,7 +167,6 @@ export interface ArtifactVersionListItem {
 }
 
 export interface ArtifactVersion extends ArtifactVersionListItem {
-  slug: string;
   display_name: string;
   description?: string | null;
   kind: ArtifactKind;

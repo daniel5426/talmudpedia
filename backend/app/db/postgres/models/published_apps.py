@@ -37,6 +37,13 @@ class PublishedAppRevisionBuildStatus(str, enum.Enum):
     failed = "failed"
 
 
+class PublishedAppWorkspaceBuildStatus(str, enum.Enum):
+    queued = "queued"
+    building = "building"
+    ready = "ready"
+    failed = "failed"
+
+
 class PublishedAppDraftDevSessionStatus(str, enum.Enum):
     starting = "starting"
     building = "building"
@@ -147,6 +154,11 @@ class PublishedApp(Base):
         cascade="all, delete-orphan",
     )
     revisions = relationship("PublishedAppRevision", back_populates="published_app", cascade="all, delete-orphan")
+    workspace_builds = relationship(
+        "PublishedAppWorkspaceBuild",
+        back_populates="published_app",
+        cascade="all, delete-orphan",
+    )
     custom_domains = relationship(
         "PublishedAppCustomDomain",
         back_populates="published_app",
@@ -466,6 +478,12 @@ class PublishedAppRevision(Base):
         nullable=True,
         index=True,
     )
+    workspace_build_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("published_app_workspace_builds.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     source_revision_id = Column(
         UUID(as_uuid=True),
         ForeignKey("published_app_revisions.id", ondelete="SET NULL"),
@@ -476,6 +494,11 @@ class PublishedAppRevision(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     published_app = relationship("PublishedApp", back_populates="revisions")
+    workspace_build = relationship(
+        "PublishedAppWorkspaceBuild",
+        back_populates="revisions",
+        foreign_keys=[workspace_build_id],
+    )
     creator = relationship("User")
     builder_conversations = relationship(
         "PublishedAppBuilderConversationTurn",
@@ -504,6 +527,71 @@ class PublishedAppRevisionBlob(Base):
     inline_content = Column(Text, nullable=True)
     size_bytes = Column(Integer, nullable=False, default=0)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class PublishedAppWorkspaceBuild(Base):
+    __tablename__ = "published_app_workspace_builds"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    published_app_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("published_apps.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    workspace_fingerprint = Column(String(64), nullable=False)
+    status = Column(
+        SQLEnum(PublishedAppWorkspaceBuildStatus, values_callable=_enum_values),
+        nullable=False,
+        default=PublishedAppWorkspaceBuildStatus.queued,
+    )
+    entry_file = Column(String, nullable=False, default="src/main.tsx")
+    source_snapshot = Column(JSONB, nullable=False, default=dict)
+    dependency_hash = Column(String(64), nullable=True)
+    source_revision_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("published_app_revisions.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    origin_kind = Column(String(32), nullable=False, default="unknown", index=True)
+    origin_run_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("agent_runs.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    build_error = Column(Text, nullable=True)
+    build_started_at = Column(DateTime(timezone=True), nullable=True)
+    build_finished_at = Column(DateTime(timezone=True), nullable=True)
+    dist_storage_prefix = Column(String, nullable=True)
+    dist_manifest = Column(JSONB, nullable=True)
+    template_runtime = Column(String, nullable=False, default="vite_static")
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    published_app = relationship("PublishedApp", back_populates="workspace_builds")
+    source_revision = relationship("PublishedAppRevision", foreign_keys=[source_revision_id])
+    creator = relationship("User")
+    revisions = relationship(
+        "PublishedAppRevision",
+        back_populates="workspace_build",
+        foreign_keys="PublishedAppRevision.workspace_build_id",
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "published_app_id",
+            "workspace_fingerprint",
+            name="uq_published_app_workspace_builds_app_fingerprint",
+        ),
+        Index(
+            "ix_published_app_workspace_builds_app_updated_at_desc",
+            "published_app_id",
+            desc("updated_at"),
+        ),
+    )
 
 
 class PublishedAppBuilderConversationTurn(Base):

@@ -104,7 +104,6 @@ async def test_artifact_test_run_endpoints_execute_and_persist_events(client, db
         create_response = await client.post(
             f"/admin/artifacts?tenant_slug={tenant.slug}",
             json={
-                "slug": "runtime_test",
                 "display_name": "Runtime Test",
                 "description": "artifact runtime test",
                 "kind": "rag_operator",
@@ -231,7 +230,6 @@ async def test_artifact_test_run_can_be_cancelled_while_queued(client, db_sessio
         create_response = await client.post(
             f"/admin/artifacts?tenant_slug={tenant.slug}",
             json={
-                "slug": "queued_runtime_test",
                 "display_name": "Queued Runtime Test",
                 "description": "artifact runtime cancel test",
                 "kind": "rag_operator",

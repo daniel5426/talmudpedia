@@ -48,6 +48,15 @@ export { auditService } from "./audit";
 export type { AuditLog, AuditLogDetail, AuditFilters, ActionStats, ActorStats } from "./audit";
 export { workloadSecurityService } from "./workload-security";
 export type { ApprovalStatus, PendingScopePolicy, ActionApprovalDecision } from "./workload-security";
+export { EmbeddedAgentClient, EmbeddedAgentSDKError } from "./embedded-agent-sdk";
+export type {
+  EmbeddedAgentStreamRequest,
+  EmbeddedAgentRuntimeEvent,
+  EmbeddedAgentThreadsResponse,
+  EmbeddedAgentThreadSummary,
+  EmbeddedAgentThreadDetail,
+  EmbeddedAgentThreadTurn,
+} from "./embedded-agent-sdk";
 
 // Agent & Resource Services
 export { agentService } from "./agent";

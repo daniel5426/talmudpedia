@@ -51,7 +51,6 @@ async def _create_published_artifact(db_session, tenant_id, created_by):
     artifact = await revisions.create_artifact(
         tenant_id=tenant_id,
         created_by=created_by,
-        slug=f"tool_artifact_{uuid.uuid4().hex[:8]}",
         display_name="Tool Artifact",
         description=None,
         kind="tool_impl",

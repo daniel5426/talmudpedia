@@ -160,7 +160,6 @@ def _artifact_to_schema(artifact: ArtifactModel, *, include_code: bool = False) 
     }
     return ArtifactSchema(
         id=str(artifact.id),
-        slug=artifact.slug,
         display_name=artifact.display_name,
         description=artifact.description,
         kind=getattr(artifact.kind, "value", artifact.kind),
@@ -203,7 +202,6 @@ def _artifact_revision_to_version_schema(
         source_file_count=len(list(revision.source_files or [])),
         created_at=revision.created_at,
         created_by=None,
-        slug=artifact.slug,
         display_name=revision.display_name,
         description=revision.description,
         kind=getattr(revision.kind, "value", revision.kind),
@@ -252,7 +250,6 @@ def _artifact_form_snapshot(artifact: ArtifactModel) -> dict[str, Any]:
         return _initial_snapshot_for_kind(getattr(artifact.kind, "value", artifact.kind))
     return _serialize_form_state(
         {
-            "slug": artifact.slug,
             "display_name": artifact.display_name,
             "description": artifact.description or "",
             "kind": getattr(artifact.kind, "value", artifact.kind),
@@ -402,14 +399,9 @@ async def create_artifact_draft(
     tenant, user, db = artifact_ctx
     if tenant is None:
         raise HTTPException(status_code=400, detail="Tenant context required")
-    existing = await db.scalar(select(ArtifactModel).where(ArtifactModel.tenant_id == tenant.id, ArtifactModel.slug == request.slug))
-    if existing is not None:
-        raise HTTPException(status_code=400, detail="Artifact with this slug already exists")
-
     artifact = await ArtifactRevisionService(db).create_artifact(
         tenant_id=tenant.id,
         created_by=user.id if user else None,
-        slug=request.slug,
         display_name=request.display_name,
         description=request.description,
         kind=request.kind.value,

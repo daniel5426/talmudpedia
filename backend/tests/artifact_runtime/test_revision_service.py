@@ -44,7 +44,6 @@ async def test_revision_service_creates_updates_and_publishes_multifile_revision
     artifact = await service.create_artifact(
         tenant_id=tenant.id,
         created_by=user.id,
-        slug="reading_time",
         display_name="Reading Time",
         description="Estimate reading time",
         kind="agent_node",
@@ -124,7 +123,6 @@ async def test_revision_service_does_not_create_new_revision_for_noop_update(db_
     artifact = await service.create_artifact(
         tenant_id=tenant.id,
         created_by=user.id,
-        slug="noop_revision",
         display_name="Noop Revision",
         description="unchanged",
         kind="agent_node",

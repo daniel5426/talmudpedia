@@ -15,9 +15,12 @@ Apps Builder covers draft editing, preview runtime, coding-agent execution, revi
 - Sprite preview uses Vite watch polling, not a custom preview-build snapshot watcher.
 - Coding-agent runs execute against the canonical shared workspace watched by the Vite preview runtime.
 - Live manual code edits are applied incrementally into the shared draft-dev workspace instead of full-workspace resyncs on every debounce.
-- Manual code edits save through the draft-dev workspace, then materialize a durable draft revision by running a one-shot production build from the current live workspace into an isolated ignored output directory.
+- Manual code edits save through the draft-dev workspace, then materialize a durable draft revision from a cached workspace-build record keyed by the current workspace fingerprint.
 - Published runtime remains static artifact delivery.
-- Completed write-producing coding-agent runs materialize a durable draft revision from the current workspace state through the same one-shot build path.
+- Completed write-producing coding-agent runs materialize a durable draft revision through the same cached workspace-build path.
+- Workspace builds are cached per app/workspace fingerprint and reused across retries or repeated version creation for unchanged source state.
+- Draft-dev recovery now prefers the latest persisted live-workspace snapshot for the current revision instead of blindly resyncing from the saved draft revision files.
+- Durable dist assets still use the published bundle-storage contract, but local Sprite/dev runtimes now fall back to filesystem-backed bundle storage when the configured local S3 endpoint is unavailable.
 - Revision materialization updates draft revision pointers without reattaching the live draft-dev session to the saved revision snapshot.
 - Publish only flips `current_published_revision_id` to an already materialized revision; it does not build or create a new revision.
 - The previous template catalog was removed, but the repo now includes a new starter pack at `backend/app/templates/published_apps/classic-chat/`.
@@ -37,6 +40,7 @@ Apps Builder covers draft editing, preview runtime, coding-agent execution, revi
   - `backend/app/services/published_app_draft_dev_runtime.py`
   - `backend/app/services/published_app_draft_dev_runtime_client.py`
   - `backend/app/services/published_app_draft_dev_local_runtime.py`
+  - `backend/app/services/published_app_workspace_build_service.py`
   - `backend/app/services/published_app_draft_revision_materializer.py`
 - Coding-agent runtime:
   - `backend/app/services/published_app_coding_agent_runtime.py`

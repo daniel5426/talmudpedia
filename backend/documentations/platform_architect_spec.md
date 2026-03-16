@@ -125,7 +125,7 @@ Artifact binding behavior:
 Normal artifact binding creation is now lightweight:
 - `prepare_mode=create_new_draft`
 - required: `title_prompt`, `draft_seed.kind`
-- optional seed metadata: `slug`, `display_name`, `description`, `entry_module_path`, `runtime_target`
+- optional seed metadata: `display_name`, `description`, `entry_module_path`, `runtime_target`
 
 Advanced full snapshot seeding still exists:
 - `prepare_mode=seed_snapshot`
@@ -234,7 +234,7 @@ Recent live runs isolated the next unresolved problems:
   - Continued worker runs are now awaitable, cancellable, and joinable from the same architect run tree.
 
 - Create-mode persistence now rejects obviously unready drafts.
-  - Missing required metadata like empty `slug` / `display_name` is exposed through `persistence_readiness`.
+  - Missing required metadata like empty `display_name` is exposed through `persistence_readiness`.
   - The architect should continue the worker or return a blocker instead of attempting canonical create on an unready draft.
 
 - Artifact draft seed ergonomics are still rough for the architect.

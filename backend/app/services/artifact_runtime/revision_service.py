@@ -26,7 +26,6 @@ class ArtifactRevisionService:
         *,
         tenant_id: UUID | None,
         created_by: UUID | None,
-        slug: str,
         display_name: str,
         description: str | None,
         kind: str,
@@ -58,7 +57,6 @@ class ArtifactRevisionService:
         artifact = Artifact(
             id=artifact_id,
             tenant_id=tenant_id,
-            slug=slug,
             display_name=display_name,
             description=description,
             kind=kind_value,

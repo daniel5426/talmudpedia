@@ -46,6 +46,7 @@ class ControlPlaneClient:
         from .artifacts import ArtifactsAPI
         from .catalog import CatalogAPI
         from .credentials import CredentialsAPI
+        from .embedded_agents import EmbeddedAgentsAPI
         from .knowledge_stores import KnowledgeStoresAPI
         from .models import ModelsAPI
         from .orchestration import OrchestrationAPI
@@ -60,6 +61,7 @@ class ControlPlaneClient:
         self.rag = RagAPI(self)
         self.models = ModelsAPI(self)
         self.credentials = CredentialsAPI(self)
+        self.embedded_agents = EmbeddedAgentsAPI(self)
         self.knowledge_stores = KnowledgeStoresAPI(self)
         self.workload_security = WorkloadSecurityAPI(self)
         self.auth = AuthAPI(self)

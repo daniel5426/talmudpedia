@@ -41,7 +41,6 @@ async def _create_artifact(db_session, tenant_id, created_by, *, publish: bool, 
     artifact = await revisions.create_artifact(
         tenant_id=tenant_id,
         created_by=created_by,
-        slug=f"artifact_{uuid.uuid4().hex[:8]}",
         display_name="Runtime Artifact",
         description=None,
         kind=kind,
@@ -174,7 +173,6 @@ async def test_execute_live_run_passes_execution_tenant_for_system_revision(db_s
     artifact = await revisions.create_artifact(
         tenant_id=None,
         created_by=None,
-        slug=f"system-artifact-{uuid.uuid4().hex[:8]}",
         display_name="System Runtime Artifact",
         description=None,
         kind="tool_impl",

@@ -64,7 +64,6 @@ async def _create_artifact_for_operator(db_session, tenant_id, created_by, opera
     artifact = await revisions.create_artifact(
         tenant_id=tenant_id,
         created_by=created_by,
-        slug=f"rag_artifact_{uuid.uuid4().hex[:8]}",
         display_name="RAG Artifact",
         description=None,
         kind="rag_operator",

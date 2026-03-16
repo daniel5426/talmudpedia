@@ -24,6 +24,8 @@ backend/app/api/routers/published_apps_builder_preview_proxy.py
 backend/app/api/routers/published_apps_admin_routes_coding_agent_v2.py
 backend/app/api/routers/published_apps_host_runtime.py
 backend/app/api/routers/published_apps_external_runtime.py
+backend/app/api/routers/embedded_agents_public.py
+backend/app/api/routers/tenant_api_keys.py
 backend/app/api/routers/agent_graph_mutations.py
 backend/app/api/routers/rag_graph_mutations.py
 backend/app/api/routers/rag_operator_contracts.py
@@ -160,6 +162,8 @@ backend/app/services/delegation_service.py
 backend/app/services/workload_provisioning_service.py
 backend/app/services/workload_identity_service.py
 backend/app/services/token_broker_service.py
+backend/app/services/tenant_api_key_service.py
+backend/app/services/embedded_agent_runtime_service.py
 backend/app/services/orchestration_kernel_service.py
 backend/app/services/orchestration_policy_service.py
 backend/app/services/orchestration_lineage_service.py
@@ -183,6 +187,7 @@ backend/app/services/published_app_sandbox_backend_e2b.py
 backend/app/services/published_app_draft_dev_runtime.py
 backend/app/services/published_app_draft_dev_local_runtime.py
 backend/app/services/published_app_draft_dev_runtime_client.py
+backend/app/services/published_app_workspace_build_service.py
 backend/app/services/published_app_draft_revision_materializer.py
 backend/app/services/published_app_draft_dev_patching.py
 backend/app/services/published_app_coding_chat_history_service.py

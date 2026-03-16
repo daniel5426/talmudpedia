@@ -40,6 +40,13 @@ class ToolBindingService:
     def __init__(self, db: AsyncSession):
         self._db = db
 
+    @staticmethod
+    def _artifact_tool_slug(artifact: Artifact) -> str:
+        display_name = str(getattr(artifact, "display_name", "") or "").strip()
+        artifact_id = str(getattr(artifact, "id", "") or "").replace("-", "")
+        suffix = artifact_id[:12] or "artifact"
+        return _slugify(display_name, fallback=f"artifact-tool-{suffix}") + f"-{suffix}"
+
     async def sync_artifact_tool_binding(self, artifact: Artifact) -> ToolRegistry | None:
         if artifact.kind != ArtifactKind.TOOL_IMPL:
             await self.delete_artifact_tool_binding(artifact.id)
@@ -50,7 +57,8 @@ class ToolBindingService:
             return None
 
         tool = await self._get_artifact_tool(artifact.id)
-        await self._ensure_slug_available(artifact.slug, exclude_tool_id=tool.id if tool else None)
+        slug = self._artifact_tool_slug(artifact)
+        await self._ensure_slug_available(slug, exclude_tool_id=tool.id if tool else None)
 
         schema = self._artifact_schema_from_revision(revision)
         version = _tool_semver(revision.revision_number)
@@ -58,7 +66,7 @@ class ToolBindingService:
             tool = ToolRegistry(
                 tenant_id=artifact.tenant_id,
                 name=artifact.display_name,
-                slug=artifact.slug,
+                slug=slug,
                 description=artifact.description,
                 scope=ToolDefinitionScope.TENANT,
                 schema=schema,
@@ -78,7 +86,7 @@ class ToolBindingService:
             return tool
 
         tool.name = artifact.display_name
-        tool.slug = artifact.slug
+        tool.slug = slug
         tool.description = artifact.description
         tool.schema = schema
         tool.config_schema = dict(revision.config_schema or {})

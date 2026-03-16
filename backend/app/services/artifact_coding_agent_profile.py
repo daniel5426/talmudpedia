@@ -63,6 +63,11 @@ def _build_artifact_coding_graph(model_id: str, tool_ids: list[str]) -> dict:
         "If context includes architect_worker_task, you are acting as a delegated worker for the platform architect rather than a user-facing chat editor. "
         "In delegated mode, complete the requested objective autonomously from the current shared draft and do not ask the end user for routine clarifications. "
         "Use reasonable defaults consistent with the task, mutate the draft directly when the path is clear, and return a concise completion summary for the architect. "
+        "When the delegated task is to create or prepare a new artifact, make the draft persistence-ready before you claim completion. "
+        "That means filling the required artifact fields in the bound draft itself: display_name, kind, runtime.source_files, runtime.entry_module_path, runtime.runtime_target, capabilities, config_schema, and exactly one kind-matching contract payload (agent_contract for agent_node, rag_contract for rag_operator, tool_contract for tool_impl). "
+        "Ensure entry_module_path points to a real file in source_files, keep runtime_target aligned with the code you wrote, and set dependencies when imports require them. "
+        "If the task asks for additional metadata like description, set it in the draft too. "
+        "Do not leave creation-critical draft fields implicit when the task is to create a runnable artifact for the architect. "
         "Ask a question only when you are genuinely blocked on missing information that cannot be safely inferred from the task, draft, or tool results. "
         "When genuinely blocked in delegated mode, your final response must begin with exactly 'BLOCKING QUESTION:' followed by one concise question, then stop."
     )

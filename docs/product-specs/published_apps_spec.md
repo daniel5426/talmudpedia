@@ -4,6 +4,8 @@ Last Updated: 2026-03-16
 
 This document is the canonical product/specification overview for published apps.
 
+Published apps are distinct from the embedded-agent runtime product. If a customer only wants to call a published agent from its own existing application, that flow now belongs to `docs/product-specs/embedded_agent_runtime_spec.md` and does not require creating a published app.
+
 ## Purpose
 
 Published apps let a tenant expose an agent-backed app experience with:

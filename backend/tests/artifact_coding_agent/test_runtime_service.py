@@ -35,10 +35,9 @@ async def _seed_tenant_and_user(db_session):
     return tenant, user
 
 
-def _tool_impl_create_payload(slug: str) -> dict[str, object]:
+def _tool_impl_create_payload(name: str) -> dict[str, object]:
     return {
-        "slug": slug,
-        "display_name": f"{slug}-display",
+        "display_name": f"{name}-display",
         "description": "artifact coding payload",
         "kind": "tool_impl",
         "runtime": {
@@ -64,7 +63,6 @@ async def _create_artifact_from_payload(db_session, *, tenant_id, user_id, paylo
     artifact = await service.create_artifact(
         tenant_id=tenant_id,
         created_by=user_id,
-        slug=str(payload["slug"]),
         display_name=str(payload["display_name"]),
         description=str(payload.get("description") or ""),
         kind=str(payload["kind"]),
@@ -119,7 +117,6 @@ async def test_runtime_service_relinks_draft_key_to_saved_artifact_without_new_s
     runtime = ArtifactCodingRuntimeService(db_session)
     draft_key = f"draft-{uuid4().hex[:8]}"
     snapshot = {
-        "slug": "delegated-tool",
         "display_name": "Delegated Tool",
         "description": "created through artifact coding",
         "kind": "tool_impl",
@@ -206,7 +203,6 @@ async def test_build_initial_snapshot_from_seed_uses_seed_kind_without_agent_nod
     snapshot = runtime.build_initial_snapshot_from_seed(
         {
             "kind": "tool_impl",
-            "slug": "seeded-tool",
             "display_name": "Seeded Tool",
             "description": "seed-based initialization",
             "entry_module_path": "src/main.py",
@@ -215,7 +211,6 @@ async def test_build_initial_snapshot_from_seed_uses_seed_kind_without_agent_nod
     )
 
     assert snapshot["kind"] == "tool_impl"
-    assert snapshot["slug"] == "seeded-tool"
     assert snapshot["display_name"] == "Seeded Tool"
     assert snapshot["entry_module_path"] == "src/main.py"
     assert snapshot["source_files"][0]["path"] == "src/main.py"
@@ -389,7 +384,6 @@ async def test_serialize_runtime_state_separates_verification_state_from_persist
         draft_snapshot=runtime.build_initial_snapshot_from_seed(
             {
                 "kind": "tool_impl",
-                "slug": "verify-split",
                 "display_name": "Verify Split",
             }
         ),
@@ -542,6 +536,9 @@ async def test_artifact_coding_agent_profile_includes_delegated_worker_mode_inst
     assert "BLOCKING QUESTION:" in instructions
     assert "artifact_coding_await_last_test_result" in instructions
     assert "queued or running" in instructions
+    assert "display_name, kind, runtime.source_files, runtime.entry_module_path, runtime.runtime_target, capabilities, config_schema" in instructions
+    assert "exactly one kind-matching contract payload" in instructions
+    assert "entry_module_path points to a real file in source_files" in instructions
 
 
 @pytest.mark.asyncio

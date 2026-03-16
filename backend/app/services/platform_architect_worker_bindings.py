@@ -471,7 +471,6 @@ class ArtifactSharedDraftBindingAdapter:
             artifact = await revision_service.create_artifact(
                 tenant_id=tenant_id,
                 created_by=user_id,
-                slug=str(artifact_payload.get("slug") or "").strip(),
                 display_name=str(artifact_payload.get("display_name") or "").strip(),
                 description=artifact_payload.get("description"),
                 kind=str(artifact_payload.get("kind") or "").strip(),
@@ -563,7 +562,7 @@ class ArtifactSharedDraftBindingAdapter:
             raise RuntimeError("Artifact persistence completed without a linked artifact")
         return {
             "artifact_id": str(artifact.id),
-            "artifact_slug": artifact.slug,
+            "artifact_display_name": artifact.display_name,
             "artifact_kind": str(getattr(artifact.kind, "value", artifact.kind)),
             "persistence_mode": persistence_mode,
             "binding_ref": binding_ref.as_dict(),

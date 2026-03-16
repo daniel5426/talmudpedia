@@ -206,10 +206,9 @@ def _delete_agent(base_url: str, headers: Dict[str, str], agent_id: str) -> None
 def test_cross_surface_artifacts_create_parity() -> None:
     base_url, headers, tenant_id, api_key = _require_env()
 
-    artifact_slug = f"sdk-parity-{uuid.uuid4().hex[:8]}"
+    artifact_name = f"sdk-parity-{uuid.uuid4().hex[:8]}"
     payload = {
-        "slug": artifact_slug,
-        "display_name": f"{artifact_slug}-display",
+        "display_name": f"{artifact_name}-display",
         "description": "Cross-surface parity test artifact",
         "kind": "tool_impl",
         "runtime": {

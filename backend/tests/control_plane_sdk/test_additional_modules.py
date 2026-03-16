@@ -197,3 +197,53 @@ def test_workload_security_action_routes() -> None:
     assert decide_call["method"] == "POST"
     assert decide_call["url"].endswith("/admin/security/workloads/approvals/decide")
     assert "X-Idempotency-Key" in decide_call["headers"]
+
+
+def test_embedded_agent_routes_use_public_embed_contract() -> None:
+    session = _RecordingSession(_FakeResponse(payload={"items": [], "total": 0}))
+    client = _client_with_session(session)
+
+    client.embedded_agents.list_agent_threads(
+        "agent-1",
+        external_user_id="user-1",
+        external_session_id="session-1",
+        skip=2,
+        limit=5,
+    )
+    client.embedded_agents.get_agent_thread(
+        "agent-1",
+        "thread-1",
+        external_user_id="user-1",
+        external_session_id="session-1",
+    )
+    client.embedded_agents.stream_agent(
+        "agent-1",
+        {
+            "input": "hello",
+            "external_user_id": "user-1",
+        },
+    )
+
+    list_call = session.calls[0]
+    detail_call = session.calls[1]
+    stream_call = session.calls[2]
+    assert list_call["method"] == "GET"
+    assert list_call["url"].endswith("/public/embed/agents/agent-1/threads")
+    assert list_call["params"] == {
+        "external_user_id": "user-1",
+        "external_session_id": "session-1",
+        "skip": 2,
+        "limit": 5,
+    }
+    assert detail_call["method"] == "GET"
+    assert detail_call["url"].endswith("/public/embed/agents/agent-1/threads/thread-1")
+    assert detail_call["params"] == {
+        "external_user_id": "user-1",
+        "external_session_id": "session-1",
+    }
+    assert stream_call["method"] == "POST"
+    assert stream_call["url"].endswith("/public/embed/agents/agent-1/chat/stream")
+    assert stream_call["json"] == {
+        "input": "hello",
+        "external_user_id": "user-1",
+    }

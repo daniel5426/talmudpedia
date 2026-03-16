@@ -7,6 +7,7 @@ from .routers.auth import get_current_user
 from app.db.postgres.models.identity import Tenant, User, OrgUnit, OrgMembership
 from app.db.postgres.models.rbac import RoleAssignment, RolePermission
 from app.db.postgres.models.security import ApprovalDecision, ApprovalStatus
+from app.services.tenant_api_key_service import TenantAPIKeyAuthError, TenantAPIKeyService
 from app.db.postgres.models.published_apps import (
     PublishedApp,
     PublishedAppAccount,
@@ -225,11 +226,49 @@ async def get_current_principal(
         raise HTTPException(status_code=401, detail="Could not validate principal token")
 
 
+async def get_current_tenant_api_key_principal(
+    token: str = Depends(_extract_bearer_token),
+    db: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    service = TenantAPIKeyService(db)
+    try:
+        api_key = await service.authenticate_token(token)
+    except TenantAPIKeyAuthError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=str(exc),
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from exc
+
+    return {
+        "type": "tenant_api_key",
+        "tenant_id": str(api_key.tenant_id),
+        "api_key_id": str(api_key.id),
+        "key_prefix": api_key.key_prefix,
+        "name": api_key.name,
+        "scopes": list(api_key.scopes or []),
+        "auth_token": token,
+    }
+
+
 def require_scopes(*required_scopes: str) -> Callable[[Dict[str, Any]], Dict[str, Any]]:
     async def _dep(principal: Dict[str, Any] = Depends(get_current_principal)) -> Dict[str, Any]:
         scopes = set(principal.get("scopes") or [])
         if "*" in scopes:
             return principal
+        missing = [scope for scope in required_scopes if scope not in scopes]
+        if missing:
+            raise HTTPException(status_code=403, detail=f"Missing required scopes: {', '.join(missing)}")
+        return principal
+
+    return _dep
+
+
+def require_tenant_api_key_scopes(*required_scopes: str) -> Callable[[Dict[str, Any]], Dict[str, Any]]:
+    async def _dep(
+        principal: Dict[str, Any] = Depends(get_current_tenant_api_key_principal),
+    ) -> Dict[str, Any]:
+        scopes = set(principal.get("scopes") or [])
         missing = [scope for scope in required_scopes if scope not in scopes]
         if missing:
             raise HTTPException(status_code=403, detail=f"Missing required scopes: {', '.join(missing)}")

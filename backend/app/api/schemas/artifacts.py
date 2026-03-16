@@ -89,7 +89,6 @@ class ArtifactContractEnvelope(BaseModel):
 
 class ArtifactSchema(BaseModel):
     id: str
-    slug: str
     display_name: str
     description: Optional[str] = None
     kind: ArtifactKind
@@ -123,7 +122,6 @@ class ArtifactVersionListItem(BaseModel):
 
 
 class ArtifactVersionSchema(ArtifactVersionListItem):
-    slug: str
     display_name: str
     description: Optional[str] = None
     kind: ArtifactKind
@@ -149,7 +147,6 @@ class ArtifactWorkingDraftUpdateRequest(BaseModel):
 
 
 class ArtifactCreate(BaseModel):
-    slug: str
     display_name: str
     description: Optional[str] = None
     kind: ArtifactKind

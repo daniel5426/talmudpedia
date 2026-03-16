@@ -396,6 +396,17 @@ async def sync_builder_draft_dev_session(
         if not sandbox_id:
             raise HTTPException(status_code=409, detail="Draft dev session sandbox is unavailable")
         revision_token = None
+        existing_metadata = dict(session.backend_metadata or {}) if isinstance(session.backend_metadata, dict) else {}
+        existing_snapshot = (
+            dict(existing_metadata.get("live_workspace_snapshot") or {})
+            if isinstance(existing_metadata.get("live_workspace_snapshot"), dict)
+            else {}
+        )
+        next_files = {
+            str(path): str(content if isinstance(content, str) else str(content))
+            for path, content in dict(existing_snapshot.get("files") or draft.files or {}).items()
+        }
+        next_entry_file = str(existing_snapshot.get("entry_file") or draft.entry_file or "").strip() or draft.entry_file
         for operation in payload.operations:
             if operation.op == "upsert_file" and operation.path:
                 normalized_path = _normalize_builder_path(operation.path)
@@ -405,6 +416,7 @@ async def sync_builder_draft_dev_session(
                     path=normalized_path,
                     content=operation.content or "",
                 )
+                next_files[normalized_path] = operation.content or ""
             elif operation.op == "delete_file" and operation.path:
                 normalized_path = _normalize_builder_path(operation.path)
                 _assert_builder_path_allowed(normalized_path, field="operations.path")
@@ -412,6 +424,7 @@ async def sync_builder_draft_dev_session(
                     sandbox_id=sandbox_id,
                     path=normalized_path,
                 )
+                next_files.pop(normalized_path, None)
             elif operation.op == "rename_file" and operation.from_path and operation.to_path:
                 from_path = _normalize_builder_path(operation.from_path)
                 to_path = _normalize_builder_path(operation.to_path)
@@ -422,14 +435,25 @@ async def sync_builder_draft_dev_session(
                     from_path=from_path,
                     to_path=to_path,
                 )
+                if from_path in next_files:
+                    next_files[to_path] = next_files.pop(from_path)
             elif operation.op == "set_entry_file" and operation.entry_file:
                 normalized_entry_file = _normalize_builder_path(operation.entry_file)
                 _assert_builder_path_allowed(normalized_entry_file, field="operations.entry_file")
+                next_entry_file = normalized_entry_file
                 continue
             else:
                 continue
             revision_token = str(result.get("revision_token") or "").strip() or revision_token
 
+        await runtime_service.record_workspace_live_snapshot(
+            app_id=app.id,
+            revision_id=session.revision_id or draft.id,
+            entry_file=next_entry_file,
+            files=next_files,
+            revision_token=revision_token,
+            workspace_fingerprint=None,
+        )
         session = await runtime_service.record_live_workspace_revision_token(
             session=session,
             revision_token=revision_token,

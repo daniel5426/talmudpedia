@@ -152,7 +152,6 @@ async def test_binding_prepare_schema_accepts_lightweight_seed_and_rejects_old_s
             "title_prompt": "Seed a snapshot",
             "draft_snapshot": {
                 "kind": "tool_impl",
-                "slug": "seeded-tool",
                 "display_name": "Seeded Tool",
                 "entrypoint": "main.py",
                 "source_files": [{"path": "main.py", "text": "print('x')"}],
@@ -445,7 +444,7 @@ async def test_binding_persist_artifact_auto_create_links_binding_scope(db_sessi
             "prepare_mode": "create_new_draft",
             "draft_key": f"persist-auto-{uuid4().hex[:8]}",
             "title_prompt": "Create a random number tool",
-            "draft_seed": {"kind": "tool_impl", "slug": "random-tool", "display_name": "Random Tool"},
+            "draft_seed": {"kind": "tool_impl", "display_name": "Random Tool"},
         }
     )
 
@@ -461,7 +460,7 @@ async def test_binding_persist_artifact_auto_create_links_binding_scope(db_sessi
     )
 
     assert persist_result["persistence_mode"] == "create"
-    assert persist_result["artifact_slug"] == "random-tool"
+    assert persist_result["artifact_display_name"] == "Random Tool"
     assert persist_result["binding_state"]["artifact_id"] == persist_result["artifact_id"]
 
 

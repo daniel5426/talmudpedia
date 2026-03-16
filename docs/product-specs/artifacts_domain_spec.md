@@ -50,6 +50,7 @@ Tenant artifacts are authored through the admin artifacts APIs.
 
 Current authoring shape includes:
 - identity and metadata
+- human-facing `display_name` without a user-authored artifact slug
 - explicit `kind`
 - source files and entry module path
 - runtime target and dependency declarations

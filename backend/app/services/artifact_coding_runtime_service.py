@@ -63,7 +63,7 @@ class ArtifactCodingRuntimeService:
         if not kind:
             raise ValueError("draft_seed.kind is required")
         snapshot = _initial_snapshot_for_kind(_normalize_kind(kind))
-        for field_name in ("slug", "display_name", "description"):
+        for field_name in ("display_name", "description"):
             value = draft_seed.get(field_name)
             if isinstance(value, str):
                 snapshot[field_name] = value.strip()
@@ -106,7 +106,6 @@ class ArtifactCodingRuntimeService:
         kind = getattr(artifact.kind, "value", artifact.kind)
         return _serialize_form_state(
             {
-                "slug": artifact.slug,
                 "display_name": artifact.display_name,
                 "description": artifact.description or "",
                 "kind": kind,
@@ -541,7 +540,6 @@ class ArtifactCodingRuntimeService:
         capabilities = _parse_json_object(snapshot.get("capabilities"), field="capabilities", fallback=DEFAULT_CAPABILITIES)
         config_schema = _parse_json_object(snapshot.get("config_schema"), field="config_schema", fallback=DEFAULT_CONFIG_SCHEMA)
         artifact_payload: dict[str, Any] = {
-            "slug": snapshot.get("slug") or "",
             "display_name": snapshot.get("display_name") or "",
             "description": snapshot.get("description") or "",
             "kind": kind,
@@ -567,7 +565,6 @@ class ArtifactCodingRuntimeService:
         missing_create_fields = [
             field_name
             for field_name, field_value in (
-                ("slug", artifact_payload.get("slug")),
                 ("display_name", artifact_payload.get("display_name")),
             )
             if not str(field_value or "").strip()
@@ -578,7 +575,7 @@ class ArtifactCodingRuntimeService:
             "patch": {
                 key: value
                 for key, value in artifact_payload.items()
-                if key not in {"slug", "kind"}
+                if key != "kind"
             },
         } if artifact_id is not None else None
         platform_assets_create_input = {

@@ -56,7 +56,6 @@ async def test_artifact_working_draft_endpoints_persist_unsaved_snapshot(client,
         create_response = await client.post(
             f"/admin/artifacts?tenant_slug={tenant.slug}",
             json={
-                "slug": "artifact_working_draft",
                 "display_name": "Artifact Working Draft",
                 "description": "working draft coverage",
                 "kind": "agent_node",
@@ -93,7 +92,6 @@ async def test_artifact_working_draft_endpoints_persist_unsaved_snapshot(client,
                 "artifact_id": artifact["id"],
                 "draft_key": "draft-key-1",
                 "draft_snapshot": {
-                    "slug": "artifact_working_draft",
                     "display_name": "Artifact Working Draft Unsaved",
                     "description": "unsaved change",
                     "kind": "agent_node",
@@ -133,7 +131,6 @@ async def test_artifact_working_draft_update_merges_artifact_and_draft_key_scope
         create_response = await client.post(
             f"/admin/artifacts?tenant_slug={tenant.slug}",
             json={
-                "slug": "artifact_working_draft_merge",
                 "display_name": "Artifact Working Draft Merge",
                 "description": "working draft merge coverage",
                 "kind": "tool_impl",
@@ -166,7 +163,6 @@ async def test_artifact_working_draft_update_merges_artifact_and_draft_key_scope
             artifact_id=None,
             draft_key=draft_key,
             initial_snapshot={
-                "slug": "artifact_working_draft_merge",
                 "display_name": "Artifact Working Draft Merge",
                 "description": "draft-key row",
                 "kind": "tool_impl",
@@ -187,7 +183,6 @@ async def test_artifact_working_draft_update_merges_artifact_and_draft_key_scope
                 "artifact_id": artifact["id"],
                 "draft_key": draft_key,
                 "draft_snapshot": {
-                    "slug": "artifact_working_draft_merge",
                     "display_name": "Artifact Working Draft Merge",
                     "description": "seeded from draft key",
                     "kind": "tool_impl",

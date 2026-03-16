@@ -739,7 +739,6 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
                 "mutation": True,
                 "payload_schema": _payload_schema(
                     properties={
-                        "slug": {"type": "string"},
                         "display_name": {"type": "string"},
                         "description": {"type": "string"},
                         "kind": {"type": "string", "enum": ["agent_node", "rag_operator", "tool_impl"]},
@@ -750,14 +749,13 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
                         "rag_contract": {"type": "object"},
                         "tool_contract": {"type": "object"},
                     },
-                    required=["slug", "display_name", "kind", "runtime"],
+                    required=["display_name", "kind", "runtime"],
                     additional_properties=False,
                 ),
                 "contract": {
                     "summary": "Create a canonical draft artifact.",
-                    "required_fields": ["slug", "display_name", "kind", "runtime"],
+                    "required_fields": ["display_name", "kind", "runtime"],
                     "example_payload": {
-                        "slug": "normalize-docs",
                         "display_name": "Normalize Docs",
                         "description": "Tool implementation artifact.",
                         "kind": "tool_impl",

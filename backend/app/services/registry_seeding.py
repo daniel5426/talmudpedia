@@ -291,7 +291,6 @@ async def _seed_platform_sdk_system_artifact(db, *, input_schema: dict, output_s
         artifact = await revision_service.create_artifact(
             tenant_id=None,
             created_by=None,
-            slug="platform_sdk",
             display_name="Platform SDK",
             description="SDK-powered tool to fetch catalogs, create draft assets, and run multi-case tests.",
             kind=ArtifactKind.TOOL_IMPL.value,

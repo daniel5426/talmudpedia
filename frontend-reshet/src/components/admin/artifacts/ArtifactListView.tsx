@@ -70,7 +70,7 @@ export function ArtifactListView({
                         </div>
                         <div className="flex flex-col">
                           <span>{artifact.display_name}</span>
-                          <span className="font-mono text-xs text-muted-foreground">{artifact.slug}</span>
+                          <span className="text-xs text-muted-foreground">{kindLabel(artifact.kind)}</span>
                         </div>
                       </div>
                     </TableCell>

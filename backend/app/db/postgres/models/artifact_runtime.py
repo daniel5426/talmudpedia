@@ -72,7 +72,6 @@ class Artifact(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=True, index=True)
 
-    slug = Column(String, nullable=False)
     display_name = Column(String, nullable=False)
     description = Column(String, nullable=True)
     kind = Column(
@@ -113,7 +112,6 @@ class Artifact(Base):
     latest_published_revision = relationship("ArtifactRevision", foreign_keys=[latest_published_revision_id], post_update=True)
 
     __table_args__ = (
-        Index("uq_artifacts_tenant_slug", "tenant_id", "slug", unique=True),
         Index("uq_artifacts_system_key", "system_key", unique=True),
     )
 

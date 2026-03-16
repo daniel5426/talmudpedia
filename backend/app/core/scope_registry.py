@@ -84,6 +84,9 @@ ACTION_REQUIRED_SCOPES: dict[str, list[str]] = {
     "knowledge_stores.stats": ["knowledge_stores.read"],
     "auth.create_delegation_grant": ["auth.write"],
     "auth.mint_workload_token": ["auth.write"],
+    "api_keys.list": ["api_keys.read"],
+    "api_keys.create": ["api_keys.write"],
+    "api_keys.revoke": ["api_keys.write"],
     "workload_security.list_pending": ["workload_security.read"],
     "workload_security.approve_policy": ["workload_security.write"],
     "workload_security.reject_policy": ["workload_security.write"],
@@ -126,6 +129,9 @@ ALL_SCOPES: list[str] = sorted(
             "threads.write",
             "tenants.read",
             "tenants.write",
+            "api_keys.read",
+            "api_keys.write",
+            "agents.embed",
         }
     )
 )
@@ -145,8 +151,9 @@ TENANT_DEFAULT_ROLE_SCOPES: dict[str, list[str]] = {
             "pipelines.catalog.read",
             "pipelines.read",
             "agents.read",
-            "agents.execute",
-            "artifacts.read",
+        "agents.execute",
+        "agents.embed",
+        "artifacts.read",
             "tools.read",
             "models.read",
             "knowledge_stores.read",

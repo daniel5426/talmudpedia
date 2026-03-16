@@ -1,4 +1,4 @@
-Last Updated: 2026-03-14
+Last Updated: 2026-03-16
 
 # Test State
 
@@ -16,6 +16,7 @@ Artifact runtime revision and bundle lifecycle.
 ## Key Scenarios Covered
 
 - create tenant artifact draft with source-tree runtime payload
+- create tenant artifact draft without a user-authored slug
 - update artifact and create a new draft revision
 - skip draft revision creation for no-op artifact saves
 - publish the latest draft revision
@@ -51,6 +52,9 @@ Artifact runtime revision and bundle lifecycle.
 - Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/artifact_runtime/test_artifact_working_draft_api.py backend/tests/artifact_coding_agent/test_runtime_service.py`
 - Date: 2026-03-14 Asia/Hebron
 - Result: Pass (5 passed)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/artifact_runtime/test_revision_service.py backend/tests/artifact_runtime/test_artifact_versions_api.py backend/tests/artifact_runtime/test_artifact_working_draft_api.py backend/tests/artifact_test_runs/test_artifact_test_run_api.py backend/tests/artifact_coding_agent/test_runtime_service.py backend/tests/platform_architect_workers/test_worker_runtime.py backend/tests/platform_architect_workers/test_architect_worker_integration.py backend/tests/control_plane_sdk/test_client_and_modules.py backend/tests/platform_sdk_tool/test_platform_sdk_sdk_parity.py backend/tests/platform_sdk_tool/test_platform_sdk_sdk_parity_additional_actions.py`
+- Date: 2026-03-16 19:41 EET
+- Result: Pass (145 passed)
 
 ## Known Gaps
 

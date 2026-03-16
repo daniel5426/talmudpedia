@@ -38,7 +38,6 @@ async def _create_artifact(db_session, tenant_id, created_by, *, publish: bool):
     artifact = await revisions.create_artifact(
         tenant_id=tenant_id,
         created_by=created_by,
-        slug=f"agent_artifact_{uuid.uuid4().hex[:8]}",
         display_name="Agent Artifact",
         description=None,
         kind="agent_node",

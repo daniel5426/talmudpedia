@@ -37,6 +37,26 @@ _INLINE_VITE_PATH_PATTERN = re.compile(
 _REWRITABLE_TEXT_PREFIXES = ("text/html", "application/javascript", "text/javascript", "text/css")
 
 
+def _preview_body_probe(content: bytes, *, content_type: str) -> dict[str, Any]:
+    normalized_content_type = str(content_type or "").split(";", 1)[0].strip().lower()
+    if normalized_content_type not in {"text/html", "application/javascript", "text/javascript"}:
+        return {"content_type": normalized_content_type, "probeable": False}
+    try:
+        text = content.decode("utf-8", errors="ignore")
+    except Exception:
+        return {"content_type": normalized_content_type, "probeable": False}
+    head = text[:240]
+    return {
+        "content_type": normalized_content_type,
+        "probeable": True,
+        "head": head,
+        "contains_vite_client": "@vite/client" in text,
+        "contains_vite_hmr_create": "__vite__createHotContext" in text,
+        "contains_hashed_assets": bool(re.search(r"/?assets/[^\"'\\s>]+-[A-Za-z0-9_-]{6,}\\.(?:js|css)", text)),
+        "contains_runtime_token": "runtime_token" in text,
+    }
+
+
 def _should_retry_preview_request(*, method: str, status_code: int | None = None, error: Exception | None = None) -> bool:
     if str(method or "").upper() not in {"GET", "HEAD"}:
         return False
@@ -237,6 +257,15 @@ async def _request_preview_upstream(
             if last_error is not None:
                 raise last_error
             raise HTTPException(status_code=502, detail="Draft dev preview upstream request failed")
+        probe = _preview_body_probe(upstream.content, content_type=str(upstream.headers.get("content-type") or ""))
+        apps_builder_trace(
+            "preview.proxy.upstream_response",
+            domain="preview.proxy",
+            method=request.method,
+            upstream_url=upstream_url,
+            status_code=upstream.status_code,
+            **probe,
+        )
         return upstream
 
 
@@ -421,6 +450,9 @@ async def proxy_builder_preview(
         method=request.method,
         path=path,
         upstream_url=upstream_url,
+        upstream_base_url=str(target.get("upstream_base_url") or ""),
+        target_base_path=str(target.get("base_path") or ""),
+        target_upstream_path=str(target.get("upstream_path") or ""),
     )
     body = await request.body()
     try:
@@ -529,6 +561,9 @@ async def proxy_builder_preview(
         method=request.method,
         path=path,
         status_code=upstream.status_code,
+        content_type=content_type,
+        content_rewritten=content_rewritten,
+        response_probe=_preview_body_probe(response_content, content_type=content_type),
     )
     return response
 

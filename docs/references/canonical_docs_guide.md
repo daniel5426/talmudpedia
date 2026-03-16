@@ -46,6 +46,8 @@ This guide lists the current canonical documentation entry points after the firs
 
 - `docs/product-specs/published_apps_spec.md`
   - Published-app product behavior and runtime surface.
+- `docs/product-specs/embedded_agent_runtime_spec.md`
+  - Agent-native external embed/plugin runtime contract.
 - `docs/product-specs/settings_hub_spec.md`
   - Tenant settings hub behavior and APIs.
 - `docs/product-specs/runtime_sdk_host_anywhere_spec.md`

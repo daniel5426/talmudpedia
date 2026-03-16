@@ -60,7 +60,7 @@ V1 supports exactly one binding type:
 Normal create flow for this binding is now lightweight:
 - `prepare_mode=create_new_draft`
 - required: `title_prompt`, `draft_seed.kind`
-- optional: `draft_seed.slug`, `draft_seed.display_name`, `draft_seed.description`, `draft_seed.entry_module_path`, `draft_seed.runtime_target`, `draft_key`, `replace_snapshot`
+- optional: `draft_seed.display_name`, `draft_seed.description`, `draft_seed.entry_module_path`, `draft_seed.runtime_target`, `draft_key`, `replace_snapshot`
 
 Advanced snapshot seeding still exists but is not the architect’s normal path:
 - `prepare_mode=seed_snapshot`
@@ -234,7 +234,7 @@ The latest live runs exposed several root-cause gaps that are not yet resolved:
 
 - Blind create persistence with missing required artifact metadata is no longer accepted.
   - Binding state now exposes `persistence_readiness`, including missing fields for create mode.
-  - `architect-worker-binding-persist-artifact` now fails fast instead of attempting canonical create with empty required fields like `slug` or `display_name`.
+  - `architect-worker-binding-persist-artifact` now fails fast instead of attempting canonical create with empty required fields like `display_name`.
 
 - Artifact seed vocabulary is still not natural enough for the architect.
   - The architect still guesses values like `python` or `script` instead of the canonical artifact kinds (`tool_impl`, `agent_node`, `rag_operator`).

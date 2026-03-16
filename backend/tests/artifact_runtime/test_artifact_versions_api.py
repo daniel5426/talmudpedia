@@ -53,7 +53,6 @@ async def test_artifact_version_endpoints_list_and_get_saved_revisions(client, d
         create_response = await client.post(
             f"/admin/artifacts?tenant_slug={tenant.slug}",
             json={
-                "slug": "artifact_versions",
                 "display_name": "Artifact Versions",
                 "description": "version endpoint coverage",
                 "kind": "agent_node",

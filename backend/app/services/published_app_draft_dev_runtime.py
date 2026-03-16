@@ -212,7 +212,58 @@ class PublishedAppDraftDevRuntimeService:
             preview_runtime.pop("workspace_revision_token", None)
         metadata["workspace"] = workspace
         metadata["preview_runtime"] = preview_runtime
+        live_snapshot = dict(metadata.get("live_workspace_snapshot") or {}) if isinstance(metadata.get("live_workspace_snapshot"), dict) else {}
+        if normalized_token:
+            live_snapshot["revision_token"] = normalized_token
+        elif "revision_token" in live_snapshot:
+            live_snapshot.pop("revision_token", None)
+        if live_snapshot:
+            metadata["live_workspace_snapshot"] = live_snapshot
         return metadata
+
+    @staticmethod
+    def _merge_live_workspace_snapshot(
+        *,
+        existing_metadata: object,
+        revision_id: UUID | None,
+        entry_file: str,
+        files: Dict[str, str],
+        revision_token: str | None,
+        workspace_fingerprint: str | None,
+    ) -> dict[str, Any]:
+        metadata = dict(existing_metadata or {}) if isinstance(existing_metadata, dict) else {}
+        normalized_files = {
+            str(path): str(content if isinstance(content, str) else str(content))
+            for path, content in (files or {}).items()
+            if isinstance(path, str) and str(path).strip()
+        }
+        metadata["live_workspace_snapshot"] = {
+            "revision_id": str(revision_id) if revision_id else None,
+            "entry_file": str(entry_file or "").strip() or "src/main.tsx",
+            "files": normalized_files,
+            "revision_token": str(revision_token or "").strip() or None,
+            "workspace_fingerprint": str(workspace_fingerprint or "").strip() or None,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        return metadata
+
+    @staticmethod
+    def _get_live_workspace_snapshot_for_revision(
+        *,
+        metadata: object,
+        revision_id: UUID | None,
+    ) -> dict[str, Any] | None:
+        payload = dict(metadata or {}) if isinstance(metadata, dict) else {}
+        snapshot = payload.get("live_workspace_snapshot")
+        if not isinstance(snapshot, dict):
+            return None
+        files = snapshot.get("files")
+        if not isinstance(files, dict) or not files:
+            return None
+        snapshot_revision_id = str(snapshot.get("revision_id") or "").strip() or None
+        if revision_id is not None and snapshot_revision_id not in {None, str(revision_id)}:
+            return None
+        return snapshot
 
     @staticmethod
     def _session_load_options():
@@ -476,6 +527,8 @@ class PublishedAppDraftDevRuntimeService:
         workspace: PublishedAppDraftWorkspace,
         files_payload: Dict[str, str],
         entry_value: str,
+        source_files: Dict[str, str],
+        source_entry_file: str,
         dependency_hash: str,
         preview_base_path: str,
         now: datetime,
@@ -489,6 +542,20 @@ class PublishedAppDraftDevRuntimeService:
         workspace.detached_at = None
         workspace.revision_id = revision.id
         workspace.preview_url = preview_base_path
+        workspace.backend_metadata = self._merge_live_workspace_snapshot(
+            existing_metadata=workspace.backend_metadata,
+            revision_id=revision.id,
+            entry_file=source_entry_file,
+            files=source_files,
+            revision_token=(
+                (
+                    dict(workspace.backend_metadata or {}).get("workspace", {})
+                    if isinstance(dict(workspace.backend_metadata or {}).get("workspace"), dict)
+                    else {}
+                ).get("revision_token")
+            ),
+            workspace_fingerprint=None,
+        )
         if must_start:
             workspace.runtime_generation = self._runtime_generation_value(workspace) + 1
             workspace.status = PublishedAppDraftWorkspaceStatus.syncing
@@ -574,14 +641,30 @@ class PublishedAppDraftDevRuntimeService:
             app_slug=str(app.slug or ""),
             agent_id=str(app.agent_id or ""),
         )
+        workspace = await self._get_or_create_workspace(app=app)
+        live_snapshot = self._get_live_workspace_snapshot_for_revision(
+            metadata=workspace.backend_metadata,
+            revision_id=revision.id,
+        )
+        effective_files = (
+            {
+                str(path): str(content if isinstance(content, str) else str(content))
+                for path, content in dict(live_snapshot.get("files") or {}).items()
+            }
+            if live_snapshot is not None
+            else dict(files or revision.files or {})
+        )
+        effective_entry_file = (
+            str(live_snapshot.get("entry_file") or "").strip() or entry_file or revision.entry_file
+            if live_snapshot is not None
+            else (entry_file or revision.entry_file)
+        )
         files_payload = apply_runtime_bootstrap_overlay(
-            dict(files or revision.files or {}),
+            dict(effective_files),
             runtime_context=runtime_context,
         )
-        entry_value = entry_file or revision.entry_file
+        entry_value = effective_entry_file
         dependency_hash = self._dependency_hash(files_payload)
-
-        workspace = await self._get_or_create_workspace(app=app)
         session = await self._get_or_create_session(
             app=app,
             user_id=user_id,
@@ -613,6 +696,8 @@ class PublishedAppDraftDevRuntimeService:
                 workspace=workspace,
                 files_payload=files_payload,
                 entry_value=entry_value,
+                source_files=effective_files,
+                source_entry_file=effective_entry_file,
                 dependency_hash=dependency_hash,
                 preview_base_path=preview_base_path,
                 now=now,
@@ -746,6 +831,70 @@ class PublishedAppDraftDevRuntimeService:
                     revision_token=revision_token,
                 )
         return session
+
+    async def record_workspace_live_snapshot(
+        self,
+        *,
+        app_id: UUID,
+        revision_id: UUID | None,
+        entry_file: str,
+        files: Dict[str, str],
+        revision_token: str | None,
+        workspace_fingerprint: str | None,
+    ) -> None:
+        workspace = await self.get_workspace(app_id=app_id)
+        if workspace is not None:
+            workspace.backend_metadata = self._merge_live_workspace_snapshot(
+                existing_metadata=workspace.backend_metadata,
+                revision_id=revision_id,
+                entry_file=entry_file,
+                files=files,
+                revision_token=revision_token,
+                workspace_fingerprint=workspace_fingerprint,
+            )
+        result = await self.db.execute(
+            select(PublishedAppDraftDevSession)
+            .options(self._session_load_options())
+            .where(PublishedAppDraftDevSession.published_app_id == app_id)
+        )
+        for session in result.scalars().all():
+            session.backend_metadata = self._merge_live_workspace_snapshot(
+                existing_metadata=session.backend_metadata,
+                revision_id=revision_id,
+                entry_file=entry_file,
+                files=files,
+                revision_token=revision_token,
+                workspace_fingerprint=workspace_fingerprint,
+            )
+
+    async def bind_live_workspace_snapshot_to_revision(
+        self,
+        *,
+        app_id: UUID,
+        revision_id: UUID,
+    ) -> None:
+        workspace = await self.get_workspace(app_id=app_id)
+        targets: list[object] = []
+        if workspace is not None:
+            targets.append(workspace)
+        result = await self.db.execute(
+            select(PublishedAppDraftDevSession)
+            .options(self._session_load_options())
+            .where(PublishedAppDraftDevSession.published_app_id == app_id)
+        )
+        targets.extend(result.scalars().all())
+        for target in targets:
+            metadata = dict(getattr(target, "backend_metadata", {}) or {})
+            snapshot = dict(metadata.get("live_workspace_snapshot") or {}) if isinstance(metadata.get("live_workspace_snapshot"), dict) else {}
+            files = snapshot.get("files")
+            if not isinstance(files, dict) or not files:
+                continue
+            metadata["live_workspace_snapshot"] = {
+                **snapshot,
+                "revision_id": str(revision_id),
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+            target.backend_metadata = metadata
 
     async def bind_session_to_revision_without_sync(
         self,

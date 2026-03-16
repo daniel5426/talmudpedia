@@ -19,6 +19,7 @@ class AgentThreadSurface(str, enum.Enum):
     published_host_runtime = "published_host_runtime"
     preview_runtime = "preview_runtime"
     artifact_admin = "artifact_admin"
+    embedded_runtime = "embedded_runtime"
 
 
 class AgentThreadTurnStatus(str, enum.Enum):
@@ -36,8 +37,11 @@ class AgentThread(Base):
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     app_account_id = Column(UUID(as_uuid=True), ForeignKey("published_app_accounts.id", ondelete="SET NULL"), nullable=True, index=True)
+    tenant_api_key_id = Column(UUID(as_uuid=True), ForeignKey("tenant_api_keys.id", ondelete="SET NULL"), nullable=True, index=True)
     agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id", ondelete="SET NULL"), nullable=True, index=True)
     published_app_id = Column(UUID(as_uuid=True), ForeignKey("published_apps.id", ondelete="SET NULL"), nullable=True, index=True)
+    external_user_id = Column(String(255), nullable=True, index=True)
+    external_session_id = Column(String(255), nullable=True, index=True)
     surface = Column(SQLEnum(AgentThreadSurface), nullable=False, default=AgentThreadSurface.internal, index=True)
     title = Column(String(255), nullable=True)
     status = Column(SQLEnum(AgentThreadStatus), nullable=False, default=AgentThreadStatus.active, index=True)
@@ -49,6 +53,7 @@ class AgentThread(Base):
     tenant = relationship("Tenant")
     user = relationship("User")
     app_account = relationship("PublishedAppAccount")
+    tenant_api_key = relationship("TenantAPIKey")
     agent = relationship("Agent")
     published_app = relationship("PublishedApp")
     last_run = relationship("AgentRun", foreign_keys=[last_run_id])
@@ -62,6 +67,7 @@ class AgentThread(Base):
     __table_args__ = (
         Index("ix_agent_threads_scope_activity", "tenant_id", "user_id", "last_activity_at"),
         Index("ix_agent_threads_app_account_activity", "tenant_id", "app_account_id", "last_activity_at"),
+        Index("ix_agent_threads_embed_activity", "tenant_id", "agent_id", "external_user_id", "last_activity_at"),
     )
 
 

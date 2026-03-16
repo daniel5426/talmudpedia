@@ -35,6 +35,7 @@ Last Updated: 2026-03-16
 - Seeded architect prompt now instructs artifact binding creation through `title_prompt + draft_seed.kind` and explicitly forbids low-level guesses like `create`, `files`, `entrypoint`, and `text`.
 - Seeded architect prompt now treats artifact-coding delegated workers as draft-mutation-only workers and keeps persistence architect-owned through `architect-worker-binding-persist-artifact`.
 - Seeded architect prompt now forbids asking artifact-coding workers to mutate runtime-owned readiness fields like `persistence_readiness`.
+- Seeded artifact-coding worker instructions now spell out the required draft fields for a new artifact before the architect can persist it.
 - Architect domain tools bind to local `platform_sdk` function dispatch instead of artifact-worker execution.
 - Local `platform_sdk` function dispatch forwards the correct architect domain tool slug.
 - Local `platform_sdk` function dispatch emits internal trace events for the prepared runtime context and the completed SDK result.
@@ -70,6 +71,9 @@ Last Updated: 2026-03-16
 - Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/platform_architect_runtime/test_architect_seeding.py`
 - Date/Time: 2026-03-16 19:20 Asia/Hebron
 - Result: passed (`4 passed, 1 warning`)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/artifact_coding_agent/test_runtime_service.py backend/tests/platform_architect_runtime/test_architect_seeding.py`
+- Date/Time: 2026-03-16 20:12 EET
+- Result: passed (`15 passed, 1 warning`)
 
 ## Known gaps or follow-ups
 - Add integration coverage that exercises seeded `platform-architect` graph with real tool resolution in DB-backed test environment.

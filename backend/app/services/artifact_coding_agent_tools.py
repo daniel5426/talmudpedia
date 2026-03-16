@@ -63,7 +63,6 @@ DEFAULT_SOURCE = """async def execute(inputs, config, context):
 def _initial_snapshot_for_kind(kind: str) -> dict[str, Any]:
     normalized_kind = _normalize_kind(kind)
     return {
-        "slug": "",
         "display_name": "",
         "description": "",
         "kind": normalized_kind,
@@ -175,7 +174,6 @@ def _default_contract_for_kind(kind: str) -> dict[str, Any]:
 def _serialize_form_state(snapshot: dict[str, Any]) -> dict[str, Any]:
     kind = _normalize_kind(snapshot.get("kind"))
     normalized = deepcopy(snapshot)
-    normalized.setdefault("slug", "")
     normalized.setdefault("display_name", "")
     normalized.setdefault("description", "")
     normalized["kind"] = kind
@@ -288,7 +286,6 @@ async def artifact_coding_get_context(payload: Any) -> dict[str, Any]:
             "run_id": str(run.id),
             "draft_key": session.draft_key,
             "metadata": {
-                "slug": snapshot["slug"],
                 "display_name": snapshot["display_name"],
                 "description": snapshot["description"],
                 "kind": snapshot["kind"],
@@ -552,7 +549,7 @@ async def artifact_coding_set_metadata(payload: Any) -> dict[str, Any]:
         session, shared_draft, _run, _artifact = await _resolve_session_context(db, tool_payload)
         snapshot = _serialize_form_state(shared_draft.working_draft_snapshot)
         changed_fields: list[str] = []
-        for field_name in ("slug", "display_name", "description"):
+        for field_name in ("display_name", "description"):
             if field_name not in tool_payload:
                 continue
             snapshot[field_name] = str(tool_payload.get(field_name) or "")
@@ -693,7 +690,7 @@ ARTIFACT_CODING_TOOL_SPECS: list[dict[str, Any]] = [
     {"slug": "artifact-coding-rename-file", "name": "Artifact Coding Rename File", "description": "Rename a draft file.", "function_name": "artifact_coding_rename_file", "timeout_s": 60, "is_pure": False, "schema": _tool_schema(properties={"from_path": {"type": "string"}, "to_path": {"type": "string"}}, required=["from_path", "to_path"])},
     {"slug": "artifact-coding-set-entry-module", "name": "Artifact Coding Set Entry Module", "description": "Set the entry module path.", "function_name": "artifact_coding_set_entry_module", "timeout_s": 30, "is_pure": False, "schema": _tool_schema(properties={"path": {"type": "string"}}, required=["path"])},
     {"slug": "artifact-coding-set-dependencies", "name": "Artifact Coding Set Dependencies", "description": "Set Python dependencies for the draft.", "function_name": "artifact_coding_set_dependencies", "timeout_s": 30, "is_pure": False, "schema": _tool_schema(properties={"dependencies": {"anyOf": [{"type": "array", "items": {"type": "string"}}, {"type": "string"}]}})},
-    {"slug": "artifact-coding-set-metadata", "name": "Artifact Coding Set Metadata", "description": "Update artifact metadata fields.", "function_name": "artifact_coding_set_metadata", "timeout_s": 30, "is_pure": False, "schema": _tool_schema(properties={"slug": {"type": "string"}, "display_name": {"type": "string"}, "description": {"type": "string"}})},
+    {"slug": "artifact-coding-set-metadata", "name": "Artifact Coding Set Metadata", "description": "Update artifact metadata fields.", "function_name": "artifact_coding_set_metadata", "timeout_s": 30, "is_pure": False, "schema": _tool_schema(properties={"display_name": {"type": "string"}, "description": {"type": "string"}})},
     {"slug": "artifact-coding-set-kind", "name": "Artifact Coding Set Kind", "description": "Change the artifact kind and contract shape.", "function_name": "artifact_coding_set_kind", "timeout_s": 30, "is_pure": False, "schema": _tool_schema(properties={"kind": {"type": "string", "enum": [item.value for item in ArtifactKind]}, "contract_payload": {"type": "object"}}, required=["kind"])},
     {"slug": "artifact-coding-set-config-schema", "name": "Artifact Coding Set Config Schema", "description": "Update the artifact config schema JSON.", "function_name": "artifact_coding_set_config_schema", "timeout_s": 30, "is_pure": False, "schema": _tool_schema(properties={"config_schema": {"type": "object"}}, required=["config_schema"])},
     {"slug": "artifact-coding-set-capabilities", "name": "Artifact Coding Set Capabilities", "description": "Update the artifact capabilities JSON.", "function_name": "artifact_coding_set_capabilities", "timeout_s": 30, "is_pure": False, "schema": _tool_schema(properties={"capabilities": {"type": "object"}}, required=["capabilities"])},

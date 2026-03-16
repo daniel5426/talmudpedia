@@ -583,8 +583,8 @@ def test_platform_architect_artifact_worker_smoke_live(e2e_runtime):
         "Create one minimal tool artifact through the architect worker flow. "
         "Use an architect worker binding, spawn the artifact worker, wait for it, persist the artifact through platform-assets, "
         "and do not publish it. "
-        f"Use slug {unique_prefix} and display name {unique_prefix}. "
-        "Return one JSON object only with keys: status, artifact_slug, child_agent_slugs, errors."
+        f"Use display name {unique_prefix}. "
+        "Return one JSON object only with keys: status, artifact_display_name, child_agent_slugs, errors."
     )
 
     run_id = _start_run(
@@ -609,4 +609,4 @@ def test_platform_architect_artifact_worker_smoke_live(e2e_runtime):
     assert "artifact-coding-agent" in tree_blob
     assert contains_action_evidence(run_status.get("result"), "artifacts.create") or contains_action_evidence(run_tree, "artifacts.create")
     assert str(assistant_json.get("status") or "").lower() in {"ok", "completed", "success"}
-    assert str(assistant_json.get("artifact_slug") or "") == unique_prefix
+    assert str(assistant_json.get("artifact_display_name") or "") == unique_prefix

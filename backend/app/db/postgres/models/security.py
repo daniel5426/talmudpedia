@@ -50,6 +50,11 @@ class ApprovalStatus(str, enum.Enum):
     REJECTED = "rejected"
 
 
+class TenantAPIKeyStatus(str, enum.Enum):
+    ACTIVE = "active"
+    REVOKED = "revoked"
+
+
 class WorkloadPrincipal(Base):
     __tablename__ = "workload_principals"
 
@@ -196,3 +201,29 @@ class ApprovalDecision(Base):
     __table_args__ = (
         Index("ix_approval_subject", "tenant_id", "subject_type", "subject_id"),
     )
+
+
+class TenantAPIKey(Base):
+    __tablename__ = "tenant_api_keys"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    name = Column(String, nullable=False)
+    key_prefix = Column(String, nullable=False, unique=True, index=True)
+    secret_hash = Column(String, nullable=False)
+    scopes = Column(JSONB, default=list, nullable=False)
+    status = Column(
+        SQLEnum(
+            TenantAPIKeyStatus,
+            values_callable=lambda enum_cls: [e.value for e in enum_cls],
+        ),
+        nullable=False,
+        default=TenantAPIKeyStatus.ACTIVE,
+    )
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    revoked_at = Column(DateTime(timezone=True), nullable=True)
+    last_used_at = Column(DateTime(timezone=True), nullable=True)
+
+    tenant = relationship("Tenant")
+    creator = relationship("User")

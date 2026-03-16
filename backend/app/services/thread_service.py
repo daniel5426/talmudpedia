@@ -57,8 +57,11 @@ class ThreadService:
         tenant_id: UUID,
         user_id: Optional[UUID],
         app_account_id: Optional[UUID] = None,
+        tenant_api_key_id: Optional[UUID] = None,
         agent_id: Optional[UUID],
         published_app_id: Optional[UUID],
+        external_user_id: Optional[str] = None,
+        external_session_id: Optional[str] = None,
         surface: AgentThreadSurface,
         thread_id: Optional[UUID],
         input_text: Optional[str],
@@ -69,6 +72,13 @@ class ThreadService:
                 raise ThreadAccessError("Thread not found")
             if thread.status == AgentThreadStatus.archived:
                 raise ThreadAccessError("Thread is archived")
+            if surface == AgentThreadSurface.embedded_runtime:
+                if thread.agent_id != agent_id:
+                    raise ThreadAccessError("Thread scope mismatch")
+                if not external_user_id or thread.external_user_id != external_user_id:
+                    raise ThreadAccessError("Thread ownership mismatch")
+                if external_session_id is not None and thread.external_session_id != external_session_id:
+                    raise ThreadAccessError("Thread session mismatch")
             if published_app_id is not None and thread.published_app_id != published_app_id:
                 raise ThreadAccessError("Thread scope mismatch")
             if published_app_id is not None:
@@ -82,8 +92,11 @@ class ThreadService:
             tenant_id=tenant_id,
             user_id=user_id,
             app_account_id=app_account_id,
+            tenant_api_key_id=tenant_api_key_id,
             agent_id=agent_id,
             published_app_id=published_app_id,
+            external_user_id=external_user_id,
+            external_session_id=external_session_id,
             surface=surface,
             status=AgentThreadStatus.active,
             title=self._derive_title(input_text=input_text),
@@ -191,6 +204,9 @@ class ThreadService:
         user_id: Optional[UUID] = None,
         app_account_id: Optional[UUID] = None,
         published_app_id: Optional[UUID] = None,
+        agent_id: Optional[UUID] = None,
+        external_user_id: Optional[str] = None,
+        external_session_id: Optional[str] = None,
         skip: int = 0,
         limit: int = 20,
     ) -> tuple[list[AgentThread], int]:
@@ -201,6 +217,12 @@ class ThreadService:
             base = base.where(AgentThread.app_account_id == app_account_id)
         if published_app_id is not None:
             base = base.where(AgentThread.published_app_id == published_app_id)
+        if agent_id is not None:
+            base = base.where(AgentThread.agent_id == agent_id)
+        if external_user_id is not None:
+            base = base.where(AgentThread.external_user_id == external_user_id)
+        if external_session_id is not None:
+            base = base.where(AgentThread.external_session_id == external_session_id)
         count = (
             await self.db.execute(
                 select(func.count()).select_from(base.subquery())
@@ -223,6 +245,9 @@ class ThreadService:
         user_id: Optional[UUID] = None,
         app_account_id: Optional[UUID] = None,
         published_app_id: Optional[UUID] = None,
+        agent_id: Optional[UUID] = None,
+        external_user_id: Optional[str] = None,
+        external_session_id: Optional[str] = None,
     ) -> Optional[AgentThread]:
         query = select(AgentThread).where(AgentThread.id == thread_id).options(selectinload(AgentThread.turns)).limit(1)
         if tenant_id is not None:
@@ -232,10 +257,16 @@ class ThreadService:
             return None
         if published_app_id is not None and thread.published_app_id != published_app_id:
             return None
+        if agent_id is not None and thread.agent_id != agent_id:
+            return None
         if app_account_id is not None:
             if thread.app_account_id is not None and thread.app_account_id != app_account_id:
                 return None
         elif user_id is not None and thread.user_id is not None and thread.user_id != user_id:
+            return None
+        if external_user_id is not None and thread.external_user_id != external_user_id:
+            return None
+        if external_session_id is not None and thread.external_session_id != external_session_id:
             return None
         thread.turns.sort(key=self._turn_sort_key)
         return thread

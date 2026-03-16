@@ -234,12 +234,46 @@ class PublishedAppCodingRunMonitor:
                 app_id=str(app_id),
             )
             async with cls._session_factory() as db:
+                apps_builder_trace(
+                    "monitor.finalize.session_opened",
+                    domain="coding_agent.finalizer",
+                    run_id=str(run_id),
+                    app_id=str(app_id),
+                )
                 run = await db.get(AgentRun, run_id)
                 app = await db.get(PublishedApp, app_id)
                 if run is None or app is None:
+                    apps_builder_trace(
+                        "monitor.finalize.session_missing_entities",
+                        domain="coding_agent.finalizer",
+                        run_id=str(run_id),
+                        app_id=str(app_id),
+                        run_found=bool(run is not None),
+                        app_found=bool(app is not None),
+                    )
                     return
                 run_status = run.status.value if hasattr(run.status, "value") else str(run.status)
+                apps_builder_trace(
+                    "monitor.finalize.loaded_entities",
+                    domain="coding_agent.finalizer",
+                    run_id=str(run_id),
+                    app_id=str(app_id),
+                    run_status=run_status,
+                    has_workspace_writes=bool(getattr(run, "has_workspace_writes", False)),
+                    result_revision_id=str(getattr(run, "result_revision_id", None) or "") or None,
+                    batch_finalized_at=run.batch_finalized_at.isoformat()
+                    if isinstance(run.batch_finalized_at, datetime)
+                    else None,
+                )
                 if run_status != RunStatus.completed.value:
+                    apps_builder_trace(
+                        "monitor.finalize.skipped",
+                        domain="coding_agent.finalizer",
+                        run_id=str(run_id),
+                        app_id=str(app_id),
+                        reason="run_not_completed",
+                        run_status=run_status,
+                    )
                     await db.commit()
                     return
                 source_revision_id = run.base_revision_id or app.current_draft_revision_id
@@ -258,6 +292,14 @@ class PublishedAppCodingRunMonitor:
                 result = None
                 if bool(getattr(run, "has_workspace_writes", False)):
                     materializer = PublishedAppDraftRevisionMaterializerService(db)
+                    apps_builder_trace(
+                        "monitor.finalize.materializer_call_begin",
+                        domain="coding_agent.finalizer",
+                        run_id=str(run_id),
+                        app_id=str(app_id),
+                        source_revision_id=str(source_revision_id or "") or None,
+                        entry_file=entry_file,
+                    )
                     result_revision = await materializer.finalize_run_materialization(
                         app=app,
                         run=run,
@@ -265,18 +307,62 @@ class PublishedAppCodingRunMonitor:
                         source_revision_id=source_revision_id,
                         created_by=run.initiator_user_id or run.user_id,
                     )
+                    apps_builder_trace(
+                        "monitor.finalize.materializer_call_done",
+                        domain="coding_agent.finalizer",
+                        run_id=str(run_id),
+                        app_id=str(app_id),
+                        result_revision_id=str(result_revision.id) if result_revision is not None else None,
+                    )
                     actor_id = run.initiator_user_id or run.user_id
                     if result_revision is not None and actor_id is not None:
                         runtime_service = PublishedAppDraftDevRuntimeService(db)
+                        apps_builder_trace(
+                            "monitor.finalize.bind_session_begin",
+                            domain="coding_agent.finalizer",
+                            run_id=str(run_id),
+                            app_id=str(app_id),
+                            actor_id=str(actor_id),
+                            result_revision_id=str(result_revision.id),
+                        )
                         await runtime_service.bind_session_to_revision_without_sync(
                             app_id=app.id,
                             user_id=actor_id,
                             revision=result_revision,
                         )
+                        apps_builder_trace(
+                            "monitor.finalize.bind_session_done",
+                            domain="coding_agent.finalizer",
+                            run_id=str(run_id),
+                            app_id=str(app_id),
+                            actor_id=str(actor_id),
+                            result_revision_id=str(result_revision.id),
+                        )
                     result = {
                         "result_revision_id": str(result_revision.id) if result_revision is not None else None,
                     }
+                else:
+                    apps_builder_trace(
+                        "monitor.finalize.skipped",
+                        domain="coding_agent.finalizer",
+                        run_id=str(run_id),
+                        app_id=str(app_id),
+                        reason="no_workspace_writes",
+                    )
+                apps_builder_trace(
+                    "monitor.finalize.db_commit_begin",
+                    domain="coding_agent.finalizer",
+                    run_id=str(run_id),
+                    app_id=str(app_id),
+                )
                 await db.commit()
+                apps_builder_trace(
+                    "monitor.finalize.db_commit_done",
+                    domain="coding_agent.finalizer",
+                    run_id=str(run_id),
+                    app_id=str(app_id),
+                    result=result,
+                )
                 cls._trace(
                     "monitor.revision_materialize_done",
                     run_id=str(run_id),
@@ -291,6 +377,14 @@ class PublishedAppCodingRunMonitor:
                     result=result,
                 )
         except PublishedAppDraftRevisionMaterializerError as exc:
+            apps_builder_trace(
+                "monitor.finalize.materializer_error",
+                domain="coding_agent.finalizer",
+                run_id=str(run_id),
+                app_id=str(app_id),
+                error=str(exc),
+                error_type=exc.__class__.__name__,
+            )
             logger.exception(
                 "CODING_AGENT_MONITOR revision_materialize_failed run_id=%s app_id=%s error=%s",
                 run_id,
@@ -298,6 +392,14 @@ class PublishedAppCodingRunMonitor:
                 exc,
             )
         except Exception as exc:
+            apps_builder_trace(
+                "monitor.finalize.exception",
+                domain="coding_agent.finalizer",
+                run_id=str(run_id),
+                app_id=str(app_id),
+                error=str(exc),
+                error_type=exc.__class__.__name__,
+            )
             logger.exception(
                 "CODING_AGENT_MONITOR revision_materialize_failed run_id=%s app_id=%s",
                 run_id,

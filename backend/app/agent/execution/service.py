@@ -206,6 +206,8 @@ class AgentExecutorService:
             surface = AgentThreadSurface.preview_runtime
         elif runtime_context.get("published_app_id"):
             surface = AgentThreadSurface.published_host_runtime
+        elif runtime_surface == "embedded_agent_runtime":
+            surface = AgentThreadSurface.embedded_runtime
 
         published_app_id: Optional[UUID] = None
         raw_published_app_id = runtime_context.get("published_app_id")
@@ -221,14 +223,27 @@ class AgentExecutorService:
         except Exception:
             published_app_account_id = None
 
+        tenant_api_key_id: Optional[UUID] = None
+        raw_tenant_api_key_id = runtime_context.get("tenant_api_key_id")
+        try:
+            tenant_api_key_id = UUID(str(raw_tenant_api_key_id)) if raw_tenant_api_key_id else None
+        except Exception:
+            tenant_api_key_id = None
+
+        external_user_id = str(runtime_context.get("external_user_id") or "").strip() or None
+        external_session_id = str(runtime_context.get("external_session_id") or "").strip() or None
+
         thread_service = ThreadService(self.db)
         try:
             thread_result = await thread_service.resolve_or_create_thread(
                 tenant_id=agent.tenant_id,
                 user_id=effective_initiator_id,
                 app_account_id=published_app_account_id,
+                tenant_api_key_id=tenant_api_key_id,
                 agent_id=agent_id,
                 published_app_id=published_app_id,
+                external_user_id=external_user_id,
+                external_session_id=external_session_id,
                 surface=surface,
                 thread_id=parsed_thread_id,
                 input_text=input_params.get("input") if isinstance(input_params.get("input"), str) else None,

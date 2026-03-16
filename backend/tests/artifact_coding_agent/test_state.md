@@ -18,6 +18,7 @@ Track backend coverage for the artifact-coding agent runtime across locked draft
 - scope-free architect-created sessions keep a stable direct `shared_draft_id` link and do not create a second shared draft on later resolution
 - artifact coding agent profile includes explicit delegated-worker instructions and the canonical `BLOCKING QUESTION:` blocker prefix
 - helper-tool/session state export returns canonical `platform_assets_create_input` and `platform_assets_update_input`
+- helper-tool/session state export returns canonical artifact payloads without a draft/authored slug field
 - saved artifact session hydration rebuilds the working snapshot from the canonical artifact row
 - stored `orchestrator` chat turns are mapped to model-facing `system` messages when rebuilding session history
 - native `continue_prompt_run(...)` persists visible `orchestrator` turns and starts the next run from real stored session history on the same thread
@@ -26,6 +27,7 @@ Track backend coverage for the artifact-coding agent runtime across locked draft
 - runtime state serialization now exposes `persistence_readiness` separately from `verification_state`
 - artifact test tools now enforce one active test run at a time and add a server-side `artifact_coding_await_last_test_result` wait path for Cloudflare cold-start / queue delay
 - delegated artifact-worker instructions now tell the model to start one test run, wait for terminal result, and avoid `queued` polling loops
+- delegated artifact-worker instructions now include an explicit draft-readiness checklist for new artifacts, covering display_name, kind, source files, entry module, runtime target, capabilities, config schema, dependencies, and the matching contract payload
 
 ## Last Run
 
@@ -65,6 +67,12 @@ Track backend coverage for the artifact-coding agent runtime across locked draft
 - Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/artifact_coding_agent/test_runtime_service.py`
 - Date: 2026-03-16 17:14 EET
 - Result: PASS (`11 passed, 1 warning`)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/artifact_runtime/test_revision_service.py backend/tests/artifact_runtime/test_artifact_versions_api.py backend/tests/artifact_runtime/test_artifact_working_draft_api.py backend/tests/artifact_test_runs/test_artifact_test_run_api.py backend/tests/artifact_coding_agent/test_runtime_service.py backend/tests/platform_architect_workers/test_worker_runtime.py backend/tests/platform_architect_workers/test_architect_worker_integration.py backend/tests/control_plane_sdk/test_client_and_modules.py backend/tests/platform_sdk_tool/test_platform_sdk_sdk_parity.py backend/tests/platform_sdk_tool/test_platform_sdk_sdk_parity_additional_actions.py`
+- Date: 2026-03-16 19:41 EET
+- Result: PASS (`145 passed`)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/artifact_coding_agent/test_runtime_service.py backend/tests/platform_architect_runtime/test_architect_seeding.py`
+- Date: 2026-03-16 20:12 EET
+- Result: PASS (`15 passed, 1 warning`)
 
 ## Known Gaps
 

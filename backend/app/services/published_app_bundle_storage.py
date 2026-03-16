@@ -3,8 +3,10 @@ from __future__ import annotations
 import mimetypes
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from pathlib import PurePosixPath
 from typing import List, Optional, Tuple
+from urllib.parse import urlparse
 
 
 class PublishedAppBundleStorageError(Exception):
@@ -26,6 +28,8 @@ class PublishedAppBundleStorageConfig:
     endpoint: Optional[str]
     access_key: Optional[str]
     secret_key: Optional[str]
+    local_dir: Optional[str]
+    allow_local_fallback: bool = False
 
 
 class PublishedAppBundleStorage:
@@ -38,13 +42,24 @@ class PublishedAppBundleStorage:
         bucket = (os.getenv("APPS_BUNDLE_BUCKET") or "").strip()
         if not bucket:
             raise PublishedAppBundleStorageNotConfigured("APPS_BUNDLE_BUCKET is required")
+        endpoint = (os.getenv("APPS_BUNDLE_ENDPOINT") or "").strip() or None
+        local_dir = (os.getenv("APPS_BUNDLE_LOCAL_DIR") or "").strip() or None
+        allow_local_fallback = False
+        if endpoint:
+            parsed = urlparse(endpoint)
+            if parsed.hostname in {"127.0.0.1", "localhost"}:
+                allow_local_fallback = True
+        if allow_local_fallback and not local_dir:
+            local_dir = "/tmp/talmudpedia-apps-bundles"
         return cls(
             PublishedAppBundleStorageConfig(
                 bucket=bucket,
                 region=(os.getenv("APPS_BUNDLE_REGION") or "").strip() or None,
-                endpoint=(os.getenv("APPS_BUNDLE_ENDPOINT") or "").strip() or None,
+                endpoint=endpoint,
                 access_key=(os.getenv("APPS_BUNDLE_ACCESS_KEY") or "").strip() or None,
                 secret_key=(os.getenv("APPS_BUNDLE_SECRET_KEY") or "").strip() or None,
+                local_dir=local_dir,
+                allow_local_fallback=allow_local_fallback,
             )
         )
 
@@ -72,6 +87,10 @@ class PublishedAppBundleStorage:
     @staticmethod
     def build_revision_dist_prefix(*, tenant_id: str, app_id: str, revision_id: str) -> str:
         return f"apps/{tenant_id}/{app_id}/revisions/{revision_id}/dist"
+
+    @staticmethod
+    def build_workspace_build_dist_prefix(*, tenant_id: str, app_id: str, workspace_build_id: str) -> str:
+        return f"apps/{tenant_id}/{app_id}/workspace-builds/{workspace_build_id}/dist"
 
     @staticmethod
     def _normalize_prefix(prefix: str) -> str:
@@ -107,6 +126,40 @@ class PublishedAppBundleStorage:
         normalized_asset_path = cls._normalize_asset_path(asset_path)
         return f"{prefix}/{normalized_asset_path}"
 
+    def _local_asset_path(self, *, key: str) -> Path:
+        local_dir = str(self._config.local_dir or "").strip()
+        if not local_dir:
+            raise PublishedAppBundleStorageError("Local bundle storage directory is not configured")
+        return Path(local_dir).resolve() / key
+
+    def _write_local_asset_bytes(self, *, key: str, payload: bytes) -> str:
+        path = self._local_asset_path(key=key)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(payload)
+        return key
+
+    def _read_local_asset_bytes(self, *, key: str) -> bytes:
+        path = self._local_asset_path(key=key)
+        if not path.exists() or not path.is_file():
+            raise PublishedAppBundleAssetNotFound(f"Asset not found: {key}")
+        return path.read_bytes()
+
+    def _copy_local_prefix(self, *, source_prefix: str, destination_prefix: str) -> int:
+        source_root = self._local_asset_path(key=f"{self._normalize_prefix(source_prefix)}/__placeholder__").parent
+        destination_root = self._local_asset_path(key=f"{self._normalize_prefix(destination_prefix)}/__placeholder__").parent
+        if not source_root.exists():
+            return 0
+        copied = 0
+        for file_path in sorted(source_root.rglob("*")):
+            if not file_path.is_file():
+                continue
+            relative = file_path.relative_to(source_root)
+            target = destination_root / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(file_path.read_bytes())
+            copied += 1
+        return copied
+
     def copy_prefix(self, *, source_prefix: str, destination_prefix: str) -> int:
         source = self._normalize_prefix(source_prefix)
         destination = self._normalize_prefix(destination_prefix)
@@ -114,7 +167,12 @@ class PublishedAppBundleStorage:
         if source == destination:
             return 0
 
-        client = self._get_client()
+        try:
+            client = self._get_client()
+        except PublishedAppBundleStorageError:
+            if self._config.allow_local_fallback and self._config.local_dir:
+                return self._copy_local_prefix(source_prefix=source, destination_prefix=destination)
+            raise
 
         copied = 0
         continuation_token = None
@@ -130,6 +188,8 @@ class PublishedAppBundleStorage:
             try:
                 page = client.list_objects_v2(**kwargs)
             except Exception as exc:
+                if self._config.allow_local_fallback and self._config.local_dir:
+                    return self._copy_local_prefix(source_prefix=source, destination_prefix=destination)
                 raise PublishedAppBundleStorageError(f"Failed to list source artifacts: {exc}") from exc
 
             for item in page.get("Contents", []) or []:
@@ -168,7 +228,12 @@ class PublishedAppBundleStorage:
         cache_control: Optional[str] = None,
     ) -> str:
         key = self.build_asset_key(dist_storage_prefix=dist_storage_prefix, asset_path=asset_path)
-        client = self._get_client()
+        try:
+            client = self._get_client()
+        except PublishedAppBundleStorageError as exc:
+            if self._config.allow_local_fallback and self._config.local_dir:
+                return self._write_local_asset_bytes(key=key, payload=payload)
+            raise exc
         resolved_content_type = content_type or mimetypes.guess_type(PurePosixPath(asset_path).name)[0] or "application/octet-stream"
         kwargs = {
             "Bucket": self._config.bucket,
@@ -181,18 +246,38 @@ class PublishedAppBundleStorage:
         try:
             client.put_object(**kwargs)
         except Exception as exc:
+            if self._config.allow_local_fallback and self._config.local_dir:
+                return self._write_local_asset_bytes(key=key, payload=payload)
             raise PublishedAppBundleStorageError(f"Failed to upload asset `{asset_path}`: {exc}") from exc
         return key
 
     def read_asset_bytes(self, *, dist_storage_prefix: str, asset_path: str) -> Tuple[bytes, str]:
         key = self.build_asset_key(dist_storage_prefix=dist_storage_prefix, asset_path=asset_path)
-        client = self._get_client()
+        try:
+            client = self._get_client()
+        except PublishedAppBundleStorageError as exc:
+            if self._config.allow_local_fallback and self._config.local_dir:
+                payload = self._read_local_asset_bytes(key=key)
+                content_type = mimetypes.guess_type(PurePosixPath(asset_path).name)[0] or "application/octet-stream"
+                return payload, content_type
+            raise exc
         try:
             response = client.get_object(Bucket=self._config.bucket, Key=key)
         except Exception as exc:
             error_message = str(exc)
             if "NoSuchKey" in error_message or "404" in error_message:
+                if self._config.allow_local_fallback and self._config.local_dir:
+                    payload = self._read_local_asset_bytes(key=key)
+                    content_type = mimetypes.guess_type(PurePosixPath(asset_path).name)[0] or "application/octet-stream"
+                    return payload, content_type
                 raise PublishedAppBundleAssetNotFound(f"Asset not found: {asset_path}") from exc
+            if self._config.allow_local_fallback and self._config.local_dir:
+                try:
+                    payload = self._read_local_asset_bytes(key=key)
+                    content_type = mimetypes.guess_type(PurePosixPath(asset_path).name)[0] or "application/octet-stream"
+                    return payload, content_type
+                except PublishedAppBundleAssetNotFound:
+                    pass
             raise PublishedAppBundleStorageError(f"Failed to fetch asset `{asset_path}`: {exc}") from exc
 
         body = response.get("Body")
