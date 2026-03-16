@@ -296,6 +296,9 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     }
     return buildPreviewFrameUrl(previewAssetUrl, previewRoute, previewReloadToken);
   }, [previewAssetUrl, previewReloadToken, previewRoute]);
+  const lastObservedWorkspaceRevisionTokenRef = useRef<string | null>(null);
+  const lastObservedActiveCodingRunLockRef = useRef<boolean>(hasActiveCodingRunLock);
+  const lastObservedPostRunHydrationPendingRef = useRef<boolean>(postRunHydrationPending);
 
   const navigatePreview = useCallback((route: string) => {
     setPreviewRoute(route);
@@ -304,6 +307,34 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
   const reloadPreview = useCallback(() => {
     setPreviewReloadToken((current) => current + 1);
   }, []);
+
+  useEffect(() => {
+    const nextWorkspaceRevisionToken = String(state?.draft_dev?.workspace_revision_token || "").trim() || null;
+    const previousWorkspaceRevisionToken = lastObservedWorkspaceRevisionTokenRef.current;
+    const previousHadActiveRun = lastObservedActiveCodingRunLockRef.current;
+    const runJustFinished = previousHadActiveRun && !hasActiveCodingRunLock;
+
+    if (
+      nextWorkspaceRevisionToken
+      && previousWorkspaceRevisionToken
+      && nextWorkspaceRevisionToken !== previousWorkspaceRevisionToken
+      && runJustFinished
+    ) {
+      reloadPreview();
+    }
+
+    lastObservedWorkspaceRevisionTokenRef.current = nextWorkspaceRevisionToken;
+    lastObservedActiveCodingRunLockRef.current = hasActiveCodingRunLock;
+  }, [hasActiveCodingRunLock, reloadPreview, state?.draft_dev?.workspace_revision_token]);
+
+  useEffect(() => {
+    const previousPending = lastObservedPostRunHydrationPendingRef.current;
+    const hydrationJustFinished = previousPending && !postRunHydrationPending;
+    if (hydrationJustFinished && !hasActiveCodingRunLock) {
+      reloadPreview();
+    }
+    lastObservedPostRunHydrationPendingRef.current = postRunHydrationPending;
+  }, [hasActiveCodingRunLock, postRunHydrationPending, reloadPreview]);
 
   const hydrateFromRevision = useCallback((revision?: PublishedAppRevision | null) => {
     const nextFiles = filterAppsBuilderFiles(revision?.files || {});

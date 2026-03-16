@@ -79,7 +79,6 @@ class ArtifactCodingChatHistoryService:
             "artifact_id": str(session.artifact_id) if session.artifact_id else None,
             "shared_draft_id": str(session.shared_draft_id),
             "draft_key": session.draft_key,
-            "scope_mode": str(getattr(session, "scope_mode", "locked") or "locked"),
             "agent_thread_id": str(session.agent_thread_id),
             "active_run_id": str(session.active_run_id) if session.active_run_id else None,
             "last_run_id": str(session.last_run_id) if session.last_run_id else None,
@@ -129,14 +128,13 @@ class ArtifactCodingChatHistoryService:
         draft_key: str | None,
         agent_thread_id: UUID,
         title_prompt: str,
-        scope_mode: str,
     ) -> ArtifactCodingSession:
         session = ArtifactCodingSession(
             tenant_id=tenant_id,
             artifact_id=artifact_id,
             shared_draft_id=shared_draft_id,
             draft_key=draft_key,
-            scope_mode=scope_mode,
+            scope_mode="locked",
             agent_thread_id=agent_thread_id,
             title=self._session_title_from_prompt(title_prompt),
             last_message_at=datetime.now(timezone.utc),
@@ -152,7 +150,6 @@ class ArtifactCodingChatHistoryService:
         user_id: UUID | None,
         artifact_id: UUID | None,
         draft_key: str | None,
-        scope_mode: str | None = None,
         limit: int = 25,
     ) -> list[ArtifactCodingSession]:
         stmt = (
@@ -162,8 +159,6 @@ class ArtifactCodingChatHistoryService:
         )
         if user_id is not None:
             stmt = stmt.where(AgentThread.user_id == user_id)
-        if scope_mode:
-            stmt = stmt.where(ArtifactCodingSession.scope_mode == str(scope_mode).strip().lower())
         if artifact_id is not None:
             stmt = stmt.where(
                 or_(
@@ -173,7 +168,7 @@ class ArtifactCodingChatHistoryService:
             )
         elif draft_key:
             stmt = stmt.where(ArtifactCodingSession.draft_key == draft_key)
-        elif not scope_mode:
+        else:
             return []
         result = await self.db.execute(
             stmt.order_by(ArtifactCodingSession.last_message_at.desc(), ArtifactCodingSession.created_at.desc()).limit(limit)

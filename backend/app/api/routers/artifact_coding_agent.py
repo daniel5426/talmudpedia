@@ -40,7 +40,6 @@ class ArtifactCodingPromptRequest(BaseModel):
     chat_session_id: Optional[UUID] = None
     artifact_id: Optional[UUID] = None
     draft_key: Optional[str] = None
-    scope_mode: Optional[str] = None
     model_id: Optional[str] = None
     client_message_id: Optional[str] = None
     draft_snapshot: Dict[str, Any] = Field(default_factory=dict)
@@ -72,7 +71,6 @@ class ArtifactCodingChatSessionResponse(BaseModel):
     title: str
     artifact_id: Optional[str] = None
     draft_key: Optional[str] = None
-    scope_mode: str
     active_run_id: Optional[str] = None
     last_run_id: Optional[str] = None
     created_at: datetime
@@ -273,21 +271,18 @@ async def _build_session_detail_response(
 async def list_artifact_coding_sessions(
     artifact_id: Optional[UUID] = None,
     draft_key: Optional[str] = None,
-    scope_mode: Optional[str] = None,
     limit: int = Query(default=25, ge=1, le=100),
     _: Dict[str, Any] = Depends(require_scopes("artifacts.read")),
     artifact_ctx=Depends(get_artifact_context),
 ):
     tenant, user, db = await _require_user_context(artifact_ctx)
-    normalized_scope_mode = str(scope_mode or "").strip().lower() or None
-    if artifact_id is None and not str(draft_key or "").strip() and normalized_scope_mode is None:
+    if artifact_id is None and not str(draft_key or "").strip():
         raise HTTPException(status_code=400, detail="artifact_id or draft_key is required")
     sessions = await ArtifactCodingChatHistoryService(db).list_sessions(
         tenant_id=tenant.id,
         user_id=user.id,
         artifact_id=artifact_id,
         draft_key=str(draft_key or "").strip() or None,
-        scope_mode=normalized_scope_mode,
         limit=limit,
     )
     return [ArtifactCodingChatSessionResponse(**ArtifactCodingChatHistoryService(db).serialize_session(item)) for item in sessions]
@@ -373,7 +368,6 @@ async def submit_artifact_coding_prompt(
             chat_session_id=payload.chat_session_id,
             draft_snapshot=dict(payload.draft_snapshot or {}),
             model_id=requested_model_id,
-            scope_mode=str(payload.scope_mode or "").strip().lower() or "locked",
         )
     except RuntimeError as exc:
         if str(exc) == "CODING_AGENT_RUN_ACTIVE":

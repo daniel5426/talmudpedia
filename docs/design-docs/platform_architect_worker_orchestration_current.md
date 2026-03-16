@@ -86,14 +86,12 @@ Current artifact flow:
 3. The spawned child run uses the artifact session's native `agent_thread_id` from the first spawn and is bound to the artifact session via child context, including the artifact-coding surface marker.
 4. The architect waits through `architect-worker-await` or inspects through `architect-worker-get-run`.
 5. If more edits are needed from the same worker, the architect continues the same worker conversation with `architect-worker-respond`, then waits again on the continued child run.
-6. If the task requires create/save/update, the artifact-coding worker may persist its own bound draft through `artifact-coding-persist-artifact`.
-7. `architect-worker-binding-persist-artifact` remains available as an architect-owned persistence/recovery tool, but it is no longer the canonical persistence step for artifact-coding delegated work.
-8. The architect may optionally call `architect-worker-binding-get-state` for inspection/debug/export.
-9. The architect may optionally call `artifacts.publish` subject to existing draft-first/publish-intent rules.
+6. If the task requires create/save/update, the architect persists through `architect-worker-binding-persist-artifact`.
+7. The architect may optionally call `architect-worker-binding-get-state` for inspection/debug/export.
+8. The architect may optionally call `artifacts.publish` subject to existing draft-first/publish-intent rules.
 
 Important boundary:
 - the worker edits only the shared draft
-- artifact-coding workers may now also persist the current bound draft directly through the artifact-coding runtime
 - architect-owned binding persistence remains server-side and runtime-owned when used
 - binding-backed conversational worker continuation now uses binding-prepared native session history plus a kernel-owned child run, not a session-owned run or a synthetic child run with `messages=[]`
 

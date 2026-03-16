@@ -1069,15 +1069,15 @@ def build_architect_graph_definition(model_id: str, tool_ids: list[str] | None =
         "That continuation stays on the worker's native session/thread history; do not restate the entire original objective unless genuinely needed. "
         "If you continue the same worker with architect-worker-respond, do not persist yet; wait for the continued child run to reach a terminal accepted state first. "
         "If architect-worker-await returns completed, failed, or cancelled, then decide the next step from worker state. "
-        "For artifact-coding delegated work, the worker may persist its own bound artifact draft through artifact-coding-persist-artifact when the task requires save/create/update. "
-        "Use architect-worker-binding-persist-artifact only when you intentionally need an architect-owned persistence step or recovery path. "
+        "Artifact-coding delegated workers edit the shared draft only; they do not persist artifacts themselves. "
+        "Use architect-worker-binding-persist-artifact for the persistence step when create/save/update is required. "
         "Use architect-worker-binding-get-state only when inspection, export, or debugging is specifically needed. "
         "Do not invent nested fields like task.instructions, task.title, task.worker_agent, or generic binding_payload wrappers. "
         "Do not invent non-canonical binding fields such as create, files, entrypoint, or text. "
-        "Artifact-coding workers may mutate their binding-backed draft, run tests, and persist the canonical artifact themselves when explicitly asked to save/create/update. "
+        "Artifact-coding workers may mutate their binding-backed draft and run tests, but persistence remains architect-owned. "
         "Do not ask a worker to mutate runtime-owned fields like persistence_readiness or platform_assets_* payloads. "
         "If you used an artifact worker binding for a create/update task, you must not end the run after spawn/join alone: before final completion "
-        "you must either confirm that the worker already persisted the artifact, persist through architect-worker-binding-persist-artifact yourself, or return an explicit blocker explaining why persistence could not be completed. "
+        "you must persist through architect-worker-binding-persist-artifact yourself or return an explicit blocker explaining why persistence could not be completed. "
         "Do not treat successful worker completion as task completion by itself. "
         "Never burn tool iterations on repeated immediate architect-worker-get-run calls; architect-worker-await is the normal waiting primitive. "
         "Do not repeatedly respawn a worker on the same writable artifact binding unless the prior run is terminal and you have a concrete reason to retry. "
@@ -1085,7 +1085,7 @@ def build_architect_graph_definition(model_id: str, tool_ids: list[str] | None =
         "If the worker finished but you need further changes from the same worker, use architect-worker-respond to continue that worker conversation on the same binding/session/thread context. "
         "Do not respawn a fresh worker just to send another conversational turn to the same binding-backed artifact worker. "
         "After architect-worker-respond starts a continued worker run, the next required step is architect-worker-await on that latest child before any persistence decision. "
-        "If the worker finished and no further changes are needed, the next required step is to verify whether persistence already happened; if not, decide between worker-side persistence and architect-worker-binding-persist-artifact. "
+        "If the worker finished and no further changes are needed, the next required step is to decide whether architect-worker-binding-persist-artifact can be called safely. "
         "If binding state says persistence_readiness.ready=false, do not call architect-worker-binding-persist-artifact; continue the worker or return a blocker instead. "
         "After delegated artifact changes, ensure the artifact is persisted exactly once, optionally run artifacts.create_test_run, "
         "and only then publish if explicit publish intent is present. "
@@ -1119,6 +1119,7 @@ def build_architect_graph_definition(model_id: str, tool_ids: list[str] | None =
                     "instructions": instructions,
                     "include_chat_history": True,
                     "temperature": 1,
+                    "max_tool_iterations": 26,
                     "reasoning_effort": "medium",
                     "tools": list(tool_ids or []),
                     "write_output_to_context": True,

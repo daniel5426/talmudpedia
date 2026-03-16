@@ -17,6 +17,7 @@ def test_platform_architect_graph_is_single_agent_topology():
     runtime_node = next(node for node in graph["nodes"] if node["id"] == "architect_runtime")
     assert runtime_node["config"]["tools"] == ["tool-a", "tool-b", "tool-c", "tool-d"]
     assert runtime_node["config"]["temperature"] == 1
+    assert runtime_node["config"]["max_tool_iterations"] == 26
     instructions = runtime_node["config"]["instructions"]
     assert "Never call architect.run" in instructions
     assert "architect-worker-spawn" in instructions
@@ -24,7 +25,7 @@ def test_platform_architect_graph_is_single_agent_topology():
     assert "architect-worker-binding-persist-artifact" in instructions
     assert "architect-worker-await" in instructions
     assert "architect-worker-respond" in instructions
-    assert "Do not call raw orchestration.* actions" in instructions
+    assert "platform-governance does not expose raw orchestration.spawn_* actions" in instructions
     assert "must not end the run after spawn/join alone" in instructions
     assert "Do not treat successful worker completion as task completion by itself" in instructions
     assert "Never burn tool iterations on repeated immediate architect-worker-get-run calls" in instructions
@@ -35,7 +36,7 @@ def test_platform_architect_graph_is_single_agent_topology():
     assert "Do not construct a full draft_snapshot for normal artifact creation" in instructions
     assert "top-level action and payload" in instructions
     assert "Never wrap a tool call inside query, text, value" in instructions
-    assert "worker may persist its own bound artifact draft through artifact-coding-persist-artifact" in instructions
+    assert "Artifact-coding delegated workers edit the shared draft only" in instructions
     assert "Do not ask a worker to mutate runtime-owned fields like persistence_readiness" in instructions
     assert "agents.graph.add_tool_to_agent_node" in instructions
     assert "rag.operators.catalog" in instructions

@@ -242,11 +242,8 @@ async def _request_preview_upstream(
 
 def _assert_preview_scope_matches_session(payload: dict[str, Any], session: PublishedAppDraftDevSession) -> None:
     token_app_id = str(payload.get("app_id") or "").strip()
-    token_revision_id = str(payload.get("revision_id") or "").strip()
     if token_app_id != str(session.published_app_id):
         raise HTTPException(status_code=403, detail="Preview token does not match draft session app scope")
-    if session.revision_id and token_revision_id and token_revision_id != str(session.revision_id):
-        raise HTTPException(status_code=403, detail="Preview token does not match draft session revision scope")
 
 
 def _compose_upstream_path(*, path: str, target: dict[str, str]) -> str:

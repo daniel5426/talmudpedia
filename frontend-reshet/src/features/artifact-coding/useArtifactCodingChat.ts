@@ -5,7 +5,6 @@ import {
   type ArtifactCodingChatSession,
   type ArtifactCodingChatSessionDetail,
   type ArtifactCodingModelOption,
-  type ArtifactCodingScopeMode,
 } from "@/services/artifacts";
 
 import { TimelineItem, timelineId } from "./chat-model";
@@ -23,7 +22,6 @@ type UseArtifactCodingChatOptions = {
   artifactId?: string | null;
   draftKey: string;
   isCreateMode: boolean;
-  scopeMode?: ArtifactCodingScopeMode;
   initialChatSessionId?: string | null;
   getDraftSnapshot: () => Record<string, unknown>;
   onApplyDraftSnapshot: (snapshot: Record<string, unknown>) => void;
@@ -110,7 +108,6 @@ export function useArtifactCodingChat({
   artifactId,
   draftKey,
   isCreateMode,
-  scopeMode = "locked",
   initialChatSessionId = null,
   getDraftSnapshot,
   onApplyDraftSnapshot,
@@ -161,18 +158,17 @@ export function useArtifactCodingChat({
   }, []);
 
   const refreshSessions = useCallback(async () => {
-    if (scopeMode === "locked" && !artifactId && !draftKey) return;
+    if (!artifactId && !draftKey) return;
     const sessions = await artifactsService.listCodingAgentChatSessions(
       {
         artifactId: artifactId || undefined,
-        draftKey: scopeMode === "locked" ? draftKey || undefined : undefined,
-        scopeMode: scopeMode === "standalone" ? "standalone" : undefined,
+        draftKey: draftKey || undefined,
         limit: 25,
       },
       tenantSlug,
     );
     setChatSessions(sessions);
-  }, [artifactId, draftKey, scopeMode, tenantSlug]);
+  }, [artifactId, draftKey, tenantSlug]);
 
   const applySessionDetail = useCallback((detail: ArtifactCodingChatSessionDetail, beforeMessageId?: string | null) => {
     onApplyDraftSnapshot(detail.draft_snapshot || {});
@@ -346,8 +342,7 @@ export function useArtifactCodingChat({
         input: prompt,
         chat_session_id: activeChatSessionId || undefined,
         artifact_id: artifactId || undefined,
-        draft_key: scopeMode === "locked" && (isCreateMode || !artifactId) ? draftKey : undefined,
-        scope_mode: scopeMode,
+        draft_key: isCreateMode || !artifactId ? draftKey : undefined,
         model_id: selectedRunModelId,
         client_message_id: clientMessageId,
         draft_snapshot: getDraftSnapshot(),
@@ -369,7 +364,7 @@ export function useArtifactCodingChat({
     });
     await refreshSessions();
     await consumeRunStream(response.run.run_id, response.chat_session_id);
-  }, [activeChatSessionId, artifactId, consumeRunStream, draftKey, getDraftSnapshot, isCreateMode, refreshSessions, scopeMode, selectedRunModelId, tenantSlug, updateTimelineForSession]);
+  }, [activeChatSessionId, artifactId, consumeRunStream, draftKey, getDraftSnapshot, isCreateMode, refreshSessions, selectedRunModelId, tenantSlug, updateTimelineForSession]);
 
   const loadOlderHistory = useCallback(async () => {
     const historyPage = historyPagesBySession[activeSessionKey] || { hasMore: false, nextBeforeMessageId: null };
@@ -435,9 +430,6 @@ export function useArtifactCodingChat({
     if (sameDraftPromotedToSaved) {
       return;
     }
-    if (scopeMode === "standalone") {
-      return;
-    }
     setActiveChatSessionId(null);
     activeSessionRef.current = null;
     setTimelinesBySession({});
@@ -446,7 +438,7 @@ export function useArtifactCodingChat({
     setActiveRunIdsBySession({});
     setActiveThinkingBySession({});
     setHistoryPagesBySession({});
-  }, [artifactId, draftKey, scopeMode]);
+  }, [artifactId, draftKey]);
 
   const activateDraftChat = useCallback(() => {
     setActiveChatSessionId(null);
@@ -457,8 +449,8 @@ export function useArtifactCodingChat({
       [DRAFT_SESSION_KEY]: { hasMore: false, nextBeforeMessageId: null },
     }));
     onResetDraftSnapshot?.();
-    onApplyDraftSnapshot(scopeMode === "standalone" ? {} : getDraftSnapshot());
-  }, [getDraftSnapshot, onApplyDraftSnapshot, onResetDraftSnapshot, scopeMode, setTimelineForSession]);
+    onApplyDraftSnapshot(getDraftSnapshot());
+  }, [getDraftSnapshot, onApplyDraftSnapshot, onResetDraftSnapshot, setTimelineForSession]);
 
   const startNewChat = useCallback(() => {
     activateDraftChat();

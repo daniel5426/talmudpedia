@@ -703,12 +703,7 @@ ARTIFACT_CODING_TOOL_SPECS: list[dict[str, Any]] = [
     {"slug": "artifact-coding-get-last-test-result", "name": "Artifact Coding Get Last Test Result", "description": "Get the latest artifact test result for this session.", "function_name": "artifact_coding_get_last_test_result", "timeout_s": 30, "is_pure": True, "schema": _tool_schema(properties={})},
 ]
 
-
 import app.services.artifact_coding_agent_test_tools  # noqa: F401,E402
-import app.services.artifact_coding_agent_scope_tools  # noqa: F401,E402
-from app.services.artifact_coding_agent_scope_tools import ARTIFACT_CODING_SCOPE_TOOL_SPECS  # noqa: E402
-
-ARTIFACT_CODING_TOOL_SPECS += ARTIFACT_CODING_SCOPE_TOOL_SPECS
 
 
 async def ensure_artifact_coding_tools(db: AsyncSession) -> list[str]:

@@ -239,14 +239,11 @@ export interface ArtifactCodingRun {
   completed_at?: string | null;
 }
 
-export type ArtifactCodingScopeMode = "locked" | "standalone";
-
 export interface ArtifactCodingChatSession {
   id: string;
   title: string;
   artifact_id?: string | null;
   draft_key?: string | null;
-  scope_mode: ArtifactCodingScopeMode;
   active_run_id?: string | null;
   last_run_id?: string | null;
   created_at: string;
@@ -301,7 +298,6 @@ export interface ArtifactCodingPromptRequest {
   chat_session_id?: string;
   artifact_id?: string;
   draft_key?: string;
-  scope_mode?: ArtifactCodingScopeMode;
   model_id?: string | null;
   client_message_id?: string;
   draft_snapshot: Record<string, unknown>;
@@ -415,13 +411,12 @@ export const artifactsService = {
   },
 
   listCodingAgentChatSessions: async (
-    options: { artifactId?: string | null; draftKey?: string | null; scopeMode?: ArtifactCodingScopeMode | null; limit?: number },
+    options: { artifactId?: string | null; draftKey?: string | null; limit?: number },
     tenantSlug?: string,
   ): Promise<ArtifactCodingChatSession[]> => {
     const params = new URLSearchParams();
     if (options.artifactId) params.set("artifact_id", options.artifactId);
     if (options.draftKey) params.set("draft_key", options.draftKey);
-    if (options.scopeMode) params.set("scope_mode", options.scopeMode);
     params.set("limit", String(Math.max(1, Number(options.limit || 25))));
     if (tenantSlug) params.set("tenant_slug", tenantSlug);
     return httpClient.get<ArtifactCodingChatSession[]>(

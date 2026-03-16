@@ -914,7 +914,7 @@ async def test_worker_respond_continues_completed_blocking_child_natively(db_ses
     assert result["status"] == RunStatus.queued.value
     assert result["lifecycle_state"] == "running"
     assert captured["message"] == "Use slug random-number-tool."
-    assert captured["prompt_role"] == "orchestrator"
+    assert captured["prompt_role"] == "user"
     assert result["continuation_of_run_id"] == str(child.id)
     assert result["next_action_hint"] == "await_latest_child_then_persist"
     assert captured["spawn_kwargs"]["thread_id"] == worker_thread_id
@@ -1039,6 +1039,6 @@ async def test_worker_respond_continues_completed_non_waiting_child_natively(db_
     assert result["status"] == RunStatus.queued.value
     assert result["lifecycle_state"] == "running"
     assert captured["message"] == "Add tests, README, and set slug to fibpkg."
-    assert captured["prompt_role"] == "orchestrator"
+    assert captured["prompt_role"] == "user"
     assert result["continuation_of_run_id"] == str(child.id)
     assert captured["spawn_kwargs"]["thread_id"] == worker_thread_id

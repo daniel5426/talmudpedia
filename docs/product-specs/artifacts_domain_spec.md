@@ -73,17 +73,16 @@ Current admin authoring UI also includes:
 The artifact domain now has one canonical coding-agent authoring surface implemented by `artifact-coding-agent`.
 
 Current behavior:
-- the coding agent is a public seeded tenant agent profile and now supports two artifact-authoring surfaces on the same runtime substrate:
+- the coding agent is a public seeded tenant agent profile and supports two artifact-authoring surfaces on the same runtime substrate:
   - artifact page as a locked session
   - architect worker delegation as a locked session
 - agent tool mutations update only a persisted shared working-draft snapshot for the current artifact scope, not canonical artifact rows
 - reopening an existing artifact page should hydrate from the current persisted working draft before falling back to the latest saved revision
-- in standalone mode the runtime may search existing artifacts, open one into the current session, or start a new draft when used by supported artifact-authoring surfaces
-- in locked mode the agent cannot switch to another artifact scope
-- explicit agent persistence is now supported through `artifact-coding-persist-artifact`
+- the agent cannot switch to another artifact scope
+- the agent does not persist artifacts; persistence remains owned by the artifact page or the architect binding flow
 - Save still creates a new immutable artifact revision/version when used from the page UI
 - Publish remains explicit and now auto-saves first when the editor has unsaved changes
-- create mode is supported before first artifact save through a temporary `draft_key` or a standalone unbound session
+- create mode is supported before first artifact save through a temporary `draft_key`
 
 Current transcript roles for artifact coding chat are:
 - `user`

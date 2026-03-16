@@ -316,7 +316,7 @@ class PlatformArchitectWorkerRuntimeService:
             user_id=runtime_context["user_id"],
             binding_ref=binding_ref,
             prompt=response.strip(),
-            prompt_role="orchestrator",
+            prompt_role="user",
             task=task,
         )
         continued_result = await self.kernel.spawn_run(
@@ -348,7 +348,7 @@ class PlatformArchitectWorkerRuntimeService:
             binding_ref=binding_ref,
             run_id=continued_run.id,
             prompt=response.strip(),
-            prompt_role="orchestrator",
+            prompt_role="user",
         )
         self._record_trace_event(
             runtime_context["caller_run_id"],

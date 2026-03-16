@@ -2,7 +2,7 @@
 
 Last Updated: 2026-03-16
 
-This document describes the current direct-use `artifact-coding-agent` runtime across the artifact page and architect worker delegation.
+This document describes the current `artifact-coding-agent` runtime across the artifact page and architect worker delegation.
 
 ## Purpose
 
@@ -10,7 +10,7 @@ The artifact coding agent is now the canonical artifact authoring agent.
 
 Current goals:
 - edit the live artifact draft, including unsaved form state
-- start new drafts, test them, and persist create/update explicitly through agent tools
+- test draft changes against the canonical runtime when needed
 - operate through one shared artifact session, draft, and chat-history substrate across the supported artifact-authoring surfaces
 
 ## Runtime Shape
@@ -31,7 +31,7 @@ Artifact coding runs are marked with:
 
 Each artifact coding chat session stores:
 - tenant scope
-- `scope_mode` as `locked` or `standalone`
+- `scope_mode` fixed to `locked`
 - optional saved `artifact_id`
 - optional temporary `draft_key` for create mode
 - backing shared `agent_thread_id`
@@ -42,13 +42,10 @@ Each artifact coding chat session stores:
 The working draft snapshot is the mutation target for coding tools.
 Canonical artifact rows and revisions are not mutated by tool calls.
 
-Current scope modes:
+Current scope model:
 - `locked`
   - used by the artifact page and architect worker bindings
   - the session is bound to its current artifact/draft scope and cannot switch to another artifact from chat
-- `standalone`
-  - used by the playground for direct artifact authoring
-  - the agent may search, list, open, and start drafts inside the same session
 
 ## Tool Model
 
@@ -58,8 +55,6 @@ Current tool groups:
 - context/read: form state, file listing, file reads, search
 - mutation: file edits, metadata/runtime updates, kind/contract updates
 - validation: run artifact test, fetch last test result
-- scope management: search artifacts, list recent artifacts, open artifact, start new draft
-- persistence: explicit create/update through `artifact-coding-persist-artifact`
 
 Mutation tools update only the shared working-draft snapshot for the current artifact scope and return:
 - a short summary
@@ -69,8 +64,8 @@ Mutation tools update only the shared working-draft snapshot for the current art
 The frontend uses those tool results to update the live artifact editor state immediately.
 
 Hard-cut scope rule:
-- scope-switching tools are allowed only in `standalone`
-- artifact page and architect worker sessions are `locked`
+- the agent only edits the current bound draft
+- scope switching and persistence are owned by the caller surface, not by the agent
 
 The same session/shared-draft runtime is reused by:
 - the artifact page
@@ -82,12 +77,10 @@ The same session/shared-draft runtime is reused by:
 
 This keeps authoring validation aligned with the real Cloudflare artifact execution path instead of a separate local coding sandbox.
 
-Artifact persistence is now also first-class on the same substrate:
-- `artifact-coding-persist-artifact` persists only the current bound session draft
-- `mode=auto|create|update`
-- create links the session/shared draft to the canonical artifact and keeps the session alive
-- update persists into the linked artifact while preserving the same session
-- explicit page Save still exists, but agent-driven persistence is now also canonical
+Artifact persistence remains outside the coding agent:
+- the artifact page Save flow persists
+- Platform Architect persists through `architect-worker-binding-persist-artifact`
+- the coding agent itself edits and validates the bound draft only
 
 ## Frontend Surface
 

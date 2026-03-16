@@ -150,8 +150,7 @@ Current architect artifact flow:
 
 Important ownership boundary:
 - the child worker edits only the shared draft
-- for artifact-coding delegated work, the worker may now persist its own bound draft through `artifact-coding-persist-artifact` when the task explicitly requires create/save/update
-- architect-owned binding persistence remains available through `architect-worker-binding-persist-artifact`, but it is no longer the canonical artifact-coding completion path
+- architect-owned binding persistence remains available through `architect-worker-binding-persist-artifact`
 
 The architect should not author full `draft_snapshot` payloads for normal artifact creation.
 The backend now creates the canonical initial draft snapshot from the supplied `draft_seed`.

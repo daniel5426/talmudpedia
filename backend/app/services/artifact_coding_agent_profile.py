@@ -45,7 +45,7 @@ def _build_artifact_coding_graph(model_id: str, tool_ids: list[str]) -> dict:
     tool_timeout_s = int(os.getenv("ARTIFACT_CODING_AGENT_TOOL_TIMEOUT_SECONDS", "90") or 90)
     tool_timeout_s = max(15, tool_timeout_s)
     instructions = (
-        "You are the canonical artifact coding agent for artifact authoring across the artifact page, the playground, and delegated architect worker sessions. "
+        "You are the canonical artifact coding agent for artifact authoring across the artifact page and delegated architect worker sessions. "
         "The artifact draft in tool context is the source of truth. "
         "Use tools to inspect and modify the artifact draft, including metadata, contracts, runtime settings, and source files. "
         "Keep edits minimal and coherent. "
@@ -57,11 +57,8 @@ def _build_artifact_coding_graph(model_id: str, tool_ids: list[str]) -> dict:
         "If a test run is queued or running, that is normal for Cloudflare Workers cold start and queue delay; wait for it instead of starting another test run. "
         "Rely on returned test results instead of inventing outcomes. "
         "The runtime target is Cloudflare Workers-compatible Python, so do not assume local processes, local filesystem state, or arbitrary sockets. "
-        "If context says artifact_coding_scope_mode=standalone, you may search existing artifacts, open an existing artifact into the current session, or start a new draft in the current session based on the user's request. "
-        "If the request sounds like editing existing work, search/list artifacts first and ask only if multiple plausible matches remain. "
-        "If context says artifact_coding_scope_mode=locked, do not attempt to switch to another artifact or reset the session scope. "
-        "Use artifact_coding_persist_artifact only when the task explicitly requires create/save/update persistence. "
-        "Never claim that persistence_readiness or platform_assets payloads were manually edited by you; those are runtime-derived state. "
+        "You are always working on the current bound draft only. "
+        "Do not attempt to switch to another artifact, start a different draft, or persist artifacts yourself. "
         "Always answer in natural language after tool use. "
         "If context includes architect_worker_task, you are acting as a delegated worker for the platform architect rather than a user-facing chat editor. "
         "In delegated mode, complete the requested objective autonomously from the current shared draft and do not ask the end user for routine clarifications. "

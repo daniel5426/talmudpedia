@@ -125,7 +125,6 @@ backend/app/services/registry_seeding.py
 backend/app/services/artifact_coding_chat_history_service.py
 backend/app/services/artifact_coding_shared_draft_service.py
 backend/app/services/artifact_coding_agent_tools.py
-backend/app/services/artifact_coding_agent_scope_tools.py
 backend/app/services/artifact_coding_agent_test_tools.py
 backend/app/services/artifact_coding_agent_profile.py
 backend/app/services/artifact_coding_runtime_service.py
