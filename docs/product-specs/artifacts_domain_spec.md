@@ -1,6 +1,6 @@
 # Artifacts Domain Spec
 
-Last Updated: 2026-03-14
+Last Updated: 2026-03-16
 
 This document is the canonical product/specification overview for the artifact domain.
 
@@ -70,17 +70,27 @@ Current admin authoring UI also includes:
 
 ### Direct Coding Chat
 
-The admin artifact page now has a direct coding-agent surface for artifact authoring.
+The artifact domain now has one canonical coding-agent authoring surface implemented by `artifact-coding-agent`.
 
 Current behavior:
-- the coding agent is a public seeded tenant agent profile, but the direct UI surface is the artifact page
-- the artifact page sends the full live form draft as prompt context on each submission
+- the coding agent is a public seeded tenant agent profile and now supports two artifact-authoring surfaces on the same runtime substrate:
+  - artifact page as a locked session
+  - architect worker delegation as a locked session
 - agent tool mutations update only a persisted shared working-draft snapshot for the current artifact scope, not canonical artifact rows
-- tool mutation results are applied back into the artifact page immediately
 - reopening an existing artifact page should hydrate from the current persisted working draft before falling back to the latest saved revision
-- Save creates a new immutable artifact revision/version
+- in standalone mode the runtime may search existing artifacts, open one into the current session, or start a new draft when used by supported artifact-authoring surfaces
+- in locked mode the agent cannot switch to another artifact scope
+- explicit agent persistence is now supported through `artifact-coding-persist-artifact`
+- Save still creates a new immutable artifact revision/version when used from the page UI
 - Publish remains explicit and now auto-saves first when the editor has unsaved changes
-- create mode is supported before first artifact save through a temporary `draft_key`
+- create mode is supported before first artifact save through a temporary `draft_key` or a standalone unbound session
+
+Current transcript roles for artifact coding chat are:
+- `user`
+- `assistant`
+- `orchestrator`
+
+Stored `orchestrator` turns remain visible in chat history but are mapped to model-facing `system` messages.
 
 ### Publish
 

@@ -36,7 +36,6 @@ import { ExecutionHistoryDropdown } from "@/components/agent-builder/ExecutionHi
 import { FloatingPanel } from "@/components/builder"
 import { cn } from "@/lib/utils"
 import type { AgentChatHistoryItem } from "@/hooks/useAgentThreadHistory"
-import { ArtifactCodingPlaygroundSurface } from "@/features/artifact-coding/ArtifactCodingPlaygroundSurface"
 
 const logPlaygroundDebug = (event: string, details?: Record<string, unknown>) => {
     if (process.env.NODE_ENV === "production") return
@@ -48,7 +47,6 @@ function PlaygroundContent() {
     const searchParams = useSearchParams()
     const agentId = searchParams.get("agentId")
     const threadId = searchParams.get("threadId")
-    const chatSessionId = searchParams.get("chatSessionId")
 
     const [agent, setAgent] = useState<Agent | null>(null)
     const [agents, setAgents] = useState<Agent[]>([])
@@ -79,15 +77,10 @@ function PlaygroundContent() {
         chatId: agentId ?? "agent-playground",
     })
     const isArtifactMessage = (content: string) => Boolean(parseReactArtifact(content))
-    const isArtifactCodingAgent = agent?.slug === "artifact-coding-agent"
-
-    useEffect(() => {
-        if (!isArtifactCodingAgent || !agentId || !threadId) return
-        const nextUrl = chatSessionId
-            ? `/admin/agents/playground?agentId=${agentId}&chatSessionId=${chatSessionId}`
-            : `/admin/agents/playground?agentId=${agentId}`
-        router.replace(nextUrl, { scroll: false })
-    }, [agentId, chatSessionId, isArtifactCodingAgent, router, threadId])
+    const visibleAgents = useMemo(
+        () => agents.filter((item) => item.show_in_playground !== false),
+        [agents],
+    )
 
     useEffect(() => {
         let isMounted = true;
@@ -112,9 +105,13 @@ function PlaygroundContent() {
                     ]);
 
                     if (isMounted) {
-                        setAgent(agentData);
                         setAgents(listData.agents);
+                        const visibleList = listData.agents.filter((item) => item.show_in_playground !== false);
+                        setAgent(agentData.show_in_playground === false ? null : agentData);
                         setIsMetadataLoading(false);
+                        if (agentData.show_in_playground === false && visibleList.length > 0) {
+                            router.replace(`/admin/agents/playground?agentId=${visibleList[0].id}`, { scroll: false });
+                        }
                     }
                 } catch (err) {
                     console.error("Failed to load agent metadata:", err);
@@ -130,9 +127,10 @@ function PlaygroundContent() {
                 const listData = await listPromise;
                 if (isMounted) {
                     setAgents(listData.agents);
-                    if (listData.agents.length > 0) {
+                    const visibleList = listData.agents.filter((item) => item.show_in_playground !== false);
+                    if (visibleList.length > 0) {
                         // Redirect to the first agent
-                        router.replace(`/admin/agents/playground?agentId=${listData.agents[0].id}`, { scroll: false });
+                        router.replace(`/admin/agents/playground?agentId=${visibleList[0].id}`, { scroll: false });
                     } else {
                         setAgent(null);
                         setIsMetadataLoading(false);
@@ -355,32 +353,28 @@ function PlaygroundContent() {
                 </div>
 
                 <div className="flex items-center gap-2">
-                    {!isArtifactCodingAgent ? (
-                        <>
-                            <button
-                                type="button"
-                                className="inline-flex h-8 w-8 items-center justify-center rounded-md border bg-background/90 text-xs font-medium text-foreground backdrop-blur hover:bg-muted transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                                onClick={() => setIsExecutionSidebarOpen((prev) => !prev)}
-                                disabled={!agent || isMetadataLoading}
-                                aria-label={isExecutionSidebarOpen ? "Hide execution traces" : "Show execution traces"}
-                            >
-                                <Terminal className="h-3.5 w-3.5" />
-                            </button>
+                    <button
+                        type="button"
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-md border bg-background/90 text-xs font-medium text-foreground backdrop-blur hover:bg-muted transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        onClick={() => setIsExecutionSidebarOpen((prev) => !prev)}
+                        disabled={!agent || isMetadataLoading}
+                        aria-label={isExecutionSidebarOpen ? "Hide execution traces" : "Show execution traces"}
+                    >
+                        <Terminal className="h-3.5 w-3.5" />
+                    </button>
 
-                            <ExecutionHistoryDropdown
-                                historyItems={controller.history}
-                                loading={controller.historyLoading}
-                                label={null}
-                                ariaLabel="Show history"
-                                align="end"
-                                showChevron={false}
-                                onSelectHistory={handleSelectHistory}
-                                onStartNewChat={handleStartNewThread}
-                                className="inline-flex h-8 w-8 items-center justify-center rounded-md border bg-background/90 text-xs font-medium text-foreground backdrop-blur hover:bg-muted transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                                contentClassName="w-[320px] max-w-[min(90vw,320px)] max-h-[360px] overflow-y-auto"
-                            />
-                        </>
-                    ) : null}
+                    <ExecutionHistoryDropdown
+                        historyItems={controller.history}
+                        loading={controller.historyLoading}
+                        label={null}
+                        ariaLabel="Show history"
+                        align="end"
+                        showChevron={false}
+                        onSelectHistory={handleSelectHistory}
+                        onStartNewChat={handleStartNewThread}
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-md border bg-background/90 text-xs font-medium text-foreground backdrop-blur hover:bg-muted transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        contentClassName="w-[320px] max-w-[min(90vw,320px)] max-h-[360px] overflow-y-auto"
+                    />
 
                     {agent && (
                         <Button
@@ -395,19 +389,17 @@ function PlaygroundContent() {
                         </Button>
                     )}
 
-                    {!isArtifactCodingAgent ? (
-                        <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            className="h-8 gap-1.5"
-                            onClick={handleStartNewThread}
-                            disabled={!agent || isMetadataLoading}
-                        >
-                            <Plus className="size-3.5" />
-                            <span>New Thread</span>
-                        </Button>
-                    ) : null}
+                    <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-8 gap-1.5"
+                        onClick={handleStartNewThread}
+                        disabled={!agent || isMetadataLoading}
+                    >
+                        <Plus className="size-3.5" />
+                        <span>New Thread</span>
+                    </Button>
 
                     <Select
                         value={agent?.id || ""}
@@ -419,7 +411,7 @@ function PlaygroundContent() {
                             <SelectValue placeholder={isMetadataLoading ? "Loading..." : "Select Agent"} />
                         </SelectTrigger>
                         <SelectContent className="w-[280px] max-w-[min(90vw,280px)] max-h-[320px]">
-                            {agents.map((a) => (
+                            {visibleAgents.map((a) => (
                                 <SelectItem key={a.id} value={a.id}>
                                     <div className="flex items-center gap-2">
                                         <span className="font-medium">{a.name}</span>
@@ -442,7 +434,7 @@ function PlaygroundContent() {
                     </div>
                 ) : !agentId || !agent ? (
                     <div className="p-6 h-full overflow-auto" data-admin-page-scroll>
-                        {!isListingLoading && agents.length === 0 && (
+                        {!isListingLoading && visibleAgents.length === 0 && (
                             <div className="flex flex-col items-center justify-center min-h-[400px] space-y-4 text-center border-2 border-dashed rounded-lg">
                                 <div className="bg-muted p-4 rounded-full">
                                     <Plus className="h-8 w-8 text-muted-foreground" />
@@ -459,20 +451,6 @@ function PlaygroundContent() {
                             </div>
                         )}
                     </div>
-                ) : isArtifactCodingAgent ? (
-                    <ArtifactCodingPlaygroundSurface
-                        tenantSlug={currentTenant?.slug}
-                        tenantId={currentTenant?.id ?? authUser?.tenant_id ?? null}
-                        initialChatSessionId={chatSessionId}
-                        onChatSessionIdChange={(nextSessionId) => {
-                            if (!agentId) return
-                            if ((chatSessionId || null) === (nextSessionId || null)) return
-                            const nextUrl = nextSessionId
-                                ? `/admin/agents/playground?agentId=${agentId}&chatSessionId=${nextSessionId}`
-                                : `/admin/agents/playground?agentId=${agentId}`
-                            router.replace(nextUrl, { scroll: false })
-                        }}
-                    />
                 ) : (
                     <div
                         className={cn(
@@ -512,19 +490,17 @@ function PlaygroundContent() {
                     </div>
                 )}
 
-                {!isArtifactCodingAgent ? (
-                    <FloatingPanel
-                        position="right"
-                        visible={Boolean(isExecutionSidebarOpen && agent && !isMetadataLoading)}
-                        className="w-80 z-30 hidden lg:block"
-                        fullHeight={false}
-                    >
-                        <ExecutionSidebar
-                            steps={executionSteps}
-                            className="w-full"
-                        />
-                    </FloatingPanel>
-                ) : null}
+                <FloatingPanel
+                    position="right"
+                    visible={Boolean(isExecutionSidebarOpen && agent && !isMetadataLoading)}
+                    className="w-80 z-30 hidden lg:block"
+                    fullHeight={false}
+                >
+                    <ExecutionSidebar
+                        steps={executionSteps}
+                        className="w-full"
+                    />
+                </FloatingPanel>
             </main>
         </div>
     )

@@ -1,6 +1,6 @@
 # Canonical Docs Guide
 
-Last Updated: 2026-03-15
+Last Updated: 2026-03-16
 
 This guide lists the current canonical documentation entry points after the first documentation-system refactor.
 

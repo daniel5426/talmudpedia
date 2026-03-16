@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 
 import {
   artifactsService,
@@ -137,6 +137,9 @@ export function useArtifactCodingChat({
   const abortReaderMapRef = useRef<Map<string, ReadableStreamDefaultReader<Uint8Array>>>(new Map());
   const activeSessionRef = useRef<string | null>(null);
   const previousScopeRef = useRef<{ artifactId: string | null | undefined; draftKey: string }>({ artifactId, draftKey });
+  const emitError = useEffectEvent((message: string | null) => {
+    onError(message);
+  });
   const activeSessionKey = activeChatSessionId || DRAFT_SESSION_KEY;
   const timeline = timelinesBySession[activeSessionKey] || [];
   const activeThinkingSummary = activeThinkingBySession[activeSessionKey] || "";
@@ -421,9 +424,9 @@ export function useArtifactCodingChat({
         await loadSessionDetail(initialChatSessionId);
       }
     }).catch((error) => {
-      onError(error instanceof Error ? error.message : "Failed to load artifact coding chat");
+      emitError(error instanceof Error ? error.message : "Failed to load artifact coding chat");
     });
-  }, [initialChatSessionId, loadSessionDetail, onError, refreshSessions]);
+  }, [initialChatSessionId, loadSessionDetail, refreshSessions]);
 
   useEffect(() => {
     const previous = previousScopeRef.current;

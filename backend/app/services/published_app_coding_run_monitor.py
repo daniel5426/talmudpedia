@@ -15,10 +15,14 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession, a
 
 from app.db.postgres.engine import sessionmaker
 from app.db.postgres.models.agents import AgentRun, RunStatus
-from app.db.postgres.models.published_apps import PublishedApp
+from app.db.postgres.models.published_apps import PublishedApp, PublishedAppRevision
 from app.services.apps_builder_trace import apps_builder_trace
 from app.services.published_app_coding_agent_runtime import PublishedAppCodingAgentRuntimeService
-from app.services.published_app_preview_builds import PublishedAppPreviewBuildService
+from app.services.published_app_draft_dev_runtime import PublishedAppDraftDevRuntimeService
+from app.services.published_app_draft_revision_materializer import (
+    PublishedAppDraftRevisionMaterializerError,
+    PublishedAppDraftRevisionMaterializerService,
+)
 from app.services.published_app_coding_run_monitor_config import (
     monitor_force_terminal_on_inactivity,
     monitor_force_terminal_on_stream_end_without_terminal,
@@ -224,13 +228,12 @@ class PublishedAppCodingRunMonitor:
     async def _finalize_terminal_scope_detached(cls, *, app_id: UUID, run_id: UUID) -> None:
         try:
             apps_builder_trace(
-                "monitor.preview_finalize_begin",
+                "monitor.revision_materialize_begin",
                 domain="coding_agent.finalizer",
                 run_id=str(run_id),
                 app_id=str(app_id),
             )
             async with cls._session_factory() as db:
-                preview_builds = PublishedAppPreviewBuildService(db)
                 run = await db.get(AgentRun, run_id)
                 app = await db.get(PublishedApp, app_id)
                 if run is None or app is None:
@@ -239,52 +242,64 @@ class PublishedAppCodingRunMonitor:
                 if run_status != RunStatus.completed.value:
                     await db.commit()
                     return
-                workspace, snapshot = await preview_builds.get_current_build(app_id=app_id)
-                context = preview_builds._run_context(run)
-                try:
-                    baseline_build_seq = max(0, int(context.get("preview_build_baseline_seq") or 0))
-                except Exception:
-                    baseline_build_seq = 0
-                required_build_seq = baseline_build_seq + 1
-                current_build_seq = int(snapshot.build_seq or 0) if snapshot is not None else 0
-                preview_builds.mark_run_waiting_for_build(run=run, min_build_seq=required_build_seq)
+                source_revision_id = run.base_revision_id or app.current_draft_revision_id
+                entry_file = "src/main.tsx"
+                if source_revision_id is not None:
+                    source_revision = await db.get(PublishedAppRevision, source_revision_id)
+                    if source_revision is not None:
+                        entry_file = str(source_revision.entry_file or entry_file)
                 cls._trace(
-                    "monitor.preview_finalize_begin",
+                    "monitor.revision_materialize_begin",
                     run_id=str(run_id),
                     app_id=str(app_id),
-                    baseline_build_seq=baseline_build_seq,
-                    required_build_seq=required_build_seq,
-                    current_build_seq=current_build_seq,
+                    source_revision_id=str(source_revision_id or ""),
+                    has_workspace_writes=bool(getattr(run, "has_workspace_writes", False)),
                 )
                 result = None
-                if workspace is not None and snapshot is not None:
-                    result_revision = await preview_builds.finalize_waiting_runs_for_build(
+                if bool(getattr(run, "has_workspace_writes", False)):
+                    materializer = PublishedAppDraftRevisionMaterializerService(db)
+                    result_revision = await materializer.finalize_run_materialization(
                         app=app,
-                        workspace=workspace,
-                        snapshot=snapshot,
+                        run=run,
+                        entry_file=entry_file,
+                        source_revision_id=source_revision_id,
+                        created_by=run.initiator_user_id or run.user_id,
                     )
+                    actor_id = run.initiator_user_id or run.user_id
+                    if result_revision is not None and actor_id is not None:
+                        runtime_service = PublishedAppDraftDevRuntimeService(db)
+                        await runtime_service.bind_session_to_revision_without_sync(
+                            app_id=app.id,
+                            user_id=actor_id,
+                            revision=result_revision,
+                        )
                     result = {
-                        "preview_build_id": snapshot.build_id,
-                        "preview_build_seq": snapshot.build_seq,
                         "result_revision_id": str(result_revision.id) if result_revision is not None else None,
                     }
                 await db.commit()
                 cls._trace(
-                    "monitor.preview_finalize_done",
+                    "monitor.revision_materialize_done",
                     run_id=str(run_id),
                     app_id=str(app_id),
                     result=result,
                 )
                 apps_builder_trace(
-                    "monitor.preview_finalize_done",
+                    "monitor.revision_materialize_done",
                     domain="coding_agent.finalizer",
                     run_id=str(run_id),
                     app_id=str(app_id),
                     result=result,
                 )
+        except PublishedAppDraftRevisionMaterializerError as exc:
+            logger.exception(
+                "CODING_AGENT_MONITOR revision_materialize_failed run_id=%s app_id=%s error=%s",
+                run_id,
+                app_id,
+                exc,
+            )
         except Exception as exc:
             logger.exception(
-                "CODING_AGENT_MONITOR preview_finalize_failed run_id=%s app_id=%s",
+                "CODING_AGENT_MONITOR revision_materialize_failed run_id=%s app_id=%s",
                 run_id,
                 app_id,
             )

@@ -5,7 +5,7 @@ import json
 import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 from uuid import UUID, uuid4
 
 from sqlalchemy import and_, exists, func, select, text
@@ -191,11 +191,28 @@ class PublishedAppDraftDevRuntimeService:
         return refreshed
 
     @staticmethod
-    def _preview_build_current_available(preview_build: object) -> bool:
-        payload = preview_build if isinstance(preview_build, dict) else {}
-        current = payload.get("current") if isinstance(payload.get("current"), dict) else {}
-        current_build_id = str(current.get("build_id") or "").strip()
-        return bool(current_build_id)
+    def _merge_live_workspace_revision_token(
+        *,
+        existing_metadata: object,
+        revision_token: str | None,
+    ) -> dict[str, Any]:
+        metadata = dict(existing_metadata or {}) if isinstance(existing_metadata, dict) else {}
+        normalized_token = str(revision_token or "").strip() or None
+        workspace = dict(metadata.get("workspace") or {}) if isinstance(metadata.get("workspace"), dict) else {}
+        preview_runtime = (
+            dict(metadata.get("preview_runtime") or {})
+            if isinstance(metadata.get("preview_runtime"), dict)
+            else {}
+        )
+        if normalized_token:
+            workspace["revision_token"] = normalized_token
+            preview_runtime["workspace_revision_token"] = normalized_token
+        else:
+            workspace.pop("revision_token", None)
+            preview_runtime.pop("workspace_revision_token", None)
+        metadata["workspace"] = workspace
+        metadata["preview_runtime"] = preview_runtime
+        return metadata
 
     @staticmethod
     def _session_load_options():
@@ -411,29 +428,6 @@ class PublishedAppDraftDevRuntimeService:
         except PublishedAppDraftDevRuntimeClientError:
             return
 
-    async def _finalize_preview_runs_best_effort(
-        self,
-        *,
-        app: PublishedApp,
-        workspace: PublishedAppDraftWorkspace | None,
-    ) -> None:
-        if workspace is None:
-            return
-        try:
-            from app.services.published_app_preview_builds import PublishedAppPreviewBuildService
-
-            preview_builds = PublishedAppPreviewBuildService(self.db)
-            snapshot = preview_builds.snapshot_from_workspace(workspace)
-            if snapshot is None:
-                return
-            await preview_builds.finalize_waiting_runs_for_build(
-                app=app,
-                workspace=workspace,
-                snapshot=snapshot,
-            )
-        except Exception:
-            return
-
     def _attach_session(
         self,
         *,
@@ -454,16 +448,17 @@ class PublishedAppDraftDevRuntimeService:
         session.runtime_backend = str(workspace.runtime_backend or self.client.backend_name)
         session.backend_metadata = dict(workspace.backend_metadata or {})
         session.dependency_hash = dependency_hash
-        preview_build = workspace.backend_metadata.get("preview_build") if isinstance(workspace.backend_metadata, dict) else {}
-        preview_build_error = (
-            str(preview_build.get("last_error") or "").strip()
-            if isinstance(preview_build, dict)
-            else ""
+        preview_runtime = (
+            workspace.backend_metadata.get("preview_runtime")
+            if isinstance(workspace.backend_metadata, dict)
+            and isinstance(workspace.backend_metadata.get("preview_runtime"), dict)
+            else {}
         )
+        preview_runtime_error = str(preview_runtime.get("last_error") or "").strip()
         session.last_error = (
             workspace.last_error
             if workspace.status == PublishedAppDraftWorkspaceStatus.degraded
-            else (preview_build_error or None) if not self._preview_build_current_available(preview_build) else None
+            else (preview_runtime_error or None)
         )
         session.status = (
             PublishedAppDraftDevSessionStatus.degraded
@@ -636,7 +631,6 @@ class PublishedAppDraftDevRuntimeService:
             dependency_hash=dependency_hash,
             now=now,
         )
-        await self._finalize_preview_runs_best_effort(app=app, workspace=workspace)
         return attached
 
     async def ensure_active_session(
@@ -696,6 +690,13 @@ class PublishedAppDraftDevRuntimeService:
             self._mark_workspace_error(workspace, exc)
             return self._mark_session_error(session, exc)
 
+        if isinstance(heartbeat_result.get("backend_metadata"), dict):
+            workspace.backend_metadata = self._merge_backend_metadata(
+                existing_metadata=workspace.backend_metadata,
+                refreshed_metadata=heartbeat_result.get("backend_metadata"),
+                preview_base_path=str(workspace.preview_url or "").strip() or str(session.preview_url or "").strip() or "/",
+            )
+
         attached = self._attach_session(
             session=session,
             workspace=workspace,
@@ -703,7 +704,6 @@ class PublishedAppDraftDevRuntimeService:
             dependency_hash=str(workspace.dependency_hash or session.dependency_hash or ""),
             now=now,
         )
-        await self._finalize_preview_runs_best_effort(app=app, workspace=workspace)
         return attached
 
     async def sync_session(
@@ -722,6 +722,53 @@ class PublishedAppDraftDevRuntimeService:
             files=files,
             entry_file=entry_file,
         )
+
+    async def record_live_workspace_revision_token(
+        self,
+        *,
+        session: PublishedAppDraftDevSession,
+        revision_token: str | None,
+    ) -> PublishedAppDraftDevSession:
+        now = self._now()
+        session.last_activity_at = now
+        session.expires_at = self._session_expires_at(now)
+        session.backend_metadata = self._merge_live_workspace_revision_token(
+            existing_metadata=session.backend_metadata,
+            revision_token=revision_token,
+        )
+        if session.draft_workspace_id is not None:
+            workspace = await self.db.get(PublishedAppDraftWorkspace, session.draft_workspace_id)
+            if workspace is not None:
+                workspace.last_activity_at = now
+                workspace.detached_at = None
+                workspace.backend_metadata = self._merge_live_workspace_revision_token(
+                    existing_metadata=workspace.backend_metadata,
+                    revision_token=revision_token,
+                )
+        return session
+
+    async def bind_session_to_revision_without_sync(
+        self,
+        *,
+        app_id: UUID,
+        user_id: UUID,
+        revision: PublishedAppRevision,
+    ) -> PublishedAppDraftDevSession | None:
+        session = await self.get_session(app_id=app_id, user_id=user_id)
+        if session is None:
+            return None
+        now = self._now()
+        session.revision_id = revision.id
+        session.last_activity_at = now
+        session.expires_at = self._session_expires_at(now)
+        if session.draft_workspace_id is not None:
+            workspace = await self.db.get(PublishedAppDraftWorkspace, session.draft_workspace_id)
+            if workspace is not None:
+                workspace.revision_id = revision.id
+                workspace.last_activity_at = now
+                workspace.detached_at = None
+                session.backend_metadata = dict(workspace.backend_metadata or {})
+        return session
 
     async def heartbeat_session(self, *, session: PublishedAppDraftDevSession) -> PublishedAppDraftDevSession:
         if not self.settings.enabled:
@@ -769,15 +816,13 @@ class PublishedAppDraftDevRuntimeService:
         session.status = PublishedAppDraftDevSessionStatus.serving
         session.sandbox_id = self._normalize_runtime_sandbox_id(workspace.sandbox_id)
         session.backend_metadata = dict(workspace.backend_metadata or {})
-        preview_build = workspace.backend_metadata.get("preview_build") if isinstance(workspace.backend_metadata, dict) else {}
-        session.last_error = (
-            (str(preview_build.get("last_error") or "").strip() or None)
-            if isinstance(preview_build, dict) and not self._preview_build_current_available(preview_build)
-            else None
+        preview_runtime = (
+            workspace.backend_metadata.get("preview_runtime")
+            if isinstance(workspace.backend_metadata, dict)
+            and isinstance(workspace.backend_metadata.get("preview_runtime"), dict)
+            else {}
         )
-        app = await self.db.get(PublishedApp, session.published_app_id)
-        if app is not None:
-            await self._finalize_preview_runs_best_effort(app=app, workspace=workspace)
+        session.last_error = str(preview_runtime.get("last_error") or "").strip() or None
         return session
 
     async def get_publish_ready_session(

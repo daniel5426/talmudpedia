@@ -1,6 +1,7 @@
 import {
   adaptRunStreamEvent,
   applyRunStreamEventToBlocks,
+  createAssistantTextBlock,
   extractStructuredAssistantText,
   finalizeAssistantRenderBlocks,
   sortChatRenderBlocks,
@@ -219,5 +220,30 @@ describe("chat presentation normalizer", () => {
     expect(finalized).toHaveLength(1);
     expect(finalized[0].kind).toBe("assistant_text");
     expect(finalized[0].text).toBe("Hi there");
+  });
+
+  it("collapses duplicate finalized assistant text blocks", () => {
+    const finalized = finalizeAssistantRenderBlocks(
+      [
+        createAssistantTextBlock({
+          id: "assistant-1",
+          text: "What is your favorite programming language?",
+          runId: "run-1",
+          seq: 1,
+        }),
+        createAssistantTextBlock({
+          id: "assistant-2",
+          text: "What is your favorite programming language?",
+          runId: "run-1",
+          seq: 2,
+        }),
+      ],
+      "What is your favorite programming language?",
+      { runId: "run-1", fallbackSeq: 3 },
+    );
+
+    expect(finalized).toHaveLength(1);
+    expect(finalized[0].kind).toBe("assistant_text");
+    expect(finalized[0].text).toBe("What is your favorite programming language?");
   });
 });

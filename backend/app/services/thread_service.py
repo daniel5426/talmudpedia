@@ -33,6 +33,18 @@ class ThreadService:
         self.db = db
 
     @staticmethod
+    def _turn_sort_key(turn: AgentThreadTurn) -> tuple[int, datetime, datetime, str]:
+        created_at = turn.created_at if isinstance(turn.created_at, datetime) else datetime.min.replace(tzinfo=timezone.utc)
+        completed_at = turn.completed_at if isinstance(turn.completed_at, datetime) else datetime.min.replace(tzinfo=timezone.utc)
+        turn_index = int(turn.turn_index) if turn.turn_index is not None else 0
+        return (
+            turn_index,
+            created_at,
+            completed_at,
+            str(turn.id),
+        )
+
+    @staticmethod
     def _derive_title(*, input_text: Optional[str], fallback: str = "New Thread") -> str:
         text = (input_text or "").strip()
         if not text:
@@ -99,12 +111,13 @@ class ThreadService:
         thread = await self.db.get(AgentThread, thread_id)
         if thread is None:
             raise ThreadAccessError("Thread not found")
+        await self.repair_thread_turn_indices(thread_id=thread_id)
         max_index = (
             await self.db.execute(
                 select(func.coalesce(func.max(AgentThreadTurn.turn_index), -1)).where(AgentThreadTurn.thread_id == thread_id)
             )
         ).scalar()
-        next_index = int(max_index or -1) + 1
+        next_index = int(max_index if max_index is not None else -1) + 1
         turn = AgentThreadTurn(
             thread_id=thread_id,
             run_id=run_id,
@@ -151,6 +164,26 @@ class ThreadService:
                 thread.title = self._derive_title(input_text=turn.user_input_text)
         return turn
 
+    async def repair_thread_turn_indices(self, *, thread_id: UUID) -> bool:
+        result = await self.db.execute(
+            select(AgentThreadTurn).where(AgentThreadTurn.thread_id == thread_id)
+        )
+        turns = list(result.scalars().all())
+        if not turns:
+            return False
+
+        turns.sort(key=self._turn_sort_key)
+        changed = False
+        for expected_index, turn in enumerate(turns):
+            current_index = int(turn.turn_index) if turn.turn_index is not None else 0
+            if current_index == expected_index:
+                continue
+            turn.turn_index = expected_index
+            changed = True
+        if changed:
+            await self.db.flush()
+        return changed
+
     async def list_threads(
         self,
         *,
@@ -185,18 +218,15 @@ class ThreadService:
     async def get_thread_with_turns(
         self,
         *,
-        tenant_id: UUID,
+        tenant_id: Optional[UUID],
         thread_id: UUID,
         user_id: Optional[UUID] = None,
         app_account_id: Optional[UUID] = None,
         published_app_id: Optional[UUID] = None,
     ) -> Optional[AgentThread]:
-        query = (
-            select(AgentThread)
-            .where(and_(AgentThread.id == thread_id, AgentThread.tenant_id == tenant_id))
-            .options(selectinload(AgentThread.turns))
-            .limit(1)
-        )
+        query = select(AgentThread).where(AgentThread.id == thread_id).options(selectinload(AgentThread.turns)).limit(1)
+        if tenant_id is not None:
+            query = query.where(AgentThread.tenant_id == tenant_id)
         thread = (await self.db.execute(query)).scalar_one_or_none()
         if thread is None:
             return None
@@ -207,6 +237,7 @@ class ThreadService:
                 return None
         elif user_id is not None and thread.user_id is not None and thread.user_id != user_id:
             return None
+        thread.turns.sort(key=self._turn_sort_key)
         return thread
 
     async def delete_threads(self, *, tenant_id: UUID, thread_ids: list[UUID]) -> int:

@@ -8,7 +8,7 @@ import {
   isDraftDevPendingStatus,
   isDraftDevServingStatus,
 } from "@/services";
-import type { DraftDevSessionResponse, DraftDevSessionStatus } from "@/services";
+import type { BuilderPatchOp, DraftDevSessionResponse, DraftDevSessionStatus } from "@/services";
 import { filterAppsBuilderFiles } from "@/services/apps-builder-file-filter";
 import {
   isCodingAgentRunActiveError,
@@ -73,6 +73,38 @@ function buildDraftDevSyncFingerprint(entry: string, nextFiles: Record<string, s
   });
 }
 
+function buildDraftDevSyncOperations(
+  previousFiles: Record<string, string>,
+  previousEntryFile: string,
+  nextFiles: Record<string, string>,
+  nextEntryFile: string,
+): BuilderPatchOp[] {
+  const operations: BuilderPatchOp[] = [];
+  const previousPaths = new Set(Object.keys(previousFiles));
+  const nextPaths = new Set(Object.keys(nextFiles));
+
+  Array.from(previousPaths)
+    .filter((path) => !nextPaths.has(path))
+    .sort()
+    .forEach((path) => {
+      operations.push({ op: "delete_file", path });
+    });
+
+  Array.from(nextPaths)
+    .sort()
+    .forEach((path) => {
+      if (previousFiles[path] !== nextFiles[path]) {
+        operations.push({ op: "upsert_file", path, content: nextFiles[path] || "" });
+      }
+    });
+
+  if (previousEntryFile !== nextEntryFile) {
+    operations.push({ op: "set_entry_file", entry_file: nextEntryFile });
+  }
+
+  return operations;
+}
+
 function normalizePreviewSessionUrlForReloadCompare(url: string | null | undefined): string {
   if (!url) return "";
   try {
@@ -86,31 +118,6 @@ function normalizePreviewSessionUrlForReloadCompare(url: string | null | undefin
     return parsed.toString();
   } catch {
     return String(url).trim();
-  }
-}
-
-function withPreviewBuildReloadKey(
-  url: string | null | undefined,
-  buildId: string | null | undefined,
-  buildSeq: number | null | undefined,
-): string | null {
-  const rawUrl = String(url || "").trim();
-  if (!rawUrl) {
-    return null;
-  }
-  const normalizedBuildId = String(buildId || "").trim();
-  const normalizedBuildSeq = Number(buildSeq || 0);
-  const buildKey = normalizedBuildId || (normalizedBuildSeq > 0 ? `seq-${normalizedBuildSeq}` : "");
-  if (!buildKey) {
-    return rawUrl;
-  }
-  try {
-    const parsed = new URL(rawUrl);
-    parsed.searchParams.set("__preview_build", buildKey);
-    return parsed.toString();
-  } catch {
-    const separator = rawUrl.includes("?") ? "&" : "?";
-    return `${rawUrl}${separator}__preview_build=${encodeURIComponent(buildKey)}`;
   }
 }
 
@@ -142,6 +149,8 @@ export function useAppsBuilderSandboxLifecycle({
   const syncFingerprintRef = useRef<string>("");
   const currentSyncFingerprintRef = useRef<string>("");
   const revisionFingerprintSeedRef = useRef<string | null>(null);
+  const syncedFilesRef = useRef<Record<string, string>>({});
+  const syncedEntryFileRef = useRef<string>("src/main.tsx");
   const latestSessionPayloadRef = useRef<DraftDevSessionResponse | null>(null);
   const draftDevErrorRef = useRef<string | null>(null);
   const sessionSnapshotRef = useRef<{
@@ -173,11 +182,7 @@ export function useAppsBuilderSandboxLifecycle({
     setPreviewAuthToken(session.preview_auth_token || null);
     setRecoveryExhausted(false);
 
-    const nextPreviewUrl = withPreviewBuildReloadKey(
-      session.preview_url || null,
-      session.current_preview_build_id || null,
-      session.preview_build_seq ?? 0,
-    );
+    const nextPreviewUrl = session.preview_url || null;
     setPreviewAssetUrl((current) => {
       const currentNormalized = normalizePreviewSessionUrlForReloadCompare(current);
       const nextNormalized = normalizePreviewSessionUrlForReloadCompare(nextPreviewUrl);
@@ -226,7 +231,7 @@ export function useAppsBuilderSandboxLifecycle({
       clearSession();
       return;
     }
-    applySession(session, { markSynced: true });
+    applySession(session);
   }, [applySession, clearSession]);
 
   const ensureDraftDevSession = useCallback(async (options?: EnsureSessionOptions) => {
@@ -291,7 +296,7 @@ export function useAppsBuilderSandboxLifecycle({
     return ensurePromise;
   }, [appId, applySession]);
 
-  const syncDraftDevSession = useCallback(async (fingerprint: string) => {
+  const syncDraftDevSession = useCallback(async (fingerprint: string, options?: { forceFullSync?: boolean }) => {
     if (!currentRevisionId || !draftDevSessionId || !isDraftDevServingStatus(draftDevStatus)) {
       return null;
     }
@@ -302,13 +307,34 @@ export function useAppsBuilderSandboxLifecycle({
     const syncPromise = (async () => {
       setPhase("syncing");
       try {
-        const session = await publishedAppsService.syncDraftDevSession(appId, {
-          files: filteredFiles,
-          entry_file: entryFile,
-          revision_id: currentRevisionId,
-        });
+        const operations = buildDraftDevSyncOperations(
+          syncedFilesRef.current,
+          syncedEntryFileRef.current,
+          filteredFiles,
+          entryFile,
+        );
+        if (!options?.forceFullSync && operations.length <= 0) {
+          syncFingerprintRef.current = fingerprint;
+          return latestSessionPayloadRef.current;
+        }
+        const session = await publishedAppsService.syncDraftDevSession(
+          appId,
+          options?.forceFullSync
+            ? {
+                files: filteredFiles,
+                entry_file: entryFile,
+                revision_id: currentRevisionId,
+              }
+            : {
+                operations,
+                entry_file: entryFile,
+                revision_id: currentRevisionId,
+              },
+        );
         applySession(session, { markSynced: true });
         syncFingerprintRef.current = fingerprint;
+        syncedFilesRef.current = filteredFiles;
+        syncedEntryFileRef.current = entryFile;
         return session;
       } catch (err) {
         if (isCodingAgentRunActiveError(err)) {
@@ -320,8 +346,16 @@ export function useAppsBuilderSandboxLifecycle({
           setDraftDevError(null);
           setPhase("recovering");
           try {
-            const session = await ensureDraftDevSession({ force: true, reason: "recovering" });
+            await ensureDraftDevSession({ force: true, reason: "recovering" });
+            const session = await publishedAppsService.syncDraftDevSession(appId, {
+              files: filteredFiles,
+              entry_file: entryFile,
+              revision_id: currentRevisionId,
+            });
+            applySession(session, { markSynced: true });
             syncFingerprintRef.current = fingerprint;
+            syncedFilesRef.current = filteredFiles;
+            syncedEntryFileRef.current = entryFile;
             return session;
           } catch (ensureErr) {
             if (isCodingAgentRunActiveError(ensureErr)) {
@@ -379,6 +413,8 @@ export function useAppsBuilderSandboxLifecycle({
     if (!currentRevisionId) {
       syncFingerprintRef.current = "";
       revisionFingerprintSeedRef.current = null;
+      syncedFilesRef.current = {};
+      syncedEntryFileRef.current = "src/main.tsx";
       return;
     }
     if (revisionFingerprintSeedRef.current === currentRevisionId) {
@@ -386,7 +422,9 @@ export function useAppsBuilderSandboxLifecycle({
     }
     revisionFingerprintSeedRef.current = currentRevisionId;
     syncFingerprintRef.current = currentSyncFingerprint;
-  }, [currentRevisionId, currentSyncFingerprint]);
+    syncedFilesRef.current = filteredFiles;
+    syncedEntryFileRef.current = entryFile;
+  }, [currentRevisionId, currentSyncFingerprint, entryFile, filteredFiles]);
 
   // Reset local lifecycle state when the workspace scope changes.
   /* eslint-disable react-hooks/set-state-in-effect */
@@ -401,6 +439,8 @@ export function useAppsBuilderSandboxLifecycle({
     setRecoveryExhausted(false);
     syncFingerprintRef.current = "";
     revisionFingerprintSeedRef.current = null;
+    syncedFilesRef.current = {};
+    syncedEntryFileRef.current = "src/main.tsx";
     latestSessionPayloadRef.current = null;
     ensureInFlightRef.current = null;
     syncInFlightRef.current = null;

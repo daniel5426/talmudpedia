@@ -1,4 +1,4 @@
-Last Updated: 2026-03-10
+Last Updated: 2026-03-16
 
 ## Scope
 Shared assistant-response normalization and timeline rendering used by the agent builder execute panel and the agent playground.
@@ -19,6 +19,7 @@ Shared assistant-response normalization and timeline rendering used by the agent
 - Historical assistant messages do not inherit active loading shimmer from newer runs.
 - Tool rows can expand to reveal the stored summary text when the summary differs from the short title.
 - Persisted run events can be replayed back into assistant response blocks for lazy trace loading and latest-turn thread hydration.
+- Finalization collapses duplicate assistant text blocks when persisted replay and saved final text resolve to the same assistant message.
 
 ## Last Run
 - Command: `cd frontend-reshet && npm test -- --runInBand src/__tests__/assistant_response_ui/normalizer.test.ts src/__tests__/assistant_response_ui/renderer.test.tsx`
@@ -30,6 +31,9 @@ Shared assistant-response normalization and timeline rendering used by the agent
 - Command: `cd frontend-reshet && npm test -- --runInBand src/__tests__/assistant_response_ui/trace_loader.test.ts src/__tests__/assistant_response_ui/normalizer.test.ts`
 - Date: 2026-03-12 05:51 EET
 - Result: Pass
+- Command: `cd frontend-reshet && npm test -- --runInBand src/__tests__/assistant_response_ui/normalizer.test.ts src/__tests__/agent_thread_history/useAgentThreadHistory.test.tsx`
+- Date: 2026-03-16 15:18 EET
+- Result: Pass (`7 passed`)
 
 ## Known Gaps / Follow-ups
 - Add end-to-end controller tests once the playground stream handling is covered directly.

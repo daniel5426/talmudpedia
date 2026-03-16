@@ -5,7 +5,11 @@ import os
 from hashlib import sha256
 from typing import Dict
 
+from sqlalchemy import insert
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.postgres.models.published_apps import PublishedAppRevision, PublishedAppRevisionBlob
@@ -94,9 +98,11 @@ class PublishedAppRevisionStore:
     async def _ensure_blobs(self, files: Dict[str, str], manifest: Dict[str, str]) -> None:
         required_hashes = set(manifest.values())
         existing = await self._load_blob_rows(required_hashes)
-        for path, content in files.items():
+        pending_rows: list[dict[str, object]] = []
+        seen_hashes: set[str] = set(existing)
+        for path, content in sorted(files.items()):
             blob_hash = manifest[path]
-            if blob_hash in existing:
+            if blob_hash in seen_hashes:
                 continue
             payload = content.encode("utf-8")
             storage_key = None
@@ -117,14 +123,37 @@ class PublishedAppRevisionStore:
                     # Fall back to inline blob persistence so revision snapshots still work.
                     inline_content = content
                     storage_key = None
-            row = PublishedAppRevisionBlob(
-                blob_hash=blob_hash,
-                storage_key=storage_key,
-                inline_content=inline_content,
-                size_bytes=len(payload),
+            pending_rows.append(
+                {
+                    "blob_hash": blob_hash,
+                    "storage_key": storage_key,
+                    "inline_content": inline_content,
+                    "size_bytes": len(payload),
+                }
             )
-            self._db.add(row)
-            existing[blob_hash] = row
+            seen_hashes.add(blob_hash)
+        if not pending_rows:
+            return
+
+        bind = self._db.get_bind()
+        dialect_name = str(getattr(getattr(bind, "dialect", None), "name", "") or "").lower()
+        try:
+            if dialect_name == "postgresql":
+                stmt = pg_insert(PublishedAppRevisionBlob).values(pending_rows).on_conflict_do_nothing(
+                    index_elements=["blob_hash"]
+                )
+                await self._db.execute(stmt)
+            elif dialect_name == "sqlite":
+                stmt = sqlite_insert(PublishedAppRevisionBlob).values(pending_rows).on_conflict_do_nothing(
+                    index_elements=["blob_hash"]
+                )
+                await self._db.execute(stmt)
+            else:
+                stmt = insert(PublishedAppRevisionBlob).values(pending_rows)
+                await self._db.execute(stmt)
+        except IntegrityError:
+            # Concurrent materializers may race on the same blob hash in non-upsert-capable paths.
+            pass
 
     async def _load_blob_rows(self, blob_hashes: set[str]) -> Dict[str, PublishedAppRevisionBlob]:
         if not blob_hashes:

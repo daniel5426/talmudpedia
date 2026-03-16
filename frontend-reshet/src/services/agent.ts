@@ -12,6 +12,7 @@ export interface Agent {
   description?: string;
   status: 'draft' | 'published' | 'deprecated' | 'archived';
   version: number;
+  show_in_playground: boolean;
   graph_definition?: AgentGraphDefinition;
   created_at: string;
   updated_at: string;

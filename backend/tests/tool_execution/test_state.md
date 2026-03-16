@@ -1,6 +1,6 @@
 # Tool Execution Tests
 
-Last Updated: 2026-03-15
+Last Updated: 2026-03-16
 
 ## Scope
 Validate MCP/function/agent-call execution paths in the `ToolNodeExecutor`.
@@ -38,6 +38,7 @@ Validate MCP/function/agent-call execution paths in the `ToolNodeExecutor`.
 - Function-tool execution now flattens wrapper payloads (`args`, `input`, `parameters`, `payload`, `data`, `arguments`, `value`) before validation and dispatch.
 - Function-tool execution now propagates delegation/runtime context fields (`tenant_id`, `grant_id`, `requested_scopes`, agent metadata) into the nested function payload context.
 - Strict function-tool execution now validates canonical model-authored payloads before dispatch, rejects unknown fields deterministically, and strips executor-owned runtime metadata from schema validation.
+- Strict function-tool validation errors now return explicit, agent-friendly summaries for missing required fields, wrong types, unexpected fields, and schema-union mismatches instead of raw JSON Schema-only wording.
 - Strict `platform-*` function tools now reject raw scalar args and `value` / `query` / `text` wrapped payloads with `NON_CANONICAL_PLATFORM_SDK_INPUT` before generic schema validation.
 - Reasoning tool-call normalization now preserves direct argument fields when no `input/args/parameters` wrapper is present.
 - Reasoning executor now emits internal trace events when it infers a tool call from assistant JSON fallback instead of a native provider tool call.
@@ -108,6 +109,9 @@ Validate MCP/function/agent-call execution paths in the `ToolNodeExecutor`.
 - Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/tool_execution/test_reasoning_tool_call_chunk_buffering.py backend/tests/tool_execution/test_function_tool_execution.py backend/tests/artifact_coding_agent/test_runtime_service.py backend/tests/platform_architect_workers/test_architect_worker_integration.py backend/tests/platform_architect_runtime/test_architect_seeding.py backend/tests/platform_architect_runtime/test_platform_architect_runtime.py backend/tests/platform_sdk_tool/test_platform_sdk_actions.py`
 - Date/Time: 2026-03-15 00:27 EET
 - Result: PASS (`55 passed`)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/tool_execution/test_function_tool_execution.py`
+- Date/Time: 2026-03-16 15:35 EET
+- Result: PASS (`17 passed, 5 warnings`)
 
 ## Known Gaps / Follow-ups
 - Add coverage for `agent_call` payload mode variants beyond sync (`spawn`/future orchestration modes).

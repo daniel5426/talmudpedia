@@ -1,6 +1,6 @@
 # Classic Chat Template Reference
 
-Last Updated: 2026-03-15
+Last Updated: 2026-03-16
 
 This document describes the current `classic-chat` published-app starter template.
 
@@ -233,7 +233,12 @@ The current implementation is runtime-ready in shape, but still local-state-driv
   - ensure `vite.config.*` sets `base: "./"`
   - remove local-only project noise such as `.git/` and `node_modules/`
   - [x] confirm compatibility with runtime bootstrap overlay files injected by `published_app_templates.py`
-- [/] replace local mock thread/message state with runtime SDK adapters when the template contract is wired (Auth integrated, Streaming in progress)
+- [/] replace remaining local thread/message state assumptions with full runtime SDK history adapters
+
+## Runtime Contract Note
+
+- The template’s runtime SDK integration for host-anywhere clients now targets `/public/external/apps/{slug}/*`.
+- Platform-hosted same-origin published runtime still uses injected host-runtime bootstrap and `/_talmudpedia/*` routes.
 
 ## Related Docs
 

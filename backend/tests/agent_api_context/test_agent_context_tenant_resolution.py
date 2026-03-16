@@ -2,9 +2,12 @@ import pytest
 import pytest_asyncio
 from fastapi import HTTPException
 from starlette.requests import Request
+from sqlalchemy import select
 from uuid import uuid4
 
+from app.core.security import create_access_token
 from app.api.routers.agents import get_agent_context
+from app.db.postgres.models.agents import Agent
 from app.db.postgres.models.identity import (
     MembershipStatus,
     OrgMembership,
@@ -14,6 +17,7 @@ from app.db.postgres.models.identity import (
     Tenant,
     User,
 )
+from app.services.agent_service import AgentService, CreateAgentData
 
 
 def _request_with_headers(headers: dict[str, str]) -> Request:
@@ -24,6 +28,19 @@ def _request_with_headers(headers: dict[str, str]) -> Request:
         "headers": [(k.lower().encode("latin-1"), v.encode("latin-1")) for k, v in headers.items()],
     }
     return Request(scope)
+
+
+def _auth_headers(user_id: str, tenant_id: str, org_unit_id: str) -> dict[str, str]:
+    token = create_access_token(
+        subject=user_id,
+        tenant_id=tenant_id,
+        org_unit_id=org_unit_id,
+        org_role="member",
+    )
+    return {
+        "Authorization": f"Bearer {token}",
+        "X-Tenant-ID": tenant_id,
+    }
 
 
 @pytest_asyncio.fixture
@@ -64,6 +81,8 @@ async def tenant_fixture(db_session):
         "user": user,
         "tenant_a": tenant_a,
         "tenant_b": tenant_b,
+        "org_unit_a": ou_a,
+        "org_unit_b": ou_b,
     }
 
 
@@ -96,3 +115,41 @@ async def test_get_agent_context_without_header_requires_explicit_tenant_context
         await get_agent_context(request=request, context=context, db=db_session)
     assert exc.value.status_code == 403
     assert exc.value.detail == "Tenant context required"
+
+
+@pytest.mark.asyncio
+async def test_agents_api_exposes_show_in_playground_and_defaults_true(client, db_session, tenant_fixture):
+    tenant = tenant_fixture["tenant_a"]
+    user = tenant_fixture["user"]
+    org_unit = tenant_fixture["org_unit_a"]
+    service = AgentService(db_session, tenant.id)
+    agent = await service.create_agent(
+        CreateAgentData(
+            name="Visible Agent",
+            slug=f"visible-agent-{uuid4().hex[:8]}",
+            graph_definition={
+                "nodes": [
+                    {"id": "start", "type": "start", "position": {"x": 0, "y": 0}, "config": {}},
+                    {"id": "end", "type": "end", "position": {"x": 200, "y": 0}, "config": {}},
+                ],
+                "edges": [
+                    {"id": "e1", "source": "start", "target": "end", "type": "control"},
+                ],
+            },
+        ),
+        user_id=user.id,
+    )
+    headers = _auth_headers(str(user.id), str(tenant.id), str(org_unit.id))
+
+    list_response = await client.get("/agents?compact=true", headers=headers)
+    assert list_response.status_code == 200
+    list_payload = list_response.json()
+    listed = next(item for item in list_payload["agents"] if item["id"] == str(agent.id))
+    assert listed["show_in_playground"] is True
+
+    get_response = await client.get(f"/agents/{agent.id}", headers=headers)
+    assert get_response.status_code == 200
+    assert get_response.json()["show_in_playground"] is True
+
+    refreshed = (await db_session.execute(select(Agent).where(Agent.id == agent.id))).scalar_one()
+    assert refreshed.show_in_playground is True

@@ -1,8 +1,8 @@
 # Runtime SDK Host-Anywhere Spec
 
-Last Updated: 2026-03-10
+Last Updated: 2026-03-16
 
-This document is the canonical runtime SDK contract for published apps that run on-platform or on external hosting.
+This document is the canonical runtime SDK contract for externally hosted published-app clients.
 
 ## Purpose
 
@@ -10,7 +10,9 @@ The runtime SDK provides a stable client contract for:
 - fetching runtime bootstrap data
 - streaming runtime chat events
 - handling published-app auth flows
-- supporting hosted and externally hosted published-app experiences
+- supporting externally hosted published-app experiences
+
+Hosted same-origin app runtime remains on the app host `/_talmudpedia/*` surface and is not the primary browser contract for host-anywhere clients.
 
 ## Current Package Shape
 
@@ -37,7 +39,7 @@ Current bootstrap schema version:
 - `runtime-bootstrap.v1`
 
 Current bootstrap endpoints:
-- `GET /public/apps/{app_slug}/runtime/bootstrap`
+- `GET /public/external/apps/{app_slug}/runtime/bootstrap`
 - `GET /public/apps/preview/revisions/{revision_id}/runtime/bootstrap`
 
 Current bootstrap payload includes:
@@ -47,14 +49,15 @@ Current bootstrap payload includes:
 - auth capability information
 
 Important current behavior verified in code:
-- public published runtime/bootstrap asset delivery is host-runtime-only in the public router and may defer to hosted runtime handling
+- published same-origin app-host runtime remains on `/_talmudpedia/*`
+- external published runtime uses the dedicated `/public/external/apps/{slug}/*` route family
 - preview runtime/bootstrap endpoints are active on the public router
 - preview token transport is bearer/cookie based; query-token-only auth is not supported
 
 ## Current Auth Exchange Contract
 
 Endpoint:
-- `POST /public/apps/{app_slug}/auth/exchange`
+- `POST /public/external/apps/{app_slug}/auth/exchange`
 
 Purpose:
 - exchange external identity for a platform-native app session token
@@ -63,11 +66,11 @@ Current backend also supports host-runtime auth-exchange handling under hosted i
 
 ## Current Integration Flow
 
-1. Fetch bootstrap for the published app slug or preview revision.
+1. Fetch bootstrap from `/public/external/apps/{slug}/runtime/bootstrap` or the preview revision endpoint.
 2. Build the runtime client with the bootstrap payload.
-3. Provide a token provider for platform bearer/session usage when needed.
-4. For preview iframe flows, update preview auth state without relying on query-token-only URLs.
-5. If using external identity, exchange the external token for a platform app session.
+3. Authenticate external clients through bearer-token auth routes under `/public/external/apps/{slug}/auth/*`.
+4. Use the returned bearer token for chat streaming and thread/history APIs.
+5. For preview iframe flows, update preview auth state without relying on query-token-only URLs.
 
 ## Canonical Implementation References
 

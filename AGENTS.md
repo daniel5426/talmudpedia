@@ -1,6 +1,6 @@
 # Agent Operating Instructions (Talmudpedia)
 
-Last Updated: 2026-03-12
+Last Updated: 2026-03-16
 
 ## Documentation Hygiene (Context-dependent)
 - The repo-level documentation hub is `docs/`.
@@ -104,6 +104,24 @@ Last Updated: 2026-03-12
 - If the user asks to log every step of an agent or process run, prefer the shared execution-event logging path over ad-hoc prints or one-off debug files.
 - Use `backend/app/agent/execution/trace_recorder.py` as the reusable logging mechanism and read logs through `GET /agents/runs/{run_id}/events` when applicable.
 - Keep new logging reusable across runtimes and subsystems by preserving a consistent event shape and shared run/trace identifiers.
+
+## Apps Builder Debugging
+- For apps-builder runtime/debug issues, check the shared trace file first: `/tmp/talmudpedia-apps-builder-events.jsonl`.
+- `backend/backend.log` may be stale or from a failed startup; do not assume it reflects the current local runtime.
+- For local DB inspection, load `backend/.env` and prefer `DATABASE_URL_LOCAL` unless the task explicitly targets another environment.
+- Key local tables for apps-builder debugging:
+  - `agent_runs`
+  - `published_apps`
+  - `published_app_revisions`
+  - `published_app_draft_workspaces`
+  - `published_app_draft_dev_sessions`
+- For coding-agent runs, verify these facts first:
+  - run terminal status
+  - `has_workspace_writes`
+  - `result_revision_id`
+  - `batch_finalized_at`
+- For preview debugging, check whether `/tmp/talmudpedia-apps-builder-events.jsonl` contains `preview.proxy.websocket_*` events for the app/session. If websocket events are missing, HMR is not actually connected even if plain preview HTTP requests succeed.
+- For revision materialization debugging, look for `draft_revision.materializer` events before patching behavior. Add trace steps there before guessing about build/export failures.
 
 ## Fallback Policy
 - Keep fallbacks to a minimum across the app.

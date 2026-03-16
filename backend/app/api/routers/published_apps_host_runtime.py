@@ -757,6 +757,9 @@ async def host_get_thread(
         return response
 
     service = ThreadService(db)
+    repaired = await service.repair_thread_turn_indices(thread_id=thread_id)
+    if repaired:
+        await db.commit()
     thread = await service.get_thread_with_turns(
         tenant_id=app.tenant_id,
         thread_id=thread_id,

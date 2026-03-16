@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import asyncio
-import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 from uuid import UUID
@@ -26,8 +24,11 @@ from app.db.postgres.models.published_apps import (
     PublishedAppRevisionKind,
 )
 from app.db.postgres.session import get_db
+from app.services.published_app_draft_revision_materializer import (
+    PublishedAppDraftRevisionMaterializerError,
+    PublishedAppDraftRevisionMaterializerService,
+)
 from app.services.published_app_draft_dev_runtime import PublishedAppDraftDevRuntimeDisabled, PublishedAppDraftDevRuntimeService
-from app.services.published_app_preview_builds import PublishedAppPreviewBuildService
 from app.services.published_app_revision_build_dispatch import (
     enqueue_revision_build,
     mark_revision_build_enqueue_failed,
@@ -78,11 +79,6 @@ class VersionPreviewRuntimeResponse(BaseModel):
     preview_url: str
     runtime_token: str
     expires_at: datetime
-
-
-MANUAL_SAVE_PREVIEW_BUILD_TIMEOUT_SECONDS = 30.0
-MANUAL_SAVE_PREVIEW_BUILD_POLL_SECONDS = 0.5
-
 
 def _revision_has_dist_assets(revision: PublishedAppRevision) -> bool:
     return bool(str(revision.dist_storage_prefix or "").strip()) and bool(revision.dist_manifest)
@@ -197,15 +193,9 @@ async def create_draft_version(
     _assert_builder_path_allowed(entry_file, field="entry_file")
     _validate_builder_project_or_raise(files, entry_file)
 
-    preview_builds = PublishedAppPreviewBuildService(db)
-    _, previous_snapshot = await preview_builds.get_current_build(app_id=app.id, refresh=False)
-    previous_build_seq = previous_snapshot.build_seq if previous_snapshot is not None else 0
-    previous_build_id = previous_snapshot.build_id if previous_snapshot is not None else None
-    source_changed = files != dict(current.files or {}) or entry_file != current.entry_file
-
     runtime_service = PublishedAppDraftDevRuntimeService(db)
     try:
-        session = await runtime_service.sync_session(
+        await runtime_service.sync_session(
             app=app,
             revision=current,
             user_id=actor.id,
@@ -215,74 +205,33 @@ async def create_draft_version(
     except PublishedAppDraftDevRuntimeDisabled as exc:
         raise HTTPException(status_code=409, detail=str(exc))
 
-    target_build_seq = max(0, int(session.preview_build_seq or 0))
-    target_build_id = str(session.current_preview_build_id or "").strip() or None
-    if source_changed and target_build_id and target_build_id == previous_build_id:
-        target_build_id = None
-    if source_changed and not target_build_id:
-        target_build_seq = max(target_build_seq, previous_build_seq + 1)
+    materializer = PublishedAppDraftRevisionMaterializerService(db)
+    try:
+        result = await materializer.materialize_live_workspace(
+            app=app,
+            entry_file=entry_file,
+            source_revision_id=current.id,
+            created_by=actor.id,
+            origin_kind="manual_edit",
+        )
+    except PublishedAppDraftRevisionMaterializerError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "MANUAL_SAVE_BUILD_FAILED",
+                "message": "Manual save could not materialize a draft version from the current workspace.",
+                "reason": str(exc),
+            },
+        ) from exc
 
-    deadline = time.monotonic() + MANUAL_SAVE_PREVIEW_BUILD_TIMEOUT_SECONDS
-    while True:
-        workspace, snapshot = await preview_builds.get_current_build(app_id=app.id)
-        if workspace is not None and snapshot is not None:
-            build_seq = max(0, int(snapshot.build_seq or 0))
-            build_id = str(snapshot.build_id or "").strip() or None
-            build_ready = snapshot.status == "succeeded"
-            if build_ready and target_build_id:
-                build_ready = build_id == target_build_id
-            elif build_ready and source_changed:
-                build_ready = build_seq >= target_build_seq and (
-                    build_id != previous_build_id or build_seq > previous_build_seq
-                )
-
-            if build_ready:
-                revision = await preview_builds.materialize_revision_from_build(
-                    app=app,
-                    workspace=workspace,
-                    snapshot=snapshot,
-                    created_by=actor.id,
-                    source_revision_id=current.id,
-                    origin_kind="manual_edit",
-                )
-                app.current_draft_revision_id = revision.id
-                await runtime_service.sync_session(
-                    app=app,
-                    revision=revision,
-                    user_id=actor.id,
-                    files=dict(revision.files or {}),
-                    entry_file=revision.entry_file,
-                )
-                await db.commit()
-                await db.refresh(revision)
-                return _revision_to_response(revision)
-
-            if snapshot.status == "failed" and (
-                (target_build_id and build_id == target_build_id)
-                or (not target_build_id and build_seq >= target_build_seq)
-            ):
-                raise HTTPException(
-                    status_code=409,
-                    detail={
-                        "code": "MANUAL_SAVE_BUILD_FAILED",
-                        "message": "Manual save could not finalize because the preview build failed.",
-                        "preview_build_id": build_id,
-                        "preview_build_seq": build_seq,
-                        "preview_build_error": snapshot.last_error,
-                    },
-                )
-
-        if time.monotonic() >= deadline:
-            raise HTTPException(
-                status_code=409,
-                detail={
-                    "code": "MANUAL_SAVE_BUILD_TIMEOUT",
-                    "message": "Manual save timed out waiting for the preview build to finish.",
-                    "preview_build_id": target_build_id,
-                    "preview_build_seq": target_build_seq,
-                },
-            )
-        await asyncio.sleep(MANUAL_SAVE_PREVIEW_BUILD_POLL_SECONDS)
+    await runtime_service.bind_session_to_revision_without_sync(
+        app_id=app.id,
+        user_id=actor.id,
+        revision=result.revision,
+    )
+    await db.commit()
+    await db.refresh(result.revision)
+    return _revision_to_response(result.revision)
 
 
 @router.post("/{app_id}/versions/{version_id}/restore", response_model=PublishedAppRevisionResponse)
@@ -420,7 +369,6 @@ async def publish_version(
     if actor_id is None:
         raise HTTPException(status_code=403, detail="Publish requires a user principal")
 
-    _ = version_id
     active_publish = await _get_active_publish_job_for_app(db, app_id=app.id)
     if active_publish is not None:
         raise HTTPException(
@@ -432,27 +380,16 @@ async def publish_version(
             },
         )
 
-    preview_builds = PublishedAppPreviewBuildService(db)
-    workspace, snapshot = await preview_builds.get_current_build(app_id=app.id)
-    if workspace is None or snapshot is None or snapshot.status != "succeeded":
+    revision = await _get_revision_for_app(db, app.id, version_id)
+    if not _revision_has_dist_assets(revision):
         raise HTTPException(
             status_code=409,
             detail={
-                "code": "PREVIEW_BUILD_NOT_READY",
-                "message": "Publish requires a successful current preview build.",
-                "preview_build_status": snapshot.status if snapshot is not None else None,
-                "preview_build_error": snapshot.last_error if snapshot is not None else None,
+                "code": "REVISION_NOT_MATERIALIZED",
+                "message": "Publish requires a materialized revision with durable build output.",
+                "version_id": str(revision.id),
             },
         )
-
-    revision = await preview_builds.materialize_revision_from_build(
-        app=app,
-        workspace=workspace,
-        snapshot=snapshot,
-        created_by=actor_id,
-        source_revision_id=app.current_draft_revision_id,
-        origin_kind="publish_output",
-    )
 
     now = datetime.now(timezone.utc)
     publish_job = PublishedAppPublishJob(
@@ -467,11 +404,9 @@ async def publish_version(
         error=None,
         diagnostics=[
             {
-                "kind": "preview_publish",
+                "kind": "revision_publish",
                 "version_id": str(revision.id),
-                "preview_build_id": snapshot.build_id,
-                "preview_build_seq": str(snapshot.build_seq),
-                "reused_dist": "true",
+                "pointer_only": "true",
             }
         ],
         last_heartbeat_at=now,

@@ -42,6 +42,20 @@ const parseTimestamp = (value?: string, fallback: number = Date.now()): number =
   return Number.isNaN(parsed) ? fallback : parsed;
 };
 
+export const sortThreadTurnsForReplay = (turns: ThreadTurn[]): ThreadTurn[] =>
+  [...turns].sort((left, right) => {
+    const turnIndexDiff = Number(left.turn_index ?? 0) - Number(right.turn_index ?? 0);
+    if (turnIndexDiff !== 0) return turnIndexDiff;
+
+    const createdDiff = parseTimestamp(left.created_at, 0) - parseTimestamp(right.created_at, 0);
+    if (createdDiff !== 0) return createdDiff;
+
+    const completedDiff = parseTimestamp(left.completed_at, 0) - parseTimestamp(right.completed_at, 0);
+    if (completedDiff !== 0) return completedDiff;
+
+    return String(left.id || "").localeCompare(String(right.id || ""));
+  });
+
 const buildResponseBlocksFromTurn = async (
   turn: ThreadTurn,
   assistantText: string,
@@ -67,28 +81,17 @@ const buildResponseBlocksFromTurn = async (
   }
 };
 
-const mapTurnsToMessages = async (threadId: string, turns: ThreadTurn[]): Promise<ChatMessage[]> => {
-  const sortedTurns = [...turns].sort(
-    (a, b) => Number(a.turn_index ?? 0) - Number(b.turn_index ?? 0)
-  );
+export const mapTurnsToMessages = async (threadId: string, turns: ThreadTurn[]): Promise<ChatMessage[]> => {
+  const sortedTurns = sortThreadTurnsForReplay(turns);
   const next: ChatMessage[] = [];
   const priorAssistantParts: string[] = [];
   const responseBlocksByTurnKey = new Map<string, ChatRenderBlock[] | undefined>();
-  let latestAssistantTurnKey: string | undefined;
-  for (let index = sortedTurns.length - 1; index >= 0; index -= 1) {
-    const turn = sortedTurns[index];
-    if (String(turn.assistant_output_text ?? "").trim() && String(turn.run_id ?? "").trim()) {
-      latestAssistantTurnKey = String(turn.id ?? index);
-      break;
-    }
-  }
 
   await Promise.all(
     sortedTurns.map(async (turn, index) => {
       const rawAssistantText = String(turn.assistant_output_text ?? "").trim();
       if (!rawAssistantText) return;
       const turnKey = String(turn.id ?? index);
-      if (turnKey !== latestAssistantTurnKey) return;
       const blocks = await buildResponseBlocksFromTurn(turn, rawAssistantText);
       responseBlocksByTurnKey.set(turnKey, blocks);
     })

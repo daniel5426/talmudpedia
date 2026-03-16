@@ -604,19 +604,32 @@ export function finalizeAssistantRenderBlocks(
       text: parsedText,
       status: "complete",
     };
+  } else {
+    next.push(
+      createAssistantTextBlock({
+        id: `assistant-text:${options?.runId || "run"}:${options?.fallbackSeq ?? next.length + 1}`,
+        text: parsedText,
+        runId: options?.runId,
+        seq: options?.fallbackSeq ?? next.length + 1,
+        status: "complete",
+      }),
+    );
+  }
+
+  const matchingAssistantIndices = next
+    .map((block, index) => ({ block, index }))
+    .filter(
+      ({ block }) => block.kind === "assistant_text" && block.text.trim() === parsedText.trim(),
+    )
+    .map(({ index }) => index);
+  if (matchingAssistantIndices.length <= 1) {
     return next;
   }
 
-  next.push(
-    createAssistantTextBlock({
-      id: `assistant-text:${options?.runId || "run"}:${options?.fallbackSeq ?? next.length + 1}`,
-      text: parsedText,
-      runId: options?.runId,
-      seq: options?.fallbackSeq ?? next.length + 1,
-      status: "complete",
-    }),
+  const keepIndex = matchingAssistantIndices[0];
+  return next.filter(
+    (block, index) => block.kind !== "assistant_text" || index === keepIndex || block.text.trim() !== parsedText.trim(),
   );
-  return next;
 }
 
 export function sortChatRenderBlocks(blocks: ChatRenderBlock[]): ChatRenderBlock[] {

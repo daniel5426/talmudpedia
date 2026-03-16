@@ -1,4 +1,9 @@
-import { createRuntimeClient, fetchRuntimeBootstrap, normalizeRuntimeEvent } from "../../../../packages/runtime-sdk/src";
+import {
+  createPublishedAppAuthClient,
+  createRuntimeClient,
+  fetchRuntimeBootstrap,
+  normalizeRuntimeEvent,
+} from "../../../../packages/runtime-sdk/src";
 import type { RuntimeBootstrap } from "../../../../packages/runtime-sdk/src";
 import { ReadableStream } from "node:stream/web";
 import { TextDecoder, TextEncoder } from "node:util";
@@ -44,8 +49,8 @@ describe("runtime-sdk core", () => {
     mode: "published-runtime",
     api_base_path: "/api/py",
     api_base_url: "https://api.example.com/api/py",
-    chat_stream_path: "/api/py/public/apps/slug-1/chat/stream",
-    chat_stream_url: "https://api.example.com/api/py/public/apps/slug-1/chat/stream",
+    chat_stream_path: "/api/py/public/external/apps/slug-1/chat/stream",
+    chat_stream_url: "https://api.example.com/api/py/public/external/apps/slug-1/chat/stream",
     auth: {
       enabled: true,
       providers: ["password"],
@@ -139,5 +144,77 @@ describe("runtime-sdk core", () => {
       method: "GET",
       headers: { Authorization: "Bearer preview-token-123" },
     });
+  });
+
+  test("fetchRuntimeBootstrap uses external published runtime path for app slugs", async () => {
+    const fetchImpl = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      async json() {
+        return bootstrap;
+      },
+    });
+
+    await fetchRuntimeBootstrap({
+      apiBaseUrl: "https://api.example.com/api/py",
+      appSlug: "slug-1",
+      fetchImpl,
+    });
+
+    const [url] = fetchImpl.mock.calls[0];
+    expect(String(url)).toBe("https://api.example.com/api/py/public/external/apps/slug-1/runtime/bootstrap");
+  });
+
+  test("published app auth client uses external auth and history routes", async () => {
+    const tokenStore = {
+      get: jest.fn().mockReturnValue("stored-token"),
+      set: jest.fn(),
+      clear: jest.fn(),
+    };
+    const fetchImpl = jest.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        async json() {
+          return { token: "new-token", token_type: "bearer", user: { id: "u1", email: "u@example.com" } };
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        async json() {
+          return { items: [], total: 0, page: 1, pages: 1 };
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        async json() {
+          return { id: "thread-1", title: "Thread", status: "active", surface: "published_app", created_at: "", updated_at: "", last_activity_at: "", turns: [] };
+        },
+      });
+
+    const client = createPublishedAppAuthClient({
+      apiBaseUrl: "https://api.example.com/api/py",
+      appSlug: "slug-1",
+      fetchImpl,
+      tokenStore,
+    });
+
+    await client.login({ email: "u@example.com", password: "secret123" });
+    await client.listThreads();
+    await client.getThread("thread-1");
+
+    expect(fetchImpl.mock.calls[0][0]).toBe("https://api.example.com/api/py/public/external/apps/slug-1/auth/login");
+    expect(fetchImpl.mock.calls[1][0]).toBe("https://api.example.com/api/py/public/external/apps/slug-1/threads");
+    expect(fetchImpl.mock.calls[1][1]).toMatchObject({
+      headers: { Authorization: "Bearer stored-token" },
+    });
+    expect(fetchImpl.mock.calls[2][0]).toBe("https://api.example.com/api/py/public/external/apps/slug-1/threads/thread-1");
+    expect(tokenStore.set).toHaveBeenCalledWith("new-token");
   });
 });

@@ -236,6 +236,7 @@ describe("playground trace sidebar", () => {
           tenant_id: "tenant-1",
           name: "Test agent",
           slug: "test-agent",
+          show_in_playground: true,
           status: "draft",
           version: 1,
           created_at: "2026-03-12T10:00:00Z",
@@ -249,6 +250,7 @@ describe("playground trace sidebar", () => {
       tenant_id: "tenant-1",
       name: "Test agent",
       slug: "test-agent",
+      show_in_playground: true,
       status: "draft",
       version: 1,
       created_at: "2026-03-12T10:00:00Z",
@@ -270,6 +272,102 @@ describe("playground trace sidebar", () => {
 
     expect(screen.getByText("Search library")).toBeInTheDocument();
     expect(screen.getByText("Saved answer")).toBeInTheDocument();
+  });
+
+  it("filters hidden agents out of the selector bootstrap redirect", async () => {
+    mockSearchState.agentId = null as unknown as string;
+    mockedAgentService.listAgents.mockResolvedValue({
+      agents: [
+        {
+          id: "agent-hidden",
+          tenant_id: "tenant-1",
+          name: "Hidden agent",
+          slug: "hidden-agent",
+          show_in_playground: false,
+          status: "draft",
+          version: 1,
+          created_at: "2026-03-12T10:00:00Z",
+          updated_at: "2026-03-12T10:00:00Z",
+        },
+        {
+          id: "agent-visible",
+          tenant_id: "tenant-1",
+          name: "Visible agent",
+          slug: "visible-agent",
+          show_in_playground: true,
+          status: "draft",
+          version: 1,
+          created_at: "2026-03-12T10:00:00Z",
+          updated_at: "2026-03-12T10:00:00Z",
+        },
+      ],
+      total: 2,
+    } as any);
+
+    render(<PlaygroundPage />);
+
+    await waitFor(() => {
+      expect(
+        mockReplace.mock.calls.some(
+          ([path, options]) =>
+            path === "/admin/agents/playground?agentId=agent-visible"
+            && JSON.stringify(options) === JSON.stringify({ scroll: false }),
+        ),
+      ).toBe(true);
+    });
+  });
+
+  it("redirects away from a hidden agent deep link to the first visible agent", async () => {
+    mockedAgentService.listAgents.mockResolvedValue({
+      agents: [
+        {
+          id: "agent-hidden",
+          tenant_id: "tenant-1",
+          name: "Hidden agent",
+          slug: "hidden-agent",
+          show_in_playground: false,
+          status: "draft",
+          version: 1,
+          created_at: "2026-03-12T10:00:00Z",
+          updated_at: "2026-03-12T10:00:00Z",
+        },
+        {
+          id: "agent-visible",
+          tenant_id: "tenant-1",
+          name: "Visible agent",
+          slug: "visible-agent",
+          show_in_playground: true,
+          status: "draft",
+          version: 1,
+          created_at: "2026-03-12T10:00:00Z",
+          updated_at: "2026-03-12T10:00:00Z",
+        },
+      ],
+      total: 2,
+    } as any);
+    mockedAgentService.getAgent.mockResolvedValue({
+      id: "agent-hidden",
+      tenant_id: "tenant-1",
+      name: "Hidden agent",
+      slug: "hidden-agent",
+      show_in_playground: false,
+      status: "draft",
+      version: 1,
+      created_at: "2026-03-12T10:00:00Z",
+      updated_at: "2026-03-12T10:00:00Z",
+    } as any);
+
+    render(<PlaygroundPage />);
+
+    await waitFor(() => {
+      expect(
+        mockReplace.mock.calls.some(
+          ([path, options]) =>
+            path === "/admin/agents/playground?agentId=agent-visible"
+            && JSON.stringify(options) === JSON.stringify({ scroll: false }),
+        ),
+      ).toBe(true);
+    });
   });
 
   it("syncs the active thread id into the URL for reload persistence", async () => {

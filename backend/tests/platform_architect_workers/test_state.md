@@ -24,11 +24,13 @@ Focused coverage for the architect-specific async worker runtime, binding-backed
 - DB-backed seeded architect run that prepares an artifact binding, spawns an artifact worker, waits, and persists the canonical artifact successfully without a `platform-assets` artifact-create call in the architect path.
 - DB-backed seeded architect run that attempts a second mutating spawn on the same binding and reports the active-binding blocker cleanly.
 - Strict architect worker tool schemas reject malformed model payloads before runtime dispatch, including the observed bad binding-create guesses (`create`, `files`, `entrypoint`, `text`), while still allowing executor-owned runtime metadata to flow separately.
+- Architect worker spawn/binding schema failures now expose explicit branch/type diagnostics, including missing `worker_agent_slug` or `binding_ref` and wrong `objective` types.
 - Binding-exported artifact payloads remain available for inspection/debugging, but the normal worker-backed persistence path is now runtime-owned instead of model pass-through.
 - Spawned architect worker context now carries the canonical `artifact_coding_shared_draft_id` derived from the prepared binding session.
 - Completed artifact-worker continuation no longer uses synthetic `messages=[]` follow-up spawn payloads; continuation is history-native, kernel-owned, and persisted with visible `orchestrator` role chat turns.
 - Binding-backed spawn now uses the native worker session thread id from the first architect child run, so spawn and continuation share one worker conversation thread.
 - Artifact worker validation now has a server-side `artifact-coding-await-last-test-result` path, and duplicate in-flight test starts fail explicitly instead of queue-spamming.
+- Artifact-coding delegated workers may now persist their own bound draft through `artifact-coding-persist-artifact`; architect-owned binding persistence remains available but is no longer the canonical artifact-coding completion path.
 
 ## Last run command + date/time + result
 - Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/platform_architect_workers/test_worker_runtime.py backend/tests/platform_architect_workers/test_architect_worker_integration.py backend/tests/platform_architect_runtime/test_architect_seeding.py backend/tests/artifact_coding_agent/test_runtime_service.py backend/tests/platform_sdk_tool/test_platform_sdk_sdk_parity_additional_actions.py`
@@ -61,6 +63,12 @@ Focused coverage for the architect-specific async worker runtime, binding-backed
 - Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/platform_architect_workers/test_worker_runtime.py backend/tests/platform_architect_workers/test_architect_worker_integration.py backend/tests/artifact_coding_agent/test_runtime_service.py backend/tests/platform_architect_runtime/test_architect_seeding.py`
 - Date/Time: 2026-03-16 00:37 EET
 - Result: PASS (`33 passed`)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/artifact_coding_agent/test_runtime_service.py backend/tests/platform_architect_runtime/test_architect_seeding.py backend/tests/platform_architect_workers/test_worker_runtime.py backend/tests/platform_architect_workers/test_architect_worker_integration.py`
+- Date/Time: 2026-03-16 01:16 Asia/Hebron
+- Result: PASS (`38 passed`)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/platform_architect_workers/test_worker_runtime.py`
+- Date/Time: 2026-03-16 15:35 EET
+- Result: PASS (`18 passed, 1 warning`)
 
 ## Known gaps or follow-ups
 - Group fanout is covered at runtime level, but there is not yet a DB-backed seeded architect E2E for parallel multi-binding spawn/join.

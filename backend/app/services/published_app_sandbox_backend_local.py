@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from urllib.parse import urlparse
 from typing import Any, Dict
 
 from app.services.published_app_draft_dev_local_runtime import (
@@ -15,6 +16,29 @@ from app.services.published_app_sandbox_backend import (
 class LocalSandboxBackend(PublishedAppSandboxBackend):
     backend_name = "local"
     is_remote = False
+
+    @staticmethod
+    def _backend_metadata(*, preview_url: str | None, base_path: str, revision_token: str | None) -> Dict[str, Any]:
+        parsed = urlparse(str(preview_url or "").strip())
+        preview: Dict[str, Any] = {}
+        if parsed.scheme and parsed.netloc:
+            preview = {
+                "upstream_base_url": f"{parsed.scheme}://{parsed.netloc}".rstrip("/"),
+                "base_path": base_path,
+                "upstream_path": parsed.path or "/",
+            }
+        return {
+            "provider": "local",
+            "preview": preview,
+            "workspace": {
+                "revision_token": str(revision_token or "").strip() or None,
+            },
+            "preview_runtime": {
+                "mode": "vite_dev",
+                "workspace_revision_token": str(revision_token or "").strip() or None,
+                "last_error": None,
+            },
+        }
 
     @staticmethod
     def _manager():
@@ -52,7 +76,11 @@ class LocalSandboxBackend(PublishedAppSandboxBackend):
         except LocalDraftDevRuntimeError as exc:
             raise self._translate(exc) from exc
         payload["runtime_backend"] = self.backend_name
-        payload["backend_metadata"] = {}
+        payload["backend_metadata"] = self._backend_metadata(
+            preview_url=str(payload.get("preview_upstream_url") or payload.get("preview_url") or "").strip(),
+            base_path=preview_base_path,
+            revision_token=str(payload.get("revision_token") or "").strip() or None,
+        )
         return payload
 
     async def sync_session(
@@ -77,6 +105,11 @@ class LocalSandboxBackend(PublishedAppSandboxBackend):
         except LocalDraftDevRuntimeError as exc:
             raise self._translate(exc) from exc
         payload["runtime_backend"] = self.backend_name
+        payload["backend_metadata"] = self._backend_metadata(
+            preview_url=str(payload.get("preview_upstream_url") or "").strip(),
+            base_path=str(preview_base_path or "/"),
+            revision_token=str(payload.get("revision_token") or "").strip() or None,
+        )
         return payload
 
     async def heartbeat_session(self, *, sandbox_id: str, idle_timeout_seconds: int) -> Dict[str, Any]:
@@ -86,6 +119,11 @@ class LocalSandboxBackend(PublishedAppSandboxBackend):
         except LocalDraftDevRuntimeError as exc:
             raise self._translate(exc) from exc
         payload["runtime_backend"] = self.backend_name
+        payload["backend_metadata"] = self._backend_metadata(
+            preview_url=str(payload.get("preview_upstream_url") or "").strip(),
+            base_path=self.config.preview_proxy_base_path,
+            revision_token=str(payload.get("revision_token") or "").strip() or None,
+        )
         return payload
 
     async def stop_session(self, *, sandbox_id: str) -> Dict[str, Any]:

@@ -4,7 +4,7 @@ Last Updated: 2026-03-16
 
 ## Scope
 
-Track backend coverage for the direct-use artifact coding agent wrapper, session state, native conversation continuation, and function tool pack.
+Track backend coverage for the artifact-coding agent runtime across locked and standalone sessions, native conversation continuation, direct persistence, and function tool pack.
 
 ## Test Files Present
 
@@ -16,6 +16,10 @@ Track backend coverage for the direct-use artifact coding agent wrapper, session
 - lightweight seed-based draft initialization builds a canonical initial snapshot without falling back to a generic `agent_node`
 - relinking from `draft_key` to `artifact_id` without creating a second shared draft
 - scope-free architect-created sessions keep a stable direct `shared_draft_id` link and do not create a second shared draft on later resolution
+- standalone sessions persist `scope_mode=standalone` and expose it in serialized runtime/session state
+- standalone scope tools can search artifacts, open an existing artifact into the current session, and reset the session to a new draft
+- locked sessions reject standalone-only scope switching tools
+- `artifact-coding-persist-artifact` can create from an unbound standalone draft and relink the session to the canonical artifact
 - artifact coding agent profile includes explicit delegated-worker instructions and the canonical `BLOCKING QUESTION:` blocker prefix
 - helper-tool/session state export returns canonical `platform_assets_create_input` and `platform_assets_update_input`
 - saved artifact session hydration rebuilds the working snapshot from the canonical artifact row
@@ -55,8 +59,12 @@ Track backend coverage for the direct-use artifact coding agent wrapper, session
 - Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/platform_architect_workers/test_worker_runtime.py backend/tests/platform_architect_workers/test_architect_worker_integration.py backend/tests/artifact_coding_agent/test_runtime_service.py backend/tests/platform_architect_runtime/test_architect_seeding.py`
 - Date: 2026-03-16 00:37 EET
 - Result: PASS (`33 passed`)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/artifact_coding_agent/test_runtime_service.py backend/tests/platform_architect_runtime/test_architect_seeding.py backend/tests/platform_architect_workers/test_worker_runtime.py backend/tests/platform_architect_workers/test_architect_worker_integration.py`
+- Date: 2026-03-16 01:16 Asia/Hebron
+- Result: PASS (`38 passed`)
 
 ## Known Gaps
 
 - router prompt-run execution is still not covered in this feature directory
+- no backend integration test yet covers standalone playground session restoration through `chatSessionId`
 - no test yet asserts live artifact test-run reconciliation after a child run

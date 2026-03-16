@@ -137,6 +137,8 @@ async def seed_published_app(
     description: str | None = None,
     logo_url: str | None = None,
     auth_template_key: str = "auth-classic",
+    allowed_origins=None,
+    external_auth_oidc=None,
 ):
     app = PublishedApp(
         tenant_id=tenant_id,
@@ -149,6 +151,8 @@ async def seed_published_app(
         auth_enabled=auth_enabled,
         auth_providers=auth_providers or ["password"],
         auth_template_key=auth_template_key,
+        allowed_origins=list(allowed_origins or []),
+        external_auth_oidc=dict(external_auth_oidc) if external_auth_oidc else None,
         status=PublishedAppStatus.published,
         created_by=created_by,
         published_url=f"https://{slug}.apps.localhost",

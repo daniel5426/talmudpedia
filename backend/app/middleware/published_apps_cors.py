@@ -22,15 +22,17 @@ def _normalize_origin(origin: str) -> str:
 
 def _match_public_app_slug(path: str) -> Optional[str]:
     normalized = (path or "").strip()
-    if not normalized.startswith("/public/apps/"):
-        return None
-    suffix = normalized[len("/public/apps/") :]
-    if not suffix:
-        return None
-    slug = suffix.split("/", 1)[0].strip().lower()
-    if not slug or slug in {"preview", "resolve"}:
-        return None
-    return slug
+    for prefix in ("/public/apps/", "/public/external/apps/"):
+        if not normalized.startswith(prefix):
+            continue
+        suffix = normalized[len(prefix) :]
+        if not suffix:
+            return None
+        slug = suffix.split("/", 1)[0].strip().lower()
+        if prefix == "/public/apps/" and slug in {"preview", "resolve"}:
+            return None
+        return slug or None
+    return None
 
 
 class PublishedAppsCORSMiddleware(BaseHTTPMiddleware):

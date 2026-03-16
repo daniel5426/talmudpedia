@@ -54,14 +54,14 @@ Current continuation contract:
 - For binding-backed conversational workers, the binding/runtime prepares native session-history input and the orchestration kernel creates the continued child run with normal architect lineage.
 
 Important prompt boundary:
-- do not use raw `platform-governance` `orchestration.*` actions for worker delegation
-- use the dedicated architect worker tools instead
+- raw `orchestration.spawn_*` actions are not part of the architect-visible `platform-governance` contract
+- use the dedicated architect worker tools for worker delegation
 
 ## Domain Tool Boundaries
 - `platform-rag` -> `rag.*`
 - `platform-agents` -> `agents.*`
 - `platform-assets` -> `artifacts.*`, `tools.*`, `models.*`, `credentials.*`, `knowledge_stores.*`
-- `platform-governance` -> `auth.*`, `workload_security.*`, `orchestration.*`
+- `platform-governance` -> `auth.*`, `workload_security.*`, `orchestration.join`, `orchestration.cancel_subtree`, `orchestration.evaluate_and_replan`, `orchestration.query_tree`
 
 Cross-domain action usage through the wrong domain tool is denied with `SCOPE_DENIED`.
 
@@ -150,7 +150,8 @@ Current architect artifact flow:
 
 Important ownership boundary:
 - the child worker edits only the shared draft
-- worker-backed canonical artifact persistence now happens inside the architect worker binding runtime, not through model-authored `platform-assets` passthrough
+- for artifact-coding delegated work, the worker may now persist its own bound draft through `artifact-coding-persist-artifact` when the task explicitly requires create/save/update
+- architect-owned binding persistence remains available through `architect-worker-binding-persist-artifact`, but it is no longer the canonical artifact-coding completion path
 
 The architect should not author full `draft_snapshot` payloads for normal artifact creation.
 The backend now creates the canonical initial draft snapshot from the supplied `draft_seed`.
@@ -161,6 +162,7 @@ Continuation contract for artifact workers:
 - initial architect spawn also uses the artifact session's native `agent_thread_id`, so spawn and continuation share the same worker conversation thread
 - `orchestrator` turns remain visible in chat history and are not treated as user-authored turns
 - when the worker validates code through the artifact test runtime, the normal contract is `artifact-coding-run-test` once, then `artifact-coding-await-last-test-result`; repeated restart loops on queued Cloudflare test runs are no longer valid behavior
+- architect worker sessions use locked artifact-coding scope and cannot switch to another artifact from chat
 
 ## Removed Legacy Path
 
@@ -209,9 +211,9 @@ Recent live runs isolated the next unresolved problems:
 - The old `prepare -> spawn` binding-not-found failure is fixed.
   - Root cause was missing commits between separate mutating architect worker tool calls.
 
-- The delegated artifact worker mode is now explicit.
-  - The artifact coding agent profile instructs architect-spawned workers to complete `architect_worker_task` autonomously, not behave like a user-facing editor.
-  - When a worker is genuinely blocked, it emits a final response starting with `BLOCKING QUESTION:` so the orchestrator can treat the run as waiting for input.
+- The delegated artifact worker mode is now explicit, but live behavior is still inconsistent.
+  - The artifact coding agent profile instructs architect-spawned workers to complete `architect_worker_task` autonomously, persist their own draft when the task requires save/create/update, and avoid user-facing scope switching in locked sessions.
+  - Some live runs still show the worker behaving like a chatty editor instead of executing the delegated task directly.
 
 - Session-to-shared-draft resolution for fresh architect-created bindings is structurally weak.
   - Fixed by adding `ArtifactCodingSession.shared_draft_id` and migrating existing sessions onto canonical shared drafts.

@@ -110,6 +110,7 @@ class LocalDraftDevRuntimeManager:
                 return {
                     "sandbox_id": session_id,
                     "preview_url": self._preview_url(current.port, draft_dev_token),
+                    "preview_upstream_url": self._preview_upstream_url(current.port),
                     "status": "running",
                     "workspace_path": str(current.project_dir),
                     "revision_token": self._current_revision_token(current),
@@ -131,6 +132,7 @@ class LocalDraftDevRuntimeManager:
             return {
                 "sandbox_id": session_id,
                 "preview_url": self._preview_url(port, draft_dev_token),
+                "preview_upstream_url": self._preview_upstream_url(port),
                 "status": "running",
                 "workspace_path": str(project_dir),
                 "revision_token": "sandbox-seq-1",
@@ -178,6 +180,7 @@ class LocalDraftDevRuntimeManager:
                 "status": "running",
                 "sandbox_id": sandbox_id,
                 "revision_token": self._current_revision_token(state),
+                "preview_upstream_url": self._preview_upstream_url(state.port),
             }
 
     async def heartbeat_session(self, *, sandbox_id: str) -> Dict[str, str]:
@@ -185,7 +188,12 @@ class LocalDraftDevRuntimeManager:
             state = self._state.get(sandbox_id)
             if state is None or state.process.poll() is not None:
                 raise LocalDraftDevRuntimeError("Draft dev sandbox is not running")
-            return {"status": "running", "sandbox_id": sandbox_id}
+            return {
+                "status": "running",
+                "sandbox_id": sandbox_id,
+                "revision_token": self._current_revision_token(state),
+                "preview_upstream_url": self._preview_upstream_url(state.port),
+            }
 
     async def stop_session(self, *, sandbox_id: str) -> Dict[str, str]:
         async with self._lock:
@@ -830,6 +838,9 @@ class LocalDraftDevRuntimeManager:
     def _preview_url(self, port: int, draft_dev_token: str) -> str:
         return f"http://{self._host}:{port}/?draft_dev_token={draft_dev_token}"
 
+    def _preview_upstream_url(self, port: int) -> str:
+        return f"http://{self._host}:{port}/"
+
     def _stage_workspace_dir(self, *, project_dir: Path) -> Path:
         return project_dir / ".talmudpedia" / "stage" / "shared" / "workspace"
 
@@ -1062,8 +1073,6 @@ class LocalDraftDevRuntimeManager:
             "--port",
             str(port),
             "--strictPort",
-            "--base",
-            preview_base_path,
         ]
 
     async def _must_install_dependencies_locked(self, project_dir: Path, dependency_hash: str) -> bool:

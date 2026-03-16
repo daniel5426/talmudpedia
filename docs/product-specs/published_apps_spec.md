@@ -1,6 +1,6 @@
 # Published Apps Spec
 
-Last Updated: 2026-03-15
+Last Updated: 2026-03-16
 
 This document is the canonical product/specification overview for published apps.
 
@@ -52,16 +52,17 @@ The current product does not yet include:
 
 The current backend exposes these main published-app surfaces:
 - admin management and builder APIs under `/admin/apps`
-- public runtime and auth endpoints under `/public/apps`
+- preview runtime and discovery endpoints under `/public/apps`
+- external runtime/auth/history endpoints under `/public/external/apps`
 - hosted runtime/internal auth surface in `published_apps_host_runtime`
 - builder preview proxy/runtime flows for draft development and preview assets
 
 Notable current public/runtime routes include:
 - `/public/apps/{app_slug}/config`
-- `/public/apps/{app_slug}/runtime`
-- `/public/apps/{app_slug}/runtime/bootstrap`
-- `/public/apps/{app_slug}/chat/stream`
-- `/public/apps/{app_slug}/auth/*`
+- `/public/external/apps/{app_slug}/runtime/bootstrap`
+- `/public/external/apps/{app_slug}/chat/stream`
+- `/public/external/apps/{app_slug}/auth/*`
+- `/public/external/apps/{app_slug}/threads`
 - `/public/apps/preview/revisions/{revision_id}/runtime`
 - `/public/apps/preview/revisions/{revision_id}/runtime/bootstrap`
 - `/public/apps/preview/revisions/{revision_id}/chat/stream`
@@ -69,6 +70,8 @@ Notable current public/runtime routes include:
 Important current behavior verified in code:
 - source-UI mode has been removed
 - `/public/apps/{slug}/ui` returns `410 UI_SOURCE_MODE_REMOVED`
+- legacy path-mode published runtime/auth/chat endpoints under `/public/apps/{slug}/*` remain hard-cut and return `410`
+- externally hosted clients should use the dedicated `/public/external/apps/{slug}/*` runtime/auth/history surface
 - preview source-UI mode is also removed in favor of runtime/bootstrap flows
 
 ## Data Model Shape
@@ -93,6 +96,7 @@ Published apps also integrate with agent threads and chat history through app-sc
 - runtime reads and writes are filtered by app scope
 - preview runtime uses preview principals/tokens
 - app membership and account/session state enforce access for authenticated apps
+- external runtime is bearer/CORS oriented; host runtime is cookie/host-shell oriented
 
 ## Canonical Implementation References
 

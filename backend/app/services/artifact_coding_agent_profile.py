@@ -134,6 +134,7 @@ async def ensure_artifact_coding_agent_profile(
             status=AgentStatus.published,
             is_active=True,
             is_public=True,
+            show_in_playground=False,
         )
         db.add(agent)
         await db.flush()
@@ -147,6 +148,7 @@ async def ensure_artifact_coding_agent_profile(
         agent.status = AgentStatus.published
         agent.is_active = True
         agent.is_public = True
+        agent.show_in_playground = False
         await db.flush()
 
     await WorkloadProvisioningService(db).provision_agent_policy(

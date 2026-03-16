@@ -13,6 +13,39 @@ type PublicAuthResponse = {
   user: AuthUser;
 };
 
+type PublishedAppThreadSummary = {
+  id: string;
+  title: string | null;
+  status: string;
+  surface: string;
+  last_run_id?: string | null;
+  created_at: string;
+  updated_at: string;
+  last_activity_at: string;
+};
+
+type PublishedAppThreadDetail = PublishedAppThreadSummary & {
+  turns: Array<{
+    id: string;
+    run_id: string;
+    turn_index: number;
+    status: string;
+    user_input_text?: string | null;
+    assistant_output_text?: string | null;
+    usage_tokens: number;
+    created_at: string;
+    completed_at?: string | null;
+    metadata?: Record<string, unknown> | null;
+  }>;
+};
+
+type PublishedAppThreadListResponse = {
+  items: PublishedAppThreadSummary[];
+  total: number;
+  page: number;
+  pages: number;
+};
+
 type AuthClientOptions = {
   apiBaseUrl?: string;
   appSlug: string;
@@ -72,10 +105,18 @@ export function createPublishedAppAuthClient(options: AuthClientOptions) {
     return payload;
   };
 
+  const requireBearer = (token?: string): string => {
+    const bearer = token || options.tokenStore?.get();
+    if (!bearer) {
+      throw new Error("No auth token is available.");
+    }
+    return bearer;
+  };
+
   return {
     async signup(payload: PasswordSignupRequest): Promise<PublicAuthResponse> {
       return persistToken(
-        await request<PublicAuthResponse>(`/public/apps/${slug}/auth/signup`, {
+        await request<PublicAuthResponse>(`/public/external/apps/${slug}/auth/signup`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
@@ -85,7 +126,7 @@ export function createPublishedAppAuthClient(options: AuthClientOptions) {
 
     async login(payload: PasswordLoginRequest): Promise<PublicAuthResponse> {
       return persistToken(
-        await request<PublicAuthResponse>(`/public/apps/${slug}/auth/login`, {
+        await request<PublicAuthResponse>(`/public/external/apps/${slug}/auth/login`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
@@ -95,7 +136,7 @@ export function createPublishedAppAuthClient(options: AuthClientOptions) {
 
     async exchange(payload: ExchangeRequest): Promise<PublicAuthResponse> {
       return persistToken(
-        await request<PublicAuthResponse>(`/public/apps/${slug}/auth/exchange`, {
+        await request<PublicAuthResponse>(`/public/external/apps/${slug}/auth/exchange`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
@@ -104,23 +145,31 @@ export function createPublishedAppAuthClient(options: AuthClientOptions) {
     },
 
     async me(token?: string): Promise<AuthUser> {
-      const bearer = token || options.tokenStore?.get();
-      if (!bearer) {
-        throw new Error("No auth token is available.");
-      }
-      return request<AuthUser>(`/public/apps/${slug}/auth/me`, {
-        headers: { Authorization: `Bearer ${bearer}` },
+      return request<AuthUser>(`/public/external/apps/${slug}/auth/me`, {
+        headers: { Authorization: `Bearer ${requireBearer(token)}` },
+      });
+    },
+
+    async listThreads(params?: { skip?: number; limit?: number; token?: string }): Promise<PublishedAppThreadListResponse> {
+      const query = new URLSearchParams();
+      if (typeof params?.skip === "number") query.set("skip", String(params.skip));
+      if (typeof params?.limit === "number") query.set("limit", String(params.limit));
+      const suffix = query.toString() ? `?${query.toString()}` : "";
+      return request<PublishedAppThreadListResponse>(`/public/external/apps/${slug}/threads${suffix}`, {
+        headers: { Authorization: `Bearer ${requireBearer(params?.token)}` },
+      });
+    },
+
+    async getThread(threadId: string, token?: string): Promise<PublishedAppThreadDetail> {
+      return request<PublishedAppThreadDetail>(`/public/external/apps/${slug}/threads/${encodeURIComponent(threadId)}`, {
+        headers: { Authorization: `Bearer ${requireBearer(token)}` },
       });
     },
 
     async logout(token?: string): Promise<{ status: string }> {
-      const bearer = token || options.tokenStore?.get();
-      if (!bearer) {
-        throw new Error("No auth token is available.");
-      }
-      const payload = await request<{ status: string }>(`/public/apps/${slug}/auth/logout`, {
+      const payload = await request<{ status: string }>(`/public/external/apps/${slug}/auth/logout`, {
         method: "POST",
-        headers: { Authorization: `Bearer ${bearer}` },
+        headers: { Authorization: `Bearer ${requireBearer(token)}` },
       });
       options.tokenStore?.clear();
       return payload;
@@ -132,6 +181,9 @@ export type {
   AuthClientOptions,
   AuthUser,
   PublicAuthResponse,
+  PublishedAppThreadSummary,
+  PublishedAppThreadDetail,
+  PublishedAppThreadListResponse,
   ExchangeRequest,
   PasswordSignupRequest,
   PasswordLoginRequest,

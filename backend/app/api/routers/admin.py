@@ -13,6 +13,7 @@ from app.db.postgres.models.identity import User, OrgMembership
 from app.db.postgres.models.agent_threads import AgentThread, AgentThreadTurn
 from app.db.postgres.models.agents import AgentRun
 from app.core.scope_registry import is_platform_admin_role
+from app.services.thread_service import ThreadService
 from pydantic import BaseModel
 
 router = APIRouter()
@@ -419,19 +420,18 @@ async def get_thread_details(
         raise HTTPException(status_code=400, detail="Invalid thread ID")
 
     tenant_id = context["tenant_id"]
-    query = (
-        select(AgentThread)
-        .options(selectinload(AgentThread.turns))
-        .where(AgentThread.id == tid)
-        .limit(1)
+    service = ThreadService(db)
+    repaired = await service.repair_thread_turn_indices(thread_id=tid)
+    if repaired:
+        await db.commit()
+    thread = await service.get_thread_with_turns(
+        tenant_id=tenant_id,
+        thread_id=tid,
     )
-    if tenant_id:
-        query = query.where(AgentThread.tenant_id == tenant_id)
-    thread = (await db.execute(query)).scalar_one_or_none()
     if not thread:
         raise HTTPException(status_code=404, detail="Thread not found")
 
-    turns = sorted(list(thread.turns or []), key=lambda item: int(item.turn_index or 0))
+    turns = list(thread.turns or [])
     return {
         "id": str(thread.id),
         "title": thread.title,

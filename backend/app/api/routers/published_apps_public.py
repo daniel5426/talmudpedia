@@ -480,6 +480,7 @@ async def _stream_chat_for_app(
     allow_chat_persistence: bool,
     request_user_id: Optional[str] = None,
     extra_context: Optional[Dict[str, Any]] = None,
+    cleanup_transient_thread: bool = False,
 ) -> Response:
     if enforce_app_auth:
         if app.auth_enabled and principal is None:
@@ -562,6 +563,9 @@ async def _stream_chat_for_app(
 
     run_row = await db.get(AgentRun, run_id)
     thread_id_value = str(run_row.thread_id) if run_row and run_row.thread_id else None
+    cleanup_thread_ids: list[UUID] = []
+    if cleanup_transient_thread and run_row and run_row.thread_id:
+        cleanup_thread_ids.append(run_row.thread_id)
 
     async def event_generator():
         raw_stream = executor.run_and_stream(run_id, db, resume_payload=resume_payload, mode=ExecutionMode.PRODUCTION)
@@ -610,9 +614,15 @@ async def _stream_chat_for_app(
                 yield f"data: {json.dumps(envelope, default=str)}\n\n"
             else:
                 yield f"data: {json.dumps({'type': 'error', 'error': str(exc)})}\n\n"
+        finally:
+            if cleanup_thread_ids:
+                await ThreadService(db).delete_threads(
+                    tenant_id=app.tenant_id,
+                    thread_ids=cleanup_thread_ids,
+                )
 
     headers = {"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"}
-    if thread_id_value:
+    if thread_id_value and not cleanup_transient_thread:
         headers["X-Thread-ID"] = thread_id_value
     return StreamingResponse(event_generator(), media_type="text/event-stream", headers=headers)
 

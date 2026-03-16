@@ -142,7 +142,7 @@ async def test_binding_prepare_schema_accepts_lightweight_seed_and_rejects_old_s
             "draft_snapshot": {"files": {}},
         },
     )
-    assert any("not valid under any of the given schemas" in item["message"] for item in files_guess_errors)
+    assert any("must satisfy one of these field sets" in item["message"] for item in files_guess_errors)
 
     entrypoint_errors = validate_tool_input_schema(
         tool,
@@ -188,6 +188,59 @@ async def test_spawn_schema_allows_bound_worker_payload_with_explicit_worker_slu
     )
 
     assert errors == []
+
+
+@pytest.mark.asyncio
+async def test_spawn_schema_reports_missing_worker_agent_slug_or_binding_ref_explicitly(db_session):
+    tenant, user = await _seed_tenant_and_user(db_session)
+    await ensure_platform_architect_worker_tools(
+        db_session,
+        tenant_id=tenant.id,
+        actor_user_id=user.id,
+    )
+    await db_session.commit()
+    tool = await _get_tool_by_slug(db_session, "architect-worker-spawn")
+
+    errors = validate_tool_input_schema(
+        tool,
+        {
+            "objective": "Ask the architect which language to use.",
+            "timeout_s": 600,
+        },
+    )
+
+    assert errors == [
+        {
+            "path": "",
+            "message": (
+                "`input` must satisfy one of these field sets: "
+                "(`worker_agent_slug`, `objective`) or (`binding_ref`, `objective`). "
+                "Missing fields for matching branches: `worker_agent_slug` or `binding_ref`."
+            ),
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_spawn_schema_reports_objective_type_explicitly(db_session):
+    tenant, user = await _seed_tenant_and_user(db_session)
+    await ensure_platform_architect_worker_tools(
+        db_session,
+        tenant_id=tenant.id,
+        actor_user_id=user.id,
+    )
+    await db_session.commit()
+    tool = await _get_tool_by_slug(db_session, "architect-worker-spawn")
+
+    errors = validate_tool_input_schema(
+        tool,
+        {
+            "worker_agent_slug": "artifact-coding-agent",
+            "objective": {"title": "wrong"},
+        },
+    )
+
+    assert any(item["message"] == "`objective` must be string, got object." for item in errors)
 
 
 @pytest.mark.asyncio
@@ -350,7 +403,7 @@ def test_architect_graph_instructions_include_async_worker_flow():
     assert "architect-worker-binding-persist-artifact" in instructions
     assert "architect-worker-await" in instructions
     assert "architect-worker-respond" in instructions
-    assert "Do not call raw orchestration.* actions" in instructions
+    assert "platform-governance does not expose raw orchestration" in instructions
     assert "must not end the run after spawn/join alone" in instructions
     assert "Do not treat successful worker completion as task completion by itself" in instructions
     assert "Never burn tool iterations on repeated immediate architect-worker-get-run calls" in instructions

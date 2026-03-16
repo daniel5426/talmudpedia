@@ -63,4 +63,30 @@ describe("PreviewCanvas auth channel", () => {
       jest.useRealTimers();
     }
   });
+
+  it("keeps iframe src stable when only the preview auth token rotates", async () => {
+    const { rerender } = render(
+      <PreviewCanvas
+        previewUrl="https://preview.local/sandbox/session-1/"
+        previewAuthToken="preview-auth-token-1"
+        devStatus="running"
+        devError={null}
+      />,
+    );
+
+    const frame = await screen.findByTestId("preview-iframe");
+    const initialSrc = frame.getAttribute("src");
+    expect(initialSrc).toContain("runtime_token=preview-auth-token-1");
+
+    rerender(
+      <PreviewCanvas
+        previewUrl="https://preview.local/sandbox/session-1/"
+        previewAuthToken="preview-auth-token-2"
+        devStatus="running"
+        devError={null}
+      />,
+    );
+
+    expect(frame.getAttribute("src")).toBe(initialSrc);
+  });
 });

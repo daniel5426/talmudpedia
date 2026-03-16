@@ -1056,6 +1056,7 @@ from app.api.routers import internal_auth as internal_auth_router
 from app.api.routers import orchestration_internal as orchestration_internal_router
 from app.api.routers import workload_security as workload_security_router
 from app.api.routers import published_apps_admin as published_apps_admin_router
+from app.api.routers import published_apps_external_runtime as published_apps_external_runtime_router
 from app.api.routers import published_apps_public as published_apps_public_router
 from app.api.routers import published_apps_host_runtime as published_apps_host_runtime_router
 from app.api.routers import published_apps_builder_preview_proxy as published_apps_builder_preview_proxy_router
@@ -1080,6 +1081,7 @@ app.include_router(internal_auth_router.router)
 app.include_router(internal_auth_router.jwks_router)
 app.include_router(orchestration_internal_router.router)
 app.include_router(published_apps_admin_router.router)
+app.include_router(published_apps_external_runtime_router.router)
 app.include_router(published_apps_public_router.router)
 app.include_router(published_apps_host_runtime_router.router)
 app.include_router(published_apps_builder_preview_proxy_router.router)

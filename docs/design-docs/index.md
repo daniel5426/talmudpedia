@@ -1,6 +1,6 @@
 # Design Docs Index
 
-Last Updated: 2026-03-12
+Last Updated: 2026-03-16
 
 This section is for architecture and design documents that explain system shape, constraints, and tradeoffs.
 

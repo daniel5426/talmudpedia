@@ -50,19 +50,6 @@ _WORKSPACE_WRITE_TOOL_HINTS = (
 
 class PublishedAppCodingAgentRuntimeSandboxMixin:
     @staticmethod
-    def _preview_build_seq_from_metadata(metadata: object) -> int:
-        payload = metadata if isinstance(metadata, dict) else {}
-        preview_build = payload.get("preview_build") if isinstance(payload.get("preview_build"), dict) else {}
-        current = preview_build.get("current") if isinstance(preview_build.get("current"), dict) else {}
-        raw_value = current.get("build_seq")
-        if raw_value is None:
-            raw_value = preview_build.get("build_seq")
-        try:
-            return max(0, int(raw_value or 0))
-        except Exception:
-            return 0
-
-    @staticmethod
     def _normalize_workspace_path(path: str | None) -> str:
         return str(path or "").strip().rstrip("/")
 
@@ -189,7 +176,6 @@ class PublishedAppCodingAgentRuntimeSandboxMixin:
         context["preview_sandbox_id"] = sandbox_id
         context["preview_sandbox_status"] = status
         context["preview_sandbox_started_at"] = started_at
-        context["preview_build_baseline_seq"] = self._preview_build_seq_from_metadata(session.backend_metadata)
         context["preview_workspace_live_path"] = live_workspace_path or "/workspace"
         context["opencode_sandbox_id"] = sandbox_id
         context["opencode_workspace_path"] = live_workspace_path or "/workspace"
@@ -197,7 +183,6 @@ class PublishedAppCodingAgentRuntimeSandboxMixin:
             "preview_sandbox_id": sandbox_id,
             "preview_sandbox_status": status,
             "preview_sandbox_started_at": started_at,
-            "preview_build_baseline_seq": self._preview_build_seq_from_metadata(session.backend_metadata),
             "preview_workspace_live_path": live_workspace_path or "/workspace",
             "opencode_sandbox_id": sandbox_id,
             "opencode_workspace_path": live_workspace_path or "/workspace",

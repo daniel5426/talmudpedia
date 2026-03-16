@@ -226,6 +226,9 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
   }, [appId]);
 
   const syncCurrentRevisionFromDraftDevSession = useCallback((revisionId: string) => {
+    if (currentRevisionId) {
+      return;
+    }
     const normalizedRevisionId = revisionId.trim();
     if (!normalizedRevisionId) return;
     setCurrentRevisionId(normalizedRevisionId);
@@ -242,7 +245,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
         },
       };
     });
-  }, []);
+  }, [currentRevisionId]);
 
   const applyDraftDevSessionToBuilderState = useCallback((session: DraftDevSessionResponse | null) => {
     setState((prev) => {
@@ -348,12 +351,12 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     try {
       const response = await publishedAppsService.getBuilderState(appId);
       setState(response);
-      hydrateFromRevision(response.current_draft_revision);
+      setCurrentRevisionId(response.current_draft_revision?.id || null);
       hydrateFromBuilderSession(response.draft_dev);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to refresh builder state");
     }
-  }, [appId, hydrateFromBuilderSession, hydrateFromRevision]);
+  }, [appId, hydrateFromBuilderSession]);
 
   const {
     versions,

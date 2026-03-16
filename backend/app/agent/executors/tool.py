@@ -19,6 +19,7 @@ from sqlalchemy.exc import ProgrammingError
 from app.agent.execution.tool_input_contracts import (
     get_tool_input_schema,
     is_strict_tool_input,
+    summarize_validation_errors,
     validate_tool_input_schema,
 )
 from app.agent.executors.base import BaseNodeExecutor, ValidationResult
@@ -603,6 +604,7 @@ class ToolNodeExecutor(BaseNodeExecutor):
                 return {
                     "error": "Tool input validation failed",
                     "code": "TOOL_INPUT_VALIDATION_FAILED",
+                    "validation_summary": summarize_validation_errors(validation_errors),
                     "validation_errors": validation_errors,
                     "received_keys": sorted(str(key) for key in payload.keys()) if isinstance(payload, dict) else [],
                 }

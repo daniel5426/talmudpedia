@@ -62,6 +62,7 @@ export const PreviewCanvas = forwardRef<HTMLIFrameElement, PreviewCanvasProps>(
     const failSafeTimerRef = useRef<number | null>(null);
     const frameRef = useRef<HTMLIFrameElement | null>(null);
     const [isFrameVisible, setIsFrameVisible] = useState(false);
+    const [resolvedPreviewSrc, setResolvedPreviewSrc] = useState<string | null>(null);
 
     const clearTimers = useCallback(() => {
       if (revealTimerRef.current !== null) {
@@ -81,9 +82,39 @@ export const PreviewCanvas = forwardRef<HTMLIFrameElement, PreviewCanvasProps>(
     const hasSessionError = Boolean(devError);
     const canLoadFrame = (forceReady || isDraftDevServingStatus(devStatus)) && Boolean(previewUrl) && !hasFailed && !hasSessionError;
     const warmupMessage = String(loadingMessage || "").trim() || (isPending ? "Starting draft preview..." : "Warming preview sandbox...");
-    const previewSrc = canLoadFrame
-      ? appendRuntimeTokenToUrl(String(previewUrl || ""), previewAuthToken)
-      : null;
+    const previewSrc = canLoadFrame ? resolvedPreviewSrc : null;
+
+    useEffect(() => {
+      if (!canLoadFrame) {
+        setResolvedPreviewSrc(null);
+        return;
+      }
+      const nextBaseUrl = String(previewUrl || "").trim();
+      setResolvedPreviewSrc((current) => {
+        if (!nextBaseUrl) {
+          return null;
+        }
+        if (current) {
+          try {
+            const parsedCurrent = new URL(current);
+            const parsedNext = new URL(nextBaseUrl);
+            const currentRuntimeToken = parsedCurrent.searchParams.get("runtime_token");
+            parsedCurrent.searchParams.delete("runtime_token");
+            if (!currentRuntimeToken && String(previewAuthToken || "").trim()) {
+              return appendRuntimeTokenToUrl(nextBaseUrl, previewAuthToken);
+            }
+            if (parsedCurrent.toString() === parsedNext.toString()) {
+              return current;
+            }
+          } catch {
+            if (current.startsWith(nextBaseUrl)) {
+              return current;
+            }
+          }
+        }
+        return appendRuntimeTokenToUrl(nextBaseUrl, previewAuthToken);
+      });
+    }, [canLoadFrame, previewAuthToken, previewUrl]);
 
     const setFrameRef = useCallback(
       (node: HTMLIFrameElement | null) => {

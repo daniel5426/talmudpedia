@@ -23,6 +23,7 @@ backend/app/api/routers/sandbox_controller_dev_shim.py
 backend/app/api/routers/published_apps_builder_preview_proxy.py
 backend/app/api/routers/published_apps_admin_routes_coding_agent_v2.py
 backend/app/api/routers/published_apps_host_runtime.py
+backend/app/api/routers/published_apps_external_runtime.py
 backend/app/api/routers/agent_graph_mutations.py
 backend/app/api/routers/rag_graph_mutations.py
 backend/app/api/routers/rag_operator_contracts.py
@@ -124,6 +125,7 @@ backend/app/services/registry_seeding.py
 backend/app/services/artifact_coding_chat_history_service.py
 backend/app/services/artifact_coding_shared_draft_service.py
 backend/app/services/artifact_coding_agent_tools.py
+backend/app/services/artifact_coding_agent_scope_tools.py
 backend/app/services/artifact_coding_agent_test_tools.py
 backend/app/services/artifact_coding_agent_profile.py
 backend/app/services/artifact_coding_runtime_service.py
@@ -182,9 +184,8 @@ backend/app/services/published_app_sandbox_backend_e2b.py
 backend/app/services/published_app_draft_dev_runtime.py
 backend/app/services/published_app_draft_dev_local_runtime.py
 backend/app/services/published_app_draft_dev_runtime_client.py
+backend/app/services/published_app_draft_revision_materializer.py
 backend/app/services/published_app_draft_dev_patching.py
-backend/app/services/published_app_preview_builds.py
-backend/app/services/published_app_preview_runtime_scripts.py
 backend/app/services/published_app_coding_chat_history_service.py
 backend/app/services/published_app_coding_agent_tools.py
 backend/app/services/published_app_agent_integration_contract.py

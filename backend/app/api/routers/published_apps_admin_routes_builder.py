@@ -1,5 +1,4 @@
 import os
-from contextlib import suppress
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
@@ -192,25 +191,15 @@ async def get_builder_state(
     app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
     actor_id = ctx["user"].id if ctx["user"] else None
 
-    draft = await _ensure_current_draft_revision(db, app, actor_id)
+    draft = await _get_revision(db, app.current_draft_revision_id)
     published = await _get_revision(db, app.current_published_revision_id)
     draft_dev_session: Optional[PublishedAppDraftDevSession] = None
     if actor_id:
-        runtime_service = PublishedAppDraftDevRuntimeService(db)
-        await runtime_service.expire_idle_sessions(app_id=app.id, user_id=actor_id)
         draft_dev_session = await _get_draft_dev_session_for_scope(
             db,
             app_id=app.id,
             user_id=actor_id,
         )
-        if (
-            draft_dev_session is not None
-            and runtime_service._is_session_serving_status(draft_dev_session.status)
-        ):
-            with suppress(PublishedAppDraftDevRuntimeDisabled, Exception):
-                draft_dev_session = await runtime_service.heartbeat_session(session=draft_dev_session)
-    await db.commit()
-    await db.refresh(app)
 
     preview_token: Optional[str] = None
     if actor_id and draft:
@@ -396,22 +385,70 @@ async def sync_builder_draft_dev_session(
     app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
     await _assert_no_active_coding_run_for_scope(db=db, app_id=app.id, user_id=actor.id)
     draft = await _ensure_current_draft_revision(db, app, actor.id)
-    files = _coerce_files_payload(payload.files)
-    entry_file = _normalize_builder_path(payload.entry_file or draft.entry_file)
-    _assert_builder_path_allowed(entry_file, field="entry_file")
-    _validate_builder_project_or_raise(files, entry_file)
 
     runtime_service = PublishedAppDraftDevRuntimeService(db)
-    try:
-        session = await runtime_service.sync_session(
-            app=app,
-            revision=draft,
-            user_id=actor.id,
-            files=files,
-            entry_file=entry_file,
+    session = await _get_draft_dev_session_for_scope(db, app_id=app.id, user_id=actor.id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Draft dev session not found")
+
+    if payload.operations:
+        sandbox_id = str(session.sandbox_id or "").strip()
+        if not sandbox_id:
+            raise HTTPException(status_code=409, detail="Draft dev session sandbox is unavailable")
+        revision_token = None
+        for operation in payload.operations:
+            if operation.op == "upsert_file" and operation.path:
+                normalized_path = _normalize_builder_path(operation.path)
+                _assert_builder_path_allowed(normalized_path, field="operations.path")
+                result = await runtime_service.client.write_file(
+                    sandbox_id=sandbox_id,
+                    path=normalized_path,
+                    content=operation.content or "",
+                )
+            elif operation.op == "delete_file" and operation.path:
+                normalized_path = _normalize_builder_path(operation.path)
+                _assert_builder_path_allowed(normalized_path, field="operations.path")
+                result = await runtime_service.client.delete_file(
+                    sandbox_id=sandbox_id,
+                    path=normalized_path,
+                )
+            elif operation.op == "rename_file" and operation.from_path and operation.to_path:
+                from_path = _normalize_builder_path(operation.from_path)
+                to_path = _normalize_builder_path(operation.to_path)
+                _assert_builder_path_allowed(from_path, field="operations.from_path")
+                _assert_builder_path_allowed(to_path, field="operations.to_path")
+                result = await runtime_service.client.rename_file(
+                    sandbox_id=sandbox_id,
+                    from_path=from_path,
+                    to_path=to_path,
+                )
+            elif operation.op == "set_entry_file" and operation.entry_file:
+                normalized_entry_file = _normalize_builder_path(operation.entry_file)
+                _assert_builder_path_allowed(normalized_entry_file, field="operations.entry_file")
+                continue
+            else:
+                continue
+            revision_token = str(result.get("revision_token") or "").strip() or revision_token
+
+        session = await runtime_service.record_live_workspace_revision_token(
+            session=session,
+            revision_token=revision_token,
         )
-    except PublishedAppDraftDevRuntimeDisabled as exc:
-        raise HTTPException(status_code=409, detail=str(exc))
+    else:
+        files = _coerce_files_payload(payload.files or {})
+        entry_file = _normalize_builder_path(payload.entry_file or draft.entry_file)
+        _assert_builder_path_allowed(entry_file, field="entry_file")
+        _validate_builder_project_or_raise(files, entry_file)
+        try:
+            session = await runtime_service.sync_session(
+                app=app,
+                revision=draft,
+                user_id=actor.id,
+                files=files,
+                entry_file=entry_file,
+            )
+        except PublishedAppDraftDevRuntimeDisabled as exc:
+            raise HTTPException(status_code=409, detail=str(exc))
 
     await db.commit()
     return await _decorate_draft_dev_session_response(

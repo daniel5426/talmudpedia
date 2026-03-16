@@ -353,11 +353,7 @@ class DraftDevSessionResponse(BaseModel):
     preview_url: Optional[str] = None
     preview_auth_token: Optional[str] = None
     preview_auth_expires_at: Optional[datetime] = None
-    preview_build_status: Optional[str] = None
-    preview_build_error: Optional[str] = None
-    preview_build_seq: int = 0
-    current_preview_build_id: Optional[str] = None
-    current_preview_built_at: Optional[datetime] = None
+    workspace_revision_token: Optional[str] = None
     expires_at: Optional[datetime] = None
     idle_timeout_seconds: int = 180
     last_activity_at: Optional[datetime] = None
@@ -365,8 +361,9 @@ class DraftDevSessionResponse(BaseModel):
 
 
 class DraftDevSyncRequest(BaseModel):
-    files: Dict[str, str]
-    entry_file: str
+    files: Optional[Dict[str, str]] = None
+    entry_file: Optional[str] = None
+    operations: List[BuilderPatchOp] = Field(default_factory=list)
     revision_id: Optional[UUID] = None
 
 
@@ -486,19 +483,6 @@ def _apps_url_port() -> str:
 
 def _build_published_url(slug: str) -> str:
     return f"{_apps_url_scheme()}://{slug}.{_apps_base_domain()}{_apps_url_port()}"
-
-
-def _parse_preview_build_datetime(value: object) -> Optional[datetime]:
-    text = str(value or "").strip()
-    if not text:
-        return None
-    try:
-        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
-    except Exception:
-        return None
-    if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
 
 
 def _slugify(value: str) -> str:
@@ -726,7 +710,12 @@ def _draft_dev_session_to_response(
 ) -> DraftDevSessionResponse:
     normalized_active_count = max(0, int(active_coding_run_count or 0))
     backend_metadata = dict(session.backend_metadata or {}) if isinstance(session.backend_metadata, dict) else {}
-    preview_build = backend_metadata.get("preview_build") if isinstance(backend_metadata.get("preview_build"), dict) else {}
+    preview_runtime = (
+        backend_metadata.get("preview_runtime")
+        if isinstance(backend_metadata.get("preview_runtime"), dict)
+        else {}
+    )
+    workspace = backend_metadata.get("workspace") if isinstance(backend_metadata.get("workspace"), dict) else {}
     return DraftDevSessionResponse(
         session_id=str(session.id),
         app_id=str(session.published_app_id),
@@ -736,11 +725,10 @@ def _draft_dev_session_to_response(
         has_active_coding_runs=normalized_active_count > 0,
         active_coding_run_count=normalized_active_count,
         preview_url=session.preview_url,
-        preview_build_status=str(preview_build.get("status") or "").strip() or None,
-        preview_build_error=str(preview_build.get("last_error") or "").strip() or None,
-        preview_build_seq=max(0, int(preview_build.get("build_seq") or 0)),
-        current_preview_build_id=str(preview_build.get("build_id") or "").strip() or None,
-        current_preview_built_at=_parse_preview_build_datetime(preview_build.get("built_at")),
+        workspace_revision_token=(
+            str(preview_runtime.get("workspace_revision_token") or workspace.get("revision_token") or "").strip()
+            or None
+        ),
         expires_at=session.expires_at,
         idle_timeout_seconds=int(session.idle_timeout_seconds or 180),
         last_activity_at=session.last_activity_at,

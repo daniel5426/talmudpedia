@@ -11,12 +11,15 @@ Apps Builder covers draft editing, preview runtime, coding-agent execution, revi
 ## Current Model
 
 - Draft mode uses one shared draft-dev workspace per app with per-user attachment sessions.
-- Preview serves the latest successful preview-build snapshot instead of raw live modules.
-- Sprite preview builds use polling-based watch detection so out-of-process workspace writes from coding-agent and manual edits reliably trigger rebuilds.
-- Coding-agent runs execute against the canonical shared workspace watched by the preview runtime.
-- Manual code edits save through the draft-dev workspace, then materialize a new draft revision from the resulting preview build so the builder lands in the same revisioned state as a completed coding-agent edit.
+- Preview is a live Vite dev server running directly against the shared draft-dev workspace.
+- Sprite preview uses Vite watch polling, not a custom preview-build snapshot watcher.
+- Coding-agent runs execute against the canonical shared workspace watched by the Vite preview runtime.
+- Live manual code edits are applied incrementally into the shared draft-dev workspace instead of full-workspace resyncs on every debounce.
+- Manual code edits save through the draft-dev workspace, then materialize a durable draft revision by running a one-shot production build from the current live workspace into an isolated ignored output directory.
 - Published runtime remains static artifact delivery.
-- Publish reuses or materializes the currently visible successful preview-build snapshot.
+- Completed write-producing coding-agent runs materialize a durable draft revision from the current workspace state through the same one-shot build path.
+- Revision materialization updates draft revision pointers without reattaching the live draft-dev session to the saved revision snapshot.
+- Publish only flips `current_published_revision_id` to an already materialized revision; it does not build or create a new revision.
 - The previous template catalog was removed, but the repo now includes a new starter pack at `backend/app/templates/published_apps/classic-chat/`.
 - Template infrastructure remains active in backend services and app metadata, and the system is moving toward a single canonical starter rather than a broad multi-template catalog.
 
@@ -34,6 +37,7 @@ Apps Builder covers draft editing, preview runtime, coding-agent execution, revi
   - `backend/app/services/published_app_draft_dev_runtime.py`
   - `backend/app/services/published_app_draft_dev_runtime_client.py`
   - `backend/app/services/published_app_draft_dev_local_runtime.py`
+  - `backend/app/services/published_app_draft_revision_materializer.py`
 - Coding-agent runtime:
   - `backend/app/services/published_app_coding_agent_runtime.py`
   - `backend/app/services/published_app_coding_agent_runtime_streaming.py`
@@ -63,6 +67,8 @@ Apps Builder covers draft editing, preview runtime, coding-agent execution, revi
   - `DELETE /admin/apps/{app_id}/builder/draft-dev/session`
 - Draft preview responses carry off-URL auth fields such as `preview_auth_token`.
 - Preview/runtime URLs use explicit runtime query context such as `runtime_mode`, `runtime_base_path`, and `runtime_token`.
+- The preview iframe is expected to keep a stable URL across routine auth-token refreshes; token rotation should not force full iframe reloads.
+- Draft preview session responses now expose `workspace_revision_token` instead of preview-build ids/sequences.
 - Coding-agent APIs live under `/admin/apps/{app_id}/coding-agent/v2/*`.
 - Version preview inspection lives at `GET /admin/apps/{app_id}/versions/{version_id}/preview-runtime`.
 - Publish job status lives at `GET /admin/apps/{app_id}/publish/jobs/{job_id}`.
@@ -82,6 +88,12 @@ Apps Builder covers draft editing, preview runtime, coding-agent execution, revi
 - `docs/product-specs/runtime_sdk_host_anywhere_spec.md`
 - `docs/design-docs/coding_agent_runtime_current.md`
 - `docs/references/classic_chat_template_reference.md`
+
+## Runtime Surface Note
+
+- Builder-hosted and published same-origin runtime continues to use the host runtime/auth shell model.
+- Host-anywhere published clients now use the separate external runtime surface under `/public/external/apps/{slug}/*`.
+- Both surfaces share the same underlying published-app runtime execution core and stream contract.
 
 ## Legacy Detail
 

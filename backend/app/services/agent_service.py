@@ -33,6 +33,7 @@ class CreateAgentData:
     execution_constraints: Optional[dict] = None
     workload_scope_profile: Optional[str] = "default_agent_run"
     workload_scope_overrides: Optional[List[str]] = None
+    show_in_playground: bool = True
 
 @dataclass
 class UpdateAgentData:
@@ -43,6 +44,7 @@ class UpdateAgentData:
     execution_constraints: Optional[dict] = None
     workload_scope_profile: Optional[str] = None
     workload_scope_overrides: Optional[List[str]] = None
+    show_in_playground: Optional[bool] = None
 
 @dataclass
 class ExecuteAgentData:
@@ -356,6 +358,7 @@ class AgentService:
                     Agent.published_at,
                     Agent.is_active,
                     Agent.is_public,
+                    Agent.show_in_playground,
                     Agent.workload_scope_profile,
                     Agent.workload_scope_overrides,
                 )
@@ -410,6 +413,7 @@ class AgentService:
             execution_constraints=data.execution_constraints or {},
             workload_scope_profile=(data.workload_scope_profile or "default_agent_run"),
             workload_scope_overrides=list(data.workload_scope_overrides or []),
+            show_in_playground=bool(data.show_in_playground),
             created_by=user_id,
         )
         self.db.add(agent)
@@ -447,6 +451,8 @@ class AgentService:
             agent.workload_scope_profile = data.workload_scope_profile
         if data.workload_scope_overrides is not None:
             agent.workload_scope_overrides = list(data.workload_scope_overrides)
+        if data.show_in_playground is not None:
+            agent.show_in_playground = bool(data.show_in_playground)
 
         await WorkloadProvisioningService(self.db).provision_agent_policy(
             agent=agent,

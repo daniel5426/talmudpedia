@@ -28,7 +28,7 @@ The architect now receives these dedicated tools:
 - `architect-worker-join`
 - `architect-worker-cancel`
 
-These tools are the architect’s orchestration surface. The architect should not use raw `platform-governance` `orchestration.*` actions for worker delegation.
+These tools are the architect’s worker-spawn surface. Raw `orchestration.spawn_*` actions are intentionally not exposed through the architect-visible `platform-governance` contract.
 
 Current waiting contract:
 - `architect-worker-get-run` is snapshot/debug only
@@ -86,13 +86,15 @@ Current artifact flow:
 3. The spawned child run uses the artifact session's native `agent_thread_id` from the first spawn and is bound to the artifact session via child context, including the artifact-coding surface marker.
 4. The architect waits through `architect-worker-await` or inspects through `architect-worker-get-run`.
 5. If more edits are needed from the same worker, the architect continues the same worker conversation with `architect-worker-respond`, then waits again on the continued child run.
-6. Only after the latest child run is terminal and accepted does the architect persist the binding server-side with `architect-worker-binding-persist-artifact`.
-7. The architect may optionally call `architect-worker-binding-get-state` for inspection/debug/export.
-8. The architect may optionally call `artifacts.create_test_run` and `artifacts.publish` subject to existing draft-first/publish-intent rules.
+6. If the task requires create/save/update, the artifact-coding worker may persist its own bound draft through `artifact-coding-persist-artifact`.
+7. `architect-worker-binding-persist-artifact` remains available as an architect-owned persistence/recovery tool, but it is no longer the canonical persistence step for artifact-coding delegated work.
+8. The architect may optionally call `architect-worker-binding-get-state` for inspection/debug/export.
+9. The architect may optionally call `artifacts.publish` subject to existing draft-first/publish-intent rules.
 
 Important boundary:
 - the worker edits only the shared draft
-- canonical artifact persistence for worker-backed artifact drafts now happens inside the binding runtime, not through model-authored `platform-assets` passthrough
+- artifact-coding workers may now also persist the current bound draft directly through the artifact-coding runtime
+- architect-owned binding persistence remains server-side and runtime-owned when used
 - binding-backed conversational worker continuation now uses binding-prepared native session history plus a kernel-owned child run, not a session-owned run or a synthetic child run with `messages=[]`
 
 The backend now owns initial draft construction for the normal create path:
@@ -102,6 +104,7 @@ The backend now owns initial draft construction for the normal create path:
 
 Artifact session contract:
 - `ArtifactCodingSession` now directly references its canonical shared draft through `shared_draft_id`
+- `ArtifactCodingSession.scope_mode` is `locked` for architect worker sessions
 - artifact worker tools resolve draft state through that direct session link, not by re-deriving draft ownership from nullable scope
 - architect child-run context now includes `artifact_coding_shared_draft_id` so worker resolution can fail fast on mismatched draft state
 - artifact worker verification now distinguishes structural create/update readiness from latest test-run state through a separate `verification_state` payload in binding/session state
@@ -207,9 +210,9 @@ The latest live runs exposed several root-cause gaps that are not yet resolved:
   - Root cause was transaction visibility across separate tool-call DB sessions.
   - The fix was to commit successful mutating architect worker tools before returning.
 
-- The artifact worker delegated-mode gap is fixed.
-  - The artifact coding agent profile now instructs delegated workers to complete `architect_worker_task` autonomously from the current shared draft.
-  - When a delegated worker is genuinely blocked, it emits a final response beginning with `BLOCKING QUESTION:` so the orchestrator can detect the waiting state reliably.
+- The artifact worker delegated-mode gap is partially improved but not fully solved.
+  - The artifact coding agent profile now instructs delegated workers to complete `architect_worker_task` autonomously from the current shared draft and to use the artifact-coding runtime directly for create/update persistence when required.
+  - Some live runs still show the worker falling back to chatty editor behavior instead of executing the requested mutations.
 
 - The session/shared-draft drift bug is fixed.
   - Root cause was indirect session-to-draft resolution through nullable `artifact_id` / `draft_key`.

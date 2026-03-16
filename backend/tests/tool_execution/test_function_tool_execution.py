@@ -388,6 +388,8 @@ async def test_strict_function_tool_rejects_missing_required_field_before_dispat
 
     assert captured["called"] is False
     assert result["context"]["code"] == "TOOL_INPUT_VALIDATION_FAILED"
+    assert "Missing required field `objective`." in result["context"]["validation_summary"]
+    assert "Unexpected field `args`." in result["context"]["validation_summary"]
     assert any("objective" in item["message"] for item in result["context"]["validation_errors"])
 
 
@@ -433,7 +435,54 @@ async def test_strict_function_tool_rejects_unknown_fields_before_dispatch(monke
 
     assert captured["called"] is False
     assert result["context"]["code"] == "TOOL_INPUT_VALIDATION_FAILED"
-    assert any("Additional properties are not allowed" in item["message"] for item in result["context"]["validation_errors"])
+    assert "Unexpected field `args`." in result["context"]["validation_summary"]
+    assert any("Unexpected field `args`." in item["message"] for item in result["context"]["validation_errors"])
+
+
+@pytest.mark.asyncio
+async def test_strict_function_tool_rejects_wrong_type_with_explicit_message(monkeypatch):
+    captured = {"called": False}
+
+    @register_tool_function("unit_test_strict_type")
+    def unit_test_strict_type(payload):
+        captured["called"] = True
+        return {"ok": True, "payload": payload}
+
+    tool_id = uuid4()
+    config_schema = {
+        "implementation": {"type": "function", "function_name": "unit_test_strict_type"},
+        "execution": {"strict_input_schema": True},
+    }
+    tool = make_tool(
+        tool_id,
+        config_schema,
+        schema={
+            "input": {
+                "type": "object",
+                "properties": {"objective": {"type": "string"}},
+                "required": ["objective"],
+                "additionalProperties": False,
+            }
+        },
+    )
+    db = FakeDB(tool)
+    executor = ToolNodeExecutor(tenant_id=None, db=db)
+
+    async def has_columns(_self):
+        return True
+
+    monkeypatch.setattr(ToolNodeExecutor, "_has_artifact_columns", has_columns)
+
+    result = await executor.execute(
+        {"context": {"run_id": "run-1", "args": {"objective": {"title": "wrong"}}}},
+        {"tool_id": str(tool_id)},
+        {"node_id": "tool-node"},
+    )
+
+    assert captured["called"] is False
+    assert result["context"]["code"] == "TOOL_INPUT_VALIDATION_FAILED"
+    assert "Unexpected field `args`." in result["context"]["validation_summary"]
+    assert any("Missing required field `objective`." in item["message"] for item in result["context"]["validation_errors"])
 
 
 @pytest.mark.asyncio

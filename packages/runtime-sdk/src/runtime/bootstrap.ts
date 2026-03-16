@@ -17,7 +17,7 @@ function resolveBootstrapPath(request: RuntimeBootstrapRequest): string {
     return `/public/apps/preview/revisions/${encodeURIComponent(request.revisionId)}/runtime/bootstrap`;
   }
   if (request.appSlug) {
-    return `/public/apps/${encodeURIComponent(request.appSlug)}/runtime/bootstrap`;
+    return `/public/external/apps/${encodeURIComponent(request.appSlug)}/runtime/bootstrap`;
   }
   throw new Error("Runtime bootstrap requires appSlug or revisionId.");
 }
