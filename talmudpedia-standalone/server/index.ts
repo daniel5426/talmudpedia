@@ -6,7 +6,8 @@ import { fileURLToPath } from "node:url";
 import { EmbeddedAgentClient, EmbeddedAgentSDKError } from "@agents24/embed-sdk";
 
 import { loadEnv } from "./env.js";
-import { clearSession, ensureSession } from "./session.js";
+import { createPricoDemoRouter } from "./prico-demo/router.js";
+import { clearSession, ensureSession, setSelectedClient } from "./session.js";
 
 const env = loadEnv();
 const app = express();
@@ -54,10 +55,28 @@ app.get("/api/session", (req, res) => {
   res.json(getSession(req, res));
 });
 
+app.patch("/api/session/client", (req, res) => {
+  const requestedClientId = String(req.body?.clientId || "").trim();
+  const session = getSession(req, res);
+  const matchedClient = session.availableClients.find((client) => client.id === requestedClientId);
+  if (!matchedClient) {
+    res.status(400).json({ error: "clientId must match one of the demo clients." });
+    return;
+  }
+
+  setSelectedClient(res, matchedClient.id);
+  res.json({
+    ...session,
+    selectedClientId: matchedClient.id,
+  });
+});
+
 app.delete("/api/session", (_req, res) => {
   clearSession(res);
   res.status(204).end();
 });
+
+app.use("/api/prico-tools", createPricoDemoRouter());
 
 app.get("/api/agent/threads", async (req, res) => {
   try {
@@ -91,11 +110,24 @@ app.post("/api/agent/chat/stream", async (req, res) => {
   const session = getSession(req, res);
   const input = String(req.body?.input || "").trim();
   const threadId = String(req.body?.threadId || "").trim() || undefined;
+  const requestedClientId = String(req.body?.clientId || session.selectedClientId || "").trim();
 
   if (!input) {
     res.status(400).json({ error: "input is required" });
     return;
   }
+  if (!requestedClientId) {
+    res.status(400).json({ error: "clientId is required" });
+    return;
+  }
+
+  const matchedClient = session.availableClients.find((client) => client.id === requestedClientId);
+  if (!matchedClient) {
+    res.status(400).json({ error: "clientId must match one of the demo clients." });
+    return;
+  }
+
+  setSelectedClient(res, matchedClient.id);
 
   try {
     const upstreamResponse = await fetch(
@@ -109,8 +141,24 @@ app.post("/api/agent/chat/stream", async (req, res) => {
         },
         body: JSON.stringify({
           input,
+          messages: [
+            {
+              role: "system",
+              content:
+                `Selected demo client context: client_id=${matchedClient.id}; ` +
+                `client_name=${matchedClient.name}; sector=${matchedClient.sector}; ` +
+                `base_currency=${matchedClient.baseCurrency}. ` +
+                "Treat this as authoritative client scope for the current turn unless the user explicitly asks to switch clients.",
+            },
+          ],
           thread_id: threadId,
           external_user_id: session.userId,
+          metadata: {
+            client_id: matchedClient.id,
+            client_name: matchedClient.name,
+            sector: matchedClient.sector,
+            base_currency: matchedClient.baseCurrency,
+          },
         }),
       },
     );

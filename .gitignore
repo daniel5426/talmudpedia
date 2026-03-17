@@ -34,9 +34,12 @@ backend/app/templates/published_apps/*/dist/
 talmudpedia-standalone/dist/
 talmudpedia-standalone/server-dist/
 talmudpedia-standalone/node_modules/
+talmudpedia-standalone/docs/
+packages/embed-sdk/*.tgz
 
 # misc
 */.DS_Store
+**/.DS_Store
 .claude/
 *.pem
 *.pyc

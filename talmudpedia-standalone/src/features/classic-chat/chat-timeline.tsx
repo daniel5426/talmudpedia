@@ -53,6 +53,7 @@ import type {
 type ChatTimelineProps = {
   copiedMessageId: string | null;
   dislikedMessageIds: Record<string, boolean>;
+  errorMessage?: string | null;
   inputValue: string;
   isResponding: boolean;
   likedMessageIds: Record<string, boolean>;
@@ -157,6 +158,7 @@ function renderBlock(block: TemplateRenderBlock) {
 export function ChatTimeline({
   copiedMessageId,
   dislikedMessageIds,
+  errorMessage,
   inputValue,
   isResponding,
   likedMessageIds,
@@ -275,6 +277,7 @@ export function ChatTimeline({
           <div className="pointer-events-auto">
             <BotInputArea
               compact
+              errorMessage={errorMessage}
               inputValue={inputValue}
               isLoading={isResponding}
               onInputValueChange={onInputValueChange}

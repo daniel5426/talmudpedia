@@ -6,6 +6,7 @@ import {
 import { BotInputArea } from "./bot-input-area";
 
 type ChatEmptyStateProps = {
+  errorMessage?: string | null;
   inputValue: string;
   isResponding: boolean;
   onInputValueChange: (value: string) => void;
@@ -14,6 +15,7 @@ type ChatEmptyStateProps = {
 };
 
 export function ChatEmptyState({
+  errorMessage,
   inputValue,
   isResponding,
   onInputValueChange,
@@ -28,6 +30,7 @@ export function ChatEmptyState({
         </p>
 
         <BotInputArea
+          errorMessage={errorMessage}
           inputValue={inputValue}
           isLoading={isResponding}
           onInputValueChange={onInputValueChange}

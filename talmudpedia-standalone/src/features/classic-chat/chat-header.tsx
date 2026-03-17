@@ -1,14 +1,35 @@
 import { Moon, Search, Sun } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { useTheme } from "@/components/theme-provider";
 import { cn } from "@/lib/utils";
 
 type ChatHeaderProps = {
   isScrolled: boolean;
+  isLoadingClients: boolean;
+  onSelectedClientChange: (clientId: string) => void;
+  selectedClientId: string | null;
+  clients: Array<{
+    id: string;
+    name: string;
+    sector: string;
+  }>;
 };
 
-export function ChatHeader({ isScrolled }: ChatHeaderProps) {
+export function ChatHeader({
+  isScrolled,
+  isLoadingClients,
+  onSelectedClientChange,
+  selectedClientId,
+  clients,
+}: ChatHeaderProps) {
   const { theme, setTheme } = useTheme();
 
   const toggleTheme = () => {
@@ -24,6 +45,23 @@ export function ChatHeader({ isScrolled }: ChatHeaderProps) {
       )}
     >
       <div className="flex h-12 items-center justify-end gap-1 px-3">
+        <Select
+          disabled={isLoadingClients || clients.length === 0}
+          onValueChange={onSelectedClientChange}
+          value={selectedClientId || undefined}
+        >
+          <SelectTrigger className="w-[220px] justify-between">
+            <SelectValue placeholder="Select demo client" />
+          </SelectTrigger>
+          <SelectContent align="end">
+            {clients.map((client) => (
+              <SelectItem key={client.id} value={client.id}>
+                {client.name} ({client.id})
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
         <Button
           variant="ghost"
           size="icon"

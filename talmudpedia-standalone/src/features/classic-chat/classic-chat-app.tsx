@@ -6,10 +6,12 @@ import { ChatEmptyState } from "./chat-empty-state";
 import { ChatHeader } from "./chat-header";
 import { ChatSidebar } from "./chat-sidebar";
 import { ChatTimeline } from "./chat-timeline";
+import { useSession } from "./session-context";
 import { useClassicChatState } from "./use-classic-chat-state";
 
 export function ClassicChatApp() {
   const [isAtTop, setIsAtTop] = useState(true);
+  const { isLoading: isLoadingSession, session, setSelectedClientId } = useSession();
   const {
     activeThread,
     activeThreadId,
@@ -25,6 +27,7 @@ export function ClassicChatApp() {
     retryAssistantMessage,
     setActiveThreadId,
     setInputValue,
+    submitError,
     submitMessage,
     threads,
     toggleDislike,
@@ -50,13 +53,26 @@ export function ClassicChatApp() {
 
       <SidebarInset className="min-h-0 bg-transparent overflow-hidden">
         <div className="flex h-full flex-col overflow-hidden">
-          <ChatHeader isScrolled={!isAtTop && hasMessages} />
+          <ChatHeader
+            clients={(session?.availableClients || []).map((client) => ({
+              id: client.id,
+              name: client.name,
+              sector: client.sector,
+            }))}
+            isLoadingClients={isLoadingSession}
+            isScrolled={!isAtTop && hasMessages}
+            onSelectedClientChange={(clientId) => {
+              void setSelectedClientId(clientId);
+            }}
+            selectedClientId={session?.selectedClientId || null}
+          />
 
           <main className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
             {hasMessages && activeThread ? (
               <ChatTimeline
                 copiedMessageId={copiedMessageId}
                 dislikedMessageIds={dislikedMessageIds}
+                errorMessage={submitError}
                 inputValue={inputValue}
                 isResponding={isResponding}
                 likedMessageIds={likedMessageIds}
@@ -71,6 +87,7 @@ export function ClassicChatApp() {
               />
             ) : (
               <ChatEmptyState
+                errorMessage={submitError}
                 inputValue={inputValue}
                 isResponding={isResponding}
                 onInputValueChange={setInputValue}

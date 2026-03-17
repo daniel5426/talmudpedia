@@ -21,13 +21,16 @@ import {
   previewFromMessage,
   titleFromPrompt,
 } from "./thread-mappers";
+import { useSession } from "./session-context";
 import type { TemplateMessage, TemplateThread } from "./types";
 
 export function useClassicChatState() {
+  const { session } = useSession();
   const [threads, setThreads] = useState<TemplateThread[]>([]);
   const [activeThreadId, setActiveThreadId] = useState<string>("");
   const [visibleHistoryCount, setVisibleHistoryCount] = useState(HISTORY_PAGE_SIZE);
   const [inputValue, setInputValue] = useState("");
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const [isResponding, setIsResponding] = useState(false);
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
@@ -52,6 +55,12 @@ export function useClassicChatState() {
   useEffect(() => {
     activeThreadIdRef.current = activeThreadId;
   }, [activeThreadId]);
+
+  useEffect(() => {
+    if (session?.selectedClientId) {
+      setSubmitError(null);
+    }
+  }, [session?.selectedClientId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -116,9 +125,10 @@ export function useClassicChatState() {
     };
 
     startTransition(() => {
-      setThreads((current) => [nextThread, ...current]);
+    setThreads((current) => [nextThread, ...current]);
       setActiveThreadId(threadId);
       setInputValue("");
+      setSubmitError(null);
       setVisibleHistoryCount((current) => Math.max(current, HISTORY_PAGE_SIZE));
     });
   };
@@ -132,6 +142,11 @@ export function useClassicChatState() {
   const submitMessage = async (text: string) => {
     const normalized = text.trim();
     if (!normalized || isResponding) return;
+    const selectedClientId = String(session?.selectedClientId || "").trim();
+    if (!selectedClientId) {
+      setSubmitError("Select a demo client before sending a message.");
+      return;
+    }
 
     const threadId = activeThread?.id || `local-${createId()}`;
     const userMessage: TemplateMessage = {
@@ -150,6 +165,7 @@ export function useClassicChatState() {
     };
 
     setInputValue("");
+    setSubmitError(null);
     setIsResponding(true);
 
     // Initial message append
@@ -176,6 +192,7 @@ export function useClassicChatState() {
     try {
       const { threadId: platformThreadId } = await streamAgent(
         {
+          clientId: selectedClientId,
           input: normalized,
           threadId: threadId.startsWith("local-") ? undefined : threadId,
         },
@@ -320,6 +337,7 @@ export function useClassicChatState() {
     hasMoreHistory: !isLoadingHistory && hasMoreHistory,
     inputValue,
     isResponding,
+    submitError,
     likedMessageIds,
     loadMoreHistory,
     newChat,

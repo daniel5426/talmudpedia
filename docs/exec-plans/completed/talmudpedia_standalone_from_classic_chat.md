@@ -9,7 +9,7 @@ Built a new root app at `talmudpedia-standalone/` by copying the `classic-chat` 
 The new app is a single Node deployable with:
 - Vite React frontend
 - Express backend-for-frontend
-- server-only `@talmudpedia/embed-sdk`
+- server-only `@agents24/embed-sdk`
 - cookie-backed local session identity
 - embedded-agent thread history and streaming chat routes under `/api`
 
@@ -27,6 +27,17 @@ The new app is a single Node deployable with:
 - `pnpm lint`
 - `pnpm typecheck`
 - `pnpm build`
+- live standalone-server verification against a running local backend and published agent:
+  - `GET /api/session`
+  - `GET /api/agent/threads`
+  - `POST /api/agent/chat/stream`
+  - `GET /api/agent/threads/:threadId`
+
+## Local Dev Notes
+
+- `talmudpedia-standalone/.env` is now part of the expected local workflow.
+- the standalone server now auto-loads `.env` through `dotenv`.
+- when the platform backend is running directly on a local port, `TALMUDPEDIA_BASE_URL` should point to that host directly, for example `http://127.0.0.1:8026`.
 
 ## Notes
 

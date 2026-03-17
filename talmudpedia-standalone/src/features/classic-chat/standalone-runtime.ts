@@ -37,6 +37,7 @@ type StreamResult = {
 type StreamPayload = {
   input: string;
   threadId?: string;
+  clientId: string;
 };
 
 function isStandaloneRuntimeEvent(value: unknown): value is StandaloneRuntimeEvent {

@@ -90,6 +90,38 @@ app.post("/api/agent/chat", async (req, res) => {
 
 The frontend should call `/api/agent/chat` on this customer backend. It should not call Talmudpedia directly.
 
+## Local Development With The Repo Standalone Test App
+
+This repo now includes a concrete standalone test app at `talmudpedia-standalone/`.
+
+That app is useful for development and verification of the embedded-agent runtime contract because it provides:
+- a Vite React frontend
+- an Express backend-for-frontend
+- cookie-backed local session identity
+- same-origin `/api/session`, `/api/agent/threads`, `/api/agent/threads/:threadId`, and `/api/agent/chat/stream`
+
+For local development:
+
+1. run the Talmudpedia backend locally
+2. create `talmudpedia-standalone/.env`
+3. set:
+   - `TALMUDPEDIA_BASE_URL`
+   - `TALMUDPEDIA_EMBED_API_KEY`
+   - `TALMUDPEDIA_AGENT_ID`
+   - `SESSION_COOKIE_SECRET`
+   - optional `PORT`
+4. start the standalone app with `pnpm dev`
+
+Important local note:
+- if the backend is running directly on a local port such as `http://127.0.0.1:8026`, use that base URL directly
+- do not assume a local `/api/py` prefix exists unless the backend is actually mounted behind that prefix
+
+The current local standalone test-app flow has been verified against a running backend by:
+- loading `/api/session`
+- listing embedded-agent threads
+- streaming a chat run through `/api/agent/chat/stream`
+- reopening the resulting thread through `/api/agent/threads/:threadId`
+
 ## History Example
 
 ```ts

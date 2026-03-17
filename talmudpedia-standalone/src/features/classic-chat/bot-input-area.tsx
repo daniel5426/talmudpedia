@@ -19,6 +19,7 @@ import { cn } from "@/lib/utils";
 type BotInputAreaProps = {
   className?: string;
   compact?: boolean;
+  errorMessage?: string | null;
   inputValue: string;
   isLoading: boolean;
   onInputValueChange: (value: string) => void;
@@ -28,6 +29,7 @@ type BotInputAreaProps = {
 export function BotInputArea({
   className,
   compact = false,
+  errorMessage,
   inputValue,
   isLoading,
   onInputValueChange,
@@ -72,6 +74,9 @@ export function BotInputArea({
           </PromptInputFooter>
         </PromptInput>
       </PromptInputProvider>
+      {errorMessage ? (
+        <p className="mt-2 px-1 text-left text-xs text-destructive">{errorMessage}</p>
+      ) : null}
     </div>
   );
 }
