@@ -12,6 +12,7 @@ import re
 from typing import Any, Dict, List, Optional, Tuple
 from uuid import uuid4
 
+from app.core.runtime_urls import resolve_local_backend_origin
 from sdk import Client
 from talmudpedia_control_sdk import ControlPlaneClient
 from app.core.scope_registry import get_required_scopes_for_action
@@ -628,7 +629,7 @@ def _resolve_auth(
         or inputs.get("base_url")
         or os.getenv("PLATFORM_BASE_URL")
         or os.getenv("API_BASE_URL")
-        or "http://localhost:8000"
+        or resolve_local_backend_origin()
     )
 
     state_ctx = state.get("context") if isinstance(state, dict) else {}

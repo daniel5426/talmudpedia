@@ -24,6 +24,10 @@ from app.api.dependencies import (
     get_current_published_app_principal,
     get_optional_published_app_principal,
 )
+from app.core.runtime_urls import (
+    build_published_app_url,
+    resolve_runtime_api_base_url as _resolve_runtime_api_base_url,
+)
 from app.db.postgres.models.agents import AgentRun
 from app.db.postgres.models.agent_threads import AgentThreadTurn
 from app.db.postgres.models.published_apps import (
@@ -155,22 +159,8 @@ def _apps_base_domain() -> str:
     return os.getenv("APPS_BASE_DOMAIN", "apps.localhost")
 
 
-def _apps_url_scheme() -> str:
-    configured = (os.getenv("APPS_URL_SCHEME") or "").strip().lower()
-    if configured in {"http", "https"}:
-        return configured
-    return "https"
-
-
-def _apps_url_port() -> str:
-    configured = (os.getenv("APPS_URL_PORT") or "").strip()
-    if configured:
-        return configured if configured.startswith(":") else f":{configured}"
-    return ""
-
-
 def _build_published_url(slug: str) -> str:
-    return f"{_apps_url_scheme()}://{slug}.{_apps_base_domain()}{_apps_url_port()}"
+    return build_published_app_url(slug)
 
 
 def _to_public_config(app: PublishedApp) -> PublicAppConfigResponse:
@@ -285,28 +275,6 @@ def _append_query(url: str, params: dict[str, str]) -> str:
     current.update(params)
     updated = parsed._replace(query=urlencode(current))
     return urlunparse(updated)
-
-
-def _resolve_runtime_api_base_url(request: Request) -> str:
-    explicit = (os.getenv("APPS_DRAFT_DEV_RUNTIME_API_BASE_URL") or "").strip()
-    if explicit:
-        return explicit.rstrip("/")
-    parsed = urlparse(str(request.base_url))
-    origin = f"{parsed.scheme}://{parsed.netloc}".rstrip("/")
-    prefix_env = os.getenv("APPS_DRAFT_DEV_RUNTIME_API_PREFIX")
-    if prefix_env is not None:
-        api_prefix = (prefix_env or "").strip()
-    else:
-        api_prefix = str(request.scope.get("root_path") or "").strip()
-        if not api_prefix:
-            api_prefix = (request.headers.get("x-forwarded-prefix") or "").strip()
-        if not api_prefix and str(request.url.path).startswith("/api/py/"):
-            api_prefix = "/api/py"
-    if not api_prefix:
-        return origin
-    if not api_prefix.startswith("/"):
-        api_prefix = f"/{api_prefix}"
-    return f"{origin}{api_prefix.rstrip('/')}"
 
 
 def _build_published_bootstrap(

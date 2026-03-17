@@ -104,21 +104,21 @@ def _apps_base_domain() -> str:
 
 
 def _apps_url_scheme() -> str:
-    configured = (os.getenv("APPS_URL_SCHEME") or "").strip().lower()
-    if configured in {"http", "https"}:
-        return configured
-    return "https"
+    from app.core.runtime_urls import resolve_apps_url_scheme
+
+    return resolve_apps_url_scheme()
 
 
 def _apps_url_port() -> str:
-    configured = (os.getenv("APPS_URL_PORT") or "").strip()
-    if configured:
-        return configured if configured.startswith(":") else f":{configured}"
-    return ""
+    from app.core.runtime_urls import resolve_apps_url_port
+
+    return resolve_apps_url_port()
 
 
 def _build_published_url(slug: str) -> str:
-    return f"{_apps_url_scheme()}://{slug}.{_apps_base_domain()}{_apps_url_port()}"
+    from app.core.runtime_urls import build_published_app_url
+
+    return build_published_app_url(slug)
 
 
 def _publish_mock_mode_enabled() -> bool:

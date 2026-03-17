@@ -79,7 +79,12 @@ class ControlPlaneClient:
         default_request_metadata: Optional[Mapping[str, Any]] = None,
         session: Optional[requests.sessions.Session] = None,
     ) -> "ControlPlaneClient":
-        base_url = os.getenv(base_url_env) or "http://localhost:8000"
+        base_url = (
+            os.getenv(base_url_env)
+            or os.getenv("PLATFORM_BASE_URL")
+            or os.getenv("API_BASE_URL")
+            or f"http://127.0.0.1:{os.getenv('BACKEND_PORT') or os.getenv('PORT') or '8000'}"
+        )
         token = os.getenv(token_env)
         tenant_id = os.getenv(tenant_env)
         return cls(

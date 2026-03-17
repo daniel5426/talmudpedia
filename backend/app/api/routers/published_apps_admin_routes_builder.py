@@ -1,4 +1,3 @@
-import os
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
@@ -9,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_current_principal, require_scopes
+from app.core.runtime_urls import resolve_runtime_api_base_url as _resolve_runtime_api_base_url
 from app.core.security import create_published_app_preview_token
 from app.db.postgres.models.published_apps import (
     PublishedApp,
@@ -77,28 +77,6 @@ def _append_query(url: str, params: dict[str, str]) -> str:
     current = dict(parse_qsl(parsed.query, keep_blank_values=True))
     current.update({k: v for k, v in params.items() if v})
     return urlunparse(parsed._replace(query=urlencode(current)))
-
-
-def _resolve_runtime_api_base_url(request: Request) -> str:
-    explicit = (os.getenv("APPS_DRAFT_DEV_RUNTIME_API_BASE_URL") or "").strip()
-    if explicit:
-        return explicit.rstrip("/")
-    parsed = urlparse(str(request.base_url))
-    origin = f"{parsed.scheme}://{parsed.netloc}".rstrip("/")
-    prefix_env = os.getenv("APPS_DRAFT_DEV_RUNTIME_API_PREFIX")
-    if prefix_env is not None:
-        api_prefix = (prefix_env or "").strip()
-    else:
-        api_prefix = str(request.scope.get("root_path") or "").strip()
-        if not api_prefix:
-            api_prefix = (request.headers.get("x-forwarded-prefix") or "").strip()
-        if not api_prefix and str(request.url.path).startswith("/api/py/"):
-            api_prefix = "/api/py"
-    if not api_prefix:
-        return origin
-    if not api_prefix.startswith("/"):
-        api_prefix = f"/{api_prefix}"
-    return f"{origin}{api_prefix.rstrip('/')}"
 
 
 async def _decorate_draft_dev_session_response(

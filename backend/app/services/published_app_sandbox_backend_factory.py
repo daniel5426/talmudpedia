@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 
+from app.core.runtime_urls import resolve_sandbox_controller_url
 from app.services.published_app_sandbox_backend import (
     PublishedAppSandboxBackend,
     PublishedAppSandboxBackendConfig,
@@ -43,11 +44,7 @@ def validate_published_app_sandbox_backend_env() -> None:
 
 def load_published_app_sandbox_backend_config() -> PublishedAppSandboxBackendConfig:
     timeout_seconds = int(os.getenv("APPS_DRAFT_DEV_CONTROLLER_TIMEOUT_SECONDS", "15"))
-    controller_url = (
-        (os.getenv("APPS_SANDBOX_CONTROLLER_URL") or "").strip()
-        or (os.getenv("APPS_DRAFT_DEV_CONTROLLER_URL") or "").strip()
-        or None
-    )
+    controller_url = resolve_sandbox_controller_url()
     controller_token = (
         (os.getenv("APPS_SANDBOX_CONTROLLER_TOKEN") or "").strip()
         or (os.getenv("APPS_DRAFT_DEV_CONTROLLER_TOKEN") or "").strip()

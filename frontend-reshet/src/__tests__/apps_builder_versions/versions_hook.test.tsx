@@ -46,7 +46,7 @@ describe("useAppsBuilderVersions", () => {
     mockedService.getVersion.mockResolvedValue(VERSION_PAYLOAD);
     mockedService.getVersionPreviewRuntime.mockResolvedValue({
       revision_id: "rev-1",
-      preview_url: "http://localhost:8000/public/apps/preview/revisions/rev-1/runtime?runtime_token=abc",
+      preview_url: "http://localhost:8026/public/apps/preview/revisions/rev-1/runtime?runtime_token=abc",
       runtime_token: "abc",
       expires_at: "2026-03-01T00:00:00Z",
     });
