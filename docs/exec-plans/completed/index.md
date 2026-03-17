@@ -1,6 +1,6 @@
 # Completed Execution Plans
 
-Last Updated: 2026-03-10
+Last Updated: 2026-03-17
 
 This section archives completed work plans that are still useful for historical context.
 
@@ -14,3 +14,7 @@ These documents explain what happened. They should not become the source of trut
 
 ## Usage Rule
 If a completed plan contains important current-state behavior, extract that behavior into `design-docs/` or `product-specs/` and leave this section as history.
+
+## Recent Entries
+
+- `talmudpedia_standalone_from_classic_chat.md`

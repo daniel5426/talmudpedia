@@ -1,7 +1,6 @@
-
-import React from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { Agent } from "@/services"
-import { ArrowUpRight, MoreHorizontal, Play, Trash2 } from "lucide-react"
+import { ArrowUpRight, Check, Copy, MoreHorizontal } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
     DropdownMenu,
@@ -22,9 +21,34 @@ interface AgentCardProps {
 }
 
 export function AgentCard({ agent, onOpen, onRun, onDelete, onPlayground, className }: AgentCardProps) {
+    const [idCopied, setIdCopied] = useState(false)
+    const copyResetTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+    useEffect(() => {
+        return () => {
+            if (copyResetTimeoutRef.current) {
+                clearTimeout(copyResetTimeoutRef.current)
+            }
+        }
+    }, [])
+
     const handleOpen = (e: React.MouseEvent) => {
         e.preventDefault();
         onOpen?.(agent);
+    }
+
+    const handleCopyId = async () => {
+        if (typeof window === "undefined" || !navigator?.clipboard?.writeText) {
+            return
+        }
+        await navigator.clipboard.writeText(agent.id)
+        setIdCopied(true)
+        if (copyResetTimeoutRef.current) {
+            clearTimeout(copyResetTimeoutRef.current)
+        }
+        copyResetTimeoutRef.current = setTimeout(() => {
+            setIdCopied(false)
+        }, 2000)
     }
 
     return (
@@ -61,6 +85,19 @@ export function AgentCard({ agent, onOpen, onRun, onDelete, onPlayground, classN
                         <DropdownMenuContent align="end">
                             <DropdownMenuItem onClick={() => onOpen?.(agent)}>Edit Agent</DropdownMenuItem>
                             <DropdownMenuItem onClick={() => (onPlayground || onRun)?.(agent)}>Run Playground</DropdownMenuItem>
+                            <DropdownMenuItem onClick={handleCopyId}>
+                                {idCopied ? (
+                                    <>
+                                        <Check className="mr-2 h-3.5 w-3.5" />
+                                        Copied ID
+                                    </>
+                                ) : (
+                                    <>
+                                        <Copy className="mr-2 h-3.5 w-3.5" />
+                                        Copy ID
+                                    </>
+                                )}
+                            </DropdownMenuItem>
                             {onDelete && (
                                 <>
                                     <DropdownMenuSeparator />

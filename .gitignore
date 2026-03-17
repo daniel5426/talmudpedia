@@ -31,6 +31,9 @@ frontend/node_modules
 **/build/
 **/dist/
 backend/app/templates/published_apps/*/dist/
+talmudpedia-standalone/dist/
+talmudpedia-standalone/server-dist/
+talmudpedia-standalone/node_modules/
 
 # misc
 */.DS_Store

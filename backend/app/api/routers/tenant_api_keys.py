@@ -75,6 +75,24 @@ async def create_tenant_api_key(
     }
 
 
+@router.delete("/{key_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_tenant_api_key(
+    key_id: UUID,
+    _: dict[str, Any] = Depends(require_scopes("api_keys.write")),
+    principal: dict[str, Any] = Depends(get_current_principal),
+    db: AsyncSession = Depends(get_db),
+):
+    if principal.get("type") != "user":
+        raise HTTPException(status_code=403, detail="Only users can delete tenant API keys")
+
+    tenant_id = UUID(str(principal["tenant_id"]))
+    try:
+        await TenantAPIKeyService(db).delete_api_key(tenant_id=tenant_id, key_id=key_id)
+    except TenantAPIKeyNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    await db.commit()
+
+
 @router.post("/{key_id}/revoke")
 async def revoke_tenant_api_key(
     key_id: UUID,

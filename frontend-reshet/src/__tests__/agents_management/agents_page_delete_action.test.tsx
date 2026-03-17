@@ -3,22 +3,32 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import AgentsPage from "@/app/admin/agents/page"
 
 const pushMock = jest.fn()
+const replaceMock = jest.fn()
 const listAgentsMock = jest.fn()
 const deleteAgentMock = jest.fn()
+const clipboardWriteTextMock = jest.fn()
 
 jest.mock("next/navigation", () => ({
-  useRouter: () => ({ push: pushMock }),
+  useRouter: () => ({ push: pushMock, replace: replaceMock }),
+  useSearchParams: () => ({
+    get: () => null,
+  }),
 }))
 
 jest.mock("@/components/ui/dropdown-menu", () => ({
   DropdownMenu: ({ children }: any) => <div>{children}</div>,
   DropdownMenuTrigger: ({ children }: any) => <div>{children}</div>,
   DropdownMenuContent: ({ children }: any) => <div>{children}</div>,
+  DropdownMenuSeparator: () => <div />,
   DropdownMenuItem: ({ children, onClick, disabled }: any) => (
     <button type="button" onClick={onClick} disabled={disabled}>
       {children}
     </button>
   ),
+}))
+
+jest.mock("@/components/agents/CreateAgentDialog", () => ({
+  CreateAgentDialog: () => null,
 }))
 
 jest.mock("@/services", () => ({
@@ -31,6 +41,11 @@ jest.mock("@/services", () => ({
 describe("agents page delete action", () => {
   beforeEach(() => {
     jest.clearAllMocks()
+    Object.assign(navigator, {
+      clipboard: {
+        writeText: clipboardWriteTextMock,
+      },
+    })
     listAgentsMock.mockResolvedValue({
       agents: [
         {
@@ -47,6 +62,7 @@ describe("agents page delete action", () => {
       total: 1,
     })
     deleteAgentMock.mockResolvedValue({ success: true })
+    clipboardWriteTextMock.mockResolvedValue(undefined)
     jest.spyOn(window, "confirm").mockReturnValue(true)
   })
 
@@ -62,6 +78,17 @@ describe("agents page delete action", () => {
 
     await waitFor(() => {
       expect(deleteAgentMock).toHaveBeenCalledWith("agent-1")
+    })
+  })
+
+  it("copies the agent id when copy id menu item is clicked", async () => {
+    render(<AgentsPage />)
+
+    await screen.findByText("Delete Candidate")
+    fireEvent.click(await screen.findByText("Copy ID"))
+
+    await waitFor(() => {
+      expect(clipboardWriteTextMock).toHaveBeenCalledWith("agent-1")
     })
   })
 })

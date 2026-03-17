@@ -102,6 +102,8 @@ export default function SecurityPage() {
   const [isCreateKeyDialogOpen, setIsCreateKeyDialogOpen] = useState(false)
   const [isRevokeDialogOpen, setIsRevokeDialogOpen] = useState(false)
   const [revokeTarget, setRevokeTarget] = useState<TenantAPIKey | null>(null)
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<TenantAPIKey | null>(null)
   const [newKeyName, setNewKeyName] = useState("")
   const [isCreatingKey, setIsCreatingKey] = useState(false)
   const [createdToken, setCreatedToken] = useState<string | null>(null)
@@ -315,6 +317,19 @@ export default function SecurityPage() {
     } catch (error) {
       console.error("Failed to revoke API key", error)
       setApiKeyError(error instanceof Error ? error.message : "Failed to revoke API key")
+    }
+  }
+
+  const handleDeleteApiKey = async () => {
+    if (!deleteTarget) return
+    try {
+      await tenantAPIKeysService.deleteAPIKey(deleteTarget.id)
+      setIsDeleteDialogOpen(false)
+      setDeleteTarget(null)
+      fetchApiKeys()
+    } catch (error) {
+      console.error("Failed to delete API key", error)
+      setApiKeyError(error instanceof Error ? error.message : "Failed to delete API key")
     }
   }
 
@@ -1087,31 +1102,26 @@ export default function SecurityPage() {
                     </span>
 
                     {/* Actions */}
-                    <div className="flex justify-end">
-                      {apiKey.status === "active" ? (
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-7 w-7 text-muted-foreground/40 hover:text-foreground"
-                            >
-                              <MoreVertical className="h-3.5 w-3.5" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align={isRTL ? "start" : "end"} className="w-32">
-                            <DropdownMenuItem
-                              className="text-xs text-destructive focus:text-destructive"
-                              onClick={() => { setRevokeTarget(apiKey); setIsRevokeDialogOpen(true) }}
-                            >
-                              <XCircle className={cn("h-3.5 w-3.5", isRTL ? "ml-2" : "mr-2")} />
-                              Revoke key
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      ) : (
-                        <span className="text-[11px] text-muted-foreground/25 px-2">—</span>
+                    <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      {apiKey.status === "active" && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 text-[11px] text-muted-foreground/50 hover:text-amber-600 hover:bg-amber-500/5"
+                          onClick={() => { setRevokeTarget(apiKey); setIsRevokeDialogOpen(true) }}
+                        >
+                          <XCircle className={cn("h-3 w-3", isRTL ? "ml-1" : "mr-1")} />
+                          Revoke
+                        </Button>
                       )}
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 text-muted-foreground/40 hover:text-destructive hover:bg-destructive/5"
+                        onClick={() => { setDeleteTarget(apiKey); setIsDeleteDialogOpen(true) }}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
                     </div>
                   </div>
                 ))}
@@ -1331,6 +1341,39 @@ const { threadId } = await client.streamAgent(
               onClick={handleRevokeApiKey}
             >
               Revoke Key
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* =================== DELETE API KEY DIALOG =================== */}
+      <Dialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
+        <DialogContent className="sm:max-w-[400px]" dir={direction}>
+          <DialogHeader>
+            <DialogTitle className={cn("text-base", isRTL ? "text-right" : "text-left")}>
+              Delete API Key
+            </DialogTitle>
+            <DialogDescription className={cn("text-xs", isRTL ? "text-right" : "text-left")}>
+              This permanently removes the key record. Any integration using it will stop working.
+            </DialogDescription>
+          </DialogHeader>
+          {deleteTarget && (
+            <div className="py-2">
+              <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border/50 bg-muted/20">
+                <Key className="h-3.5 w-3.5 text-muted-foreground/50 shrink-0" />
+                <div>
+                  <p className="text-sm font-medium">{deleteTarget.name}</p>
+                  <p className="text-[11px] font-mono text-muted-foreground/50">{deleteTarget.key_prefix}...</p>
+                </div>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" size="sm" className="h-8" onClick={() => { setIsDeleteDialogOpen(false); setDeleteTarget(null) }}>
+              Cancel
+            </Button>
+            <Button variant="destructive" size="sm" className="h-8" onClick={handleDeleteApiKey}>
+              Delete
             </Button>
           </DialogFooter>
         </DialogContent>

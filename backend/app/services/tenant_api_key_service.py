@@ -81,6 +81,13 @@ class TenantAPIKeyService:
             await self.db.flush()
         return api_key
 
+    async def delete_api_key(self, *, tenant_id: UUID, key_id: UUID) -> None:
+        api_key = await self.db.get(TenantAPIKey, key_id)
+        if api_key is None or api_key.tenant_id != tenant_id:
+            raise TenantAPIKeyNotFoundError("API key not found")
+        await self.db.delete(api_key)
+        await self.db.flush()
+
     async def authenticate_token(self, token: str) -> TenantAPIKey:
         token_text = str(token or "").strip()
         prefix, separator, _ = token_text.partition(".")

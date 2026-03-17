@@ -1,9 +1,10 @@
 "use client"
 
-import { ReactNode, useEffect, useState } from "react"
-import { FileText, PencilLine, X } from "lucide-react"
+import { ReactNode, useEffect, useRef, useState } from "react"
+import { Check, Copy, FileText, PencilLine, X } from "lucide-react"
 import { motion } from "motion/react"
 
+import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
@@ -19,6 +20,8 @@ interface HeaderConfigEditorProps {
   namePlaceholder?: string
   descriptionPlaceholder?: string
   triggerLabel?: string
+  identifier?: string
+  identifierLabel?: string
   disabled?: boolean
   defaultOpen?: boolean
   className?: string
@@ -36,6 +39,8 @@ export function HeaderConfigEditor({
   namePlaceholder = "Enter a name",
   descriptionPlaceholder = "Add a short description",
   triggerLabel = "Edit details",
+  identifier,
+  identifierLabel = "ID",
   disabled = false,
   defaultOpen = false,
   className,
@@ -43,6 +48,8 @@ export function HeaderConfigEditor({
   children,
 }: HeaderConfigEditorProps) {
   const [open, setOpen] = useState(defaultOpen)
+  const [isCopied, setIsCopied] = useState(false)
+  const copyResetTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const fieldIdBase = triggerLabel.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "") || "config"
   const collapsedWidth = 122
   const expandedWidth = "min(420px, calc(100vw - 2rem))"
@@ -50,6 +57,28 @@ export function HeaderConfigEditor({
   useEffect(() => {
     setOpen(defaultOpen)
   }, [defaultOpen])
+
+  useEffect(() => {
+    return () => {
+      if (copyResetTimeoutRef.current) {
+        clearTimeout(copyResetTimeoutRef.current)
+      }
+    }
+  }, [])
+
+  const handleCopyIdentifier = async () => {
+    if (!identifier || typeof window === "undefined" || !navigator?.clipboard?.writeText) {
+      return
+    }
+    await navigator.clipboard.writeText(identifier)
+    setIsCopied(true)
+    if (copyResetTimeoutRef.current) {
+      clearTimeout(copyResetTimeoutRef.current)
+    }
+    copyResetTimeoutRef.current = setTimeout(() => {
+      setIsCopied(false)
+    }, 2000)
+  }
 
   return (
     <div className={cn("relative h-8 w-[122px] shrink-0", className)}>
@@ -132,6 +161,39 @@ export function HeaderConfigEditor({
                 disabled={disabled}
               />
             </div>
+            {identifier && (
+              <div className="space-y-2">
+                <Label className="text-xs font-medium text-foreground/80">
+                  {identifierLabel}
+                </Label>
+                <div className="flex items-center gap-2 rounded-md border border-border/60 bg-muted/20 px-3 py-2">
+                  <code className="min-w-0 flex-1 truncate text-xs text-foreground/85">
+                    {identifier}
+                  </code>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-7 shrink-0 gap-1.5 px-2 text-[11px]"
+                    onClick={handleCopyIdentifier}
+                    disabled={disabled}
+                    aria-label="Copy agent ID"
+                  >
+                    {isCopied ? (
+                      <>
+                        <Check className="h-3.5 w-3.5" />
+                        Copied
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="h-3.5 w-3.5" />
+                        Copy
+                      </>
+                    )}
+                  </Button>
+                </div>
+              </div>
+            )}
             <div className="space-y-2">
               <Label htmlFor={`${fieldIdBase}-description`} className="text-xs font-medium text-foreground/80">
                 {descriptionLabel}

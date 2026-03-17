@@ -167,6 +167,8 @@ export default function AgentBuilderPage() {
                             namePlaceholder="Research Assistant"
                             descriptionPlaceholder="Describe what this agent is meant to handle."
                             triggerLabel="Edit details"
+                            identifier={agent?.id}
+                            identifierLabel="Agent ID"
                             disabled={isSaving || isLoading}
                         />
                         {saveStatus === "saved" && (

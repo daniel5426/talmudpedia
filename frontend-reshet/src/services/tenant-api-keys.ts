@@ -47,6 +47,10 @@ class TenantAPIKeysService {
   async revokeAPIKey(keyId: string): Promise<TenantAPIKeyRevokeResponse> {
     return httpClient.post(`/admin/security/api-keys/${keyId}/revoke`)
   }
+
+  async deleteAPIKey(keyId: string): Promise<void> {
+    return httpClient.delete(`/admin/security/api-keys/${keyId}`)
+  }
 }
 
 export const tenantAPIKeysService = new TenantAPIKeysService()
