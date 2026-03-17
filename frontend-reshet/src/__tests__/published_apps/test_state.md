@@ -1,6 +1,6 @@
 # Published Apps Frontend Tests
 
-Last Updated: 2026-03-16
+Last Updated: 2026-03-17
 
 ## Scope
 Frontend coverage for published-apps admin and public runtime surfaces outside the new versions module.
@@ -22,11 +22,15 @@ Frontend coverage for published-apps admin and public runtime surfaces outside t
 - Chat panel shimmer cutoff and scroll-fade activation.
 - Coding-agent stream speed/coalescing expectations.
 - Preview auth token channel updates and iframe src stability across token refreshes.
+- Preview keeps the iframe mounted during same-session transient pending/recovering states instead of immediately blanking it.
 
 ## Last Run
 - Command: `cd frontend-reshet && npm test -- --runInBand src/__tests__/published_apps/preview_canvas_auth_channel.test.tsx`
 - Date: 2026-03-16
 - Result: Pass
+- Command: `cd frontend-reshet && npm test -- --runInBand src/__tests__/published_apps/preview_canvas_auth_channel.test.tsx --watch=false`
+- Date: 2026-03-17
+- Result: PASS (3 passed)
 
 ## Known Gaps / Follow-ups
 - Workspace versions-first flows moved to `frontend-reshet/src/__tests__/apps_builder_versions/`.

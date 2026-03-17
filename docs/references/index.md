@@ -1,6 +1,6 @@
 # References Index
 
-Last Updated: 2026-03-15
+Last Updated: 2026-03-17
 
 This section is for stable supporting documentation used as lookup material by humans and agents.
 
@@ -29,3 +29,5 @@ This section is for stable supporting documentation used as lookup material by h
   - Full coverage review of every file still under `backend/documentations/`.
 - `classic_chat_template_reference.md`
   - Current dependency and component inventory for the `classic-chat` published-app starter template.
+- `embedded_agent_sdk_standalone_integration_guide.md`
+  - Canonical standalone-app integration guide for the server-only embed SDK.

@@ -1,0 +1,75 @@
+name: embed-sdk-ci
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/embed-sdk-ci.yml"
+      - ".github/workflows/embed-sdk-release.yml"
+      - ".release-please-manifest.json"
+      - "release-please-config.json"
+      - "packages/embed-sdk/**"
+      - "frontend-reshet/src/__tests__/embed_sdk/**"
+      - "backend/tests/embedded_agent_runtime/**"
+      - "docs/product-specs/embedded_agent_runtime_spec.md"
+      - "docs/references/embedded_agent_sdk_standalone_integration_guide.md"
+      - "docs/references/canonical_docs_guide.md"
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/embed-sdk-ci.yml"
+      - ".github/workflows/embed-sdk-release.yml"
+      - ".release-please-manifest.json"
+      - "release-please-config.json"
+      - "packages/embed-sdk/**"
+      - "frontend-reshet/src/__tests__/embed_sdk/**"
+      - "backend/tests/embedded_agent_runtime/**"
+      - "docs/product-specs/embedded_agent_runtime_spec.md"
+      - "docs/references/embedded_agent_sdk_standalone_integration_guide.md"
+      - "docs/references/canonical_docs_guide.md"
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install embed-sdk dependencies
+        working-directory: packages/embed-sdk
+        run: npm ci
+
+      - name: Build embed-sdk
+        working-directory: packages/embed-sdk
+        run: npm run build
+
+      - name: Run embed-sdk pack smoke test
+        working-directory: packages/embed-sdk
+        run: npm run smoke:pack
+
+      - name: Check npm pack contents
+        working-directory: packages/embed-sdk
+        run: npm pack --dry-run
+
+      - name: Install frontend dependencies
+        working-directory: frontend-reshet
+        run: npm ci
+
+      - name: Run embed-sdk frontend tests
+        working-directory: frontend-reshet
+        run: npm test -- --runInBand src/__tests__/embed_sdk/embedded_agent_sdk.test.ts
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+
+      - name: Run backend embed runtime tests
+        working-directory: backend
+        run: PYTHONPATH=. pytest -q tests/embedded_agent_runtime/test_embedded_agent_runtime_api.py

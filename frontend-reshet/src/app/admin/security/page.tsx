@@ -13,6 +13,10 @@ import {
   ActionApprovalDecision,
 } from "@/services/workload-security"
 import {
+  tenantAPIKeysService,
+  TenantAPIKey,
+} from "@/services/tenant-api-keys"
+import {
   ShieldCheck,
   UserPlus,
   Trash2,
@@ -29,6 +33,12 @@ import {
   Users,
   FileCheck,
   Clock,
+  Plus,
+  Copy,
+  Check,
+  AlertTriangle,
+  Code2,
+  Plug,
 } from "lucide-react"
 
 import { Card } from "@/components/ui/card"
@@ -76,7 +86,7 @@ export default function SecurityPage() {
   const [searchRoles, setSearchRoles] = useState("")
   const [searchAssignments, setSearchAssignments] = useState("")
   const [searchWorkloads, setSearchWorkloads] = useState("")
-  const [activeTab, setActiveTab] = useState<"assignments" | "roles" | "workloads">("assignments")
+  const [activeTab, setActiveTab] = useState<"assignments" | "roles" | "workloads" | "apikeys">("assignments")
   const [pendingPolicies, setPendingPolicies] = useState<PendingScopePolicy[]>([])
   const [actionApprovals, setActionApprovals] = useState<ActionApprovalDecision[]>([])
   const [decisionForm, setDecisionForm] = useState({
@@ -85,6 +95,19 @@ export default function SecurityPage() {
     action_scope: "",
     rationale: "",
   })
+
+  // API Keys state
+  const [apiKeys, setApiKeys] = useState<TenantAPIKey[]>([])
+  const [isApiKeysLoading, setIsApiKeysLoading] = useState(true)
+  const [isCreateKeyDialogOpen, setIsCreateKeyDialogOpen] = useState(false)
+  const [isRevokeDialogOpen, setIsRevokeDialogOpen] = useState(false)
+  const [revokeTarget, setRevokeTarget] = useState<TenantAPIKey | null>(null)
+  const [newKeyName, setNewKeyName] = useState("")
+  const [isCreatingKey, setIsCreatingKey] = useState(false)
+  const [createdToken, setCreatedToken] = useState<string | null>(null)
+  const [tokenCopied, setTokenCopied] = useState(false)
+  const [apiKeyError, setApiKeyError] = useState<string | null>(null)
+  const [searchApiKeys, setSearchApiKeys] = useState("")
 
   const [isRoleDialogOpen, setIsRoleDialogOpen] = useState(false)
   const [isAssignDialogOpen, setIsAssignDialogOpen] = useState(false)
@@ -145,10 +168,25 @@ export default function SecurityPage() {
     }
   }, [currentTenant])
 
+  const fetchApiKeys = useCallback(async () => {
+    setIsApiKeysLoading(true)
+    setApiKeyError(null)
+    try {
+      const data = await tenantAPIKeysService.listAPIKeys()
+      setApiKeys(data.items)
+    } catch (error) {
+      console.error("Failed to fetch API keys", error)
+      setApiKeyError(error instanceof Error ? error.message : "Failed to load API keys")
+    } finally {
+      setIsApiKeysLoading(false)
+    }
+  }, [])
+
   useEffect(() => {
     fetchData()
     fetchWorkloadData()
-  }, [fetchData, fetchWorkloadData])
+    fetchApiKeys()
+  }, [fetchData, fetchWorkloadData, fetchApiKeys])
 
   const handleCreateRole = async () => {
     if (!currentTenant) return
@@ -250,6 +288,65 @@ export default function SecurityPage() {
     }
   }
 
+  const handleCreateApiKey = async () => {
+    if (!newKeyName.trim()) return
+    setIsCreatingKey(true)
+    setApiKeyError(null)
+    try {
+      const result = await tenantAPIKeysService.createAPIKey({ name: newKeyName.trim() })
+      setCreatedToken(result.token)
+      setNewKeyName("")
+      fetchApiKeys()
+    } catch (error) {
+      console.error("Failed to create API key", error)
+      setApiKeyError(error instanceof Error ? error.message : "Failed to create API key")
+    } finally {
+      setIsCreatingKey(false)
+    }
+  }
+
+  const handleRevokeApiKey = async () => {
+    if (!revokeTarget) return
+    try {
+      await tenantAPIKeysService.revokeAPIKey(revokeTarget.id)
+      setIsRevokeDialogOpen(false)
+      setRevokeTarget(null)
+      fetchApiKeys()
+    } catch (error) {
+      console.error("Failed to revoke API key", error)
+      setApiKeyError(error instanceof Error ? error.message : "Failed to revoke API key")
+    }
+  }
+
+  const handleCopyToken = async () => {
+    if (!createdToken) return
+    try {
+      await navigator.clipboard.writeText(createdToken)
+      setTokenCopied(true)
+      setTimeout(() => setTokenCopied(false), 2000)
+    } catch {
+      console.error("Failed to copy token")
+    }
+  }
+
+  const handleCloseCreateDialog = () => {
+    setIsCreateKeyDialogOpen(false)
+    setCreatedToken(null)
+    setNewKeyName("")
+    setTokenCopied(false)
+    setApiKeyError(null)
+  }
+
+  const filteredApiKeys = useMemo(() => {
+    const query = searchApiKeys.toLowerCase().trim()
+    if (!query) return apiKeys
+    return apiKeys.filter((key) =>
+      key.name.toLowerCase().includes(query) ||
+      key.key_prefix.toLowerCase().includes(query) ||
+      key.scopes.join(" ").toLowerCase().includes(query)
+    )
+  }, [apiKeys, searchApiKeys])
+
   const togglePermission = (scope: string) => {
     setNewRoleData(prev => {
       const exists = prev.permissions.includes(scope)
@@ -342,17 +439,20 @@ export default function SecurityPage() {
     )
   }
 
-  const currentSearch = activeTab === "assignments" ? searchAssignments : activeTab === "roles" ? searchRoles : searchWorkloads
+  const currentSearch = activeTab === "assignments" ? searchAssignments : activeTab === "roles" ? searchRoles : activeTab === "apikeys" ? searchApiKeys : searchWorkloads
   const searchPlaceholder =
     activeTab === "assignments"
       ? "Search user, role, or scope..."
       : activeTab === "roles"
         ? "Search roles..."
-        : "Search principal, policy, subject, or scope..."
+        : activeTab === "apikeys"
+          ? "Search API keys..."
+          : "Search principal, policy, subject, or scope..."
 
   const handleSearchChange = (value: string) => {
     if (activeTab === "assignments") setSearchAssignments(value)
     else if (activeTab === "roles") setSearchRoles(value)
+    else if (activeTab === "apikeys") setSearchApiKeys(value)
     else setSearchWorkloads(value)
   }
 
@@ -364,7 +464,16 @@ export default function SecurityPage() {
           { label: "Security & Org", href: "/admin/organization" },
           { label: "Security", active: true }
         ]} />
-        {activeTab !== "workloads" && (
+        {activeTab === "apikeys" ? (
+          <Button
+            size="sm"
+            className="h-8 text-xs"
+            onClick={() => setIsCreateKeyDialogOpen(true)}
+          >
+            <Plus className={cn("h-3.5 w-3.5", isRTL ? "ml-1.5" : "mr-1.5")} />
+            Create API Key
+          </Button>
+        ) : activeTab !== "workloads" ? (
           <div className="flex items-center gap-2">
             <Button
               variant="outline"
@@ -384,7 +493,7 @@ export default function SecurityPage() {
               Assign Role
             </Button>
           </div>
-        )}
+        ) : null}
       </AdminPageHeader>
 
       {/* Tabs + Content */}
@@ -393,7 +502,7 @@ export default function SecurityPage() {
         value={activeTab}
         dir={direction}
         className="flex-1 min-h-0 flex flex-col"
-        onValueChange={(value) => setActiveTab(value as "assignments" | "roles" | "workloads")}
+        onValueChange={(value) => setActiveTab(value as "assignments" | "roles" | "workloads" | "apikeys")}
       >
         <div className="border-b border-border/40 px-4 py-3 bg-background shrink-0 flex items-center justify-between">
           <TabsList>
@@ -408,6 +517,10 @@ export default function SecurityPage() {
             <TabsTrigger value="workloads">
               <FileCheck className={cn("h-3.5 w-3.5", isRTL ? "ml-1.5" : "mr-1.5")} />
               Workloads
+            </TabsTrigger>
+            <TabsTrigger value="apikeys">
+              <Plug className={cn("h-3.5 w-3.5", isRTL ? "ml-1.5" : "mr-1.5")} />
+              API Keys
             </TabsTrigger>
           </TabsList>
 
@@ -879,7 +992,349 @@ export default function SecurityPage() {
             )}
           </div>
         </TabsContent>
+
+        {/* =================== API KEYS TAB =================== */}
+        <TabsContent value="apikeys" className="flex-1 min-h-0 overflow-auto mt-0" data-admin-page-scroll>
+          {/* Error banner */}
+          {apiKeyError && (
+            <div className="flex items-center gap-2 mx-4 mt-4 px-3 py-2.5 rounded-md border border-destructive/20 bg-destructive/5 text-[13px] text-destructive">
+              <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+              {apiKeyError}
+            </div>
+          )}
+
+          {/* Keys table */}
+          <div className="px-4 pt-4">
+            {isApiKeysLoading ? (
+              <div className="rounded-lg border border-border/40 overflow-hidden">
+                <div className="bg-muted/20 px-4 py-2.5 border-b border-border/40">
+                  <Skeleton className="h-3 w-20" />
+                </div>
+                {[...Array(3)].map((_, i) => (
+                  <div key={i} className="flex items-center gap-4 px-4 py-3 border-b border-border/30 last:border-b-0">
+                    <Skeleton className="h-3.5 w-32" />
+                    <Skeleton className="h-3 w-20" />
+                    <div className="flex-1" />
+                    <Skeleton className="h-3 w-16" />
+                    <Skeleton className="h-3 w-16" />
+                  </div>
+                ))}
+              </div>
+            ) : filteredApiKeys.length === 0 ? (
+              <div className="rounded-lg border border-border/40 overflow-hidden">
+                <div className="flex flex-col items-center justify-center py-16 px-4">
+                  <div className="h-10 w-10 rounded-lg bg-muted/40 flex items-center justify-center mb-3">
+                    <Key className="h-5 w-5 text-muted-foreground/30" />
+                  </div>
+                  <p className="text-[13px] font-medium text-foreground/70">No API keys yet</p>
+                  <p className="text-xs text-muted-foreground/50 mt-1 max-w-[280px] text-center">Create a key to start integrating embedded agents into your application.</p>
+                  <Button
+                    size="sm"
+                    className="mt-5 h-8 text-xs"
+                    onClick={() => setIsCreateKeyDialogOpen(true)}
+                  >
+                    <Plus className={cn("h-3.5 w-3.5", isRTL ? "ml-1.5" : "mr-1.5")} />
+                    Create API Key
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <div className="rounded-lg border border-border/40 overflow-hidden">
+                {/* Table header */}
+                <div className="grid grid-cols-[1fr_100px_100px_100px_80px] gap-2 px-4 py-2 bg-muted/20 border-b border-border/40">
+                  <span className="text-[11px] font-medium text-muted-foreground/50 uppercase tracking-wider">Name</span>
+                  <span className="text-[11px] font-medium text-muted-foreground/50 uppercase tracking-wider">Status</span>
+                  <span className="text-[11px] font-medium text-muted-foreground/50 uppercase tracking-wider hidden sm:block">Created</span>
+                  <span className="text-[11px] font-medium text-muted-foreground/50 uppercase tracking-wider hidden md:block">Last Used</span>
+                  <span />
+                </div>
+                {/* Table rows */}
+                {filteredApiKeys.map((apiKey, idx) => (
+                  <div
+                    key={apiKey.id}
+                    className={cn(
+                      "group grid grid-cols-[1fr_100px_100px_100px_80px] gap-2 items-center px-4 py-2.5 transition-colors hover:bg-muted/20",
+                      idx < filteredApiKeys.length - 1 && "border-b border-border/30"
+                    )}
+                  >
+                    {/* Name + prefix + scopes */}
+                    <div className="min-w-0">
+                      <div className="text-[13px] font-medium truncate">{apiKey.name}</div>
+                      <div className="flex items-center gap-1.5 mt-0.5">
+                        <span className="text-[11px] font-mono text-muted-foreground/40">{apiKey.key_prefix}...</span>
+                        {apiKey.scopes.map((scope) => (
+                          <Badge key={scope} variant="secondary" className="text-[9px] h-4 px-1 font-mono">
+                            {scope}
+                          </Badge>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Status */}
+                    <div className="flex items-center gap-1.5">
+                      <span className={cn("h-1.5 w-1.5 rounded-full", apiKey.status === "active" ? "bg-emerald-500" : "bg-muted-foreground/30")} />
+                      <span className="text-[12px] text-muted-foreground/60 capitalize">{apiKey.status}</span>
+                    </div>
+
+                    {/* Created */}
+                    <span className="text-[12px] text-muted-foreground/40 hidden sm:block">
+                      {new Date(apiKey.created_at).toLocaleDateString()}
+                    </span>
+
+                    {/* Last used */}
+                    <span className="text-[12px] text-muted-foreground/40 hidden md:block">
+                      {apiKey.last_used_at ? new Date(apiKey.last_used_at).toLocaleDateString() : "Never"}
+                    </span>
+
+                    {/* Actions */}
+                    <div className="flex justify-end">
+                      {apiKey.status === "active" ? (
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7 text-muted-foreground/40 hover:text-foreground"
+                            >
+                              <MoreVertical className="h-3.5 w-3.5" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align={isRTL ? "start" : "end"} className="w-32">
+                            <DropdownMenuItem
+                              className="text-xs text-destructive focus:text-destructive"
+                              onClick={() => { setRevokeTarget(apiKey); setIsRevokeDialogOpen(true) }}
+                            >
+                              <XCircle className={cn("h-3.5 w-3.5", isRTL ? "ml-2" : "mr-2")} />
+                              Revoke key
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      ) : (
+                        <span className="text-[11px] text-muted-foreground/25 px-2">—</span>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Integration guide — sits below keys, separated by whitespace */}
+          <div className="px-4 pt-6 pb-6">
+            <div className="border-t border-border/30 pt-5">
+              <div className="flex items-center gap-2 mb-4">
+                <Code2 className="h-3.5 w-3.5 text-muted-foreground/40" />
+                <h2 className="text-[12px] font-semibold uppercase tracking-wider text-muted-foreground/50">
+                  Integration Guide
+                </h2>
+              </div>
+
+              {/* Steps — horizontal on large, stacked on small */}
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+                {([
+                  { n: "1", title: "Publish agent", desc: "Only published agents can be embedded. Draft agents are rejected." },
+                  { n: "2", title: "Create API key", desc: "Generate a key with agents.embed scope. The secret is shown once." },
+                  { n: "3", title: "Store in backend", desc: "Set the key as a server environment variable. Never expose to browser." },
+                  { n: "4", title: "Call embed API", desc: "POST to /public/embed/agents/{id}/chat/stream with external_user_id." },
+                ] as const).map((step) => (
+                  <div key={step.n} className="flex gap-3 md:flex-col md:gap-2">
+                    <span className="flex items-center justify-center h-6 w-6 rounded-md bg-muted/50 text-[11px] font-semibold text-muted-foreground/60 shrink-0">{step.n}</span>
+                    <div>
+                      <p className="text-[13px] font-medium text-foreground/80">{step.title}</p>
+                      <p className="text-[11px] text-muted-foreground/50 mt-0.5 leading-relaxed">{step.desc}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Endpoints + code side by side on large */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                {/* Endpoints */}
+                <div className="rounded-lg border border-border/40 overflow-hidden">
+                  <div className="px-3 py-2 bg-muted/20 border-b border-border/40">
+                    <span className="text-[11px] font-medium text-muted-foreground/50 uppercase tracking-wider">Endpoints</span>
+                  </div>
+                  <div className="divide-y divide-border/30">
+                    <div className="flex items-center gap-2.5 px-3 py-2">
+                      <span className="text-[10px] font-mono font-semibold text-emerald-600/70 bg-emerald-500/8 px-1.5 py-0.5 rounded w-10 text-center shrink-0">POST</span>
+                      <span className="text-[12px] font-mono text-muted-foreground/60 truncate">/public/embed/agents/&#123;agent_id&#125;/chat/stream</span>
+                    </div>
+                    <div className="flex items-center gap-2.5 px-3 py-2">
+                      <span className="text-[10px] font-mono font-semibold text-blue-600/70 bg-blue-500/8 px-1.5 py-0.5 rounded w-10 text-center shrink-0">GET</span>
+                      <span className="text-[12px] font-mono text-muted-foreground/60 truncate">/public/embed/agents/&#123;agent_id&#125;/threads</span>
+                    </div>
+                    <div className="flex items-center gap-2.5 px-3 py-2">
+                      <span className="text-[10px] font-mono font-semibold text-blue-600/70 bg-blue-500/8 px-1.5 py-0.5 rounded w-10 text-center shrink-0">GET</span>
+                      <span className="text-[12px] font-mono text-muted-foreground/60 truncate">/public/embed/agents/&#123;agent_id&#125;/threads/&#123;thread_id&#125;</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Code snippet */}
+                <div className="rounded-lg border border-border/40 overflow-hidden">
+                  <div className="px-3 py-2 bg-muted/20 border-b border-border/40">
+                    <span className="text-[11px] font-medium text-muted-foreground/50 uppercase tracking-wider">Server-Side Example</span>
+                  </div>
+                  <pre className="px-3 py-3 text-[11px] font-mono text-muted-foreground/70 overflow-x-auto leading-relaxed whitespace-pre">{`import { EmbeddedAgentClient } from "@talmudpedia/embed-sdk";
+
+const client = new EmbeddedAgentClient({
+  baseUrl: process.env.PLATFORM_BASE_URL!,
+  apiKey: process.env.TALMUDPEDIA_API_KEY!,
+});
+
+const { threadId } = await client.streamAgent(
+  "<your-agent-id>",
+  { input: "Hello", external_user_id: "user-123" },
+  (event) => console.log(event),
+);`}</pre>
+                </div>
+              </div>
+
+              {/* Note */}
+              <div className="flex items-start gap-2 mt-4 px-3 py-2 rounded-md bg-muted/20 border border-border/30">
+                <AlertTriangle className="h-3 w-3 text-amber-500/70 shrink-0 mt-0.5" />
+                <p className="text-[11px] text-muted-foreground/50 leading-relaxed">
+                  You need a <strong className="text-foreground/60">published agent ID</strong> to use embedded runtime.
+                  Embedded agents are a separate product from published apps — no published app is required.
+                </p>
+              </div>
+            </div>
+          </div>
+        </TabsContent>
       </Tabs>
+
+      {/* =================== CREATE API KEY DIALOG =================== */}
+      <Dialog open={isCreateKeyDialogOpen} onOpenChange={(open) => { if (!open) handleCloseCreateDialog() }}>
+        <DialogContent className="sm:max-w-[480px]" dir={direction}>
+          {createdToken ? (
+            <>
+              <DialogHeader>
+                <DialogTitle className={cn("text-base", isRTL ? "text-right" : "text-left")}>
+                  API Key Created
+                </DialogTitle>
+                <DialogDescription className={cn("text-xs", isRTL ? "text-right" : "text-left")}>
+                  Copy the key below. It will not be shown again.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="space-y-3 py-2">
+                <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-amber-500/5 border border-amber-500/20">
+                  <AlertTriangle className="h-3.5 w-3.5 text-amber-500 shrink-0 mt-0.5" />
+                  <p className="text-xs text-muted-foreground/60">
+                    This is the only time the full key will be displayed. Store it securely in your backend environment.
+                  </p>
+                </div>
+                <div className="relative">
+                  <Input
+                    readOnly
+                    value={createdToken}
+                    className="h-10 font-mono text-sm pr-10"
+                  />
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="absolute top-1/2 -translate-y-1/2 right-1 h-8 w-8"
+                    onClick={handleCopyToken}
+                  >
+                    {tokenCopied ? (
+                      <Check className="h-3.5 w-3.5 text-emerald-500" />
+                    ) : (
+                      <Copy className="h-3.5 w-3.5" />
+                    )}
+                  </Button>
+                </div>
+              </div>
+              <DialogFooter>
+                <Button size="sm" className="h-8" onClick={handleCloseCreateDialog}>
+                  Done
+                </Button>
+              </DialogFooter>
+            </>
+          ) : (
+            <>
+              <DialogHeader>
+                <DialogTitle className={cn("text-base", isRTL ? "text-right" : "text-left")}>
+                  Create API Key
+                </DialogTitle>
+                <DialogDescription className={cn("text-xs", isRTL ? "text-right" : "text-left")}>
+                  Create a tenant API key for embedded agent integrations.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4 py-2">
+                <div className="space-y-1.5">
+                  <Label htmlFor="api-key-name" className="text-xs font-medium text-muted-foreground">
+                    Key Name
+                  </Label>
+                  <Input
+                    id="api-key-name"
+                    placeholder="e.g. Production Backend"
+                    className="h-9"
+                    value={newKeyName}
+                    onChange={(e) => setNewKeyName(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-medium text-muted-foreground">Scopes</Label>
+                  <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border/50 bg-muted/20">
+                    <Badge variant="secondary" className="text-[10px] h-5 px-1.5 font-mono">agents.embed</Badge>
+                    <span className="text-[11px] text-muted-foreground/40">Default scope for embedded agent access</span>
+                  </div>
+                </div>
+              </div>
+              <DialogFooter>
+                <Button variant="outline" size="sm" className="h-8" onClick={handleCloseCreateDialog}>
+                  Cancel
+                </Button>
+                <Button
+                  size="sm"
+                  className="h-8"
+                  onClick={handleCreateApiKey}
+                  disabled={!newKeyName.trim() || isCreatingKey}
+                >
+                  {isCreatingKey ? "Creating..." : "Create Key"}
+                </Button>
+              </DialogFooter>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* =================== REVOKE API KEY DIALOG =================== */}
+      <Dialog open={isRevokeDialogOpen} onOpenChange={setIsRevokeDialogOpen}>
+        <DialogContent className="sm:max-w-[400px]" dir={direction}>
+          <DialogHeader>
+            <DialogTitle className={cn("text-base", isRTL ? "text-right" : "text-left")}>
+              Revoke API Key
+            </DialogTitle>
+            <DialogDescription className={cn("text-xs", isRTL ? "text-right" : "text-left")}>
+              This action cannot be undone. Any integrations using this key will stop working.
+            </DialogDescription>
+          </DialogHeader>
+          {revokeTarget && (
+            <div className="py-2">
+              <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border/50 bg-muted/20">
+                <Key className="h-3.5 w-3.5 text-muted-foreground/50" />
+                <div>
+                  <p className="text-sm font-medium">{revokeTarget.name}</p>
+                  <p className="text-[11px] font-mono text-muted-foreground/50">{revokeTarget.key_prefix}...</p>
+                </div>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" size="sm" className="h-8" onClick={() => { setIsRevokeDialogOpen(false); setRevokeTarget(null) }}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              size="sm"
+              className="h-8"
+              onClick={handleRevokeApiKey}
+            >
+              Revoke Key
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* =================== CREATE ROLE DIALOG =================== */}
       <Dialog open={isRoleDialogOpen} onOpenChange={setIsRoleDialogOpen}>

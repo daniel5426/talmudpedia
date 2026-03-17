@@ -1,6 +1,6 @@
 # Canonical Docs Guide
 
-Last Updated: 2026-03-16
+Last Updated: 2026-03-17
 
 This guide lists the current canonical documentation entry points after the first documentation-system refactor.
 
@@ -31,6 +31,8 @@ This guide lists the current canonical documentation entry points after the firs
   - Current auth, authorization, and workload-security overview.
 - `docs/design-docs/apps_builder_current.md`
   - Current Apps Builder architecture, preview runtime, revision flow, and publish model.
+- `docs/design-docs/apps_builder_live_workspace_hmr_architecture.md`
+  - Focused design note for the unified live-workspace model, Vite HMR proxying, and the concrete preview bug chain that had to be fixed.
 - `docs/design-docs/artifact_execution_current.md`
   - Current artifact execution architecture.
 - `docs/design-docs/coding_agent_runtime_current.md`
@@ -65,6 +67,9 @@ This guide lists the current canonical documentation entry points after the firs
 
 - `docs/references/classic_chat_template_reference.md`
   - Current dependency and component inventory for the `classic-chat` published-app starter template.
+- `docs/references/embedded_agent_sdk_standalone_integration_guide.md`
+  - Canonical customer integration guide for building a standalone app with `@talmudpedia/embed-sdk`.
+  - Use this alongside `packages/embed-sdk/README.md` for the server-only embed SDK contract and customer-backend architecture.
 
 ## Focused Current Detail Docs Still Under `backend/documentations/`
 

@@ -126,6 +126,16 @@ function isWarmupRecoverySession(session: DraftDevSessionResponse | null | undef
   return isDraftDevWarmupError(session.last_error || null) && !isDraftDevServingStatus(session.status);
 }
 
+function logSandboxLifecycleDebug(event: string, fields: Record<string, unknown> = {}): void {
+  if (typeof console === "undefined" || typeof console.info !== "function") {
+    return;
+  }
+  console.info("[apps-builder][sandbox]", {
+    event,
+    ...fields,
+  });
+}
+
 export function useAppsBuilderSandboxLifecycle({
   appId,
   currentRevisionId,
@@ -184,6 +194,18 @@ export function useAppsBuilderSandboxLifecycle({
 
     const nextPreviewUrl = session.preview_url || null;
     setPreviewAssetUrl((current) => {
+      logSandboxLifecycleDebug("apply_session.preview_url", {
+        sessionId: session.session_id || null,
+        status: session.status,
+        nextPreviewUrl,
+        currentPreviewUrl: current,
+        previewAuthTokenPresent: Boolean(session.preview_auth_token),
+        workspaceRevisionToken: session.workspace_revision_token || null,
+        activeCodingRunCount: session.active_coding_run_count,
+      });
+      if (!nextPreviewUrl) {
+        return current;
+      }
       const currentNormalized = normalizePreviewSessionUrlForReloadCompare(current);
       const nextNormalized = normalizePreviewSessionUrlForReloadCompare(nextPreviewUrl);
       if (current && nextPreviewUrl && currentNormalized === nextNormalized) {
@@ -195,6 +217,17 @@ export function useAppsBuilderSandboxLifecycle({
     if (options?.markSynced) {
       syncFingerprintRef.current = currentSyncFingerprintRef.current;
     }
+
+    logSandboxLifecycleDebug("apply_session.done", {
+      sessionId: session.session_id || null,
+      status: session.status,
+      warmupRecovery,
+      markSynced: Boolean(options?.markSynced),
+      previewUrl: session.preview_url || null,
+      workspaceRevisionToken: session.workspace_revision_token || null,
+      activeCodingRunCount: session.active_coding_run_count,
+      lifecyclePhase: phase,
+    });
 
     if (isDraftDevServingStatus(session.status as DraftDevSessionStatus | undefined)) {
       setPhase("running");
@@ -216,6 +249,7 @@ export function useAppsBuilderSandboxLifecycle({
   }, [onRevisionFromSession, onSessionChange]);
 
   const clearSession = useCallback(() => {
+    logSandboxLifecycleDebug("clear_session");
     latestSessionPayloadRef.current = null;
     setDraftDevSessionId(null);
     setDraftDevStatus(null);
@@ -260,12 +294,22 @@ export function useAppsBuilderSandboxLifecycle({
 
       let lastError: unknown = null;
       for (let attempt = 0; attempt < DRAFT_DEV_RECOVERY_ATTEMPTS; attempt += 1) {
-        try {
-          const session = await publishedAppsService.ensureDraftDevSession(appId);
-          applySession(session, { markSynced: true });
-          return session;
-        } catch (err) {
-          lastError = err;
+      try {
+        const session = await publishedAppsService.ensureDraftDevSession(appId);
+        logSandboxLifecycleDebug("ensure_session.success", {
+          reason,
+          sessionId: session.session_id || null,
+          status: session.status,
+          previewUrl: session.preview_url || null,
+        });
+        applySession(session, { markSynced: true });
+        return session;
+      } catch (err) {
+        logSandboxLifecycleDebug("ensure_session.failed", {
+          reason,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        lastError = err;
           if (!isDraftDevTransientBootstrapError(err) || attempt === DRAFT_DEV_RECOVERY_ATTEMPTS - 1) {
             if (isCodingAgentRunActiveError(err)) {
               throw err;
@@ -331,6 +375,13 @@ export function useAppsBuilderSandboxLifecycle({
                 revision_id: currentRevisionId,
               },
         );
+        logSandboxLifecycleDebug("sync_session.success", {
+          sessionId: session.session_id || null,
+          status: session.status,
+          previewUrl: session.preview_url || null,
+          operationMode: options?.forceFullSync ? "full" : "incremental",
+          operationCount: operations.length,
+        });
         applySession(session, { markSynced: true });
         syncFingerprintRef.current = fingerprint;
         syncedFilesRef.current = filteredFiles;
@@ -351,6 +402,11 @@ export function useAppsBuilderSandboxLifecycle({
               files: filteredFiles,
               entry_file: entryFile,
               revision_id: currentRevisionId,
+            });
+            logSandboxLifecycleDebug("sync_session.recovery_success", {
+              sessionId: session.session_id || null,
+              status: session.status,
+              previewUrl: session.preview_url || null,
             });
             applySession(session, { markSynced: true });
             syncFingerprintRef.current = fingerprint;
@@ -516,6 +572,14 @@ export function useAppsBuilderSandboxLifecycle({
       publishedAppsService
         .heartbeatDraftDevSessionQuiet(appId)
         .then((result) => {
+          logSandboxLifecycleDebug("heartbeat.result", {
+            hasSession: Boolean(result.session),
+            publishLocked: result.publish_locked,
+            code: result.code || null,
+            message: result.message || null,
+            sessionStatus: result.session?.status || null,
+            previewUrl: result.session?.preview_url || null,
+          });
           if (result.publish_locked) {
             setPublishLockMessage(result.message || "Publish is running. Preview session lock is expected.");
             return;

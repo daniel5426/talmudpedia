@@ -64,6 +64,7 @@ export function useAppsBuilderVersions({
   const [isRestoringVersion, setIsRestoringVersion] = useState(false);
   const [isPublishingVersion, setIsPublishingVersion] = useState(false);
   const [publishStatus, setPublishStatus] = useState<string | null>(null);
+  const lastMissingCurrentRevisionRefreshRef = useRef<string | null>(null);
 
   const loadVersion = useCallback(async (versionId: string, options: { inspect?: boolean } = {}) => {
     const shouldInspect = options.inspect ?? true;
@@ -140,6 +141,7 @@ export function useAppsBuilderVersions({
     setInspectedPreviewUrl(null);
     setInspectedRuntimeToken(null);
     setPublishStatus(null);
+    lastMissingCurrentRevisionRefreshRef.current = null;
     void refreshVersions();
   }, [appId, refreshVersions]);
 
@@ -157,8 +159,13 @@ export function useAppsBuilderVersions({
   useEffect(() => {
     const normalized = String(currentRevisionId || "").trim();
     if (!normalized) return;
-    if (versions.some((item) => item.id === normalized)) return;
+    if (versions.some((item) => item.id === normalized)) {
+      lastMissingCurrentRevisionRefreshRef.current = null;
+      return;
+    }
     if (isLoadingVersions) return;
+    if (lastMissingCurrentRevisionRefreshRef.current === normalized) return;
+    lastMissingCurrentRevisionRefreshRef.current = normalized;
     void refreshVersions();
   }, [currentRevisionId, isLoadingVersions, refreshVersions, versions]);
 

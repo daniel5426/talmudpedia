@@ -4,7 +4,7 @@ from uuid import uuid4
 import pytest
 
 import app.services.published_app_coding_agent_tools  # noqa: F401
-import app.services.platform_sdk_local_tools  # noqa: F401
+import app.services.platform_native_tools as platform_native_tools  # noqa: F401
 from app.agent.executors.tool import ToolNodeExecutor
 from app.services.tool_function_registry import register_tool_function
 
@@ -541,13 +541,57 @@ async def test_strict_function_tool_ignores_executor_runtime_metadata_before_dis
 
 
 @pytest.mark.asyncio
+async def test_strict_platform_tool_forwards_internal_auth_context_to_local_sdk(monkeypatch):
+    captured = {}
+
+    async def fake_handler(_runtime):
+        captured["runtime_context"] = _runtime.runtime_context
+        return {"status": "ok"}
+
+    class _FakeSession:
+        async def __aenter__(self):
+            return object()
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr(platform_native_tools, "get_session", lambda: _FakeSession())
+    monkeypatch.setitem(platform_native_tools._ACTION_HANDLERS, "artifacts.list", fake_handler)
+
+    tool_id = uuid4()
+    tool = make_platform_tool(tool_id, "platform-assets", "platform_native_platform_assets")
+    db = FakeDB(tool)
+    executor = ToolNodeExecutor(tenant_id=None, db=db)
+
+    async def has_columns(_self):
+        return True
+
+    monkeypatch.setattr(ToolNodeExecutor, "_has_artifact_columns", has_columns)
+
+    result = await executor.execute(
+        {"context": {"action": "artifacts.list", "payload": {}}},
+        {"tool_id": str(tool_id)},
+        {
+            "node_id": "tool-node",
+            "tenant_id": "tenant-1",
+            "user_id": "user-1",
+            "token": "bearer-123",
+        },
+    )
+
+    assert result["context"]["result"]["status"] == "ok"
+    assert captured["runtime_context"]["tenant_id"] == "tenant-1"
+    assert captured["runtime_context"]["user_id"] == "user-1"
+    assert captured["runtime_context"]["token"] == "bearer-123"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("tool_slug", "function_name", "wrapper_key", "attempted_action"),
     [
-        ("platform-assets", "platform_sdk_local_platform_assets", "value", "artifacts.create"),
-        ("platform-agents", "platform_sdk_local_platform_agents", "query", "agents.create"),
-        ("platform-rag", "platform_sdk_local_platform_rag", "text", "rag.create_pipeline_shell"),
-        ("platform-governance", "platform_sdk_local_platform_governance", "value", "auth.get_current_user"),
+        ("platform-assets", "platform_native_platform_assets", "value", "artifacts.create"),
+        ("platform-agents", "platform_native_platform_agents", "query", "agents.create"),
+        ("platform-rag", "platform_native_platform_rag", "text", "rag.create_pipeline_shell"),
+        ("platform-governance", "platform_native_platform_governance", "value", "auth.get_current_user"),
     ],
 )
 async def test_strict_platform_tools_reject_wrapped_input_with_noncanonical_error(
@@ -584,7 +628,7 @@ async def test_strict_platform_tools_reject_wrapped_input_with_noncanonical_erro
 @pytest.mark.asyncio
 async def test_strict_platform_tool_rejects_raw_scalar_args_with_noncanonical_error(monkeypatch):
     tool_id = uuid4()
-    tool = make_platform_tool(tool_id, "platform-assets", "platform_sdk_local_platform_assets")
+    tool = make_platform_tool(tool_id, "platform-assets", "platform_native_platform_assets")
     db = FakeDB(tool)
     executor = ToolNodeExecutor(tenant_id=None, db=db)
 

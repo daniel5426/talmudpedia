@@ -1,11 +1,12 @@
 # Platform SDK Tool Tests
 
-Last Updated: 2026-03-14
+Last Updated: 2026-03-17
 
 Scope:
-- Platform SDK tool action dispatch, explicit-action behavior, and strict canonical input enforcement.
+- Platform SDK contract/parity behavior, explicit-action behavior, and strict canonical input enforcement.
 - Domain-method action wrappers for control-plane SDK surfaces.
 - Runtime primitive orchestration action dispatch and validation.
+- This suite now covers the SDK/client-side parity layer only; architect runtime tool execution is tested separately in native `platform-*` runtime tests.
 
 Test files present:
 - test_platform_sdk_actions.py

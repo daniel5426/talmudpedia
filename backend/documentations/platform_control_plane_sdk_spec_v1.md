@@ -1,6 +1,6 @@
 # Platform Control Plane SDK Contract Specification (v1)
 
-Last Updated: 2026-03-12
+Last Updated: 2026-03-17
 
 ## Document Control
 - Status: In implementation (normative for new SDK work)
@@ -13,8 +13,9 @@ This document defines the canonical SDK contract for controlling platform resour
 
 The same contract MUST be used by:
 - Developer SDK clients (Python and TypeScript)
-- Platform Architect runtime tools (agent callable tools)
 - UI control-plane clients (service layer)
+
+Platform Architect runtime tools MUST preserve contract parity with this SDK surface, but they no longer execute by routing through the SDK shim runtime path.
 
 This removes contract drift between UI, SDK, and autonomous agent flows.
 
@@ -72,7 +73,7 @@ This spec defines the target canonical behavior and migration rules from these d
 - Layer A: versioned contract schemas
 - Layer B: control-plane API handlers and services
 - Layer C: SDK clients (Python/TS)
-- Layer D: tool wrappers (agent-callable) generated/adapted from SDK methods
+ - Layer D: tool wrappers (agent-callable) that preserve SDK contract parity but may execute through native backend dispatch
 
 ### 5.3 SDK Separation Rule
 - `@talmudpedia/runtime-sdk` remains runtime/hosted-app focused

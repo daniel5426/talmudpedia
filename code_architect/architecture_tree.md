@@ -1,6 +1,6 @@
 # Architecture Tree (Curated)
 
-Last Updated: 2026-03-16
+Last Updated: 2026-03-17
 
 This file is a backend-only architecture map optimized for agent context efficiency.
 
@@ -134,7 +134,7 @@ backend/app/services/platform_architect_contracts.py
 backend/app/services/platform_architect_worker_bindings.py
 backend/app/services/platform_architect_worker_runtime_service.py
 backend/app/services/platform_architect_worker_tools.py
-backend/app/services/platform_sdk_local_tools.py
+backend/app/services/platform_native_tools.py
 backend/app/services/platform_architect_guardrails.py
 backend/app/services/graph_mutation_service.py
 backend/app/services/agent_graph_mutation_service.py

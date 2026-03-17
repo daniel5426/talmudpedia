@@ -202,7 +202,6 @@ class PublishedAppDraftRevisionMaterializerService:
             origin_run_id=str(origin_run_id or ""),
             source_revision_id=str(source_revision_id or ""),
         )
-        await self._acquire_app_lock(app_id=app.id)
         try:
             build_result = await self.workspace_builds.ensure_ready_build(
                 app=app,
@@ -212,6 +211,7 @@ class PublishedAppDraftRevisionMaterializerService:
                 origin_kind=origin_kind,
                 origin_run_id=origin_run_id,
             )
+            await self._acquire_app_lock(app_id=app.id)
             result = await self._create_or_reuse_revision_from_build(
                 app=app,
                 build_result=build_result,
@@ -274,6 +274,4 @@ class PublishedAppDraftRevisionMaterializerService:
             origin_kind="coding_run",
             origin_run_id=run.id,
         )
-        run.result_revision_id = result.revision.id
-        run.batch_finalized_at = datetime.now(timezone.utc)
         return result.revision

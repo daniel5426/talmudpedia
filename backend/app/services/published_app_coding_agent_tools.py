@@ -151,7 +151,7 @@ async def _resolve_run_tool_context(
     if actor_id is None:
         raise PermissionError("Coding-agent tools require a user-scoped run")
 
-    revision_id = app.current_draft_revision_id or run.base_revision_id
+    revision_id = run.base_revision_id or app.current_draft_revision_id
     if revision_id is None:
         raise ValueError("No draft revision available for coding-agent run")
 
@@ -184,6 +184,7 @@ async def _resolve_run_tool_context(
                 app=app,
                 revision=revision,
                 user_id=actor_id,
+                prefer_live_workspace=True,
             )
         except PublishedAppDraftDevRuntimeDisabled as exc:
             raise RuntimeError(str(exc)) from exc
@@ -240,6 +241,38 @@ async def _snapshot_files(ctx: _RunToolContext) -> dict[str, str]:
     if not isinstance(raw_files, dict):
         raise RuntimeError("Sandbox snapshot did not return files")
     return _filter_builder_snapshot_files(raw_files)
+
+
+async def _persist_live_workspace_state(
+    ctx: _RunToolContext,
+    *,
+    revision_token: str | None,
+    entry_file: str | None = None,
+) -> None:
+    payload = await ctx.runtime_service.client.snapshot_files(sandbox_id=ctx.sandbox_id)
+    raw_files = payload.get("files")
+    if not isinstance(raw_files, dict):
+        raise RuntimeError("Sandbox snapshot did not return files")
+    files = _filter_builder_snapshot_files(raw_files)
+    normalized_revision_token = str(
+        revision_token or payload.get("revision_token") or ""
+    ).strip() or None
+    normalized_entry_file = str(entry_file or ctx.revision.entry_file or "src/main.tsx").strip() or "src/main.tsx"
+    revision_id = ctx.app.current_draft_revision_id or ctx.revision.id
+    await ctx.runtime_service.record_workspace_live_snapshot(
+        app_id=ctx.app.id,
+        revision_id=revision_id,
+        entry_file=normalized_entry_file,
+        files=files,
+        revision_token=normalized_revision_token,
+        workspace_fingerprint=None,
+    )
+    session = await ctx.runtime_service.get_session(app_id=ctx.app.id, user_id=ctx.actor_id)
+    if session is not None:
+        await ctx.runtime_service.record_live_workspace_revision_token(
+            session=session,
+            revision_token=normalized_revision_token,
+        )
 
 
 def _coerce_string_arg(payload: dict[str, Any], aliases: tuple[str, ...]) -> str:
@@ -1057,6 +1090,10 @@ async def coding_agent_apply_patch(payload: Any) -> dict[str, Any]:
                 "failures": failures,
             }
         changed_paths = result.get("applied_files") if isinstance(result.get("applied_files"), list) else []
+        await _persist_live_workspace_state(
+            ctx,
+            revision_token=str(result.get("revision_token") or "").strip() or None,
+        )
         verification_plan = _build_verification_plan(changed_paths)
         result["verification_plan"] = verification_plan
         auto_verify_default = "1" if str(getattr(ctx.run, "execution_engine", "")).strip().lower() == "opencode" else "0"
@@ -1151,6 +1188,11 @@ async def coding_agent_write_file(payload: Any) -> dict[str, Any]:
             path=path,
             content=content,
         )
+        await _persist_live_workspace_state(
+            ctx,
+            revision_token=str(result.get("revision_token") or "").strip() or None,
+            entry_file=path if path == str(ctx.revision.entry_file or "").strip() else None,
+        )
         await db.commit()
         return result
 
@@ -1169,6 +1211,12 @@ async def coding_agent_rename_file(payload: Any) -> dict[str, Any]:
             from_path=from_path,
             to_path=to_path,
         )
+        next_entry_file = to_path if from_path == str(ctx.revision.entry_file or "").strip() else None
+        await _persist_live_workspace_state(
+            ctx,
+            revision_token=str(result.get("revision_token") or "").strip() or None,
+            entry_file=next_entry_file,
+        )
         await db.commit()
         return result
 
@@ -1181,6 +1229,10 @@ async def coding_agent_delete_file(payload: Any) -> dict[str, Any]:
     async with get_session() as db:
         ctx = await _resolve_run_tool_context(db, tool_payload)
         result = await ctx.runtime_service.client.delete_file(sandbox_id=ctx.sandbox_id, path=path)
+        await _persist_live_workspace_state(
+            ctx,
+            revision_token=str(result.get("revision_token") or "").strip() or None,
+        )
         await db.commit()
         return result
 

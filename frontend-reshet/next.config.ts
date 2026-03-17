@@ -4,6 +4,9 @@ const localBackendTarget =
   process.env.NEXT_PUBLIC_BACKEND_URL?.trim() || "http://127.0.0.1:8026";
 
 const nextConfig: NextConfig = {
+  experimental: {
+    externalDir: true,
+  },
   rewrites: async () => {
     return [
       {

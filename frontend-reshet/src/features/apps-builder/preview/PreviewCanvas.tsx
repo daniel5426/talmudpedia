@@ -38,7 +38,19 @@ type PreviewCanvasProps = {
 
 const PREVIEW_REVEAL_DELAY_MS = 350;
 const PREVIEW_MAX_HIDDEN_MS = 8_000;
+const PREVIEW_TRANSIENT_OVERLAY_DELAY_MS = 700;
 const PREVIEW_AUTH_MESSAGE_TYPE = "talmudpedia.preview-auth.v1";
+const PREVIEW_DEBUG_BRIDGE_MESSAGE_TYPE = "talmudpedia.preview-debug.v1";
+
+function logPreviewCanvasDebug(event: string, fields: Record<string, unknown> = {}): void {
+  if (typeof console === "undefined" || typeof console.info !== "function") {
+    return;
+  }
+  console.info("[apps-builder][preview]", {
+    event,
+    ...fields,
+  });
+}
 
 function appendRuntimeTokenToUrl(url: string, token?: string | null): string {
   const trimmedToken = String(token || "").trim();
@@ -60,9 +72,27 @@ export const PreviewCanvas = forwardRef<HTMLIFrameElement, PreviewCanvasProps>(
   ) {
     const revealTimerRef = useRef<number | null>(null);
     const failSafeTimerRef = useRef<number | null>(null);
+    const transientOverlayTimerRef = useRef<number | null>(null);
     const frameRef = useRef<HTMLIFrameElement | null>(null);
+    const lastUsablePreviewKeyRef = useRef<string | null>(null);
     const [isFrameVisible, setIsFrameVisible] = useState(false);
     const [resolvedPreviewSrc, setResolvedPreviewSrc] = useState<string | null>(null);
+    const [showTransientOverlay, setShowTransientOverlay] = useState(false);
+
+    const normalizePreviewKey = useCallback((value: string | null | undefined): string | null => {
+      const raw = String(value || "").trim();
+      if (!raw) return null;
+      try {
+        const parsed = new URL(raw);
+        parsed.searchParams.delete("runtime_token");
+        parsed.searchParams.delete("preview_token");
+        parsed.searchParams.delete("runtime_preview_token");
+        parsed.hash = "";
+        return parsed.toString();
+      } catch {
+        return raw;
+      }
+    }, []);
 
     const clearTimers = useCallback(() => {
       if (revealTimerRef.current !== null) {
@@ -73,6 +103,10 @@ export const PreviewCanvas = forwardRef<HTMLIFrameElement, PreviewCanvasProps>(
         window.clearTimeout(failSafeTimerRef.current);
         failSafeTimerRef.current = null;
       }
+      if (transientOverlayTimerRef.current !== null) {
+        window.clearTimeout(transientOverlayTimerRef.current);
+        transientOverlayTimerRef.current = null;
+      }
     }, []);
 
     useEffect(() => clearTimers, [clearTimers]);
@@ -81,12 +115,55 @@ export const PreviewCanvas = forwardRef<HTMLIFrameElement, PreviewCanvasProps>(
     const hasFailed = isDraftDevFailureStatus(devStatus) || lifecyclePhase === "error";
     const hasSessionError = Boolean(devError);
     const canLoadFrame = (forceReady || isDraftDevServingStatus(devStatus)) && Boolean(previewUrl) && !hasFailed && !hasSessionError;
+    const hasEstablishedPreview = Boolean(resolvedPreviewSrc) && !hasFailed && !hasSessionError;
+    const normalizedPreviewKey = normalizePreviewKey(previewUrl);
+    const isTransientSameSessionPending =
+      !canLoadFrame
+      && !hasFailed
+      && !hasSessionError
+      && Boolean(normalizedPreviewKey)
+      && normalizedPreviewKey === lastUsablePreviewKeyRef.current
+      && Boolean(resolvedPreviewSrc);
     const warmupMessage = String(loadingMessage || "").trim() || (isPending ? "Starting draft preview..." : "Warming preview sandbox...");
-    const previewSrc = canLoadFrame ? resolvedPreviewSrc : null;
+    const previewSrc = hasEstablishedPreview ? resolvedPreviewSrc : (canLoadFrame || isTransientSameSessionPending ? resolvedPreviewSrc : null);
 
     useEffect(() => {
-      if (!canLoadFrame) {
+      logPreviewCanvasDebug("state", {
+        previewUrl: previewUrl || null,
+        resolvedPreviewSrc,
+        canLoadFrame,
+        hasEstablishedPreview,
+        isFrameVisible,
+        isPending,
+        hasFailed,
+        hasSessionError,
+        devStatus: devStatus || null,
+        lifecyclePhase: lifecyclePhase || null,
+        isTransientSameSessionPending,
+        showTransientOverlay,
+      });
+    }, [
+      canLoadFrame,
+      devStatus,
+      hasEstablishedPreview,
+      hasFailed,
+      hasSessionError,
+      isFrameVisible,
+      isPending,
+      isTransientSameSessionPending,
+      lifecyclePhase,
+      previewUrl,
+      resolvedPreviewSrc,
+      showTransientOverlay,
+    ]);
+
+    useEffect(() => {
+      if (hasFailed || hasSessionError) {
         setResolvedPreviewSrc(null);
+        lastUsablePreviewKeyRef.current = null;
+        return;
+      }
+      if (!previewUrl) {
         return;
       }
       const nextBaseUrl = String(previewUrl || "").trim();
@@ -114,7 +191,7 @@ export const PreviewCanvas = forwardRef<HTMLIFrameElement, PreviewCanvasProps>(
         }
         return appendRuntimeTokenToUrl(nextBaseUrl, previewAuthToken);
       });
-    }, [canLoadFrame, previewAuthToken, previewUrl]);
+    }, [hasFailed, hasSessionError, previewAuthToken, previewUrl]);
 
     const setFrameRef = useCallback(
       (node: HTMLIFrameElement | null) => {
@@ -132,7 +209,7 @@ export const PreviewCanvas = forwardRef<HTMLIFrameElement, PreviewCanvasProps>(
 
     const postPreviewAuthToken = useCallback(() => {
       const frame = frameRef.current;
-      if (!frame?.contentWindow || !canLoadFrame) return;
+      if (!frame?.contentWindow || !hasEstablishedPreview) return;
       let targetOrigin = "*";
       try {
         targetOrigin = new URL(previewUrl || "").origin;
@@ -146,23 +223,38 @@ export const PreviewCanvas = forwardRef<HTMLIFrameElement, PreviewCanvasProps>(
         },
         targetOrigin,
       );
-    }, [canLoadFrame, previewAuthToken, previewUrl]);
+      logPreviewCanvasDebug("auth_posted", {
+        targetOrigin,
+        hasEstablishedPreview,
+        previewUrl: previewUrl || null,
+        previewAuthTokenPresent: Boolean(String(previewAuthToken || "").trim()),
+      });
+    }, [hasEstablishedPreview, previewAuthToken, previewUrl]);
 
     useEffect(() => {
       clearTimers();
-      setIsFrameVisible(false);
+      setShowTransientOverlay(false);
 
-      if (!canLoadFrame) {
+      if (!previewSrc && !isTransientSameSessionPending) {
+        setIsFrameVisible(false);
         return;
       }
 
+      if (isTransientSameSessionPending) {
+        transientOverlayTimerRef.current = window.setTimeout(() => {
+          setShowTransientOverlay(true);
+        }, PREVIEW_TRANSIENT_OVERLAY_DELAY_MS);
+        return;
+      }
+
+      setIsFrameVisible(false);
       failSafeTimerRef.current = window.setTimeout(() => {
         setIsFrameVisible(true);
       }, PREVIEW_MAX_HIDDEN_MS);
-    }, [canLoadFrame, clearTimers, previewUrl]);
+    }, [clearTimers, isTransientSameSessionPending, previewSrc, previewUrl]);
 
     useEffect(() => {
-      if (!canLoadFrame) return;
+      if (!hasEstablishedPreview) return;
       postPreviewAuthToken();
       const timer = window.setTimeout(() => {
         postPreviewAuthToken();
@@ -170,19 +262,47 @@ export const PreviewCanvas = forwardRef<HTMLIFrameElement, PreviewCanvasProps>(
       return () => {
         window.clearTimeout(timer);
       };
-    }, [canLoadFrame, postPreviewAuthToken]);
+    }, [hasEstablishedPreview, postPreviewAuthToken]);
+
+    useEffect(() => {
+      const handleMessage = (event: MessageEvent) => {
+        const data = event.data;
+        if (!data || typeof data !== "object" || data.type !== PREVIEW_DEBUG_BRIDGE_MESSAGE_TYPE) {
+          return;
+        }
+        logPreviewCanvasDebug("iframe_bridge", {
+          origin: event.origin,
+          ...(typeof data.payload === "object" && data.payload ? data.payload : {}),
+        });
+      };
+      window.addEventListener("message", handleMessage);
+      return () => {
+        window.removeEventListener("message", handleMessage);
+      };
+    }, []);
 
     const handleFrameLoad = useCallback(() => {
       clearTimers();
       postPreviewAuthToken();
+      setShowTransientOverlay(false);
+      lastUsablePreviewKeyRef.current = normalizePreviewKey(previewUrl);
+      logPreviewCanvasDebug("frame_load", {
+        previewUrl: previewUrl || null,
+        resolvedPreviewSrc,
+        normalizedPreviewKey: lastUsablePreviewKeyRef.current,
+      });
       revealTimerRef.current = window.setTimeout(() => {
         setIsFrameVisible(true);
+        logPreviewCanvasDebug("frame_revealed", {
+          previewUrl: previewUrl || null,
+          resolvedPreviewSrc,
+        });
       }, PREVIEW_REVEAL_DELAY_MS);
-    }, [clearTimers, postPreviewAuthToken]);
+    }, [clearTimers, normalizePreviewKey, postPreviewAuthToken, previewUrl, resolvedPreviewSrc]);
 
     return (
       <div className="relative h-full w-full overflow-hidden bg-white">
-        {canLoadFrame ? (
+        {previewSrc ? (
           <iframe
             ref={setFrameRef}
             title="App Preview"
@@ -197,7 +317,7 @@ export const PreviewCanvas = forwardRef<HTMLIFrameElement, PreviewCanvasProps>(
           />
         ) : null}
 
-        {(isPending || (canLoadFrame && !isFrameVisible)) && !hasSessionError && !hasFailed && (
+        {(((isPending && !previewSrc) && !isTransientSameSessionPending) || (previewSrc && !isFrameVisible) || showTransientOverlay) && !hasSessionError && !hasFailed && (
           <div
             data-testid="preview-warmup-overlay"
             className="absolute inset-0 flex items-center justify-center gap-2 bg-background/70 text-sm text-muted-foreground"

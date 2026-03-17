@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 from contextlib import suppress
 import json
-import logging
 import os
 from datetime import datetime
 from typing import Any, Dict, List, Literal, Optional
@@ -17,30 +16,23 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_current_principal, require_scopes
 from app.db.postgres.models.agents import AgentRun, RunStatus
-from app.db.postgres.models.published_apps import PublishedAppDraftDevSessionStatus, PublishedAppRevision
+from app.db.postgres.models.published_apps import PublishedAppRevision
 from app.db.postgres.session import get_db
 from app.services.published_app_coding_agent_runtime import PublishedAppCodingAgentRuntimeService
 from app.services.published_app_coding_agent_tools import CODING_AGENT_SURFACE
 from app.services.published_app_coding_chat_history_service import PublishedAppCodingChatHistoryService
 from app.services.published_app_coding_pipeline_trace import pipeline_trace
 from app.services.published_app_coding_run_monitor import PublishedAppCodingRunMonitor
-from app.services.published_app_draft_dev_runtime import (
-    PublishedAppDraftDevRuntimeDisabled,
-    PublishedAppDraftDevRuntimeService,
-)
+from app.services.published_app_draft_dev_runtime import PublishedAppDraftDevRuntimeDisabled
 
 from .published_apps_admin_access import (
     _assert_can_manage_apps,
-    _create_draft_revision_snapshot,
     _ensure_current_draft_revision,
     _get_app_for_tenant,
     _get_revision_for_app,
     _resolve_tenant_admin_context,
 )
-from .published_apps_admin_files import _filter_builder_snapshot_files
 from .published_apps_admin_shared import PublishedAppRevisionResponse, _revision_to_response, router
-
-logger = logging.getLogger(__name__)
 
 
 class CodingAgentSubmitPromptRequest(BaseModel):
@@ -177,68 +169,6 @@ def _normalize_run_tool_events(*, run: AgentRun) -> List[CodingAgentRunEventResp
             )
         )
     return normalized
-
-
-async def _refresh_draft_from_active_builder_sandbox(
-    *,
-    db: AsyncSession,
-    app,
-    draft: PublishedAppRevision,
-    actor_id: UUID | None,
-) -> PublishedAppRevision:
-    if actor_id is None:
-        return draft
-    runtime_service = PublishedAppDraftDevRuntimeService(db)
-    try:
-        session = await runtime_service.get_session(app_id=app.id, user_id=actor_id)
-    except PublishedAppDraftDevRuntimeDisabled:
-        return draft
-    if (
-        session is None
-        or not session.sandbox_id
-        or session.status
-        not in {
-            PublishedAppDraftDevSessionStatus.starting,
-            PublishedAppDraftDevSessionStatus.building,
-            PublishedAppDraftDevSessionStatus.serving,
-            PublishedAppDraftDevSessionStatus.degraded,
-            PublishedAppDraftDevSessionStatus.running,
-        }
-    ):
-        return draft
-
-    try:
-        snapshot_payload = await runtime_service.client.snapshot_files(sandbox_id=session.sandbox_id)
-    except Exception as exc:
-        logger.warning(
-            "Skipping builder sandbox snapshot before coding run app_id=%s user_id=%s session_id=%s: %s",
-            app.id,
-            actor_id,
-            session.id,
-            exc,
-        )
-        return draft
-
-    files_payload = snapshot_payload.get("files")
-    if not isinstance(files_payload, dict):
-        return draft
-    normalized_files = _filter_builder_snapshot_files(files_payload)
-    if not normalized_files:
-        return draft
-    if normalized_files == dict(draft.files or {}):
-        return draft
-
-    refreshed = await _create_draft_revision_snapshot(
-        db=db,
-        app=app,
-        current=draft,
-        actor_id=actor_id,
-        files=normalized_files,
-        entry_file=draft.entry_file,
-    )
-    if session.revision_id != refreshed.id:
-        session.revision_id = refreshed.id
-    return refreshed
 
 
 @router.post(

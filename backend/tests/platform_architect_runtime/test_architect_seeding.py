@@ -1,5 +1,5 @@
 from app.services import registry_seeding
-from app.services.platform_sdk_local_tools import PLATFORM_SDK_LOCAL_FUNCTIONS
+from app.services.platform_native_tools import PLATFORM_NATIVE_FUNCTIONS
 
 
 def test_platform_architect_graph_is_single_agent_topology():
@@ -59,10 +59,10 @@ def test_platform_architect_domain_tool_specs_are_seeded():
     assert "architect.run" not in registry_seeding.PLATFORM_ARCHITECT_DOMAIN_TOOLS["platform-agents"]["actions"]
 
 
-def test_platform_architect_domain_tools_bind_to_local_platform_sdk_functions():
+def test_platform_architect_domain_tools_bind_to_native_platform_functions():
     for slug in registry_seeding.PLATFORM_ARCHITECT_DOMAIN_TOOLS:
-        function_name = PLATFORM_SDK_LOCAL_FUNCTIONS[slug]
-        assert function_name.startswith("platform_sdk_local_")
+        function_name = PLATFORM_NATIVE_FUNCTIONS[slug]
+        assert function_name.startswith("platform_native_")
 
 
 def test_platform_domain_schema_is_action_specific_one_of():

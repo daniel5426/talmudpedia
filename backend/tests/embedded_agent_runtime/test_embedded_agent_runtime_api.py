@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 from sqlalchemy import func, select
 
@@ -24,6 +26,16 @@ async def _create_embed_key(db_session, *, tenant_id, created_by, scopes=None):
     return api_key, token
 
 
+def _extract_stream_events(stream_text: str) -> list[dict]:
+    events: list[dict] = []
+    for block in stream_text.split("\n\n"):
+        for line in block.splitlines():
+            if not line.startswith("data: "):
+                continue
+            events.append(json.loads(line[len("data: ") :]))
+    return events
+
+
 @pytest.mark.asyncio
 async def test_embedded_agent_stream_persists_and_scopes_threads(client, db_session, monkeypatch):
     tenant, owner, _, agent = await seed_admin_tenant_and_agent(db_session)
@@ -44,6 +56,10 @@ async def test_embedded_agent_stream_persists_and_scopes_threads(client, db_sess
         json={"input": "hi", "external_user_id": "customer-user-1"},
     )
     assert stream_resp.status_code == 200
+    stream_events = _extract_stream_events(stream_resp.text)
+    assert stream_events[0]["version"] == "run-stream.v2"
+    assert stream_events[0]["event"] == "run.accepted"
+    assert any(event["event"] == "assistant.delta" for event in stream_events)
     assert "hello from embed" in stream_resp.text
     thread_id = stream_resp.headers.get("X-Thread-ID")
     assert thread_id

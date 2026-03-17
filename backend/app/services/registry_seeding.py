@@ -31,7 +31,7 @@ from app.services.platform_architect_worker_tools import (
     ensure_platform_architect_worker_orchestration_policy,
     ensure_platform_architect_worker_tools,
 )
-from app.services.platform_sdk_local_tools import PLATFORM_SDK_LOCAL_FUNCTIONS
+from app.services.platform_native_tools import PLATFORM_NATIVE_FUNCTIONS
 from app.services.artifact_coding_agent_profile import ensure_artifact_coding_agent_profile
 
 # Backward-compatible exports for tests and internal callers.
@@ -444,7 +444,7 @@ async def seed_builtin_tool_templates(db):
 
 
 async def seed_platform_architect_domain_tools(db) -> dict[str, str]:
-    import app.services.platform_sdk_local_tools  # noqa: F401
+    import app.services.platform_native_tools  # noqa: F401
 
     required_cols = {
         "id",
@@ -475,7 +475,7 @@ async def seed_platform_architect_domain_tools(db) -> dict[str, str]:
         config_schema = {
             "implementation": {
                 "type": "function",
-                "function_name": PLATFORM_SDK_LOCAL_FUNCTIONS[slug],
+                "function_name": PLATFORM_NATIVE_FUNCTIONS[slug],
             },
             "execution": {
                 "timeout_s": 60,

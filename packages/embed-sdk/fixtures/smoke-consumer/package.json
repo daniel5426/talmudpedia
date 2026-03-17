@@ -1,0 +1,14 @@
+{
+  "name": "embed-sdk-smoke-consumer",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "verify": "npm run verify:esm && npm run verify:cjs && npm run verify:types",
+    "verify:esm": "node ./scripts/check-esm.mjs",
+    "verify:cjs": "node ./scripts/check-cjs.cjs",
+    "verify:types": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}

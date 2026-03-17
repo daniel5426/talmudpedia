@@ -1,0 +1,55 @@
+name: embed-sdk-release
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  id-token: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    outputs:
+      embed_sdk_released: ${{ steps.release.outputs['packages/embed-sdk--release_created'] }}
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  publish:
+    needs: release-please
+    if: needs.release-please.outputs.embed_sdk_released == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+
+      - name: Install embed-sdk dependencies
+        working-directory: packages/embed-sdk
+        run: npm ci
+
+      - name: Build embed-sdk
+        working-directory: packages/embed-sdk
+        run: npm run build
+
+      - name: Run pack smoke test
+        working-directory: packages/embed-sdk
+        run: npm run smoke:pack
+
+      - name: Publish embed-sdk
+        working-directory: packages/embed-sdk
+        run: npm publish --access public --provenance

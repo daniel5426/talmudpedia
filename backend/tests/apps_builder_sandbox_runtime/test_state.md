@@ -1,4 +1,4 @@
-Last Updated: 2026-03-15
+Last Updated: 2026-03-17
 
 # Apps Builder Sandbox Runtime Tests
 
@@ -31,6 +31,7 @@ Last Updated: 2026-03-15
 - Sprite workspace snapshots filter generated/high-noise paths before serializing payloads back to the backend.
 - Sprite live sync preserves `node_modules/` across no-op file syncs, and start/sync can force a dependency repair plus Vite cache rebuild when preview readiness fails.
 - Shared app-level draft workspaces are reused across multiple editors on the same app.
+- Coding-run bootstrap can reuse a healthy live workspace even when the saved draft revision has advanced, instead of forcing a revision-driven resync.
 - Session stop detaches one editor without destroying the shared Sprite while another editor remains attached.
 - Dormant workspace sweep destroys the shared Sprite only after all sessions detach and retention elapses.
 - App delete destroys the shared Sprite and removes workspace metadata.
@@ -42,6 +43,9 @@ Last Updated: 2026-03-15
 - Command: `cd backend && PYTHONPATH=. pytest -x -q tests/apps_builder_sandbox_runtime/test_draft_dev_runtime_lifecycle.py`
 - Date: 2026-03-15
 - Result: PASS (6 passed, 6 warnings)
+- Command: `cd backend && PYTHONPATH=. pytest -q tests/apps_builder_sandbox_runtime/test_draft_dev_runtime_lifecycle.py`
+- Date: 2026-03-17
+- Result: PASS (7 passed, 6 warnings)
 - Command: `cd backend && set -a && source .env >/dev/null 2>&1 && PYTHONPATH=. pytest -q tests/apps_builder_sandbox_runtime/test_sprite_backend_config.py tests/coding_agent_api/test_batch_finalizer.py tests/app_versions/test_coding_run_versions.py tests/apps_publish_sandbox/test_local_publish_dependency_reuse.py tests/apps_publish_sandbox/test_publish_runtime_helpers.py tests/sandbox_controller/test_dev_shim.py`
 - Date: 2026-03-09 19:03 EET
 - Result: PASS (29 passed, 6 warnings)

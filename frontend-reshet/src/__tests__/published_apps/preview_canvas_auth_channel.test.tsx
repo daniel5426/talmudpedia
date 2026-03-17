@@ -89,4 +89,45 @@ describe("PreviewCanvas auth channel", () => {
 
     expect(frame.getAttribute("src")).toBe(initialSrc);
   });
+
+  it("keeps the iframe mounted during same-session transient pending states", async () => {
+    jest.useFakeTimers();
+    try {
+      const { rerender } = render(
+        <PreviewCanvas
+          previewUrl="https://preview.local/sandbox/session-1/"
+          previewAuthToken="preview-auth-token-1"
+          devStatus="running"
+          devError={null}
+        />,
+      );
+
+      const frame = await screen.findByTestId("preview-iframe");
+      fireEvent.load(frame);
+      await act(async () => {
+        jest.advanceTimersByTime(600);
+      });
+
+      rerender(
+        <PreviewCanvas
+          previewUrl="https://preview.local/sandbox/session-1/"
+          previewAuthToken="preview-auth-token-1"
+          devStatus="starting"
+          devError={null}
+          lifecyclePhase="recovering"
+        />,
+      );
+
+      expect(screen.getByTestId("preview-iframe")).toBeInTheDocument();
+      expect(screen.queryByTestId("preview-warmup-overlay")).not.toBeInTheDocument();
+
+      await act(async () => {
+        jest.advanceTimersByTime(900);
+      });
+
+      expect(screen.getByTestId("preview-warmup-overlay")).toBeInTheDocument();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
 });

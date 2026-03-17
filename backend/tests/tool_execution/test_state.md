@@ -1,6 +1,6 @@
 # Tool Execution Tests
 
-Last Updated: 2026-03-16
+Last Updated: 2026-03-17
 
 ## Scope
 Validate MCP/function/agent-call execution paths in the `ToolNodeExecutor`.
@@ -40,6 +40,7 @@ Validate MCP/function/agent-call execution paths in the `ToolNodeExecutor`.
 - Strict function-tool execution now validates canonical model-authored payloads before dispatch, rejects unknown fields deterministically, and strips executor-owned runtime metadata from schema validation.
 - Strict function-tool validation errors now return explicit, agent-friendly summaries for missing required fields, wrong types, unexpected fields, and schema-union mismatches instead of raw JSON Schema-only wording.
 - Strict `platform-*` function tools now reject raw scalar args and `value` / `query` / `text` wrapped payloads with `NON_CANONICAL_PLATFORM_SDK_INPUT` before generic schema validation.
+- Strict local `platform-*` function tools now execute through native backend control-plane dispatch while still receiving executor-owned auth/runtime context through `__tool_runtime_context__`.
 - Reasoning tool-call normalization now preserves direct argument fields when no `input/args/parameters` wrapper is present.
 - Reasoning executor now emits internal trace events when it infers a tool call from assistant JSON fallback instead of a native provider tool call.
 - `agent_call` success returns compact sync payload with child output/context
@@ -112,6 +113,12 @@ Validate MCP/function/agent-call execution paths in the `ToolNodeExecutor`.
 - Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/tool_execution/test_function_tool_execution.py`
 - Date/Time: 2026-03-16 15:35 EET
 - Result: PASS (`17 passed, 5 warnings`)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/tool_execution/test_function_tool_execution.py`
+- Date/Time: 2026-03-17 18:05 Asia/Hebron
+- Result: PASS (`18 passed`)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/tool_execution/test_function_tool_execution.py`
+- Date/Time: 2026-03-17 18:32 Asia/Hebron
+- Result: PASS (`18 passed`)
 
 ## Known Gaps / Follow-ups
 - Add coverage for `agent_call` payload mode variants beyond sync (`spawn`/future orchestration modes).

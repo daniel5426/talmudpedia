@@ -487,8 +487,10 @@ class PublishedAppDraftDevRuntimeService:
         revision: PublishedAppRevision,
         dependency_hash: str,
         now: datetime,
+        preserve_live_revision: bool = False,
     ) -> PublishedAppDraftDevSession:
-        session.revision_id = revision.id
+        if not preserve_live_revision:
+            session.revision_id = revision.id
         session.draft_workspace_id = workspace.id
         session.idle_timeout_seconds = self.settings.idle_timeout_seconds
         session.last_activity_at = now
@@ -724,6 +726,7 @@ class PublishedAppDraftDevRuntimeService:
         app: PublishedApp,
         revision: PublishedAppRevision,
         user_id: UUID,
+        prefer_live_workspace: bool = False,
     ) -> PublishedAppDraftDevSession:
         if not self.settings.enabled:
             raise PublishedAppDraftDevRuntimeDisabled("Draft dev mode is disabled (`APPS_BUILDER_DRAFT_DEV_ENABLED=0`).")
@@ -734,6 +737,70 @@ class PublishedAppDraftDevRuntimeService:
         await self.expire_idle_sessions(app_id=app.id)
         session = await self.get_session(app_id=app.id, user_id=user_id)
         workspace = await self.get_workspace(app_id=app.id)
+        workspace_is_active = (
+            workspace is not None
+            and bool(str(workspace.sandbox_id or "").strip())
+            and str(getattr(workspace.status, "value", workspace.status) or "").strip().lower()
+            in self._workspace_active_statuses()
+        )
+        if (
+            prefer_live_workspace
+            and session is not None
+            and workspace is not None
+            and session.draft_workspace_id == workspace.id
+            and workspace_is_active
+        ):
+            session.last_activity_at = now
+            session.expires_at = self._session_expires_at(now)
+            workspace.last_activity_at = now
+            workspace.detached_at = None
+            try:
+                heartbeat_result = await self.client.heartbeat_session(
+                    sandbox_id=str(workspace.sandbox_id),
+                    idle_timeout_seconds=self.settings.idle_timeout_seconds,
+                )
+            except PublishedAppDraftDevRuntimeClientError as exc:
+                if self._is_runtime_not_running_error(exc):
+                    return await self.ensure_session(
+                        app=app,
+                        revision=revision,
+                        user_id=user_id,
+                        files=dict(revision.files or {}),
+                        entry_file=revision.entry_file,
+                    )
+                if self._is_transient_remote_error(exc):
+                    self._mark_workspace_degraded(workspace, exc)
+                    return self._mark_session_degraded(session, exc)
+                self._mark_workspace_error(workspace, exc)
+                return self._mark_session_error(session, exc)
+
+            if isinstance(heartbeat_result.get("backend_metadata"), dict):
+                workspace.backend_metadata = self._merge_backend_metadata(
+                    existing_metadata=workspace.backend_metadata,
+                    refreshed_metadata=heartbeat_result.get("backend_metadata"),
+                    preview_base_path=str(workspace.preview_url or "").strip() or str(session.preview_url or "").strip() or "/",
+                )
+
+            apps_builder_trace(
+                "workspace.ensure_active.reused_live",
+                domain="draft_dev.runtime",
+                app_id=str(app.id),
+                requested_revision_id=str(revision.id),
+                session_revision_id=str(session.revision_id or "") or None,
+                workspace_revision_id=str(workspace.revision_id or "") or None,
+                session_id=str(session.id),
+                workspace_id=str(workspace.id),
+                sandbox_id=str(workspace.sandbox_id or "") or None,
+                user_id=str(user_id),
+            )
+            return self._attach_session(
+                session=session,
+                workspace=workspace,
+                revision=revision,
+                dependency_hash=str(workspace.dependency_hash or session.dependency_hash or ""),
+                now=now,
+                preserve_live_revision=True,
+            )
         if (
             session is None
             or workspace is None

@@ -1,6 +1,6 @@
 # Embedded Agent Runtime Spec
 
-Last Updated: 2026-03-16
+Last Updated: 2026-03-17
 
 This document defines the canonical v1 external embed/plugin contract for published agents used inside customer-owned applications.
 
@@ -112,9 +112,26 @@ It does not reuse the published-app route/auth/session model.
 The supported SDK direction for v1 is server-side:
 
 - Python control SDK: `embedded_agents.stream_agent`, `list_agent_threads`, `get_agent_thread`
-- TypeScript server helper: embedded-agent client methods with the same shape
+- TypeScript package: `@talmudpedia/embed-sdk`
 
 No browser runtime SDK integration is required in this phase.
+
+`@talmudpedia/embed-sdk` is the canonical TypeScript integration surface for the embed runtime:
+
+- Node-only in v1
+- distributed as a public npm package
+- wraps the existing `/public/embed/agents/{agent_id}/*` routes exactly
+- does not provide browser auth helpers, bootstrap flows, cookies, localStorage integration, or published-app account/session models
+
+Customer architecture must remain:
+
+- customer frontend
+- customer backend
+- `@talmudpedia/embed-sdk`
+- Talmudpedia embed API
+- published agent
+
+The customer frontend must never hold the tenant API key.
 
 ## Canonical Implementation References
 
@@ -126,3 +143,5 @@ No browser runtime SDK integration is required in this phase.
 - `backend/app/agent/execution/service.py`
 - `backend/app/db/postgres/models/security.py`
 - `backend/app/db/postgres/models/agent_threads.py`
+- `packages/embed-sdk/`
+- `docs/references/embedded_agent_sdk_standalone_integration_guide.md`

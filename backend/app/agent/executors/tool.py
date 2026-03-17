@@ -615,6 +615,7 @@ class ToolNodeExecutor(BaseNodeExecutor):
             if value is not None
             and key
             in {
+                "token",
                 "run_id",
                 "thread_id",
                 "tenant_id",

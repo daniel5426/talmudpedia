@@ -5,6 +5,7 @@ from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import logging
+import json
 import os
 import time
 from typing import Any, AsyncGenerator
@@ -16,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession, a
 from app.db.postgres.engine import sessionmaker
 from app.db.postgres.models.agents import AgentRun, RunStatus
 from app.db.postgres.models.published_apps import PublishedApp, PublishedAppRevision
+from app.api.routers.published_apps_admin_files import _filter_builder_snapshot_files
 from app.services.apps_builder_trace import apps_builder_trace
 from app.services.published_app_coding_agent_runtime import PublishedAppCodingAgentRuntimeService
 from app.services.published_app_draft_dev_runtime import PublishedAppDraftDevRuntimeService
@@ -106,6 +108,268 @@ class PublishedAppCodingRunMonitor:
             return "run.paused"
         return "run.failed"
 
+    async def _try_acquire_advisory_lock(self, *, run_id: UUID) -> tuple[bool, int | None]:
+        dialect_name = getattr(getattr(self.db.get_bind(), "dialect", None), "name", "")
+        if str(dialect_name or "").strip().lower() != "postgresql":
+            return True, None
+        key = (run_id.int & ((1 << 63) - 1))
+        result = await self.db.execute(text("SELECT pg_try_advisory_lock(:key)"), {"key": int(key)})
+        acquired = bool(result.scalar_one_or_none())
+        return acquired, int(key)
+
+    async def _release_advisory_lock(self, *, advisory_key: int | None) -> None:
+        if advisory_key is None:
+            return
+        try:
+            await self.db.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": int(advisory_key)})
+            await self.db.commit()
+        except Exception:
+            logger.exception("CODING_AGENT_MONITOR advisory_unlock_failed key=%s", advisory_key)
+
+    @staticmethod
+    def _finalization_state(run: AgentRun) -> dict[str, Any]:
+        payload = run.output_result if isinstance(run.output_result, dict) else {}
+        state = payload.get("draft_revision_finalization")
+        return dict(state) if isinstance(state, dict) else {}
+
+    @staticmethod
+    def _set_finalization_state(run: AgentRun, state: dict[str, Any] | None) -> None:
+        payload = dict(run.output_result) if isinstance(run.output_result, dict) else {}
+        if state:
+            payload["draft_revision_finalization"] = dict(state)
+        else:
+            payload.pop("draft_revision_finalization", None)
+        run.output_result = payload
+
+    @staticmethod
+    def _finalization_attempt_id(*, run_id: UUID) -> str:
+        return f"{run_id}:{datetime.now(timezone.utc).isoformat()}"
+
+    @staticmethod
+    def _finalization_claim_timeout_seconds() -> float:
+        raw = (os.getenv("APPS_DRAFT_REVISION_FINALIZATION_CLAIM_TIMEOUT_SECONDS") or "").strip()
+        try:
+            value = float(raw) if raw else 900.0
+        except Exception:
+            value = 900.0
+        return max(30.0, value)
+
+    @classmethod
+    def _is_stale_finalization_claim(cls, state: dict[str, Any]) -> bool:
+        claimed_at = str(state.get("claimed_at") or "").strip()
+        if not claimed_at:
+            return True
+        try:
+            claimed = datetime.fromisoformat(claimed_at)
+        except Exception:
+            return True
+        age = (cls._now() - claimed).total_seconds()
+        return age >= cls._finalization_claim_timeout_seconds()
+
+    @classmethod
+    async def _reconcile_live_workspace_metadata(
+        cls,
+        *,
+        db: AsyncSession,
+        run: AgentRun,
+        app: PublishedApp,
+        actor_id: UUID | None,
+        source_revision_id: UUID | None,
+        entry_file: str,
+    ) -> None:
+        if actor_id is None:
+            apps_builder_trace(
+                "monitor.finalize.workspace_reconcile_skipped",
+                domain="coding_agent.finalizer",
+                run_id=str(run.id),
+                app_id=str(app.id),
+                reason="missing_actor_id",
+            )
+            return
+        input_params = run.input_params if isinstance(run.input_params, dict) else {}
+        context = input_params.get("context") if isinstance(input_params.get("context"), dict) else {}
+        sandbox_id = str(context.get("preview_sandbox_id") or "").strip()
+        if not sandbox_id:
+            apps_builder_trace(
+                "monitor.finalize.workspace_reconcile_skipped",
+                domain="coding_agent.finalizer",
+                run_id=str(run.id),
+                app_id=str(app.id),
+                reason="missing_sandbox_id",
+            )
+            return
+        runtime_service = PublishedAppDraftDevRuntimeService(db)
+        apps_builder_trace(
+            "monitor.finalize.workspace_reconcile_begin",
+            domain="coding_agent.finalizer",
+            run_id=str(run.id),
+            app_id=str(app.id),
+            sandbox_id=sandbox_id,
+            source_revision_id=str(source_revision_id or "") or None,
+        )
+        try:
+            payload = await runtime_service.client.snapshot_files(sandbox_id=sandbox_id)
+            raw_files = payload.get("files")
+            if not isinstance(raw_files, dict):
+                apps_builder_trace(
+                    "monitor.finalize.workspace_reconcile_skipped",
+                    domain="coding_agent.finalizer",
+                    run_id=str(run.id),
+                    app_id=str(app.id),
+                    reason="snapshot_missing_files",
+                )
+                return
+            files = _filter_builder_snapshot_files(raw_files)
+            revision_token = str(payload.get("revision_token") or "").strip() or None
+            await runtime_service.record_workspace_live_snapshot(
+                app_id=app.id,
+                revision_id=source_revision_id or app.current_draft_revision_id,
+                entry_file=entry_file,
+                files=files,
+                revision_token=revision_token,
+                workspace_fingerprint=None,
+            )
+            session = await runtime_service.get_session(app_id=app.id, user_id=actor_id)
+            if session is not None:
+                await runtime_service.record_live_workspace_revision_token(
+                    session=session,
+                    revision_token=revision_token,
+                )
+            apps_builder_trace(
+                "monitor.finalize.workspace_reconcile_done",
+                domain="coding_agent.finalizer",
+                run_id=str(run.id),
+                app_id=str(app.id),
+                sandbox_id=sandbox_id,
+                file_count=len(files),
+                revision_token=revision_token,
+            )
+        except Exception as exc:
+            apps_builder_trace(
+                "monitor.finalize.workspace_reconcile_failed",
+                domain="coding_agent.finalizer",
+                run_id=str(run.id),
+                app_id=str(app.id),
+                sandbox_id=sandbox_id,
+                error=str(exc),
+                error_type=exc.__class__.__name__,
+            )
+
+    @classmethod
+    async def _claim_run_finalization(
+        cls,
+        *,
+        db: AsyncSession,
+        app_id: UUID,
+        run_id: UUID,
+    ) -> tuple[AgentRun | None, PublishedApp | None, UUID | None, str, UUID | None]:
+        apps_builder_trace(
+            "monitor.finalize.claim_begin",
+            domain="coding_agent.finalizer",
+            run_id=str(run_id),
+            app_id=str(app_id),
+        )
+        run_result = await db.execute(
+            select(AgentRun)
+            .where(AgentRun.id == run_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        run = run_result.scalar_one_or_none()
+        app = await db.get(PublishedApp, app_id)
+        if run is None or app is None:
+            apps_builder_trace(
+                "monitor.finalize.claim_missing_entities",
+                domain="coding_agent.finalizer",
+                run_id=str(run_id),
+                app_id=str(app_id),
+                run_found=bool(run is not None),
+                app_found=bool(app is not None),
+            )
+            await db.commit()
+            return None, None, None, "", None
+
+        run_status = run.status.value if hasattr(run.status, "value") else str(run.status)
+        apps_builder_trace(
+            "monitor.finalize.claim_loaded",
+            domain="coding_agent.finalizer",
+            run_id=str(run_id),
+            app_id=str(app_id),
+            run_status=run_status,
+            has_workspace_writes=bool(getattr(run, "has_workspace_writes", False)),
+            result_revision_id=str(getattr(run, "result_revision_id", None) or "") or None,
+            batch_finalized_at=run.batch_finalized_at.isoformat()
+            if isinstance(run.batch_finalized_at, datetime)
+            else None,
+        )
+        if getattr(run, "batch_finalized_at", None) is not None:
+            apps_builder_trace(
+                "monitor.finalize.claim_skipped",
+                domain="coding_agent.finalizer",
+                run_id=str(run_id),
+                app_id=str(app_id),
+                reason="already_batch_finalized",
+            )
+            await db.commit()
+            return None, None, None, "", None
+        if run_status != RunStatus.completed.value:
+            apps_builder_trace(
+                "monitor.finalize.claim_skipped",
+                domain="coding_agent.finalizer",
+                run_id=str(run_id),
+                app_id=str(app_id),
+                reason="run_not_completed",
+                run_status=run_status,
+            )
+            await db.commit()
+            return None, None, None, "", None
+        if not bool(getattr(run, "has_workspace_writes", False)):
+            apps_builder_trace(
+                "monitor.finalize.claim_skipped",
+                domain="coding_agent.finalizer",
+                run_id=str(run_id),
+                app_id=str(app_id),
+                reason="no_workspace_writes",
+            )
+            await db.commit()
+            return run, app, None, "", None
+
+        state = cls._finalization_state(run)
+        if state.get("status") == "in_progress" and not cls._is_stale_finalization_claim(state):
+            apps_builder_trace(
+                "monitor.finalize.claim_skipped",
+                domain="coding_agent.finalizer",
+                run_id=str(run_id),
+                app_id=str(app_id),
+                reason="already_claimed",
+                claim_state=state,
+            )
+            await db.commit()
+            return None, None, None, "", None
+
+        source_revision_id = run.base_revision_id or app.current_draft_revision_id
+        actor_id = run.initiator_user_id or run.user_id
+        attempt_id = cls._finalization_attempt_id(run_id=run_id)
+        cls._set_finalization_state(
+            run,
+            {
+                "status": "in_progress",
+                "attempt_id": attempt_id,
+                "claimed_at": cls._now().isoformat(),
+                "source_revision_id": str(source_revision_id or "") or None,
+            },
+        )
+        apps_builder_trace(
+            "monitor.finalize.claim_acquired",
+            domain="coding_agent.finalizer",
+            run_id=str(run_id),
+            app_id=str(app_id),
+            attempt_id=attempt_id,
+            source_revision_id=str(source_revision_id or "") or None,
+        )
+        await db.commit()
+        return run, app, source_revision_id, attempt_id, actor_id
+
     @staticmethod
     def _envelope(*, event: str, run_id: UUID, app_id: UUID, stage: str, payload: dict[str, Any], diagnostics: list[dict[str, Any]] | None = None) -> dict[str, Any]:
         return {
@@ -177,23 +441,6 @@ class PublishedAppCodingRunMonitor:
             except Exception:
                 pass
 
-    async def _try_acquire_advisory_lock(self, *, run_id: UUID) -> tuple[bool, int | None]:
-        dialect_name = getattr(getattr(self.db.get_bind(), "dialect", None), "name", "")
-        if dialect_name != "postgresql":
-            return True, None
-        key = (run_id.int & ((1 << 63) - 1))
-        result = await self.db.execute(text("SELECT pg_try_advisory_lock(:key)"), {"key": int(key)})
-        acquired = bool(result.scalar_one_or_none())
-        return acquired, int(key)
-
-    async def _release_advisory_lock(self, *, advisory_key: int | None) -> None:
-        if advisory_key is None:
-            return
-        try:
-            await self.db.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": int(advisory_key)})
-        except Exception:
-            logger.exception("CODING_AGENT_MONITOR advisory_unlock_failed key=%s", advisory_key)
-
     async def ensure_monitor(self, *, app_id: UUID, run_id: UUID) -> _MonitorState | None:
         run = await self.db.get(AgentRun, run_id)
         if run is None:
@@ -240,143 +487,166 @@ class PublishedAppCodingRunMonitor:
                     run_id=str(run_id),
                     app_id=str(app_id),
                 )
-                run = await db.get(AgentRun, run_id)
-                app = await db.get(PublishedApp, app_id)
-                if run is None or app is None:
+                claimed_run, claimed_app, source_revision_id, attempt_id, actor_id = await cls._claim_run_finalization(
+                    db=db,
+                    app_id=app_id,
+                    run_id=run_id,
+                )
+                if claimed_run is None or claimed_app is None:
+                    return
+                if not source_revision_id:
+                    return
+
+            entry_file = "src/main.tsx"
+            async with cls._session_factory() as read_db:
+                source_revision = await read_db.get(PublishedAppRevision, source_revision_id)
+                if source_revision is not None:
+                    entry_file = str(source_revision.entry_file or entry_file)
+            cls._trace(
+                "monitor.revision_materialize_begin",
+                run_id=str(run_id),
+                app_id=str(app_id),
+                source_revision_id=str(source_revision_id or ""),
+                has_workspace_writes=True,
+            )
+            result_revision_id: str | None = None
+            async with cls._session_factory() as work_db:
+                work_run = await work_db.get(AgentRun, run_id)
+                work_app = await work_db.get(PublishedApp, app_id)
+                if work_run is None or work_app is None:
                     apps_builder_trace(
                         "monitor.finalize.session_missing_entities",
                         domain="coding_agent.finalizer",
                         run_id=str(run_id),
                         app_id=str(app_id),
-                        run_found=bool(run is not None),
-                        app_found=bool(app is not None),
+                        run_found=bool(work_run is not None),
+                        app_found=bool(work_app is not None),
                     )
                     return
-                run_status = run.status.value if hasattr(run.status, "value") else str(run.status)
+                materializer = PublishedAppDraftRevisionMaterializerService(work_db)
                 apps_builder_trace(
-                    "monitor.finalize.loaded_entities",
+                    "monitor.finalize.materializer_call_begin",
                     domain="coding_agent.finalizer",
                     run_id=str(run_id),
                     app_id=str(app_id),
-                    run_status=run_status,
-                    has_workspace_writes=bool(getattr(run, "has_workspace_writes", False)),
-                    result_revision_id=str(getattr(run, "result_revision_id", None) or "") or None,
-                    batch_finalized_at=run.batch_finalized_at.isoformat()
-                    if isinstance(run.batch_finalized_at, datetime)
-                    else None,
+                    source_revision_id=str(source_revision_id or "") or None,
+                    entry_file=entry_file,
+                    attempt_id=attempt_id,
                 )
-                if run_status != RunStatus.completed.value:
-                    apps_builder_trace(
-                        "monitor.finalize.skipped",
-                        domain="coding_agent.finalizer",
-                        run_id=str(run_id),
-                        app_id=str(app_id),
-                        reason="run_not_completed",
-                        run_status=run_status,
-                    )
-                    await db.commit()
-                    return
-                source_revision_id = run.base_revision_id or app.current_draft_revision_id
-                entry_file = "src/main.tsx"
-                if source_revision_id is not None:
-                    source_revision = await db.get(PublishedAppRevision, source_revision_id)
-                    if source_revision is not None:
-                        entry_file = str(source_revision.entry_file or entry_file)
-                cls._trace(
-                    "monitor.revision_materialize_begin",
+                await cls._reconcile_live_workspace_metadata(
+                    db=work_db,
+                    run=work_run,
+                    app=work_app,
+                    actor_id=actor_id,
+                    source_revision_id=source_revision_id,
+                    entry_file=entry_file,
+                )
+                result_revision = await materializer.finalize_run_materialization(
+                    app=work_app,
+                    run=work_run,
+                    entry_file=entry_file,
+                    source_revision_id=source_revision_id,
+                    created_by=actor_id,
+                )
+                result_revision_id = str(result_revision.id) if result_revision is not None else None
+                apps_builder_trace(
+                    "monitor.finalize.materializer_call_done",
+                    domain="coding_agent.finalizer",
                     run_id=str(run_id),
                     app_id=str(app_id),
-                    source_revision_id=str(source_revision_id or ""),
-                    has_workspace_writes=bool(getattr(run, "has_workspace_writes", False)),
+                    result_revision_id=result_revision_id,
+                    attempt_id=attempt_id,
                 )
-                result = None
-                if bool(getattr(run, "has_workspace_writes", False)):
-                    materializer = PublishedAppDraftRevisionMaterializerService(db)
+                if result_revision is not None and actor_id is not None:
                     apps_builder_trace(
-                        "monitor.finalize.materializer_call_begin",
+                        "monitor.finalize.bind_session_skipped",
                         domain="coding_agent.finalizer",
                         run_id=str(run_id),
                         app_id=str(app_id),
-                        source_revision_id=str(source_revision_id or "") or None,
-                        entry_file=entry_file,
+                        actor_id=str(actor_id),
+                        result_revision_id=str(result_revision.id),
+                        reason="live_preview_session_remains_bound_to_workspace",
                     )
-                    result_revision = await materializer.finalize_run_materialization(
-                        app=app,
-                        run=run,
-                        entry_file=entry_file,
-                        source_revision_id=source_revision_id,
-                        created_by=run.initiator_user_id or run.user_id,
-                    )
+                await work_db.commit()
+
+            async with cls._session_factory() as finalize_db:
+                run_result = await finalize_db.execute(
+                    select(AgentRun)
+                    .where(AgentRun.id == run_id)
+                    .with_for_update()
+                    .execution_options(populate_existing=True)
+                )
+                finalize_run = run_result.scalar_one_or_none()
+                if finalize_run is None:
+                    return
+                state = cls._finalization_state(finalize_run)
+                if str(state.get("attempt_id") or "") != attempt_id:
                     apps_builder_trace(
-                        "monitor.finalize.materializer_call_done",
+                        "monitor.finalize.claim_skipped",
                         domain="coding_agent.finalizer",
                         run_id=str(run_id),
                         app_id=str(app_id),
-                        result_revision_id=str(result_revision.id) if result_revision is not None else None,
+                        reason="attempt_id_mismatch",
+                        expected_attempt_id=attempt_id,
+                        actual_attempt_id=str(state.get("attempt_id") or ""),
                     )
-                    actor_id = run.initiator_user_id or run.user_id
-                    if result_revision is not None and actor_id is not None:
-                        runtime_service = PublishedAppDraftDevRuntimeService(db)
-                        apps_builder_trace(
-                            "monitor.finalize.bind_session_begin",
-                            domain="coding_agent.finalizer",
-                            run_id=str(run_id),
-                            app_id=str(app_id),
-                            actor_id=str(actor_id),
-                            result_revision_id=str(result_revision.id),
-                        )
-                        await runtime_service.bind_session_to_revision_without_sync(
-                            app_id=app.id,
-                            user_id=actor_id,
-                            revision=result_revision,
-                        )
-                        apps_builder_trace(
-                            "monitor.finalize.bind_session_done",
-                            domain="coding_agent.finalizer",
-                            run_id=str(run_id),
-                            app_id=str(app_id),
-                            actor_id=str(actor_id),
-                            result_revision_id=str(result_revision.id),
-                        )
-                    result = {
-                        "result_revision_id": str(result_revision.id) if result_revision is not None else None,
-                    }
-                else:
-                    apps_builder_trace(
-                        "monitor.finalize.skipped",
-                        domain="coding_agent.finalizer",
-                        run_id=str(run_id),
-                        app_id=str(app_id),
-                        reason="no_workspace_writes",
-                    )
+                    await finalize_db.commit()
+                    return
+                if result_revision_id:
+                    finalize_run.result_revision_id = UUID(result_revision_id)
+                finalize_run.batch_finalized_at = cls._now()
+                cls._set_finalization_state(finalize_run, None)
                 apps_builder_trace(
                     "monitor.finalize.db_commit_begin",
                     domain="coding_agent.finalizer",
                     run_id=str(run_id),
                     app_id=str(app_id),
+                    result_revision_id=result_revision_id,
+                    attempt_id=attempt_id,
                 )
-                await db.commit()
+                await finalize_db.commit()
                 apps_builder_trace(
                     "monitor.finalize.db_commit_done",
                     domain="coding_agent.finalizer",
                     run_id=str(run_id),
                     app_id=str(app_id),
-                    result=result,
+                    result={"result_revision_id": result_revision_id},
+                    attempt_id=attempt_id,
                 )
-                cls._trace(
-                    "monitor.revision_materialize_done",
-                    run_id=str(run_id),
-                    app_id=str(app_id),
-                    result=result,
-                )
-                apps_builder_trace(
-                    "monitor.revision_materialize_done",
-                    domain="coding_agent.finalizer",
-                    run_id=str(run_id),
-                    app_id=str(app_id),
-                    result=result,
-                )
+            cls._trace(
+                "monitor.revision_materialize_done",
+                run_id=str(run_id),
+                app_id=str(app_id),
+                result={"result_revision_id": result_revision_id},
+            )
+            apps_builder_trace(
+                "monitor.revision_materialize_done",
+                domain="coding_agent.finalizer",
+                run_id=str(run_id),
+                app_id=str(app_id),
+                result={"result_revision_id": result_revision_id},
+                attempt_id=attempt_id,
+            )
         except PublishedAppDraftRevisionMaterializerError as exc:
+            async with cls._session_factory() as db:
+                run_result = await db.execute(
+                    select(AgentRun)
+                    .where(AgentRun.id == run_id)
+                    .with_for_update()
+                    .execution_options(populate_existing=True)
+                )
+                failed_run = run_result.scalar_one_or_none()
+                if failed_run is not None:
+                    cls._set_finalization_state(
+                        failed_run,
+                        {
+                            "status": "failed",
+                            "failed_at": cls._now().isoformat(),
+                            "error": str(exc),
+                            "error_type": exc.__class__.__name__,
+                        },
+                    )
+                    await db.commit()
             apps_builder_trace(
                 "monitor.finalize.materializer_error",
                 domain="coding_agent.finalizer",
@@ -392,6 +662,25 @@ class PublishedAppCodingRunMonitor:
                 exc,
             )
         except Exception as exc:
+            async with cls._session_factory() as db:
+                run_result = await db.execute(
+                    select(AgentRun)
+                    .where(AgentRun.id == run_id)
+                    .with_for_update()
+                    .execution_options(populate_existing=True)
+                )
+                failed_run = run_result.scalar_one_or_none()
+                if failed_run is not None:
+                    cls._set_finalization_state(
+                        failed_run,
+                        {
+                            "status": "failed",
+                            "failed_at": cls._now().isoformat(),
+                            "error": str(exc),
+                            "error_type": exc.__class__.__name__,
+                        },
+                    )
+                    await db.commit()
             apps_builder_trace(
                 "monitor.finalize.exception",
                 domain="coding_agent.finalizer",

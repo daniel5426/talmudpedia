@@ -1,6 +1,6 @@
 # Tools Domain Spec
 
-Last Updated: 2026-03-14
+Last Updated: 2026-03-17
 
 This document is the canonical product/specification overview for the tools domain.
 
@@ -102,7 +102,7 @@ Current contract boundary:
 
 Current system-tool note:
 - system tools can also be artifact-backed
-- `platform-sdk` is the main current example of a global/system tool implemented by a system-owned artifact revision
+- the architect-visible `platform-rag`, `platform-agents`, `platform-assets`, and `platform-governance` tools are global/system `FUNCTION` tools backed by native backend dispatch, not by the control-plane SDK shim runtime
 
 ## Artifact Connection
 
@@ -141,3 +141,4 @@ Current MCP tools execute through HTTP JSON-RPC `tools/call`.
 - `backend/app/db/postgres/models/registry.py`
 - `backend/app/services/artifact_runtime/registry_service.py`
 - `backend/app/services/artifact_runtime/execution_service.py`
+- `backend/app/services/platform_native_tools.py`

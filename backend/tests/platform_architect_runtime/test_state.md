@@ -1,6 +1,6 @@
 # Platform Architect Runtime Tests
 
-Last Updated: 2026-03-16
+Last Updated: 2026-03-17
 
 ## Scope
 - Platform Architect v1.2 direct domain-tool loop runtime (no `architect.run` path).
@@ -9,7 +9,7 @@ Last Updated: 2026-03-16
 ## Test files present
 - test_platform_architect_runtime.py
 - test_architect_seeding.py
-- test_local_platform_sdk_tools.py
+- test_native_platform_tools.py
 
 ## Key scenarios covered
 - Happy path executes direct `rag.*` and `agents.*` calls for create/compile/validate/execute.
@@ -36,9 +36,8 @@ Last Updated: 2026-03-16
 - Seeded architect prompt now treats artifact-coding delegated workers as draft-mutation-only workers and keeps persistence architect-owned through `architect-worker-binding-persist-artifact`.
 - Seeded architect prompt now forbids asking artifact-coding workers to mutate runtime-owned readiness fields like `persistence_readiness`.
 - Seeded artifact-coding worker instructions now spell out the required draft fields for a new artifact before the architect can persist it.
-- Architect domain tools bind to local `platform_sdk` function dispatch instead of artifact-worker execution.
-- Local `platform_sdk` function dispatch forwards the correct architect domain tool slug.
-- Local `platform_sdk` function dispatch emits internal trace events for the prepared runtime context and the completed SDK result.
+- Architect domain tools now bind to native backend control-plane function dispatch instead of the runtime SDK shim.
+- Native `platform-*` dispatch preserves runtime auth/tenant context and rejects cross-domain action mismatch before execution.
 
 ## Last run command + date/time + result
 - Command: `cd backend && PYTHONPATH=. pytest -q tests/platform_architect_runtime/test_architect_seeding.py`
@@ -74,6 +73,9 @@ Last Updated: 2026-03-16
 - Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/artifact_coding_agent/test_runtime_service.py backend/tests/platform_architect_runtime/test_architect_seeding.py`
 - Date/Time: 2026-03-16 20:12 EET
 - Result: passed (`15 passed, 1 warning`)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/platform_architect_runtime/test_architect_seeding.py backend/tests/platform_architect_runtime/test_native_platform_tools.py backend/tests/tool_execution/test_function_tool_execution.py backend/tests/platform_architect_runtime/test_platform_architect_runtime.py backend/tests/platform_architect_workers/test_worker_runtime.py backend/tests/platform_sdk_tool/test_platform_sdk_actions.py`
+- Date/Time: 2026-03-17 18:32 Asia/Hebron
+- Result: passed (`65 passed, 7 warnings`)
 
 ## Known gaps or follow-ups
 - Add integration coverage that exercises seeded `platform-architect` graph with real tool resolution in DB-backed test environment.

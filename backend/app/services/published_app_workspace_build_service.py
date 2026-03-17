@@ -69,6 +69,22 @@ class PublishedAppWorkspaceBuildService:
         digest = hashlib.sha256(f"workspace-build:{app_id}".encode("utf-8")).digest()
         return int.from_bytes(digest[:8], "big") & 0x7FFFFFFFFFFFFFFF
 
+    @staticmethod
+    def _stale_build_timeout_seconds() -> float:
+        raw = (os.getenv("APPS_WORKSPACE_BUILD_STALE_TIMEOUT_SECONDS") or "").strip()
+        try:
+            value = float(raw) if raw else 900.0
+        except Exception:
+            value = 900.0
+        return max(60.0, value)
+
+    @classmethod
+    def _is_stale_build(cls, build: PublishedAppWorkspaceBuild) -> bool:
+        started_at = build.build_started_at
+        if not isinstance(started_at, datetime):
+            return True
+        return (datetime.now(timezone.utc) - started_at).total_seconds() >= cls._stale_build_timeout_seconds()
+
     async def _acquire_app_lock(self, *, app_id: UUID) -> None:
         bind = self.db.get_bind()
         dialect_name = str(getattr(getattr(bind, "dialect", None), "name", "") or "").lower()
@@ -283,7 +299,6 @@ class PublishedAppWorkspaceBuildService:
             created_by=str(created_by or "") or None,
         )
         try:
-            await self._acquire_app_lock(app_id=app.id)
             workspace = await self._resolve_workspace(app_id=app.id)
             sandbox_id = str(workspace.sandbox_id or "").strip()
             runtime_context = TemplateRuntimeContext(
@@ -347,7 +362,40 @@ class PublishedAppWorkspaceBuildService:
                     reused=True,
                 )
 
+            await self._acquire_app_lock(app_id=app.id)
             build = await self._get_or_create_build(app=app, workspace_fingerprint=source_fingerprint)
+            if (
+                build.status == PublishedAppWorkspaceBuildStatus.ready
+                and str(build.dist_storage_prefix or "").strip()
+            ):
+                self._trace(
+                    "build.reused_after_lock",
+                    app_id=app.id,
+                    workspace_build_id=str(build.id),
+                    workspace_fingerprint=source_fingerprint,
+                )
+                return ReadyWorkspaceBuildResult(
+                    build=build,
+                    source_files=source_files,
+                    build_files=build_files,
+                    source_fingerprint=source_fingerprint,
+                    workspace_revision_token=workspace_revision_token,
+                    reused=True,
+                )
+            if build.status == PublishedAppWorkspaceBuildStatus.building:
+                if not self._is_stale_build(build):
+                    raise PublishedAppWorkspaceBuildError(
+                        "Workspace build already in progress for this workspace state."
+                    )
+                self._trace(
+                    "build.reclaim_stale",
+                    app_id=app.id,
+                    workspace_build_id=str(build.id),
+                    workspace_fingerprint=source_fingerprint,
+                    previous_started_at=build.build_started_at.isoformat()
+                    if isinstance(build.build_started_at, datetime)
+                    else None,
+                )
             self._trace(
                 "build.row_update.begin",
                 app_id=app.id,
@@ -384,6 +432,19 @@ class PublishedAppWorkspaceBuildService:
                 workspace_fingerprint=source_fingerprint,
                 status=str(build.status.value if hasattr(build.status, "value") else build.status),
             )
+            self._trace(
+                "build.row_update.commit_begin",
+                app_id=app.id,
+                workspace_build_id=str(build.id),
+                workspace_fingerprint=source_fingerprint,
+            )
+            await self.db.commit()
+            self._trace(
+                "build.row_update.commit_done",
+                app_id=app.id,
+                workspace_build_id=str(build.id),
+                workspace_fingerprint=source_fingerprint,
+            )
 
             live_workspace_path = str(
                 snapshot.get("workspace_path")
@@ -417,6 +478,12 @@ class PublishedAppWorkspaceBuildService:
 
             build_root = f"{live_workspace_path.rstrip('/')}/.talmudpedia/materialized-build/{build.id}"
             dist_workspace = f"{build_root}/dist"
+            self._trace(
+                "build.prepare_dir.begin",
+                app_id=app.id,
+                workspace_build_id=str(build.id),
+                build_root=build_root,
+            )
             prepare_build_dir = await self.runtime_service.client.run_command(
                 sandbox_id=sandbox_id,
                 command=["bash", "-lc", f"rm -rf {json.dumps(build_root)} && mkdir -p {json.dumps(build_root)}"],
@@ -425,7 +492,19 @@ class PublishedAppWorkspaceBuildService:
                 workspace_path=live_workspace_path,
             )
             self._assert_command_success(result=prepare_build_dir, command_name="prepare workspace build dir")
+            self._trace(
+                "build.prepare_dir.done",
+                app_id=app.id,
+                workspace_build_id=str(build.id),
+                build_root=build_root,
+            )
 
+            self._trace(
+                "build.run.begin",
+                app_id=app.id,
+                workspace_build_id=str(build.id),
+                dist_workspace=dist_workspace,
+            )
             build_result = await self.runtime_service.client.run_command(
                 sandbox_id=sandbox_id,
                 command=["npm", "run", "build", "--", "--outDir", dist_workspace],
@@ -434,14 +513,33 @@ class PublishedAppWorkspaceBuildService:
                 workspace_path=live_workspace_path,
             )
             self._assert_command_success(result=build_result, command_name="npm run build")
+            self._trace(
+                "build.run.done",
+                app_id=app.id,
+                workspace_build_id=str(build.id),
+                dist_workspace=dist_workspace,
+                exit_code=self._extract_exit_code(build_result, command_name="npm run build"),
+            )
             build.build_finished_at = datetime.now(timezone.utc)
 
+            self._trace(
+                "build.export.begin",
+                app_id=app.id,
+                workspace_build_id=str(build.id),
+                dist_workspace=dist_workspace,
+            )
             archive_response = await self.runtime_service.client.export_workspace_archive(
                 sandbox_id=sandbox_id,
                 workspace_path=dist_workspace,
                 format="tar.gz",
             )
             archive_bytes = self.runtime_service.client.decode_archive_payload(archive_response)
+            self._trace(
+                "build.export.done",
+                app_id=app.id,
+                workspace_build_id=str(build.id),
+                archive_bytes=len(archive_bytes),
+            )
 
             with tempfile.TemporaryDirectory(prefix=f"apps-workspace-build-{str(app.id)[:8]}-") as temp_dir:
                 extract_dir = Path(temp_dir) / "dist"
@@ -487,6 +585,19 @@ class PublishedAppWorkspaceBuildService:
                 workspace_build_id=str(build.id),
                 workspace_fingerprint=source_fingerprint,
             )
+            self._trace(
+                "build.ready.commit_begin",
+                app_id=app.id,
+                workspace_build_id=str(build.id),
+                workspace_fingerprint=source_fingerprint,
+            )
+            await self.db.commit()
+            self._trace(
+                "build.ready.commit_done",
+                app_id=app.id,
+                workspace_build_id=str(build.id),
+                workspace_fingerprint=source_fingerprint,
+            )
         except Exception as exc:
             build_id = str(build.id) if "build" in locals() and getattr(build, "id", None) is not None else None
             self._trace(
@@ -511,6 +622,19 @@ class PublishedAppWorkspaceBuildService:
                 await self.db.flush()
                 self._trace(
                     "build.failed.flush_done",
+                    app_id=app.id,
+                    workspace_build_id=build_id,
+                    workspace_fingerprint=locals().get("source_fingerprint"),
+                )
+                self._trace(
+                    "build.failed.commit_begin",
+                    app_id=app.id,
+                    workspace_build_id=build_id,
+                    workspace_fingerprint=locals().get("source_fingerprint"),
+                )
+                await self.db.commit()
+                self._trace(
+                    "build.failed.commit_done",
                     app_id=app.id,
                     workspace_build_id=build_id,
                     workspace_fingerprint=locals().get("source_fingerprint"),

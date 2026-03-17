@@ -1,6 +1,6 @@
 # Documentation System
 
-Last Updated: 2026-03-16
+Last Updated: 2026-03-17
 
 This directory is the repo-level documentation hub for Talmudpedia.
 
@@ -50,6 +50,7 @@ Most existing long-form documentation still lives in `backend/documentations/`. 
 - `docs/design-docs/platform_architecture_layers.md`
 - `docs/design-docs/auth_current.md`
 - `docs/design-docs/apps_builder_current.md`
+- `docs/design-docs/apps_builder_live_workspace_hmr_architecture.md`
 - `docs/design-docs/artifact_execution_current.md`
 - `docs/design-docs/coding_agent_runtime_current.md`
 - `docs/design-docs/voice_runtime_current.md`
@@ -62,6 +63,7 @@ Most existing long-form documentation still lives in `backend/documentations/`. 
 - `docs/product-specs/tools_domain_spec.md`
 - `docs/product-specs/admin_stats_spec.md`
 - `docs/references/canonical_docs_guide.md`
+- `docs/references/embedded_agent_sdk_standalone_integration_guide.md`
 - `docs/references/legacy_docs_coverage_map.md`
 
 ## Legacy Detail Policy

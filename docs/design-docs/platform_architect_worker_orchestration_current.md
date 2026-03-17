@@ -1,6 +1,6 @@
 # Platform Architect Worker Orchestration Current State
 
-Last Updated: 2026-03-16
+Last Updated: 2026-03-17
 
 This document is the canonical design reference for the current `platform-architect` worker orchestration model.
 
@@ -166,7 +166,7 @@ Binding-backed conversational worker continuation is now a native-history, kerne
 - completed artifact workers are continued by appending an `orchestrator` message to the existing artifact coding chat session
 - the binding/runtime prepares the next run from stored session history on the same `agent_thread_id`
 - the orchestration kernel creates the continued child run so lineage, await, join, and cancel still work inside the architect tree
-- stored `orchestrator` turns are mapped to model-facing `system` messages, not `user` messages
+- architect replies injected through worker continuation are treated as model-facing `user` messages so the worker consumes them like a normal conversational answer
 
 Hard-cut removal:
 - no synthetic objective replay inside `input`

@@ -1,6 +1,6 @@
 # Platform Architect Spec
 
-Last Updated: 2026-03-16
+Last Updated: 2026-03-17
 
 ## Purpose
 This file is the focused current-state reference for the seeded `platform-architect` runtime.
@@ -31,6 +31,7 @@ The architect is seeded with:
 Primary implementation files:
 - `backend/app/services/registry_seeding.py`
 - `backend/app/services/platform_architect_contracts.py`
+- `backend/app/services/platform_native_tools.py`
 - `backend/app/services/platform_architect_worker_tools.py`
 - `backend/app/services/platform_architect_worker_runtime_service.py`
 - `backend/app/services/platform_architect_worker_bindings.py`
@@ -56,6 +57,7 @@ Current continuation contract:
 Important prompt boundary:
 - raw `orchestration.spawn_*` actions are not part of the architect-visible `platform-governance` contract
 - use the dedicated architect worker tools for worker delegation
+- the architect-visible `platform-*` control-plane tools now execute through native backend function dispatch, not through the runtime SDK shim
 
 ## Domain Tool Boundaries
 - `platform-rag` -> `rag.*`
@@ -178,6 +180,7 @@ There is no compatibility wrapper for that path in the live architect runtime.
 - Architect should not ask the user for `tenant_id`.
 - Publish actions remain blocked unless explicit publish intent is present.
 - Approval-sensitive failures continue to normalize through the existing Platform SDK error contract.
+- The control-plane SDK remains a separate client/parity layer, but architect runtime tool execution no longer routes through SDK wrapper artifacts or `platform_sdk` handler dispatch.
 - Wrapped `value` / `query` / `text` recovery is not part of the platform SDK path; canonical top-level `action` / `payload` is required there.
 - Architect worker tools derive `tenant_id`, user identity, and `run_id` from runtime context, not from model-authored payload.
 - Strict platform tools are validated before function dispatch against their registered JSON-schema input contract.

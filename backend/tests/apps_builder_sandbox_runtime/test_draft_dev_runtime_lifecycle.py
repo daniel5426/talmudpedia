@@ -9,10 +9,17 @@ from sqlalchemy import select
 
 from app.core.security import get_password_hash
 from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, User
-from app.db.postgres.models.published_apps import PublishedAppDraftDevSession, PublishedAppDraftWorkspace
+from app.db.postgres.models.published_apps import (
+    PublishedApp,
+    PublishedAppDraftDevSession,
+    PublishedAppDraftWorkspace,
+    PublishedAppRevision,
+    PublishedAppRevisionKind,
+)
 from app.services import published_app_draft_dev_runtime as runtime_module
 from app.services.published_app_draft_dev_runtime import PublishedAppDraftDevRuntimeService
 from app.services.published_app_draft_dev_runtime_client import PublishedAppDraftDevRuntimeClientError
+from app.services.published_app_versioning import create_app_version
 from tests.published_apps._helpers import admin_headers, seed_admin_tenant_and_agent
 
 
@@ -254,6 +261,59 @@ async def test_heartbeat_refreshes_workspace_preview_metadata(client, db_session
     assert workspace.backend_metadata["preview"]["upstream_base_url"].startswith("https://sprite-")
     assert session.backend_metadata["preview"]["upstream_base_url"] == workspace.backend_metadata["preview"]["upstream_base_url"]
     assert workspace.backend_metadata["preview"]["base_path"] == str(session.preview_url)
+
+
+@pytest.mark.asyncio
+async def test_prefer_live_workspace_reuses_healthy_session_across_revision_mismatch(
+    client,
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
+    headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
+    fake_client = _FakeSpriteRuntimeClient()
+
+    monkeypatch.setattr(runtime_module.PublishedAppDraftDevRuntimeService, "_acquire_scope_lock", _noop_scope_lock)
+    monkeypatch.setattr(
+        runtime_module.PublishedAppDraftDevRuntimeClient,
+        "from_env",
+        classmethod(lambda cls: fake_client),
+    )
+
+    app_id = await _create_builder_app(client, headers, str(agent.id), name="Prefer Live Workspace App")
+    ensure_resp = await client.post(f"/admin/apps/{app_id}/builder/draft-dev/session/ensure", headers=headers)
+    assert ensure_resp.status_code == 200
+
+    app = await db_session.get(PublishedApp, UUID(app_id))
+    assert app is not None
+    first_revision = await db_session.get(PublishedAppRevision, app.current_draft_revision_id)
+    assert first_revision is not None
+    next_revision = await create_app_version(
+        db_session,
+        app=app,
+        kind=PublishedAppRevisionKind.draft,
+        template_key=app.template_key,
+        entry_file=first_revision.entry_file,
+        files=dict(first_revision.files or {}),
+        created_by=user.id,
+        source_revision_id=first_revision.id,
+        origin_kind="test",
+    )
+    app.current_draft_revision_id = next_revision.id
+    await db_session.commit()
+
+    runtime_service = PublishedAppDraftDevRuntimeService(db_session)
+    reused = await runtime_service.ensure_active_session(
+        app=app,
+        revision=next_revision,
+        user_id=user.id,
+        prefer_live_workspace=True,
+    )
+
+    await db_session.refresh(reused)
+    assert reused.revision_id == first_revision.id
+    assert len(fake_client.start_calls) == 1
+    assert len(fake_client.sync_calls) == 0
 
 
 @pytest.mark.asyncio
