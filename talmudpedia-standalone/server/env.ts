@@ -1,3 +1,5 @@
+import "dotenv/config";
+
 const requiredEnvKeys = [
   "TALMUDPEDIA_BASE_URL",
   "TALMUDPEDIA_EMBED_API_KEY",
