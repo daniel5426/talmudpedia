@@ -8,7 +8,7 @@
     "build": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@talmudpedia/embed-sdk": "file:../..",
+    "@agents24/embed-sdk": "file:../..",
     "express": "^5.1.0"
   },
   "devDependencies": {

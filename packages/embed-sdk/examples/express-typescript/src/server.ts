@@ -1,5 +1,5 @@
 import express from "express";
-import { EmbeddedAgentClient, type EmbeddedAgentRuntimeEvent } from "@talmudpedia/embed-sdk";
+import { EmbeddedAgentClient, type EmbeddedAgentRuntimeEvent } from "@agents24/embed-sdk";
 
 const app = express();
 app.use(express.json());

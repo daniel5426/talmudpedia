@@ -68,7 +68,7 @@ This guide lists the current canonical documentation entry points after the firs
 - `docs/references/classic_chat_template_reference.md`
   - Current dependency and component inventory for the `classic-chat` published-app starter template.
 - `docs/references/embedded_agent_sdk_standalone_integration_guide.md`
-  - Canonical customer integration guide for building a standalone app with `@talmudpedia/embed-sdk`.
+  - Canonical customer integration guide for building a standalone app with `@agents24/embed-sdk`.
   - Use this alongside `packages/embed-sdk/README.md` for the server-only embed SDK contract and customer-backend architecture.
 
 ## Focused Current Detail Docs Still Under `backend/documentations/`

@@ -2,10 +2,10 @@
 
 Last Updated: 2026-03-17
 
-This example shows the intended v1 architecture for `@talmudpedia/embed-sdk`:
+This example shows the intended v1 architecture for `@agents24/embed-sdk`:
 
 - customer frontend sends requests to the customer backend
-- customer backend uses `@talmudpedia/embed-sdk`
+- customer backend uses `@agents24/embed-sdk`
 - the Talmudpedia API key stays only on the backend
 
 ## Run Locally
@@ -35,4 +35,4 @@ npm run dev
 
 ## Frontend Rule
 
-Do not import `@talmudpedia/embed-sdk` in the browser. Your frontend should call the routes in `src/server.ts`, and only that backend should talk to Talmudpedia.
+Do not import `@agents24/embed-sdk` in the browser. Your frontend should call the routes in `src/server.ts`, and only that backend should talk to Talmudpedia.

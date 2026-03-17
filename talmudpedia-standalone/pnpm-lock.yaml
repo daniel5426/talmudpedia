@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      '@agents24/embed-sdk':
+        specifier: file:../packages/embed-sdk
+        version: file:../packages/embed-sdk
       '@fontsource-variable/noto-sans':
         specifier: ^5.2.10
         version: 5.2.10
@@ -38,9 +41,6 @@ importers:
       '@tailwindcss/vite':
         specifier: ^4.1.17
         version: 4.2.1(vite@7.3.1(@types/node@24.12.0)(jiti@2.6.1)(lightningcss@1.31.1)(tsx@4.21.0))
-      '@talmudpedia/embed-sdk':
-        specifier: file:../packages/embed-sdk
-        version: file:../packages/embed-sdk
       '@tanstack/react-query':
         specifier: ^5.90.21
         version: 5.90.21(react@19.2.4)
@@ -209,6 +209,10 @@ importers:
         version: 7.3.1(@types/node@24.12.0)(jiti@2.6.1)(lightningcss@1.31.1)(tsx@4.21.0)
 
 packages:
+
+  '@agents24/embed-sdk@file:../packages/embed-sdk':
+    resolution: {directory: ../packages/embed-sdk, type: directory}
+    engines: {node: '>=18.17'}
 
   '@ai-sdk/gateway@3.0.66':
     resolution: {integrity: sha512-SIQ0YY0iMuv+07HLsZ+bB990zUJ6S4ujORAh+Jv1V2KGNn73qQKnGO0JBk+w+Res8YqOFSycwDoWcFlQrVxS4A==}
@@ -1761,10 +1765,6 @@ packages:
     resolution: {integrity: sha512-TBf2sJjYeb28jD2U/OhwdW0bbOsxkWPwQ7SrqGf9sVcoYwZj7rkXljroBO9wKBut9XnmQLXanuDUeqQK0lGg/w==}
     peerDependencies:
       vite: ^5.2.0 || ^6 || ^7
-
-  '@talmudpedia/embed-sdk@file:../packages/embed-sdk':
-    resolution: {directory: ../packages/embed-sdk, type: directory}
-    engines: {node: '>=18.17'}
 
   '@tanstack/query-core@5.90.20':
     resolution: {integrity: sha512-OMD2HLpNouXEfZJWcKeVKUgQ5n+n3A2JFmBaScpNDUqSrQSjiveC7dKMe53uJUg1nDG16ttFPz2xfilz6i2uVg==}
@@ -4763,6 +4763,8 @@ packages:
 
 snapshots:
 
+  '@agents24/embed-sdk@file:../packages/embed-sdk': {}
+
   '@ai-sdk/gateway@3.0.66(zod@4.3.6)':
     dependencies:
       '@ai-sdk/provider': 3.0.8
@@ -6319,8 +6321,6 @@ snapshots:
       '@tailwindcss/oxide': 4.2.1
       tailwindcss: 4.2.1
       vite: 7.3.1(@types/node@24.12.0)(jiti@2.6.1)(lightningcss@1.31.1)(tsx@4.21.0)
-
-  '@talmudpedia/embed-sdk@file:../packages/embed-sdk': {}
 
   '@tanstack/query-core@5.90.20': {}
 

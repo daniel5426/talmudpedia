@@ -4,7 +4,7 @@ Last Updated: 2026-03-17
 
 This document is the canonical runtime SDK contract for externally hosted published-app clients.
 
-This package is not the embedded-agent SDK. For agent embedding into a customer-owned app without creating a published app, use the embedded-agent runtime and `@talmudpedia/embed-sdk` instead.
+This package is not the embedded-agent SDK. For agent embedding into a customer-owned app without creating a published app, use the embedded-agent runtime and `@agents24/embed-sdk` instead.
 
 ## Purpose
 

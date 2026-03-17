@@ -1,8 +1,8 @@
-# `@talmudpedia/embed-sdk`
+# `@agents24/embed-sdk`
 
 Last Updated: 2026-03-17
 
-`@talmudpedia/embed-sdk` is the canonical server-only TypeScript SDK for Talmudpedia embedded-agent runtime.
+`@agents24/embed-sdk` is the canonical server-only TypeScript SDK for Talmudpedia embedded-agent runtime.
 
 Use it when a customer already has its own application and wants its backend to call a published Talmudpedia agent directly through the embed API.
 
@@ -11,7 +11,7 @@ Use it when a customer already has its own application and wants its backend to 
 This package is not the published-app runtime SDK.
 
 - `@talmudpedia/runtime-sdk`: browser/client SDK for published-app runtime
-- `@talmudpedia/embed-sdk`: Node/server SDK for embedded-agent runtime
+- `@agents24/embed-sdk`: Node/server SDK for embedded-agent runtime
 
 ## Supported Runtime
 
@@ -28,7 +28,7 @@ Do not use this package in browser bundles. Keep your Talmudpedia tenant API key
 After the first public npm release is cut:
 
 ```bash
-npm install @talmudpedia/embed-sdk
+npm install @agents24/embed-sdk
 ```
 
 Until that release exists, validate the package from this repo with `npm pack` or `npm run smoke:pack`.
@@ -44,7 +44,7 @@ The API key must have the `agents.embed` scope.
 ## Quickstart
 
 ```ts
-import { EmbeddedAgentClient } from "@talmudpedia/embed-sdk";
+import { EmbeddedAgentClient } from "@agents24/embed-sdk";
 
 const client = new EmbeddedAgentClient({
   baseUrl: process.env.TALMUDPEDIA_BASE_URL!,
@@ -71,7 +71,7 @@ Supported v1 architecture:
 
 - customer frontend
 - customer backend
-- `@talmudpedia/embed-sdk`
+- `@agents24/embed-sdk`
 - Talmudpedia embed API
 - published agent
 
@@ -177,7 +177,7 @@ The SDK throws `EmbeddedAgentSDKError` with:
 - `details` when the response body includes structured error information
 
 ```ts
-import { EmbeddedAgentSDKError } from "@talmudpedia/embed-sdk";
+import { EmbeddedAgentSDKError } from "@agents24/embed-sdk";
 
 try {
   await client.listAgentThreads(agentId, { externalUserId: "customer-user-123" });

@@ -2,7 +2,7 @@
 
 Last Updated: 2026-03-17
 
-Standalone Vite + Express app for embedding a published Talmudpedia agent through the server-only `@talmudpedia/embed-sdk`.
+Standalone Vite + Express app for embedding a published Talmudpedia agent through the server-only `@agents24/embed-sdk`.
 
 ## Architecture
 

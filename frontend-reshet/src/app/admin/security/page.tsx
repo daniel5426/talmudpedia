@@ -1185,7 +1185,7 @@ export default function SecurityPage() {
                   <div className="px-3 py-2 bg-muted/20 border-b border-border/40">
                     <span className="text-[11px] font-medium text-muted-foreground/50 uppercase tracking-wider">Server-Side Example</span>
                   </div>
-                  <pre className="px-3 py-3 text-[11px] font-mono text-muted-foreground/70 overflow-x-auto leading-relaxed whitespace-pre">{`import { EmbeddedAgentClient } from "@talmudpedia/embed-sdk";
+                  <pre className="px-3 py-3 text-[11px] font-mono text-muted-foreground/70 overflow-x-auto leading-relaxed whitespace-pre">{`import { EmbeddedAgentClient } from "@agents24/embed-sdk";
 
 const client = new EmbeddedAgentClient({
   baseUrl: process.env.PLATFORM_BASE_URL!,

@@ -4,7 +4,7 @@
     "packages/embed-sdk": {
       "release-type": "node",
       "component": "embed-sdk",
-      "package-name": "@talmudpedia/embed-sdk",
+      "package-name": "@agents24/embed-sdk",
       "include-component-in-tag": true
     }
   }

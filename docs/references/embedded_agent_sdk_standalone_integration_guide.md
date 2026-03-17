@@ -2,7 +2,7 @@
 
 Last Updated: 2026-03-17
 
-This guide describes how a customer uses `@talmudpedia/embed-sdk` to build a standalone app around an agent created on the platform.
+This guide describes how a customer uses `@agents24/embed-sdk` to build a standalone app around an agent created on the platform.
 
 ## Intended Architecture
 
@@ -10,7 +10,7 @@ The supported v1 architecture is:
 
 - customer frontend
 - customer backend
-- `@talmudpedia/embed-sdk`
+- `@agents24/embed-sdk`
 - Talmudpedia embed API
 - published agent
 
@@ -18,7 +18,7 @@ Important rule:
 - the customer frontend talks only to the customer backend
 - the customer backend talks to Talmudpedia
 - the Talmudpedia tenant API key must never be exposed to the browser
-- `@talmudpedia/embed-sdk` must never be imported into browser code
+- `@agents24/embed-sdk` must never be imported into browser code
 
 ## Prerequisites
 
@@ -40,7 +40,7 @@ Required backend values:
 After the first public npm release is cut:
 
 ```bash
-npm install @talmudpedia/embed-sdk
+npm install @agents24/embed-sdk
 ```
 
 Until that release exists, validate the package from the repo with `packages/embed-sdk` and `npm pack`.
@@ -48,7 +48,7 @@ Until that release exists, validate the package from the repo with `packages/emb
 ## Backend Client Setup
 
 ```ts
-import { EmbeddedAgentClient } from "@talmudpedia/embed-sdk";
+import { EmbeddedAgentClient } from "@agents24/embed-sdk";
 
 export const talmudpediaEmbedClient = new EmbeddedAgentClient({
   baseUrl: process.env.TALMUDPEDIA_BASE_URL!,
@@ -135,6 +135,6 @@ Thread ownership is enforced by:
 
 - Do not call the embed API directly from the browser.
 - Do not put the tenant API key in frontend code, local storage, cookies, or public env vars.
-- Do not import `@talmudpedia/embed-sdk` into a React app, Next client component, or any browser bundle.
+- Do not import `@agents24/embed-sdk` into a React app, Next client component, or any browser bundle.
 - Do not use `@talmudpedia/runtime-sdk` for embedded-agent runtime.
 - Do not create a published app if the product need is only “use this agent inside my existing app”.

@@ -3,7 +3,7 @@
 Last Updated: 2026-03-17
 
 Scope:
-- TypeScript `@talmudpedia/embed-sdk` transport, protocol, and server-only runtime behavior.
+- TypeScript `@agents24/embed-sdk` transport, protocol, and server-only runtime behavior.
 
 Test files present:
 - embedded_agent_sdk.test.ts

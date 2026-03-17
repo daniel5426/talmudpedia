@@ -112,11 +112,11 @@ It does not reuse the published-app route/auth/session model.
 The supported SDK direction for v1 is server-side:
 
 - Python control SDK: `embedded_agents.stream_agent`, `list_agent_threads`, `get_agent_thread`
-- TypeScript package: `@talmudpedia/embed-sdk`
+- TypeScript package: `@agents24/embed-sdk`
 
 No browser runtime SDK integration is required in this phase.
 
-`@talmudpedia/embed-sdk` is the canonical TypeScript integration surface for the embed runtime:
+`@agents24/embed-sdk` is the canonical TypeScript integration surface for the embed runtime:
 
 - Node-only in v1
 - distributed as a public npm package
@@ -127,7 +127,7 @@ Customer architecture must remain:
 
 - customer frontend
 - customer backend
-- `@talmudpedia/embed-sdk`
+- `@agents24/embed-sdk`
 - Talmudpedia embed API
 - published agent
 

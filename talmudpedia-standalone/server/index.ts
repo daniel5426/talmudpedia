@@ -3,11 +3,7 @@ import express from "express";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import {
-  EmbeddedAgentClient,
-  EmbeddedAgentSDKError,
-  type EmbeddedAgentRuntimeEvent,
-} from "@talmudpedia/embed-sdk";
+import { EmbeddedAgentClient, EmbeddedAgentSDKError } from "@agents24/embed-sdk";
 
 import { loadEnv } from "./env.js";
 import { clearSession, ensureSession } from "./session.js";
@@ -178,8 +174,3 @@ if (isProduction) {
 app.listen(env.PORT, () => {
   console.log(`Talmudpedia standalone server listening on http://localhost:${env.PORT}`);
 });
-
-function resultThreadIdFromEvent(event: EmbeddedAgentRuntimeEvent): string | null {
-  const value = event.event === "run.accepted" ? event.payload?.thread_id : null;
-  return typeof value === "string" && value.trim() ? value : null;
-}

@@ -1,5 +1,5 @@
 {
-  "name": "@talmudpedia/embed-sdk",
+  "name": "@agents24/embed-sdk",
   "version": "1.0.0",
   "private": false,
   "description": "Server-only TypeScript SDK for Talmudpedia embedded-agent runtime.",

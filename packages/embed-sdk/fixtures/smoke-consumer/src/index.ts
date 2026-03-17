@@ -1,4 +1,4 @@
-import { EmbeddedAgentClient, type EmbeddedAgentRuntimeEvent } from "@talmudpedia/embed-sdk";
+import { EmbeddedAgentClient, type EmbeddedAgentRuntimeEvent } from "@agents24/embed-sdk";
 
 const client = new EmbeddedAgentClient({
   baseUrl: "https://api.example.com",

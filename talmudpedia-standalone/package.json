@@ -25,7 +25,7 @@
     "@streamdown/math": "^1.0.2",
     "@streamdown/mermaid": "^1.0.2",
     "@tailwindcss/vite": "^4.1.17",
-    "@talmudpedia/embed-sdk": "file:../packages/embed-sdk",
+    "@agents24/embed-sdk": "file:../packages/embed-sdk",
     "@tanstack/react-query": "^5.90.21",
     "@xyflow/react": "^12.10.1",
     "ai": "^6.0.116",

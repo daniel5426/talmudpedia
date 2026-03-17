@@ -1,4 +1,4 @@
-import { EmbeddedAgentClient, EmbeddedAgentSDKError } from "@talmudpedia/embed-sdk";
+import { EmbeddedAgentClient, EmbeddedAgentSDKError } from "@agents24/embed-sdk";
 
 if (typeof EmbeddedAgentClient !== "function") {
   throw new Error("EmbeddedAgentClient export is missing.");
