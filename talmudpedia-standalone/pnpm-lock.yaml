@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@agents24/embed-sdk':
-        specifier: 1.0.0
-        version: 1.0.0
+        specifier: 1.0.1
+        version: 1.0.1
       '@fontsource-variable/noto-sans':
         specifier: ^5.2.10
         version: 5.2.10
@@ -213,8 +213,8 @@ importers:
 
 packages:
 
-  '@agents24/embed-sdk@1.0.0':
-    resolution: {integrity: sha512-5mPUmLOm6kGEsbUd4z/Pci1uYTR0+s6ps0aWq6ydCnvkmRinmiso0ANxtTnRFJ3ioL8j8VlQeHXq1oZ+9eVDdQ==}
+  '@agents24/embed-sdk@1.0.1':
+    resolution: {integrity: sha512-mBx0rUEAEcNH9a9v0XBNpyyPiCWjam6fhz4GbaldNnVFhUi3q9qOx/y8SAbaVXrmbqQCbQZmOxZWh5owvOGguw==}
     engines: {node: '>=18.17'}
 
   '@ai-sdk/gateway@3.0.66':
@@ -4770,7 +4770,7 @@ packages:
 
 snapshots:
 
-  '@agents24/embed-sdk@1.0.0': {}
+  '@agents24/embed-sdk@1.0.1': {}
 
   '@ai-sdk/gateway@3.0.66(zod@4.3.6)':
     dependencies:
