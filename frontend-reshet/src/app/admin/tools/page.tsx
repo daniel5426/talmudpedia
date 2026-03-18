@@ -98,6 +98,99 @@ const NAV_ITEMS: Array<{ key: ToolsSection; label: string; icon: React.ElementTy
     { key: "custom", label: "Custom", icon: Code },
 ]
 
+type CreateToolIntent = "manual" | "artifact" | "pipeline" | "agent"
+
+const CREATE_TOOL_OPTIONS: Array<{
+    id: CreateToolIntent
+    title: string
+    description: string
+    actionLabel: string
+    icon: React.ElementType
+    disabled?: boolean
+}> = [
+    {
+        id: "manual",
+        title: "Integration / Manual Tool",
+        description: "Create a registry-managed HTTP, MCP, function, agent-call, or custom tool from `/tools`.",
+        actionLabel: "Create Here",
+        icon: Wrench,
+    },
+    {
+        id: "artifact",
+        title: "Artifact Tool",
+        description: "Create a `tool_impl` artifact and let the bound tool row sync from the artifact domain.",
+        actionLabel: "Open Artifact Editor",
+        icon: Package,
+    },
+    {
+        id: "pipeline",
+        title: "Pipeline Tool",
+        description: "Create or open a pipeline, then enable `Use as tool` from the pipeline editor.",
+        actionLabel: "Open Pipelines",
+        icon: Database,
+    },
+    {
+        id: "agent",
+        title: "Agent / Workflow Tool",
+        description: "Export a published agent as an owner-managed `agent_call` tool from the agents surface.",
+        actionLabel: "Open Agents",
+        icon: Bot,
+    },
+]
+
+function CreateToolEntryDialog({
+    open,
+    onOpenChange,
+    onSelect,
+}: {
+    open: boolean
+    onOpenChange: (open: boolean) => void
+    onSelect: (intent: CreateToolIntent) => void
+}) {
+    const { direction } = useDirection()
+
+    return (
+        <Dialog open={open} onOpenChange={onOpenChange}>
+            <DialogContent dir={direction} className="sm:max-w-[720px]">
+                <DialogHeader>
+                    <DialogTitle>Create Tool</DialogTitle>
+                    <DialogDescription>
+                        Choose the owning surface first. Only manual tools should be authored directly from the tools registry.
+                    </DialogDescription>
+                </DialogHeader>
+                <div className="grid gap-3 py-2 sm:grid-cols-2">
+                    {CREATE_TOOL_OPTIONS.map((option) => {
+                        const Icon = option.icon
+                        return (
+                            <button
+                                key={option.id}
+                                type="button"
+                                disabled={option.disabled}
+                                onClick={() => onSelect(option.id)}
+                                className={cn(
+                                    "rounded-xl border border-border/60 p-4 text-left transition-colors",
+                                    option.disabled
+                                        ? "cursor-not-allowed opacity-55"
+                                        : "hover:border-border hover:bg-muted/30"
+                                )}
+                            >
+                                <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-lg border border-border/60 bg-muted/30 text-muted-foreground/70">
+                                    <Icon className="h-5 w-5" />
+                                </div>
+                                <div className="space-y-1">
+                                    <div className="text-sm font-medium text-foreground">{option.title}</div>
+                                    <div className="text-xs leading-5 text-muted-foreground/80">{option.description}</div>
+                                </div>
+                                <div className="mt-4 text-xs font-medium text-foreground/80">{option.actionLabel}</div>
+                            </button>
+                        )
+                    })}
+                </div>
+            </DialogContent>
+        </Dialog>
+    )
+}
+
 /* ───────────────────────────── Create Tool Dialog ─────────────────── */
 
 function CreateToolDialog({
@@ -456,13 +549,14 @@ function ToolDetailSheet({
     const Icon = IMPLEMENTATION_ICONS[tool.implementation_type] || Wrench
     const implementationConfig = tool.implementation_config || {}
     const executionConfig = tool.execution_config || {}
-    const canOpenEditor = tool.managed_by === "artifacts" || tool.managed_by === "pipelines"
+    const canOpenEditor = tool.managed_by === "artifacts" || tool.managed_by === "pipelines" || tool.managed_by === "agents"
     const canPublishFromRegistry = tool.status === "draft" && tool.can_publish_in_registry
     const canDeleteFromRegistry = tool.can_delete_in_registry
     const managerLabel = {
         tools: "Tools",
         artifacts: "Artifacts",
         pipelines: "Pipelines",
+        agents: "Agents",
         system: "System",
     }[tool.managed_by]
 
@@ -623,6 +717,7 @@ export default function ToolsPage() {
     const [query, setQuery] = useState("")
 
     const [selectedTool, setSelectedTool] = useState<ToolDefinition | null>(null)
+    const [createEntryOpen, setCreateEntryOpen] = useState(false)
     const [createDialogOpen, setCreateDialogOpen] = useState(false)
 
     const fetchTools = useCallback(async () => {
@@ -685,6 +780,32 @@ export default function ToolsPage() {
         }
         if (tool.managed_by === "pipelines" && tool.source_object_id) {
             router.push(`/admin/pipelines/${tool.source_object_id}?toolSettings=1`)
+            return
+        }
+        if (tool.managed_by === "agents" && tool.source_object_id) {
+            router.push(`/admin/agents/${tool.source_object_id}/builder`)
+        }
+    }, [router])
+
+    const handleCreateIntent = useCallback((intent: CreateToolIntent) => {
+        if (intent === "manual") {
+            setCreateEntryOpen(false)
+            setCreateDialogOpen(true)
+            return
+        }
+        if (intent === "artifact") {
+            setCreateEntryOpen(false)
+            router.push("/admin/artifacts?mode=create&kind=tool_impl")
+            return
+        }
+        if (intent === "pipeline") {
+            setCreateEntryOpen(false)
+            router.push("/admin/pipelines")
+            return
+        }
+        if (intent === "agent") {
+            setCreateEntryOpen(false)
+            router.push("/admin/agents?mode=export-tool")
         }
     }, [router])
 
@@ -748,10 +869,10 @@ export default function ToolsPage() {
                     <Button
                         size="sm"
                         className="h-9 gap-1.5"
-                        onClick={() => setCreateDialogOpen(true)}
+                        onClick={() => setCreateEntryOpen(true)}
                     >
                         <Plus className="h-3.5 w-3.5" />
-                        New Tool
+                        Create Tool
                     </Button>
                 </div>
             </AdminPageHeader>
@@ -839,7 +960,7 @@ export default function ToolsPage() {
                                         size="sm"
                                         variant="outline"
                                         className="gap-1.5"
-                                        onClick={() => setCreateDialogOpen(true)}
+                                        onClick={() => setCreateEntryOpen(true)}
                                     >
                                         <Plus className="h-3.5 w-3.5" />
                                         Create Tool
@@ -971,6 +1092,12 @@ export default function ToolsPage() {
                     </main>
                 </div>
             </div>
+
+            <CreateToolEntryDialog
+                open={createEntryOpen}
+                onOpenChange={setCreateEntryOpen}
+                onSelect={handleCreateIntent}
+            />
 
             {/* Create dialog */}
             <CreateToolDialog

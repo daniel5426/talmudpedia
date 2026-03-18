@@ -18,6 +18,7 @@ export type TemplateTaskBlock = {
   kind: "task";
   title: string;
   status: TemplateTaskStatus;
+  spanId?: string;
   items: string[];
   files?: string[];
 };

@@ -6,7 +6,7 @@ import {
   useState,
 } from "react";
 
-import { EMPTY_SUGGESTIONS, HISTORY_PAGE_SIZE } from "./demo-data";
+import { HISTORY_PAGE_SIZE } from "./demo-data";
 import {
   fetchAgentThread,
   fetchAgentThreads,
@@ -342,7 +342,6 @@ export function useClassicChatState() {
     activeThreadId,
     copiedMessageId,
     dislikedMessageIds,
-    emptySuggestions: EMPTY_SUGGESTIONS,
     hasMoreHistory: !isLoadingHistory && hasMoreHistory,
     inputValue,
     isResponding,

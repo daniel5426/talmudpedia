@@ -1,4 +1,4 @@
-import { Moon, Search, Sun } from "lucide-react";
+import { Languages, Moon, Search, Sun } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/select";
 import { useTheme } from "@/components/theme-provider";
 import { cn } from "@/lib/utils";
+import { useLocale } from "./locale-context";
 
 type ChatHeaderProps = {
   isScrolled: boolean;
@@ -31,6 +32,8 @@ export function ChatHeader({
   clients,
 }: ChatHeaderProps) {
   const { theme, setTheme } = useTheme();
+  const { locale, toggleLocale } = useLocale();
+  const isHebrew = locale === "he";
 
   const toggleTheme = () => {
     setTheme(theme === "dark" ? "light" : "dark");
@@ -51,7 +54,7 @@ export function ChatHeader({
           value={selectedClientId || undefined}
         >
           <SelectTrigger className="w-[220px] justify-between">
-            <SelectValue placeholder="Select demo client" />
+            <SelectValue placeholder={isHebrew ? "בחר לקוח דמו" : "Select demo client"} />
           </SelectTrigger>
           <SelectContent align="end">
             {clients.map((client) => (
@@ -61,6 +64,17 @@ export function ChatHeader({
             ))}
           </SelectContent>
         </Select>
+
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8 rounded-md"
+          onClick={toggleLocale}
+          aria-label={isHebrew ? "Switch to English" : "העבר לעברית"}
+        >
+          <Languages className="size-3.5" />
+          <span className="sr-only">{isHebrew ? "Switch to English" : "Switch to Hebrew"}</span>
+        </Button>
 
         <Button
           variant="ghost"

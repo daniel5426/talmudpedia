@@ -34,6 +34,7 @@ import {
 import { cn } from "@/lib/utils";
 
 import { BotInputArea } from "./bot-input-area";
+import { useLocale } from "./locale-context";
 import type {
   TemplateMessage,
   TemplateRenderBlock,
@@ -130,6 +131,7 @@ export function ChatTimeline({
   onToggleLike,
   onTopVisibilityChange,
 }: ChatTimelineProps) {
+  const { locale } = useLocale();
   const hasMessages = messages.length > 0;
 
   const timelineMessages = useMemo(
@@ -178,7 +180,7 @@ export function ChatTimeline({
                   {message.blocks?.map((block) => renderBlock(block))}
                   {message.runStatus && message.runStatus !== "completed" && !message.plainText ? (
                     <div className="px-1 py-1 text-sm text-muted-foreground">
-                      <Shimmer>Thinking...</Shimmer>
+                      <Shimmer>{locale === "he" ? "חושב..." : "Thinking..."}</Shimmer>
                     </div>
                   ) : null}
                 </>
@@ -188,16 +190,16 @@ export function ChatTimeline({
             {message.role === "assistant" && message.runStatus === "completed" && (
               <MessageActions className="mt-1.5 gap-1 ps-1">
                 <MessageAction
-                  label="Retry"
+                  label={locale === "he" ? "נסה שוב" : "Retry"}
                   onClick={() => onRetryMessage(message.id)}
-                  tooltip="Retry"
+                  tooltip={locale === "he" ? "נסה שוב" : "Retry"}
                 >
                   <RefreshCcw className="size-3.5" />
                 </MessageAction>
                 <MessageAction
-                  label="Like"
+                  label={locale === "he" ? "אהבתי" : "Like"}
                   onClick={() => onToggleLike(message.id)}
-                  tooltip="Like"
+                  tooltip={locale === "he" ? "אהבתי" : "Like"}
                 >
                   <ThumbsUp
                     className="size-3.5"
@@ -205,9 +207,9 @@ export function ChatTimeline({
                   />
                 </MessageAction>
                 <MessageAction
-                  label="Dislike"
+                  label={locale === "he" ? "לא אהבתי" : "Dislike"}
                   onClick={() => onToggleDislike(message.id)}
-                  tooltip="Dislike"
+                  tooltip={locale === "he" ? "לא אהבתי" : "Dislike"}
                 >
                   <ThumbsDown
                     className="size-3.5"
@@ -215,9 +217,17 @@ export function ChatTimeline({
                   />
                 </MessageAction>
                 <MessageAction
-                  label="Copy"
+                  label={locale === "he" ? "העתק" : "Copy"}
                   onClick={() => onCopyMessage(message.id, message.plainText)}
-                  tooltip={copiedMessageId === message.id ? "Copied" : "Copy"}
+                  tooltip={
+                    copiedMessageId === message.id
+                      ? locale === "he"
+                        ? "הועתק"
+                        : "Copied"
+                      : locale === "he"
+                        ? "העתק"
+                        : "Copy"
+                  }
                 >
                   {copiedMessageId === message.id ? (
                     <Check className="size-3.5 text-emerald-500" />
@@ -225,7 +235,10 @@ export function ChatTimeline({
                     <Copy className="size-3.5" />
                   )}
                 </MessageAction>
-                <MessageAction label="Trace" tooltip="Trace">
+                <MessageAction
+                  label={locale === "he" ? "טרייס" : "Trace"}
+                  tooltip={locale === "he" ? "טרייס" : "Trace"}
+                >
                   <Search className="size-3.5" />
                 </MessageAction>
               </MessageActions>

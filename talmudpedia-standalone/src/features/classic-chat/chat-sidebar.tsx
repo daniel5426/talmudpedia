@@ -36,7 +36,9 @@ import {
   SidebarTrigger,
   useSidebar,
 } from "@/components/ui/sidebar";
+import { cn } from "@/lib/utils";
 
+import { useLocale } from "./locale-context";
 import { useSession } from "./session-context";
 import type { TemplateThread } from "./types";
 
@@ -57,6 +59,7 @@ export function ChatSidebar({
   onSelectThread,
   threads,
 }: ChatSidebarProps) {
+  const { isRtl, locale } = useLocale();
   const { isLoading, resetSession, session } = useSession();
 
   const { open, openMobile, isMobile } = useSidebar();
@@ -77,8 +80,16 @@ export function ChatSidebar({
     }
   }, [hasMoreHistory, onLoadMoreHistory]);
 
+
   return (
-    <Sidebar collapsible="icon" className="z-50 shadow-none">
+    <Sidebar
+      side={isRtl ? "right" : "left"}
+      collapsible="icon"
+      className={cn(
+        "z-50 shadow-none",
+        isRtl ? "border-l border-sidebar-border" : "border-r border-sidebar-border",
+      )}
+    >
       <SidebarHeader>
         <div
           className={`flex items-center gap-1 p-2 ${
@@ -88,7 +99,7 @@ export function ChatSidebar({
           {isExpanded ? (
             <div className="flex-1 overflow-hidden">
               <p className="truncate text-xs font-semibold uppercase tracking-[0.18em] text-sidebar-foreground/55">
-                Talmudpedia Standalone
+                {locale === "he" ? "טלמודפדיה סטנדאלון" : "Talmudpedia Standalone"}
               </p>
             </div>
           ) : null}
@@ -103,10 +114,10 @@ export function ChatSidebar({
               <SidebarMenuButton
                 onClick={onNewChat}
                 className="cursor-pointer"
-                tooltip="New chat"
+                tooltip={locale === "he" ? "צ'אט חדש" : "New chat"}
               >
                 <PenSquare className="size-4" />
-                <span>New chat</span>
+                <span>{locale === "he" ? "צ'אט חדש" : "New chat"}</span>
               </SidebarMenuButton>
             </SidebarMenuItem>
           </SidebarMenu>
@@ -116,13 +127,16 @@ export function ChatSidebar({
           <div className="flex min-h-0 flex-1 flex-col">
             <SidebarGroup className="flex h-full flex-col">
               <SidebarGroupLabel className="font-semibold">
-                Previous Chats
+                {locale === "he" ? "צ'אטים קודמים" : "Previous Chats"}
               </SidebarGroupLabel>
               <div className="min-h-0 flex-1 overflow-hidden rounded-2xl p-2">
                 <div
                   ref={chatListRef}
                   onScroll={handleChatScroll}
-                  className="flex h-full flex-col gap-1 overflow-y-auto pl-2 text-left"
+                  className={cn(
+                    "flex h-full flex-col gap-1 overflow-y-auto pl-2",
+                    isRtl ? "text-right" : "text-left",
+                  )}
                 >
                   <SidebarMenu className="space-y-1">
                     {threads.map((thread) => (
@@ -140,17 +154,17 @@ export function ChatSidebar({
                                 className="cursor-pointer p-1 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 hover:text-foreground"
                               >
                                 <MoreHorizontal className="h-4 w-4" />
-                                <span className="sr-only">More</span>
+                                <span className="sr-only">{locale === "he" ? "עוד" : "More"}</span>
                               </div>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent className="w-44" side="bottom" align="end">
                               <DropdownMenuItem className="cursor-pointer">
                                 <Share2 className="mr-2 h-4 w-4" />
-                                <span>Share</span>
+                                <span>{locale === "he" ? "שתף" : "Share"}</span>
                               </DropdownMenuItem>
                               <DropdownMenuItem className="cursor-pointer text-destructive focus:text-destructive">
                                 <Trash2 className="mr-2 h-4 w-4" />
-                                <span>Delete</span>
+                                <span>{locale === "he" ? "מחק" : "Delete"}</span>
                               </DropdownMenuItem>
                             </DropdownMenuContent>
                           </DropdownMenu>
@@ -160,7 +174,7 @@ export function ChatSidebar({
                   </SidebarMenu>
                   {hasMoreHistory ? (
                     <div className="py-2 text-center text-xs text-muted-foreground">
-                      Loading more chats...
+                      {locale === "he" ? "טוען עוד צ'אטים..." : "Loading more chats..."}
                     </div>
                   ) : null}
                 </div>
@@ -178,20 +192,24 @@ export function ChatSidebar({
                 <SidebarMenuButton
                   size="lg"
                   className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground cursor-pointer"
-                  tooltip={session?.displayName || "Local user"}
+                  tooltip={session?.displayName || (locale === "he" ? "משתמש מקומי" : "Local user")}
                 >
                   <Avatar className="h-8 w-8 rounded-lg shrink-0">
-                    <AvatarImage src="" alt={session?.displayName || "Local user"} />
+                    <AvatarImage src="" alt={session?.displayName || (locale === "he" ? "משתמש מקומי" : "Local user")} />
                     <AvatarFallback className="rounded-lg bg-sidebar-primary text-sidebar-primary-foreground text-xs font-medium">
                       {fallbackInitials}
                     </AvatarFallback>
                   </Avatar>
-                  <div className="grid flex-1 text-sm leading-tight text-left">
+                  <div className={cn("grid flex-1 text-sm leading-tight", isRtl ? "text-right" : "text-left")}>
                     <span className="truncate font-medium">
-                      {isLoading ? "Loading local session..." : session?.displayName || "Local user"}
+                      {isLoading
+                        ? locale === "he"
+                          ? "טוען סשן מקומי..."
+                          : "Loading local session..."
+                        : session?.displayName || (locale === "he" ? "משתמש מקומי" : "Local user")}
                     </span>
                     <span className="truncate text-xs text-muted-foreground">
-                      {session?.userId || "Cookie-backed development identity"}
+                      {session?.userId || (locale === "he" ? "זהות פיתוח מבוססת קוקי" : "Cookie-backed development identity")}
                     </span>
                   </div>
                   <ChevronsUpDown className="ml-auto size-4 shrink-0" />
@@ -206,14 +224,18 @@ export function ChatSidebar({
                 <DropdownMenuLabel className="p-0 font-normal">
                   <div className="flex items-center gap-2 px-1 py-1.5 text-sm text-left">
                     <Avatar className="h-8 w-8 rounded-lg">
-                      <AvatarImage src="" alt={session?.displayName || "Local user"} />
+                      <AvatarImage src="" alt={session?.displayName || (locale === "he" ? "משתמש מקומי" : "Local user")} />
                       <AvatarFallback className="rounded-lg bg-sidebar-primary text-sidebar-primary-foreground text-xs font-medium">
                         {fallbackInitials}
                       </AvatarFallback>
                     </Avatar>
-                    <div className="grid flex-1 text-sm leading-tight text-left">
-                      <span className="truncate font-medium">{session?.displayName || "Local user"}</span>
-                      <span className="truncate text-xs">{session?.userId || "Pending session"}</span>
+                    <div className={cn("grid flex-1 text-sm leading-tight", isRtl ? "text-right" : "text-left")}>
+                      <span className="truncate font-medium">
+                        {session?.displayName || (locale === "he" ? "משתמש מקומי" : "Local user")}
+                      </span>
+                      <span className="truncate text-xs">
+                        {session?.userId || (locale === "he" ? "סשן בהמתנה" : "Pending session")}
+                      </span>
                     </div>
                   </div>
                 </DropdownMenuLabel>
@@ -228,7 +250,7 @@ export function ChatSidebar({
                     }}
                   >
                     <RefreshCcw className="mr-2 size-4" />
-                    Reset local session
+                    {locale === "he" ? "אפס סשן מקומי" : "Reset local session"}
                   </DropdownMenuItem>
                 </DropdownMenuGroup>
               </DropdownMenuContent>

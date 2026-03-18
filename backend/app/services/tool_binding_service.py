@@ -9,6 +9,7 @@ from uuid import UUID
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.db.postgres.models.agents import Agent, AgentStatus
 from app.db.postgres.models.artifact_runtime import Artifact, ArtifactKind, ArtifactRevision
 from app.db.postgres.models.rag import ExecutablePipeline, PipelineJob, PipelineJobStatus, VisualPipeline
 from app.db.postgres.models.registry import (
@@ -23,6 +24,27 @@ from app.rag.pipeline.registry import ConfigFieldType, OperatorRegistry
 _GENERIC_PIPELINE_OUTPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": True,
+}
+_GENERIC_AGENT_OUTPUT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": True,
+}
+_DEFAULT_AGENT_INPUT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "input": {
+            "description": "String input or structured agent payload.",
+            "anyOf": [
+                {"type": "string"},
+                {"type": "object", "additionalProperties": True},
+            ],
+        },
+        "text": {"type": "string"},
+        "input_text": {"type": "string"},
+        "messages": {"type": "array", "items": {"type": "object"}},
+        "context": {"type": "object", "additionalProperties": True},
+    },
+    "additionalProperties": False,
 }
 
 
@@ -297,6 +319,90 @@ class ToolBindingService:
             await self._db.delete(tool)
             await self._db.flush()
 
+    async def get_agent_tool(self, agent_id: UUID) -> ToolRegistry | None:
+        return (
+            await self._db.execute(
+                select(ToolRegistry).where(ToolRegistry.slug == self._agent_tool_slug(agent_id))
+            )
+        ).scalar_one_or_none()
+
+    async def export_agent_tool_binding(
+        self,
+        *,
+        agent: Agent,
+        name: str | None = None,
+        description: str | None = None,
+        input_schema: dict[str, Any] | None = None,
+        created_by: UUID | None = None,
+    ) -> ToolRegistry:
+        tool = await self.get_agent_tool(agent.id)
+        config_schema = self._agent_tool_config_schema(agent=agent, existing_tool=tool)
+        desired_status = self._agent_tool_status(agent)
+        desired_version = _tool_semver(agent.version)
+        schema = dict(tool.schema or {}) if tool is not None and isinstance(tool.schema, dict) else {}
+        if input_schema is not None:
+            schema["input"] = deepcopy(input_schema)
+        else:
+            schema.setdefault("input", deepcopy(_DEFAULT_AGENT_INPUT_SCHEMA))
+        schema["output"] = deepcopy(_GENERIC_AGENT_OUTPUT_SCHEMA)
+
+        if tool is None:
+            tool = ToolRegistry(
+                tenant_id=agent.tenant_id,
+                name=str(name or agent.name).strip() or agent.name,
+                slug=self._agent_tool_slug(agent.id),
+                description=description if description is not None else agent.description,
+                scope=ToolDefinitionScope.TENANT,
+                schema=schema,
+                config_schema=config_schema,
+                implementation_type=ToolImplementationType.AGENT_CALL,
+                status=desired_status,
+                version=desired_version,
+                published_at=datetime.utcnow() if desired_status == ToolStatus.PUBLISHED else None,
+                is_active=True,
+                is_system=False,
+            )
+            self._db.add(tool)
+            await self._db.flush()
+        else:
+            if name is not None:
+                tool.name = str(name).strip() or agent.name
+            elif not str(tool.name or "").strip():
+                tool.name = agent.name
+            if description is not None:
+                tool.description = description
+            elif tool.description is None:
+                tool.description = agent.description
+            tool.schema = schema
+            tool.config_schema = config_schema
+            tool.implementation_type = ToolImplementationType.AGENT_CALL
+            tool.status = desired_status
+            tool.version = desired_version
+            tool.is_active = True
+            tool.is_system = False
+            tool.published_at = datetime.utcnow() if desired_status == ToolStatus.PUBLISHED else None
+
+        await self._maybe_snapshot_published_tool(tool=tool, created_by=created_by)
+        await self._db.flush()
+        return tool
+
+    async def sync_exported_agent_tool_binding(
+        self,
+        *,
+        agent: Agent,
+        created_by: UUID | None = None,
+    ) -> ToolRegistry | None:
+        existing = await self.get_agent_tool(agent.id)
+        if existing is None:
+            return None
+        return await self.export_agent_tool_binding(agent=agent, created_by=created_by)
+
+    async def delete_agent_tool_binding(self, agent_id: UUID) -> None:
+        tool = await self.get_agent_tool(agent_id)
+        if tool is not None:
+            await self._db.delete(tool)
+            await self._db.flush()
+
     def build_pipeline_input_schema(self, executable_pipeline: ExecutablePipeline) -> dict[str, Any]:
         dag = ((executable_pipeline.compiled_graph or {}).get("dag") or [])
         registry = OperatorRegistry.get_instance()
@@ -391,6 +497,39 @@ class ToolBindingService:
         base = _slugify(pipeline.name, fallback="pipeline-tool")
         return f"{base}-pipeline-{str(pipeline.id).replace('-', '')[:8]}"
 
+    def _agent_tool_slug(self, agent_id: UUID) -> str:
+        return f"agent-tool-{str(agent_id).replace('-', '')[:12]}"
+
+    def _agent_tool_status(self, agent: Agent) -> ToolStatus:
+        status_text = str(getattr(getattr(agent, "status", None), "value", getattr(agent, "status", ""))).lower()
+        if status_text == AgentStatus.published.value:
+            return ToolStatus.PUBLISHED
+        return ToolStatus.DRAFT
+
+    def _agent_tool_config_schema(self, *, agent: Agent, existing_tool: ToolRegistry | None) -> dict[str, Any]:
+        existing_config = dict(existing_tool.config_schema or {}) if existing_tool and isinstance(existing_tool.config_schema, dict) else {}
+        existing_execution = existing_config.get("execution") if isinstance(existing_config.get("execution"), dict) else {}
+        timeout_s = existing_execution.get("timeout_s")
+        if timeout_s is None:
+            constraints = agent.execution_constraints if isinstance(agent.execution_constraints, dict) else {}
+            timeout_s = int(constraints.get("timeout_seconds") or 60)
+        return {
+            "implementation": {
+                "type": "agent_call",
+                "target_agent_id": str(agent.id),
+                "target_agent_slug": agent.slug,
+                "mode": "sync",
+            },
+            "execution": {
+                "timeout_s": int(timeout_s or 60),
+                "is_pure": False,
+            },
+            "agent_binding": {
+                "agent_id": str(agent.id),
+                "owned_by_source": True,
+            },
+        }
+
     def _tool_snapshot(self, tool: ToolRegistry) -> dict[str, Any]:
         return {
             "schema": deepcopy(tool.schema or {}),
@@ -403,6 +542,25 @@ class ToolBindingService:
             "visual_pipeline_id": str(tool.visual_pipeline_id) if tool.visual_pipeline_id else None,
             "executable_pipeline_id": str(tool.executable_pipeline_id) if tool.executable_pipeline_id else None,
         }
+
+    async def _maybe_snapshot_published_tool(self, *, tool: ToolRegistry, created_by: UUID | None) -> None:
+        if tool.status != ToolStatus.PUBLISHED:
+            return
+        existing = (
+            await self._db.execute(
+                select(ToolVersion).where(ToolVersion.tool_id == tool.id, ToolVersion.version == tool.version).limit(1)
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            return
+        self._db.add(
+            ToolVersion(
+                tool_id=tool.id,
+                version=tool.version,
+                schema_snapshot=self._tool_snapshot(tool),
+                created_by=created_by,
+            )
+        )
 
     def _step_input_object(
         self,

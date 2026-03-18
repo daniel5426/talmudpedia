@@ -54,6 +54,30 @@ async def _seed_tool(db_session, tenant_id):
     return tool
 
 
+async def _seed_agent_bound_tool(db_session, tenant_id):
+    suffix = uuid4().hex[:8]
+    tool = ToolRegistry(
+        tenant_id=tenant_id,
+        name=f"Agent Bound Tool {suffix}",
+        slug=f"agent-tool-{suffix}",
+        description="agent-bound tool",
+        scope=ToolDefinitionScope.TENANT,
+        schema={"input": {"type": "object"}, "output": {"type": "object"}},
+        config_schema={
+            "implementation": {"type": "agent_call", "target_agent_id": str(uuid4())},
+            "agent_binding": {"agent_id": str(uuid4()), "owned_by_source": True},
+        },
+        status=ToolStatus.DRAFT,
+        implementation_type=ToolImplementationType.AGENT_CALL,
+        is_active=True,
+        is_system=False,
+    )
+    db_session.add(tool)
+    await db_session.commit()
+    await db_session.refresh(tool)
+    return tool
+
+
 @pytest.mark.asyncio
 async def test_create_tool_rejects_non_tenant_scope(client, db_session):
     tenant, user = await _seed_tenant_and_user(db_session)
@@ -142,3 +166,28 @@ async def test_update_cannot_publish_directly_and_publish_endpoint_still_works(c
         )
     ).fetchall()
     assert len(versions) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method", "path_suffix", "expected_detail"),
+    [
+        ("put", "", "managed by its owning domain"),
+        ("post", "/publish", "owning domain"),
+        ("delete", "", "owning domain"),
+    ],
+)
+async def test_agent_bound_tools_reject_registry_lifecycle_actions(client, db_session, method: str, path_suffix: str, expected_detail: str):
+    tenant, user = await _seed_tenant_and_user(db_session)
+    tool = await _seed_agent_bound_tool(db_session, tenant.id)
+    headers = _headers(user, tenant)
+
+    if method == "put":
+        response = await client.put(f"/tools/{tool.id}{path_suffix}", json={"name": "nope"}, headers=headers)
+    elif method == "post":
+        response = await client.post(f"/tools/{tool.id}{path_suffix}", json={}, headers=headers)
+    else:
+        response = await client.delete(f"/tools/{tool.id}{path_suffix}", headers=headers)
+
+    assert response.status_code == 400
+    assert expected_detail in response.json()["detail"]

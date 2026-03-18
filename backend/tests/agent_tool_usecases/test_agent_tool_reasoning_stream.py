@@ -667,7 +667,7 @@ async def test_multiple_agents_web_search_and_retrieval_calls_reflect_in_product
             "output": {"type": "object"},
         },
         implementation={
-            "type": "rag_retrieval",
+            "type": "rag_pipeline",
             "pipeline_id": str(retrieval_pipeline.id),
         },
     )
@@ -711,7 +711,7 @@ async def test_multiple_agents_web_search_and_retrieval_calls_reflect_in_product
         assert api_key == "unit-test-key"
         return _FakeWebSearchProvider()
 
-    async def fake_execute_job(self, job_id: UUID):
+    async def fake_execute_job(self, job_id: UUID, **_kwargs):
         job = await self.db.get(PipelineJob, job_id)
         query = str((job.input_params or {}).get("query") or "")
         job.status = PipelineJobStatus.COMPLETED

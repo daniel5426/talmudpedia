@@ -490,8 +490,6 @@ async def ensure_platform_architect_worker_tools(
     tenant_id: UUID,
     actor_user_id: UUID | None = None,
 ) -> list[str]:
-    import app.services.platform_architect_worker_tools  # noqa: F401
-
     await ensure_artifact_coding_agent_profile(db, tenant_id, actor_user_id=actor_user_id)
 
     try:

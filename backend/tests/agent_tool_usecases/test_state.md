@@ -1,6 +1,6 @@
 # Agent Tool Usecases Tests
 
-Last Updated: 2026-03-13
+Last Updated: 2026-03-18
 
 ## Scope
 Covers end-to-end agent tool-call execution flows for built-in tools through the real agent runtime path (`AgentExecutorService` -> `ReasoningNodeExecutor` -> `ToolNodeExecutor`).
@@ -12,7 +12,7 @@ Covers end-to-end agent tool-call execution flows for built-in tools through the
 
 ## Key scenarios covered
 - Web search built-in executes from an agent tool call with scalar/non-JSON args.
-- Retrieval built-in executes from an agent tool call using a tenant visual retrieval pipeline.
+- Retrieval built-in executes from an agent tool call using a tenant visual retrieval pipeline and the canonical `rag_pipeline` authored metadata.
 - Agent reasoning loop executes `agent_call` tools and consumes compact child-run payloads.
 - Agent run completes and persists tool outputs in final run state.
 - Debug stream emits synthesized reasoning step events (`active`/`complete`) for each successful tool invocation.
@@ -34,6 +34,9 @@ Covers end-to-end agent tool-call execution flows for built-in tools through the
 - Command: `PYTHONPATH=backend pytest -q backend/tests/agent_tool_usecases/test_agent_tool_reasoning_stream.py -k 'tool_error_emits_failed_terminal_tool_event'`
 - Date/Time: 2026-03-13 (local run during this change set)
 - Result: pass (`1 passed, 11 deselected`)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/agent_tool_usecases/test_agent_builtin_tool_flow.py backend/tests/agent_tool_usecases/test_agent_tool_reasoning_stream.py`
+- Date/Time: 2026-03-18 19:08 Asia/Hebron
+- Result: pass (`12 passed`)
 
 ## Manual Real-Provider Validation (No Mocks)
 - Date/Time: 2026-02-12 01:18 EET

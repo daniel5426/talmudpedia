@@ -158,8 +158,21 @@ async def _normalize_tool_impl_values(db):
     Align lowercase implementation_type values with uppercase ENUM literals.
     """
     labels = await _get_enum_labels(db, "toolimplementationtype")
-    for old in ("internal", "http", "rag_retrieval", "rag_pipeline", "agent_call", "function", "custom", "artifact", "mcp"):
+    replacements = {
+        "internal": "internal",
+        "http": "http",
+        "rag_retrieval": "rag_pipeline",
+        "rag_pipeline": "rag_pipeline",
+        "agent_call": "agent_call",
+        "function": "function",
+        "custom": "custom",
+        "artifact": "artifact",
+        "mcp": "mcp",
+    }
+    for old, preferred in replacements.items():
         new = _resolve_enum_value(labels, old)
+        if old == "rag_retrieval":
+            new = _resolve_enum_value(labels, preferred)
         try:
             await db.execute(
                 text("UPDATE tool_registry SET implementation_type=:new WHERE lower(implementation_type::text)=:old"),
@@ -444,8 +457,6 @@ async def seed_builtin_tool_templates(db):
 
 
 async def seed_platform_architect_domain_tools(db) -> dict[str, str]:
-    import app.services.platform_native_tools  # noqa: F401
-
     required_cols = {
         "id",
         "tenant_id",

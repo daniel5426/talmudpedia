@@ -1,6 +1,6 @@
 # Tool Execution Tests
 
-Last Updated: 2026-03-17
+Last Updated: 2026-03-18
 
 ## Scope
 Validate MCP/function/agent-call execution paths in the `ToolNodeExecutor`.
@@ -16,8 +16,10 @@ Validate MCP/function/agent-call execution paths in the `ToolNodeExecutor`.
 
 ## Key Scenarios Covered
 - MCP JSON-RPC request shape and successful result handling
+- MCP runtime now rejects private/loopback hosts by default, supports explicit host allowlists, and normalizes transport / invalid-JSON failures into stable runtime errors
 - MCP error handling on missing result
 - Function tool execution via registry allowlist
+- Function-tool execution now bootstraps runtime-owned callable modules explicitly instead of relying on test/module import side effects
 - Missing function tool name raises a clear error
 - Reasoning-node tool input coercion maps file/path aliases (`file_path`, `filePath`, `fromPath`, `toPath`) to canonical tool schema keys.
 - Reasoning-node input coercion also maps aliases inside wrapper payloads (`parameters`, `payload`, `args`) for path-bearing tools.
@@ -119,6 +121,9 @@ Validate MCP/function/agent-call execution paths in the `ToolNodeExecutor`.
 - Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/tool_execution/test_function_tool_execution.py`
 - Date/Time: 2026-03-17 18:32 Asia/Hebron
 - Result: PASS (`18 passed`)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/tool_execution/test_function_tool_execution.py backend/tests/tool_execution/test_mcp_tool_execution.py`
+- Date/Time: 2026-03-18 19:08 Asia/Hebron
+- Result: PASS (`24 passed`)
 
 ## Known Gaps / Follow-ups
 - Add coverage for `agent_call` payload mode variants beyond sync (`spawn`/future orchestration modes).

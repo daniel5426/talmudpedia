@@ -316,9 +316,21 @@ def _get_tool_type(tool: ToolRegistry | object, impl_type: ToolImplementationTyp
     return "custom"
 
 
+def _get_agent_binding_id(tool: ToolRegistry | object) -> str | None:
+    config_schema = getattr(tool, "config_schema", {}) or {}
+    if not isinstance(config_schema, dict):
+        return None
+    binding = config_schema.get("agent_binding")
+    if isinstance(binding, dict) and binding.get("owned_by_source") is True and binding.get("agent_id"):
+        return str(binding["agent_id"])
+    return None
+
+
 def _get_tool_ownership(tool: ToolRegistry | object, impl_type: ToolImplementationType) -> str:
     if bool(getattr(tool, "is_system", False)):
         return "system"
+    if _get_agent_binding_id(tool):
+        return "agent_bound"
     if getattr(tool, "artifact_id", None) or impl_type == ToolImplementationType.ARTIFACT:
         return "artifact_bound"
     if getattr(tool, "visual_pipeline_id", None) or getattr(tool, "executable_pipeline_id", None) or impl_type == ToolImplementationType.RAG_PIPELINE:
@@ -327,6 +339,8 @@ def _get_tool_ownership(tool: ToolRegistry | object, impl_type: ToolImplementati
 
 
 def _get_tool_manager(ownership: str) -> str:
+    if ownership == "agent_bound":
+        return "agents"
     if ownership == "artifact_bound":
         return "artifacts"
     if ownership == "pipeline_bound":
@@ -337,6 +351,8 @@ def _get_tool_manager(ownership: str) -> str:
 
 
 def _get_tool_source(tool: ToolRegistry | object, ownership: str) -> tuple[str | None, str | None]:
+    if ownership == "agent_bound":
+        return "agent", _get_agent_binding_id(tool)
     if ownership == "artifact_bound":
         artifact_id = getattr(tool, "artifact_id", None)
         return "artifact", str(artifact_id) if artifact_id else None
@@ -824,8 +840,9 @@ async def update_tool(
     ).scalar_one_or_none()
     if not tool:
         raise HTTPException(status_code=404, detail="Tool not found")
-    if _get_tool_impl_type(tool) in {ToolImplementationType.ARTIFACT, ToolImplementationType.RAG_PIPELINE}:
-        raise HTTPException(status_code=400, detail="This tool is managed by its owning artifact or pipeline")
+    ownership = _get_tool_ownership(tool, _get_tool_impl_type(tool))
+    if ownership in {"artifact_bound", "pipeline_bound", "agent_bound"}:
+        raise HTTPException(status_code=400, detail="This tool is managed by its owning domain")
     if tool.is_system:
         raise HTTPException(status_code=400, detail="Cannot modify system tools")
     if _is_builtin_instance(tool):
@@ -917,8 +934,9 @@ async def publish_tool(
         raise HTTPException(status_code=400, detail="Cannot publish system tools")
     if _is_builtin_instance(tool):
         raise HTTPException(status_code=404, detail="Tool not found")
-    if _get_tool_impl_type(tool) in {ToolImplementationType.ARTIFACT, ToolImplementationType.RAG_PIPELINE}:
-        raise HTTPException(status_code=400, detail="Publish this tool from its owning artifact or pipeline")
+    ownership = _get_tool_ownership(tool, _get_tool_impl_type(tool))
+    if ownership in {"artifact_bound", "pipeline_bound", "agent_bound"}:
+        raise HTTPException(status_code=400, detail="Publish this tool from its owning domain")
 
     await _validate_pipeline_config_if_needed(
         db=db,
@@ -997,6 +1015,9 @@ async def delete_tool(
         raise HTTPException(status_code=400, detail="Cannot delete system tools")
     if _is_builtin_instance(tool):
         raise HTTPException(status_code=404, detail="Tool not found")
+    ownership = _get_tool_ownership(tool, _get_tool_impl_type(tool))
+    if ownership in {"artifact_bound", "pipeline_bound", "agent_bound"}:
+        raise HTTPException(status_code=400, detail="Delete this tool from its owning domain")
 
     await ensure_sensitive_action_approved(
         principal=principal,

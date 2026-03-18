@@ -101,8 +101,8 @@ export interface ModelsListResponse {
 export type ToolImplementationType = "internal" | "http" | "rag_pipeline" | "agent_call" | "function" | "custom" | "artifact" | "mcp";
 export type ToolStatus = "draft" | "published" | "deprecated" | "disabled";
 export type ToolTypeBucket = "built_in" | "mcp" | "artifact" | "custom";
-export type ToolOwnership = "manual" | "artifact_bound" | "pipeline_bound" | "system";
-export type ToolManager = "tools" | "artifacts" | "pipelines" | "system";
+export type ToolOwnership = "manual" | "artifact_bound" | "pipeline_bound" | "agent_bound" | "system";
+export type ToolManager = "tools" | "artifacts" | "pipelines" | "agents" | "system";
 
 export interface ToolDefinition {
   id: string;
@@ -120,7 +120,7 @@ export interface ToolDefinition {
   tool_type?: ToolTypeBucket;
   ownership: ToolOwnership;
   managed_by: ToolManager;
-  source_object_type?: "artifact" | "pipeline" | null;
+  source_object_type?: "artifact" | "pipeline" | "agent" | null;
   source_object_id?: string | null;
   can_edit_in_registry: boolean;
   can_publish_in_registry: boolean;
@@ -173,6 +173,19 @@ export interface UpdateToolRequest {
 export interface ToolsListResponse {
   tools: ToolDefinition[];
   total: number;
+}
+
+export interface ExportAgentToolRequest {
+  name?: string;
+  description?: string;
+  input_schema?: Record<string, unknown>;
+}
+
+export interface ExportAgentToolResponse {
+  tool_id: string;
+  tool_slug: string;
+  tool_name: string;
+  status: string;
 }
 
 export interface AgentRunStatus {
@@ -300,6 +313,10 @@ export const agentService = {
 
   async deleteAgent(id: string) {
     return httpClient.delete<{ success?: boolean }>(`/agents/${id}`);
+  },
+
+  async exportAgentTool(id: string, data: ExportAgentToolRequest) {
+    return httpClient.post<ExportAgentToolResponse>(`/agents/${id}/export-tool`, data);
   },
 
   // Execution

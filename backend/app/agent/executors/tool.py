@@ -36,7 +36,7 @@ from app.services.published_app_coding_agent_tools import (
     normalize_coding_agent_tool_exception,
     validate_coding_agent_required_fields,
 )
-from app.services.tool_function_registry import get_tool_function, run_tool_function
+from app.services.tool_function_registry import ensure_tool_functions_registered, get_tool_function, run_tool_function
 from app.services.web_search import create_web_search_provider
 
 logger = logging.getLogger(__name__)
@@ -526,6 +526,9 @@ class ToolNodeExecutor(BaseNodeExecutor):
             raise ValueError("Function tool is missing function_name in implementation_config")
 
         fn = get_tool_function(function_name)
+        if not fn:
+            ensure_tool_functions_registered(function_name=function_name)
+            fn = get_tool_function(function_name)
         if not fn:
             raise RuntimeError(f"Function tool '{function_name}' is not registered")
 

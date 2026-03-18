@@ -58,6 +58,16 @@ The standalone server now hosts:
 - local session state with a selected demo client
 - chat forwarding that injects selected client context into the embedded-agent request
 
+## Showcase Data Seed
+
+To seed a clean PRICO showcase dataset into the local SQL Server:
+
+```bash
+pnpm seed:prico-showcase
+```
+
+This inserts three curated demo clients plus clean deals, currency mappings, `paku` rows, and market benchmarks.
+
 ## Production
 
 ```bash

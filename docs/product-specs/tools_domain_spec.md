@@ -27,6 +27,7 @@ Current ownership classes are:
 - `manual`
 - `artifact_bound`
 - `pipeline_bound`
+- `agent_bound`
 - `system`
 
 These are returned in the `/tools` DTO so the UI can tell which rows are editable in the registry versus managed from another domain.
@@ -89,6 +90,21 @@ Current behavior includes:
   - `source_object_id`
   - registry action flags (`can_edit_in_registry`, `can_publish_in_registry`, `can_delete_in_registry`)
 - scope-based route protection
+
+## Current Creation Surfaces
+
+Current creation/authorship surfaces are split by ownership:
+- manual tools
+  - created from the tools page and persisted through `/tools`
+- artifact-bound tools
+  - created from the artifact domain, typically as `tool_impl` artifacts
+  - the tools page should route users to artifact-native authoring instead of generic `/tools` CRUD
+- pipeline-bound tools
+  - created from the pipeline domain through the pipeline tool-binding flow
+  - the tools page should route users to pipeline authoring instead of generic `/tools` CRUD
+- agent/workflow tools
+  - created from the agents surface through the export-to-tool flow
+  - exported rows are owner-managed `agent_call` tools mirrored into `ToolRegistry`
 
 ## Current Runtime Rules
 
@@ -154,6 +170,14 @@ Current pipeline-backed tools follow the same mirrored-row model:
 - the bound `ToolRegistry` row is the runtime-facing catalog entry
 - generic `/tools` CRUD should not be treated as the authoring surface for those rows
 
+### Agent-backed tools
+
+Current agent-backed tools now follow the same mirrored-row model:
+- the owning surface is the agents page/export flow
+- the bound `ToolRegistry` row is an `agent_call` runtime catalog entry
+- generic `/tools` CRUD should not be treated as the authoring surface for those rows
+- publish/delete lifecycle is synchronized from the agent domain once a binding exists
+
 ## Current Known Modeling Tension
 
 There is still some duplicated schema/config surface between tools and `tool_impl` artifacts:
@@ -165,6 +189,13 @@ The runtime path already works, but the docs should treat this as one connected 
 ### MCP tools
 
 Current MCP tools execute through HTTP JSON-RPC `tools/call`.
+
+Current MCP runtime policy:
+- `server_url` must use `http` or `https`
+- embedded URL credentials are rejected
+- private/loopback hosts are blocked by default unless `MCP_ALLOW_PRIVATE_HOSTS=true`
+- optional `MCP_ALLOWED_HOSTS` constrains outbound MCP hostnames
+- transport and protocol failures are normalized into stable runtime errors instead of leaking raw client exceptions
 
 ## Canonical Implementation References
 

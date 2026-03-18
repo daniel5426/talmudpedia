@@ -3,9 +3,8 @@ from uuid import uuid4
 
 import pytest
 
-import app.services.published_app_coding_agent_tools  # noqa: F401
-import app.services.platform_native_tools as platform_native_tools  # noqa: F401
 from app.agent.executors.tool import ToolNodeExecutor
+from app.services import tool_function_registry
 from app.services.tool_function_registry import register_tool_function
 
 
@@ -96,6 +95,26 @@ async def test_function_tool_execution(monkeypatch):
 
     assert result["context"]["echo"]["x"] == 1
     assert result["context"]["echo"]["context"] == {}
+
+
+def test_tool_function_registry_bootstrap_is_idempotent(monkeypatch):
+    imported: list[str] = []
+
+    def fake_import(module_name: str):
+        imported.append(module_name)
+        return object()
+
+    monkeypatch.setattr(tool_function_registry, "import_module", fake_import)
+    monkeypatch.setattr(
+        tool_function_registry,
+        "_BOOTSTRAPPED_MODULES",
+        set(),
+    )
+
+    tool_function_registry.ensure_tool_functions_registered(modules=("app.services.fake_a", "app.services.fake_b"))
+    tool_function_registry.ensure_tool_functions_registered(modules=("app.services.fake_a", "app.services.fake_b"))
+
+    assert imported == ["app.services.fake_a", "app.services.fake_b"]
 
 
 @pytest.mark.asyncio
@@ -543,6 +562,7 @@ async def test_strict_function_tool_ignores_executor_runtime_metadata_before_dis
 @pytest.mark.asyncio
 async def test_strict_platform_tool_forwards_internal_auth_context_to_local_sdk(monkeypatch):
     captured = {}
+    from app.services import platform_native_tools
 
     async def fake_handler(_runtime):
         captured["runtime_context"] = _runtime.runtime_context

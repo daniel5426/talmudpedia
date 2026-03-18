@@ -1050,6 +1050,7 @@ from app.api.routers import tools as tools_router
 from app.api.routers import artifacts as artifacts_router
 from app.api.routers import artifact_runs as artifact_runs_router
 from app.api.routers import artifact_coding_agent as artifact_coding_agent_router
+from app.api.routers import agent_tool_exports as agent_tool_exports_router
 from app.api.routers import stats as stats_router
 from app.api.routers import settings as settings_router
 from app.api.routers import internal_auth as internal_auth_router
@@ -1065,6 +1066,7 @@ from app.api.routers import published_apps_builder_preview_proxy as published_ap
 from app.api.routers import sandbox_controller_dev_shim as sandbox_controller_dev_shim_router
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
 app.include_router(agents_router)
+app.include_router(agent_tool_exports_router.router)
 app.include_router(agent_run_logs_router.router)
 app.include_router(agent_graph_mutations_router.router)
 app.include_router(admin.router, prefix="/admin", tags=["admin"])

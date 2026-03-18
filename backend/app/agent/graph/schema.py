@@ -19,7 +19,7 @@ class NodeType(str, Enum):
     LOOP = "loop"
     PARALLEL = "parallel"
     TRANSFORM = "transform"
-    RAG_RETRIEVAL = "rag_retrieval"
+    RAG_PIPELINE = "rag_pipeline"
     HUMAN_INPUT = "human_input"
     SPAWN_RUN = "spawn_run"
     SPAWN_GROUP = "spawn_group"

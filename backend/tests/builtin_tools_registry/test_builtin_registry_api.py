@@ -347,7 +347,7 @@ async def test_pipeline_bound_tool_row_rejects_registry_update(client, db_sessio
         headers=_headers(user, tenant),
     )
     assert update.status_code == 400
-    assert "managed by its owning artifact or pipeline" in update.json()["detail"]
+    assert "managed by its owning domain" in update.json()["detail"]
 
 
 @pytest.mark.asyncio
@@ -380,7 +380,7 @@ async def test_publish_pipeline_bound_tool_from_registry_is_rejected(client, db_
         headers=_headers(user, tenant),
     )
     assert publish_response.status_code == 400
-    assert "owning artifact or pipeline" in publish_response.json()["detail"]
+    assert "owning domain" in publish_response.json()["detail"]
 
 
 @pytest.mark.asyncio

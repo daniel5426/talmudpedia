@@ -118,10 +118,25 @@ const pipelineTool = {
   can_delete_in_registry: false,
 }
 
+const agentTool = {
+  ...baseTool,
+  id: "agent-tool-1",
+  name: "Agent Owned Tool",
+  slug: "agent-tool-1",
+  implementation_type: "agent_call",
+  ownership: "agent_bound",
+  managed_by: "agents",
+  source_object_type: "agent",
+  source_object_id: "agent-123",
+  can_edit_in_registry: false,
+  can_publish_in_registry: false,
+  can_delete_in_registry: false,
+}
+
 describe("Tools built-in UI", () => {
   beforeEach(() => {
     push.mockReset()
-    ;(toolsService.listTools as jest.Mock).mockResolvedValue({ tools: [baseTool, retrievalBuiltin, artifactTool, pipelineTool], total: 4 })
+    ;(toolsService.listTools as jest.Mock).mockResolvedValue({ tools: [baseTool, retrievalBuiltin, artifactTool, pipelineTool, agentTool], total: 5 })
     ;(toolsService.createTool as jest.Mock).mockResolvedValue({ ...baseTool, id: "tool-created-1" })
   })
 
@@ -143,6 +158,46 @@ describe("Tools built-in UI", () => {
     expect(screen.queryByRole("button", { name: "Create Built-in Instance" })).not.toBeInTheDocument()
   })
 
+  it("opens the manual tool dialog from the creation chooser", async () => {
+    render(<ToolsPage />)
+
+    await waitFor(() => expect(toolsService.listTools).toHaveBeenCalled())
+    fireEvent.click(screen.getByRole("button", { name: "Create Tool" }))
+    fireEvent.click(screen.getByRole("button", { name: /Integration \/ Manual Tool/i }))
+
+    expect(await screen.findByText("Implementation Type")).toBeInTheDocument()
+  })
+
+  it("routes artifact tool creation to the artifact editor create flow", async () => {
+    render(<ToolsPage />)
+
+    await waitFor(() => expect(toolsService.listTools).toHaveBeenCalled())
+    fireEvent.click(screen.getByRole("button", { name: "Create Tool" }))
+    fireEvent.click(screen.getByRole("button", { name: /Artifact Tool/i }))
+
+    expect(push).toHaveBeenCalledWith("/admin/artifacts?mode=create&kind=tool_impl")
+  })
+
+  it("routes pipeline tool creation to the pipelines surface", async () => {
+    render(<ToolsPage />)
+
+    await waitFor(() => expect(toolsService.listTools).toHaveBeenCalled())
+    fireEvent.click(screen.getByRole("button", { name: "Create Tool" }))
+    fireEvent.click(screen.getByRole("button", { name: /Pipeline Tool/i }))
+
+    expect(push).toHaveBeenCalledWith("/admin/pipelines")
+  })
+
+  it("routes agent tool creation to the agents export flow", async () => {
+    render(<ToolsPage />)
+
+    await waitFor(() => expect(toolsService.listTools).toHaveBeenCalled())
+    fireEvent.click(screen.getByRole("button", { name: "Create Tool" }))
+    fireEvent.click(screen.getByRole("button", { name: /Agent \/ Workflow Tool/i }))
+
+    expect(push).toHaveBeenCalledWith("/admin/agents?mode=export-tool")
+  })
+
   it("opens artifact editor from the tool detail sheet", async () => {
     render(<ToolsPage />)
 
@@ -162,5 +217,15 @@ describe("Tools built-in UI", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Open Editor" }))
 
     expect(push).toHaveBeenCalledWith("/admin/pipelines/pipeline-123?toolSettings=1")
+  })
+
+  it("opens agent builder from the tool detail sheet", async () => {
+    render(<ToolsPage />)
+
+    await waitFor(() => expect(toolsService.listTools).toHaveBeenCalled())
+    fireEvent.click(await screen.findByText("Agent Owned Tool"))
+    fireEvent.click(await screen.findByRole("button", { name: "Open Editor" }))
+
+    expect(push).toHaveBeenCalledWith("/admin/agents/agent-123/builder")
   })
 })

@@ -39,6 +39,7 @@ export default function ArtifactsPage() {
     const searchParams = useSearchParams()
     const modeParam = searchParams.get("mode") as ViewMode | null
     const idParam = searchParams.get("id")
+    const kindParam = searchParams.get("kind") as ArtifactKind | null
 
     const [viewMode, setViewMode] = useState<ViewMode>("list")
     const [loading, setLoading] = useState(true)
@@ -158,6 +159,15 @@ export default function ArtifactsPage() {
         setViewMode("edit")
     }, [loadArtifactEditorState])
 
+    const hydrateCreateMode = useCallback((kind: ArtifactKind) => {
+        const next = createFormDataForKind(kind)
+        setFormData(next)
+        setSelectedArtifact(null)
+        setActiveFilePath(getDefaultActiveFilePath(next))
+        setConvertTargetKind(kind === "agent_node" ? "rag_operator" : "agent_node")
+        setViewMode("create")
+    }, [])
+
     useEffect(() => {
         if (loading) return
         if (modeParam === "edit" && idParam) {
@@ -169,8 +179,15 @@ export default function ArtifactsPage() {
             }
             return
         }
+        if (modeParam === "create") {
+            const requestedKind = kindParam && PAGE_ARTIFACT_KIND_OPTIONS.some((option) => option.value === kindParam)
+                ? kindParam
+                : "agent_node"
+            hydrateCreateMode(requestedKind)
+            return
+        }
         setViewMode("list")
-    }, [artifacts, handleEdit, idParam, loading, modeParam, setViewModeWithUrl])
+    }, [artifacts, handleEdit, hydrateCreateMode, idParam, kindParam, loading, modeParam, setViewModeWithUrl])
 
     const loadArtifactVersions = useCallback(async () => {
         if (!selectedArtifact?.id) return

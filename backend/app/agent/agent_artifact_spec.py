@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 class ArtifactScope(str, Enum):
     """Determines which Builder displays the artifact."""
     RAG_INGESTION = "rag_ingestion"
-    RAG_RETRIEVAL = "rag_retrieval"
+    RAG_PIPELINE = "rag_pipeline"
     AGENT = "agent"
     TOOL = "tool"
 

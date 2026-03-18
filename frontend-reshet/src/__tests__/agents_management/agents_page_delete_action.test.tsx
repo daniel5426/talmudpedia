@@ -31,6 +31,10 @@ jest.mock("@/components/agents/CreateAgentDialog", () => ({
   CreateAgentDialog: () => null,
 }))
 
+jest.mock("@/components/direction-provider", () => ({
+  useDirection: () => ({ direction: "ltr" }),
+}))
+
 jest.mock("@/services", () => ({
   agentService: {
     listAgents: (...args: unknown[]) => listAgentsMock(...args),

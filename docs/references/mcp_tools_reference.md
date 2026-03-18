@@ -1,6 +1,6 @@
 # MCP Tools Reference
 
-Last Updated: 2026-03-10
+Last Updated: 2026-03-18
 
 This document is the canonical reference for current MCP tool behavior.
 
@@ -46,6 +46,14 @@ MCP tools still inherit normal tool guardrails:
 - tenant/global visibility checks
 - active-state requirement
 - published requirement in production mode
+
+Current MCP transport policy:
+- `server_url` must use `http` or `https`
+- URL-embedded credentials are rejected
+- private and loopback hosts are blocked by default
+- `MCP_ALLOW_PRIVATE_HOSTS=true` can explicitly allow private hosts for local/dev setups
+- `MCP_ALLOWED_HOSTS` can restrict outbound MCP calls to a hostname allowlist
+- malformed headers, invalid JSON responses, and transport failures are normalized into stable runtime errors
 
 ## Current Governance Gaps
 

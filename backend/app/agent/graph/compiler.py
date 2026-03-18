@@ -146,6 +146,7 @@ class AgentCompiler:
             "llm": "llm",
             "tool_call": "tool",
             "rag_retrieval": "rag",
+            "rag_pipeline": "rag",
         }
         return mapping.get(str(node_type), str(node_type))
 

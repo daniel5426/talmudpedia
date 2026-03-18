@@ -4,11 +4,12 @@ Last Updated: 2026-03-18
 
 ## Scope
 
-Domain-owned tool bindings for `tool_impl` artifacts and visual pipelines.
+Domain-owned tool bindings for `tool_impl` artifacts, visual pipelines, and exported agents.
 
 ## Test Files Present
 
 - `test_domain_owned_tool_bindings.py`
+- `test_agent_tool_bindings.py`
 
 ## Key Scenarios Covered
 
@@ -23,12 +24,15 @@ Domain-owned tool bindings for `tool_impl` artifacts and visual pipelines.
 - disabling and re-enabling a pipeline tool binding preserves custom schema overrides
 - updating a published pipeline demotes the bound tool back to draft and clears the executable pin
 - compiling an ingestion pipeline can also publish a `rag_pipeline` tool
+- exporting an agent now creates an owner-managed `agent_call` tool row exposed through `/tools` as `agent_bound`
+- publishing an exported agent syncs the bound tool to `PUBLISHED` and snapshots a tool version
+- deleting an agent removes the exported bound tool row
 
 ## Last Run
 
-- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/builtin_tools_registry/test_builtin_registry_api.py backend/tests/tools_guardrails/test_tools_api_guardrails.py backend/tests/tool_bindings/test_domain_owned_tool_bindings.py`
-- Date: 2026-03-18 16:00 Asia/Hebron
-- Result: pass (`16 passed`)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/tool_bindings/test_agent_tool_bindings.py backend/tests/tools_guardrails/test_tools_api_guardrails.py backend/tests/tool_bindings/test_domain_owned_tool_bindings.py`
+- Date: 2026-03-18 19:10 Asia/Hebron
+- Result: pass (`14 passed`)
 
 ## Known Gaps / Follow-ups
 

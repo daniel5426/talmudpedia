@@ -45,9 +45,9 @@ def _make_tool(
 async def test_builtin_retrieval_pipeline_executes_runtime(monkeypatch):
     pipeline_id = str(uuid4())
     tool = _make_tool(
-        implementation_type="RAG_RETRIEVAL",
+        implementation_type="RAG_PIPELINE",
         builtin_key="retrieval_pipeline",
-        config_schema={"implementation": {"type": "rag_retrieval", "pipeline_id": pipeline_id}},
+        config_schema={"implementation": {"type": "rag_pipeline", "pipeline_id": pipeline_id}},
     )
 
     async def fake_load_tool(_self, _tool_id):
@@ -75,9 +75,9 @@ async def test_builtin_retrieval_pipeline_executes_runtime(monkeypatch):
 async def test_builtin_retrieval_pipeline_accepts_input_string_alias(monkeypatch):
     pipeline_id = str(uuid4())
     tool = _make_tool(
-        implementation_type="RAG_RETRIEVAL",
+        implementation_type="RAG_PIPELINE",
         builtin_key="retrieval_pipeline",
-        config_schema={"implementation": {"type": "rag_retrieval", "pipeline_id": pipeline_id}},
+        config_schema={"implementation": {"type": "rag_pipeline", "pipeline_id": pipeline_id}},
     )
 
     async def fake_load_tool(_self, _tool_id):

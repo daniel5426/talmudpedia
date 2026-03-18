@@ -12,6 +12,7 @@
     "lint": "eslint .",
     "format": "prettier --write \"**/*.{ts,tsx}\"",
     "provision:prico-demo": "tsx server/provision-prico-demo.ts",
+    "seed:prico-showcase": "python3 scripts/seed_prico_showcase_data.py",
     "typecheck": "tsc --noEmit -p tsconfig.app.json && tsc --noEmit -p tsconfig.server.json",
     "preview": "vite preview"
   },

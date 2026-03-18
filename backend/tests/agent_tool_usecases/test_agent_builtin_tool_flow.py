@@ -261,13 +261,13 @@ async def test_agent_retrieval_tool_full_flow_with_visual_pipeline(db_session, m
         },
         config_schema={
             "implementation": {
-                "type": "rag_retrieval",
+                "type": "rag_pipeline",
                 "pipeline_id": str(visual.id),
             }
         },
         status=ToolStatus.PUBLISHED,
         version="1.0.0",
-        implementation_type=ToolImplementationType.RAG_RETRIEVAL,
+        implementation_type=ToolImplementationType.RAG_PIPELINE,
         builtin_key="retrieval_pipeline",
         builtin_template_id=None,
         is_builtin_template=False,
@@ -288,7 +288,7 @@ async def test_agent_retrieval_tool_full_flow_with_visual_pipeline(db_session, m
     async def fake_resolve(_self, _model_id):
         return provider
 
-    async def fake_execute_job(self, job_id: UUID):
+    async def fake_execute_job(self, job_id: UUID, **_kwargs):
         job = await self.db.get(PipelineJob, job_id)
         job.status = PipelineJobStatus.COMPLETED
         job.output = {

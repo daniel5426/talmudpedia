@@ -159,6 +159,7 @@ export function applyRuntimeEvent(
         id: createId(),
         kind: "task",
         title: String(event.payload.display_name || event.payload.summary || event.payload.tool || "Working..."),
+        spanId: typeof event.payload.span_id === "string" ? event.payload.span_id : undefined,
         status: "running",
         items: [],
       },
@@ -166,11 +167,25 @@ export function applyRuntimeEvent(
   }
 
   if (event.event === "tool.completed" || event.event === "tool.failed") {
-    const lastBlock = blocks[blocks.length - 1];
-    if (lastBlock?.kind !== "task") return blocks;
+    const spanId = typeof event.payload.span_id === "string" ? event.payload.span_id : null;
+    const taskIndex = [...blocks]
+      .map((block, index) => ({ block, index }))
+      .reverse()
+      .find(({ block }) => {
+        if (block.kind !== "task" || block.status !== "running") {
+          return false;
+        }
+        if (!spanId) {
+          return true;
+        }
+        return block.spanId === spanId;
+      })?.index;
+    if (typeof taskIndex !== "number") return blocks;
+    const taskBlock = blocks[taskIndex];
+    if (taskBlock.kind !== "task") return blocks;
     const summary = event.payload.summary;
     const error = event.payload.error;
-    const items = [...lastBlock.items];
+    const items = [...taskBlock.items];
     if (typeof summary === "string" && summary.trim()) {
       items.push(summary);
     }
@@ -178,12 +193,13 @@ export function applyRuntimeEvent(
       items.push(error);
     }
     return [
-      ...blocks.slice(0, -1),
+      ...blocks.slice(0, taskIndex),
       {
-        ...lastBlock,
+        ...taskBlock,
         status: event.event === "tool.failed" ? "error" : "done",
         items,
       },
+      ...blocks.slice(taskIndex + 1),
     ];
   }
 

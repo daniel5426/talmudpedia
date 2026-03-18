@@ -13,6 +13,7 @@ from pydantic import ValidationError as PydanticValidationError
 
 from ..db.postgres.models.agents import Agent, AgentVersion, AgentRun, AgentTrace, AgentStatus, RunStatus
 from app.db.postgres.models.registry import ModelRegistry, ToolRegistry
+from app.services.tool_binding_service import ToolBindingService
 from app.services.usage_quota_service import QuotaExceededError
 from app.services.workload_provisioning_service import WorkloadProvisioningService
 from app.agent.graph.compiler import AgentCompiler
@@ -458,6 +459,10 @@ class AgentService:
             agent=agent,
             actor_user_id=user_id,
         )
+        await ToolBindingService(self.db).sync_exported_agent_tool_binding(
+            agent=agent,
+            created_by=user_id,
+        )
         
         await self.db.commit()
         await self.db.refresh(agent)
@@ -476,6 +481,7 @@ class AgentService:
     async def delete_agent(self, agent_id: UUID) -> bool:
         """Delete an agent."""
         await self.get_agent(agent_id)
+        await ToolBindingService(self.db).delete_agent_tool_binding(agent_id)
 
         # Use explicit SQL deletes to avoid ORM relationship-loading on agent_runs.
         # This keeps deletion compatible with DBs that are missing newer run-lineage columns.
@@ -599,6 +605,10 @@ class AgentService:
         await WorkloadProvisioningService(self.db).provision_agent_policy(
             agent=agent,
             actor_user_id=user_id,
+        )
+        await ToolBindingService(self.db).sync_exported_agent_tool_binding(
+            agent=agent,
+            created_by=user_id,
         )
         
         await self.db.commit()

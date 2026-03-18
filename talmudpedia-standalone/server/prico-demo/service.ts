@@ -44,7 +44,9 @@ type BenchmarkRow = {
 };
 
 const LIVE_PRICO_CLIENTS: DemoClientRecord[] = [
-  { id: "9192", name: "דמו", sector: "Unknown", baseCurrency: "USD" },
+  { id: "32001", name: "Orion Foods", sector: "Food Imports", baseCurrency: "USD" },
+  { id: "32002", name: "Atlas Medical", sector: "MedTech", baseCurrency: "EUR" },
+  { id: "32003", name: "Cedar Mobility", sector: "Retail", baseCurrency: "GBP" },
 ];
 
 function requireClient(clientId: string): DemoClientRecord {

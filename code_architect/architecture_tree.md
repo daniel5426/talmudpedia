@@ -1,6 +1,6 @@
 # Architecture Tree (Curated)
 
-Last Updated: 2026-03-17
+Last Updated: 2026-03-18
 
 This file is a backend-only architecture map optimized for agent context efficiency.
 
@@ -27,6 +27,7 @@ backend/app/api/routers/published_apps_external_runtime.py
 backend/app/api/routers/embedded_agents_public.py
 backend/app/api/routers/tenant_api_keys.py
 backend/app/api/routers/agent_graph_mutations.py
+backend/app/api/routers/agent_tool_exports.py
 backend/app/api/routers/rag_graph_mutations.py
 backend/app/api/routers/rag_operator_contracts.py
 backend/app/api/routers/artifacts.py

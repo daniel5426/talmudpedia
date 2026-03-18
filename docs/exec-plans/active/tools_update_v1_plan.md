@@ -22,14 +22,27 @@ Implemented in the current pass:
   - `can_delete_in_registry`
 - frontend tools UI now consumes those fields directly instead of reconstructing meaning from `config_schema`
 - dead frontend `/tools/{id}/test` client code has been removed
+- tools-page creation now starts with an ownership-aware chooser:
+  - manual/integration tools stay in `/tools`
+  - artifact tools route to artifact-native `tool_impl` creation
+  - pipeline tools route to pipeline authoring
+  - agent/workflow tools route to the agents export flow
+- artifact page now supports deep-link create mode via `?mode=create&kind=tool_impl`
 - regression coverage now explicitly checks:
   - manual vs system DTO metadata
   - artifact-bound and pipeline-bound managed metadata
   - direct `/tools` creation rejection for domain-owned types
+  - owner-aware create-flow routing in the tools UI
 
-Still pending inside V1:
+Implemented in the current backend follow-up pass:
+- `FUNCTION` tools now bootstrap the process-local callable registry explicitly from runtime-owned module maps instead of depending on scattered import side effects
+- side-effect-only imports were removed from profile/worker setup paths where they were only populating the in-process function registry
+- `rag_pipeline` is now the canonical authored taxonomy across graph/tool tests still under active use, while seed-time normalization upgrades legacy `rag_retrieval` DB rows to `rag_pipeline`
+- MCP runtime now enforces URL/host/header validation and returns normalized transport/protocol errors
+- agents now support a domain-native export-to-tool flow that creates owner-managed `agent_call` tool rows, syncs publish/delete lifecycle from the agent domain, and surfaces those rows as `agent_bound` in `/tools`
+
+Still pending beyond this pass:
 - persistence-level ownership metadata is not yet first-class in the DB model; current ownership metadata is derived at the API layer
-- broader UX reframing of tool creation around user intent remains for a later slice
 
 ## Slice 1: Ownership Clarification
 
@@ -79,6 +92,11 @@ Target model:
 4. System tools
 - Owned by backend seeding/runtime code
 - Exposed through the same runtime catalog
+
+5. Agent-bound tools
+- Owned by the agents domain
+- Exported as managed `agent_call` tools
+- Mirrored into `ToolRegistry` for runtime selection
 
 Under this model, `ToolRegistry` remains the unified agent-facing catalog, but not every row is authored there.
 
@@ -223,14 +241,15 @@ Current implementation:
 - agents can reference tools
 - agent builder attaches tools to an agent node through a flat `tools` list
 - agents store tool references as lists of ids/slugs
+- agents now also support an explicit export route that creates/refreshes an owner-managed `agent_call` tool row
 
-Implication:
-- “turn agent/workflow into a tool” is not implemented today
-- this will require a new backend export/binding path rather than just a UI button
+Current implication:
+- exported agent tools remain owner-managed from the agents surface
+- `/tools` shows them as runtime catalog rows, not registry-authored tools
 
 Direction:
-- add a domain-native “export as tool” flow for agents/workflows
-- that flow should create a tool/binding result using the existing tool model, with editable model-facing metadata:
+- keep the current agent export flow lightweight until the richer per-agent binding model lands
+- model-facing metadata stays editable at export time:
   - name
   - description
   - input schema

@@ -15,6 +15,7 @@ import {
   PromptInputTools,
 } from "@/components/ai-elements/prompt-input";
 import { cn } from "@/lib/utils";
+import { useLocale } from "./locale-context";
 
 type BotInputAreaProps = {
   className?: string;
@@ -35,6 +36,8 @@ export function BotInputArea({
   onInputValueChange,
   onSubmit,
 }: BotInputAreaProps) {
+  const { isRtl, locale } = useLocale();
+
   return (
     <div className={cn("w-full", compact ? "max-w-3xl" : "max-w-3xl", className)}>
       <PromptInputProvider initialInput={inputValue}>
@@ -50,7 +53,7 @@ export function BotInputArea({
             <PromptInputTextarea
               className="min-h-[48px] bg-transparent text-sm md:text-sm"
               onChange={(event) => onInputValueChange(event.target.value)}
-              placeholder="Message..."
+              placeholder={locale === "he" ? "כתוב הודעה..." : "Message..."}
               value={inputValue}
             />
           </PromptInputBody>
@@ -63,7 +66,10 @@ export function BotInputArea({
                 </PromptInputActionMenuContent>
               </PromptInputActionMenu>
 
-              <PromptInputButton type="button" title="Add context">
+              <PromptInputButton
+                type="button"
+                title={locale === "he" ? "הוסף הקשר" : "Add context"}
+              >
                 <Paperclip className="size-4" />
               </PromptInputButton>
             </PromptInputTools>
@@ -75,7 +81,9 @@ export function BotInputArea({
         </PromptInput>
       </PromptInputProvider>
       {errorMessage ? (
-        <p className="mt-2 px-1 text-left text-xs text-destructive">{errorMessage}</p>
+        <p className={cn("mt-2 px-1 text-xs text-destructive", isRtl ? "text-right" : "text-left")}>
+          {errorMessage}
+        </p>
       ) : null}
     </div>
   );

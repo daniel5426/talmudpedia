@@ -103,9 +103,6 @@ async def resolve_coding_agent_chat_model_id(db: AsyncSession, tenant_id) -> str
 
 
 async def ensure_coding_agent_profile(db: AsyncSession, tenant_id, *, actor_user_id=None) -> Agent:
-    # Import side-effect ensures function tools are registered in registry.
-    import app.services.published_app_coding_agent_tools  # noqa: F401
-
     tool_ids = await ensure_coding_agent_tools(db)
 
     result = await db.execute(
