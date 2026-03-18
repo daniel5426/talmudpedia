@@ -9,12 +9,6 @@ import {
 import { useMemo } from "react";
 
 import {
-  ChainOfThought,
-  ChainOfThoughtContent,
-  ChainOfThoughtHeader,
-  ChainOfThoughtStep,
-} from "@/components/ai-elements/chain-of-thought";
-import {
   Conversation,
   ConversationContent,
   ConversationScrollButton,
@@ -36,10 +30,6 @@ import {
 import { Shimmer } from "@/components/ai-elements/shimmer";
 import {
   Task,
-  TaskContent,
-  TaskItem,
-  TaskItemFile,
-  TaskTrigger,
 } from "@/components/ai-elements/task";
 import { cn } from "@/lib/utils";
 
@@ -85,50 +75,19 @@ function renderBlock(block: TemplateRenderBlock) {
   }
 
   if (block.kind === "reasoning") {
-    return (
-      <ChainOfThought
-        key={block.id}
-        className="rounded-xl border border-border/40 bg-muted/30 px-4 py-3"
-        defaultOpen={false}
-      >
-        <ChainOfThoughtHeader>{block.title}</ChainOfThoughtHeader>
-        <ChainOfThoughtContent>
-          {block.steps.map((step) => (
-            <ChainOfThoughtStep
-              key={`${block.id}-${step}`}
-              label={step}
-              status="complete"
-            />
-          ))}
-        </ChainOfThoughtContent>
-      </ChainOfThought>
-    );
+    return null;
   }
 
   if (block.kind === "task") {
     return (
       <Task
         key={block.id}
-        className="rounded-xl border border-border/40 bg-muted/30 px-4 py-3"
-        defaultOpen={block.status === "running"}
+        className="border-0 bg-transparent p-0 shadow-none"
+        defaultOpen={false}
       >
-        <TaskTrigger title={block.title}>
-          <div className={cn("flex items-center gap-2 text-sm", taskTone(block.status))}>
-            {block.status === "running" ? (
-              <Shimmer>{block.title}</Shimmer>
-            ) : (
-              <span>{block.title}</span>
-            )}
-          </div>
-        </TaskTrigger>
-        <TaskContent>
-          {block.items.map((item) => (
-            <TaskItem key={`${block.id}-${item}`}>{item}</TaskItem>
-          ))}
-          {block.files?.map((file) => (
-            <TaskItemFile key={`${block.id}-${file}`}>{file}</TaskItemFile>
-          ))}
-        </TaskContent>
+        <div className={cn("text-sm", taskTone(block.status))}>
+          {block.status === "running" ? <Shimmer>{block.title}</Shimmer> : <span>{block.title}</span>}
+        </div>
       </Task>
     );
   }
@@ -215,11 +174,18 @@ export function ChatTimeline({
               {message.role === "user" ? (
                 <MessageResponse>{message.plainText}</MessageResponse>
               ) : (
-                message.blocks?.map((block) => renderBlock(block))
+                <>
+                  {message.blocks?.map((block) => renderBlock(block))}
+                  {message.runStatus && message.runStatus !== "completed" && !message.plainText ? (
+                    <div className="px-1 py-1 text-sm text-muted-foreground">
+                      <Shimmer>Thinking...</Shimmer>
+                    </div>
+                  ) : null}
+                </>
               )}
             </MessageContent>
 
-            {message.role === "assistant" && (
+            {message.role === "assistant" && message.runStatus === "completed" && (
               <MessageActions className="mt-1.5 gap-1 ps-1">
                 <MessageAction
                   label="Retry"

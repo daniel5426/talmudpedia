@@ -1,6 +1,6 @@
 # Tools Built-in Frontend Tests
 
-Last Updated: 2026-03-15
+Last Updated: 2026-03-18
 
 ## Scope
 Covers built-in tools UX under the single-list architecture, plus bucket/subtype classification behavior.
@@ -14,8 +14,13 @@ Covers built-in tools UX under the single-list architecture, plus bucket/subtype
 - Built-in instance creation action is removed from the tools page.
 - Bucket/subtype filtering remains coherent with built-in metadata.
 - Artifact-backed and pipeline-backed rows now expose redirect/open-editor actions instead of registry-side editing or publish flows.
+- The tools detail sheet consumes canonical DTO fields (`implementation_config`, `execution_config`) instead of reconstructing from `config_schema`.
+- The tools detail sheet now shows ownership/management metadata from the backend DTO.
 
 ## Last run command + date/time + result
+- Command: `npm test -- --runInBand src/__tests__/tools_builtin/tool_bucket_filtering.test.ts src/__tests__/tools_builtin/tools_builtin_page.test.tsx`
+- Date/Time: 2026-03-18 (Asia/Hebron local)
+- Result: pass (`2 suites, 6 passed`)
 - Command: `npm test -- --runInBand src/__tests__/tools_builtin/tools_builtin_page.test.tsx`
 - Date/Time: 2026-03-15 (Asia/Hebron local)
 - Result: pass (`1 suite, 4 passed`)

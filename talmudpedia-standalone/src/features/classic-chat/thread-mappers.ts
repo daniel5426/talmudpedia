@@ -63,6 +63,7 @@ export function mapThreadDetail(detail: AgentThreadDetailDto): TemplateThread {
         id: `${turn.id}-user`,
         role: "user",
         createdAt: turn.created_at,
+        runStatus: "completed",
         text: turn.user_input_text,
       });
     }
@@ -76,6 +77,7 @@ export function mapThreadDetail(detail: AgentThreadDetailDto): TemplateThread {
         id: `${turn.id}-assistant`,
         role: "assistant",
         createdAt: turn.completed_at || turn.created_at,
+        runStatus: "completed",
         text: turn.assistant_output_text,
         blocks: [textBlock],
       });
@@ -125,7 +127,6 @@ export function applyRuntimeEvent(
   }
 
   if (event.event === "reasoning.update") {
-    const title = String(event.payload.title || "Reasoning");
     const content = String(event.payload.content || event.payload.text || "");
     const lastBlock = blocks[blocks.length - 1];
     if (lastBlock?.kind === "reasoning") {
@@ -145,7 +146,7 @@ export function applyRuntimeEvent(
       {
         id: createId(),
         kind: "reasoning",
-        title,
+        title: "Reasoning",
         steps: content ? [content] : [],
       },
     ];

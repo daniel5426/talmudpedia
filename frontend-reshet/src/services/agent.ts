@@ -101,21 +101,31 @@ export interface ModelsListResponse {
 export type ToolImplementationType = "internal" | "http" | "rag_pipeline" | "agent_call" | "function" | "custom" | "artifact" | "mcp";
 export type ToolStatus = "draft" | "published" | "deprecated" | "disabled";
 export type ToolTypeBucket = "built_in" | "mcp" | "artifact" | "custom";
+export type ToolOwnership = "manual" | "artifact_bound" | "pipeline_bound" | "system";
+export type ToolManager = "tools" | "artifacts" | "pipelines" | "system";
 
 export interface ToolDefinition {
   id: string;
   name: string;
   slug: string;
-  description: string;
+  description?: string | null;
   input_schema: Record<string, unknown>;
   output_schema: Record<string, unknown>;
+  config_schema: Record<string, unknown>;
   implementation_type: ToolImplementationType;
   implementation_config?: Record<string, unknown>;
   execution_config?: Record<string, unknown>;
   version: string;
   status: ToolStatus;
   tool_type?: ToolTypeBucket;
-  tenant_id: string;
+  ownership: ToolOwnership;
+  managed_by: ToolManager;
+  source_object_type?: "artifact" | "pipeline" | null;
+  source_object_id?: string | null;
+  can_edit_in_registry: boolean;
+  can_publish_in_registry: boolean;
+  can_delete_in_registry: boolean;
+  tenant_id: string | null;
   created_at: string;
   updated_at: string;
   published_at: string | null;

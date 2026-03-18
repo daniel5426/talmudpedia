@@ -188,10 +188,11 @@ async def test_tool_impl_artifact_routes_own_bound_tool_lifecycle(client, db_ses
     )
 
     try:
+        artifact_slug = f"artifact-tool-{uuid.uuid4().hex[:8]}"
         create_response = await client.post(
             f"/admin/artifacts?tenant_slug={tenant.slug}",
             json={
-                "slug": f"artifact-tool-{uuid.uuid4().hex[:8]}",
+                "slug": artifact_slug,
                 "display_name": "Artifact Tool",
                 "description": "Artifact-owned tool",
                 "kind": "tool_impl",
@@ -219,8 +220,19 @@ async def test_tool_impl_artifact_routes_own_bound_tool_lifecycle(client, db_ses
         assert tool is not None
         assert tool.implementation_type == ToolImplementationType.ARTIFACT
         assert tool.status == ToolStatus.DRAFT
-        assert tool.slug == artifact["slug"]
+        assert tool.slug.startswith("artifact-tool-")
         assert tool.schema["input"]["properties"]["text"]["type"] == "string"
+
+        tool_response = await client.get(f"/tools/{tool.id}")
+        assert tool_response.status_code == 200, tool_response.text
+        tool_payload = tool_response.json()
+        assert tool_payload["ownership"] == "artifact_bound"
+        assert tool_payload["managed_by"] == "artifacts"
+        assert tool_payload["source_object_type"] == "artifact"
+        assert tool_payload["source_object_id"] == artifact["id"]
+        assert tool_payload["can_edit_in_registry"] is False
+        assert tool_payload["can_publish_in_registry"] is False
+        assert tool_payload["can_delete_in_registry"] is False
 
         update_response = await client.put(
             f"/admin/artifacts/{artifact['id']}?tenant_slug={tenant.slug}",
@@ -307,6 +319,17 @@ async def test_pipeline_owned_tool_binding_enable_publish_disable_and_demote(cli
         assert tool.status == ToolStatus.DRAFT
         assert tool.executable_pipeline_id is None
         assert tool.schema["input"]["properties"]["text"]["description"] == "Normalized retrieval query"
+
+        tool_response = await client.get(f"/tools/{tool.id}")
+        assert tool_response.status_code == 200, tool_response.text
+        tool_payload = tool_response.json()
+        assert tool_payload["ownership"] == "pipeline_bound"
+        assert tool_payload["managed_by"] == "pipelines"
+        assert tool_payload["source_object_type"] == "pipeline"
+        assert tool_payload["source_object_id"] == pipeline_id
+        assert tool_payload["can_edit_in_registry"] is False
+        assert tool_payload["can_publish_in_registry"] is False
+        assert tool_payload["can_delete_in_registry"] is False
 
         compile_response = await client.post(
             f"/admin/pipelines/visual-pipelines/{pipeline_id}/compile?tenant_slug={tenant.slug}"

@@ -454,10 +454,17 @@ function ToolDetailSheet({
 
     const status = STATUS_CONFIG[tool.status] || STATUS_CONFIG.draft
     const Icon = IMPLEMENTATION_ICONS[tool.implementation_type] || Wrench
-    const implementationConfig = (tool as any)?.config_schema?.implementation
-    const executionConfig = (tool as any)?.config_schema?.execution
-    const canOpenEditor = tool.implementation_type === "artifact" || tool.implementation_type === "rag_pipeline"
-    const canPublishFromRegistry = tool.status === "draft" && !canOpenEditor
+    const implementationConfig = tool.implementation_config || {}
+    const executionConfig = tool.execution_config || {}
+    const canOpenEditor = tool.managed_by === "artifacts" || tool.managed_by === "pipelines"
+    const canPublishFromRegistry = tool.status === "draft" && tool.can_publish_in_registry
+    const canDeleteFromRegistry = tool.can_delete_in_registry
+    const managerLabel = {
+        tools: "Tools",
+        artifacts: "Artifacts",
+        pipelines: "Pipelines",
+        system: "System",
+    }[tool.managed_by]
 
     return (
         <Sheet open={open} onOpenChange={onOpenChange}>
@@ -501,6 +508,14 @@ function ToolDetailSheet({
                                 <span className="text-xs text-muted-foreground/60">Version</span>
                                 <span className="text-sm font-mono">v{tool.version}</span>
                             </div>
+                            <div className="flex items-center justify-between px-4 py-2.5">
+                                <span className="text-xs text-muted-foreground/60">Managed By</span>
+                                <span className="text-sm">{managerLabel}</span>
+                            </div>
+                            <div className="flex items-center justify-between px-4 py-2.5">
+                                <span className="text-xs text-muted-foreground/60">Ownership</span>
+                                <span className="text-sm font-mono text-muted-foreground">{tool.ownership}</span>
+                            </div>
                         </div>
                     </div>
 
@@ -525,7 +540,7 @@ function ToolDetailSheet({
                     </div>
 
                     {/* Actions */}
-                    {(canPublishFromRegistry || canOpenEditor) && (
+                    {(canPublishFromRegistry || canOpenEditor || canDeleteFromRegistry) && (
                         <div className="flex gap-2 pt-4 border-t border-border/40">
                             {canPublishFromRegistry && (
                                 <Button
@@ -554,18 +569,20 @@ function ToolDetailSheet({
                                     Open Editor
                                 </Button>
                             )}
-                            <Button
-                                size="sm"
-                                variant="outline"
-                                className="text-destructive hover:text-destructive gap-1.5"
-                                onClick={() => {
-                                    onDelete(tool.id)
-                                    onOpenChange(false)
-                                }}
-                            >
-                                <Trash2 className="h-3.5 w-3.5" />
-                                Delete
-                            </Button>
+                            {canDeleteFromRegistry && (
+                                <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="text-destructive hover:text-destructive gap-1.5"
+                                    onClick={() => {
+                                        onDelete(tool.id)
+                                        onOpenChange(false)
+                                    }}
+                                >
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                    Delete
+                                </Button>
+                            )}
                         </div>
                     )}
                 </div>
@@ -662,12 +679,12 @@ export default function ToolsPage() {
     }
 
     const openToolEditor = useCallback((tool: ToolDefinition) => {
-        if (tool.implementation_type === "artifact" && tool.artifact_id) {
-            router.push(`/admin/artifacts?mode=edit&id=${tool.artifact_id}`)
+        if (tool.managed_by === "artifacts" && tool.source_object_id) {
+            router.push(`/admin/artifacts?mode=edit&id=${tool.source_object_id}`)
             return
         }
-        if (tool.implementation_type === "rag_pipeline" && tool.visual_pipeline_id) {
-            router.push(`/admin/pipelines/${tool.visual_pipeline_id}?toolSettings=1`)
+        if (tool.managed_by === "pipelines" && tool.source_object_id) {
+            router.push(`/admin/pipelines/${tool.source_object_id}?toolSettings=1`)
         }
     }, [router])
 
@@ -914,7 +931,7 @@ export default function ToolsPage() {
                                                             <ChevronRight className="mr-2 h-3.5 w-3.5" />
                                                             View Details
                                                         </DropdownMenuItem>
-                                                        {(tool.implementation_type === "artifact" || tool.implementation_type === "rag_pipeline") && (
+                                                        {(tool.managed_by === "artifacts" || tool.managed_by === "pipelines") && (
                                                             <>
                                                                 <DropdownMenuItem onClick={() => openToolEditor(tool)}>
                                                                     <ArrowUpRight className="mr-2 h-3.5 w-3.5" />
@@ -923,22 +940,26 @@ export default function ToolsPage() {
                                                                 <DropdownMenuSeparator />
                                                             </>
                                                         )}
-                                                        {tool.status === "draft" && tool.implementation_type !== "artifact" && tool.implementation_type !== "rag_pipeline" && (
+                                                        {(tool.status === "draft" && tool.can_publish_in_registry) || tool.can_delete_in_registry ? (
                                                             <>
-                                                                <DropdownMenuItem onClick={() => handlePublish(tool.id)}>
-                                                                    <ArrowUpRight className="mr-2 h-3.5 w-3.5" />
-                                                                    Publish
-                                                                </DropdownMenuItem>
-                                                                <DropdownMenuSeparator />
-                                                                <DropdownMenuItem
-                                                                    className="text-destructive focus:text-destructive"
-                                                                    onClick={() => handleDelete(tool.id)}
-                                                                >
-                                                                    <Trash2 className="mr-2 h-3.5 w-3.5" />
-                                                                    Delete
-                                                                </DropdownMenuItem>
+                                                                {tool.status === "draft" && tool.can_publish_in_registry && (
+                                                                    <DropdownMenuItem onClick={() => handlePublish(tool.id)}>
+                                                                        <ArrowUpRight className="mr-2 h-3.5 w-3.5" />
+                                                                        Publish
+                                                                    </DropdownMenuItem>
+                                                                )}
+                                                                {tool.can_publish_in_registry && tool.can_delete_in_registry && <DropdownMenuSeparator />}
+                                                                {tool.can_delete_in_registry && (
+                                                                    <DropdownMenuItem
+                                                                        className="text-destructive focus:text-destructive"
+                                                                        onClick={() => handleDelete(tool.id)}
+                                                                    >
+                                                                        <Trash2 className="mr-2 h-3.5 w-3.5" />
+                                                                        Delete
+                                                                    </DropdownMenuItem>
+                                                                )}
                                                             </>
-                                                        )}
+                                                        ) : null}
                                                     </DropdownMenuContent>
                                                 </DropdownMenu>
                                             </div>

@@ -161,6 +161,7 @@ export function useClassicChatState() {
       id: assistantMessageId,
       role: "assistant",
       createdAt: new Date().toISOString(),
+      runStatus: "pending",
       blocks: [],
     };
 
@@ -207,6 +208,13 @@ export function useClassicChatState() {
             const updatedMessages = [...currentThread.messages];
             const message = { ...updatedMessages[msgIndex] };
             message.blocks = applyRuntimeEvent([...(message.blocks || [])], event);
+            if (event.event === "run.completed") {
+              message.runStatus = "completed";
+            } else if (event.event === "run.failed") {
+              message.runStatus = "error";
+            } else {
+              message.runStatus = "streaming";
+            }
             message.text = message.blocks
               ?.filter((block) => block.kind === "text")
               .map((block) => block.content)
@@ -254,6 +262,7 @@ export function useClassicChatState() {
 
         const updatedMessages = [...currentThread.messages];
         const message = { ...updatedMessages[msgIndex] };
+        message.runStatus = "error";
         message.blocks = [
           ...(message.blocks || []),
           {

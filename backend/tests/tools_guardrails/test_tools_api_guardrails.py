@@ -97,6 +97,27 @@ async def test_create_tool_rejects_direct_published_status(client, db_session):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("implementation_type", ["ARTIFACT", "RAG_PIPELINE"])
+async def test_create_tool_rejects_domain_owned_types(client, db_session, implementation_type: str):
+    tenant, user = await _seed_tenant_and_user(db_session)
+
+    payload = {
+        "name": f"{implementation_type} Attempt",
+        "slug": f"{implementation_type.lower()}-attempt-{uuid4().hex[:8]}",
+        "description": "should fail",
+        "input_schema": {"type": "object", "properties": {}},
+        "output_schema": {"type": "object", "properties": {}},
+        "implementation_type": implementation_type,
+        "implementation_config": {"type": implementation_type.lower()},
+    }
+
+    response = await client.post("/tools", json=payload, headers=_headers(user, tenant))
+
+    assert response.status_code == 400
+    assert "domain-owned" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
 async def test_update_cannot_publish_directly_and_publish_endpoint_still_works(client, db_session):
     tenant, user = await _seed_tenant_and_user(db_session)
     tool = await _seed_tool(db_session, tenant.id)

@@ -45,6 +45,7 @@ export type TemplateMessage = {
   id: string;
   role: "user" | "assistant";
   createdAt: string;
+  runStatus?: "pending" | "streaming" | "completed" | "error";
   text?: string;
   blocks?: TemplateRenderBlock[];
 };

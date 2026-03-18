@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import pytest
 from sqlalchemy import select
@@ -13,7 +13,6 @@ from app.db.postgres.models.registry import (
     ToolImplementationType,
     ToolRegistry,
     ToolStatus,
-    ToolVersion,
 )
 
 
@@ -119,6 +118,49 @@ async def _create_http_tool(client, user: User, tenant: Tenant, slug_suffix: str
     )
     assert response.status_code == 200
     return response.json()
+
+
+@pytest.mark.asyncio
+async def test_tool_dto_exposes_derived_config_and_ownership_metadata(client, db_session):
+    tenant, user = await _seed_tenant_and_user(db_session)
+
+    system_tool = await _ensure_builtin_template(
+        db_session,
+        builtin_key=f"system_{uuid4().hex[:8]}",
+        implementation_type=ToolImplementationType.FUNCTION,
+        implementation={"type": "function", "function_name": "echo"},
+        execution={"timeout_s": 15},
+    )
+    manual_tool = await _create_http_tool(client, user, tenant, "dto")
+
+    response = await client.get("/tools", headers=_headers(user, tenant))
+    assert response.status_code == 200
+
+    by_id = {item["id"]: item for item in response.json()["tools"]}
+    manual_payload = by_id[manual_tool["id"]]
+    system_payload = by_id[str(system_tool.id)]
+
+    assert manual_payload["implementation_config"] == {
+        "type": "http",
+        "url": "https://example.com",
+        "method": "GET",
+    }
+    assert manual_payload["execution_config"] == {}
+    assert manual_payload["ownership"] == "manual"
+    assert manual_payload["managed_by"] == "tools"
+    assert manual_payload["source_object_type"] is None
+    assert manual_payload["source_object_id"] is None
+    assert manual_payload["can_edit_in_registry"] is True
+    assert manual_payload["can_publish_in_registry"] is True
+    assert manual_payload["can_delete_in_registry"] is True
+
+    assert system_payload["implementation_config"]["function_name"] == "echo"
+    assert system_payload["execution_config"]["timeout_s"] == 15
+    assert system_payload["ownership"] == "system"
+    assert system_payload["managed_by"] == "system"
+    assert system_payload["can_edit_in_registry"] is False
+    assert system_payload["can_publish_in_registry"] is False
+    assert system_payload["can_delete_in_registry"] is False
 
 
 @pytest.mark.asyncio
@@ -254,11 +296,9 @@ async def test_generic_tool_management_allows_cleanup_of_legacy_builtin_rows(cli
 
 
 @pytest.mark.asyncio
-async def test_rag_retrieval_regular_tool_rejects_pipeline_from_other_tenant_on_create(client, db_session):
-    tenant_a, user_a = await _seed_tenant_and_user(db_session)
-    tenant_b, _user_b = await _seed_tenant_and_user(db_session)
-
-    foreign_pipeline = await _seed_retrieval_pipeline(db_session, tenant_b.id)
+async def test_rag_pipeline_registry_create_is_rejected_as_domain_owned(client, db_session):
+    tenant, user = await _seed_tenant_and_user(db_session)
+    pipeline = await _seed_retrieval_pipeline(db_session, tenant.id)
 
     response = await client.post(
         "/tools",
@@ -268,53 +308,65 @@ async def test_rag_retrieval_regular_tool_rejects_pipeline_from_other_tenant_on_
             "description": "invalid",
             "input_schema": {"type": "object", "properties": {"query": {"type": "string"}}},
             "output_schema": {"type": "object", "properties": {"results": {"type": "array"}}},
-            "implementation_type": "RAG_RETRIEVAL",
-            "implementation_config": {"type": "rag_retrieval", "pipeline_id": str(foreign_pipeline.id)},
+            "implementation_type": "RAG_PIPELINE",
+            "implementation_config": {"type": "rag_pipeline", "pipeline_id": str(pipeline.id)},
         },
-        headers=_headers(user_a, tenant_a),
+        headers=_headers(user, tenant),
     )
     assert response.status_code == 400
-    assert "tenant scope" in response.json()["detail"].lower() or "not found" in response.json()["detail"].lower()
+    assert "domain-owned" in response.json()["detail"]
 
 
 @pytest.mark.asyncio
-async def test_rag_retrieval_regular_tool_rejects_pipeline_from_other_tenant_on_update(client, db_session):
-    tenant_a, user_a = await _seed_tenant_and_user(db_session)
-    tenant_b, _user_b = await _seed_tenant_and_user(db_session)
-
-    foreign_pipeline = await _seed_retrieval_pipeline(db_session, tenant_b.id)
-    tool = await _create_http_tool(client, user_a, tenant_a, slug_suffix=uuid4().hex[:8])
-
-    update = await client.put(
-        f"/tools/{tool['id']}",
-        json={
-            "implementation_type": "RAG_RETRIEVAL",
-            "implementation_config": {"type": "rag_retrieval", "pipeline_id": str(foreign_pipeline.id)},
-        },
-        headers=_headers(user_a, tenant_a),
-    )
-    assert update.status_code == 400
-    assert "tenant scope" in update.json()["detail"].lower() or "not found" in update.json()["detail"].lower()
-
-
-@pytest.mark.asyncio
-async def test_publish_regular_rag_retrieval_tool_validates_pipeline_scope(client, db_session):
-    tenant_a, user_a = await _seed_tenant_and_user(db_session)
-    tenant_b, _user_b = await _seed_tenant_and_user(db_session)
-
-    foreign_pipeline = await _seed_retrieval_pipeline(db_session, tenant_b.id)
+async def test_pipeline_bound_tool_row_rejects_registry_update(client, db_session):
+    tenant, user = await _seed_tenant_and_user(db_session)
+    pipeline = await _seed_retrieval_pipeline(db_session, tenant.id)
 
     tool = ToolRegistry(
-        tenant_id=tenant_a.id,
+        tenant_id=tenant.id,
+        name=f"pipeline-bound-{uuid4().hex[:6]}",
+        slug=f"pipeline-bound-{uuid4().hex[:8]}",
+        description="managed row",
+        scope=ToolDefinitionScope.TENANT,
+        schema={"input": {"type": "object"}, "output": {"type": "object"}},
+        config_schema={"implementation": {"type": "rag_pipeline", "pipeline_id": str(pipeline.id)}},
+        status=ToolStatus.DRAFT,
+        version="1.0.0",
+        implementation_type=ToolImplementationType.RAG_PIPELINE,
+        visual_pipeline_id=pipeline.id,
+        is_active=True,
+        is_system=False,
+    )
+    db_session.add(tool)
+    await db_session.commit()
+    await db_session.refresh(tool)
+
+    update = await client.put(
+        f"/tools/{tool.id}",
+        json={"description": "should fail"},
+        headers=_headers(user, tenant),
+    )
+    assert update.status_code == 400
+    assert "managed by its owning artifact or pipeline" in update.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_publish_pipeline_bound_tool_from_registry_is_rejected(client, db_session):
+    tenant, user = await _seed_tenant_and_user(db_session)
+    pipeline = await _seed_retrieval_pipeline(db_session, tenant.id)
+
+    tool = ToolRegistry(
+        tenant_id=tenant.id,
         name=f"invalid-publish-{uuid4().hex[:6]}",
         slug=f"invalid-publish-{uuid4().hex[:8]}",
         description="invalid publish",
         scope=ToolDefinitionScope.TENANT,
         schema={"input": {"type": "object"}, "output": {"type": "object"}},
-        config_schema={"implementation": {"type": "rag_retrieval", "pipeline_id": str(foreign_pipeline.id)}},
+        config_schema={"implementation": {"type": "rag_pipeline", "pipeline_id": str(pipeline.id)}},
         status=ToolStatus.DRAFT,
         version="1.0.0",
-        implementation_type=ToolImplementationType.RAG_RETRIEVAL,
+        implementation_type=ToolImplementationType.RAG_PIPELINE,
+        visual_pipeline_id=pipeline.id,
         is_active=True,
         is_system=False,
     )
@@ -325,42 +377,48 @@ async def test_publish_regular_rag_retrieval_tool_validates_pipeline_scope(clien
     publish_response = await client.post(
         f"/tools/{tool.id}/publish",
         json={},
-        headers=_headers(user_a, tenant_a),
+        headers=_headers(user, tenant),
     )
     assert publish_response.status_code == 400
+    assert "owning artifact or pipeline" in publish_response.json()["detail"]
 
 
 @pytest.mark.asyncio
-async def test_publish_regular_rag_retrieval_tool_with_tenant_pipeline_creates_version(client, db_session):
+async def test_pipeline_bound_tool_row_reports_managed_metadata(client, db_session):
     tenant, user = await _seed_tenant_and_user(db_session)
     pipeline = await _seed_retrieval_pipeline(db_session, tenant.id)
 
-    create_response = await client.post(
-        "/tools",
-        json={
-            "name": "valid retrieval",
-            "slug": f"valid-retrieval-{uuid4().hex[:8]}",
-            "description": "valid",
-            "input_schema": {"type": "object", "properties": {"query": {"type": "string"}}},
-            "output_schema": {"type": "object", "properties": {"results": {"type": "array"}}},
-            "implementation_type": "RAG_RETRIEVAL",
-            "implementation_config": {"type": "rag_retrieval", "pipeline_id": str(pipeline.id)},
+    tool = ToolRegistry(
+        tenant_id=tenant.id,
+        name=f"pipeline-metadata-{uuid4().hex[:6]}",
+        slug=f"pipeline-metadata-{uuid4().hex[:8]}",
+        description="managed metadata",
+        scope=ToolDefinitionScope.TENANT,
+        schema={"input": {"type": "object"}, "output": {"type": "object"}},
+        config_schema={
+            "implementation": {"type": "rag_pipeline", "pipeline_id": str(pipeline.id)},
+            "execution": {"timeout_s": 30},
         },
-        headers=_headers(user, tenant),
+        status=ToolStatus.DRAFT,
+        version="1.0.0",
+        implementation_type=ToolImplementationType.RAG_PIPELINE,
+        visual_pipeline_id=pipeline.id,
+        is_active=True,
+        is_system=False,
     )
-    assert create_response.status_code == 200
-    tool_id = create_response.json()["id"]
+    db_session.add(tool)
+    await db_session.commit()
+    await db_session.refresh(tool)
 
-    publish_response = await client.post(
-        f"/tools/{tool_id}/publish",
-        json={},
-        headers=_headers(user, tenant),
-    )
-    assert publish_response.status_code == 200
-    body = publish_response.json()
-    assert body["status"] == "PUBLISHED"
-
-    versions = (
-        await db_session.execute(select(ToolVersion).where(ToolVersion.tool_id == UUID(str(tool_id))))
-    ).scalars().all()
-    assert len(versions) == 1
+    response = await client.get(f"/tools/{tool.id}", headers=_headers(user, tenant))
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ownership"] == "pipeline_bound"
+    assert body["managed_by"] == "pipelines"
+    assert body["source_object_type"] == "pipeline"
+    assert body["source_object_id"] == str(pipeline.id)
+    assert body["implementation_config"]["pipeline_id"] == str(pipeline.id)
+    assert body["execution_config"]["timeout_s"] == 30
+    assert body["can_edit_in_registry"] is False
+    assert body["can_publish_in_registry"] is False
+    assert body["can_delete_in_registry"] is False

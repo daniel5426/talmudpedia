@@ -87,10 +87,6 @@ export const toolsService = {
     await httpClient.delete(`/tools/${id}`);
   },
 
-  async testTool(id: string, input: Record<string, unknown>): Promise<unknown> {
-    return httpClient.post(`/tools/${id}/test`, { input });
-  },
-
   async listBuiltinTemplates(skip = 0, limit = 100): Promise<ToolsListResponse> {
     const query = new URLSearchParams();
     query.set("skip", String(skip));

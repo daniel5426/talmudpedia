@@ -1,6 +1,6 @@
 # Tools Domain Spec
 
-Last Updated: 2026-03-17
+Last Updated: 2026-03-18
 
 This document is the canonical product/specification overview for the tools domain.
 
@@ -12,8 +12,24 @@ Tools are callable capabilities that agents can execute. The tools domain provid
 - multiple implementation types
 - tenant/global visibility rules
 
-In the current platform, the canonical tool registry is the DB-backed `ToolRegistry` domain exposed at `/tools`.
+In the current platform, the canonical runtime-facing tool catalog is the DB-backed `ToolRegistry` domain exposed at `/tools`.
 The small in-process helper in `backend/app/services/tool_function_registry.py` is only a function-dispatch map for `FUNCTION` tools, not the canonical registry for the tools domain.
+
+Important boundary:
+- `/tools` is the authoring surface for manual tools
+- artifact-bound tools are authored from the artifact domain and mirrored into `ToolRegistry`
+- pipeline-bound tools are authored from the pipeline domain and mirrored into `ToolRegistry`
+- system tools are authored by backend seeding/runtime code
+
+## Current Ownership Classes
+
+Current ownership classes are:
+- `manual`
+- `artifact_bound`
+- `pipeline_bound`
+- `system`
+
+These are returned in the `/tools` DTO so the UI can tell which rows are editable in the registry versus managed from another domain.
 
 ## Current Tool Classes
 
@@ -36,17 +52,18 @@ The logical tool record lives in `tool_registry` and currently carries:
 - optional artifact binding fields
 
 Important current detail:
-- artifact-backed tools are still first-class tool records
-- artifacts do not replace the tool registry row
-- the tool registry row owns tool identity, visibility, publish lifecycle, and agent-facing tool selection
-- the artifact runtime owns executable code packaging and execution for artifact-backed tools
+- `ToolRegistry` remains the unified runtime-facing catalog used for tool selection and execution
+- not every row is authored from `/tools`
+- manual tools are authored and managed from `/tools`
+- artifact-bound and pipeline-bound rows are mirrored runtime records managed from their owning domains
+- system rows are seeded/managed by backend code
 
 ## Current Implementation Types
 
 Current implementation types include:
 - `internal`
 - `http`
-- `rag_retrieval`
+- `rag_pipeline`
 - `agent_call`
 - `function`
 - `custom`
@@ -60,9 +77,17 @@ The main tools API is mounted at:
 
 Current behavior includes:
 - tenant + global tool listing
-- create/update/publish/version flows
+- create/update/publish/version flows for manual tools
 - tool-type filtering
 - sensitive config redaction on reads
+- explicit derived DTO fields for:
+  - `implementation_config`
+  - `execution_config`
+  - `ownership`
+  - `managed_by`
+  - `source_object_type`
+  - `source_object_id`
+  - registry action flags (`can_edit_in_registry`, `can_publish_in_registry`, `can_delete_in_registry`)
 - scope-based route protection
 
 ## Current Runtime Rules
@@ -97,7 +122,8 @@ Current publish/runtime rules:
 Current contract boundary:
 - the backing artifact must be kind `tool_impl`
 - the artifact owns the executable handler and `tool_contract`
-- the tool registry row still owns the callable tool identity presented to agents
+- the tool registry row still owns the runtime-facing callable identity presented to agents
+- artifact-bound tool rows are managed from the artifact surface, not from generic `/tools` CRUD
 - runtime execution calls `ArtifactExecutionService.execute_live_run(...)` with `domain=tool`
 
 Current system-tool note:
@@ -109,7 +135,7 @@ Current system-tool note:
 The current artifact-to-tool relationship is composition, not inheritance:
 
 1. An artifact is authored as kind `tool_impl`.
-2. A tool record is created in `/tools` with `implementation_type=artifact` and an artifact binding.
+2. A bound tool record is synchronized into `ToolRegistry` with `implementation_type=artifact` and an artifact binding.
 3. Tool publish resolves the backing artifact, requires a published immutable artifact revision, and pins that revision into `artifact_revision_id`.
 4. Production tool execution uses the pinned `artifact_revision_id`, not a floating draft artifact pointer.
 
@@ -118,8 +144,15 @@ This means “artifact needs to be able to be a tool” is already satisfied in 
 - `ToolRegistry`
 
 The current design intentionally keeps both because they own different responsibilities:
-- artifacts own executable source, revisioning, deployment, and runtime execution
-- tools own agent-facing registration, tenant/global visibility, and tool lifecycle/publish policy
+- artifacts own executable source, revisioning, deployment, runtime execution, and bound-tool authoring
+- tools own runtime-facing registration, tenant/global visibility, and unified selection
+
+### Pipeline-backed tools
+
+Current pipeline-backed tools follow the same mirrored-row model:
+- the owning surface is the pipeline editor/tool-binding flow
+- the bound `ToolRegistry` row is the runtime-facing catalog entry
+- generic `/tools` CRUD should not be treated as the authoring surface for those rows
 
 ## Current Known Modeling Tension
 

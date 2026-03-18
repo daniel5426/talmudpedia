@@ -112,11 +112,20 @@ class ToolResponse(BaseModel):
     input_schema: dict
     output_schema: dict
     config_schema: dict
+    implementation_config: dict
+    execution_config: dict
     status: ToolStatus
     version: str
     implementation_type: ToolImplementationType
     published_at: Optional[datetime] = None
     tool_type: str
+    ownership: str
+    managed_by: str
+    source_object_type: Optional[str] = None
+    source_object_id: Optional[str] = None
+    can_edit_in_registry: bool
+    can_publish_in_registry: bool
+    can_delete_in_registry: bool
     artifact_id: Optional[str] = None
     artifact_version: Optional[str] = None
     artifact_revision_id: Optional[uuid.UUID] = None
@@ -307,8 +316,46 @@ def _get_tool_type(tool: ToolRegistry | object, impl_type: ToolImplementationTyp
     return "custom"
 
 
+def _get_tool_ownership(tool: ToolRegistry | object, impl_type: ToolImplementationType) -> str:
+    if bool(getattr(tool, "is_system", False)):
+        return "system"
+    if getattr(tool, "artifact_id", None) or impl_type == ToolImplementationType.ARTIFACT:
+        return "artifact_bound"
+    if getattr(tool, "visual_pipeline_id", None) or getattr(tool, "executable_pipeline_id", None) or impl_type == ToolImplementationType.RAG_PIPELINE:
+        return "pipeline_bound"
+    return "manual"
+
+
+def _get_tool_manager(ownership: str) -> str:
+    if ownership == "artifact_bound":
+        return "artifacts"
+    if ownership == "pipeline_bound":
+        return "pipelines"
+    if ownership == "system":
+        return "system"
+    return "tools"
+
+
+def _get_tool_source(tool: ToolRegistry | object, ownership: str) -> tuple[str | None, str | None]:
+    if ownership == "artifact_bound":
+        artifact_id = getattr(tool, "artifact_id", None)
+        return "artifact", str(artifact_id) if artifact_id else None
+    if ownership == "pipeline_bound":
+        visual_pipeline_id = getattr(tool, "visual_pipeline_id", None)
+        executable_pipeline_id = getattr(tool, "executable_pipeline_id", None)
+        source_id = visual_pipeline_id or executable_pipeline_id
+        return "pipeline", str(source_id) if source_id else None
+    return None, None
+
+
 def _serialize_tool(tool: ToolRegistry | object) -> ToolResponse:
     impl_type = _get_tool_impl_type(tool)
+    ownership = _get_tool_ownership(tool, impl_type)
+    managed_by = _get_tool_manager(ownership)
+    source_object_type, source_object_id = _get_tool_source(tool, ownership)
+    config_schema = getattr(tool, "config_schema", {}) or {}
+    implementation_config = _redact_sensitive_config((config_schema.get("implementation") if isinstance(config_schema, dict) else {}) or {})
+    execution_config = _redact_sensitive_config((config_schema.get("execution") if isinstance(config_schema, dict) else {}) or {})
     return ToolResponse(
         id=getattr(tool, "id"),
         tenant_id=getattr(tool, "tenant_id", None),
@@ -318,12 +365,21 @@ def _serialize_tool(tool: ToolRegistry | object) -> ToolResponse:
         scope=_serialize_scope(getattr(tool, "scope", None)),
         input_schema=((getattr(tool, "schema", None) or {}).get("input", {})),
         output_schema=((getattr(tool, "schema", None) or {}).get("output", {})),
-        config_schema=_redact_sensitive_config(getattr(tool, "config_schema", {}) or {}),
+        config_schema=_redact_sensitive_config(config_schema),
+        implementation_config=implementation_config,
+        execution_config=execution_config,
         status=getattr(tool, "status"),
         version=str(getattr(tool, "version", "1.0.0")),
         implementation_type=impl_type,
         published_at=getattr(tool, "published_at", None),
         tool_type=_get_tool_type(tool, impl_type),
+        ownership=ownership,
+        managed_by=managed_by,
+        source_object_type=source_object_type,
+        source_object_id=source_object_id,
+        can_edit_in_registry=ownership == "manual",
+        can_publish_in_registry=ownership == "manual",
+        can_delete_in_registry=ownership == "manual",
         artifact_id=getattr(tool, "artifact_id", None),
         artifact_version=getattr(tool, "artifact_version", None),
         artifact_revision_id=getattr(tool, "artifact_revision_id", None),

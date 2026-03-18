@@ -161,8 +161,8 @@ export const INITIAL_THREADS: TemplateThread[] = [
 ];
 
 export const EMPTY_SUGGESTIONS = [
-  "Map a customer support dashboard",
-  "Audit this app shell for friction",
-  "Design a cleaner internal tool flow",
-  "Turn this prompt into a publishable app",
+  "Summarize recent activity for the selected client",
+  "Show bank concentration for this client",
+  "Explain deal 200462 for this client",
+  "Compare deal 200462 against market context",
 ];

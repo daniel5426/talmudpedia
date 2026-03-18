@@ -24,6 +24,11 @@ Copy `.env.example` to `.env` and set:
 - optional `PORT`
 - optional `PRICO_TOOL_BASE_URL`
 - optional `PRICO_AGENT_MODEL_ID`
+- optional `PRICO_DB_HOST`
+- optional `PRICO_DB_PORT`
+- optional `PRICO_DB_USER`
+- optional `PRICO_DB_PASSWORD`
+- optional `PRICO_DB_DATABASE`
 
 ## Local Development
 
@@ -49,6 +54,7 @@ The script prints the created agent id. Set `TALMUDPEDIA_AGENT_ID` in `.env` to 
 The standalone server now hosts:
 
 - `/api/prico-tools/*` read-only demo endpoints for the five PRICO tool contracts
+- live SQL-backed PRICO reads when `PRICO_DB_*` is configured locally
 - local session state with a selected demo client
 - chat forwarding that injects selected client context into the embedded-agent request
 
