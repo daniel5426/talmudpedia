@@ -1,6 +1,6 @@
 # Embedded Agent Runtime Spec
 
-Last Updated: 2026-03-17
+Last Updated: 2026-03-18
 
 This document defines the canonical v1 external embed/plugin contract for published agents used inside customer-owned applications.
 
@@ -52,6 +52,12 @@ The canonical public embed routes are:
 - `POST /public/embed/agents/{agent_id}/chat/stream`
 - `GET /public/embed/agents/{agent_id}/threads`
 - `GET /public/embed/agents/{agent_id}/threads/{thread_id}`
+- `DELETE /public/embed/agents/{agent_id}/threads/{thread_id}`
+
+V1 does not include:
+
+- any separate public embed route for historical run-event fetch beyond thread detail
+- any public embed route for agent/tool/admin resource mutation
 
 ## Request Contract
 
@@ -132,6 +138,48 @@ Customer architecture must remain:
 - published agent
 
 The customer frontend must never hold the tenant API key.
+
+## Exact V1 SDK Methods
+
+The current TypeScript SDK maps 1:1 to the public embed routes:
+
+- `streamAgent(agentId, payload, onEvent?)` -> `POST /public/embed/agents/{agent_id}/chat/stream`
+- `listAgentThreads(agentId, options)` -> `GET /public/embed/agents/{agent_id}/threads`
+- `getAgentThread(agentId, threadId, options)` -> `GET /public/embed/agents/{agent_id}/threads/{thread_id}`
+- `deleteAgentThread(agentId, threadId, options)` -> `DELETE /public/embed/agents/{agent_id}/threads/{thread_id}`
+
+The SDK does not currently expose:
+
+- fetch historical event streams for a completed run
+- browser auth/bootstrap helpers
+- retry, timeout, or abort controls
+- control-plane/admin operations
+
+## Thread Detail Contract Boundary
+
+`GET /public/embed/agents/{agent_id}/threads/{thread_id}` returns thread summary plus persisted turns.
+
+Each turn includes:
+
+- `id`
+- `run_id`
+- `turn_index`
+- `user_input_text`
+- `assistant_output_text`
+- `status`
+- `usage_tokens`
+- `metadata`
+- `created_at`
+- `completed_at`
+- `run_events`
+
+Important boundary:
+
+- `run_id` is exposed on turns
+- `run_events` provides ordered historical non-text public run events for that turn
+- these events are returned in `run-stream.v2` envelope shape
+- this is intended for replaying tool/reasoning history on old chats without bypassing the embed contract
+- final assistant text still comes from `assistant_output_text`, not token replay
 
 ## Canonical Implementation References
 

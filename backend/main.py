@@ -1,6 +1,5 @@
 from contextlib import asynccontextmanager
 from pathlib import Path
-from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 import multiprocessing
@@ -17,10 +16,12 @@ import sys
 import tempfile
 import time
 from urllib.parse import urlparse
+
+from app.core.env_loader import load_backend_env, running_under_pytest
+
 # Load environment variables BEFORE importing any modules that might need them.
-# `override=True` avoids stale exported shell vars (e.g. old APPS_URL_PORT) from
-# silently shadowing backend/.env in local development.
-load_dotenv(Path(__file__).parent / ".env", override=True)
+# In tests we keep explicit test/monkeypatched vars authoritative.
+load_backend_env(override=not running_under_pytest())
 
 from app.db.connection import MongoDatabase
 from vector_store import VectorStore

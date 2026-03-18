@@ -107,4 +107,35 @@ async def get_embedded_agent_thread(
     if thread is None:
         raise HTTPException(status_code=404, detail="Thread not found")
     await db.commit()
-    return serialize_thread_detail(thread)
+    return await serialize_thread_detail(db=db, thread=thread)
+
+
+@router.delete("/{agent_id}/threads/{thread_id}")
+async def delete_embedded_agent_thread(
+    agent_id: UUID,
+    thread_id: UUID,
+    external_user_id: str = Query(..., min_length=1, max_length=255),
+    external_session_id: str | None = Query(default=None, max_length=255),
+    principal: dict[str, Any] = Depends(require_tenant_api_key_scopes("agents.embed")),
+    db: AsyncSession = Depends(get_db),
+):
+    agent = await ensure_published_embed_agent(db=db, agent_id=agent_id)
+    if str(agent.tenant_id) != str(principal["tenant_id"]):
+        raise HTTPException(status_code=404, detail="Published agent not found")
+
+    thread = await ThreadService(db).get_thread_with_turns(
+        tenant_id=agent.tenant_id,
+        thread_id=thread_id,
+        agent_id=agent.id,
+        external_user_id=external_user_id,
+        external_session_id=external_session_id,
+    )
+    if thread is None:
+        raise HTTPException(status_code=404, detail="Thread not found")
+
+    deleted = await ThreadService(db).delete_threads(
+        tenant_id=agent.tenant_id,
+        thread_ids=[thread.id],
+    )
+    await db.commit()
+    return {"deleted": bool(deleted)}

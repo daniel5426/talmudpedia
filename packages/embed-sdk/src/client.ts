@@ -14,6 +14,8 @@ import type {
   EmbeddedAgentRuntimeEvent,
   EmbeddedAgentStreamRequest,
   EmbeddedAgentThreadDetail,
+  EmbeddedAgentThreadDeleteOptions,
+  EmbeddedAgentThreadDeleteResult,
   EmbeddedAgentThreadDetailOptions,
   EmbeddedAgentThreadListOptions,
   EmbeddedAgentThreadsResponse,
@@ -100,10 +102,33 @@ export class EmbeddedAgentClient {
     );
   }
 
-  private async requestJson<T>(url: string): Promise<T> {
+  async deleteAgentThread(
+    agentId: string,
+    threadId: string,
+    {
+      externalUserId,
+      externalSessionId,
+    }: EmbeddedAgentThreadDeleteOptions,
+  ): Promise<EmbeddedAgentThreadDeleteResult> {
+    const search = new URLSearchParams({
+      external_user_id: externalUserId,
+    });
+    if (externalSessionId) {
+      search.set("external_session_id", externalSessionId);
+    }
+    return this.requestJson<EmbeddedAgentThreadDeleteResult>(
+      `${this.baseUrl}/public/embed/agents/${agentId}/threads/${threadId}?${search.toString()}`,
+      {
+        method: "DELETE",
+        headers: buildJsonHeaders(this.apiKey),
+      },
+    );
+  }
+
+  private async requestJson<T>(url: string, init?: RequestInit): Promise<T> {
     const response = await this.fetchOrThrow(
       url,
-      {
+      init || {
         method: "GET",
         headers: buildJsonHeaders(this.apiKey),
       },

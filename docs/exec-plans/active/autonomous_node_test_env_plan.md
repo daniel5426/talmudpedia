@@ -2,7 +2,34 @@
 
 Last Updated: 2026-03-18
 
-## Status: Planned
+## Status: In Progress
+
+## Current Slice Progress
+
+Implemented in the current pass:
+- added shared backend env-file resolution in `backend/app/core/env_loader.py`
+- backend startup and Celery startup now use the shared env loader instead of hardcoding `backend/.env`
+- pytest bootstrap now loads a test-profile env file before runtime imports and pins the resolved test env path/profile for downstream imports
+- added repo-safe test profile templates:
+  - `backend/.env.test.example`
+  - `frontend-reshet/.env.test.example`
+- added first test-stack helper commands:
+  - `backend/scripts/dev-services/check_test_stack.sh`
+  - `backend/scripts/dev-services/run_backend_tests.sh`
+- added dedicated regression coverage for env resolution and test env loading under `backend/tests/test_env_bootstrap/`
+- added generated node-surface inventory plumbing:
+  - `backend/app/services/node_surface_inventory.py`
+  - `backend/scripts/export_node_surface_inventory.py`
+  - `docs/generated/node_surface_inventory.md`
+  - `docs/generated/node_surface_inventory.json`
+- added inventory regression coverage under `backend/tests/node_inventory/`
+- added the first shared contract-iteration harness in `backend/tests/node_contract_harness.py`
+
+Still pending from the broader plan:
+- stack reset/teardown commands
+- shared node harness builders
+- trace-first failure artifact collection at the harness layer
+- broad interaction-matrix rollout
 
 This plan defines the environment required to build, run, monitor, iterate, and harden an extreme test matrix around every current node contract.
 

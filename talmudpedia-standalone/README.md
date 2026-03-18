@@ -4,6 +4,12 @@ Last Updated: 2026-03-18
 
 Standalone Vite + Express app for embedding a published Talmudpedia agent through the server-only `@agents24/embed-sdk`.
 
+Important rule:
+- this app is intentionally treated as a real customer standalone app
+- `server/` must use `@agents24/embed-sdk` and the public embed surface only
+- do not add direct admin/internal platform API calls here as workarounds for missing embed-SDK capabilities
+- missing capabilities should be fixed in the public embed API and `@agents24/embed-sdk` first
+
 ## Architecture
 
 - `src/`: Vite React frontend

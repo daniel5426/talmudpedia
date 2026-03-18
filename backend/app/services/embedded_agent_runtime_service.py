@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import datetime, timezone
 from typing import Any, AsyncGenerator
 from uuid import UUID
 
@@ -15,6 +16,7 @@ from app.agent.execution.stream_contract_v2 import (
     build_stream_v2_event,
     normalize_filtered_event_to_v2,
 )
+from app.agent.execution.trace_recorder import ExecutionTraceRecorder
 from app.agent.execution.types import ExecutionMode
 from app.db.postgres.models.agents import Agent, AgentRun, AgentStatus
 from app.db.postgres.models.agent_threads import AgentThread, AgentThreadTurn
@@ -53,20 +55,128 @@ def serialize_thread_summary(thread: AgentThread) -> dict[str, Any]:
     }
 
 
-def serialize_thread_detail(thread: AgentThread) -> dict[str, Any]:
+def _serialize_turn_base(turn: AgentThreadTurn) -> dict[str, Any]:
+    return {
+        "id": str(turn.id),
+        "run_id": str(turn.run_id),
+        "turn_index": int(turn.turn_index or 0),
+        "user_input_text": turn.user_input_text,
+        "assistant_output_text": turn.assistant_output_text,
+        "status": turn.status.value if hasattr(turn.status, "value") else str(turn.status),
+        "usage_tokens": int(turn.usage_tokens or 0),
+        "metadata": dict(turn.metadata_ or {}),
+        "created_at": turn.created_at,
+        "completed_at": turn.completed_at,
+    }
+
+
+def _trace_item_to_raw_event(item: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "event": str(item.get("event") or "").strip(),
+        "name": item.get("name"),
+        "span_id": item.get("span_id"),
+        "visibility": item.get("visibility"),
+        "data": item.get("data") if isinstance(item.get("data"), dict) else {},
+        "metadata": item.get("metadata") if isinstance(item.get("metadata"), dict) else {},
+    }
+
+
+def _embed_history_ts(raw_timestamp: Any) -> str:
+    if isinstance(raw_timestamp, str) and raw_timestamp.strip():
+        return raw_timestamp
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _embed_history_event(
+    *,
+    seq: int,
+    run_id: UUID,
+    timestamp: Any,
+    mapped_event: str,
+    stage: str,
+    payload: dict[str, Any],
+    diagnostics: list[dict[str, Any]],
+) -> dict[str, Any]:
+    envelope = build_stream_v2_event(
+        seq=seq,
+        run_id=str(run_id),
+        event=mapped_event,
+        stage=stage,
+        payload=payload,
+        diagnostics=diagnostics,
+    )
+    envelope["ts"] = _embed_history_ts(timestamp)
+    return envelope
+
+
+async def list_public_run_events(*, db: AsyncSession, run_id: UUID) -> list[dict[str, Any]]:
+    recorder = ExecutionTraceRecorder(serializer=lambda value: value)
+    raw_events = await recorder.list_events(db, run_id)
+    events: list[dict[str, Any]] = []
+    seq = 1
+
+    for item in raw_events:
+        raw_event = _trace_item_to_raw_event(item)
+        event_name = str(raw_event.get("event") or "").strip()
+        if not event_name:
+            continue
+        is_allowed = (
+            StreamAdapter._is_client_safe(raw_event.get("visibility"))
+            or event_name in StreamAdapter._TOOL_LIFECYCLE_EVENTS
+            or event_name in StreamAdapter._PRODUCTION_LEGACY_ALLOW
+        )
+        if not is_allowed:
+            continue
+
+        mapped_event, stage, payload, diagnostics = normalize_filtered_event_to_v2(raw_event=raw_event)
+        if mapped_event != "assistant.delta":
+            events.append(
+                _embed_history_event(
+                    seq=seq,
+                    run_id=run_id,
+                    timestamp=item.get("timestamp"),
+                    mapped_event=mapped_event,
+                    stage=stage,
+                    payload=payload,
+                    diagnostics=diagnostics,
+                )
+            )
+            seq += 1
+
+        reasoning = StreamAdapter._reasoning_event(
+            event_type=event_name,
+            event_name=str(raw_event.get("name") or "").strip() or None,
+            step_id=str(raw_event.get("span_id") or "").strip() or None,
+            data=raw_event.get("data") if isinstance(raw_event.get("data"), dict) else {},
+        )
+        if reasoning is None:
+            continue
+
+        reasoning_event, reasoning_stage, reasoning_payload, reasoning_diagnostics = normalize_filtered_event_to_v2(
+            raw_event=reasoning
+        )
+        events.append(
+            _embed_history_event(
+                seq=seq,
+                run_id=run_id,
+                timestamp=item.get("timestamp"),
+                mapped_event=reasoning_event,
+                stage=reasoning_stage,
+                payload=reasoning_payload,
+                diagnostics=reasoning_diagnostics,
+            )
+        )
+        seq += 1
+
+    return events
+
+
+async def serialize_thread_detail(*, db: AsyncSession, thread: AgentThread) -> dict[str, Any]:
     payload = serialize_thread_summary(thread)
     payload["turns"] = [
         {
-            "id": str(turn.id),
-            "run_id": str(turn.run_id),
-            "turn_index": int(turn.turn_index or 0),
-            "user_input_text": turn.user_input_text,
-            "assistant_output_text": turn.assistant_output_text,
-            "status": turn.status.value if hasattr(turn.status, "value") else str(turn.status),
-            "usage_tokens": int(turn.usage_tokens or 0),
-            "metadata": dict(turn.metadata_ or {}),
-            "created_at": turn.created_at,
-            "completed_at": turn.completed_at,
+            **_serialize_turn_base(turn),
+            "run_events": await list_public_run_events(db=db, run_id=turn.run_id),
         }
         for turn in sorted(thread.turns or [], key=lambda item: int(item.turn_index or 0))
     ]

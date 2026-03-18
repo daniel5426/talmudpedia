@@ -35,6 +35,7 @@ export type EmbeddedAgentThreadTurn = {
   metadata: Record<string, unknown>;
   created_at: string;
   completed_at: string | null;
+  run_events: EmbeddedAgentRuntimeEvent[];
 };
 
 export type EmbeddedAgentThreadDetail = EmbeddedAgentThreadSummary & {
@@ -75,6 +76,15 @@ export type EmbeddedAgentThreadListOptions = {
 export type EmbeddedAgentThreadDetailOptions = {
   externalUserId: string;
   externalSessionId?: string;
+};
+
+export type EmbeddedAgentThreadDeleteOptions = {
+  externalUserId: string;
+  externalSessionId?: string;
+};
+
+export type EmbeddedAgentThreadDeleteResult = {
+  deleted: boolean;
 };
 
 export type EmbeddedAgentClientOptions = {

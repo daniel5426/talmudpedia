@@ -1,6 +1,6 @@
 # Agent Operating Instructions (Talmudpedia)
 
-Last Updated: 2026-03-16
+Last Updated: 2026-03-18
 
 ## Documentation Hygiene (Context-dependent)
 - The repo-level documentation hub is `docs/`.
@@ -134,3 +134,9 @@ Last Updated: 2026-03-16
 - Prefer removing obsolete code paths instead of keeping dual architectures alive.
 - Optimize for clean architecture, runtime efficiency, and maintainability over backward compatibility by default.
 - If you discover cleanup that is outside the current requested scope, do **not** silently include it; explicitly alert the user and ask whether they want that cleanup done.
+
+## Embedded Standalone Rule
+- `talmudpedia-standalone/` must behave like a real customer standalone app.
+- Its server/BFF must use the server-only `@agents24/embed-sdk` and the public embed contract only.
+- Do **not** bypass the SDK with direct platform admin/internal API calls from the standalone app, even as a temporary workaround.
+- If the standalone app needs a capability that the SDK does not expose, treat that as an embed public-API/SDK gap and fix it in the platform + SDK first.

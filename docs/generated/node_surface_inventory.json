@@ -1,0 +1,816 @@
+{
+  "agent_nodes": {
+    "items": [
+      {
+        "category": "reasoning",
+        "declared_in_graph_schema_enum": false,
+        "description": "Primary reasoning node with tools and structured output",
+        "display_name": "Agent",
+        "has_executor": true,
+        "reads": [
+          "messages",
+          "state",
+          "memory"
+        ],
+        "required_config_fields": [
+          "model_id"
+        ],
+        "type": "agent",
+        "writes": [
+          "messages",
+          "state"
+        ]
+      },
+      {
+        "category": "orchestration",
+        "declared_in_graph_schema_enum": true,
+        "description": "Cancel a child run subtree through the orchestration kernel",
+        "display_name": "Cancel Subtree",
+        "has_executor": true,
+        "reads": [
+          "context"
+        ],
+        "required_config_fields": [],
+        "type": "cancel_subtree",
+        "writes": [
+          "context"
+        ]
+      },
+      {
+        "category": "reasoning",
+        "declared_in_graph_schema_enum": false,
+        "description": "Classify input into categories using LLM",
+        "display_name": "Classify",
+        "has_executor": true,
+        "reads": [
+          "messages",
+          "state"
+        ],
+        "required_config_fields": [],
+        "type": "classify",
+        "writes": [
+          "next",
+          "branch_taken"
+        ]
+      },
+      {
+        "category": "logic",
+        "declared_in_graph_schema_enum": true,
+        "description": "Legacy conditional. Use If/Else for new workflows.",
+        "display_name": "Conditional (Legacy)",
+        "has_executor": true,
+        "reads": [
+          "messages",
+          "next"
+        ],
+        "required_config_fields": [],
+        "type": "conditional",
+        "writes": [
+          "next",
+          "branch_taken"
+        ]
+      },
+      {
+        "category": "control",
+        "declared_in_graph_schema_enum": true,
+        "description": "Exit point. Specify what to return.",
+        "display_name": "End",
+        "has_executor": true,
+        "reads": [
+          "messages",
+          "state",
+          "final_output"
+        ],
+        "required_config_fields": [],
+        "type": "end",
+        "writes": [
+          "final_output"
+        ]
+      },
+      {
+        "category": "interaction",
+        "declared_in_graph_schema_enum": true,
+        "description": "Legacy human input. Use User Approval for new workflows.",
+        "display_name": "Human Input (Legacy)",
+        "has_executor": true,
+        "reads": [],
+        "required_config_fields": [],
+        "type": "human_input",
+        "writes": [
+          "messages"
+        ]
+      },
+      {
+        "category": "logic",
+        "declared_in_graph_schema_enum": false,
+        "description": "Multi-condition branching with CEL expressions",
+        "display_name": "If/Else",
+        "has_executor": true,
+        "reads": [
+          "state",
+          "messages"
+        ],
+        "required_config_fields": [],
+        "type": "if_else",
+        "writes": [
+          "next",
+          "branch_taken"
+        ]
+      },
+      {
+        "category": "orchestration",
+        "declared_in_graph_schema_enum": true,
+        "description": "Join an orchestration group and route by completion status",
+        "display_name": "Join",
+        "has_executor": true,
+        "reads": [
+          "context"
+        ],
+        "required_config_fields": [],
+        "type": "join",
+        "writes": [
+          "next",
+          "branch_taken",
+          "context"
+        ]
+      },
+      {
+        "category": "orchestration",
+        "declared_in_graph_schema_enum": true,
+        "description": "Decide orchestration pass/fail branches",
+        "display_name": "Judge",
+        "has_executor": true,
+        "reads": [
+          "context"
+        ],
+        "required_config_fields": [],
+        "type": "judge",
+        "writes": [
+          "next",
+          "branch_taken"
+        ]
+      },
+      {
+        "category": "reasoning",
+        "declared_in_graph_schema_enum": true,
+        "description": "Simple LLM completion. Use Agent for complex workflows.",
+        "display_name": "LLM (Simple)",
+        "has_executor": true,
+        "reads": [
+          "messages",
+          "memory"
+        ],
+        "required_config_fields": [
+          "model_id"
+        ],
+        "type": "llm",
+        "writes": [
+          "messages",
+          "next"
+        ]
+      },
+      {
+        "category": "logic",
+        "declared_in_graph_schema_enum": true,
+        "description": "Execute branches in parallel",
+        "display_name": "Parallel",
+        "has_executor": true,
+        "reads": [],
+        "required_config_fields": [],
+        "type": "parallel",
+        "writes": []
+      },
+      {
+        "category": "action",
+        "declared_in_graph_schema_enum": false,
+        "description": "Execute a Retrieval Pipeline",
+        "display_name": "Retrieval",
+        "has_executor": true,
+        "reads": [
+          "messages",
+          "state"
+        ],
+        "required_config_fields": [],
+        "type": "rag",
+        "writes": [
+          "context"
+        ]
+      },
+      {
+        "category": "orchestration",
+        "declared_in_graph_schema_enum": true,
+        "description": "Evaluate subtree and decide replan vs continue",
+        "display_name": "Replan",
+        "has_executor": true,
+        "reads": [
+          "context"
+        ],
+        "required_config_fields": [],
+        "type": "replan",
+        "writes": [
+          "next",
+          "branch_taken",
+          "context"
+        ]
+      },
+      {
+        "category": "orchestration",
+        "declared_in_graph_schema_enum": true,
+        "description": "Route orchestration payload to named branches",
+        "display_name": "Router",
+        "has_executor": true,
+        "reads": [
+          "context"
+        ],
+        "required_config_fields": [],
+        "type": "router",
+        "writes": [
+          "next",
+          "branch_taken"
+        ]
+      },
+      {
+        "category": "data",
+        "declared_in_graph_schema_enum": false,
+        "description": "Explicitly set state variables",
+        "display_name": "Set State",
+        "has_executor": true,
+        "reads": [
+          "state"
+        ],
+        "required_config_fields": [],
+        "type": "set_state",
+        "writes": [
+          "state"
+        ]
+      },
+      {
+        "category": "orchestration",
+        "declared_in_graph_schema_enum": true,
+        "description": "Spawn a fanout group of child runs through the orchestration kernel",
+        "display_name": "Spawn Group",
+        "has_executor": true,
+        "reads": [
+          "state",
+          "context"
+        ],
+        "required_config_fields": [],
+        "type": "spawn_group",
+        "writes": [
+          "context"
+        ]
+      },
+      {
+        "category": "orchestration",
+        "declared_in_graph_schema_enum": true,
+        "description": "Spawn a single child run through the orchestration kernel",
+        "display_name": "Spawn Run",
+        "has_executor": true,
+        "reads": [
+          "state",
+          "context"
+        ],
+        "required_config_fields": [],
+        "type": "spawn_run",
+        "writes": [
+          "context"
+        ]
+      },
+      {
+        "category": "control",
+        "declared_in_graph_schema_enum": true,
+        "description": "Entry point for the agent. Initialize variables here.",
+        "display_name": "Start",
+        "has_executor": true,
+        "reads": [],
+        "required_config_fields": [],
+        "type": "start",
+        "writes": [
+          "messages",
+          "state"
+        ]
+      },
+      {
+        "category": "action",
+        "declared_in_graph_schema_enum": false,
+        "description": "Invoke a registered tool",
+        "display_name": "Tool",
+        "has_executor": true,
+        "reads": [
+          "state"
+        ],
+        "required_config_fields": [],
+        "type": "tool",
+        "writes": [
+          "tool_outputs",
+          "context"
+        ]
+      },
+      {
+        "category": "data",
+        "declared_in_graph_schema_enum": true,
+        "description": "Reshape data using expressions",
+        "display_name": "Transform",
+        "has_executor": true,
+        "reads": [
+          "state",
+          "context"
+        ],
+        "required_config_fields": [],
+        "type": "transform",
+        "writes": [
+          "state",
+          "transform_output"
+        ]
+      },
+      {
+        "category": "interaction",
+        "declared_in_graph_schema_enum": false,
+        "description": "Pause for user approval or rejection",
+        "display_name": "User Approval",
+        "has_executor": true,
+        "reads": [
+          "state"
+        ],
+        "required_config_fields": [],
+        "type": "user_approval",
+        "writes": [
+          "messages",
+          "approval_status",
+          "next"
+        ]
+      },
+      {
+        "category": "action",
+        "declared_in_graph_schema_enum": false,
+        "description": "Search a Knowledge Store directly",
+        "display_name": "Vector Search",
+        "has_executor": true,
+        "reads": [
+          "messages",
+          "state"
+        ],
+        "required_config_fields": [],
+        "type": "vector_search",
+        "writes": [
+          "context"
+        ]
+      },
+      {
+        "category": "logic",
+        "declared_in_graph_schema_enum": false,
+        "description": "Loop while condition is true",
+        "display_name": "While",
+        "has_executor": true,
+        "reads": [
+          "state",
+          "loop_counters"
+        ],
+        "required_config_fields": [],
+        "type": "while",
+        "writes": [
+          "next",
+          "loop_counters"
+        ]
+      }
+    ],
+    "registered_only_types": [
+      "agent",
+      "classify",
+      "if_else",
+      "rag",
+      "set_state",
+      "tool",
+      "user_approval",
+      "vector_search",
+      "while"
+    ],
+    "registered_types": [
+      "agent",
+      "cancel_subtree",
+      "classify",
+      "conditional",
+      "end",
+      "human_input",
+      "if_else",
+      "join",
+      "judge",
+      "llm",
+      "parallel",
+      "rag",
+      "replan",
+      "router",
+      "set_state",
+      "spawn_group",
+      "spawn_run",
+      "start",
+      "tool",
+      "transform",
+      "user_approval",
+      "vector_search",
+      "while"
+    ],
+    "schema_enum_types": [
+      "cancel_subtree",
+      "conditional",
+      "end",
+      "human_input",
+      "input",
+      "join",
+      "judge",
+      "llm",
+      "llm_call",
+      "loop",
+      "output",
+      "parallel",
+      "rag_pipeline",
+      "replan",
+      "router",
+      "spawn_group",
+      "spawn_run",
+      "start",
+      "tool_call",
+      "transform"
+    ],
+    "schema_only_types": [
+      "input",
+      "llm_call",
+      "loop",
+      "output",
+      "rag_pipeline",
+      "tool_call"
+    ]
+  },
+  "rag_operators": {
+    "items": [
+      {
+        "category": "chunking",
+        "deprecated": false,
+        "display_name": "Hierarchical Chunker",
+        "input_type": "enriched_documents",
+        "is_custom": false,
+        "operator_id": "hierarchical_chunker",
+        "optional_config_fields": [
+          "parent_chunk_size",
+          "child_chunk_size"
+        ],
+        "output_type": "chunks",
+        "required_config_fields": []
+      },
+      {
+        "category": "chunking",
+        "deprecated": false,
+        "display_name": "Recursive Character Chunker",
+        "input_type": "enriched_documents",
+        "is_custom": false,
+        "operator_id": "recursive_chunker",
+        "optional_config_fields": [
+          "chunk_size",
+          "chunk_overlap",
+          "separators"
+        ],
+        "output_type": "chunks",
+        "required_config_fields": []
+      },
+      {
+        "category": "chunking",
+        "deprecated": false,
+        "display_name": "Semantic Chunker",
+        "input_type": "enriched_documents",
+        "is_custom": false,
+        "operator_id": "semantic_chunker",
+        "optional_config_fields": [
+          "similarity_threshold",
+          "min_chunk_size"
+        ],
+        "output_type": "chunks",
+        "required_config_fields": [
+          "model_id"
+        ]
+      },
+      {
+        "category": "chunking",
+        "deprecated": false,
+        "display_name": "Token-Based Chunker",
+        "input_type": "enriched_documents",
+        "is_custom": false,
+        "operator_id": "token_based_chunker",
+        "optional_config_fields": [
+          "chunk_size",
+          "chunk_overlap"
+        ],
+        "output_type": "chunks",
+        "required_config_fields": []
+      },
+      {
+        "category": "embedding",
+        "deprecated": false,
+        "display_name": "Model Embedder",
+        "input_type": "chunks",
+        "is_custom": false,
+        "operator_id": "model_embedder",
+        "optional_config_fields": [],
+        "output_type": "embeddings",
+        "required_config_fields": [
+          "model_id"
+        ]
+      },
+      {
+        "category": "enrichment",
+        "deprecated": false,
+        "display_name": "Document Classifier",
+        "input_type": "normalized_documents",
+        "is_custom": false,
+        "operator_id": "classifier",
+        "optional_config_fields": [
+          "model_id",
+          "multi_label"
+        ],
+        "output_type": "enriched_documents",
+        "required_config_fields": [
+          "categories"
+        ]
+      },
+      {
+        "category": "enrichment",
+        "deprecated": false,
+        "display_name": "Entity Recognizer",
+        "input_type": "normalized_documents",
+        "is_custom": false,
+        "operator_id": "entity_recognizer",
+        "optional_config_fields": [
+          "entity_types",
+          "model"
+        ],
+        "output_type": "enriched_documents",
+        "required_config_fields": []
+      },
+      {
+        "category": "enrichment",
+        "deprecated": false,
+        "display_name": "Metadata Extractor",
+        "input_type": "normalized_documents",
+        "is_custom": false,
+        "operator_id": "metadata_extractor",
+        "optional_config_fields": [
+          "extract_dates",
+          "extract_titles",
+          "extract_authors",
+          "custom_patterns"
+        ],
+        "output_type": "enriched_documents",
+        "required_config_fields": []
+      },
+      {
+        "category": "enrichment",
+        "deprecated": false,
+        "display_name": "Document Summarizer",
+        "input_type": "normalized_documents",
+        "is_custom": false,
+        "operator_id": "summarizer",
+        "optional_config_fields": [
+          "max_summary_length",
+          "summary_style"
+        ],
+        "output_type": "enriched_documents",
+        "required_config_fields": [
+          "model_id"
+        ]
+      },
+      {
+        "category": "input",
+        "deprecated": false,
+        "display_name": "Query Input",
+        "input_type": "none",
+        "is_custom": false,
+        "operator_id": "query_input",
+        "optional_config_fields": [
+          "schema",
+          "filters"
+        ],
+        "output_type": "query",
+        "required_config_fields": [
+          "text"
+        ]
+      },
+      {
+        "category": "normalization",
+        "deprecated": false,
+        "display_name": "Format Normalizer",
+        "input_type": "raw_documents",
+        "is_custom": false,
+        "operator_id": "format_normalizer",
+        "optional_config_fields": [
+          "normalize_whitespace",
+          "normalize_unicode",
+          "lowercase"
+        ],
+        "output_type": "normalized_documents",
+        "required_config_fields": []
+      },
+      {
+        "category": "normalization",
+        "deprecated": false,
+        "display_name": "Language Detector",
+        "input_type": "raw_documents",
+        "is_custom": false,
+        "operator_id": "language_detector",
+        "optional_config_fields": [
+          "filter_languages"
+        ],
+        "output_type": "normalized_documents",
+        "required_config_fields": []
+      },
+      {
+        "category": "normalization",
+        "deprecated": false,
+        "display_name": "PII Redactor",
+        "input_type": "raw_documents",
+        "is_custom": false,
+        "operator_id": "pii_redactor",
+        "optional_config_fields": [
+          "redact_emails",
+          "redact_phones",
+          "redact_ssn",
+          "redact_names",
+          "replacement_text"
+        ],
+        "output_type": "normalized_documents",
+        "required_config_fields": []
+      },
+      {
+        "category": "output",
+        "deprecated": false,
+        "display_name": "Retrieval Result",
+        "input_type": "search_results",
+        "is_custom": false,
+        "operator_id": "retrieval_result",
+        "optional_config_fields": [],
+        "output_type": "none",
+        "required_config_fields": []
+      },
+      {
+        "category": "reranking",
+        "deprecated": false,
+        "display_name": "Cross-Encoder Reranker",
+        "input_type": "search_results",
+        "is_custom": false,
+        "operator_id": "cross_encoder_reranker",
+        "optional_config_fields": [
+          "model_name",
+          "top_k"
+        ],
+        "output_type": "reranked_results",
+        "required_config_fields": []
+      },
+      {
+        "category": "reranking",
+        "deprecated": false,
+        "display_name": "Model Reranker",
+        "input_type": "search_results",
+        "is_custom": false,
+        "operator_id": "model_reranker",
+        "optional_config_fields": [
+          "top_k"
+        ],
+        "output_type": "reranked_results",
+        "required_config_fields": [
+          "model_id"
+        ]
+      },
+      {
+        "category": "retrieval",
+        "deprecated": false,
+        "display_name": "Hybrid Search",
+        "input_type": "embeddings",
+        "is_custom": false,
+        "operator_id": "hybrid_search",
+        "optional_config_fields": [
+          "top_k",
+          "alpha"
+        ],
+        "output_type": "search_results",
+        "required_config_fields": [
+          "index_name"
+        ]
+      },
+      {
+        "category": "retrieval",
+        "deprecated": false,
+        "display_name": "Vector Search",
+        "input_type": "embeddings",
+        "is_custom": false,
+        "operator_id": "vector_search",
+        "optional_config_fields": [
+          "top_k",
+          "similarity_threshold",
+          "namespace"
+        ],
+        "output_type": "search_results",
+        "required_config_fields": [
+          "knowledge_store_id"
+        ]
+      },
+      {
+        "category": "source",
+        "deprecated": false,
+        "display_name": "Local File Loader",
+        "input_type": "none",
+        "is_custom": false,
+        "operator_id": "local_loader",
+        "optional_config_fields": [
+          "file_extensions",
+          "recursive"
+        ],
+        "output_type": "raw_documents",
+        "required_config_fields": [
+          "base_path"
+        ]
+      },
+      {
+        "category": "source",
+        "deprecated": false,
+        "display_name": "S3 Loader",
+        "input_type": "none",
+        "is_custom": false,
+        "operator_id": "s3_loader",
+        "optional_config_fields": [
+          "prefix",
+          "region_name"
+        ],
+        "output_type": "raw_documents",
+        "required_config_fields": [
+          "bucket",
+          "aws_access_key_id",
+          "aws_secret_access_key"
+        ]
+      },
+      {
+        "category": "source",
+        "deprecated": false,
+        "display_name": "Web Crawler",
+        "input_type": "none",
+        "is_custom": false,
+        "operator_id": "web_crawler",
+        "optional_config_fields": [
+          "max_depth",
+          "max_pages",
+          "respect_robots_txt",
+          "content_preference",
+          "wait_until",
+          "page_timeout_ms",
+          "scan_full_page"
+        ],
+        "output_type": "raw_documents",
+        "required_config_fields": [
+          "start_urls"
+        ]
+      },
+      {
+        "category": "storage",
+        "deprecated": false,
+        "display_name": "Knowledge Store",
+        "input_type": "embeddings",
+        "is_custom": false,
+        "operator_id": "knowledge_store_sink",
+        "optional_config_fields": [
+          "namespace",
+          "batch_size"
+        ],
+        "output_type": "vectors",
+        "required_config_fields": [
+          "knowledge_store_id"
+        ]
+      }
+    ],
+    "registered_operator_ids": [
+      "classifier",
+      "cross_encoder_reranker",
+      "entity_recognizer",
+      "format_normalizer",
+      "hierarchical_chunker",
+      "hybrid_search",
+      "knowledge_store_sink",
+      "language_detector",
+      "local_loader",
+      "metadata_extractor",
+      "model_embedder",
+      "model_reranker",
+      "pii_redactor",
+      "query_input",
+      "recursive_chunker",
+      "retrieval_result",
+      "s3_loader",
+      "semantic_chunker",
+      "summarizer",
+      "token_based_chunker",
+      "vector_search",
+      "web_crawler"
+    ]
+  },
+  "summary": {
+    "agent_registered_count": 23,
+    "agent_schema_enum_count": 20,
+    "rag_operator_count": 22
+  }
+}

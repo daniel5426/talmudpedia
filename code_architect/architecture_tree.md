@@ -40,6 +40,7 @@ backend/app/core/security.py
 backend/app/core/rbac.py
 backend/app/core/scope_registry.py
 backend/app/core/audit.py
+backend/app/core/env_loader.py
 backend/app/core/internal_token.py
 backend/app/core/jwt_keys.py
 backend/app/core/workload_jwt.py
@@ -170,6 +171,7 @@ backend/app/services/orchestration_kernel_service.py
 backend/app/services/orchestration_policy_service.py
 backend/app/services/orchestration_lineage_service.py
 backend/app/services/mcp_client.py
+backend/app/services/node_surface_inventory.py
 backend/app/services/web_search.py
 backend/app/services/tool_binding_service.py
 backend/app/services/apps_builder_trace.py

@@ -1,6 +1,6 @@
 # Generated Docs Index
 
-Last Updated: 2026-03-10
+Last Updated: 2026-03-18
 
 This section is for generated or machine-derived documentation artifacts.
 
@@ -22,6 +22,8 @@ This section is for generated or machine-derived documentation artifacts.
 ## Current Generated/Historical Mapping
 - `backend/documentations/summary/opencode_tools_protocol_probe_2026-02-25.json`
 - `backend/documentations/summary/opencode_tools_protocol_probe_legacy_2026-02-25.json`
+- `node_surface_inventory.json`
+- `node_surface_inventory.md`
 
 See also:
 - `docs/exec-plans/legacy_plan_and_summary_map.md`

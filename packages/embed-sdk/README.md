@@ -1,6 +1,6 @@
 # `@agents24/embed-sdk`
 
-Last Updated: 2026-03-17
+Last Updated: 2026-03-18
 
 `@agents24/embed-sdk` is the canonical server-only TypeScript SDK for Talmudpedia embedded-agent runtime.
 
@@ -124,6 +124,13 @@ type StreamAgentResult = {
 
 `onEvent` receives typed `run-stream.v2` envelopes.
 
+Current behavior:
+
+- callback-based streaming only
+- resolves after the full SSE stream is consumed
+- returns `threadId` from the `X-Thread-ID` response header
+- does not currently expose abort, timeout, retry, or async-iterator helpers
+
 ### `listAgentThreads(agentId, options)`
 
 Wraps:
@@ -147,6 +154,61 @@ Options:
 
 - `externalUserId`
 - `externalSessionId?`
+
+Returned turn shape includes:
+
+- `id`
+- `run_id`
+- `turn_index`
+- `user_input_text`
+- `assistant_output_text`
+- `status`
+- `usage_tokens`
+- `metadata`
+- `created_at`
+- `completed_at`
+- `run_events`
+
+`run_events` contains ordered historical non-text `run-stream.v2` events for that turn, intended for replaying tool/reasoning UI on old chats.
+
+### `deleteAgentThread(agentId, threadId, options)`
+
+Wraps:
+
+- `DELETE /public/embed/agents/{agent_id}/threads/{thread_id}`
+
+Options:
+
+- `externalUserId`
+- `externalSessionId?`
+
+## Exact Current Surface
+
+This package currently exposes exactly 4 runtime methods:
+
+- `streamAgent(...)`
+- `listAgentThreads(...)`
+- `getAgentThread(...)`
+- `deleteAgentThread(...)`
+
+It intentionally does not expose:
+
+- a separate run-events fetch method beyond `getAgentThread(...).turns[].run_events`
+- agent/tool/admin management
+- browser auth/session helpers
+
+If you need one of those capabilities, treat it as a platform/public-embed contract change first, not just an SDK patch.
+
+## Source Map
+
+If you need to change the SDK in an integrated way, start from these files:
+
+- SDK client methods: `src/client.ts`
+- SDK request/response types: `src/types.ts`
+- SDK SSE parsing: `src/sse.ts`
+- SDK HTTP/runtime guards: `src/http.ts`
+- public embed backend routes: `../../backend/app/api/routers/embedded_agents_public.py`
+- backend serialization/runtime service: `../../backend/app/services/embedded_agent_runtime_service.py`
 
 ## Thread And History Usage
 

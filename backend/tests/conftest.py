@@ -12,22 +12,21 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
+import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from app.core.env_loader import ENV_FILE_VAR, ENV_PROFILE_VAR, load_backend_env
+
+_LOADED_TEST_ENV = load_backend_env(override=False, prefer_test_env=True)
+if _LOADED_TEST_ENV is not None:
+    os.environ.setdefault(ENV_FILE_VAR, str(_LOADED_TEST_ENV))
+os.environ.setdefault(ENV_PROFILE_VAR, "test")
+
 USE_REAL_DB = os.getenv("TEST_USE_REAL_DB") == "1"
 sqlite3.register_adapter(UUID, lambda value: str(value))
 os.environ.setdefault("APPS_BUILDER_BUILD_AUTOMATION_ENABLED", "0")
 os.environ.setdefault("APPS_PUBLISH_JOB_EAGER", "1")
 os.environ.setdefault("APPS_PUBLISH_MOCK_MODE", "1")
-
-if USE_REAL_DB:
-    try:
-        from dotenv import load_dotenv
-        env_path = Path(__file__).resolve().parents[1] / ".env"
-        load_dotenv(env_path)
-    except Exception:
-        pass
-
-import sys
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.db.postgres.base import Base
 from app.db.postgres.session import get_db

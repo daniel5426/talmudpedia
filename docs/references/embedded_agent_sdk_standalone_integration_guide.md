@@ -1,6 +1,6 @@
 # Embedded Agent SDK Standalone Integration Guide
 
-Last Updated: 2026-03-17
+Last Updated: 2026-03-18
 
 This guide describes how a customer uses `@agents24/embed-sdk` to build a standalone app around an agent created on the platform.
 
@@ -19,6 +19,7 @@ Important rule:
 - the customer backend talks to Talmudpedia
 - the Talmudpedia tenant API key must never be exposed to the browser
 - `@agents24/embed-sdk` must never be imported into browser code
+- the customer backend should use `@agents24/embed-sdk` as its integration surface, not bypass it with direct admin/internal platform API calls
 
 ## Prerequisites
 
@@ -134,6 +135,13 @@ const thread = await talmudpediaEmbedClient.getAgentThread(agentId, threadId, {
 });
 ```
 
+Current boundary:
+
+- thread detail gives final persisted turns
+- each turn also includes `run_events` with ordered historical non-text `run-stream.v2` events for replaying tool/reasoning UI on old chats
+- delete-thread is available through the embed public API and `@agents24/embed-sdk`
+- if the standalone app needs a future missing capability, fix the public embed API and `@agents24/embed-sdk` first instead of adding a standalone-only direct platform API workaround
+
 ## Identity and Thread Rules
 
 The customer must pass its own user identity on every call:
@@ -170,3 +178,4 @@ Thread ownership is enforced by:
 - Do not import `@agents24/embed-sdk` into a React app, Next client component, or any browser bundle.
 - Do not use `@talmudpedia/runtime-sdk` for embedded-agent runtime.
 - Do not create a published app if the product need is only “use this agent inside my existing app”.
+- Do not patch `talmudpedia-standalone/` with direct calls to admin/internal Talmudpedia APIs to work around missing embed-SDK features.

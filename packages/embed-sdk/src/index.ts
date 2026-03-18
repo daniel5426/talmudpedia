@@ -8,6 +8,8 @@ export type {
   EmbeddedAgentSDKSerializedError,
   EmbeddedAgentStreamRequest,
   EmbeddedAgentThreadDetail,
+  EmbeddedAgentThreadDeleteOptions,
+  EmbeddedAgentThreadDeleteResult,
   EmbeddedAgentThreadDetailOptions,
   EmbeddedAgentThreadListOptions,
   EmbeddedAgentThreadSummary,

@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+from uuid import UUID
 
 import pytest
 from sqlalchemy import func, select
 
-from app.db.postgres.models.agents import Agent, AgentStatus
-from app.db.postgres.models.agent_threads import AgentThread
+from app.agent.execution.trace_recorder import ExecutionTraceRecorder
+from app.db.postgres.models.agents import Agent, AgentRun, AgentStatus
+from app.db.postgres.models.agent_threads import AgentThread, AgentThreadTurn, AgentThreadTurnStatus
 from app.services.tenant_api_key_service import TenantAPIKeyService
 from tests.published_apps._helpers import seed_admin_tenant_and_agent
 
@@ -98,6 +100,133 @@ async def test_embedded_agent_stream_persists_and_scopes_threads(client, db_sess
 
 
 @pytest.mark.asyncio
+async def test_embedded_agent_thread_detail_includes_run_events_and_delete_route(client, db_session, monkeypatch):
+    tenant, owner, _, agent = await seed_admin_tenant_and_agent(db_session)
+    _, token = await _create_embed_key(db_session, tenant_id=tenant.id, created_by=owner.id)
+
+    async def fake_run_and_stream(self, *args, **kwargs):
+        yield {
+            "event": "token",
+            "data": {"content": "hello from embed"},
+            "visibility": "client_safe",
+        }
+
+    monkeypatch.setattr("app.services.embedded_agent_runtime_service.AgentExecutorService.run_and_stream", fake_run_and_stream)
+
+    stream_resp = await client.post(
+        f"/public/embed/agents/{agent.id}/chat/stream",
+        headers=_embed_headers(token),
+        json={"input": "hi", "external_user_id": "customer-user-1"},
+    )
+    assert stream_resp.status_code == 200
+    thread_id = stream_resp.headers["X-Thread-ID"]
+
+    stored_thread = await db_session.get(AgentThread, thread_id)
+    assert stored_thread is not None
+    run_row = await db_session.scalar(
+        select(AgentRun).where(AgentRun.thread_id == UUID(thread_id)).limit(1)
+    )
+    assert run_row is not None
+    db_session.add(
+        AgentThreadTurn(
+            thread_id=UUID(thread_id),
+            run_id=run_row.id,
+            turn_index=0,
+            user_input_text="hi",
+            assistant_output_text="hello from embed",
+            status=AgentThreadTurnStatus.completed,
+        )
+    )
+    stored_thread.last_run_id = run_row.id
+    await db_session.commit()
+
+    initial_detail_resp = await client.get(
+        f"/public/embed/agents/{agent.id}/threads/{thread_id}",
+        headers=_embed_headers(token),
+        params={"external_user_id": "customer-user-1"},
+    )
+    assert initial_detail_resp.status_code == 200
+    initial_turn = initial_detail_resp.json()["turns"][0]
+    run_id = UUID(initial_turn["run_id"])
+
+    recorder = ExecutionTraceRecorder(serializer=lambda value: value)
+    await recorder.save_event(
+        run_id,
+        db_session,
+        {
+            "event": "on_tool_start",
+            "name": "lookup_client",
+            "span_id": "tool-call-1",
+            "visibility": "internal",
+            "data": {
+                "input": {"client_id": "32001"},
+                "display_name": "Lookup client",
+                "summary": "Looking up client data",
+                "message": "Looking up client data",
+            },
+        },
+    )
+    await recorder.save_event(
+        run_id,
+        db_session,
+        {
+            "event": "on_tool_end",
+            "name": "lookup_client",
+            "span_id": "tool-call-1",
+            "visibility": "internal",
+            "data": {
+                "output": {"client_id": "32001"},
+                "display_name": "Lookup client",
+                "summary": "Client data loaded",
+            },
+        },
+    )
+    await db_session.commit()
+
+    detail_resp = await client.get(
+        f"/public/embed/agents/{agent.id}/threads/{thread_id}",
+        headers=_embed_headers(token),
+        params={"external_user_id": "customer-user-1"},
+    )
+    assert detail_resp.status_code == 200
+    payload = detail_resp.json()
+    assert payload["id"] == thread_id
+    assert len(payload["turns"]) == 1
+    turn = payload["turns"][0]
+    assert turn["run_id"] == str(run_id)
+    assert [item["event"] for item in turn["run_events"]] == [
+        "tool.started",
+        "reasoning.update",
+        "tool.completed",
+        "reasoning.update",
+    ]
+    assert [item["run_id"] for item in turn["run_events"]] == [str(run_id)] * 4
+
+    delete_resp = await client.delete(
+        f"/public/embed/agents/{agent.id}/threads/{thread_id}",
+        headers=_embed_headers(token),
+        params={"external_user_id": "customer-user-1"},
+    )
+    assert delete_resp.status_code == 200
+    assert delete_resp.json() == {"deleted": True}
+
+    list_resp = await client.get(
+        f"/public/embed/agents/{agent.id}/threads",
+        headers=_embed_headers(token),
+        params={"external_user_id": "customer-user-1"},
+    )
+    assert list_resp.status_code == 200
+    assert list_resp.json()["total"] == 0
+
+    missing_resp = await client.get(
+        f"/public/embed/agents/{agent.id}/threads/{thread_id}",
+        headers=_embed_headers(token),
+        params={"external_user_id": "customer-user-1"},
+    )
+    assert missing_resp.status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_embedded_agent_routes_reject_wrong_scope_revoked_keys_and_cross_user_access(client, db_session, monkeypatch):
     tenant, owner, _, agent = await seed_admin_tenant_and_agent(db_session)
     _, token = await _create_embed_key(db_session, tenant_id=tenant.id, created_by=owner.id)
@@ -134,6 +263,13 @@ async def test_embedded_agent_routes_reject_wrong_scope_revoked_keys_and_cross_u
         params={"external_user_id": "customer-user-2"},
     )
     assert cross_user.status_code == 404
+
+    cross_user_delete = await client.delete(
+        f"/public/embed/agents/{agent.id}/threads/{thread_id}",
+        headers=_embed_headers(token),
+        params={"external_user_id": "customer-user-2"},
+    )
+    assert cross_user_delete.status_code == 404
 
     wrong_scope_resp = await client.get(
         f"/public/embed/agents/{agent.id}/threads",
