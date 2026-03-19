@@ -55,7 +55,9 @@ Tooling split in that script:
 - `frontend-reshet`: `pnpm`
 - `backend`: `pip` + `pytest`
 
-The script performs a clean reinstall in `frontend-reshet` before running the Jest check so mixed `npm`/`pnpm` state in `node_modules` does not break the preflight.
+`frontend-reshet` is standardized on `pnpm`. Do not regenerate or commit a `package-lock.json` there.
+
+The script performs a clean reinstall in `frontend-reshet` before running the Jest check so stale local `node_modules` state does not break the preflight.
 
 Run:
 

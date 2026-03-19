@@ -1,6 +1,6 @@
 # Embed SDK Tests
 
-Last Updated: 2026-03-17
+Last Updated: 2026-03-19
 
 Scope:
 - TypeScript `@agents24/embed-sdk` transport, protocol, and server-only runtime behavior.
@@ -16,8 +16,8 @@ Key scenarios covered:
 - HTTP, text-body, and network failures map to typed SDK errors.
 - Browser runtime instantiation is rejected.
 
-Last run command: `cd frontend-reshet && npm test -- --runInBand src/__tests__/embed_sdk/embedded_agent_sdk.test.ts`
-Last run date/time: 2026-03-17 18:30 EET
+Last run command: `cd frontend-reshet && pnpm exec jest --runInBand src/__tests__/embed_sdk/embedded_agent_sdk.test.ts`
+Last run date/time: 2026-03-19 05:01 Asia/Hebron
 Last run result: pass (`1 suite, 6 tests`)
 
 Known gaps / follow-ups:
