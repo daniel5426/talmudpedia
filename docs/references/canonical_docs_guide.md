@@ -71,7 +71,7 @@ This guide lists the current canonical documentation entry points after the firs
   - Canonical customer integration guide for building a standalone app with `@agents24/embed-sdk`.
   - Use this alongside `packages/embed-sdk/README.md` for the server-only embed SDK contract and customer-backend architecture.
 - `docs/references/embed_sdk_release_runbook.md`
-  - Operational runbook for releasing `@agents24/embed-sdk`, including `release-please`, npm auth, provenance, and fallback manual publish steps.
+  - Operational runbook for releasing `@agents24/embed-sdk`, including direct GitHub Actions publish, npm auth, provenance, and fallback manual publish steps.
 
 ## Focused Current Detail Docs Still Under `backend/documentations/`
 

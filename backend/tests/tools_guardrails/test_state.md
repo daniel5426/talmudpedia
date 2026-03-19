@@ -21,9 +21,9 @@ Covers tool control-plane guardrails and tenant-isolation behavior.
 - Removed built-in instance routes now return `404` (no instance management API surface).
 
 ## Last run command + result
-- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/tool_bindings/test_agent_tool_bindings.py backend/tests/tools_guardrails/test_tools_api_guardrails.py backend/tests/tool_bindings/test_domain_owned_tool_bindings.py`
-- Date/Time: 2026-03-18 19:10 Asia/Hebron
-- Result: pass (`14 passed`)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/builtin_tools_registry/test_builtin_registry_api.py backend/tests/tools_guardrails/test_tools_api_guardrails.py backend/tests/tool_bindings/test_domain_owned_tool_bindings.py backend/tests/tool_bindings/test_agent_tool_bindings.py`
+- Date/Time: 2026-03-19 14:36 EET
+- Result: pass (`22 passed`)
 
 ## Known gaps / follow-ups
 - Add coverage for workload-principal publish/delete approval gates on `/tools` routes.

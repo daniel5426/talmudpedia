@@ -8,6 +8,7 @@ import { CustomBreadcrumb } from "@/components/ui/custom-breadcrumb"
 import { AdminPageHeader } from "@/components/admin/AdminPageHeader"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import {
     Dialog,
@@ -77,6 +78,7 @@ export default function PipelineEditorPage() {
     const [toolBinding, setToolBinding] = useState<PipelineToolBinding | null>(null)
     const [toolBindingLoading, setToolBindingLoading] = useState(false)
     const [toolBindingSaving, setToolBindingSaving] = useState(false)
+    const [toolName, setToolName] = useState("")
     const [toolDescription, setToolDescription] = useState("")
     const [toolInputSchemaText, setToolInputSchemaText] = useState('{\n  "type": "object",\n  "properties": {},\n  "additionalProperties": false\n}')
 
@@ -94,6 +96,7 @@ export default function PipelineEditorPage() {
         try {
             const binding = await ragAdminService.getPipelineToolBinding(targetPipelineId, currentTenant?.slug)
             setToolBinding(binding)
+            setToolName(binding.tool_name || "")
             setToolDescription(binding.description || "")
             setToolInputSchemaText(JSON.stringify(binding.input_schema || {}, null, 2))
         } catch (error) {
@@ -385,12 +388,14 @@ export default function PipelineEditorPage() {
                 pipeline.id,
                 {
                     enabled,
+                    tool_name: toolName,
                     description: toolDescription,
                     input_schema: parsedInputSchema,
                 },
                 currentTenant?.slug
             )
             setToolBinding(binding)
+            setToolName(binding.tool_name || "")
             setToolDescription(binding.description || "")
             setToolInputSchemaText(JSON.stringify(binding.input_schema || {}, null, 2))
         } catch (error) {
@@ -399,7 +404,7 @@ export default function PipelineEditorPage() {
         } finally {
             setToolBindingSaving(false)
         }
-    }, [currentTenant?.slug, pipeline, toolDescription, toolInputSchemaText])
+    }, [currentTenant?.slug, pipeline, toolDescription, toolInputSchemaText, toolName])
 
     const ensureExecutableForRun = useCallback(async (): Promise<CompileResult | null> => {
         if (compileResult?.executable_pipeline_id) {
@@ -504,6 +509,21 @@ export default function PipelineEditorPage() {
 
                                     {(toolBinding?.enabled || toolSettingsParam) && (
                                         <>
+                                            <div className="space-y-2">
+                                                <span className="text-xs font-medium text-foreground/80">Tool name</span>
+                                                <Input
+                                                    value={toolName}
+                                                    onChange={(event) => setToolName(event.target.value)}
+                                                    className="border-border/60 bg-muted/20"
+                                                    placeholder="Agent-facing tool name"
+                                                    disabled={toolBindingLoading}
+                                                />
+                                                {toolBinding?.tool_id ? (
+                                                    <div className="text-[11px] text-muted-foreground/70">
+                                                        Tool ID: <span className="font-mono">{toolBinding.tool_id}</span>
+                                                    </div>
+                                                ) : null}
+                                            </div>
                                             <div className="space-y-2">
                                                 <div className="flex items-center justify-between">
                                                     <span className="text-xs font-medium text-foreground/80">Tool description</span>

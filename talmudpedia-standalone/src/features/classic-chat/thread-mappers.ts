@@ -6,10 +6,16 @@ import type {
 } from "./standalone-runtime";
 import type {
   TemplateAttachment,
+  TemplateCartesianChartWidgetSpec,
   TemplateMessage,
+  TemplatePieChartWidgetSpec,
   TemplateRenderBlock,
+  TemplateStatWidgetSpec,
+  TemplateTableWidgetSpec,
   TemplateTextBlock,
   TemplateThread,
+  TemplateWidgetBlock,
+  TemplateWidgetType,
 } from "./types";
 
 const FALLBACK_PREVIEW = "Start a new conversation.";
@@ -238,5 +244,96 @@ export function applyRuntimeEvent(
     ];
   }
 
+  if (event.event === "assistant.widget") {
+    const widgetBlock = parseWidgetBlock(event.payload);
+    if (!widgetBlock) {
+      return blocks;
+    }
+    return [
+      ...blocks,
+      {
+        id: createId(),
+        kind: "widget",
+        widgetType: widgetBlock.widgetType,
+        title: widgetBlock.title,
+        subtitle: widgetBlock.subtitle,
+        spec: widgetBlock.spec,
+        version: widgetBlock.version,
+      },
+    ];
+  }
+
   return blocks;
+}
+
+function parseWidgetBlock(payload: Record<string, unknown>): Omit<TemplateWidgetBlock, "id" | "kind"> | null {
+  const widgetType = typeof payload.widget_type === "string" ? payload.widget_type : null;
+  const rawSpec = payload.spec;
+  if (!widgetType || !rawSpec || typeof rawSpec !== "object") {
+    return null;
+  }
+
+  if (widgetType === "stat") {
+    const spec = rawSpec as TemplateStatWidgetSpec;
+    if (typeof spec.value !== "string" && typeof spec.value !== "number") {
+      return null;
+    }
+    return {
+      widgetType,
+      title: typeof payload.title === "string" ? payload.title : undefined,
+      subtitle: typeof payload.subtitle === "string" ? payload.subtitle : undefined,
+      spec,
+      version: 1,
+    };
+  }
+
+  if (widgetType === "table") {
+    const spec = rawSpec as TemplateTableWidgetSpec;
+    if (!Array.isArray(spec.columns) || !Array.isArray(spec.rows)) {
+      return null;
+    }
+    return {
+      widgetType,
+      title: typeof payload.title === "string" ? payload.title : undefined,
+      subtitle: typeof payload.subtitle === "string" ? payload.subtitle : undefined,
+      spec,
+      version: 1,
+    };
+  }
+
+  if (widgetType === "bar_chart" || widgetType === "line_chart") {
+    const spec = rawSpec as TemplateCartesianChartWidgetSpec;
+    if (!Array.isArray(spec.data) || typeof spec.xKey !== "string" || typeof spec.yKey !== "string") {
+      return null;
+    }
+    return {
+      widgetType: widgetType as Extract<TemplateWidgetType, "bar_chart" | "line_chart">,
+      title: typeof payload.title === "string" ? payload.title : undefined,
+      subtitle: typeof payload.subtitle === "string" ? payload.subtitle : undefined,
+      spec,
+      version: 1,
+    };
+  }
+
+  if (widgetType === "pie_chart") {
+    const spec = rawSpec as TemplatePieChartWidgetSpec;
+    if (!Array.isArray(spec.data) || typeof spec.labelKey !== "string" || typeof spec.valueKey !== "string") {
+      return null;
+    }
+    return {
+      widgetType,
+      title: typeof payload.title === "string" ? payload.title : undefined,
+      subtitle: typeof payload.subtitle === "string" ? payload.subtitle : undefined,
+      spec,
+      version: 1,
+    };
+  }
+
+  return {
+    widgetType: "unknown",
+    title: typeof payload.title === "string" ? payload.title : undefined,
+    subtitle: typeof payload.subtitle === "string" ? payload.subtitle : undefined,
+    spec: rawSpec as Record<string, unknown>,
+    version: 1,
+  };
 }

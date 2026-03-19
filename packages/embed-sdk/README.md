@@ -1,6 +1,6 @@
 # `@agents24/embed-sdk`
 
-Last Updated: 2026-03-18
+Last Updated: 2026-03-19
 
 `@agents24/embed-sdk` is the canonical server-only TypeScript SDK for Talmudpedia embedded-agent runtime.
 
@@ -169,7 +169,20 @@ Returned turn shape includes:
 - `completed_at`
 - `run_events`
 
-`run_events` contains ordered historical non-text `run-stream.v2` events for that turn, intended for replaying tool/reasoning UI on old chats.
+`run_events` contains ordered historical non-text `run-stream.v2` events for that turn, intended for replaying tool, reasoning, and widget UI on old chats.
+
+Current widget event:
+
+- `assistant.widget`
+
+Current widget payload fields:
+
+- `widget_id`
+- `widget_type`
+- `title`
+- `subtitle`
+- `spec`
+- `version`
 
 ### `deleteAgentThread(agentId, threadId, options)`
 
@@ -262,4 +275,4 @@ See [`examples/express-typescript/`](./examples/express-typescript/) for a minim
 
 ## Release Notes
 
-This package is released through GitHub Actions using release-please and npm trusted publishing. Local `npm pack` and `npm run smoke:pack` are the expected pre-release verification commands.
+This package is released through GitHub Actions using direct publish from `main` and npm trusted publishing. Local `npm pack` and `npm run smoke:pack` are the expected pre-release verification commands.

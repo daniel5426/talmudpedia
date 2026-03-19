@@ -62,7 +62,7 @@ export function BotInputArea({
         >
           <PromptInputBody>
             <PromptInputTextarea
-              className="min-h-[48px] bg-transparent text-[0.95rem] md:text-[0.95rem]"
+              className="min-h-[48px] bg-transparent text-[0.90rem] md:text-[0.90rem]"
               onChange={(event) => onInputValueChange(event.target.value)}
               placeholder={locale === "he" ? "כתוב הודעה..." : "Message..."}
               value={inputValue}

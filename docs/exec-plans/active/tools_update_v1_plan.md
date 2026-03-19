@@ -45,7 +45,7 @@ Implemented in the current backend follow-up pass:
 - legacy rows are backfilled at migration time and `/tools` keeps a legacy fallback path for pre-backfill or test-created rows
 
 Still pending beyond this pass:
-- pipeline binding still does not support a separate model-facing tool name/slug beyond the pipeline identity
+- pipeline binding slug remains pipeline-derived by design; only model-facing tool name is editable from the binding flow
 - frontend coverage is still missing for the pipeline-page tool settings panel and registry redirect/open-editor actions
 - no dedicated migration-level regression currently asserts legacy `rag_retrieval` row normalization to `rag_pipeline`
 

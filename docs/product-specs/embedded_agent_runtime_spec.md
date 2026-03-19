@@ -174,6 +174,31 @@ The SDK does not currently expose:
 - retry, timeout, or abort controls
 - control-plane/admin operations
 
+## Generic Widget Events
+
+The public embed runtime also supports replayable generic widget events through the normal stream/history contract.
+
+- event name: `assistant.widget`
+- stage: `assistant`
+- delivery: live SSE stream and historical `turns[].run_events`
+
+Current widget payload fields:
+
+- `widget_id`
+- `widget_type`
+- `title`
+- `subtitle`
+- `spec`
+- `version`
+
+Current widget types:
+
+- `stat`
+- `table`
+- `bar_chart`
+- `line_chart`
+- `pie_chart`
+
 ## Thread Detail Contract Boundary
 
 `GET /public/embed/agents/{agent_id}/threads/{thread_id}` returns thread summary plus persisted turns.
@@ -198,7 +223,7 @@ Important boundary:
 - `run_id` is exposed on turns
 - `run_events` provides ordered historical non-text public run events for that turn
 - these events are returned in `run-stream.v2` envelope shape
-- this is intended for replaying tool/reasoning history on old chats without bypassing the embed contract
+- this is intended for replaying tool, reasoning, and widget history on old chats without bypassing the embed contract
 - final assistant text still comes from `assistant_output_text`, not token replay
 
 ## Canonical Implementation References

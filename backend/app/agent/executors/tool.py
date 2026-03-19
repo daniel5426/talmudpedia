@@ -22,6 +22,7 @@ from app.agent.execution.tool_input_contracts import (
     summarize_validation_errors,
     validate_tool_input_schema,
 )
+from app.agent.execution.types import EventVisibility
 from app.agent.executors.base import BaseNodeExecutor, ValidationResult
 from app.agent.execution.tool_event_metadata import resolve_tool_event_metadata
 from app.agent.executors.retrieval_runtime import PipelineToolRuntime, RetrievalPipelineRuntime
@@ -40,6 +41,9 @@ from app.services.tool_function_registry import ensure_tool_functions_registered
 from app.services.web_search import create_web_search_provider
 
 logger = logging.getLogger(__name__)
+
+WIDGET_FORMATS = {"number", "currency", "percent"}
+WIDGET_TYPES = {"stat", "table", "bar_chart", "line_chart", "pie_chart"}
 
 INTERNAL_TOOL_RUNTIME_INPUT_KEYS = {
     "run_id",
@@ -969,6 +973,7 @@ class ToolNodeExecutor(BaseNodeExecutor):
         implementation_config: dict[str, Any],
         execution_config: dict[str, Any],
         context: dict[str, Any] | None,
+        emitter: Any | None,
     ) -> dict[str, Any] | None:
         builtin_key = str(getattr(tool, "builtin_key", "") or "").strip().lower()
         if not builtin_key:
@@ -994,8 +999,151 @@ class ToolNodeExecutor(BaseNodeExecutor):
             return await self._execute_json_transform_builtin(input_data, implementation_config)
         if builtin_key == "datetime_utils":
             return await self._execute_datetime_utils_builtin(input_data, implementation_config)
+        if builtin_key == "emit_widget":
+            return await self._execute_emit_widget_builtin(
+                input_data=input_data,
+                implementation_config=implementation_config,
+                emitter=emitter,
+            )
 
         return None
+
+    def _require_json_safe(self, value: Any, *, path: str) -> None:
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            return
+        if isinstance(value, list):
+            for index, item in enumerate(value):
+                self._require_json_safe(item, path=f"{path}[{index}]")
+            return
+        if isinstance(value, dict):
+            for key, item in value.items():
+                if not isinstance(key, str) or not key.strip():
+                    raise ValueError(f"{path} keys must be non-empty strings")
+                self._require_json_safe(item, path=f"{path}.{key}")
+            return
+        raise ValueError(f"{path} must contain only JSON-safe values")
+
+    def _validate_widget_format(self, spec: dict[str, Any], *, path: str) -> None:
+        raw_format = spec.get("format")
+        if raw_format is None:
+            return
+        if str(raw_format).strip().lower() not in WIDGET_FORMATS:
+            raise ValueError(f"{path}.format must be one of: {', '.join(sorted(WIDGET_FORMATS))}")
+
+    def _validate_widget_spec(self, *, widget_type: str, spec: dict[str, Any]) -> None:
+        if widget_type == "stat":
+            if "value" not in spec:
+                raise ValueError("stat widget requires spec.value")
+            self._validate_widget_format(spec, path="spec")
+            trend = spec.get("trend")
+            if trend is not None:
+                if not isinstance(trend, dict):
+                    raise ValueError("stat widget spec.trend must be an object")
+                direction = str(trend.get("direction") or "").strip().lower()
+                if direction not in {"up", "down", "flat"}:
+                    raise ValueError("stat widget spec.trend.direction must be up, down, or flat")
+                if not isinstance(trend.get("value"), (int, float)):
+                    raise ValueError("stat widget spec.trend.value must be numeric")
+            return
+
+        if widget_type == "table":
+            columns = spec.get("columns")
+            rows = spec.get("rows")
+            if not isinstance(columns, list) or not columns:
+                raise ValueError("table widget requires non-empty spec.columns")
+            if not isinstance(rows, list):
+                raise ValueError("table widget requires spec.rows")
+            for index, column in enumerate(columns):
+                if not isinstance(column, dict):
+                    raise ValueError(f"spec.columns[{index}] must be an object")
+                key = str(column.get("key") or "").strip()
+                label = str(column.get("label") or "").strip()
+                if not key or not label:
+                    raise ValueError(f"spec.columns[{index}] requires key and label")
+            for index, row in enumerate(rows):
+                if not isinstance(row, dict):
+                    raise ValueError(f"spec.rows[{index}] must be an object")
+            return
+
+        if widget_type in {"bar_chart", "line_chart"}:
+            data = spec.get("data")
+            x_key = str(spec.get("xKey") or "").strip()
+            y_key = str(spec.get("yKey") or "").strip()
+            if not isinstance(data, list) or not data:
+                raise ValueError(f"{widget_type} widget requires non-empty spec.data")
+            if not x_key or not y_key:
+                raise ValueError(f"{widget_type} widget requires spec.xKey and spec.yKey")
+            for index, row in enumerate(data):
+                if not isinstance(row, dict):
+                    raise ValueError(f"spec.data[{index}] must be an object")
+            self._validate_widget_format(spec, path="spec")
+            return
+
+        if widget_type == "pie_chart":
+            data = spec.get("data")
+            label_key = str(spec.get("labelKey") or "").strip()
+            value_key = str(spec.get("valueKey") or "").strip()
+            if not isinstance(data, list) or not data:
+                raise ValueError("pie_chart widget requires non-empty spec.data")
+            if not label_key or not value_key:
+                raise ValueError("pie_chart widget requires spec.labelKey and spec.valueKey")
+            for index, row in enumerate(data):
+                if not isinstance(row, dict):
+                    raise ValueError(f"spec.data[{index}] must be an object")
+            self._validate_widget_format(spec, path="spec")
+            return
+
+        raise ValueError(f"Unsupported widget_type: {widget_type}")
+
+    async def _execute_emit_widget_builtin(
+        self,
+        *,
+        input_data: dict[str, Any],
+        implementation_config: dict[str, Any],
+        emitter: Any | None,
+    ) -> dict[str, Any]:
+        widget_type = str(input_data.get("widget_type") or implementation_config.get("widget_type") or "").strip().lower()
+        if widget_type not in WIDGET_TYPES:
+            raise ValueError(f"widget_type must be one of: {', '.join(sorted(WIDGET_TYPES))}")
+
+        raw_spec = input_data.get("spec")
+        if raw_spec is None:
+            raw_spec = implementation_config.get("spec")
+        if not isinstance(raw_spec, dict):
+            raise ValueError("emit_widget requires spec to be an object")
+        spec = dict(raw_spec)
+        self._require_json_safe(spec, path="spec")
+        self._validate_widget_spec(widget_type=widget_type, spec=spec)
+
+        payload: dict[str, Any] = {
+            "widget_id": str(input_data.get("widget_id") or uuid4().hex),
+            "widget_type": widget_type,
+            "spec": spec,
+            "version": 1,
+        }
+        title = input_data.get("title")
+        subtitle = input_data.get("subtitle")
+        if isinstance(title, str) and title.strip():
+            payload["title"] = title.strip()
+        if isinstance(subtitle, str) and subtitle.strip():
+            payload["subtitle"] = subtitle.strip()
+
+        if emitter is None:
+            raise RuntimeError("emit_widget requires an active execution emitter")
+
+        emitter.emit_internal_event(
+            "assistant.widget",
+            payload,
+            category="assistant_ui",
+            visibility=EventVisibility.CLIENT_SAFE,
+        )
+
+        return {
+            "ok": True,
+            "widget_id": payload["widget_id"],
+            "widget_type": widget_type,
+            "version": 1,
+        }
 
     def _resolve_input_data(self, state: dict[str, Any], config: dict[str, Any] | None = None) -> dict[str, Any]:
         prefer_last = False
@@ -1478,6 +1626,7 @@ class ToolNodeExecutor(BaseNodeExecutor):
                 implementation_config=implementation_config,
                 execution_config=execution_config,
                 context=context,
+                emitter=emitter,
             )
             if output_data is None:
                 if impl_type == "http":

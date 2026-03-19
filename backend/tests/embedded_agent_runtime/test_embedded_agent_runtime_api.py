@@ -187,6 +187,29 @@ async def test_embedded_agent_thread_detail_includes_run_events_and_delete_route
             },
         },
     )
+    await recorder.save_event(
+        run_id,
+        db_session,
+        {
+            "event": "assistant.widget",
+            "visibility": "client_safe",
+            "data": {
+                "widget_id": "widget-1",
+                "widget_type": "bar_chart",
+                "title": "Bank concentration",
+                "spec": {
+                    "data": [
+                        {"bank": "Leumi", "share_pct": 42},
+                        {"bank": "Hapoalim", "share_pct": 31},
+                    ],
+                    "xKey": "bank",
+                    "yKey": "share_pct",
+                    "format": "percent",
+                },
+                "version": 1,
+            },
+        },
+    )
     await db_session.commit()
 
     detail_resp = await client.get(
@@ -205,8 +228,12 @@ async def test_embedded_agent_thread_detail_includes_run_events_and_delete_route
         "reasoning.update",
         "tool.completed",
         "reasoning.update",
+        "assistant.widget",
     ]
-    assert [item["run_id"] for item in turn["run_events"]] == [str(run_id)] * 4
+    assert [item["run_id"] for item in turn["run_events"]] == [str(run_id)] * 5
+    widget_event = turn["run_events"][-1]
+    assert widget_event["payload"]["widget_type"] == "bar_chart"
+    assert widget_event["payload"]["title"] == "Bank concentration"
 
     delete_resp = await client.delete(
         f"/public/embed/agents/{agent.id}/threads/{thread_id}",

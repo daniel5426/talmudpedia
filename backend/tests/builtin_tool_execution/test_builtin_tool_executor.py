@@ -6,6 +6,7 @@ from uuid import uuid4
 import httpx
 import pytest
 
+from app.agent.execution.emitter import active_emitter
 from app.agent.executors.retrieval_runtime import RetrievalPipelineRuntime
 from app.agent.executors.tool import ToolNodeExecutor
 from app.db.postgres.models.registry import ToolStatus, IntegrationCredentialCategory
@@ -13,6 +14,26 @@ from app.db.postgres.models.registry import ToolStatus, IntegrationCredentialCat
 
 class DummyDB:
     pass
+
+
+class FakeEmitter:
+    def __init__(self):
+        self.internal_events: list[tuple[str, dict, dict]] = []
+
+    def emit_tool_start(self, *args, **kwargs):
+        return None
+
+    def emit_tool_end(self, *args, **kwargs):
+        return None
+
+    def emit_tool_failed(self, *args, **kwargs):
+        return None
+
+    def emit_error(self, *args, **kwargs):
+        return None
+
+    def emit_internal_event(self, event_name: str, data: dict, **kwargs):
+        self.internal_events.append((event_name, data, kwargs))
 
 
 def _make_tool(
@@ -447,3 +468,87 @@ async def test_json_transform_and_datetime_utils(monkeypatch):
     )
     assert diffed["context"]["operation"] == "diff"
     assert diffed["context"]["result"] == 30
+
+
+@pytest.mark.asyncio
+async def test_emit_widget_builtin_emits_client_safe_widget_event(monkeypatch):
+    tool = _make_tool(
+        implementation_type="CUSTOM",
+        builtin_key="emit_widget",
+        config_schema={"implementation": {"type": "builtin", "builtin": "emit_widget"}},
+    )
+
+    async def fake_load_tool(_self, _tool_id):
+        return tool
+
+    monkeypatch.setattr(ToolNodeExecutor, "_load_tool", fake_load_tool)
+
+    executor = ToolNodeExecutor(tenant_id=uuid4(), db=DummyDB())
+    emitter = FakeEmitter()
+    token = active_emitter.set(emitter)
+    try:
+        result = await executor.execute(
+            state={
+                "context": {
+                    "widget_type": "bar_chart",
+                    "title": "Bank concentration",
+                    "spec": {
+                        "data": [
+                            {"bank": "Leumi", "share_pct": 42},
+                            {"bank": "Hapoalim", "share_pct": 31},
+                        ],
+                        "xKey": "bank",
+                        "yKey": "share_pct",
+                        "format": "percent",
+                    },
+                }
+            },
+            config={"tool_id": str(tool.id)},
+            context={"node_id": "tool-node"},
+        )
+    finally:
+        active_emitter.reset(token)
+
+    assert result["context"]["ok"] is True
+    assert result["context"]["widget_type"] == "bar_chart"
+    widget_events = [item for item in emitter.internal_events if item[0] == "assistant.widget"]
+    assert len(widget_events) == 1
+    _, payload, kwargs = widget_events[0]
+    assert payload["widget_type"] == "bar_chart"
+    assert payload["title"] == "Bank concentration"
+    assert payload["version"] == 1
+    assert kwargs["visibility"].value == "client_safe"
+
+
+@pytest.mark.asyncio
+async def test_emit_widget_builtin_rejects_invalid_spec(monkeypatch):
+    tool = _make_tool(
+        implementation_type="CUSTOM",
+        builtin_key="emit_widget",
+        config_schema={"implementation": {"type": "builtin", "builtin": "emit_widget"}},
+    )
+
+    async def fake_load_tool(_self, _tool_id):
+        return tool
+
+    monkeypatch.setattr(ToolNodeExecutor, "_load_tool", fake_load_tool)
+
+    executor = ToolNodeExecutor(tenant_id=uuid4(), db=DummyDB())
+    emitter = FakeEmitter()
+    token = active_emitter.set(emitter)
+    try:
+        with pytest.raises(ValueError, match="requires spec.xKey and spec.yKey"):
+            await executor.execute(
+                state={
+                    "context": {
+                        "widget_type": "bar_chart",
+                        "spec": {"data": [{"bank": "Leumi", "share_pct": 42}]},
+                    }
+                },
+                config={"tool_id": str(tool.id)},
+                context={"node_id": "tool-node"},
+            )
+    finally:
+        active_emitter.reset(token)
+
+    assert not [item for item in emitter.internal_events if item[0] == "assistant.widget"]

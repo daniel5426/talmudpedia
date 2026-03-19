@@ -305,6 +305,7 @@ async def test_pipeline_owned_tool_binding_enable_publish_disable_and_demote(cli
             f"/admin/pipelines/visual-pipelines/{pipeline_id}/tool-binding?tenant_slug={tenant.slug}",
             json={
                 "enabled": True,
+                "tool_name": "Retrieval Assistant Tool",
                 "description": "Use this when the agent needs normalized retrieval input.",
                 "input_schema": {
                     "type": "object",
@@ -324,6 +325,7 @@ async def test_pipeline_owned_tool_binding_enable_publish_disable_and_demote(cli
         assert tool.implementation_type == ToolImplementationType.RAG_PIPELINE
         assert tool.status == ToolStatus.DRAFT
         assert tool.executable_pipeline_id is None
+        assert tool.name == "Retrieval Assistant Tool"
         assert tool.ownership == "pipeline_bound"
         assert tool.managed_by == "pipelines"
         assert tool.source_object_type == "pipeline"
@@ -337,6 +339,7 @@ async def test_pipeline_owned_tool_binding_enable_publish_disable_and_demote(cli
         assert tool_payload["managed_by"] == "pipelines"
         assert tool_payload["source_object_type"] == "pipeline"
         assert tool_payload["source_object_id"] == pipeline_id
+        assert tool_payload["name"] == "Retrieval Assistant Tool"
         assert tool_payload["can_edit_in_registry"] is False
         assert tool_payload["can_publish_in_registry"] is False
         assert tool_payload["can_delete_in_registry"] is False
@@ -351,6 +354,7 @@ async def test_pipeline_owned_tool_binding_enable_publish_disable_and_demote(cli
         assert tool is not None
         assert tool.status == ToolStatus.PUBLISHED
         assert tool.executable_pipeline_id is not None
+        assert tool.name == "Retrieval Assistant Tool"
         assert tool.ownership == "pipeline_bound"
         assert tool.source_object_id == pipeline_id
         assert tool.schema["input"]["properties"]["text"]["description"] == "Normalized retrieval query"
@@ -399,6 +403,7 @@ async def test_pipeline_owned_tool_binding_enable_publish_disable_and_demote(cli
         assert tool is not None
         assert tool.status == ToolStatus.DRAFT
         assert tool.executable_pipeline_id is None
+        assert tool.name == "Retrieval Assistant Tool"
         assert tool.ownership == "pipeline_bound"
         assert tool.source_object_id == pipeline_id
     finally:

@@ -1,67 +1,147 @@
 name: embed-sdk-release
 
 on:
+  workflow_dispatch:
+    inputs:
+      force_publish:
+        description: "Bump patch and publish even if the current package version already exists on npm."
+        required: false
+        default: false
+        type: boolean
   push:
     branches:
       - main
     paths:
-      - ".github/workflows/embed-sdk-ci.yml"
-      - ".github/workflows/embed-sdk-release.yml"
-      - ".release-please-manifest.json"
-      - "release-please-config.json"
       - "packages/embed-sdk/**"
-      - "frontend-reshet/src/__tests__/embed_sdk/**"
-      - "backend/tests/embedded_agent_runtime/**"
-      - "docs/product-specs/embedded_agent_runtime_spec.md"
-      - "docs/references/embedded_agent_sdk_standalone_integration_guide.md"
-      - "docs/references/embed_sdk_release_runbook.md"
-      - "docs/references/canonical_docs_guide.md"
 
 permissions:
   contents: write
   id-token: write
-  issues: write
-  pull-requests: write
 
 jobs:
-  release-please:
-    runs-on: ubuntu-latest
-    outputs:
-      embed_sdk_released: ${{ steps.release.outputs['packages/embed-sdk--release_created'] }}
-    steps:
-      - uses: googleapis/release-please-action@v4
-        id: release
-        with:
-          config-file: release-please-config.json
-          manifest-file: .release-please-manifest.json
-
   publish:
-    needs: release-please
-    if: needs.release-please.outputs.embed_sdk_released == 'true'
+    if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[skip sdk publish]')
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
       id-token: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           registry-url: https://registry.npmjs.org
 
+      - name: Resolve version plan
+        id: version_plan
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+          const { execSync } = require('child_process');
+          const pkgPath = 'packages/embed-sdk/package.json';
+          const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+          const current = pkg.version;
+          const forcePublish = process.env.FORCE_PUBLISH === 'true';
+          const eventName = process.env.GITHUB_EVENT_NAME;
+
+          function parse(v) {
+            return v.split('.').map((part) => Number(part));
+          }
+
+          function compare(a, b) {
+            const [am, an, ap] = parse(a);
+            const [bm, bn, bp] = parse(b);
+            if (am !== bm) return am - bm;
+            if (an !== bn) return an - bn;
+            return ap - bp;
+          }
+
+          function bumpPatch(v) {
+            const [maj, min, patch] = parse(v);
+            return `${maj}.${min}.${patch + 1}`;
+          }
+
+          let published = '';
+          try {
+            published = execSync('npm view @agents24/embed-sdk version --registry=https://registry.npmjs.org', {
+              stdio: ['ignore', 'pipe', 'ignore'],
+              encoding: 'utf8',
+            }).trim();
+          } catch (error) {
+            published = '';
+          }
+
+          let shouldPublish = false;
+          let nextVersion = current;
+          let reason = 'current version is already published';
+
+          if (!published) {
+            shouldPublish = true;
+            reason = 'package has no published version yet';
+          } else if (compare(current, published) > 0) {
+            shouldPublish = true;
+            reason = 'package.json version is ahead of npm';
+          } else if (forcePublish) {
+            shouldPublish = true;
+            nextVersion = bumpPatch(published);
+            reason = 'manual force_publish requested';
+          } else if (eventName === 'push') {
+            shouldPublish = true;
+            nextVersion = bumpPatch(published);
+            reason = 'sdk package changed on main and needs a new patch version';
+          }
+
+          const output = process.env.GITHUB_OUTPUT;
+          fs.appendFileSync(output, `published_version=${published}\n`);
+          fs.appendFileSync(output, `current_version=${current}\n`);
+          fs.appendFileSync(output, `next_version=${nextVersion}\n`);
+          fs.appendFileSync(output, `should_publish=${shouldPublish}\n`);
+          fs.appendFileSync(output, `reason=${reason}\n`);
+          NODE
+        env:
+          FORCE_PUBLISH: ${{ inputs.force_publish }}
+
+      - name: Skip publish summary
+        if: steps.version_plan.outputs.should_publish != 'true'
+        run: |
+          echo "Skipping publish."
+          echo "Reason: ${{ steps.version_plan.outputs.reason }}"
+          echo "Current version: ${{ steps.version_plan.outputs.current_version }}"
+          echo "Published version: ${{ steps.version_plan.outputs.published_version }}"
+
+      - name: Bump package version
+        if: steps.version_plan.outputs.should_publish == 'true' && steps.version_plan.outputs.next_version != steps.version_plan.outputs.current_version
+        working-directory: packages/embed-sdk
+        run: npm version "${{ steps.version_plan.outputs.next_version }}" --no-git-tag-version
+
       - name: Install embed-sdk dependencies
+        if: steps.version_plan.outputs.should_publish == 'true'
         working-directory: packages/embed-sdk
         run: npm ci
 
       - name: Build embed-sdk
+        if: steps.version_plan.outputs.should_publish == 'true'
         working-directory: packages/embed-sdk
         run: npm run build
 
       - name: Run pack smoke test
+        if: steps.version_plan.outputs.should_publish == 'true'
         working-directory: packages/embed-sdk
         run: npm run smoke:pack
 
       - name: Publish embed-sdk
+        if: steps.version_plan.outputs.should_publish == 'true' && github.ref_name == 'main'
         working-directory: packages/embed-sdk
         run: npm publish --access public --provenance
+
+      - name: Commit version bump
+        if: steps.version_plan.outputs.should_publish == 'true' && github.ref_name == 'main' && steps.version_plan.outputs.next_version != steps.version_plan.outputs.current_version
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add packages/embed-sdk/package.json packages/embed-sdk/package-lock.json
+          git commit -m "chore(embed-sdk): publish ${{ steps.version_plan.outputs.next_version }} [skip sdk publish]"
+          git push

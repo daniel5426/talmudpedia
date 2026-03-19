@@ -429,6 +429,7 @@ class RAGAdminService {
     pipelineId: string,
     data: {
       enabled: boolean;
+      tool_name?: string;
       description?: string;
       input_schema?: Record<string, unknown>;
     },

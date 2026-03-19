@@ -269,6 +269,7 @@ class UpdatePipelineRequest(BaseModel):
 
 class UpdatePipelineToolBindingRequest(BaseModel):
     enabled: bool
+    tool_name: Optional[str] = None
     description: Optional[str] = None
     input_schema: Optional[Dict[str, Any]] = None
 
@@ -632,6 +633,7 @@ async def update_visual_pipeline_tool_binding(
         tool = await ToolBindingService(db).upsert_pipeline_tool_binding(
             pipeline=pipeline,
             enabled=request.enabled,
+            tool_name=request.tool_name,
             description=request.description,
             input_schema=request.input_schema,
         )

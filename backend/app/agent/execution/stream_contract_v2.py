@@ -134,6 +134,21 @@ def normalize_filtered_event_to_v2(
             [{"message": str(err)}],
         )
 
+    if event_name == "assistant.widget":
+        return (
+            "assistant.widget",
+            "assistant",
+            {
+                "widget_id": data.get("widget_id"),
+                "widget_type": data.get("widget_type"),
+                "title": data.get("title"),
+                "subtitle": data.get("subtitle"),
+                "spec": data.get("spec"),
+                "version": data.get("version") or 1,
+            },
+            [],
+        )
+
     if event_type == "reasoning":
         return "reasoning.update", "reasoning", dict(data or {}), []
 

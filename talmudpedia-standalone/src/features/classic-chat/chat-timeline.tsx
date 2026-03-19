@@ -38,6 +38,7 @@ import { cn } from "@/lib/utils";
 
 import { BotInputArea } from "./bot-input-area";
 import { useLocale } from "./locale-context";
+import { AssistantWidgetBlock } from "./widget-block";
 import type {
   ComposerSubmitPayload,
   TemplateAttachment,
@@ -127,11 +128,15 @@ function renderBlock(block: TemplateRenderBlock) {
         className="border-0 bg-transparent p-0 shadow-none"
         defaultOpen={false}
       >
-        <div className={cn("text-[1rem]", taskTone(block.status))}>
+        <div className={cn("text-[0.90rem]", taskTone(block.status))}>
           {block.status === "running" ? <Shimmer>{block.title}</Shimmer> : <span>{block.title}</span>}
         </div>
       </Task>
     );
+  }
+
+  if (block.kind === "widget") {
+    return <AssistantWidgetBlock key={block.id} block={block} />;
   }
 
   return (
@@ -223,7 +228,7 @@ export function ChatTimeline({
                 <>
                   {message.blocks?.map((block) => renderBlock(block))}
                   {message.runStatus && message.runStatus !== "completed" && !message.plainText ? (
-                    <div className="px-1 py-1 text-[1rem] text-muted-foreground">
+                    <div className="px-1 py-1 text-[0.90rem] text-muted-foreground">
                       <Shimmer>{locale === "he" ? "חושב..." : "Thinking..."}</Shimmer>
                     </div>
                   ) : null}

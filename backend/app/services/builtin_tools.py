@@ -287,6 +287,45 @@ def _specs() -> list[BuiltinToolTemplateSpec]:
         )
     )
 
+    emit_widget_input = {
+        "type": "object",
+        "properties": {
+            "widget_type": {
+                "type": "string",
+                "enum": ["stat", "table", "bar_chart", "line_chart", "pie_chart"],
+            },
+            "title": {"type": "string"},
+            "subtitle": {"type": "string"},
+            "spec": {"type": "object", "additionalProperties": True},
+        },
+        "required": ["widget_type", "spec"],
+        "additionalProperties": False,
+    }
+    emit_widget_output = {
+        "type": "object",
+        "properties": {
+            "ok": {"type": "boolean"},
+            "widget_id": {"type": "string"},
+            "widget_type": {"type": "string"},
+            "version": {"type": "integer"},
+        },
+        "required": ["ok", "widget_id", "widget_type", "version"],
+        "additionalProperties": False,
+    }
+    specs.append(
+        BuiltinToolTemplateSpec(
+            key="emit_widget",
+            name="Emit Widget",
+            slug="builtin-emit-widget",
+            description="Emit a validated generic UI widget into the assistant response stream.",
+            implementation_type=ToolImplementationType.CUSTOM,
+            implementation={"type": "builtin", "builtin": "emit_widget"},
+            execution={"timeout_s": 5, "is_pure": True, "concurrency_group": "ui", "max_concurrency": 8},
+            input_schema=emit_widget_input,
+            output_schema=emit_widget_output,
+        )
+    )
+
     return specs
 
 

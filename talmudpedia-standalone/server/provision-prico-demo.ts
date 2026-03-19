@@ -266,12 +266,89 @@ async function upsertTool(definition: ReturnType<typeof toolDefinitions>[number]
   return updated;
 }
 
+async function upsertEmitWidgetTool(): Promise<ToolRecord> {
+  const builtin = (await listTools()).find((tool) => tool.slug === "builtin-emit-widget");
+  if (builtin) {
+    return builtin;
+  }
+
+  const slug = "emit-widget";
+  const existing = (await listTools()).find((tool) => tool.slug === slug);
+  const payload = {
+    name: "Emit Widget",
+    slug,
+    description: "Emit a validated generic UI widget into the assistant response stream.",
+    scope: "tenant",
+    implementation_type: "CUSTOM",
+    input_schema: {
+      type: "object",
+      properties: {
+        widget_type: {
+          type: "string",
+          enum: ["stat", "table", "bar_chart", "line_chart", "pie_chart"],
+        },
+        title: { type: "string" },
+        subtitle: { type: "string" },
+        spec: {
+          type: "object",
+          additionalProperties: true,
+        },
+      },
+      required: ["widget_type", "spec"],
+      additionalProperties: false,
+    },
+    output_schema: {
+      type: "object",
+      properties: {
+        ok: { type: "boolean" },
+        widget_id: { type: "string" },
+        widget_type: { type: "string" },
+        version: { type: "integer" },
+      },
+      required: ["ok", "widget_id", "widget_type", "version"],
+      additionalProperties: false,
+    },
+    implementation_config: {
+      type: "builtin",
+      builtin: "emit_widget",
+    },
+    execution_config: {
+      timeout_s: 5,
+      is_pure: true,
+      concurrency_group: "ui",
+      max_concurrency: 8,
+    },
+  };
+
+  if (!existing) {
+    const created = await request<ToolRecord>("/tools", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    await maybePublish(`/tools/${created.id}/publish`);
+    return created;
+  }
+
+  const updated = await request<ToolRecord>(`/tools/${existing.id}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+  if (String(existing.status || "").toLowerCase() !== "published") {
+    await maybePublish(`/tools/${existing.id}/publish`);
+  }
+  return updated;
+}
+
 function buildAgentGraph(modelId: string, toolIds: string[]) {
   const instructions = [
     "You are the PRICO Client Exposure Copilot demo agent.",
     "You operate in read-only mode and support exactly one client at a time.",
     "Treat the selected client context as authoritative unless the user explicitly asks to switch clients.",
     "Use the available PRICO tools for factual claims. Do not invent exposure values, rates, benchmark deltas, or source rows.",
+    "Use the Emit Widget tool only after you have factual data from PRICO tools and only when a visual materially improves the answer.",
+    "Allowed widget types are stat, table, bar_chart, line_chart, and pie_chart.",
+    "For concentration splits prefer bar_chart or pie_chart; for recent rows prefer table; for a single headline metric prefer stat.",
+    "Do not emit more than 2 widgets unless the user explicitly asks for a dashboard or comparison view.",
     "Prefer deal-specific tools when the user asks about a concrete deal id.",
     "Always answer with a concise business narrative plus evidence notes and any data-quality caveats returned by the tools.",
     "If the available demo data is partial or missing, say so clearly.",
@@ -354,6 +431,9 @@ async function main() {
     tools.push(tool);
     console.log(`Upserted tool: ${definition.slug} (${tool.id})`);
   }
+  const emitWidgetTool = await upsertEmitWidgetTool();
+  tools.push(emitWidgetTool);
+  console.log(`Upserted tool: ${emitWidgetTool.slug} (${emitWidgetTool.id})`);
 
   const agent = await upsertAgent(
     modelId,

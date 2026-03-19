@@ -192,6 +192,7 @@ class ToolBindingService:
         *,
         pipeline: VisualPipeline,
         enabled: bool,
+        tool_name: str | None = None,
         description: str | None = None,
         input_schema: dict[str, Any] | None = None,
     ) -> ToolRegistry | None:
@@ -201,11 +202,12 @@ class ToolBindingService:
 
         slug = self._pipeline_tool_slug(pipeline)
         await self._ensure_slug_available(slug, exclude_tool_id=tool.id if tool else None)
+        normalized_name = str(tool_name).strip() if tool_name is not None else None
 
         if tool is None:
             tool = ToolRegistry(
                 tenant_id=pipeline.tenant_id,
-                name=pipeline.name,
+                name=normalized_name or pipeline.name,
                 slug=slug,
                 description=description if description is not None else pipeline.description,
                 scope=ToolDefinitionScope.TENANT,
@@ -233,7 +235,10 @@ class ToolBindingService:
             await self._db.flush()
             return tool
 
-        tool.name = pipeline.name
+        if tool_name is not None:
+            tool.name = normalized_name or pipeline.name
+        elif not str(tool.name or "").strip():
+            tool.name = pipeline.name
         tool.slug = slug
         tool.implementation_type = ToolImplementationType.RAG_PIPELINE
         tool.visual_pipeline_id = pipeline.id
@@ -285,7 +290,8 @@ class ToolBindingService:
 
         slug = self._pipeline_tool_slug(pipeline)
         await self._ensure_slug_available(slug, exclude_tool_id=tool.id)
-        tool.name = pipeline.name
+        if tool.name in {None, "", previous_name}:
+            tool.name = pipeline.name
         tool.slug = slug
         if tool.description in {None, "", previous_description}:
             tool.description = pipeline.description
@@ -336,7 +342,8 @@ class ToolBindingService:
             "input": self.merge_generated_schema(current_input_schema, generated_input_schema),
             "output": deepcopy(_GENERIC_PIPELINE_OUTPUT_SCHEMA),
         }
-        tool.name = pipeline.name
+        if not str(tool.name or "").strip():
+            tool.name = pipeline.name
         tool.slug = self._pipeline_tool_slug(pipeline)
         tool.implementation_type = ToolImplementationType.RAG_PIPELINE
         tool.visual_pipeline_id = pipeline.id

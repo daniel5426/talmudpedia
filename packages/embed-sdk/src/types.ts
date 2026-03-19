@@ -67,7 +67,61 @@ export type EmbeddedAgentRuntimeDiagnostic = {
   message?: string;
 } & Record<string, unknown>;
 
-export type EmbeddedAgentRuntimeEvent = {
+export type EmbeddedAgentWidgetType =
+  | "stat"
+  | "table"
+  | "bar_chart"
+  | "line_chart"
+  | "pie_chart";
+
+export type EmbeddedAgentWidgetValueFormat = "number" | "currency" | "percent";
+
+export type EmbeddedAgentStatWidgetSpec = {
+  value: string | number;
+  label?: string;
+  format?: EmbeddedAgentWidgetValueFormat;
+  trend?: {
+    value: number;
+    direction: "up" | "down" | "flat";
+  };
+};
+
+export type EmbeddedAgentTableWidgetSpec = {
+  columns: Array<{ key: string; label: string }>;
+  rows: Array<Record<string, unknown>>;
+};
+
+export type EmbeddedAgentCartesianChartWidgetSpec = {
+  data: Array<Record<string, unknown>>;
+  xKey: string;
+  yKey: string;
+  seriesLabel?: string;
+  format?: EmbeddedAgentWidgetValueFormat;
+};
+
+export type EmbeddedAgentPieChartWidgetSpec = {
+  data: Array<Record<string, unknown>>;
+  labelKey: string;
+  valueKey: string;
+  format?: EmbeddedAgentWidgetValueFormat;
+};
+
+export type EmbeddedAgentWidgetSpec =
+  | EmbeddedAgentStatWidgetSpec
+  | EmbeddedAgentTableWidgetSpec
+  | EmbeddedAgentCartesianChartWidgetSpec
+  | EmbeddedAgentPieChartWidgetSpec;
+
+export type EmbeddedAgentWidgetPayload = {
+  widget_id: string;
+  widget_type: EmbeddedAgentWidgetType;
+  title?: string | null;
+  subtitle?: string | null;
+  spec: EmbeddedAgentWidgetSpec;
+  version: 1;
+};
+
+type EmbeddedAgentRuntimeEventBase = {
   version: "run-stream.v2";
   seq: number;
   ts: string;
@@ -77,6 +131,19 @@ export type EmbeddedAgentRuntimeEvent = {
   payload: Record<string, unknown>;
   diagnostics: EmbeddedAgentRuntimeDiagnostic[];
 };
+
+export type EmbeddedAgentWidgetRuntimeEvent = Omit<
+  EmbeddedAgentRuntimeEventBase,
+  "event" | "stage" | "payload"
+> & {
+  event: "assistant.widget";
+  stage: "assistant";
+  payload: EmbeddedAgentWidgetPayload;
+};
+
+export type EmbeddedAgentRuntimeEvent =
+  | EmbeddedAgentWidgetRuntimeEvent
+  | EmbeddedAgentRuntimeEventBase;
 
 export type StreamAgentResult = {
   threadId: string | null;

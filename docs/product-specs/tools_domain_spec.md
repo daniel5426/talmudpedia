@@ -102,6 +102,7 @@ Current creation/authorship surfaces are split by ownership:
   - the tools page should route users to artifact-native authoring instead of generic `/tools` CRUD
 - pipeline-bound tools
   - created from the pipeline domain through the pipeline tool-binding flow
+  - the binding flow can set model-facing tool name, description, and input schema while the slug remains pipeline-derived
   - the tools page should route users to pipeline authoring instead of generic `/tools` CRUD
 - agent/workflow tools
   - created from the agents surface through the export-to-tool flow

@@ -6,24 +6,16 @@ Use this when releasing `@agents24/embed-sdk`.
 
 ## Normal Path
 
-1. Merge SDK changes to `main` with a releasable conventional commit, for example:
-   - `fix(embed-sdk): add thread delete and turn run-events`
-   - `feat(embed-sdk): add runtime attachment support`
-2. Wait for `embed-sdk-release` to run.
-3. Confirm `release-please` creates or updates the release PR.
-4. Merge the release PR.
-5. Confirm the publish job releases the new npm version.
+1. Push SDK package changes to `main`.
+2. `embed-sdk-release` automatically decides the next version from npm state and publishes directly.
+3. If `packages/embed-sdk/package.json` was auto-bumped for publish, the workflow commits that version bump back to `main`.
 
 ## GitHub Requirements
 
-- Repo setting must allow GitHub Actions to create pull requests:
-  - `Settings -> Actions -> General -> Allow GitHub Actions to create and approve pull requests`
-- `embed-sdk-release` is a two-step flow:
-  - push to `main`
-  - merge the release PR
-- A direct push to `main` does not publish the package by itself.
-- `embed-sdk-release` now runs only for embed-sdk related paths so unrelated `main` pushes do not create misleading successful no-op runs.
-- `embed-sdk-ci` fails fast when `packages/embed-sdk/**` changed but the PR title or merged `main` commit title is not `feat(embed-sdk): ...` or `fix(embed-sdk): ...`.
+- `embed-sdk-release` now publishes directly from `main`.
+- Commit titles no longer control SDK release behavior.
+- The workflow runs automatically only when `packages/embed-sdk/**` changes on `main`.
+- Both SDK workflows also support manual `workflow_dispatch`.
 
 ## npm Requirements
 
@@ -53,6 +45,24 @@ bash /Users/danielbenassaya/Code/personal/talmudpedia/packages/embed-sdk/scripts
 
 This mirrors the current `embed-sdk-ci` workflow checks in one command.
 
+Push everything and dispatch both SDK workflows from local:
+
+```bash
+bash /Users/danielbenassaya/Code/personal/talmudpedia/packages/embed-sdk/scripts/commit-push-and-run-workflows.sh
+```
+
+Use a custom commit message:
+
+```bash
+bash /Users/danielbenassaya/Code/personal/talmudpedia/packages/embed-sdk/scripts/commit-push-and-run-workflows.sh "save work and run sdk workflows"
+```
+
+Force a manual patch publish on the dispatched release workflow:
+
+```bash
+FORCE_PUBLISH=true bash /Users/danielbenassaya/Code/personal/talmudpedia/packages/embed-sdk/scripts/commit-push-and-run-workflows.sh
+```
+
 Tooling split in that script:
 - `packages/embed-sdk`: `npm`
 - `frontend-reshet`: `pnpm`
@@ -81,12 +91,11 @@ cat /Users/danielbenassaya/Code/personal/talmudpedia/packages/embed-sdk/package.
 
 ### Release PR was not created
 
-- GitHub Actions lacks PR creation permission, or
-- the merged commit was not releasable to `release-please`
+- This runbook no longer uses release PRs.
 
 Fix:
-- enable PR creation in repo settings
-- push or squash-merge with a title such as `fix(embed-sdk): ...` or `feat(embed-sdk): ...`
+- use the direct publish workflow on `main`
+- or dispatch `embed-sdk-release` manually
 
 ### Local publish fails with provenance error
 

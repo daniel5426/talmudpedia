@@ -20,6 +20,7 @@ Domain-owned tool bindings for `tool_impl` artifacts, visual pipelines, and expo
 - publishing a `tool_impl` artifact auto-publishes the bound tool and pins `artifact_revision_id`
 - deleting a `tool_impl` artifact deletes the bound tool row
 - enabling a pipeline tool binding creates a draft `rag_pipeline` tool row
+- pipeline bindings can now set a model-facing tool name while keeping the slug pipeline-derived
 - pipeline-bound tool rows exposed through `/tools` now report explicit ownership/management metadata and registry action flags
 - compiling a tool-enabled retrieval pipeline publishes the tool and pins `executable_pipeline_id`
 - disabling and re-enabling a pipeline tool binding preserves custom schema overrides
@@ -31,9 +32,9 @@ Domain-owned tool bindings for `tool_impl` artifacts, visual pipelines, and expo
 
 ## Last Run
 
-- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/tool_bindings/test_agent_tool_bindings.py backend/tests/tools_guardrails/test_tools_api_guardrails.py backend/tests/tool_bindings/test_domain_owned_tool_bindings.py`
-- Date: 2026-03-18 19:10 Asia/Hebron
-- Result: pass (`14 passed`)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/builtin_tools_registry/test_builtin_registry_api.py backend/tests/tools_guardrails/test_tools_api_guardrails.py backend/tests/tool_bindings/test_domain_owned_tool_bindings.py backend/tests/tool_bindings/test_agent_tool_bindings.py`
+- Date: 2026-03-19 14:36 EET
+- Result: pass (`22 passed`)
 
 ## Known Gaps / Follow-ups
 
