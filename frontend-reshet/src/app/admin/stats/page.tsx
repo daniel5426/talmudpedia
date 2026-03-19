@@ -572,10 +572,10 @@ export default function AdminStatsPage() {
             <SelectTrigger className="h-8 w-[220px]">
               <SelectValue placeholder="All agents" />
             </SelectTrigger>
-            <SelectContent>
+            <SelectContent className="max-h-72 max-w-[320px]">
               <SelectItem value="__all_agents__">All agents</SelectItem>
               {agentOptions.map((agent) => (
-                <SelectItem key={agent.id} value={agent.id}>
+                <SelectItem key={agent.id} value={agent.id} className="max-w-[300px] truncate">
                   {agent.name}
                 </SelectItem>
               ))}

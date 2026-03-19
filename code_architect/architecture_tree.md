@@ -215,6 +215,7 @@ backend/app/services/published_app_publish_autofix.py
 backend/app/services/usage_quota_service.py
 backend/app/services/thread_service.py
 backend/app/services/admin_monitoring_service.py
+backend/app/services/openui_support.py
 backend/app/services/published_app_coding_agent_engines/base.py
 backend/app/services/published_app_coding_agent_engines/opencode_engine.py
 backend/app/services/published_app_coding_agent_engines/prompt_history.py

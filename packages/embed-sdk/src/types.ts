@@ -67,58 +67,15 @@ export type EmbeddedAgentRuntimeDiagnostic = {
   message?: string;
 } & Record<string, unknown>;
 
-export type EmbeddedAgentWidgetType =
-  | "stat"
-  | "table"
-  | "bar_chart"
-  | "line_chart"
-  | "pie_chart";
-
-export type EmbeddedAgentWidgetValueFormat = "number" | "currency" | "percent";
-
-export type EmbeddedAgentStatWidgetSpec = {
-  value: string | number;
-  label?: string;
-  format?: EmbeddedAgentWidgetValueFormat;
-  trend?: {
-    value: number;
-    direction: "up" | "down" | "flat";
-  };
-};
-
-export type EmbeddedAgentTableWidgetSpec = {
-  columns: Array<{ key: string; label: string }>;
-  rows: Array<Record<string, unknown>>;
-};
-
-export type EmbeddedAgentCartesianChartWidgetSpec = {
-  data: Array<Record<string, unknown>>;
-  xKey: string;
-  yKey: string;
-  seriesLabel?: string;
-  format?: EmbeddedAgentWidgetValueFormat;
-};
-
-export type EmbeddedAgentPieChartWidgetSpec = {
-  data: Array<Record<string, unknown>>;
-  labelKey: string;
-  valueKey: string;
-  format?: EmbeddedAgentWidgetValueFormat;
-};
-
-export type EmbeddedAgentWidgetSpec =
-  | EmbeddedAgentStatWidgetSpec
-  | EmbeddedAgentTableWidgetSpec
-  | EmbeddedAgentCartesianChartWidgetSpec
-  | EmbeddedAgentPieChartWidgetSpec;
-
-export type EmbeddedAgentWidgetPayload = {
-  widget_id: string;
-  widget_type: EmbeddedAgentWidgetType;
-  title?: string | null;
-  subtitle?: string | null;
-  spec: EmbeddedAgentWidgetSpec;
+export type EmbeddedAgentUiPayload = {
+  format: "openui";
   version: 1;
+  content?: string | null;
+  content_delta?: string | null;
+  ast?: Record<string, unknown> | null;
+  component_library_id?: string | null;
+  surface?: "chat_inline" | "app_canvas" | string | null;
+  is_final?: boolean;
 };
 
 type EmbeddedAgentRuntimeEventBase = {
@@ -132,17 +89,17 @@ type EmbeddedAgentRuntimeEventBase = {
   diagnostics: EmbeddedAgentRuntimeDiagnostic[];
 };
 
-export type EmbeddedAgentWidgetRuntimeEvent = Omit<
+export type EmbeddedAgentUiRuntimeEvent = Omit<
   EmbeddedAgentRuntimeEventBase,
   "event" | "stage" | "payload"
 > & {
-  event: "assistant.widget";
+  event: "assistant.ui";
   stage: "assistant";
-  payload: EmbeddedAgentWidgetPayload;
+  payload: EmbeddedAgentUiPayload;
 };
 
 export type EmbeddedAgentRuntimeEvent =
-  | EmbeddedAgentWidgetRuntimeEvent
+  | EmbeddedAgentUiRuntimeEvent
   | EmbeddedAgentRuntimeEventBase;
 
 export type StreamAgentResult = {

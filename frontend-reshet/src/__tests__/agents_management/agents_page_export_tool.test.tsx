@@ -86,4 +86,45 @@ describe("agents page export tool flow", () => {
     })
     expect(pushMock).toHaveBeenCalledWith("/admin/tools")
   })
+
+  it("lets the user switch schema playground modes and generate schema from an example payload", async () => {
+    render(<AgentsPage />)
+
+    expect(await screen.findByText("Input Schema Playground")).toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: /Example/i }))
+    fireEvent.change(
+      screen.getByPlaceholderText('{"text":"Summarize this sugya","context":{"tractate":"Berakhot"}}'),
+      {
+        target: {
+          value: '{\n  "query": "What does Rashi say?",\n  "context": {\n    "tractate": "Berakhot"\n  }\n}',
+        },
+      }
+    )
+    fireEvent.click(screen.getByRole("button", { name: /Generate Schema From Example/i }))
+    fireEvent.click(screen.getByRole("button", { name: "Export Tool" }))
+
+    await waitFor(() => {
+      expect(exportAgentToolMock).toHaveBeenCalledWith(
+        "agent-1",
+        expect.objectContaining({
+          input_schema: {
+            type: "object",
+            properties: {
+              query: { type: "string" },
+              context: {
+                type: "object",
+                properties: {
+                  tractate: { type: "string" },
+                },
+                required: ["tractate"],
+                additionalProperties: false,
+              },
+            },
+            required: ["query", "context"],
+            additionalProperties: false,
+          },
+        })
+      )
+    })
+  })
 })

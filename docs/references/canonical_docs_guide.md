@@ -43,6 +43,8 @@ This guide lists the current canonical documentation entry points after the firs
   - Current platform-architect artifact delegation model.
 - `docs/design-docs/artifact_coding_agent_direct_use_current.md`
   - Current direct artifact usage model in coding-agent flows.
+- `docs/design-docs/prompt_library_shared_resource_design.md`
+  - Shared-resource design for the new reusable prompt library domain and cross-surface prompt references.
 
 ## Current Canonical Product Specs
 

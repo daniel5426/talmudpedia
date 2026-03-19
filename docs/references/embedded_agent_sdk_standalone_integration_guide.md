@@ -138,16 +138,15 @@ const thread = await talmudpediaEmbedClient.getAgentThread(agentId, threadId, {
 Current boundary:
 
 - thread detail gives final persisted turns
-- each turn also includes `run_events` with ordered historical non-text `run-stream.v2` events for replaying tool, reasoning, and widget UI on old chats
+- each turn also includes `run_events` with ordered historical non-text `run-stream.v2` events for replaying tool, reasoning, and OpenUI UI on old chats
 - delete-thread is available through the embed public API and `@agents24/embed-sdk`
 - if the standalone app needs a future missing capability, fix the public embed API and `@agents24/embed-sdk` first instead of adding a standalone-only direct platform API workaround
 
 Current runtime event additions:
 
-- `assistant.widget` is part of the public embed runtime contract
-- platform agents currently author those events through the built-in `emit_widget` tool
-- widget payloads are structured data, not generated HTML/React
-- old-chat widget replay should always come from `turns[].run_events`, not standalone-side tool-output inference
+- `assistant.ui` is part of the public embed runtime contract
+- current generative UI mode is OpenUI only
+- old-chat OpenUI replay should always come from `turns[].run_events`, not standalone-side inference
 
 ## Identity and Thread Rules
 

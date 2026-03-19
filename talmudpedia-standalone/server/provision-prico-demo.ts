@@ -266,212 +266,17 @@ async function upsertTool(definition: ReturnType<typeof toolDefinitions>[number]
   return updated;
 }
 
-async function upsertEmitWidgetTool(): Promise<ToolRecord> {
-  const builtin = (await listTools()).find((tool) => tool.slug === "builtin-emit-widget");
-  if (builtin) {
-    return builtin;
-  }
-
-  const slug = "emit-widget";
-  const existing = (await listTools()).find((tool) => tool.slug === slug);
-  const formatSchema = {
-    type: "string",
-    enum: ["number", "currency", "percent"],
-  } as const;
-  const titleSchema = { type: "string" } as const;
-  const valueSchema = {
-    oneOf: [{ type: "string" }, { type: "number" }],
-  } as const;
-  const chartRowSchema = {
-    type: "object",
-    additionalProperties: true,
-  } as const;
-  const labelValueRowSchema = {
-    type: "object",
-    properties: {
-      label: { type: "string" },
-      value: { type: "number" },
-    },
-    required: ["label", "value"],
-    additionalProperties: true,
-  } as const;
-  const cartesianSpecSchema = {
-    oneOf: [
-      {
-        type: "object",
-        properties: {
-          data: { type: "array", minItems: 1, items: chartRowSchema },
-          xKey: { type: "string" },
-          yKey: { type: "string" },
-          seriesLabel: { type: "string" },
-          format: formatSchema,
-        },
-        required: ["data", "xKey", "yKey"],
-        additionalProperties: false,
-      },
-      {
-        type: "object",
-        properties: {
-          data: { type: "array", minItems: 1, items: labelValueRowSchema },
-          seriesLabel: { type: "string" },
-          format: formatSchema,
-        },
-        required: ["data"],
-        additionalProperties: false,
-      },
-    ],
-  } as const;
-  const pieSpecSchema = {
-    oneOf: [
-      {
-        type: "object",
-        properties: {
-          data: { type: "array", minItems: 1, items: chartRowSchema },
-          labelKey: { type: "string" },
-          valueKey: { type: "string" },
-          format: formatSchema,
-        },
-        required: ["data", "labelKey", "valueKey"],
-        additionalProperties: false,
-      },
-      {
-        type: "object",
-        properties: {
-          data: { type: "array", minItems: 1, items: labelValueRowSchema },
-          format: formatSchema,
-        },
-        required: ["data"],
-        additionalProperties: false,
-      },
-    ],
-  } as const;
-  const variant = (
-    widgetType: "stat" | "table" | "bar_chart" | "line_chart" | "pie_chart",
-    spec: Record<string, unknown>,
-  ) => ({
-    type: "object",
-    properties: {
-      widget_type: { type: "string", enum: [widgetType] },
-      title: titleSchema,
-      subtitle: titleSchema,
-      spec,
-    },
-    required: ["widget_type", "spec"],
-    additionalProperties: false,
-  });
-  const payload = {
-    name: "Emit Widget",
-    slug,
-    description: "Emit a validated generic UI widget into the assistant response stream.",
-    scope: "tenant",
-    implementation_type: "CUSTOM",
-    input_schema: {
-      oneOf: [
-        variant("stat", {
-          type: "object",
-          properties: {
-            value: valueSchema,
-            label: { type: "string" },
-            format: formatSchema,
-            trend: {
-              type: "object",
-              properties: {
-                value: { type: "number" },
-                direction: { type: "string", enum: ["up", "down", "flat"] },
-              },
-              required: ["value", "direction"],
-              additionalProperties: false,
-            },
-          },
-          required: ["value"],
-          additionalProperties: false,
-        }),
-        variant("table", {
-          type: "object",
-          properties: {
-            columns: {
-              type: "array",
-              minItems: 1,
-              items: {
-                type: "object",
-                properties: {
-                  key: { type: "string" },
-                  label: { type: "string" },
-                },
-                required: ["key", "label"],
-                additionalProperties: false,
-              },
-            },
-            rows: {
-              type: "array",
-              items: {
-                type: "object",
-                additionalProperties: true,
-              },
-            },
-          },
-          required: ["columns", "rows"],
-          additionalProperties: false,
-        }),
-        variant("bar_chart", cartesianSpecSchema),
-        variant("line_chart", cartesianSpecSchema),
-        variant("pie_chart", pieSpecSchema),
-      ],
-    },
-    output_schema: {
-      type: "object",
-      properties: {
-        ok: { type: "boolean" },
-        widget_id: { type: "string" },
-        widget_type: { type: "string" },
-        version: { type: "integer" },
-      },
-      required: ["ok", "widget_id", "widget_type", "version"],
-      additionalProperties: false,
-    },
-    implementation_config: {
-      type: "builtin",
-      builtin: "emit_widget",
-    },
-    execution_config: {
-      timeout_s: 5,
-      is_pure: true,
-      concurrency_group: "ui",
-      max_concurrency: 8,
-    },
-  };
-
-  if (!existing) {
-    const created = await request<ToolRecord>("/tools", {
-      method: "POST",
-      body: JSON.stringify(payload),
-    });
-    await maybePublish(`/tools/${created.id}/publish`);
-    return created;
-  }
-
-  const updated = await request<ToolRecord>(`/tools/${existing.id}`, {
-    method: "PUT",
-    body: JSON.stringify(payload),
-  });
-  if (String(existing.status || "").toLowerCase() !== "published") {
-    await maybePublish(`/tools/${existing.id}/publish`);
-  }
-  return updated;
-}
-
 function buildAgentGraph(modelId: string, toolIds: string[]) {
   const instructions = [
     "You are the PRICO Client Exposure Copilot demo agent.",
     "You operate in read-only mode and support exactly one client at a time.",
     "Treat the selected client context as authoritative unless the user explicitly asks to switch clients.",
     "Use the available PRICO tools for factual claims. Do not invent exposure values, rates, benchmark deltas, or source rows.",
-    "Use the Emit Widget tool only after you have factual data from PRICO tools and only when a visual materially improves the answer.",
-    "Allowed widget types are stat, table, bar_chart, line_chart, and pie_chart.",
-    "For concentration splits prefer bar_chart or pie_chart; for recent rows prefer table; for a single headline metric prefer stat.",
-    "Do not emit more than 2 widgets unless the user explicitly asks for a dashboard or comparison view.",
+    "When a visual materially improves the answer, render the response as OpenUI Lang instead of plain prose.",
+    "Prefer concise metric cards, concentration charts, recent-deals tables, and short caveat callouts.",
+    "Keep the response compact unless the user explicitly asks for a larger dashboard.",
     "Prefer deal-specific tools when the user asks about a concrete deal id.",
-    "Always answer with a concise business narrative plus evidence notes and any data-quality caveats returned by the tools.",
+    "Always surface evidence notes and any data-quality caveats returned by the tools.",
     "If the available demo data is partial or missing, say so clearly.",
   ].join(" ");
 
@@ -490,6 +295,10 @@ function buildAgentGraph(modelId: string, toolIds: string[]) {
           include_chat_history: true,
           output_format: "text",
           reasoning_effort: "medium",
+          generative_ui_mode: "openui",
+          generative_ui_component_library_id: "openui-default-v1",
+          generative_ui_surface: "chat_inline",
+          generative_ui_max_blocks: 4,
           tools: toolIds,
           tool_execution_mode: "sequential",
           max_tool_iterations: 8,
@@ -552,9 +361,6 @@ async function main() {
     tools.push(tool);
     console.log(`Upserted tool: ${definition.slug} (${tool.id})`);
   }
-  const emitWidgetTool = await upsertEmitWidgetTool();
-  tools.push(emitWidgetTool);
-  console.log(`Upserted tool: ${emitWidgetTool.slug} (${emitWidgetTool.id})`);
 
   const agent = await upsertAgent(
     modelId,

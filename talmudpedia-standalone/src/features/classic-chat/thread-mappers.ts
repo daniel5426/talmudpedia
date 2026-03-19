@@ -6,16 +6,11 @@ import type {
 } from "./standalone-runtime";
 import type {
   TemplateAttachment,
-  TemplateCartesianChartWidgetSpec,
   TemplateMessage,
-  TemplatePieChartWidgetSpec,
   TemplateRenderBlock,
-  TemplateStatWidgetSpec,
-  TemplateTableWidgetSpec,
   TemplateTextBlock,
   TemplateThread,
-  TemplateWidgetBlock,
-  TemplateWidgetType,
+  TemplateUiBlock,
 } from "./types";
 
 const FALLBACK_PREVIEW = "Start a new conversation.";
@@ -102,19 +97,36 @@ export function mapThreadDetail(detail: AgentThreadDetailDto): TemplateThread {
       for (const event of turn.run_events || []) {
         blocks = applyRuntimeEvent(blocks, event);
       }
-      const textBlock: TemplateTextBlock = {
-        id: `${turn.id}-assistant-text`,
-        kind: "text",
-        content: turn.assistant_output_text,
-      };
+      const isOpenUiTurn = String(turn.metadata?.assistant_ui_format || "").trim().toLowerCase() === "openui";
+      const textBlock: TemplateTextBlock | null = isOpenUiTurn
+        ? null
+        : {
+            id: `${turn.id}-assistant-text`,
+            kind: "text",
+            content: turn.assistant_output_text,
+          };
       messages.push({
         id: `${turn.id}-assistant`,
         role: "assistant",
         createdAt: turn.completed_at || turn.created_at,
         runStatus: "completed",
-        text: turn.assistant_output_text,
-        blocks: [...blocks, textBlock],
+        text: isOpenUiTurn ? undefined : turn.assistant_output_text,
+        blocks: textBlock ? [...blocks, textBlock] : blocks,
       });
+    } else if ((turn.run_events || []).length > 0) {
+      let blocks: TemplateRenderBlock[] = [];
+      for (const event of turn.run_events || []) {
+        blocks = applyRuntimeEvent(blocks, event);
+      }
+      if (blocks.length > 0) {
+        messages.push({
+          id: `${turn.id}-assistant`,
+          role: "assistant",
+          createdAt: turn.completed_at || turn.created_at,
+          runStatus: "completed",
+          blocks,
+        });
+      }
     }
   }
 
@@ -244,21 +256,35 @@ export function applyRuntimeEvent(
     ];
   }
 
-  if (event.event === "assistant.widget") {
-    const widgetBlock = parseWidgetBlock(event.payload);
-    if (!widgetBlock) {
+  if (event.event === "assistant.ui") {
+    const uiPayload = parseUiPayload(event.payload);
+    if (!uiPayload) {
       return blocks;
+    }
+    const lastBlock = blocks[blocks.length - 1];
+    if (lastBlock?.kind === "ui" && lastBlock.format === "openui") {
+      return [
+        ...blocks.slice(0, -1),
+        {
+          ...lastBlock,
+          content: uiPayload.content,
+          componentLibraryId: uiPayload.componentLibraryId,
+          surface: uiPayload.surface,
+          ast: uiPayload.ast,
+        },
+      ];
     }
     return [
       ...blocks,
       {
         id: createId(),
-        kind: "widget",
-        widgetType: widgetBlock.widgetType,
-        title: widgetBlock.title,
-        subtitle: widgetBlock.subtitle,
-        spec: widgetBlock.spec,
-        version: widgetBlock.version,
+        kind: "ui",
+        format: "openui",
+        content: uiPayload.content,
+        componentLibraryId: uiPayload.componentLibraryId,
+        surface: uiPayload.surface,
+        ast: uiPayload.ast,
+        version: 1,
       },
     ];
   }
@@ -266,74 +292,32 @@ export function applyRuntimeEvent(
   return blocks;
 }
 
-function parseWidgetBlock(payload: Record<string, unknown>): Omit<TemplateWidgetBlock, "id" | "kind"> | null {
-  const widgetType = typeof payload.widget_type === "string" ? payload.widget_type : null;
-  const rawSpec = payload.spec;
-  if (!widgetType || !rawSpec || typeof rawSpec !== "object") {
+function parseUiPayload(payload: Record<string, unknown>): Omit<TemplateUiBlock, "id" | "kind"> | null {
+  if (String(payload.format || "").trim().toLowerCase() !== "openui") {
     return null;
   }
-
-  if (widgetType === "stat") {
-    const spec = rawSpec as TemplateStatWidgetSpec;
-    if (typeof spec.value !== "string" && typeof spec.value !== "number") {
-      return null;
-    }
-    return {
-      widgetType,
-      title: typeof payload.title === "string" ? payload.title : undefined,
-      subtitle: typeof payload.subtitle === "string" ? payload.subtitle : undefined,
-      spec,
-      version: 1,
-    };
+  const finalContent =
+    typeof payload.content === "string"
+      ? payload.content
+      : null;
+  const deltaContent =
+    typeof payload.content_delta === "string"
+      ? payload.content_delta
+      : null;
+  const content = finalContent ?? deltaContent;
+  if (!content) {
+    return null;
   }
-
-  if (widgetType === "table") {
-    const spec = rawSpec as TemplateTableWidgetSpec;
-    if (!Array.isArray(spec.columns) || !Array.isArray(spec.rows)) {
-      return null;
-    }
-    return {
-      widgetType,
-      title: typeof payload.title === "string" ? payload.title : undefined,
-      subtitle: typeof payload.subtitle === "string" ? payload.subtitle : undefined,
-      spec,
-      version: 1,
-    };
-  }
-
-  if (widgetType === "bar_chart" || widgetType === "line_chart") {
-    const spec = rawSpec as TemplateCartesianChartWidgetSpec;
-    if (!Array.isArray(spec.data) || typeof spec.xKey !== "string" || typeof spec.yKey !== "string") {
-      return null;
-    }
-    return {
-      widgetType: widgetType as Extract<TemplateWidgetType, "bar_chart" | "line_chart">,
-      title: typeof payload.title === "string" ? payload.title : undefined,
-      subtitle: typeof payload.subtitle === "string" ? payload.subtitle : undefined,
-      spec,
-      version: 1,
-    };
-  }
-
-  if (widgetType === "pie_chart") {
-    const spec = rawSpec as TemplatePieChartWidgetSpec;
-    if (!Array.isArray(spec.data) || typeof spec.labelKey !== "string" || typeof spec.valueKey !== "string") {
-      return null;
-    }
-    return {
-      widgetType,
-      title: typeof payload.title === "string" ? payload.title : undefined,
-      subtitle: typeof payload.subtitle === "string" ? payload.subtitle : undefined,
-      spec,
-      version: 1,
-    };
-  }
-
   return {
-    widgetType: "unknown",
-    title: typeof payload.title === "string" ? payload.title : undefined,
-    subtitle: typeof payload.subtitle === "string" ? payload.subtitle : undefined,
-    spec: rawSpec as Record<string, unknown>,
+    format: "openui",
+    content,
+    componentLibraryId:
+      typeof payload.component_library_id === "string" ? payload.component_library_id : null,
+    surface: typeof payload.surface === "string" ? payload.surface : null,
+    ast:
+      payload.ast && typeof payload.ast === "object" && !Array.isArray(payload.ast)
+        ? (payload.ast as Record<string, unknown>)
+        : null,
     version: 1,
   };
 }

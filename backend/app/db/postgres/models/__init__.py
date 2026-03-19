@@ -104,3 +104,10 @@ from .artifact_runtime import (
     ArtifactRunDomain,
     ArtifactRunStatus,
 )
+from .prompts import (
+    PromptLibrary,
+    PromptLibraryVersion,
+    PromptOwnership,
+    PromptScope,
+    PromptStatus,
+)

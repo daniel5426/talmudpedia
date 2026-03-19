@@ -1,12 +1,4 @@
 export type TemplateTaskStatus = "running" | "done" | "error";
-export type TemplateWidgetType =
-  | "stat"
-  | "table"
-  | "bar_chart"
-  | "line_chart"
-  | "pie_chart"
-  | "unknown";
-export type TemplateWidgetValueFormat = "number" | "currency" | "percent";
 
 export type ComposerAttachmentInput = {
   filename: string;
@@ -58,50 +50,14 @@ export type TemplateSource = {
   href: string;
 };
 
-export type TemplateStatWidgetSpec = {
-  value: string | number;
-  label?: string;
-  format?: TemplateWidgetValueFormat;
-  trend?: {
-    value: number;
-    direction: "up" | "down" | "flat";
-  };
-};
-
-export type TemplateTableWidgetSpec = {
-  columns: Array<{ key: string; label: string }>;
-  rows: Array<Record<string, unknown>>;
-};
-
-export type TemplateCartesianChartWidgetSpec = {
-  data: Array<Record<string, unknown>>;
-  xKey: string;
-  yKey: string;
-  seriesLabel?: string;
-  format?: TemplateWidgetValueFormat;
-};
-
-export type TemplatePieChartWidgetSpec = {
-  data: Array<Record<string, unknown>>;
-  labelKey: string;
-  valueKey: string;
-  format?: TemplateWidgetValueFormat;
-};
-
-export type TemplateWidgetSpec =
-  | TemplateStatWidgetSpec
-  | TemplateTableWidgetSpec
-  | TemplateCartesianChartWidgetSpec
-  | TemplatePieChartWidgetSpec
-  | Record<string, unknown>;
-
-export type TemplateWidgetBlock = {
+export type TemplateUiBlock = {
   id: string;
-  kind: "widget";
-  widgetType: TemplateWidgetType;
-  title?: string;
-  subtitle?: string;
-  spec: TemplateWidgetSpec;
+  kind: "ui";
+  format: "openui";
+  content: string;
+  componentLibraryId?: string | null;
+  surface?: string | null;
+  ast?: Record<string, unknown> | null;
   version: 1;
 };
 
@@ -116,7 +72,7 @@ export type TemplateRenderBlock =
   | TemplateTextBlock
   | TemplateReasoningBlock
   | TemplateTaskBlock
-  | TemplateWidgetBlock
+  | TemplateUiBlock
   | TemplateSourcesBlock;
 
 export type TemplateMessage = {

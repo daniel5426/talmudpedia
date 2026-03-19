@@ -254,6 +254,28 @@ export const AGENT_NODE_SPECS: AgentNodeSpec[] = [
           { value: "json", label: "JSON" },
         ]
       },
+      { name: "generative_ui_mode", label: "Generative UI", fieldType: "select", required: false, default: "off",
+        options: [
+          { value: "off", label: "Off" },
+          { value: "openui", label: "OpenUI" },
+        ]
+      },
+      { name: "generative_ui_component_library_id", label: "OpenUI Library", fieldType: "select", required: false, default: "openui-default-v1",
+        dependsOn: { field: "generative_ui_mode", equals: "openui" },
+        options: [
+          { value: "openui-default-v1", label: "Default V1" },
+        ]
+      },
+      { name: "generative_ui_surface", label: "OpenUI Surface", fieldType: "select", required: false, default: "chat_inline",
+        dependsOn: { field: "generative_ui_mode", equals: "openui" },
+        options: [
+          { value: "chat_inline", label: "Chat Inline" },
+          { value: "app_canvas", label: "App Canvas" },
+        ]
+      },
+      { name: "generative_ui_max_blocks", label: "OpenUI Max Blocks", fieldType: "number", required: false, default: 6,
+        dependsOn: { field: "generative_ui_mode", equals: "openui" }
+      },
       { name: "tools", label: "Tools", fieldType: "tool_list", required: false, description: "Attach tools to the agent" },
       { name: "temperature", label: "Temperature", fieldType: "number", required: false, description: "Override reasoning effort temperature" },
     ],

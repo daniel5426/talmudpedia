@@ -169,21 +169,23 @@ Returned turn shape includes:
 - `completed_at`
 - `run_events`
 
-`run_events` contains ordered historical non-text `run-stream.v2` events for that turn, intended for replaying tool, reasoning, and widget UI on old chats.
+`run_events` contains ordered historical non-text `run-stream.v2` events for that turn, intended for replaying tool, reasoning, and OpenUI UI on old chats.
 
-Current widget event:
+Current generative UI event:
 
-- `assistant.widget`
-- current platform agents author it through the built-in `emit_widget` tool
+- `assistant.ui`
+- current platform generative UI mode is OpenUI
 
-Current widget payload fields:
+Current `assistant.ui` payload fields:
 
-- `widget_id`
-- `widget_type`
-- `title`
-- `subtitle`
-- `spec`
+- `format`
 - `version`
+- `content`
+- `content_delta`
+- `ast`
+- `component_library_id`
+- `surface`
+- `is_final`
 
 ### `deleteAgentThread(agentId, threadId, options)`
 

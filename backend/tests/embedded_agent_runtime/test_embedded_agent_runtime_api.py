@@ -191,21 +191,31 @@ async def test_embedded_agent_thread_detail_includes_run_events_and_delete_route
         run_id,
         db_session,
         {
-            "event": "assistant.widget",
+            "event": "assistant.ui",
             "visibility": "client_safe",
             "data": {
-                "widget_id": "widget-1",
-                "widget_type": "bar_chart",
-                "title": "Bank concentration",
-                "spec": {
-                    "data": [
-                        {"bank": "Leumi", "share_pct": 42},
-                        {"bank": "Hapoalim", "share_pct": 31},
-                    ],
-                    "xKey": "bank",
-                    "yKey": "share_pct",
-                    "format": "percent",
-                },
+                "format": "openui",
+                "component_library_id": "openui-default-v1",
+                "surface": "chat_inline",
+                "content_delta": "root = Card([TextContent(\"Loading\")])",
+                "is_final": False,
+                "version": 1,
+            },
+        },
+    )
+    await recorder.save_event(
+        run_id,
+        db_session,
+        {
+            "event": "assistant.ui",
+            "visibility": "client_safe",
+            "data": {
+                "format": "openui",
+                "component_library_id": "openui-default-v1",
+                "surface": "chat_inline",
+                "content": "root = Card([TextContent(\"Bank concentration\")])",
+                "ast": None,
+                "is_final": True,
                 "version": 1,
             },
         },
@@ -228,12 +238,13 @@ async def test_embedded_agent_thread_detail_includes_run_events_and_delete_route
         "reasoning.update",
         "tool.completed",
         "reasoning.update",
-        "assistant.widget",
+        "assistant.ui",
     ]
     assert [item["run_id"] for item in turn["run_events"]] == [str(run_id)] * 5
-    widget_event = turn["run_events"][-1]
-    assert widget_event["payload"]["widget_type"] == "bar_chart"
-    assert widget_event["payload"]["title"] == "Bank concentration"
+    ui_event = turn["run_events"][-1]
+    assert ui_event["payload"]["format"] == "openui"
+    assert ui_event["payload"]["component_library_id"] == "openui-default-v1"
+    assert ui_event["payload"]["content"] == 'root = Card([TextContent("Bank concentration")])'
 
     delete_resp = await client.delete(
         f"/public/embed/agents/{agent.id}/threads/{thread_id}",

@@ -163,6 +163,21 @@ class AgentExecutorService:
             return final_output.strip()
         return None
 
+    @staticmethod
+    def _extract_turn_metadata(output_result: Dict[str, Any] | None) -> Dict[str, Any] | None:
+        if not isinstance(output_result, dict):
+            return None
+        ui_output = output_result.get("ui_output")
+        if not isinstance(ui_output, dict):
+            return None
+        if str(ui_output.get("format") or "").strip().lower() != "openui":
+            return None
+        return {
+            "assistant_ui_format": "openui",
+            "assistant_ui_component_library_id": ui_output.get("component_library_id"),
+            "assistant_ui_surface": ui_output.get("surface"),
+        }
+
     async def start_run(
         self, 
         agent_id: UUID, 
@@ -784,6 +799,9 @@ class AgentExecutorService:
                         run.output_result if isinstance(run.output_result, dict) else None
                     ),
                     usage_tokens=int(run.usage_tokens or 0),
+                    metadata=self._extract_turn_metadata(
+                        run.output_result if isinstance(run.output_result, dict) else None
+                    ),
                 )
             await db.commit()
 

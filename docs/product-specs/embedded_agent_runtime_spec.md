@@ -174,35 +174,30 @@ The SDK does not currently expose:
 - retry, timeout, or abort controls
 - control-plane/admin operations
 
-## Generic Widget Events
+## OpenUI Events
 
-The public embed runtime also supports replayable generic widget events through the normal stream/history contract.
+The public embed runtime supports replayable OpenUI responses through the normal stream/history contract.
 
-- event name: `assistant.widget`
+- event name: `assistant.ui`
 - stage: `assistant`
 - delivery: live SSE stream and historical `turns[].run_events`
 
-Current widget payload fields:
+Current payload fields:
 
-- `widget_id`
-- `widget_type`
-- `title`
-- `subtitle`
-- `spec`
+- `format` (`openui`)
 - `version`
-
-Current widget types:
-
-- `stat`
-- `table`
-- `bar_chart`
-- `line_chart`
-- `pie_chart`
+- `content`
+- `content_delta`
+- `ast`
+- `component_library_id`
+- `surface`
+- `is_final`
 
 Current production authoring path:
 
-- agents emit widgets by calling the built-in `emit_widget` tool
-- the tool validates widget payloads and produces replayable `assistant.widget` events
+- agent nodes can enable `generative_ui_mode = openui`
+- the runtime injects the OpenUI instructions automatically
+- the runtime emits replayable `assistant.ui` events
 
 ## Thread Detail Contract Boundary
 

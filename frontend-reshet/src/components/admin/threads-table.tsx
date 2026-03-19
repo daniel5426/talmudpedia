@@ -159,9 +159,14 @@ export function ThreadsTable({
       cell: ({ row }) => {
         const thread = row.original
         if (!thread.agent_id) return <span className="text-muted-foreground">—</span>
+        const agentLabel = thread.agent_name || thread.agent_slug || thread.agent_id
         return (
-          <Link href={`/admin/agents/${thread.agent_id}/builder`} className="hover:underline">
-            {thread.agent_name || thread.agent_slug || thread.agent_id}
+          <Link
+            href={`/admin/agents/${thread.agent_id}/builder`}
+            className="block max-w-[220px] truncate hover:underline"
+            title={agentLabel}
+          >
+            {agentLabel}
           </Link>
         )
       },
@@ -177,9 +182,14 @@ export function ThreadsTable({
       cell: ({ row }) => {
         const thread = row.original
         if (!thread.actor_id) return <span className="text-muted-foreground">—</span>
+        const actorLabel = thread.actor_display || thread.actor_email || thread.actor_id
         return (
-          <Link href={`/admin/users/${thread.actor_id}`} className="hover:underline">
-            {thread.actor_display || thread.actor_email || thread.actor_id}
+          <Link
+            href={`/admin/users/${thread.actor_id}`}
+            className="block max-w-[220px] truncate hover:underline"
+            title={actorLabel}
+          >
+            {actorLabel}
           </Link>
         )
       },
@@ -263,10 +273,10 @@ export function ThreadsTable({
             <SelectTrigger className="w-[220px]">
               <SelectValue placeholder="All agents" />
             </SelectTrigger>
-            <SelectContent>
+            <SelectContent className="max-h-72 max-w-[320px]">
               <SelectItem value={ALL_AGENTS_VALUE}>All agents</SelectItem>
               {agents.map((agent) => (
-                <SelectItem key={agent.id} value={agent.id}>
+                <SelectItem key={agent.id} value={agent.id} className="max-w-[300px] truncate">
                   {agent.name}
                 </SelectItem>
               ))}

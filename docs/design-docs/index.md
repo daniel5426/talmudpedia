@@ -1,6 +1,6 @@
 # Design Docs Index
 
-Last Updated: 2026-03-16
+Last Updated: 2026-03-19
 
 This section is for architecture and design documents that explain system shape, constraints, and tradeoffs.
 
@@ -52,3 +52,5 @@ This section is for architecture and design documents that explain system shape,
   - Current direct artifact-usage model in coding-agent flows.
 - `voice_runtime_current.md`
   - Current voice websocket/provider runtime shape and security reality.
+- `prompt_library_shared_resource_design.md`
+  - Shared-resource design for a platform-wide prompt library and cross-surface prompt references.
