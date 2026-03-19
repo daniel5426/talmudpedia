@@ -29,6 +29,7 @@ export function BarChart({
           <div
             key={i}
             className="flex-1 min-w-0 rounded-sm transition-all hover:opacity-80"
+            title={`${d.date}: ${d.value.toLocaleString()}`}
             style={{
               height: `${Math.max((d.value / (maxValue || 1)) * 100, 2)}%`,
               backgroundColor: color,

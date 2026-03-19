@@ -141,9 +141,14 @@ export function ThreadsTable({
       header: "Title",
       cell: ({ row }) => {
         const thread = row.original
+        const title = thread.title || "Untitled Thread"
         return (
-          <Link href={`${basePath}/${thread.id}`} className="hover:underline font-medium">
-            {thread.title || "Untitled Thread"}
+          <Link
+            href={`${basePath}/${thread.id}`}
+            className="block max-w-[360px] truncate font-medium hover:underline"
+            title={title}
+          >
+            {title}
           </Link>
         )
       },
