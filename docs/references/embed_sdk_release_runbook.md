@@ -42,6 +42,21 @@ npm publish --access public --no-provenance
 
 ## Before Publishing
 
+Preferred local preflight:
+
+```bash
+bash /Users/danielbenassaya/Code/personal/talmudpedia/packages/embed-sdk/scripts/run-local-release-checks.sh
+```
+
+This mirrors the current `embed-sdk-ci` workflow checks in one command.
+
+Tooling split in that script:
+- `packages/embed-sdk`: `npm`
+- `frontend-reshet`: `pnpm`
+- `backend`: `pip` + `pytest`
+
+The script performs a clean reinstall in `frontend-reshet` before running the Jest check so mixed `npm`/`pnpm` state in `node_modules` does not break the preflight.
+
 Run:
 
 ```bash
