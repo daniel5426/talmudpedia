@@ -34,8 +34,7 @@ const DEFAULT_AGENT_TOOL_INPUT_SCHEMA = {
     additionalProperties: false,
 }
 
-type SchemaMode = "outline" | "drilldown" | "split" | "composer" | "canvas"
-type SurfaceTab = "input" | "input_ui"
+type EditorMode = "builder" | "json"
 type SchemaNodeType = "string" | "number" | "boolean" | "object" | "array"
 type SchemaNode = {
     id: string
@@ -52,14 +51,6 @@ type SchemaNode = {
     uiPlaceholder: string
     uiHelp: string
 }
-const SCHEMA_MODES: Array<{ id: SchemaMode; label: string; description: string }> = [
-    { id: "outline", label: "Outline Tree", description: "Recursive tree with inline structure editing." },
-    { id: "drilldown", label: "Breadcrumb Drilldown", description: "One level at a time with a path header." },
-    { id: "split", label: "Split Tree + Detail", description: "Compact tree on the left, focused editing on the right." },
-    { id: "composer", label: "Slash Composer", description: "Quick-add structure with token-like rows." },
-    { id: "canvas", label: "Indented Schema Canvas", description: "Minimal recursive canvas with typographic depth." },
-]
-
 function createId() {
     return Math.random().toString(36).slice(2, 10)
 }
@@ -253,14 +244,12 @@ function NavigatorRow({
     selectedId,
     onSelect,
     onToggle,
-    style,
 }: {
     node: SchemaNode
     depth: number
     selectedId: string
     onSelect: (id: string) => void
     onToggle: (id: string) => void
-    style: "outline" | "canvas" | "mini"
 }) {
     const selected = node.id === selectedId
     const expandable = node.type === "object" ? node.children.length > 0 : node.type === "array" && !!node.item
@@ -271,10 +260,9 @@ function NavigatorRow({
                 onClick={() => onSelect(node.id)}
                 className={cn(
                     "group flex w-full items-center gap-2 rounded-xl px-2 py-1.5 text-left transition-colors",
-                    style === "canvas" ? "min-h-9" : "",
                     selected ? "bg-foreground/[0.06] text-foreground" : "text-muted-foreground hover:bg-foreground/[0.03] hover:text-foreground"
                 )}
-                style={{ paddingLeft: depth * (style === "mini" ? 14 : 18) + 8 }}
+                style={{ paddingLeft: depth * 14 + 8 }}
             >
                 <span
                     className="flex h-4 w-4 items-center justify-center text-muted-foreground/70"
@@ -285,7 +273,7 @@ function NavigatorRow({
                 >
                     {expandable ? node.expanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" /> : <span className="h-1 w-1 rounded-full bg-current/40" />}
                 </span>
-                <span className={cn("min-w-0 truncate text-sm", style === "canvas" ? "font-medium tracking-[-0.01em]" : "")}>
+                <span className="min-w-0 truncate text-sm">
                     {node.name || (node.type === "array" ? "item" : "field")}
                 </span>
                 <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.16em]", typeAccent(node.type))}>
@@ -302,7 +290,6 @@ function NavigatorRow({
                           selectedId={selectedId}
                           onSelect={onSelect}
                           onToggle={onToggle}
-                          style={style}
                       />
                   ))
                 : null}
@@ -313,7 +300,6 @@ function NavigatorRow({
                     selectedId={selectedId}
                     onSelect={onSelect}
                     onToggle={onToggle}
-                    style={style}
                 />
             ) : null}
         </div>
@@ -332,10 +318,11 @@ export function ExportAgentToolDialog({
     const [selectedAgentId, setSelectedAgentId] = useState("")
     const [name, setName] = useState("")
     const [description, setDescription] = useState("")
-    const [schemaMode, setSchemaMode] = useState<SchemaMode>("outline")
-    const [surfaceTab, setSurfaceTab] = useState<SurfaceTab>("input")
+    const [editorMode, setEditorMode] = useState<EditorMode>("builder")
     const [rootNode, setRootNode] = useState<SchemaNode>(() => schemaToNode("input", DEFAULT_AGENT_TOOL_INPUT_SCHEMA, true))
     const [selectedNodeId, setSelectedNodeId] = useState("")
+    const [jsonSchemaText, setJsonSchemaText] = useState(JSON.stringify(DEFAULT_AGENT_TOOL_INPUT_SCHEMA, null, 2))
+    const [schemaEditorError, setSchemaEditorError] = useState<string | null>(null)
     const [loading, setLoading] = useState(false)
     const [error, setError] = useState<string | null>(null)
     const selectedAgent = useMemo(
@@ -345,7 +332,6 @@ export function ExportAgentToolDialog({
 
     const selectedNode = useMemo(() => findNode(rootNode, selectedNodeId) ?? rootNode, [rootNode, selectedNodeId])
     const selectedPath = useMemo(() => findPath(rootNode, selectedNode.id) ?? [rootNode], [rootNode, selectedNode.id])
-    const currentDrillNode = selectedNode.type === "object" ? selectedNode : selectedPath.at(-2) ?? rootNode
     useEffect(() => {
         if (!open) return
         if (!selectedAgentId && agents.length > 0) {
@@ -358,10 +344,11 @@ export function ExportAgentToolDialog({
         const nextRoot = schemaToNode("input", DEFAULT_AGENT_TOOL_INPUT_SCHEMA, true)
         setName(`${selectedAgent.name} Tool`)
         setDescription(selectedAgent.description || `Delegates to agent ${selectedAgent.name}.`)
-        setSchemaMode("outline")
-        setSurfaceTab("input")
+        setEditorMode("builder")
         setRootNode(nextRoot)
         setSelectedNodeId(nextRoot.id)
+        setJsonSchemaText(JSON.stringify(DEFAULT_AGENT_TOOL_INPUT_SCHEMA, null, 2))
+        setSchemaEditorError(null)
         setError(null)
     }, [open, selectedAgent])
     const updateSelectedNode = (patch: Partial<SchemaNode>) => {
@@ -407,113 +394,130 @@ export function ExportAgentToolDialog({
         setRootNode((current) => removeNode(current, selectedNode.id))
         setSelectedNodeId(nextSelected)
     }
-    const renderDrilldown = () => {
-        const path = findPath(rootNode, currentDrillNode.id) ?? [rootNode]
-        return (
-            <div className="space-y-3">
-                <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                    {path.map((node, index) => (
-                        <button
-                            key={node.id}
-                            type="button"
-                            onClick={() => setSelectedNodeId(node.id)}
-                            className="rounded-full px-2 py-1 hover:bg-foreground/[0.04]"
-                        >
-                            {index === 0 ? "input" : node.name || node.type}
-                        </button>
-                    ))}
-                </div>
-                <div className="space-y-1">
-                    {(currentDrillNode.type === "object" ? currentDrillNode.children : currentDrillNode.item ? [currentDrillNode.item] : []).map((node) => (
-                        <button
-                            key={node.id}
-                            type="button"
-                            onClick={() => setSelectedNodeId(node.id)}
-                            className={cn(
-                                "flex w-full items-center justify-between rounded-2xl px-3 py-2 text-left transition-colors",
-                                selectedNode.id === node.id ? "bg-foreground/[0.06]" : "hover:bg-foreground/[0.03]"
-                            )}
-                        >
-                            <div className="min-w-0">
-                                <div className="truncate text-sm text-foreground">{node.name || node.type}</div>
-                                <div className="text-[11px] text-muted-foreground">{node.description || node.type}</div>
-                            </div>
-                            <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                        </button>
-                    ))}
-                </div>
-            </div>
-        )
-    }
     const renderSplitTree = () => (
         <div className="grid gap-4 md:grid-cols-[260px_minmax(0,1fr)]">
             <div className="max-h-[320px] overflow-y-auto rounded-2xl bg-background/70 p-2">
-                <NavigatorRow node={rootNode} depth={0} selectedId={selectedNode.id} onSelect={setSelectedNodeId} onToggle={handleToggleExpanded} style="mini" />
+                <NavigatorRow node={rootNode} depth={0} selectedId={selectedNode.id} onSelect={setSelectedNodeId} onToggle={handleToggleExpanded} />
             </div>
             <div className="rounded-2xl bg-background/70 p-3">
-                <div className="mb-3 text-xs uppercase tracking-[0.16em] text-muted-foreground">Selected</div>
-                <div className="space-y-2">
-                    <Input
-                        aria-label="Selected Field Name"
-                        value={selectedNode.id === rootNode.id ? "input" : selectedNode.name}
-                        onChange={(event) => selectedNode.id !== rootNode.id && updateSelectedNode({ name: event.target.value })}
-                        disabled={selectedNode.id === rootNode.id}
-                    />
-                    <div className="flex items-center gap-2">
-                        <FieldTypeSelect value={selectedNode.type} onChange={(value) => updateSelectedNode({ type: value, children: value === "object" ? selectedNode.children : [], item: value === "array" ? selectedNode.item ?? createChild("string", "item") : null })} />
-                        {selectedNode.id !== rootNode.id ? (
-                            <label className="flex items-center gap-2 text-sm text-muted-foreground">
+                <div className="mb-3 flex items-center justify-between">
+                    <div className="text-xs uppercase tracking-[0.16em] text-muted-foreground">
+                        {selectedNode.id === rootNode.id ? "Root object" : selectedNode.name || selectedNode.type}
+                    </div>
+                    {selectedNode.id !== rootNode.id ? (
+                        <Button type="button" variant="ghost" className="h-7 rounded-full px-2.5 text-xs text-destructive hover:bg-destructive/10" onClick={removeSelected}>
+                            <Trash2 className="mr-1 h-3.5 w-3.5" />
+                            Remove
+                        </Button>
+                    ) : null}
+                </div>
+                <div className="space-y-3">
+                    <div className="grid gap-3 md:grid-cols-[minmax(0,1.2fr)_160px_110px]">
+                        <div className="space-y-1">
+                            <Label htmlFor="selected-field-name">Field Name</Label>
+                            <Input
+                                id="selected-field-name"
+                                value={selectedNode.id === rootNode.id ? "input" : selectedNode.name}
+                                onChange={(event) => selectedNode.id !== rootNode.id && updateSelectedNode({ name: event.target.value })}
+                                disabled={selectedNode.id === rootNode.id}
+                                className="rounded-xl border-none bg-[#f7f4ee] shadow-none"
+                            />
+                        </div>
+                        <div className="space-y-1">
+                            <Label>Type</Label>
+                            <div className="rounded-xl bg-[#f7f4ee]">
+                                <FieldTypeSelect
+                                    value={selectedNode.type}
+                                    onChange={(value) =>
+                                        updateSelectedNode({
+                                            type: value,
+                                            children: value === "object" ? selectedNode.children : [],
+                                            item: value === "array" ? selectedNode.item ?? createChild("string", "item") : null,
+                                        })
+                                    }
+                                />
+                            </div>
+                        </div>
+                        <div className="space-y-1">
+                            <Label>Required</Label>
+                            <label className="flex h-8 items-center gap-2 rounded-xl bg-[#f7f4ee] px-3 text-sm text-muted-foreground">
                                 <input
                                     type="checkbox"
                                     checked={selectedNode.required}
+                                    disabled={selectedNode.id === rootNode.id}
                                     onChange={(event) => updateSelectedNode({ required: event.target.checked })}
                                 />
                                 Required
                             </label>
-                        ) : null}
+                        </div>
                     </div>
-                    <Input
-                        aria-label="Selected Field Description"
-                        placeholder="Description"
-                        value={selectedNode.description}
-                        onChange={(event) => updateSelectedNode({ description: event.target.value })}
-                    />
+                    <div className="space-y-1">
+                        <Label htmlFor="selected-field-description">Description</Label>
+                        <Input
+                            id="selected-field-description"
+                            value={selectedNode.description}
+                            onChange={(event) => updateSelectedNode({ description: event.target.value })}
+                            className="rounded-xl border-none bg-[#f7f4ee] shadow-none"
+                        />
+                    </div>
+                </div>
+                <div className="mt-4 flex flex-wrap gap-2">
+                    {selectedNode.type === "object"
+                        ? (["string", "number", "boolean", "object", "array"] as SchemaNodeType[]).map((type) => (
+                              <Button key={type} type="button" variant="ghost" className="h-8 rounded-full bg-[#f7f4ee] px-3 text-xs hover:bg-[#ede8de]" onClick={() => addChildToSelected(type)}>
+                                  <Plus className="mr-1 h-3.5 w-3.5" />
+                                  Add {type}
+                              </Button>
+                          ))
+                        : null}
+                    {selectedNode.type === "array"
+                        ? (["string", "number", "boolean", "object", "array"] as SchemaNodeType[]).map((type) => (
+                              <Button key={type} type="button" variant="ghost" className="h-8 rounded-full bg-[#f7f4ee] px-3 text-xs hover:bg-[#ede8de]" onClick={() => replaceArrayItem(type)}>
+                                  <Plus className="mr-1 h-3.5 w-3.5" />
+                                  Set items to {type}
+                              </Button>
+                          ))
+                        : null}
                 </div>
             </div>
         </div>
     )
-    const renderComposer = () => (
-        <div className="space-y-3">
-            <div className="flex flex-wrap gap-2">
-                {(["string", "number", "boolean", "object", "array"] as SchemaNodeType[]).map((type) => (
-                    <button
-                        key={type}
-                        type="button"
-                        onClick={() => (selectedNode.type === "array" ? replaceArrayItem(type) : addChildToSelected(type))}
-                        className="rounded-full bg-background px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-foreground/[0.06]"
-                    >
-                        /{type}
-                    </button>
-                ))}
-            </div>
-            <div className="space-y-1">
-                <NavigatorRow node={rootNode} depth={0} selectedId={selectedNode.id} onSelect={setSelectedNodeId} onToggle={handleToggleExpanded} style="outline" />
-            </div>
-        </div>
-    )
-    const renderNavigator = () => {
-        if (schemaMode === "drilldown") return renderDrilldown()
-        if (schemaMode === "split") return renderSplitTree()
-        if (schemaMode === "composer") return renderComposer()
-        if (schemaMode === "canvas") {
-            return <NavigatorRow node={rootNode} depth={0} selectedId={selectedNode.id} onSelect={setSelectedNodeId} onToggle={handleToggleExpanded} style="canvas" />
+
+    const switchToJson = () => {
+        setJsonSchemaText(JSON.stringify(nodeToSchema(rootNode), null, 2))
+        setSchemaEditorError(null)
+        setEditorMode("json")
+    }
+
+    const switchToBuilder = () => {
+        try {
+            const parsed = JSON.parse(jsonSchemaText)
+            const nextRoot = schemaToNode("input", parsed, true)
+            setRootNode(nextRoot)
+            setSelectedNodeId(nextRoot.id)
+            setSchemaEditorError(null)
+            setEditorMode("builder")
+        } catch {
+            setSchemaEditorError("JSON schema must be valid before switching back to the builder.")
         }
-        return <NavigatorRow node={rootNode} depth={0} selectedId={selectedNode.id} onSelect={setSelectedNodeId} onToggle={handleToggleExpanded} style="outline" />
     }
     const handleSubmit = async () => {
         if (!selectedAgentId) {
             setError("Select an agent to export.")
             return
+        }
+
+        let inputSchema: Record<string, unknown>
+        if (editorMode === "json") {
+            try {
+                inputSchema = JSON.parse(jsonSchemaText)
+                setSchemaEditorError(null)
+            } catch {
+                setSchemaEditorError("JSON schema must be valid before export.")
+                return
+            }
+        } else {
+            inputSchema = nodeToSchema(rootNode)
         }
 
         setLoading(true)
@@ -522,7 +526,7 @@ export function ExportAgentToolDialog({
             await agentService.exportAgentTool(selectedAgentId, {
                 name: name.trim() || undefined,
                 description: description.trim() || undefined,
-                input_schema: nodeToSchema(rootNode),
+                input_schema: inputSchema,
             })
             onOpenChange(false)
             router.push("/admin/tools")
@@ -533,16 +537,6 @@ export function ExportAgentToolDialog({
             setLoading(false)
         }
     }
-    const advancedPatchError = useMemo(() => {
-        if (!selectedNode.schemaPatchText.trim()) return null
-        try {
-            const parsed = JSON.parse(selectedNode.schemaPatchText)
-            return isPlainObject(parsed) ? null : "Advanced patch must be a JSON object."
-        } catch {
-            return "Advanced patch must be valid JSON."
-        }
-    }, [selectedNode.schemaPatchText])
-
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
             <DialogContent className="sm:max-w-[980px] max-h-[88vh] overflow-hidden border-none bg-[#faf8f4] shadow-2xl">
@@ -588,185 +582,38 @@ export function ExportAgentToolDialog({
                     <div className="space-y-4 rounded-[28px] bg-[#f2eee7] p-4">
                         <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
                             <div>
-                                <Label>Input Schema Playground</Label>
+                                <Label>Input Schema</Label>
                                 <p className="mt-1 text-xs text-muted-foreground">
-                                    Five structural UI directions over the same schema tree.
+                                    Split tree editor with a JSON fallback when you want raw control.
                                 </p>
                             </div>
-                            <div className="grid grid-cols-2 gap-2 md:grid-cols-5">
-                                {SCHEMA_MODES.map((mode) => (
-                                    <button
-                                        key={mode.id}
-                                        type="button"
-                                        onClick={() => setSchemaMode(mode.id)}
-                                        className={cn(
-                                            "rounded-2xl px-3 py-2 text-left transition-colors",
-                                            schemaMode === mode.id ? "bg-white text-foreground" : "text-muted-foreground hover:bg-white/60 hover:text-foreground"
-                                        )}
-                                    >
-                                        <div className="text-sm font-medium">{mode.label}</div>
-                                        <div className="mt-1 text-[11px] leading-4">{mode.description}</div>
-                                    </button>
-                                ))}
-                            </div>
+                            <Button
+                                type="button"
+                                variant="ghost"
+                                className="h-9 rounded-full bg-white/70 px-4 text-sm hover:bg-white"
+                                onClick={editorMode === "builder" ? switchToJson : switchToBuilder}
+                            >
+                                {editorMode === "builder" ? "Switch To JSON" : "Back To Builder"}
+                            </Button>
                         </div>
 
                         <div className="rounded-[24px] bg-white/70 p-3">
-                            {renderNavigator()}
-                        </div>
-
-                        <div className="rounded-[24px] bg-white/78 p-3">
-                            <div className="mb-3 flex items-center gap-2">
-                                <button
-                                    type="button"
-                                    onClick={() => setSurfaceTab("input")}
-                                    className={cn(
-                                        "rounded-full px-3 py-1.5 text-xs font-medium transition-colors",
-                                        surfaceTab === "input" ? "bg-foreground text-background" : "text-muted-foreground hover:bg-foreground/[0.05]"
-                                    )}
-                                >
-                                    Input
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => setSurfaceTab("input_ui")}
-                                    className={cn(
-                                        "rounded-full px-3 py-1.5 text-xs font-medium transition-colors",
-                                        surfaceTab === "input_ui" ? "bg-foreground text-background" : "text-muted-foreground hover:bg-foreground/[0.05]"
-                                    )}
-                                >
-                                    Input UI
-                                </button>
-                                <div className="ml-auto text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
-                                    {selectedNode.id === rootNode.id ? "root object" : selectedNode.name || selectedNode.type}
-                                </div>
-                            </div>
-
-                            {surfaceTab === "input" ? (
-                                <div className="space-y-3">
-                                    <div className="grid gap-3 md:grid-cols-[minmax(0,1.2fr)_180px_120px]">
-                                        <div className="space-y-1">
-                                            <Label htmlFor="selected-field-name">Field Name</Label>
-                                            <Input
-                                                id="selected-field-name"
-                                                value={selectedNode.id === rootNode.id ? "input" : selectedNode.name}
-                                                onChange={(event) => selectedNode.id !== rootNode.id && updateSelectedNode({ name: event.target.value })}
-                                                disabled={selectedNode.id === rootNode.id}
-                                                className="rounded-xl border-none bg-[#f7f4ee] shadow-none"
-                                            />
-                                        </div>
-                                        <div className="space-y-1">
-                                            <Label>Type</Label>
-                                            <div className="rounded-xl bg-[#f7f4ee]">
-                                                <FieldTypeSelect
-                                                    value={selectedNode.type}
-                                                    onChange={(value) =>
-                                                        updateSelectedNode({
-                                                            type: value,
-                                                            children: value === "object" ? selectedNode.children : [],
-                                                            item: value === "array" ? selectedNode.item ?? createChild("string", "item") : null,
-                                                        })
-                                                    }
-                                                />
-                                            </div>
-                                        </div>
-                                        <div className="space-y-1">
-                                            <Label>Required</Label>
-                                            <label className="flex h-8 items-center gap-2 rounded-xl bg-[#f7f4ee] px-3 text-sm text-muted-foreground">
-                                                <input
-                                                    type="checkbox"
-                                                    checked={selectedNode.required}
-                                                    disabled={selectedNode.id === rootNode.id}
-                                                    onChange={(event) => updateSelectedNode({ required: event.target.checked })}
-                                                />
-                                                Required
-                                            </label>
-                                        </div>
-                                    </div>
-
-                                    <div className="space-y-1">
-                                        <Label htmlFor="selected-field-description">Description</Label>
-                                        <Input
-                                            id="selected-field-description"
-                                            value={selectedNode.description}
-                                            onChange={(event) => updateSelectedNode({ description: event.target.value })}
-                                            className="rounded-xl border-none bg-[#f7f4ee] shadow-none"
-                                        />
-                                    </div>
-
-                                    <div className="flex flex-wrap gap-2">
-                                        {selectedNode.type === "object"
-                                            ? (["string", "number", "boolean", "object", "array"] as SchemaNodeType[]).map((type) => (
-                                                  <Button key={type} type="button" variant="ghost" className="h-8 rounded-full bg-[#f7f4ee] px-3 text-xs hover:bg-[#ede8de]" onClick={() => addChildToSelected(type)}>
-                                                      <Plus className="mr-1 h-3.5 w-3.5" />
-                                                      Add {type}
-                                                  </Button>
-                                              ))
-                                            : null}
-                                        {selectedNode.type === "array"
-                                            ? (["string", "number", "boolean", "object", "array"] as SchemaNodeType[]).map((type) => (
-                                                  <Button key={type} type="button" variant="ghost" className="h-8 rounded-full bg-[#f7f4ee] px-3 text-xs hover:bg-[#ede8de]" onClick={() => replaceArrayItem(type)}>
-                                                      <Plus className="mr-1 h-3.5 w-3.5" />
-                                                      Set items to {type}
-                                                  </Button>
-                                              ))
-                                            : null}
-                                        {selectedNode.id !== rootNode.id ? (
-                                            <Button type="button" variant="ghost" className="h-8 rounded-full px-3 text-xs text-destructive hover:bg-destructive/10" onClick={removeSelected}>
-                                                <Trash2 className="mr-1 h-3.5 w-3.5" />
-                                                Remove
-                                            </Button>
-                                        ) : null}
-                                    </div>
-                                </div>
+                            {editorMode === "builder" ? (
+                                renderSplitTree()
                             ) : (
-                                <div className="space-y-3">
-                                    <div className="grid gap-3 md:grid-cols-2">
-                                        <div className="space-y-1">
-                                            <Label htmlFor="selected-ui-label">Label</Label>
-                                            <Input
-                                                id="selected-ui-label"
-                                                value={selectedNode.uiLabel}
-                                                onChange={(event) => updateSelectedNode({ uiLabel: event.target.value })}
-                                                className="rounded-xl border-none bg-[#f7f4ee] shadow-none"
-                                            />
-                                        </div>
-                                        <div className="space-y-1">
-                                            <Label htmlFor="selected-ui-placeholder">Placeholder</Label>
-                                            <Input
-                                                id="selected-ui-placeholder"
-                                                value={selectedNode.uiPlaceholder}
-                                                onChange={(event) => updateSelectedNode({ uiPlaceholder: event.target.value })}
-                                                className="rounded-xl border-none bg-[#f7f4ee] shadow-none"
-                                            />
-                                        </div>
-                                    </div>
-                                    <div className="space-y-1">
-                                        <Label htmlFor="selected-ui-help">Help Text</Label>
-                                        <Input
-                                            id="selected-ui-help"
-                                            value={selectedNode.uiHelp}
-                                            onChange={(event) => updateSelectedNode({ uiHelp: event.target.value })}
-                                            className="rounded-xl border-none bg-[#f7f4ee] shadow-none"
-                                        />
-                                    </div>
-                                    <div className="space-y-1">
-                                        <Label htmlFor="selected-schema-patch">Advanced Schema Patch</Label>
-                                        <Textarea
-                                            id="selected-schema-patch"
-                                            value={selectedNode.schemaPatchText}
-                                            onChange={(event) => updateSelectedNode({ schemaPatchText: event.target.value })}
-                                            className="min-h-[120px] rounded-2xl border-none bg-[#f7f4ee] font-mono text-xs shadow-none"
-                                            placeholder='{"enum":["short","long"]}'
-                                        />
-                                        <div className="text-[11px] text-muted-foreground">
-                                            Use this only for schema capabilities the UI tree does not expose directly.
-                                        </div>
-                                        {advancedPatchError ? <div className="text-xs text-destructive">{advancedPatchError}</div> : null}
-                                    </div>
-                                </div>
+                                <Textarea
+                                    aria-label="JSON Schema"
+                                    className="min-h-[360px] rounded-2xl border-none bg-[#f7f4ee] font-mono text-xs shadow-none"
+                                    value={jsonSchemaText}
+                                    onChange={(event) => {
+                                        setJsonSchemaText(event.target.value)
+                                        setSchemaEditorError(null)
+                                    }}
+                                />
                             )}
                         </div>
+
+                        {schemaEditorError ? <div className="text-sm text-destructive">{schemaEditorError}</div> : null}
                     </div>
 
                     {error ? (
@@ -780,7 +627,7 @@ export function ExportAgentToolDialog({
                     <Button variant="outline" onClick={() => onOpenChange(false)} disabled={loading}>
                         Cancel
                     </Button>
-                    <Button onClick={handleSubmit} disabled={loading || agents.length === 0 || !!advancedPatchError} className="gap-2">
+                    <Button onClick={handleSubmit} disabled={loading || agents.length === 0} className="gap-2">
                         {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wrench className="h-4 w-4" />}
                         Export Tool
                     </Button>

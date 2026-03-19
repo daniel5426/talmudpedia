@@ -23,6 +23,7 @@ from app.services.openui_support import (
     build_openui_payload,
     build_openui_system_prompt,
     resolve_openui_runtime_config,
+    sanitize_openui_content,
 )
 from app.agent.core.llm_adapter import LLMProviderAdapter
 from app.agent.cel_engine import evaluate_template
@@ -1408,6 +1409,9 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
 
                 if emitter:
                     emitter.emit_node_end(node_id, node_name, "agent", {"content_length": len(full_content)})
+
+                if openui_config.enabled:
+                    full_content = sanitize_openui_content(full_content)
 
                 # Handle structured output
                 result_content: Any = full_content

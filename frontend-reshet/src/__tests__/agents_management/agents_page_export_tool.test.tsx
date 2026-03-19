@@ -87,17 +87,10 @@ describe("agents page export tool flow", () => {
     expect(pushMock).toHaveBeenCalledWith("/admin/tools")
   })
 
-  it("shows the new five schema UI options and lets the user add a field", async () => {
+  it("uses the split tree editor and lets the user add a field", async () => {
     render(<AgentsPage />)
 
-    expect(await screen.findByText("Input Schema Playground")).toBeInTheDocument()
-    expect(screen.getByRole("button", { name: /Outline Tree/i })).toBeInTheDocument()
-    expect(screen.getByRole("button", { name: /Breadcrumb Drilldown/i })).toBeInTheDocument()
-    expect(screen.getByRole("button", { name: /Split Tree \+ Detail/i })).toBeInTheDocument()
-    expect(screen.getByRole("button", { name: /Slash Composer/i })).toBeInTheDocument()
-    expect(screen.getByRole("button", { name: /Indented Schema Canvas/i })).toBeInTheDocument()
-
-    fireEvent.click(screen.getByRole("button", { name: /Slash Composer/i }))
+    expect(await screen.findByText("Input Schema")).toBeInTheDocument()
     fireEvent.click(screen.getByRole("button", { name: /Add string/i }))
     fireEvent.change(screen.getByLabelText("Field Name"), {
       target: { value: "query" },
@@ -114,6 +107,44 @@ describe("agents page export tool flow", () => {
               query: { type: "string" },
             }),
           }),
+        })
+      )
+    })
+  })
+
+  it("lets the user switch to raw json editing", async () => {
+    render(<AgentsPage />)
+
+    expect(await screen.findByText("Input Schema")).toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: "Switch To JSON" }))
+    fireEvent.change(screen.getByLabelText("JSON Schema"), {
+      target: {
+        value: JSON.stringify(
+          {
+            type: "object",
+            properties: {
+              question: { type: "string" },
+            },
+            additionalProperties: false,
+          },
+          null,
+          2
+        ),
+      },
+    })
+    fireEvent.click(screen.getByRole("button", { name: "Export Tool" }))
+
+    await waitFor(() => {
+      expect(exportAgentToolMock).toHaveBeenCalledWith(
+        "agent-1",
+        expect.objectContaining({
+          input_schema: {
+            type: "object",
+            properties: {
+              question: { type: "string" },
+            },
+            additionalProperties: false,
+          },
         })
       )
     })

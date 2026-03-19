@@ -13,8 +13,8 @@ Frontend Agents page management actions, including delete flow wiring and export
 - Clicking the per-agent overflow menu delete action triggers `agentService.deleteAgent` with the agent id.
 - Clicking the per-agent overflow menu copy action writes the agent id to the clipboard.
 - Export-mode routing opens the agent export dialog and submits `agentService.exportAgentTool` with the selected agent/tool metadata.
-- The export dialog now exposes five schema-UI playground modes and preserves export behavior while editing through the new tree-based input surface.
-- The export dialog lets the user add a field through the new schema UI before submission.
+- The export dialog exposes a single split tree + details schema editor and lets the user add a field before submission.
+- The export dialog lets the user switch to raw JSON editing and export from that mode.
 
 ## Last run command + date/time + result
 - Command: `npm test -- --runInBand src/__tests__/agents_management/agents_page_export_tool.test.tsx`

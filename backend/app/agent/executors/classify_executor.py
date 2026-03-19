@@ -2,7 +2,7 @@ import logging
 from typing import Any, Dict, List
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, BaseMessage
 from app.agent.executors.base import BaseNodeExecutor, ValidationResult
-from app.agent.execution.field_resolver import evaluate_template
+from app.agent.cel_engine import evaluate_template
 from app.agent.core.llm_adapter import LLMProviderAdapter
 from app.services.model_resolver import ModelResolver
 logger = logging.getLogger(__name__)

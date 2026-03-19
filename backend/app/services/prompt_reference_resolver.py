@@ -8,6 +8,7 @@ from uuid import UUID
 
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from app.db.postgres.models.agents import Agent
 from app.db.postgres.models.artifact_runtime import Artifact, ArtifactRevision
@@ -388,14 +389,18 @@ class PromptReferenceResolver:
                             }
                         )
 
-        artifact_stmt = select(Artifact, ArtifactRevision).outerjoin(
-            ArtifactRevision,
-            ArtifactRevision.id == Artifact.latest_draft_revision_id,
-        ).where(or_(Artifact.tenant_id == self._tenant_id, Artifact.tenant_id.is_(None)))
+        draft_revision = aliased(ArtifactRevision)
+        published_revision = aliased(ArtifactRevision)
+        artifact_stmt = (
+            select(Artifact, draft_revision, published_revision)
+            .outerjoin(draft_revision, draft_revision.id == Artifact.latest_draft_revision_id)
+            .outerjoin(published_revision, published_revision.id == Artifact.latest_published_revision_id)
+            .where(or_(Artifact.tenant_id == self._tenant_id, Artifact.tenant_id.is_(None)))
+        )
         artifact_rows = (await self._db.execute(artifact_stmt)).all()
         seen_revision_ids: set[str] = set()
-        for artifact, revision in artifact_rows:
-            for current_revision in (revision, artifact.latest_published_revision):
+        for artifact, latest_draft_revision, latest_published_revision in artifact_rows:
+            for current_revision in (latest_draft_revision, latest_published_revision):
                 if current_revision is None:
                     continue
                 revision_key = str(current_revision.id)
