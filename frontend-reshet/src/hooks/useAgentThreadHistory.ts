@@ -8,6 +8,13 @@ import {
   sortChatRenderBlocks,
 } from "@/services/chat-presentation";
 import { buildResponseBlocksFromRunTrace } from "@/services/run-trace-blocks";
+import type { FileUIPart } from "ai";
+
+type RuntimeAttachmentDto = {
+  id: string;
+  filename: string;
+  mime_type: string;
+};
 
 export interface AgentChatHistoryItem {
   id: string;
@@ -24,6 +31,7 @@ type ThreadTurn = {
   turn_index?: number;
   user_input_text?: string | null;
   assistant_output_text?: string | null;
+  attachments?: RuntimeAttachmentDto[];
   created_at?: string;
   completed_at?: string;
   metadata?: Record<string, unknown> | null;
@@ -41,6 +49,13 @@ const parseTimestamp = (value?: string, fallback: number = Date.now()): number =
   const parsed = Date.parse(value);
   return Number.isNaN(parsed) ? fallback : parsed;
 };
+
+const mapRuntimeAttachment = (attachment: RuntimeAttachmentDto): FileUIPart => ({
+  type: "file",
+  filename: attachment.filename,
+  mediaType: attachment.mime_type,
+  url: "",
+});
 
 export const sortThreadTurnsForReplay = (turns: ThreadTurn[]): ThreadTurn[] =>
   [...turns].sort((left, right) => {
@@ -109,6 +124,15 @@ export const mapTurnsToMessages = async (threadId: string, turns: ThreadTurn[]):
         role: "user",
         content: userText,
         createdAt: new Date(baseTimestamp),
+        attachments: (turn.attachments || []).map((attachment) => mapRuntimeAttachment(attachment)),
+      });
+    } else if ((turn.attachments || []).length > 0) {
+      next.push({
+        id: `${threadId}:turn:${turnKey}:user`,
+        role: "user",
+        content: "",
+        createdAt: new Date(baseTimestamp),
+        attachments: (turn.attachments || []).map((attachment) => mapRuntimeAttachment(attachment)),
       });
     }
 

@@ -7,6 +7,7 @@ import { agentService } from "@/services";
 import type { AgentExecutionEvent, AgentRunStatus } from "@/services";
 import { ChatController, ChatMessage, Citation } from "@/components/layout/useChatController";
 import type { ChatRenderBlock } from "@/services/chat-presentation";
+import type { FileUIPart } from "ai";
 import {
   adaptRunStreamEvent,
   applyRunStreamEventToBlocks,
@@ -321,8 +322,8 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
       }));
   }, []);
 
-  const handleSubmit = async (message: { text: string; files: any[] }) => {
-    if (!message.text.trim() || !agentId) return;
+  const handleSubmit = async (message: { text: string; files: FileUIPart[] }) => {
+    if ((!message.text.trim() && message.files.length === 0) || !agentId) return;
 
     const isApprovalResume = isPaused && pendingApproval;
     const approvalDecision = isApprovalResume ? message.text.trim().toLowerCase() : null;
@@ -338,6 +339,7 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
       role: "user",
       content: message.text,
       createdAt: new Date(),
+      attachments: message.files,
     };
 
     setMessages(prev => [...prev, userMsg]);
@@ -358,6 +360,14 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
     responseBlocksRef.current = [];
 
     try {
+      let attachmentIds: string[] = [];
+      if (message.files.length > 0) {
+        const uploaded = await agentService.uploadAgentAttachments(agentId, {
+          files: message.files,
+          threadId: currentThreadIdRef.current || undefined,
+        });
+        attachmentIds = (uploaded.items || []).map((item) => item.id);
+      }
       // New runs must include full prior conversation history; the backend will append request.input as the latest user turn.
       const priorMessages = !isPaused ? serializeConversationMessages(messagesRef.current) : undefined;
       const response = await agentService.streamAgent(
@@ -365,6 +375,7 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
         {
           text: message.text,
           messages: priorMessages,
+          attachmentIds,
           runId: isPaused ? currentRunId || undefined : undefined,
           threadId: currentThreadIdRef.current || undefined,
           context: isPaused && pendingApproval ? { approval: message.text } : undefined,
@@ -622,9 +633,15 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
   const handleRetry = async (msg: ChatMessage) => {
     const idx = messages.findIndex(m => m.id === msg.id);
     if (idx > 0 && messages[idx-1].role === "user") {
-      const userText = messages[idx-1].content;
+      const userMessage = messages[idx - 1];
+      const userText = userMessage.content;
       setMessages(prev => prev.slice(0, idx-1));
-      handleSubmit({ text: userText, files: [] });
+      handleSubmit({
+        text: userText,
+        files: (userMessage.attachments || []).filter(
+          (attachment): attachment is FileUIPart => Boolean(attachment?.url),
+        ),
+      });
     }
   };
 

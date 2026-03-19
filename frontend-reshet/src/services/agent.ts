@@ -1,4 +1,5 @@
 import { httpClient } from "./http";
+import type { FileUIPart } from "ai";
 
 // ============================================================================
 // Types
@@ -256,6 +257,20 @@ export interface AgentExecutionEvent {
   received_at?: number
 }
 
+export interface AgentAttachmentDto {
+  id: string;
+  thread_id: string | null;
+  kind: "image" | "document" | "audio";
+  filename: string;
+  mime_type: string;
+  byte_size: number;
+  status: string;
+  processing_error: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface AgentRunEventsResponse {
   run_id: string
   event_count: number
@@ -271,6 +286,14 @@ export interface AgentOperatorSpec {
   writes: string[];
   config_schema: Record<string, any>;
   ui: Record<string, any>;
+}
+
+async function filePartToFile(file: FileUIPart): Promise<File> {
+  const response = await fetch(file.url);
+  const blob = await response.blob();
+  return new File([blob], file.filename || "attachment", {
+    type: file.mediaType || blob.type || "application/octet-stream",
+  });
 }
 
 // ============================================================================
@@ -352,7 +375,14 @@ export const agentService = {
 
   async streamAgent(
     id: string,
-    input: { text?: string; messages?: any[]; runId?: string; threadId?: string; context?: Record<string, any> },
+    input: {
+      text?: string;
+      messages?: any[];
+      runId?: string;
+      threadId?: string;
+      context?: Record<string, any>;
+      attachmentIds?: string[];
+    },
     mode: 'debug' | 'production' = 'production'
   ) {
     // CRITICAL: Bypass Next.js dev proxy for SSE streaming.
@@ -389,10 +419,29 @@ export const agentService = {
       body: JSON.stringify({ 
         input: input.text, 
         messages: input.messages || [], 
+        attachment_ids: input.attachmentIds || [],
         context: input.context || {},
         run_id: input.runId,
         thread_id: input.threadId,
       }),
     });
+  },
+
+  async uploadAgentAttachments(
+    agentId: string,
+    payload: { files: FileUIPart[]; threadId?: string }
+  ): Promise<{ items: AgentAttachmentDto[] }> {
+    const formData = new FormData();
+    if (payload.threadId) {
+      formData.set("thread_id", payload.threadId);
+    }
+    for (const item of payload.files) {
+      const file = await filePartToFile(item);
+      formData.append("files", file, item.filename || "attachment");
+    }
+    return httpClient.post<{ items: AgentAttachmentDto[] }>(
+      `/agents/${agentId}/attachments/upload`,
+      formData
+    );
   }
 };

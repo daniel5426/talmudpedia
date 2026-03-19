@@ -14,6 +14,7 @@ from app.db.postgres.models.agent_threads import AgentThread, AgentThreadTurn
 from app.db.postgres.models.agents import AgentRun
 from app.core.scope_registry import is_platform_admin_role
 from app.services.admin_monitoring_service import AdminMonitoringService
+from app.services.runtime_attachment_service import RuntimeAttachmentService
 from app.services.thread_service import ThreadService
 from pydantic import BaseModel
 
@@ -448,6 +449,11 @@ async def get_thread_details(
                 "usage_tokens": int(turn.usage_tokens or 0),
                 "created_at": turn.created_at,
                 "completed_at": turn.completed_at,
+                "attachments": [
+                    RuntimeAttachmentService.serialize_attachment(link.attachment)
+                    for link in (turn.attachment_links or [])
+                    if getattr(link, "attachment", None) is not None
+                ],
                 "metadata": turn.metadata_,
             }
             for turn in turns
