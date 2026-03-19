@@ -1,6 +1,7 @@
 import { Paperclip, Square } from "lucide-react";
 
 import {
+  type PromptInputMessage,
   PromptInput,
   PromptInputActionAddAttachments,
   PromptInputActionMenu,
@@ -16,6 +17,7 @@ import {
 } from "@/components/ai-elements/prompt-input";
 import { cn } from "@/lib/utils";
 import { useLocale } from "./locale-context";
+import type { ComposerSubmitPayload } from "./types";
 
 type BotInputAreaProps = {
   className?: string;
@@ -24,7 +26,7 @@ type BotInputAreaProps = {
   inputValue: string;
   isLoading: boolean;
   onInputValueChange: (value: string) => void;
-  onSubmit: (text: string) => void;
+  onSubmit: (payload: ComposerSubmitPayload) => void | Promise<void>;
 };
 
 export function BotInputArea({
@@ -47,11 +49,20 @@ export function BotInputArea({
             "[&_[data-slot=input-group]]:has-[[data-slot=input-group-control]:focus-visible]:ring-0",
             "[&_[data-slot=input-group]]:has-[[data-slot=input-group-control]:focus-visible]:border-input"
           )}
-          onSubmit={() => onSubmit(inputValue)}
+          onSubmit={(message: PromptInputMessage) =>
+            onSubmit({
+              text: message.text,
+              files: message.files.map((file) => ({
+                filename: file.filename || "attachment",
+                mediaType: file.mediaType,
+                url: file.url,
+              })),
+            })
+          }
         >
           <PromptInputBody>
             <PromptInputTextarea
-              className="min-h-[48px] bg-transparent text-sm md:text-sm"
+              className="min-h-[48px] bg-transparent text-[0.95rem] md:text-[0.95rem]"
               onChange={(event) => onInputValueChange(event.target.value)}
               placeholder={locale === "he" ? "כתוב הודעה..." : "Message..."}
               value={inputValue}

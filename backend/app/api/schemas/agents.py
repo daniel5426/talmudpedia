@@ -82,6 +82,7 @@ class AgentRunResponse(BaseModel):
 class ExecuteAgentRequest(BaseModel):
     input: Optional[str] = None
     messages: list[dict[str, Any]] = []
+    attachment_ids: list[UUID] = []
     context: Optional[dict[str, Any]] = None
     run_id: Optional[UUID] = None
     thread_id: Optional[UUID] = None

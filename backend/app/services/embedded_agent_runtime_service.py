@@ -20,6 +20,7 @@ from app.agent.execution.trace_recorder import ExecutionTraceRecorder
 from app.agent.execution.types import ExecutionMode
 from app.db.postgres.models.agents import Agent, AgentRun, AgentStatus
 from app.db.postgres.models.agent_threads import AgentThread, AgentThreadTurn
+from app.services.runtime_attachment_service import RuntimeAttachmentService
 from app.services.thread_service import ThreadService
 from app.services.usage_quota_service import QuotaExceededError
 
@@ -65,6 +66,11 @@ def _serialize_turn_base(turn: AgentThreadTurn) -> dict[str, Any]:
         "status": turn.status.value if hasattr(turn.status, "value") else str(turn.status),
         "usage_tokens": int(turn.usage_tokens or 0),
         "metadata": dict(turn.metadata_ or {}),
+        "attachments": [
+            RuntimeAttachmentService.serialize_attachment(link.attachment)
+            for link in sorted(turn.attachment_links or [], key=lambda item: str(item.id))
+            if getattr(link, "attachment", None) is not None
+        ],
         "created_at": turn.created_at,
         "completed_at": turn.completed_at,
     }
@@ -197,6 +203,7 @@ async def stream_embedded_agent(
     api_key_principal: dict[str, Any],
     input_text: str | None,
     messages: list[dict[str, Any]],
+    attachment_ids: list[str] | None,
     thread_id: UUID | None,
     external_user_id: str,
     external_session_id: str | None,
@@ -219,8 +226,6 @@ async def stream_embedded_agent(
         run_messages.extend(_turns_to_messages(list(existing_thread.turns or [])))
 
     run_messages.extend(list(messages or []))
-    if input_text:
-        run_messages.append({"role": "user", "content": input_text})
 
     request_context = {
         "surface": "embedded_agent_runtime",
@@ -242,6 +247,7 @@ async def stream_embedded_agent(
             {
                 "messages": run_messages,
                 "input": input_text,
+                "attachment_ids": list(attachment_ids or []),
                 "thread_id": str(thread_id) if thread_id else None,
                 "context": request_context,
             },

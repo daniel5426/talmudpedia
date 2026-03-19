@@ -9,11 +9,17 @@ importers:
   .:
     dependencies:
       '@agents24/embed-sdk':
-        specifier: 1.0.1
-        version: 1.0.1
+        specifier: file:../packages/embed-sdk
+        version: file:../packages/embed-sdk
       '@fontsource-variable/noto-sans':
         specifier: ^5.2.10
         version: 5.2.10
+      '@fontsource/assistant':
+        specifier: ^5.2.9
+        version: 5.2.9
+      '@fontsource/heebo':
+        specifier: ^5.2.8
+        version: 5.2.8
       '@hookform/resolvers':
         specifier: ^5.2.2
         version: 5.2.2(react-hook-form@7.71.2(react@19.2.4))
@@ -213,8 +219,8 @@ importers:
 
 packages:
 
-  '@agents24/embed-sdk@1.0.1':
-    resolution: {integrity: sha512-mBx0rUEAEcNH9a9v0XBNpyyPiCWjam6fhz4GbaldNnVFhUi3q9qOx/y8SAbaVXrmbqQCbQZmOxZWh5owvOGguw==}
+  '@agents24/embed-sdk@file:../packages/embed-sdk':
+    resolution: {directory: ../packages/embed-sdk, type: directory}
     engines: {node: '>=18.17'}
 
   '@ai-sdk/gateway@3.0.66':
@@ -623,6 +629,12 @@ packages:
 
   '@fontsource-variable/noto-sans@5.2.10':
     resolution: {integrity: sha512-wyFgKkFu7jki5kEL8qv7avjQ8rxHX0J/nhLWvbR9T0hOH1HRKZEvb9EW9lMjZfWHHfEzKkYf5J+NadwgCS7TXA==}
+
+  '@fontsource/assistant@5.2.9':
+    resolution: {integrity: sha512-hSkPT8g3sZ2j95ZVCy5EjRjqRZOWohJJNuesDkDegOL6DYuBijppA0vfY4vAplsYC/l1zoNVWWkIFhu2shOfHA==}
+
+  '@fontsource/heebo@5.2.8':
+    resolution: {integrity: sha512-K5aMLH2Yy/CmmjuM9lpToyIEwSdPKwW6KzZOGCFnj7XFrgatIpnesu6FDgmQl3bkyP/YCT62rzLRqRM9s/OzLw==}
 
   '@hono/node-server@1.19.11':
     resolution: {integrity: sha512-dr8/3zEaB+p0D2n/IUrlPF1HZm586qgJNXK1a9fhg/PzdtkK7Ksd5l312tJX2yBuALqDYBlG20QEbayqPyxn+g==}
@@ -4770,7 +4782,7 @@ packages:
 
 snapshots:
 
-  '@agents24/embed-sdk@1.0.1': {}
+  '@agents24/embed-sdk@file:../packages/embed-sdk': {}
 
   '@ai-sdk/gateway@3.0.66(zod@4.3.6)':
     dependencies:
@@ -5172,6 +5184,10 @@ snapshots:
   '@floating-ui/utils@0.2.11': {}
 
   '@fontsource-variable/noto-sans@5.2.10': {}
+
+  '@fontsource/assistant@5.2.9': {}
+
+  '@fontsource/heebo@5.2.8': {}
 
   '@hono/node-server@1.19.11(hono@4.12.8)':
     dependencies:

@@ -6,9 +6,9 @@ from typing import Any, Dict, List, Optional
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import JSONResponse, RedirectResponse, Response, StreamingResponse
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -29,7 +29,7 @@ from app.core.runtime_urls import (
     resolve_runtime_api_base_url as _resolve_runtime_api_base_url,
 )
 from app.db.postgres.models.agents import AgentRun
-from app.db.postgres.models.agent_threads import AgentThreadTurn
+from app.db.postgres.models.agent_threads import AgentThreadSurface, AgentThreadTurn
 from app.db.postgres.models.published_apps import (
     PublishedApp,
     PublishedAppRevision,
@@ -38,6 +38,7 @@ from app.db.postgres.models.published_apps import (
 )
 from app.db.postgres.session import get_db
 from app.services.thread_service import ThreadService
+from app.services.runtime_attachment_service import RuntimeAttachmentOwner, RuntimeAttachmentService
 from app.services.published_app_bundle_storage import (
     PublishedAppBundleAssetNotFound,
     PublishedAppBundleStorage,
@@ -130,7 +131,8 @@ class PublicAuthExchangeRequest(BaseModel):
 
 class PublicChatStreamRequest(BaseModel):
     input: Optional[str] = None
-    messages: List[dict[str, Any]] = []
+    messages: List[dict[str, Any]] = Field(default_factory=list)
+    attachment_ids: List[UUID] = Field(default_factory=list)
     thread_id: Optional[UUID] = None
     run_id: Optional[UUID] = None
     context: Optional[dict[str, Any]] = None
@@ -481,8 +483,6 @@ async def _stream_chat_for_app(
         run_messages.extend(_turns_to_messages(list(existing_thread.turns or [])))
 
     run_messages.extend(payload.messages or [])
-    if payload.input:
-        run_messages.append({"role": "user", "content": payload.input})
 
     executor = AgentExecutorService(db=db)
     request_context = dict(payload.context or {})
@@ -516,6 +516,7 @@ async def _stream_chat_for_app(
                 {
                     "messages": run_messages,
                     "input": payload.input,
+                    "attachment_ids": [str(item) for item in payload.attachment_ids],
                     "thread_id": str(payload.thread_id) if payload.thread_id else None,
                     "context": request_context,
                 },
@@ -593,6 +594,33 @@ async def _stream_chat_for_app(
     if thread_id_value and not cleanup_transient_thread:
         headers["X-Thread-ID"] = thread_id_value
     return StreamingResponse(event_generator(), media_type="text/event-stream", headers=headers)
+
+
+def _optional_uuid(value: Any) -> UUID | None:
+    if value in {None, "", "null", "None"}:
+        return None
+    try:
+        return UUID(str(value))
+    except Exception:
+        return None
+
+
+async def _upload_published_app_attachments(
+    *,
+    app: PublishedApp,
+    owner: RuntimeAttachmentOwner,
+    files: list[UploadFile],
+    db: AsyncSession,
+) -> dict[str, Any]:
+    attachment_service = RuntimeAttachmentService(db)
+    if owner.thread_id is not None:
+        thread = await attachment_service.get_accessible_thread(owner=owner, thread_id=owner.thread_id)
+        if thread is None:
+            raise HTTPException(status_code=404, detail="Thread not found")
+    attachments = await attachment_service.upload_files(owner=owner, files=files)
+    payload = {"items": [RuntimeAttachmentService.serialize_attachment(item) for item in attachments]}
+    await db.commit()
+    return payload
 
 
 @router.get("/resolve")
@@ -852,6 +880,29 @@ async def preview_chat_stream(
             "published_app_preview": True,
         },
     )
+
+
+@router.post("/preview/revisions/{revision_id}/attachments/upload")
+async def upload_preview_attachments(
+    revision_id: UUID,
+    files: list[UploadFile] = File(...),
+    thread_id: UUID | None = Form(default=None),
+    principal: Dict[str, Any] = Depends(get_current_published_app_preview_principal),
+    db: AsyncSession = Depends(get_db),
+):
+    app, _ = await _get_preview_revision_for_principal(
+        db=db,
+        revision_id=revision_id,
+        principal=principal,
+    )
+    owner = RuntimeAttachmentOwner(
+        tenant_id=app.tenant_id,
+        surface=AgentThreadSurface.published_host_runtime,
+        user_id=_optional_uuid(principal.get("user_id")),
+        published_app_id=app.id,
+        thread_id=thread_id,
+    )
+    return await _upload_published_app_attachments(app=app, owner=owner, files=files, db=db)
 
 
 @router.post("/{app_slug}/auth/signup")

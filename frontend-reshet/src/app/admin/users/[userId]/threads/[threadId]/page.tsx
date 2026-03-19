@@ -57,7 +57,7 @@ export default function AdminUserThreadPage() {
         <CustomBreadcrumb
           items={[
             { label: "Users", href: "/admin/users" },
-            { label: user?.full_name || user?.email || "User", href: `/admin/users/${userId}` },
+            { label: user?.display_name || user?.full_name || user?.email || "User", href: `/admin/users/${userId}` },
             { label: thread.title || thread.id, active: true },
           ]}
         />

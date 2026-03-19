@@ -25,6 +25,7 @@ export function ClassicChatApp() {
     isResponding,
     likedMessageIds,
     loadMoreHistory,
+    removeThread,
     newChat,
     retryAssistantMessage,
     setActiveThreadId,
@@ -50,6 +51,7 @@ export function ClassicChatApp() {
         hasMoreHistory={hasMoreHistory}
         onLoadMoreHistory={loadMoreHistory}
         onNewChat={newChat}
+        onRemoveThread={removeThread}
         onSelectThread={setActiveThreadId}
         threads={threads}
       />

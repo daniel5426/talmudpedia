@@ -1,5 +1,26 @@
 export type TemplateTaskStatus = "running" | "done" | "error";
 
+export type ComposerAttachmentInput = {
+  filename: string;
+  mediaType: string;
+  url: string;
+};
+
+export type ComposerSubmitPayload = {
+  text: string;
+  files: ComposerAttachmentInput[];
+};
+
+export type TemplateAttachment = {
+  id: string;
+  kind: "image" | "document" | "audio";
+  filename: string;
+  mimeType: string;
+  byteSize: number;
+  status: string;
+  previewUrl?: string | null;
+};
+
 export type TemplateTextBlock = {
   id: string;
   kind: "text";
@@ -49,6 +70,7 @@ export type TemplateMessage = {
   runStatus?: "pending" | "streaming" | "completed" | "error";
   text?: string;
   blocks?: TemplateRenderBlock[];
+  attachments?: TemplateAttachment[];
 };
 
 export type TemplateThread = {

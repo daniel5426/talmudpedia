@@ -5,13 +5,14 @@ import {
 
 import { useLocale } from "./locale-context";
 import { BotInputArea } from "./bot-input-area";
+import type { ComposerSubmitPayload } from "./types";
 
 type ChatEmptyStateProps = {
   errorMessage?: string | null;
   inputValue: string;
   isResponding: boolean;
   onInputValueChange: (value: string) => void;
-  onSubmit: (text: string) => void;
+  onSubmit: (payload: ComposerSubmitPayload) => void | Promise<void>;
   suggestions: readonly string[];
 };
 
@@ -45,7 +46,7 @@ export function ChatEmptyState({
             <Suggestion
               key={suggestion}
               className="rounded-full"
-              onClick={onSubmit}
+              onClick={() => onSubmit({ text: suggestion, files: [] })}
               suggestion={suggestion}
             />
           ))}

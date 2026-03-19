@@ -13,6 +13,7 @@ from app.db.postgres.models.identity import User, OrgMembership
 from app.db.postgres.models.agent_threads import AgentThread, AgentThreadTurn
 from app.db.postgres.models.agents import AgentRun
 from app.core.scope_registry import is_platform_admin_role
+from app.services.admin_monitoring_service import AdminMonitoringService
 from app.services.thread_service import ThreadService
 from pydantic import BaseModel
 
@@ -293,71 +294,48 @@ async def get_users(
     skip: int = 0, 
     limit: int = 20, 
     search: Optional[str] = None,
+    actor_type: Optional[str] = None,
+    agent_id: Optional[UUID] = None,
+    app_id: Optional[UUID] = None,
     _: Dict[str, Any] = Depends(require_scopes("users.read")),
     context: Dict[str, Any] = Depends(get_admin_context),
     db: AsyncSession = Depends(get_db)
 ):
     tenant_id = context["tenant_id"]
     period_start, period_end = _current_month_bounds_utc()
-    
-    query = select(User)
-    if tenant_id:
-        query = query.join(OrgMembership).where(OrgMembership.tenant_id == tenant_id)
-        
-    if search:
-        query = query.where(
-            (User.email.ilike(f"%{search}%")) | (User.full_name.ilike(f"%{search}%"))
-        )
-        
-    # Total count
-    count_q = select(func.count()).select_from(query.subquery())
-    total = (await db.execute(count_q)).scalar() or 0
-    
-    # Paginate
-    query = query.offset(skip).limit(limit)
-    users = (await db.execute(query)).scalars().all()
 
-    user_ids = [u.id for u in users]
-    usage_by_user: Dict[str, int] = {}
-    if user_ids:
-        q_usage = (
-            select(
-                AgentRun.user_id,
-                func.coalesce(func.sum(AgentRun.usage_tokens), 0),
-            )
-            .where(
-                and_(
-                    AgentRun.user_id.in_(user_ids),
-                    AgentRun.created_at >= period_start,
-                    AgentRun.created_at < period_end,
-                )
-            )
-            .group_by(AgentRun.user_id)
-        )
-        if tenant_id:
-            q_usage = q_usage.where(AgentRun.tenant_id == tenant_id)
-        usage_rows = (await db.execute(q_usage)).all()
-        usage_by_user = {
-            str(user_id): int(tokens or 0)
-            for user_id, tokens in usage_rows
-            if user_id is not None
-        }
-    
-    items = []
-    for u in users:
-        monthly_tokens = usage_by_user.get(str(u.id), 0)
-        items.append({
-            "id": str(u.id),
-            "email": u.email,
-            "full_name": u.full_name,
-            "role": u.role,
-            "avatar": u.avatar,
-            "created_at": u.created_at,
-            "token_usage": monthly_tokens
-        })
-        
+    monitoring = AdminMonitoringService(db=db, tenant_id=tenant_id)
+    users, total = await monitoring.list_monitored_actors(
+        month_start=period_start,
+        month_end=period_end,
+        search=search,
+        actor_type=actor_type,
+        agent_id=agent_id,
+        app_id=app_id,
+        skip=skip,
+        limit=limit,
+    )
     return {
-        "items": items,
+        "items": [
+            {
+                "id": user.actor_id,
+                "actor_id": user.actor_id,
+                "actor_type": user.actor_type,
+                "email": user.email,
+                "display_name": user.display_name,
+                "full_name": user.display_name,
+                "role": user.role,
+                "avatar": user.avatar,
+                "created_at": user.created_at,
+                "token_usage": user.tokens_used_this_month,
+                "platform_user_id": user.platform_user_id,
+                "source_app_count": user.source_app_count,
+                "last_activity_at": user.last_activity_at,
+                "threads_count": user.threads_count,
+                "is_manageable": user.is_manageable,
+            }
+            for user in users
+        ],
         "total": total,
         "page": skip // limit + 1,
         "pages": (total + limit - 1) // limit if limit else 1
@@ -368,39 +346,47 @@ async def get_threads(
     skip: int = 0, 
     limit: int = 20, 
     search: Optional[str] = None,
+    actor_type: Optional[str] = None,
+    surface: Optional[str] = None,
+    agent_id: Optional[UUID] = None,
+    app_id: Optional[UUID] = None,
     _: Dict[str, Any] = Depends(require_scopes("threads.read")),
     context: Dict[str, Any] = Depends(get_admin_context),
     db: AsyncSession = Depends(get_db)
 ):
     tenant_id = context["tenant_id"]
-    
-    query = select(AgentThread).order_by(AgentThread.last_activity_at.desc().nullslast(), AgentThread.updated_at.desc())
-    if tenant_id:
-        query = query.where(AgentThread.tenant_id == tenant_id)
-        
-    if search:
-        query = query.where(AgentThread.title.ilike(f"%{search}%"))
-        
-    # Total
-    count_q = select(func.count()).select_from(query.subquery())
-    total = (await db.execute(count_q)).scalar() or 0
-    
-    # Paginate
-    query = query.offset(skip).limit(limit)
-    threads = (await db.execute(query)).scalars().all()
-    
-    items = []
-    for thread in threads:
-        items.append({
-            "id": str(thread.id),
-            "title": thread.title,
-            "created_at": thread.created_at,
-            "updated_at": thread.last_activity_at or thread.updated_at,
-            "user_id": str(thread.user_id) if thread.user_id else None,
-        })
-        
+    period_start, period_end = _current_month_bounds_utc()
+    monitoring = AdminMonitoringService(db=db, tenant_id=tenant_id)
+    rows, total = await monitoring.list_threads(
+        month_start=period_start,
+        month_end=period_end,
+        search=search,
+        actor_type=actor_type,
+        agent_id=agent_id,
+        app_id=app_id,
+        surface=surface,
+        skip=skip,
+        limit=limit,
+    )
     return {
-        "items": items,
+        "items": [
+            {
+                "id": row.id,
+                "title": row.title,
+                "created_at": row.created_at,
+                "updated_at": row.updated_at,
+                "agent_id": row.agent_id,
+                "agent_name": row.agent_name,
+                "agent_slug": row.agent_slug,
+                "surface": row.surface,
+                "actor_id": row.actor_id,
+                "actor_type": row.actor_type,
+                "actor_display": row.actor_display,
+                "actor_email": row.actor_email,
+                "user_id": row.user_id,
+            }
+            for row in rows
+        ],
         "total": total,
         "page": skip // limit + 1,
         "pages": (total + limit - 1) // limit if limit else 1
@@ -421,6 +407,8 @@ async def get_thread_details(
 
     tenant_id = context["tenant_id"]
     service = ThreadService(db)
+    monitoring = AdminMonitoringService(db=db, tenant_id=tenant_id)
+    period_start, period_end = _current_month_bounds_utc()
     repaired = await service.repair_thread_turn_indices(thread_id=tid)
     if repaired:
         await db.commit()
@@ -431,6 +419,7 @@ async def get_thread_details(
     if not thread:
         raise HTTPException(status_code=404, detail="Thread not found")
 
+    thread_row = await monitoring.get_thread_row(tid, month_start=period_start, month_end=period_end)
     turns = list(thread.turns or [])
     return {
         "id": str(thread.id),
@@ -439,6 +428,12 @@ async def get_thread_details(
         "surface": thread.surface.value if hasattr(thread.surface, "value") else str(thread.surface),
         "user_id": str(thread.user_id) if thread.user_id else None,
         "agent_id": str(thread.agent_id) if thread.agent_id else None,
+        "agent_name": thread_row.agent_name if thread_row else None,
+        "agent_slug": thread_row.agent_slug if thread_row else None,
+        "actor_id": thread_row.actor_id if thread_row else None,
+        "actor_type": thread_row.actor_type if thread_row else None,
+        "actor_display": thread_row.actor_display if thread_row else None,
+        "actor_email": thread_row.actor_email if thread_row else None,
         "created_at": thread.created_at,
         "updated_at": thread.updated_at,
         "last_activity_at": thread.last_activity_at,
@@ -466,65 +461,37 @@ async def get_user_details(
     context: Dict[str, Any] = Depends(get_admin_context),
     db: AsyncSession = Depends(get_db)
 ):
-    try:
-        uid = UUID(user_id)
-        tenant_id = context["tenant_id"]
-        period_start, period_end = _current_month_bounds_utc()
-        
-        query = select(User).where(User.id == uid)
-        
-        # Verify tenant access
-        if tenant_id:
-             # Check if this user is in the admin's tenant
-             check_mem = await db.execute(
-                 select(OrgMembership).where(
-                     OrgMembership.user_id == uid, 
-                     OrgMembership.tenant_id == tenant_id
-                 )
-             )
-             if not check_mem.scalar_one_or_none():
-                 raise HTTPException(status_code=404, detail="User not found")
-
-        user = (await db.execute(query)).scalar_one_or_none()
-        if not user:
-            raise HTTPException(status_code=404, detail="User not found")
-            
-        # Stats
-        q_threads = select(func.count(AgentThread.id)).where(AgentThread.user_id == uid)
-        if tenant_id:
-            q_threads = q_threads.where(AgentThread.tenant_id == tenant_id)
-        thread_count = (await db.execute(q_threads)).scalar() or 0
-        q_tokens = (
-            select(func.coalesce(func.sum(AgentRun.usage_tokens), 0))
-            .where(
-                and_(
-                    AgentRun.user_id == uid,
-                    AgentRun.created_at >= period_start,
-                    AgentRun.created_at < period_end,
-                )
-            )
-        )
-        if tenant_id:
-            q_tokens = q_tokens.where(AgentRun.tenant_id == tenant_id)
-        tokens_used_this_month = int((await db.execute(q_tokens)).scalar() or 0)
-        
-        return {
-            "user": {
-                "id": str(user.id),
-                "email": user.email,
-                "full_name": user.full_name,
-                "created_at": user.created_at,
-                "role": user.role,
-                "avatar": user.avatar,
-                "token_usage": tokens_used_this_month
-            },
-            "stats": {
-                "threads_count": thread_count,
-                "tokens_used_this_month": tokens_used_this_month
-            }
-        }
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid user ID")
+    tenant_id = context["tenant_id"]
+    period_start, period_end = _current_month_bounds_utc()
+    monitoring = AdminMonitoringService(db=db, tenant_id=tenant_id)
+    detail = await monitoring.get_monitored_actor_detail(
+        user_id,
+        month_start=period_start,
+        month_end=period_end,
+    )
+    if detail is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    return {
+        "user": {
+            "id": detail.actor.actor_id,
+            "actor_id": detail.actor.actor_id,
+            "actor_type": detail.actor.actor_type,
+            "email": detail.actor.email,
+            "display_name": detail.actor.display_name,
+            "full_name": detail.actor.display_name,
+            "created_at": detail.actor.created_at,
+            "role": detail.actor.role,
+            "avatar": detail.actor.avatar,
+            "token_usage": detail.actor.tokens_used_this_month,
+            "platform_user_id": detail.actor.platform_user_id,
+            "source_app_count": detail.actor.source_app_count,
+            "last_activity_at": detail.actor.last_activity_at,
+            "threads_count": detail.actor.threads_count,
+            "is_manageable": detail.actor.is_manageable,
+        },
+        "stats": detail.stats,
+        "sources": detail.sources,
+    }
 
 @router.patch("/users/{user_id}")
 async def update_user(
@@ -568,50 +535,43 @@ async def get_user_threads(
     skip: int = 0,
     limit: int = 20,
     search: Optional[str] = None,
+    agent_id: Optional[UUID] = None,
     _: Dict[str, Any] = Depends(require_scopes("threads.read")),
     context: Dict[str, Any] = Depends(get_admin_context),
     db: AsyncSession = Depends(get_db)
 ):
-    try:
-        uid = UUID(user_id)
-        tenant_id = context["tenant_id"]
-        
-        query = (
-            select(AgentThread)
-            .where(AgentThread.user_id == uid)
-            .order_by(AgentThread.last_activity_at.desc().nullslast(), AgentThread.updated_at.desc())
-        )
-        
-        if tenant_id:
-            query = query.where(AgentThread.tenant_id == tenant_id)
-            
-        if search:
-            query = query.where(AgentThread.title.ilike(f"%{search}%"))
-            
-        # Total
-        count_q = select(func.count()).select_from(query.subquery())
-        total = (await db.execute(count_q)).scalar() or 0
-        
-        # Paginate
-        query = query.offset(skip).limit(limit)
-        threads = (await db.execute(query)).scalars().all()
-        
-        items = []
-        for thread in threads:
-            items.append({
-                "id": str(thread.id),
-                "title": thread.title,
-                "created_at": thread.created_at,
-                "updated_at": thread.last_activity_at or thread.updated_at,
-                "user_id": str(thread.user_id) if thread.user_id else None,
-            })
-            
-        return {
-            "items": items,
-            "total": total,
-            "page": skip // limit + 1,
-            "pages": (total + limit - 1) // limit if limit else 1
-        }
-            
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid user ID")
+    tenant_id = context["tenant_id"]
+    period_start, period_end = _current_month_bounds_utc()
+    monitoring = AdminMonitoringService(db=db, tenant_id=tenant_id)
+    rows, total = await monitoring.list_threads(
+        month_start=period_start,
+        month_end=period_end,
+        search=search,
+        actor_id=user_id,
+        agent_id=agent_id,
+        skip=skip,
+        limit=limit,
+    )
+    return {
+        "items": [
+            {
+                "id": row.id,
+                "title": row.title,
+                "created_at": row.created_at,
+                "updated_at": row.updated_at,
+                "agent_id": row.agent_id,
+                "agent_name": row.agent_name,
+                "agent_slug": row.agent_slug,
+                "surface": row.surface,
+                "actor_id": row.actor_id,
+                "actor_type": row.actor_type,
+                "actor_display": row.actor_display,
+                "actor_email": row.actor_email,
+                "user_id": row.user_id,
+            }
+            for row in rows
+        ],
+        "total": total,
+        "page": skip // limit + 1,
+        "pages": (total + limit - 1) // limit if limit else 1
+    }

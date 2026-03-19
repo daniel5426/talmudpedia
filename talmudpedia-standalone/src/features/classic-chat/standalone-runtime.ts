@@ -7,12 +7,32 @@ export type AgentThreadSummaryDto = {
   last_activity_at: string | null;
 };
 
+export type AgentAttachmentDto = {
+  id: string;
+  thread_id: string | null;
+  kind: "image" | "document" | "audio";
+  filename: string;
+  mime_type: string;
+  byte_size: number;
+  status: string;
+  processing_error: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+};
+
 export type AgentThreadTurnDto = {
   id: string;
+  run_id: string;
   user_input_text: string | null;
   assistant_output_text: string | null;
+  status: string;
+  usage_tokens: number;
+  metadata: Record<string, unknown>;
+  attachments: AgentAttachmentDto[];
   created_at: string;
   completed_at: string | null;
+  run_events: StandaloneRuntimeEvent[];
 };
 
 export type AgentThreadDetailDto = AgentThreadSummaryDto & {
@@ -35,10 +55,28 @@ type StreamResult = {
 };
 
 type StreamPayload = {
-  input: string;
+  input?: string;
+  attachmentIds?: string[];
   threadId?: string;
   clientId: string;
 };
+
+export type UploadAgentAttachmentsPayload = {
+  files: Array<{
+    filename: string;
+    mediaType: string;
+    url: string;
+  }>;
+  threadId?: string;
+};
+
+async function fileUrlToFile(file: UploadAgentAttachmentsPayload["files"][number]): Promise<File> {
+  const response = await fetch(file.url);
+  const blob = await response.blob();
+  return new File([blob], file.filename, {
+    type: file.mediaType || blob.type || "application/octet-stream",
+  });
+}
 
 function isStandaloneRuntimeEvent(value: unknown): value is StandaloneRuntimeEvent {
   if (!value || typeof value !== "object") return false;
@@ -69,6 +107,33 @@ export async function fetchAgentThread(threadId: string): Promise<AgentThreadDet
     credentials: "same-origin",
   });
   return parseJsonOrThrow(response, "Failed to fetch thread details.");
+}
+
+export async function deleteAgentThread(threadId: string): Promise<{ deleted: boolean }> {
+  const response = await fetch(`/api/agent/threads/${threadId}`, {
+    method: "DELETE",
+    credentials: "same-origin",
+  });
+  return parseJsonOrThrow(response, "Failed to delete thread.");
+}
+
+export async function uploadAgentAttachments(
+  payload: UploadAgentAttachmentsPayload,
+): Promise<{ items: AgentAttachmentDto[] }> {
+  const formData = new FormData();
+  if (payload.threadId) {
+    formData.set("threadId", payload.threadId);
+  }
+  for (const item of payload.files) {
+    const file = await fileUrlToFile(item);
+    formData.append("files", file, item.filename);
+  }
+  const response = await fetch("/api/agent/attachments/upload", {
+    method: "POST",
+    credentials: "same-origin",
+    body: formData,
+  });
+  return parseJsonOrThrow(response, "Failed to upload attachments.");
 }
 
 export async function streamAgent(

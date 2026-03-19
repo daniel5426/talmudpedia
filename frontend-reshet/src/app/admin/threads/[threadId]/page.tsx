@@ -20,6 +20,12 @@ type ThreadDetails = {
   id: string;
   title?: string | null;
   status: string;
+  surface?: string | null;
+  agent_id?: string | null;
+  agent_name?: string | null;
+  actor_id?: string | null;
+  actor_display?: string | null;
+  actor_email?: string | null;
   turns: ThreadTurn[];
 };
 
@@ -62,6 +68,24 @@ export default function AdminThreadPage() {
         />
       </AdminPageHeader>
       <div className="flex-1 overflow-auto p-6 space-y-4" data-admin-page-scroll>
+        <div className="grid grid-cols-1 gap-4 rounded-md border p-4 text-sm md:grid-cols-4">
+          <div>
+            <div className="text-muted-foreground">Agent</div>
+            <div className="font-medium">{thread.agent_name || thread.agent_id || "—"}</div>
+          </div>
+          <div>
+            <div className="text-muted-foreground">Actor</div>
+            <div className="font-medium">{thread.actor_email || thread.actor_display || "—"}</div>
+          </div>
+          <div>
+            <div className="text-muted-foreground">Surface</div>
+            <div className="font-medium">{thread.surface || "—"}</div>
+          </div>
+          <div>
+            <div className="text-muted-foreground">Status</div>
+            <div className="font-medium">{thread.status}</div>
+          </div>
+        </div>
         {thread.turns.length === 0 ? (
           <div className="text-sm text-muted-foreground">No turns found.</div>
         ) : (

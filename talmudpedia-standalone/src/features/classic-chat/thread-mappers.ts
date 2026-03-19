@@ -1,9 +1,11 @@
 import type {
+  AgentAttachmentDto,
   AgentThreadDetailDto,
   AgentThreadSummaryDto,
   StandaloneRuntimeEvent,
 } from "./standalone-runtime";
 import type {
+  TemplateAttachment,
   TemplateMessage,
   TemplateRenderBlock,
   TemplateTextBlock,
@@ -25,9 +27,30 @@ export function titleFromPrompt(prompt: string) {
 }
 
 export function previewFromMessage(message: TemplateMessage) {
-  if (message.role === "user") return message.text || "New message";
+  if (message.role === "user") {
+    if (message.text) return message.text;
+    if (message.attachments?.length) {
+      return `Attachments: ${message.attachments.map((item) => item.filename).join(", ")}`;
+    }
+    return "New message";
+  }
   const firstText = message.blocks?.find((block) => block.kind === "text");
   return firstText?.kind === "text" ? firstText.content : "Assistant response";
+}
+
+export function mapRuntimeAttachment(
+  attachment: AgentAttachmentDto,
+  previewUrl?: string | null,
+): TemplateAttachment {
+  return {
+    id: attachment.id,
+    kind: attachment.kind,
+    filename: attachment.filename,
+    mimeType: attachment.mime_type,
+    byteSize: attachment.byte_size,
+    status: attachment.status,
+    previewUrl: previewUrl || null,
+  };
 }
 
 export function formatRelativeTimestamp(value: string | null): string {
@@ -65,9 +88,14 @@ export function mapThreadDetail(detail: AgentThreadDetailDto): TemplateThread {
         createdAt: turn.created_at,
         runStatus: "completed",
         text: turn.user_input_text,
+        attachments: (turn.attachments || []).map((attachment) => mapRuntimeAttachment(attachment)),
       });
     }
     if (turn.assistant_output_text) {
+      let blocks: TemplateRenderBlock[] = [];
+      for (const event of turn.run_events || []) {
+        blocks = applyRuntimeEvent(blocks, event);
+      }
       const textBlock: TemplateTextBlock = {
         id: `${turn.id}-assistant-text`,
         kind: "text",
@@ -79,7 +107,7 @@ export function mapThreadDetail(detail: AgentThreadDetailDto): TemplateThread {
         createdAt: turn.completed_at || turn.created_at,
         runStatus: "completed",
         text: turn.assistant_output_text,
-        blocks: [textBlock],
+        blocks: [...blocks, textBlock],
       });
     }
   }
@@ -96,8 +124,15 @@ export function mapThreadDetail(detail: AgentThreadDetailDto): TemplateThread {
 }
 
 function deriveThreadTitle(messages: TemplateMessage[]): string {
-  const firstUserMessage = messages.find((message) => message.role === "user" && message.text);
-  return firstUserMessage?.text ? titleFromPrompt(firstUserMessage.text) : "New chat";
+  const firstUserMessage = messages.find((message) => message.role === "user");
+  if (!firstUserMessage) return "New chat";
+  if (firstUserMessage.text) {
+    return titleFromPrompt(firstUserMessage.text);
+  }
+  if (firstUserMessage.attachments?.[0]?.filename) {
+    return titleFromPrompt(firstUserMessage.attachments[0].filename);
+  }
+  return "New chat";
 }
 
 export function applyRuntimeEvent(

@@ -17,6 +17,7 @@ from app.agent.execution.types import ExecutionEvent, EventVisibility, Execution
 from app.agent.execution.durable_checkpointer import DurableMemorySaver
 from app.agent.execution.trace_recorder import ExecutionTraceRecorder
 from app.db.postgres.models.agent_threads import AgentThreadSurface, AgentThreadTurnStatus
+from app.services.runtime_attachment_service import RuntimeAttachmentOwner, RuntimeAttachmentService
 from app.services.thread_service import ThreadAccessError, ThreadService
 from app.services.usage_quota_service import UsageQuotaService
 
@@ -73,18 +74,50 @@ class AgentExecutorService:
             messages = input_params.get("messages")
             if isinstance(messages, list):
                 for msg in messages:
-                    if isinstance(msg, dict) and isinstance(msg.get("content"), str):
-                        total_chars += len(msg["content"])
+                    if isinstance(msg, dict):
+                        total_chars += AgentExecutorService._content_text_length(msg.get("content"))
         if isinstance(output_result, dict):
             messages = output_result.get("messages")
             if isinstance(messages, list):
                 for msg in messages:
-                    if isinstance(msg, dict) and isinstance(msg.get("content"), str):
-                        total_chars += len(msg["content"])
+                    if isinstance(msg, dict):
+                        total_chars += AgentExecutorService._content_text_length(msg.get("content"))
             text = output_result.get("final_output")
             if isinstance(text, str):
                 total_chars += len(text)
         return max(0, int(total_chars // 4))
+
+    @staticmethod
+    def _content_text_length(content: Any) -> int:
+        if isinstance(content, str):
+            return len(content)
+        if isinstance(content, list):
+            total = 0
+            for item in content:
+                if isinstance(item, dict) and item.get("type") == "text":
+                    total += len(str(item.get("text") or ""))
+            return total
+        return 0
+
+    @staticmethod
+    def _collect_graph_model_ids(graph_definition: dict[str, Any]) -> list[str]:
+        nodes = graph_definition.get("nodes")
+        if not isinstance(nodes, list):
+            return []
+        model_ids: list[str] = []
+        for raw_node in nodes:
+            if not isinstance(raw_node, dict):
+                continue
+            node_type = str(raw_node.get("type") or "").strip().lower()
+            if node_type not in {"agent", "llm", "llm_call", "classify"}:
+                continue
+            config = raw_node.get("config")
+            if not isinstance(config, dict):
+                continue
+            model_id = str(config.get("model_id") or "").strip()
+            if model_id:
+                model_ids.append(model_id)
+        return model_ids
 
     @staticmethod
     def _extract_usage_tokens_from_event(event: ExecutionEvent) -> int:
@@ -250,6 +283,37 @@ class AgentExecutorService:
             )
         except ThreadAccessError as exc:
             raise ValueError(str(exc)) from exc
+
+        attachment_service = RuntimeAttachmentService(self.db)
+        attachment_owner = RuntimeAttachmentOwner(
+            tenant_id=agent.tenant_id,
+            surface=surface,
+            user_id=effective_initiator_id,
+            app_account_id=published_app_account_id,
+            tenant_api_key_id=tenant_api_key_id,
+            agent_id=agent_id,
+            published_app_id=published_app_id,
+            external_user_id=external_user_id,
+            external_session_id=external_session_id,
+            thread_id=thread_result.thread.id,
+        )
+        attachment_ids = input_params.get("attachment_ids") if isinstance(input_params.get("attachment_ids"), list) else []
+        prepared_message = await attachment_service.prepare_for_run(
+            owner=attachment_owner,
+            attachment_ids=[str(item) for item in attachment_ids],
+            input_text=input_params.get("input") if isinstance(input_params.get("input"), str) else None,
+            model_ids=self._collect_graph_model_ids(agent.graph_definition or {}),
+        )
+        base_messages = input_params.get("messages")
+        normalized_messages = list(base_messages) if isinstance(base_messages, list) else []
+        if prepared_message.content is not None:
+            normalized_messages.append({"role": "user", "content": prepared_message.content})
+        input_params["messages"] = normalized_messages
+        input_params["input_display_text"] = prepared_message.display_text
+        input_params["attachment_ids"] = [str(attachment.id) for attachment in prepared_message.attachments]
+        input_params["attachments"] = [
+            attachment_service.serialize_attachment(attachment) for attachment in prepared_message.attachments
+        ]
 
         # Reserve quota (if enabled) before creating the run record.
         quota_metadata = {"max_output_cap": None}
@@ -598,10 +662,23 @@ class AgentExecutorService:
             max_observed_usage_tokens = 0
             if run.thread_id:
                 thread_service = ThreadService(db)
-                await thread_service.start_turn(
+                turn = await thread_service.start_turn(
                     thread_id=run.thread_id,
                     run_id=run_id,
-                    user_input_text=run_input_params.get("input") if isinstance(run_input_params, dict) else None,
+                    user_input_text=(
+                        run_input_params.get("input_display_text")
+                        if isinstance(run_input_params, dict)
+                        else None
+                    ) or (
+                        run_input_params.get("input")
+                        if isinstance(run_input_params, dict)
+                        else None
+                    ),
+                    attachment_ids=[
+                        UUID(str(item))
+                        for item in ((run_input_params.get("attachment_ids") or []) if isinstance(run_input_params, dict) else [])
+                        if str(item).strip()
+                    ],
                     metadata={"mode": mode.value},
                 )
             # 5. Stream Execution Events (Platform-normalized)

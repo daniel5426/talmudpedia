@@ -63,6 +63,11 @@ class AgentThread(Base):
         cascade="all, delete-orphan",
         order_by="AgentThreadTurn.turn_index",
     )
+    attachments = relationship(
+        "RuntimeAttachment",
+        back_populates="thread",
+        cascade="all, delete-orphan",
+    )
 
     __table_args__ = (
         Index("ix_agent_threads_scope_activity", "tenant_id", "user_id", "last_activity_at"),
@@ -88,6 +93,11 @@ class AgentThreadTurn(Base):
 
     thread = relationship("AgentThread", back_populates="turns")
     run = relationship("AgentRun", foreign_keys=[run_id], back_populates="thread_turn")
+    attachment_links = relationship(
+        "AgentThreadTurnAttachment",
+        back_populates="turn",
+        cascade="all, delete-orphan",
+    )
 
     __table_args__ = (
         Index("ix_agent_thread_turns_thread_turn_index", "thread_id", "turn_index"),

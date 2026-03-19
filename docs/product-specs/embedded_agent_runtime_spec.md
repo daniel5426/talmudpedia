@@ -1,6 +1,6 @@
 # Embedded Agent Runtime Spec
 
-Last Updated: 2026-03-18
+Last Updated: 2026-03-19
 
 This document defines the canonical v1 external embed/plugin contract for published agents used inside customer-owned applications.
 
@@ -50,6 +50,7 @@ Admin API-key routes:
 The canonical public embed routes are:
 
 - `POST /public/embed/agents/{agent_id}/chat/stream`
+- `POST /public/embed/agents/{agent_id}/attachments/upload`
 - `GET /public/embed/agents/{agent_id}/threads`
 - `GET /public/embed/agents/{agent_id}/threads/{thread_id}`
 - `DELETE /public/embed/agents/{agent_id}/threads/{thread_id}`
@@ -69,14 +70,31 @@ Required:
 Optional:
 - `input`
 - `messages`
+- `attachment_ids`
 - `thread_id`
 - `external_session_id`
 - `metadata`
 - `client`
 
 Notes:
+- Attachments are upload-first. Chat requests only reference uploaded `attachment_ids`.
 - `thread_id` resumes an existing embedded-runtime thread when it belongs to the same tenant, agent, and `external_user_id`.
 - `external_session_id` is optional partitioning metadata, not the primary ownership key.
+
+`POST /public/embed/agents/{agent_id}/attachments/upload`
+
+Required:
+- multipart `files`
+- `external_user_id`
+
+Optional:
+- `external_session_id`
+- `thread_id`
+
+Behavior:
+- uploads are tenant-scoped and agent-scoped
+- attachments can be reused within the same thread
+- supported v1 kinds are `image`, `document`, and `audio`
 
 ## Thread Ownership
 
@@ -144,6 +162,7 @@ The customer frontend must never hold the tenant API key.
 The current TypeScript SDK maps 1:1 to the public embed routes:
 
 - `streamAgent(agentId, payload, onEvent?)` -> `POST /public/embed/agents/{agent_id}/chat/stream`
+- `uploadAgentAttachments(agentId, options)` -> `POST /public/embed/agents/{agent_id}/attachments/upload`
 - `listAgentThreads(agentId, options)` -> `GET /public/embed/agents/{agent_id}/threads`
 - `getAgentThread(agentId, threadId, options)` -> `GET /public/embed/agents/{agent_id}/threads/{thread_id}`
 - `deleteAgentThread(agentId, threadId, options)` -> `DELETE /public/embed/agents/{agent_id}/threads/{thread_id}`
@@ -169,6 +188,7 @@ Each turn includes:
 - `status`
 - `usage_tokens`
 - `metadata`
+- `attachments`
 - `created_at`
 - `completed_at`
 - `run_events`

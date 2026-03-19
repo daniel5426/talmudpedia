@@ -17,8 +17,10 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@agents24/embed-sdk": "1.0.1",
+    "@agents24/embed-sdk": "file:../packages/embed-sdk",
     "@fontsource-variable/noto-sans": "^5.2.10",
+    "@fontsource/assistant": "^5.2.9",
+    "@fontsource/heebo": "^5.2.8",
     "@hookform/resolvers": "^5.2.2",
     "@radix-ui/react-use-controllable-state": "^1.2.2",
     "@remixicon/react": "^4.9.0",

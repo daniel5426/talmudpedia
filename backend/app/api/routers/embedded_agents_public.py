@@ -3,13 +3,14 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import (
     require_tenant_api_key_scopes,
 )
+from app.db.postgres.models.agent_threads import AgentThreadSurface
 from app.db.postgres.session import get_db
 from app.services.embedded_agent_runtime_service import (
     ensure_published_embed_agent,
@@ -17,6 +18,7 @@ from app.services.embedded_agent_runtime_service import (
     serialize_thread_summary,
     stream_embedded_agent,
 )
+from app.services.runtime_attachment_service import RuntimeAttachmentOwner, RuntimeAttachmentService
 from app.services.thread_service import ThreadService
 
 
@@ -26,6 +28,7 @@ router = APIRouter(prefix="/public/embed/agents", tags=["embedded-agents-public"
 class EmbeddedAgentChatStreamRequest(BaseModel):
     input: str | None = None
     messages: list[dict[str, Any]] = Field(default_factory=list)
+    attachment_ids: list[UUID] = Field(default_factory=list)
     thread_id: UUID | None = None
     external_user_id: str = Field(min_length=1, max_length=255)
     external_session_id: str | None = Field(default=None, max_length=255)
@@ -49,6 +52,7 @@ async def stream_embedded_agent_route(
         api_key_principal=principal,
         input_text=request.input,
         messages=request.messages,
+        attachment_ids=[str(item) for item in request.attachment_ids],
         thread_id=request.thread_id,
         external_user_id=request.external_user_id,
         external_session_id=request.external_session_id,
@@ -56,6 +60,41 @@ async def stream_embedded_agent_route(
         client=request.client,
     )
     return response
+
+
+@router.post("/{agent_id}/attachments/upload")
+async def upload_embedded_agent_attachments(
+    agent_id: UUID,
+    files: list[UploadFile] = File(...),
+    external_user_id: str = Form(...),
+    external_session_id: str | None = Form(default=None),
+    thread_id: UUID | None = Form(default=None),
+    principal: dict[str, Any] = Depends(require_tenant_api_key_scopes("agents.embed")),
+    db: AsyncSession = Depends(get_db),
+):
+    agent = await ensure_published_embed_agent(db=db, agent_id=agent_id)
+    if str(agent.tenant_id) != str(principal["tenant_id"]):
+        raise HTTPException(status_code=404, detail="Published agent not found")
+    owner = RuntimeAttachmentOwner(
+        tenant_id=agent.tenant_id,
+        surface=AgentThreadSurface.embedded_runtime,
+        tenant_api_key_id=UUID(str(principal["api_key_id"])),
+        agent_id=agent.id,
+        external_user_id=external_user_id,
+        external_session_id=external_session_id,
+        thread_id=thread_id,
+    )
+    attachment_service = RuntimeAttachmentService(db)
+    if thread_id is not None:
+        thread = await attachment_service.get_accessible_thread(owner=owner, thread_id=thread_id)
+        if thread is None:
+            raise HTTPException(status_code=404, detail="Thread not found")
+    attachments = await attachment_service.upload_files(owner=owner, files=files)
+    payload = {
+        "items": [RuntimeAttachmentService.serialize_attachment(attachment) for attachment in attachments],
+    }
+    await db.commit()
+    return payload
 
 
 @router.get("/{agent_id}/threads")

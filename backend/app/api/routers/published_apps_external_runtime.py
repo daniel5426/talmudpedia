@@ -4,7 +4,7 @@ from typing import Any, Dict, Optional
 from urllib.parse import urlparse
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import (
@@ -22,12 +22,15 @@ from app.api.routers.published_apps_public import (
     PublicChatStreamRequest,
     RuntimeBootstrapAuthResponse,
     RuntimeBootstrapResponse,
+    _upload_published_app_attachments,
     _assert_published,
     _resolve_runtime_api_base_url,
     _stream_chat_for_app,
 )
+from app.db.postgres.models.agent_threads import AgentThreadSurface
 from app.db.postgres.session import get_db
 from app.services.published_app_auth_service import PublishedAppAuthError, PublishedAppAuthService
+from app.services.runtime_attachment_service import RuntimeAttachmentOwner
 from app.services.thread_service import ThreadService
 
 
@@ -187,6 +190,28 @@ async def external_chat_stream(
         request_user_id=str(matched_principal["app_account_id"]) if matched_principal else None,
         cleanup_transient_thread=not bool(app.auth_enabled),
     )
+
+
+@router.post("/{app_slug}/attachments/upload")
+async def external_upload_attachments(
+    app_slug: str,
+    files: list[UploadFile] = File(...),
+    thread_id: UUID | None = Form(default=None),
+    db: AsyncSession = Depends(get_db),
+    principal: Optional[Dict[str, Any]] = Depends(get_optional_published_app_principal),
+):
+    app = await _assert_published(db, app_slug)
+    matched_principal = _assert_principal_matches_app(app, principal)
+    if app.auth_enabled and matched_principal is None:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    owner = RuntimeAttachmentOwner(
+        tenant_id=app.tenant_id,
+        surface=AgentThreadSurface.published_host_runtime,
+        app_account_id=UUID(str(matched_principal["app_account_id"])) if matched_principal else None,
+        published_app_id=app.id,
+        thread_id=thread_id,
+    )
+    return await _upload_published_app_attachments(app=app, owner=owner, files=files, db=db)
 
 
 @router.get("/{app_slug}/threads")

@@ -25,10 +25,21 @@ class TrendInfo(BaseModel):
 
 class TopUserSummary(BaseModel):
     """Summary for top users by activity."""
-    user_id: UUID
-    email: str
+    user_id: str
+    display_name: str
+    email: Optional[str]
+    actor_type: Optional[str] = None
     full_name: Optional[str]
     count: int
+
+
+class RecentThreadSummary(BaseModel):
+    """Summary for recent thread activity."""
+    id: UUID
+    title: Optional[str]
+    created_at: Optional[datetime]
+    actor_display: str
+    actor_email: Optional[str]
 
 
 class ModelUsageSummary(BaseModel):
@@ -122,6 +133,7 @@ class OverviewStats(BaseModel):
     messages_by_role: dict[str, int]
     top_users: list[TopUserSummary]
     top_models: list[ModelUsageSummary]
+    recent_threads: list[RecentThreadSummary]
 
 
 # --- RAG Stats ---
@@ -190,6 +202,7 @@ class AgentSummary(BaseModel):
     name: str
     slug: str
     status: str
+    thread_count: int
     run_count: int
     failed_count: int
     last_run_at: Optional[datetime]

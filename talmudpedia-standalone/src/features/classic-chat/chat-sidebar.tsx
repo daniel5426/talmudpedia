@@ -47,6 +47,7 @@ type ChatSidebarProps = {
   hasMoreHistory: boolean;
   onLoadMoreHistory: () => void;
   onNewChat: () => void;
+  onRemoveThread: (threadId: string) => void | Promise<void>;
   onSelectThread: (threadId: string) => void;
   threads: TemplateThread[];
 };
@@ -56,6 +57,7 @@ export function ChatSidebar({
   hasMoreHistory,
   onLoadMoreHistory,
   onNewChat,
+  onRemoveThread,
   onSelectThread,
   threads,
 }: ChatSidebarProps) {
@@ -98,12 +100,19 @@ export function ChatSidebar({
         >
           {isExpanded ? (
             <div className="flex-1 overflow-hidden">
-              <p className="truncate text-xs font-semibold uppercase tracking-[0.18em] text-sidebar-foreground/55">
-                {locale === "he" ? "טלמודפדיה סטנדאלון" : "Talmudpedia Standalone"}
+              <p
+                className={cn(
+                  "truncate font-semibold text-sidebar-foreground/60",
+                  locale === "he"
+                    ? "text-[0.92rem] leading-6 tracking-[0.01em]"
+                    : "text-xs uppercase tracking-[0.18em]",
+                )}
+              >
+                {locale === "he" ? "Prico AI" : "Prico AI"}
               </p>
             </div>
           ) : null}
-          <SidebarTrigger aria-label="Toggle sidebar" className="size-8" />
+          <SidebarTrigger aria-label="Toggle sidebar" className="!size-8 cursor-pointer" />
         </div>
       </SidebarHeader>
 
@@ -113,10 +122,13 @@ export function ChatSidebar({
             <SidebarMenuItem>
               <SidebarMenuButton
                 onClick={onNewChat}
-                className="cursor-pointer"
+                className={cn(
+                  "cursor-pointer",
+                  locale === "he" ? "text-[0.90rem] font-medium leading-6" : "text-sm",
+                )}
                 tooltip={locale === "he" ? "צ'אט חדש" : "New chat"}
               >
-                <PenSquare className="size-4" />
+                <PenSquare className="" />
                 <span>{locale === "he" ? "צ'אט חדש" : "New chat"}</span>
               </SidebarMenuButton>
             </SidebarMenuItem>
@@ -126,7 +138,12 @@ export function ChatSidebar({
         {isExpanded ? (
           <div className="flex min-h-0 flex-1 flex-col">
             <SidebarGroup className="flex h-full flex-col">
-              <SidebarGroupLabel className="font-semibold">
+              <SidebarGroupLabel
+                className={cn(
+                  "font-semibold text-sidebar-foreground/80",
+                  locale === "he" ? "text-[0.90rem] tracking-normal leading-6" : "text-xs uppercase tracking-[0.12em]",
+                )}
+              >
                 {locale === "he" ? "צ'אטים קודמים" : "Previous Chats"}
               </SidebarGroupLabel>
               <div className="min-h-0 flex-1 overflow-hidden rounded-2xl p-2">
@@ -162,7 +179,13 @@ export function ChatSidebar({
                                 <Share2 className="mr-2 h-4 w-4" />
                                 <span>{locale === "he" ? "שתף" : "Share"}</span>
                               </DropdownMenuItem>
-                              <DropdownMenuItem className="cursor-pointer text-destructive focus:text-destructive">
+                              <DropdownMenuItem
+                                className="cursor-pointer text-destructive focus:text-destructive"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  void onRemoveThread(thread.id);
+                                }}
+                              >
                                 <Trash2 className="mr-2 h-4 w-4" />
                                 <span>{locale === "he" ? "מחק" : "Delete"}</span>
                               </DropdownMenuItem>

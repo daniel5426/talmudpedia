@@ -22,6 +22,12 @@ from .agent_threads import (
     AgentThreadSurface,
     AgentThreadTurnStatus,
 )
+from .runtime_attachments import (
+    RuntimeAttachment,
+    RuntimeAttachmentKind,
+    RuntimeAttachmentStatus,
+    AgentThreadTurnAttachment,
+)
 from .security import (
     WorkloadPrincipal,
     WorkloadPrincipalBinding,

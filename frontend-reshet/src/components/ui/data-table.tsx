@@ -4,7 +4,9 @@ import * as React from "react"
 import {
   ColumnDef,
   ColumnFiltersState,
+  PaginationState,
   SortingState,
+  type Updater,
   VisibilityState,
   flexRender,
   getCoreRowModel,
@@ -43,6 +45,12 @@ interface DataTableProps<TData, TValue> {
   filterColumn?: string
   filterPlaceholder?: string
   isLoading?: boolean
+  filterValue?: string
+  onFilterChange?: (value: string) => void
+  manualPagination?: boolean
+  pageCount?: number
+  pagination?: PaginationState
+  onPaginationChange?: (pagination: PaginationState) => void
 }
 
 export function DataTable<TData, TValue>({
@@ -51,29 +59,50 @@ export function DataTable<TData, TValue>({
   onBulkDelete,
   filterColumn = "email",
   filterPlaceholder = "Filter...",
-  isLoading = false
+  isLoading = false,
+  filterValue,
+  onFilterChange,
+  manualPagination = false,
+  pageCount,
+  pagination,
+  onPaginationChange,
 }: DataTableProps<TData, TValue>) {
   const [sorting, setSorting] = React.useState<SortingState>([])
   const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>([])
   const [columnVisibility, setColumnVisibility] = React.useState<VisibilityState>({})
   const [rowSelection, setRowSelection] = React.useState({})
+  const [internalPagination, setInternalPagination] = React.useState<PaginationState>({
+    pageIndex: 0,
+    pageSize: 10,
+  })
+
+  const resolvedPagination = pagination ?? internalPagination
 
   const table = useReactTable({
     data,
     columns,
     onSortingChange: setSorting,
     onColumnFiltersChange: setColumnFilters,
+    onPaginationChange: (updater: Updater<PaginationState>) => {
+      const nextValue = typeof updater === "function" ? updater(resolvedPagination) : updater
+      const applyPagination = onPaginationChange ?? setInternalPagination
+      applyPagination(nextValue)
+    },
     getCoreRowModel: getCoreRowModel(),
-    getPaginationRowModel: getPaginationRowModel(),
+    getPaginationRowModel: manualPagination ? undefined : getPaginationRowModel(),
     getSortedRowModel: getSortedRowModel(),
-    getFilteredRowModel: getFilteredRowModel(),
+    getFilteredRowModel: manualPagination ? undefined : getFilteredRowModel(),
     onColumnVisibilityChange: setColumnVisibility,
     onRowSelectionChange: setRowSelection,
+    manualPagination,
+    manualFiltering: Boolean(onFilterChange),
+    pageCount,
     state: {
       sorting,
       columnFilters,
       columnVisibility,
       rowSelection,
+      pagination: resolvedPagination,
     },
   })
 
@@ -96,10 +125,14 @@ export function DataTable<TData, TValue>({
       <div className="flex items-center py-4 gap-2">
         <Input
           placeholder={filterPlaceholder}
-          value={(table.getColumn(filterColumn)?.getFilterValue() as string) ?? ""}
-          onChange={(event) =>
+          value={filterValue ?? ((table.getColumn(filterColumn)?.getFilterValue() as string) ?? "")}
+          onChange={(event) => {
+            if (onFilterChange) {
+              onFilterChange(event.target.value)
+              return
+            }
             table.getColumn(filterColumn)?.setFilterValue(event.target.value)
-          }
+          }}
           className="max-w-sm"
         />
         

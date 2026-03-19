@@ -1,14 +1,14 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { adminService, AdminStats as AdminStatsType } from "@/services"
+import { adminService, type AdminStatsOverview } from "@/services"
 import { AdminPageHeader } from "@/components/admin/AdminPageHeader"
 import { DashboardContent } from "@/components/admin/dashboard-content"
 import { CustomBreadcrumb } from "@/components/ui/custom-breadcrumb"
 import { Skeleton } from "@/components/ui/skeleton"
 
 export default function AdminDashboardPage() {
-  const [stats, setStats] = useState<AdminStatsType | null>(null)
+  const [stats, setStats] = useState<AdminStatsOverview | null>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -17,11 +17,13 @@ export default function AdminDashboardPage() {
         const endDate = new Date()
         const startDate = new Date()
         startDate.setDate(startDate.getDate() - 30)
-        const data = await adminService.getStats(
+        const data = await adminService.getStatsSummary(
+          "overview",
+          30,
           startDate.toISOString(),
           endDate.toISOString()
         )
-        setStats(data)
+        setStats(data.overview || null)
       } catch (error) {
         console.error("Failed to fetch stats", error)
       } finally {

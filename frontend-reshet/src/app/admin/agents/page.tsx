@@ -17,7 +17,7 @@ import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { CustomBreadcrumb } from "@/components/ui/custom-breadcrumb"
 import { Skeleton } from "@/components/ui/skeleton"
-import { agentService, Agent } from "@/services"
+import { agentService, adminService, Agent } from "@/services"
 import { AgentCard } from "@/components/agent-card"
 import { CreateAgentDialog } from "@/components/agents/CreateAgentDialog"
 import {
@@ -223,6 +223,7 @@ export default function AgentsPage() {
     const [isLoading, setIsLoading] = useState(true)
     const [error, setError] = useState<string | null>(null)
     const [searchQuery, setSearchQuery] = useState("")
+    const [agentMetrics, setAgentMetrics] = useState<Record<string, { threads: number; runs: number; failureRate: number }>>({})
     const isCreateDialogOpen = searchParams.get("create") === "1"
     const isExportDialogOpen = searchParams.get("mode") === "export-tool"
 
@@ -233,8 +234,20 @@ export default function AgentsPage() {
     const loadAgents = async () => {
         try {
             setIsLoading(true)
-            const data = await agentService.listAgents()
+            const [data, stats] = await Promise.all([
+                agentService.listAgents(),
+                adminService.getStatsSummary("agents", 7),
+            ])
             setAgents(data.agents)
+            const nextMetrics: Record<string, { threads: number; runs: number; failureRate: number }> = {}
+            for (const item of stats.agents?.agents || []) {
+                nextMetrics[item.id] = {
+                    threads: item.thread_count,
+                    runs: item.run_count,
+                    failureRate: item.run_count > 0 ? (item.failed_count / item.run_count) * 100 : 0,
+                }
+            }
+            setAgentMetrics(nextMetrics)
             setError(null)
         } catch (err) {
             console.error("Failed to load agents:", err)
@@ -368,6 +381,7 @@ export default function AgentsPage() {
                             <AgentCard
                                 key={agent.id}
                                 agent={agent}
+                                metrics={agentMetrics[agent.id]}
                                 onOpen={(a) => router.push(`/admin/agents/${a.id}/builder`)}
                                 onPlayground={(a) => router.push(`/admin/agents/playground?agentId=${a.id}`)}
                                 onDelete={handleDelete}

@@ -115,9 +115,9 @@ export function MetricDetailPanel({
             <SimpleTable
               title="Top Users"
               rows={overview.top_users.map((user) => ({
-                label: user.email,
+                label: user.display_name || user.email || "Unknown actor",
                 value: user.count,
-                meta: user.full_name || undefined,
+                meta: user.email || user.actor_type || undefined,
               }))}
             />
             <BreakdownList title="Messages by Role" data={overview.messages_by_role} />
@@ -133,9 +133,9 @@ export function MetricDetailPanel({
           <SimpleTable
             title="Top Users by Messages"
             rows={overview.top_users.map((user) => ({
-              label: user.email,
+              label: user.display_name || user.email || "Unknown actor",
               value: user.count,
-              meta: user.full_name || undefined,
+              meta: user.email || user.actor_type || undefined,
             }))}
           />
         </div>
@@ -418,9 +418,9 @@ export function MetricDetailPanel({
           <SimpleTable
             title="Top Users by Runs"
             rows={agents.top_users_by_runs.map((user) => ({
-              label: user.email,
+              label: user.display_name || user.email || "Unknown actor",
               value: user.count,
-              meta: user.full_name || undefined,
+              meta: user.email || user.actor_type || undefined,
             }))}
           />
         </div>

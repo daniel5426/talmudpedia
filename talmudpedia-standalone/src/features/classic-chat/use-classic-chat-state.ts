@@ -8,21 +8,24 @@ import {
 
 import { HISTORY_PAGE_SIZE } from "./demo-data";
 import {
+  deleteAgentThread,
   fetchAgentThread,
   fetchAgentThreads,
   streamAgent,
   type AgentThreadDetailDto,
+  uploadAgentAttachments,
 } from "./standalone-runtime";
 import {
   applyRuntimeEvent,
   createId,
   mapThreadDetail,
+  mapRuntimeAttachment,
   mapThreadSummary,
   previewFromMessage,
   titleFromPrompt,
 } from "./thread-mappers";
 import { useSession } from "./session-context";
-import type { TemplateMessage, TemplateThread } from "./types";
+import type { ComposerSubmitPayload, TemplateAttachment, TemplateMessage, TemplateThread } from "./types";
 
 export function useClassicChatState() {
   const { session } = useSession();
@@ -139,9 +142,43 @@ export function useClassicChatState() {
     );
   };
 
-  const submitMessage = async (text: string) => {
+  const removeThread = async (threadId: string) => {
+    if (!threads.find((thread) => thread.id === threadId)) {
+      return;
+    }
+
+    if (!threadId.startsWith("local-")) {
+      await deleteAgentThread(threadId);
+    }
+
+    hydratedThreadIdsRef.current.delete(threadId);
+    let nextActiveThreadId = "";
+    setThreads((current) => {
+      const remaining = current.filter((thread) => thread.id !== threadId);
+      nextActiveThreadId =
+        activeThreadIdRef.current === threadId ? remaining[0]?.id || "" : activeThreadIdRef.current;
+      return remaining;
+    });
+    setActiveThreadId((current) => {
+      if (current !== threadId) {
+        return current;
+      }
+      return nextActiveThreadId;
+    });
+  };
+
+  const submitPreparedMessage = async ({
+    text,
+    attachmentIds,
+    attachments,
+  }: {
+    text: string;
+    attachmentIds: string[];
+    attachments: TemplateAttachment[];
+  }) => {
     const normalized = text.trim();
-    if (!normalized || isResponding) return;
+    if (!normalized && attachments.length === 0) return;
+    if (isResponding) return;
     const selectedClientId = String(session?.selectedClientId || "").trim();
     if (!selectedClientId) {
       setSubmitError("Select a demo client before sending a message.");
@@ -153,7 +190,8 @@ export function useClassicChatState() {
       id: createId(),
       role: "user",
       createdAt: new Date().toISOString(),
-      text: normalized,
+      text: normalized || undefined,
+      attachments,
     };
 
     const assistantMessageId = createId();
@@ -165,7 +203,6 @@ export function useClassicChatState() {
       blocks: [],
     };
 
-    setInputValue("");
     setSubmitError(null);
     setIsResponding(true);
 
@@ -178,7 +215,7 @@ export function useClassicChatState() {
         title:
           existingThread && existingThread.messages.length > 0
             ? existingThread.title
-            : titleFromPrompt(normalized),
+            : titleFromPrompt(normalized || attachments[0]?.filename || "New chat"),
         preview: previewFromMessage(userMessage),
         updatedAt: "Just now",
         messages: [...threadMessages, userMessage, assistantMessage],
@@ -194,7 +231,8 @@ export function useClassicChatState() {
       const { threadId: platformThreadId } = await streamAgent(
         {
           clientId: selectedClientId,
-          input: normalized,
+          input: normalized || undefined,
+          attachmentIds,
           threadId: threadId.startsWith("local-") ? undefined : threadId,
         },
         (event) => {
@@ -291,13 +329,47 @@ export function useClassicChatState() {
     }
   };
 
+  const submitMessage = async (payload: ComposerSubmitPayload | string) => {
+    const submission =
+      typeof payload === "string"
+        ? { text: payload, files: [] }
+        : payload;
+    const normalized = submission.text.trim();
+    if (!normalized && submission.files.length === 0) {
+      return;
+    }
+
+    const currentThreadId = activeThread?.id || `local-${createId()}`;
+    const runtimeThreadId = currentThreadId.startsWith("local-") ? undefined : currentThreadId;
+
+    let attachments: TemplateAttachment[] = [];
+    let attachmentIds: string[] = [];
+    if (submission.files.length > 0) {
+      const uploaded = await uploadAgentAttachments({
+        files: submission.files,
+        threadId: runtimeThreadId,
+      });
+      attachments = uploaded.items.map((attachment, index) =>
+        mapRuntimeAttachment(attachment, submission.files[index]?.url || null),
+      );
+      attachmentIds = uploaded.items.map((attachment) => attachment.id);
+    }
+
+    setInputValue("");
+    await submitPreparedMessage({
+      text: normalized,
+      attachmentIds,
+      attachments,
+    });
+  };
+
   const retryAssistantMessage = (messageId: string) => {
     if (!activeThread) return;
     const messageIndex = activeThread.messages.findIndex((message) => message.id === messageId);
     if (messageIndex < 1) return;
 
     const previousMessage = activeThread.messages[messageIndex - 1];
-    if (previousMessage.role !== "user" || !previousMessage.text) return;
+    if (previousMessage.role !== "user") return;
 
     setThreads((current) =>
       current.map((thread) =>
@@ -312,7 +384,11 @@ export function useClassicChatState() {
       )
     );
 
-    submitMessage(previousMessage.text);
+    void submitPreparedMessage({
+      text: previousMessage.text || "",
+      attachmentIds: (previousMessage.attachments || []).map((attachment) => attachment.id),
+      attachments: previousMessage.attachments || [],
+    });
   };
 
   const toggleLike = (messageId: string) => {
@@ -348,6 +424,7 @@ export function useClassicChatState() {
     submitError,
     likedMessageIds,
     loadMoreHistory,
+    removeThread,
     newChat,
     retryAssistantMessage,
     setActiveThreadId,

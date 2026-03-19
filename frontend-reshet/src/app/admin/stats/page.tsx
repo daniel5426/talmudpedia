@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   Calendar,
@@ -23,6 +24,8 @@ import { cn } from "@/lib/utils"
 import { AdminPageHeader } from "@/components/admin/AdminPageHeader"
 import {
   adminService,
+  agentService,
+  type Agent,
   type StatsSection,
   type DailyDataPoint,
   type AdminStatsOverview,
@@ -288,6 +291,8 @@ export default function AdminStatsPage() {
   const [rag, setRAG] = useState<AdminStatsRAG | null>(null)
   const [agents, setAgents] = useState<AdminStatsAgents | null>(null)
   const [resources, setResources] = useState<AdminStatsResources | null>(null)
+  const [agentOptions, setAgentOptions] = useState<Agent[]>([])
+  const [selectedAgentId, setSelectedAgentId] = useState("")
 
   const activeDetailId = detailByTab[activeTab]
 
@@ -321,7 +326,8 @@ export default function AdminStatsPage() {
         section,
         days,
         appliedRange?.start,
-        appliedRange?.end
+        appliedRange?.end,
+        section === "agents" && selectedAgentId ? { agentId: selectedAgentId } : undefined,
       )
 
       switch (section) {
@@ -347,7 +353,19 @@ export default function AdminStatsPage() {
 
   useEffect(() => {
     loadStats(activeTab)
-  }, [activeTab, days, appliedRange?.start, appliedRange?.end])
+  }, [activeTab, days, appliedRange?.start, appliedRange?.end, selectedAgentId])
+
+  useEffect(() => {
+    const loadAgents = async () => {
+      try {
+        const data = await agentService.listAgents({ compact: true })
+        setAgentOptions(data.agents)
+      } catch (error) {
+        console.error("Failed to load agent options", error)
+      }
+    }
+    loadAgents()
+  }, [])
 
   const handleTabChange = (value: string) => {
     setActiveTab(value as StatsSection)
@@ -620,6 +638,24 @@ export default function AdminStatsPage() {
                     <div className="flex flex-col lg:flex-row lg:items-start gap-6 px-6 py-4">
                       <div className="flex-1 min-w-0">
                         <div className="space-y-6">
+                          <div className="flex items-center justify-end">
+                            <Select
+                              value={selectedAgentId || "__all_agents__"}
+                              onValueChange={(value) => setSelectedAgentId(value === "__all_agents__" ? "" : value)}
+                            >
+                              <SelectTrigger className="w-[240px]">
+                                <SelectValue placeholder="All agents" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="__all_agents__">All agents</SelectItem>
+                                {agentOptions.map((agent) => (
+                                  <SelectItem key={agent.id} value={agent.id}>
+                                    {agent.name}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
                           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4 items-start">
                             <MetricBlock
                               title="Users"

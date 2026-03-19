@@ -13,6 +13,11 @@ import { cn } from "@/lib/utils"
 
 interface AgentCardProps {
     agent: Agent
+    metrics?: {
+        threads: number
+        runs: number
+        failureRate: number
+    }
     onDelete?: (agent: Agent) => void
     onOpen?: (agent: Agent) => void // Should navigate to builder
     onRun?: (agent: Agent) => void  // Should navigate to playground
@@ -20,7 +25,7 @@ interface AgentCardProps {
     className?: string
 }
 
-export function AgentCard({ agent, onOpen, onRun, onDelete, onPlayground, className }: AgentCardProps) {
+export function AgentCard({ agent, metrics, onOpen, onRun, onDelete, onPlayground, className }: AgentCardProps) {
     const [idCopied, setIdCopied] = useState(false)
     const copyResetTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -55,7 +60,7 @@ export function AgentCard({ agent, onOpen, onRun, onDelete, onPlayground, classN
         <div
             onClick={handleOpen}
             className={cn(
-                "group relative flex flex-col justify-between h-[230px] bg-card text-card-foreground border rounded-xl p-5 shadow-sm transition-all duration-200 hover:shadow-md hover:border-primary/20 cursor-pointer overflow-hidden",
+                "group relative flex min-h-[250px] flex-col justify-between bg-card text-card-foreground border rounded-xl p-5 shadow-sm transition-all duration-200 hover:shadow-md hover:border-primary/20 cursor-pointer overflow-hidden",
                 className
             )}
         >
@@ -120,6 +125,19 @@ export function AgentCard({ agent, onOpen, onRun, onDelete, onPlayground, classN
                 <p className="text-sm text-muted-foreground mt-3 line-clamp-2 leading-relaxed">
                     {agent.description || "No description provided."}
                 </p>
+                {metrics ? (
+                    <div className="mt-4 flex flex-wrap gap-2 text-[11px]">
+                        <span className="rounded-full bg-muted px-2 py-1 text-muted-foreground">
+                            {metrics.threads} threads
+                        </span>
+                        <span className="rounded-full bg-muted px-2 py-1 text-muted-foreground">
+                            {metrics.runs} runs / 7d
+                        </span>
+                        <span className="rounded-full bg-muted px-2 py-1 text-muted-foreground">
+                            {metrics.failureRate.toFixed(1)}% fail
+                        </span>
+                    </div>
+                ) : null}
             </div>
 
             {/* Footer */}

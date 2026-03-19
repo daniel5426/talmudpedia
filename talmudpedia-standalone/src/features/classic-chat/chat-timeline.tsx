@@ -1,6 +1,9 @@
 import {
   Check,
   Copy,
+  FileAudio,
+  FileImage,
+  FileText,
   RefreshCcw,
   Search,
   ThumbsDown,
@@ -36,6 +39,8 @@ import { cn } from "@/lib/utils";
 import { BotInputArea } from "./bot-input-area";
 import { useLocale } from "./locale-context";
 import type {
+  ComposerSubmitPayload,
+  TemplateAttachment,
   TemplateMessage,
   TemplateRenderBlock,
   TemplateTaskBlock,
@@ -52,7 +57,7 @@ type ChatTimelineProps = {
   onCopyMessage: (messageId: string, text: string) => void;
   onInputValueChange: (value: string) => void;
   onRetryMessage: (messageId: string) => void;
-  onSubmit: (text: string) => void;
+  onSubmit: (payload: ComposerSubmitPayload) => void | Promise<void>;
   onToggleDislike: (messageId: string) => void;
   onToggleLike: (messageId: string) => void;
   onTopVisibilityChange: (isAtTop: boolean) => void;
@@ -62,6 +67,42 @@ function messageText(message: TemplateMessage) {
   if (message.text) return message.text;
   const firstTextBlock = message.blocks?.find((block) => block.kind === "text");
   return firstTextBlock?.kind === "text" ? firstTextBlock.content : "";
+}
+
+function attachmentIcon(attachment: TemplateAttachment) {
+  if (attachment.kind === "audio") return FileAudio;
+  if (attachment.kind === "image") return FileImage;
+  return FileText;
+}
+
+function renderAttachments(message: TemplateMessage) {
+  if (!message.attachments?.length) {
+    return null;
+  }
+  return (
+    <div className="flex flex-wrap gap-2">
+      {message.attachments.map((attachment) => {
+        const Icon = attachmentIcon(attachment);
+        return (
+          <div
+            key={attachment.id}
+            className="flex max-w-full items-center gap-2 rounded-md border border-border/60 bg-background/70 px-2.5 py-2 text-xs"
+          >
+            {attachment.kind === "image" && attachment.previewUrl ? (
+              <img
+                alt={attachment.filename}
+                className="h-10 w-10 rounded object-cover"
+                src={attachment.previewUrl}
+              />
+            ) : (
+              <Icon className="size-4 shrink-0 text-muted-foreground" />
+            )}
+            <span className="truncate">{attachment.filename}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 function taskTone(status: TemplateTaskBlock["status"]) {
@@ -86,7 +127,7 @@ function renderBlock(block: TemplateRenderBlock) {
         className="border-0 bg-transparent p-0 shadow-none"
         defaultOpen={false}
       >
-        <div className={cn("text-sm", taskTone(block.status))}>
+        <div className={cn("text-[1rem]", taskTone(block.status))}>
           {block.status === "running" ? <Shimmer>{block.title}</Shimmer> : <span>{block.title}</span>}
         </div>
       </Task>
@@ -174,12 +215,15 @@ export function ChatTimeline({
               )}
             >
               {message.role === "user" ? (
-                <MessageResponse>{message.plainText}</MessageResponse>
+                <>
+                  {message.plainText ? <MessageResponse>{message.plainText}</MessageResponse> : null}
+                  {renderAttachments(message)}
+                </>
               ) : (
                 <>
                   {message.blocks?.map((block) => renderBlock(block))}
                   {message.runStatus && message.runStatus !== "completed" && !message.plainText ? (
-                    <div className="px-1 py-1 text-sm text-muted-foreground">
+                    <div className="px-1 py-1 text-[1rem] text-muted-foreground">
                       <Shimmer>{locale === "he" ? "חושב..." : "Thinking..."}</Shimmer>
                     </div>
                   ) : null}

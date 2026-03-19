@@ -1,7 +1,7 @@
 "use client"
 
 import { format } from "date-fns"
-import { AdminStats as AdminStatsType } from "@/services"
+import { type AdminStatsOverview } from "@/services"
 import Link from "next/link"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Users, MessageSquare, UserPlus, TrendingUp, Zap, Activity } from "lucide-react"
@@ -9,7 +9,7 @@ import { ChartBarInteractive } from "@/components/admin/charts/chart-bar-interac
 import { ChartLineInteractive } from "@/components/admin/charts/chart-line-interactive"
 
 interface DashboardContentProps {
-  stats: AdminStatsType
+  stats: AdminStatsOverview
 }
 
 const StatCard = ({ 
@@ -50,9 +50,9 @@ export function DashboardContent({ stats }: DashboardContentProps) {
     },
     {
       title: "Active Users (7d)",
-      value: stats.total_active_users,
+      value: stats.active_users,
       icon: Activity,
-      subtitle: `${stats.new_users_last_7_days} new this week`,
+      subtitle: `${stats.new_users} new in range`,
     },
     {
       title: "Total Threads",
@@ -71,12 +71,12 @@ export function DashboardContent({ stats }: DashboardContentProps) {
     },
     {
       title: "New Users (7d)",
-      value: stats.new_users_last_7_days,
+      value: stats.new_users,
       icon: UserPlus,
     },
     {
       title: "Estimated Tokens",
-      value: (stats.estimated_tokens / 1000000).toFixed(1) + "M",
+      value: (stats.total_tokens / 1000000).toFixed(1) + "M",
       icon: Zap,
     },
   ]
@@ -90,8 +90,8 @@ export function DashboardContent({ stats }: DashboardContentProps) {
       </div>
 
       <div className="grid gap-3 md:grid-cols-2">
-        <ChartBarInteractive data={stats.daily_stats} />
-        <ChartLineInteractive data={stats.daily_active_users} />
+        <ChartBarInteractive data={stats.tokens_by_day.map((item) => ({ date: item.date, chats: item.value }))} />
+        <ChartLineInteractive data={stats.daily_active_users.map((item) => ({ date: item.date, count: item.value }))} />
       </div>
 
       <div className="grid gap-3 md:grid-cols-2">
@@ -106,7 +106,7 @@ export function DashboardContent({ stats }: DashboardContentProps) {
           </CardHeader>
           <CardContent className="p-0">
             <div className="divide-y divide-border">
-              {stats.latest_chats.map((thread) => (
+              {stats.recent_threads.map((thread) => (
                 <Link
                   key={thread.id}
                   href={`/admin/threads/${thread.id}`}
@@ -117,15 +117,15 @@ export function DashboardContent({ stats }: DashboardContentProps) {
                       {thread.title || "Untitled Thread"}
                     </div>
                     <div className="text-xs text-muted-foreground mt-0.5 flex items-center gap-2">
-                      <span>{thread.user_email || "Unknown User"}</span>
+                      <span>{thread.actor_email || thread.actor_display || "Unknown User"}</span>
                       <span className="text-border">•</span>
-                      <span>{format(new Date(thread.created_at), "MMM d, HH:mm")}</span>
+                      <span>{thread.created_at ? format(new Date(thread.created_at), "MMM d, HH:mm") : "—"}</span>
                     </div>
                   </div>
                   <MessageSquare className="h-4 w-4 text-muted-foreground/50 group-hover:text-primary/50 transition-colors" />
                 </Link>
               ))}
-              {stats.latest_chats.length === 0 && (
+              {stats.recent_threads.length === 0 && (
                 <div className="text-sm text-muted-foreground py-8 text-center">No threads found</div>
               )}
             </div>
@@ -145,7 +145,7 @@ export function DashboardContent({ stats }: DashboardContentProps) {
             <div className="divide-y divide-border">
               {stats.top_users.map((user, index) => (
                 <div
-                  key={user.email}
+                  key={user.user_id}
                   className="flex items-center justify-between p-4 hover:bg-muted/50 transition-colors"
                 >
                   <div className="flex items-center gap-3 flex-1 min-w-0">
@@ -153,9 +153,9 @@ export function DashboardContent({ stats }: DashboardContentProps) {
                       {index + 1}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="text-sm font-medium truncate">{user.email}</div>
+                      <div className="text-sm font-medium truncate">{user.display_name || user.email || "Unknown actor"}</div>
                       <div className="text-xs text-muted-foreground mt-0.5">
-                        {user.count} messages sent
+                        {user.count} runs
                       </div>
                     </div>
                   </div>

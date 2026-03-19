@@ -1,6 +1,6 @@
 # Admin Stats Spec
 
-Last Updated: 2026-03-10
+Last Updated: 2026-03-19
 
 This document is the canonical product/specification overview for the admin stats surface.
 
@@ -25,6 +25,7 @@ This corrects older docs that referenced `/api/v1/admin/stats/summary`.
 - `days`
 - `start_date`
 - `end_date`
+- optional `agent_id` when `section=agents`
 
 Current section values:
 - `overview`
@@ -78,6 +79,19 @@ Current frontend page:
 - `frontend-reshet/src/app/admin/stats/page.tsx`
 
 The frontend uses centralized service/types under `frontend-reshet/src/services/`.
+
+The admin dashboard overview should also read from the summary-based overview contract rather than the legacy `/admin/stats` payload.
+
+## Current Agent Drilldown
+
+The `agents` section now supports optional per-agent drilldown:
+- `GET /admin/stats/summary?section=agents&agent_id=<agent_uuid>`
+
+When `agent_id` is present:
+- run totals are scoped to that agent
+- time-series metrics are scoped to that agent
+- top-user/run attribution is scoped to that agent
+- top-agent lists may collapse to the selected agent
 
 ## Canonical Implementation References
 

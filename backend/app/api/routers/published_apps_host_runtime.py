@@ -6,7 +6,7 @@ from typing import Any, Optional
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import JSONResponse, RedirectResponse, Response
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,11 +19,13 @@ from app.api.routers.published_apps_public import (
     PublicChatStreamRequest,
     RuntimeBootstrapAuthResponse,
     RuntimeBootstrapResponse,
+    _upload_published_app_attachments,
     _get_published_ui_revision,
     _inject_runtime_context_into_html,
     _is_enabled,
     _stream_chat_for_app,
 )
+from app.db.postgres.models.agent_threads import AgentThreadSurface
 from app.core.security import decode_published_app_session_token
 from app.db.postgres.engine import sessionmaker
 from app.db.postgres.models.published_apps import (
@@ -39,6 +41,7 @@ from app.db.postgres.session import get_db
 from app.services.published_app_auth_service import PublishedAppAuthError, PublishedAppAuthService
 from app.services.published_app_auth_shell_renderer import render_published_app_auth_shell
 from app.services.thread_service import ThreadService
+from app.services.runtime_attachment_service import RuntimeAttachmentOwner, RuntimeAttachmentService
 from app.services.published_app_bundle_storage import (
     PublishedAppBundleAssetNotFound,
     PublishedAppBundleStorage,
@@ -82,6 +85,11 @@ def _serialize_thread_detail(thread: Any) -> dict[str, Any]:
                 "created_at": turn.created_at,
                 "completed_at": turn.completed_at,
                 "metadata": turn.metadata_,
+                "attachments": [
+                    RuntimeAttachmentService.serialize_attachment(link.attachment)
+                    for link in sorted(turn.attachment_links or [], key=lambda item: str(item.id))
+                    if getattr(link, "attachment", None) is not None
+                ],
             }
             for turn in turns
         ],
@@ -705,6 +713,37 @@ async def host_chat_stream(
     if stale_cookie:
         _clear_session_cookie(response=stream_response, request=request)
     return stream_response
+
+
+@router.post(f"{INTERNAL_PREFIX}/attachments/upload")
+async def host_upload_attachments(
+    request: Request,
+    files: list[UploadFile] = File(...),
+    thread_id: UUID | None = Form(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    if not _is_enabled("PUBLISHED_APPS_ENABLED", "1"):
+        raise HTTPException(status_code=404, detail="Published apps are disabled")
+    app = await _resolve_host_app_or_404(db, request)
+    principal, stale_cookie = await _resolve_optional_principal_from_cookie(db=db, request=request, expected_app=app)
+    if app.auth_enabled and principal is None:
+        response = JSONResponse(status_code=401, content={"detail": "Authentication required"})
+        if stale_cookie:
+            _clear_session_cookie(response=response, request=request)
+        return response
+
+    owner = RuntimeAttachmentOwner(
+        tenant_id=app.tenant_id,
+        surface=AgentThreadSurface.published_host_runtime,
+        app_account_id=UUID(str(principal["app_account_id"])) if principal else None,
+        published_app_id=app.id,
+        thread_id=thread_id,
+    )
+    payload = await _upload_published_app_attachments(app=app, owner=owner, files=files, db=db)
+    response = JSONResponse(payload)
+    if stale_cookie:
+        _clear_session_cookie(response=response, request=request)
+    return response
 
 
 @router.get(f"{INTERNAL_PREFIX}/threads")

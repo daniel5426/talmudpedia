@@ -16,6 +16,8 @@ from app.db.postgres.models.agent_threads import (
     AgentThreadTurn,
     AgentThreadTurnStatus,
 )
+from app.db.postgres.models.runtime_attachments import AgentThreadTurnAttachment, RuntimeAttachment
+from app.services.runtime_attachment_storage import RuntimeAttachmentStorage
 
 
 class ThreadAccessError(Exception):
@@ -31,6 +33,7 @@ class ThreadResolveResult:
 class ThreadService:
     def __init__(self, db: AsyncSession):
         self.db = db
+        self.attachment_storage = RuntimeAttachmentStorage()
 
     @staticmethod
     def _turn_sort_key(turn: AgentThreadTurn) -> tuple[int, datetime, datetime, str]:
@@ -112,6 +115,7 @@ class ThreadService:
         thread_id: UUID,
         run_id: UUID,
         user_input_text: Optional[str],
+        attachment_ids: Optional[list[UUID]] = None,
         metadata: Optional[dict[str, Any]] = None,
     ) -> AgentThreadTurn:
         existing_result = await self.db.execute(
@@ -141,7 +145,17 @@ class ThreadService:
         )
         thread.last_activity_at = datetime.now(timezone.utc)
         thread.last_run_id = run_id
+        if user_input_text and (not thread.title or thread.title == "New Thread"):
+            thread.title = self._derive_title(input_text=user_input_text)
         self.db.add(turn)
+        await self.db.flush()
+        for attachment_id in attachment_ids or []:
+            self.db.add(
+                AgentThreadTurnAttachment(
+                    turn_id=turn.id,
+                    attachment_id=attachment_id,
+                )
+            )
         await self.db.flush()
         return turn
 
@@ -250,6 +264,11 @@ class ThreadService:
         external_session_id: Optional[str] = None,
     ) -> Optional[AgentThread]:
         query = select(AgentThread).where(AgentThread.id == thread_id).options(selectinload(AgentThread.turns)).limit(1)
+        query = query.options(
+            selectinload(AgentThread.turns)
+            .selectinload(AgentThreadTurn.attachment_links)
+            .selectinload(AgentThreadTurnAttachment.attachment)
+        )
         if tenant_id is not None:
             query = query.where(AgentThread.tenant_id == tenant_id)
         thread = (await self.db.execute(query)).scalar_one_or_none()
@@ -275,12 +294,18 @@ class ThreadService:
         if not thread_ids:
             return 0
         result = await self.db.execute(
-            select(AgentThread).where(
+            select(AgentThread)
+            .where(
                 and_(AgentThread.tenant_id == tenant_id, AgentThread.id.in_(thread_ids))
             )
+            .options(selectinload(AgentThread.attachments))
         )
         rows = list(result.scalars().all())
         for row in rows:
+            for attachment in row.attachments or []:
+                storage_key = str(getattr(attachment, "storage_key", "") or "").strip()
+                if storage_key:
+                    self.attachment_storage.delete_bytes(storage_key=storage_key)
             await self.db.delete(row)
         await self.db.flush()
         return len(rows)

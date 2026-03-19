@@ -1,6 +1,6 @@
 # Canonical Docs Guide
 
-Last Updated: 2026-03-17
+Last Updated: 2026-03-19
 
 This guide lists the current canonical documentation entry points after the first documentation-system refactor.
 
@@ -70,6 +70,8 @@ This guide lists the current canonical documentation entry points after the firs
 - `docs/references/embedded_agent_sdk_standalone_integration_guide.md`
   - Canonical customer integration guide for building a standalone app with `@agents24/embed-sdk`.
   - Use this alongside `packages/embed-sdk/README.md` for the server-only embed SDK contract and customer-backend architecture.
+- `docs/references/embed_sdk_release_runbook.md`
+  - Operational runbook for releasing `@agents24/embed-sdk`, including `release-please`, npm auth, provenance, and fallback manual publish steps.
 
 ## Focused Current Detail Docs Still Under `backend/documentations/`
 

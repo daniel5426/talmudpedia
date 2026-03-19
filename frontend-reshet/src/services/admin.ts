@@ -22,27 +22,46 @@ class AdminService {
     section: StatsSection,
     days: number = 7,
     startDate?: string,
-    endDate?: string
+    endDate?: string,
+    options?: { agentId?: string }
   ): Promise<StatsSummaryResponse> {
     const params = new URLSearchParams({ section, days: String(days) });
     if (startDate) params.set("start_date", startDate);
     if (endDate) params.set("end_date", endDate);
+    if (options?.agentId) params.set("agent_id", options.agentId);
     return httpClient.get<StatsSummaryResponse>(
       `/admin/stats/summary?${params.toString()}`
     );
   }
 
-  async getUsers(page = 1, limit = 20, search = ""): Promise<UserListResponse> {
+  async getUsers(
+    page = 1,
+    limit = 20,
+    search = "",
+    options?: { actorType?: string; agentId?: string; appId?: string }
+  ): Promise<UserListResponse> {
     const skip = (page - 1) * limit;
     const query = new URLSearchParams({ skip: String(skip), limit: String(limit) });
     if (search) query.set("search", search);
+    if (options?.actorType) query.set("actor_type", options.actorType);
+    if (options?.agentId) query.set("agent_id", options.agentId);
+    if (options?.appId) query.set("app_id", options.appId);
     return httpClient.get<UserListResponse>(`/admin/users?${query.toString()}`);
   }
 
-  async getThreads(page = 1, limit = 20, search = ""): Promise<ThreadListResponse> {
+  async getThreads(
+    page = 1,
+    limit = 20,
+    search = "",
+    options?: { actorType?: string; surface?: string; agentId?: string; appId?: string }
+  ): Promise<ThreadListResponse> {
     const skip = (page - 1) * limit;
     const query = new URLSearchParams({ skip: String(skip), limit: String(limit) });
     if (search) query.set("search", search);
+    if (options?.actorType) query.set("actor_type", options.actorType);
+    if (options?.surface) query.set("surface", options.surface);
+    if (options?.agentId) query.set("agent_id", options.agentId);
+    if (options?.appId) query.set("app_id", options.appId);
     return httpClient.get<ThreadListResponse>(`/admin/threads?${query.toString()}`);
   }
 
@@ -54,11 +73,13 @@ class AdminService {
     userId: string,
     page = 1,
     limit = 20,
-    search = ""
+    search = "",
+    options?: { agentId?: string }
   ): Promise<ThreadListResponse> {
     const skip = (page - 1) * limit;
     const query = new URLSearchParams({ skip: String(skip), limit: String(limit) });
     if (search) query.set("search", search);
+    if (options?.agentId) query.set("agent_id", options.agentId);
     const queryString = query.toString();
     return httpClient.get<ThreadListResponse>(`/admin/users/${userId}/threads?${queryString}`);
   }

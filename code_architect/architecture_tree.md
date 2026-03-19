@@ -1,6 +1,6 @@
 # Architecture Tree (Curated)
 
-Last Updated: 2026-03-18
+Last Updated: 2026-03-19
 
 This file is a backend-only architecture map optimized for agent context efficiency.
 
@@ -114,6 +114,7 @@ backend/app/db/postgres/session.py
 backend/app/db/postgres/models/
 backend/app/db/postgres/models/artifact_runtime.py
 backend/app/db/postgres/models/agent_threads.py
+backend/app/db/postgres/models/runtime_attachments.py
 backend/app/db/postgres/models/usage_quota.py
 backend/app/db/postgres/seeds/
 
@@ -167,6 +168,8 @@ backend/app/services/workload_identity_service.py
 backend/app/services/token_broker_service.py
 backend/app/services/tenant_api_key_service.py
 backend/app/services/embedded_agent_runtime_service.py
+backend/app/services/runtime_attachment_service.py
+backend/app/services/runtime_attachment_storage.py
 backend/app/services/orchestration_kernel_service.py
 backend/app/services/orchestration_policy_service.py
 backend/app/services/orchestration_lineage_service.py
@@ -211,6 +214,7 @@ backend/app/services/published_app_publish_runtime.py
 backend/app/services/published_app_publish_autofix.py
 backend/app/services/usage_quota_service.py
 backend/app/services/thread_service.py
+backend/app/services/admin_monitoring_service.py
 backend/app/services/published_app_coding_agent_engines/base.py
 backend/app/services/published_app_coding_agent_engines/opencode_engine.py
 backend/app/services/published_app_coding_agent_engines/prompt_history.py

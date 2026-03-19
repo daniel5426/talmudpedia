@@ -5,7 +5,7 @@ Routers should only: Validate, Authenticate, Dispatch.
 All business logic lives in AgentService.
 """
 from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 import json
@@ -49,6 +49,8 @@ from app.api.schemas.agents import (
 from app.db.postgres.models.agents import AgentRun
 from sqlalchemy import select
 from typing import Optional
+from app.db.postgres.models.agent_threads import AgentThreadSurface
+from app.services.runtime_attachment_service import RuntimeAttachmentOwner, RuntimeAttachmentService
 
 
 router = APIRouter(prefix="/agents", tags=["agents"])
@@ -61,6 +63,15 @@ class NodeSchemaRequest(BaseModel):
 def _stream_v2_enforced() -> bool:
     raw = (os.getenv("STREAM_V2_ENFORCED") or "1").strip().lower()
     return raw in {"1", "true", "yes", "on"}
+
+
+def _optional_uuid(value: Any) -> Optional[UUID]:
+    if value in {None, ""}:
+        return None
+    try:
+        return UUID(str(value))
+    except Exception:
+        return None
 
 
 # =============================================================================
@@ -659,10 +670,7 @@ async def stream_agent(
     else:
         # Start new run
         current_messages = [msg.model_dump() if hasattr(msg, "model_dump") else msg for msg in request.messages]
-        
-        if request.input:
-            current_messages.append({"role": "user", "content": request.input})
-            
+
         tenant_id = context.get("tenant_id")
         request_context = dict(request.context or {}) if isinstance(request.context, dict) else {}
         request_context.setdefault("token", context.get("auth_token"))
@@ -686,6 +694,7 @@ async def stream_agent(
         input_params = {
             "messages": current_messages,
             "input": request.input,
+            "attachment_ids": [str(item) for item in request.attachment_ids],
             "thread_id": str(request.thread_id) if request.thread_id else None,
             "context": request_context,
         }
@@ -804,11 +813,7 @@ async def start_run_v2(
     # Construct input params
     # Convert Pydantic messages to dicts
     current_messages = [msg.model_dump() if hasattr(msg, "model_dump") else msg for msg in request.messages]
-    
-    # Append input as user message if provided
-    if request.input:
-        current_messages.append({"role": "user", "content": request.input})
-        
+
     tenant_id = context.get("tenant_id")
     request_context = dict(request.context or {}) if isinstance(request.context, dict) else {}
     request_context.setdefault("token", context.get("auth_token"))
@@ -829,6 +834,7 @@ async def start_run_v2(
     input_params = {
         "messages": current_messages,
         "input": request.input,
+        "attachment_ids": [str(item) for item in request.attachment_ids],
         "thread_id": str(request.thread_id) if request.thread_id else None,
         "context": request_context,
     }
@@ -854,6 +860,43 @@ async def start_run_v2(
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/{agent_id}/attachments/upload")
+async def upload_agent_attachments(
+    agent_id: UUID,
+    files: list[UploadFile] = File(...),
+    thread_id: Optional[UUID] = Form(default=None),
+    _: Dict[str, Any] = Depends(require_scopes("agents.execute")),
+    context: Dict[str, Any] = Depends(get_agent_context),
+    db: AsyncSession = Depends(get_db),
+):
+    tenant_id = context["tenant_id"]
+    service = AgentService(db=db, tenant_id=tenant_id)
+    agent = await service.get_agent(agent_id)
+
+    owner = RuntimeAttachmentOwner(
+        tenant_id=agent.tenant_id,
+        surface=AgentThreadSurface.internal,
+        user_id=(
+            context["user"].id
+            if context.get("user") is not None
+            else _optional_uuid(context.get("initiator_user_id"))
+        ),
+        agent_id=agent.id,
+        thread_id=thread_id,
+    )
+    attachment_service = RuntimeAttachmentService(db)
+    if thread_id is not None:
+        thread = await attachment_service.get_accessible_thread(owner=owner, thread_id=thread_id)
+        if thread is None:
+            raise HTTPException(status_code=404, detail="Thread not found")
+    attachments = await attachment_service.upload_files(owner=owner, files=files)
+    payload = {
+        "items": [RuntimeAttachmentService.serialize_attachment(attachment) for attachment in attachments],
+    }
+    await db.commit()
+    return payload
 
 
 @router.post("/runs/{run_id}/resume", response_model=Dict[str, Any])

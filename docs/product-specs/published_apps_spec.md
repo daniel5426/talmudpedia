@@ -1,6 +1,6 @@
 # Published Apps Spec
 
-Last Updated: 2026-03-16
+Last Updated: 2026-03-19
 
 This document is the canonical product/specification overview for published apps.
 
@@ -47,6 +47,7 @@ The current product does not yet include:
 - Published authenticated runtime supports persisted app-scoped chat behavior.
 - Auth-disabled runtime supports public ephemeral chat behavior.
 - Preview runtime supports real agent streaming, but preview chat execution is intentionally ephemeral.
+- Runtime chat surfaces support upload-first attachments for `image`, `document`, and `audio`.
 - Version publish is build-aware and asynchronous when build artifacts are missing.
 - If build-wait publish fails, the published pointer remains on the previously working revision.
 
@@ -62,12 +63,15 @@ The current backend exposes these main published-app surfaces:
 Notable current public/runtime routes include:
 - `/public/apps/{app_slug}/config`
 - `/public/external/apps/{app_slug}/runtime/bootstrap`
+- `/public/external/apps/{app_slug}/attachments/upload`
 - `/public/external/apps/{app_slug}/chat/stream`
 - `/public/external/apps/{app_slug}/auth/*`
 - `/public/external/apps/{app_slug}/threads`
 - `/public/apps/preview/revisions/{revision_id}/runtime`
 - `/public/apps/preview/revisions/{revision_id}/runtime/bootstrap`
+- `/public/apps/preview/revisions/{revision_id}/attachments/upload`
 - `/public/apps/preview/revisions/{revision_id}/chat/stream`
+- `/_talmudpedia/attachments/upload`
 
 Important current behavior verified in code:
 - source-UI mode has been removed
@@ -75,6 +79,8 @@ Important current behavior verified in code:
 - legacy path-mode published runtime/auth/chat endpoints under `/public/apps/{slug}/*` remain hard-cut and return `410`
 - externally hosted clients should use the dedicated `/public/external/apps/{slug}/*` runtime/auth/history surface
 - preview source-UI mode is also removed in favor of runtime/bootstrap flows
+- runtime attachments are upload-first and chat requests reference `attachment_ids`
+- thread detail payloads include attachment descriptors so replay preserves file context
 
 ## Data Model Shape
 

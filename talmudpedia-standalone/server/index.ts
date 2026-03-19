@@ -47,8 +47,25 @@ function writeSseFrame(res: express.Response, payload: unknown): void {
   res.write(`data: ${JSON.stringify(payload)}\n\n`);
 }
 
-function normalizeBaseUrl(value: string): string {
-  return value.endsWith("/") ? value.slice(0, -1) : value;
+async function parseMultipartForm(req: express.Request): Promise<FormData> {
+  const headers = new Headers();
+  for (const [key, value] of Object.entries(req.headers)) {
+    if (Array.isArray(value)) {
+      headers.set(key, value.join(", "));
+      continue;
+    }
+    if (typeof value === "string") {
+      headers.set(key, value);
+    }
+  }
+  const origin = `${req.protocol}://${req.get("host") || "localhost"}`;
+  const request = new Request(`${origin}${req.originalUrl}`, {
+    method: req.method,
+    headers,
+    body: req,
+    duplex: "half",
+  } as RequestInit & { duplex: "half" });
+  return request.formData();
 }
 
 app.get("/api/session", (req, res) => {
@@ -106,14 +123,60 @@ app.get("/api/agent/threads/:threadId", async (req, res) => {
   }
 });
 
+app.delete("/api/agent/threads/:threadId", async (req, res) => {
+  try {
+    const session = getSession(req, res);
+    const payload = await client.deleteAgentThread(
+      env.TALMUDPEDIA_AGENT_ID,
+      req.params.threadId,
+      { externalUserId: session.userId },
+    );
+    res.json(payload);
+  } catch (error) {
+    const payload = toErrorPayload(error);
+    res.status(payload.status).json(payload);
+  }
+});
+
+app.post("/api/agent/attachments/upload", async (req, res) => {
+  try {
+    const session = getSession(req, res);
+    const formData = await parseMultipartForm(req);
+    const threadId = String(formData.get("threadId") || "").trim() || undefined;
+    const files = formData
+      .getAll("files")
+      .filter((entry): entry is File => entry instanceof File);
+
+    if (files.length === 0) {
+      res.status(400).json({ error: "At least one file is required." });
+      return;
+    }
+
+    const payload = await client.uploadAgentAttachments(env.TALMUDPEDIA_AGENT_ID, {
+      externalUserId: session.userId,
+      threadId,
+      files,
+    });
+    res.json(payload);
+  } catch (error) {
+    const payload = toErrorPayload(error);
+    res.status(payload.status).json(payload);
+  }
+});
+
 app.post("/api/agent/chat/stream", async (req, res) => {
   const session = getSession(req, res);
   const input = String(req.body?.input || "").trim();
   const threadId = String(req.body?.threadId || "").trim() || undefined;
+  const attachmentIds = Array.isArray(req.body?.attachmentIds)
+    ? req.body.attachmentIds
+        .map((value: unknown) => String(value || "").trim())
+        .filter(Boolean)
+    : [];
   const requestedClientId = String(req.body?.clientId || session.selectedClientId || "").trim();
 
-  if (!input) {
-    res.status(400).json({ error: "input is required" });
+  if (!input && attachmentIds.length === 0) {
+    res.status(400).json({ error: "input or attachmentIds is required" });
     return;
   }
   if (!requestedClientId) {
@@ -130,74 +193,62 @@ app.post("/api/agent/chat/stream", async (req, res) => {
   setSelectedClient(res, matchedClient.id);
 
   try {
-    const upstreamResponse = await fetch(
-      `${normalizeBaseUrl(env.TALMUDPEDIA_BASE_URL)}/public/embed/agents/${env.TALMUDPEDIA_AGENT_ID}/chat/stream`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${env.TALMUDPEDIA_EMBED_API_KEY}`,
-          "Content-Type": "application/json",
-          Accept: "text/event-stream",
-        },
-        body: JSON.stringify({
-          input,
-          messages: [
-            {
-              role: "system",
-              content:
-                `Selected demo client context: client_id=${matchedClient.id}; ` +
-                `client_name=${matchedClient.name}; sector=${matchedClient.sector}; ` +
-                `base_currency=${matchedClient.baseCurrency}. ` +
-                "Treat this as authoritative client scope for the current turn unless the user explicitly asks to switch clients.",
-            },
-          ],
-          thread_id: threadId,
-          external_user_id: session.userId,
-          metadata: {
-            client_id: matchedClient.id,
-            client_name: matchedClient.name,
-            sector: matchedClient.sector,
-            base_currency: matchedClient.baseCurrency,
-          },
-        }),
-      },
-    );
-
-    if (!upstreamResponse.ok || !upstreamResponse.body) {
-      const text = await upstreamResponse.text();
-      res.status(upstreamResponse.status).json({
-        error: text || "Failed to connect to the embedded-agent stream endpoint.",
-      });
-      return;
-    }
-
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
     res.setHeader("X-Accel-Buffering", "no");
-    const upstreamThreadId = upstreamResponse.headers.get("X-Thread-ID");
-    if (upstreamThreadId) {
-      res.setHeader("X-Thread-ID", upstreamThreadId);
-    }
-    res.flushHeaders?.();
 
-    const reader = upstreamResponse.body.getReader();
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (value) {
-        res.write(Buffer.from(value));
-      }
+    let didFlushHeaders = false;
+    await client.streamAgent(
+      env.TALMUDPEDIA_AGENT_ID,
+      {
+        input: input || undefined,
+        messages: [
+          {
+            role: "system",
+            content:
+              `Selected demo client context: client_id=${matchedClient.id}; ` +
+              `client_name=${matchedClient.name}; sector=${matchedClient.sector}; ` +
+              `base_currency=${matchedClient.baseCurrency}. ` +
+              "Treat this as authoritative client scope for the current turn unless the user explicitly asks to switch clients.",
+          },
+        ],
+        attachment_ids: attachmentIds,
+        thread_id: threadId,
+        external_user_id: session.userId,
+        metadata: {
+          client_id: matchedClient.id,
+          client_name: matchedClient.name,
+          sector: matchedClient.sector,
+          base_currency: matchedClient.baseCurrency,
+        },
+      },
+      async (event) => {
+        if (!didFlushHeaders) {
+          const acceptedThreadId = event.event === "run.accepted" ? event.payload.thread_id : null;
+          if (typeof acceptedThreadId === "string" && acceptedThreadId.trim()) {
+            res.setHeader("X-Thread-ID", acceptedThreadId);
+          }
+          res.flushHeaders?.();
+          didFlushHeaders = true;
+        }
+        writeSseFrame(res, event);
+      },
+    );
+
+    if (!didFlushHeaders) {
+      res.flushHeaders?.();
+      didFlushHeaders = true;
     }
 
     res.end();
   } catch (error) {
     const payload = toErrorPayload(error);
-    res.status(payload.status);
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
     res.setHeader("X-Accel-Buffering", "no");
+    res.flushHeaders?.();
     writeSseFrame(res, {
       version: "run-stream.v2",
       seq: Number.MAX_SAFE_INTEGER,
@@ -208,7 +259,9 @@ app.post("/api/agent/chat/stream", async (req, res) => {
       payload: { error: payload.error },
       diagnostics: [{ message: payload.error }],
     });
-    res.end();
+    if (!res.writableEnded) {
+      res.end();
+    }
   }
 });
 

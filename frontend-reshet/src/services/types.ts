@@ -37,6 +37,14 @@ export interface Thread {
   updated_at: string;
   created_at?: string;
   user_id?: string | null;
+  agent_id?: string | null;
+  agent_name?: string | null;
+  agent_slug?: string | null;
+  surface?: string | null;
+  actor_id?: string | null;
+  actor_type?: string | null;
+  actor_display?: string | null;
+  actor_email?: string | null;
 }
 
 export interface ChatHistory {
@@ -58,7 +66,10 @@ export interface ChatFetchParams {
 
 export interface User {
   id: string;
+  actor_id?: string;
+  actor_type?: string;
   email: string;
+  display_name?: string;
   full_name?: string;
   avatar?: string;
   role?: string;
@@ -66,6 +77,12 @@ export interface User {
   tenant_id?: string;
   org_unit_id?: string;
   created_at?: string;
+  platform_user_id?: string | null;
+  source_app_count?: number;
+  last_activity_at?: string | null;
+  threads_count?: number;
+  token_usage?: number;
+  is_manageable?: boolean;
 }
 
 export interface AuthResponse {
@@ -116,6 +133,7 @@ export interface UserDetailsResponse {
     threads_count: number;
     tokens_used_this_month: number;
   };
+  sources?: Array<Record<string, unknown>>;
 }
 
 // --- Stats Types ---
@@ -127,9 +145,19 @@ export interface DailyDataPoint {
 
 export interface TopUserSummary {
   user_id: string;
-  email: string;
+  display_name: string;
+  email?: string | null;
+  actor_type?: string | null;
   full_name?: string | null;
   count: number;
+}
+
+export interface RecentThreadSummary {
+  id: string;
+  title?: string | null;
+  created_at?: string | null;
+  actor_display: string;
+  actor_email?: string | null;
 }
 
 export interface ModelUsageSummary {
@@ -197,6 +225,7 @@ export interface AdminStatsOverview {
   messages_by_role: Record<string, number>;
   top_users: TopUserSummary[];
   top_models: ModelUsageSummary[];
+  recent_threads: RecentThreadSummary[];
 }
 
 export interface KnowledgeStoreSummary {
@@ -249,6 +278,7 @@ export interface AgentSummary {
   name: string;
   slug: string;
   status: string;
+  thread_count: number;
   run_count: number;
   failed_count: number;
   last_run_at: string | null;

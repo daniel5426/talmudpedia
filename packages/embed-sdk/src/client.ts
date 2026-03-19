@@ -10,6 +10,8 @@ import {
 } from "./http";
 import { consumeEventStream } from "./sse";
 import type {
+  EmbeddedAgentAttachmentUploadOptions,
+  EmbeddedAgentAttachmentUploadResult,
   EmbeddedAgentClientOptions,
   EmbeddedAgentRuntimeEvent,
   EmbeddedAgentStreamRequest,
@@ -121,6 +123,39 @@ export class EmbeddedAgentClient {
       {
         method: "DELETE",
         headers: buildJsonHeaders(this.apiKey),
+      },
+    );
+  }
+
+  async uploadAgentAttachments(
+    agentId: string,
+    {
+      externalUserId,
+      externalSessionId,
+      threadId,
+      files,
+    }: EmbeddedAgentAttachmentUploadOptions,
+  ): Promise<EmbeddedAgentAttachmentUploadResult> {
+    const formData = new FormData();
+    formData.set("external_user_id", externalUserId);
+    if (externalSessionId) {
+      formData.set("external_session_id", externalSessionId);
+    }
+    if (threadId) {
+      formData.set("thread_id", threadId);
+    }
+    for (const file of files) {
+      formData.append("files", file, file.name);
+    }
+    return this.requestJson<EmbeddedAgentAttachmentUploadResult>(
+      `${this.baseUrl}/public/embed/agents/${agentId}/attachments/upload`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${this.apiKey}`,
+          Accept: "application/json",
+        },
+        body: formData,
       },
     );
   }
