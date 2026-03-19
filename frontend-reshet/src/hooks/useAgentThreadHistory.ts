@@ -41,6 +41,7 @@ type ThreadDetails = {
   id?: string;
   agent_id?: string | null;
   title?: string | null;
+  updated_at?: string;
   turns?: ThreadTurn[];
 };
 
@@ -178,6 +179,19 @@ const mapListItem = (thread: Thread): AgentChatHistoryItem => ({
   messages: [],
 });
 
+const mapDetailsItem = (
+  details: ThreadDetails,
+  fallback?: Partial<AgentChatHistoryItem>,
+  messages: ChatMessage[] = [],
+): AgentChatHistoryItem => ({
+  id: String(details.id || fallback?.id || fallback?.threadId || ""),
+  threadId: String(details.id || fallback?.threadId || fallback?.id || ""),
+  agentId: details.agent_id ? String(details.agent_id) : fallback?.agentId,
+  title: String(details.title || fallback?.title || "Untitled thread"),
+  timestamp: parseTimestamp(details.updated_at, fallback?.timestamp ?? Date.now()),
+  messages,
+});
+
 export function useAgentThreadHistory(userId: string | undefined) {
   const [history, setHistory] = useState<AgentChatHistoryItem[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -221,12 +235,7 @@ export function useAgentThreadHistory(userId: string | undefined) {
         item.threadId,
         Array.isArray(details.turns) ? details.turns : [],
       );
-      const mapped: AgentChatHistoryItem = {
-        ...item,
-        agentId: details.agent_id ? String(details.agent_id) : item.agentId,
-        title: String(details.title || item.title || "Untitled thread"),
-        messages: mappedMessages,
-      };
+      const mapped = mapDetailsItem(details, item, mappedMessages);
       setHistory((prev) =>
         prev.map((entry) => (entry.threadId === mapped.threadId ? mapped : entry))
       );
@@ -236,6 +245,31 @@ export function useAgentThreadHistory(userId: string | undefined) {
       return null;
     }
   }, []);
+
+  const loadThreadById = useCallback(async (threadId: string): Promise<AgentChatHistoryItem | null> => {
+    if (!threadId) return null;
+    const existing = history.find((item) => item.threadId === threadId);
+    if (existing) {
+      return await loadThreadMessages(existing);
+    }
+
+    try {
+      const details = (await adminService.getThread(threadId)) as ThreadDetails;
+      const mappedMessages = await mapTurnsToMessages(
+        threadId,
+        Array.isArray(details.turns) ? details.turns : [],
+      );
+      const mapped = mapDetailsItem(details, { threadId, id: threadId }, mappedMessages);
+      setHistory((prev) => {
+        const filtered = prev.filter((entry) => entry.threadId !== mapped.threadId);
+        return [mapped, ...filtered].sort((a, b) => b.timestamp - a.timestamp).slice(0, 50);
+      });
+      return mapped;
+    } catch (error) {
+      console.error("Failed to load thread by id", { threadId, error });
+      return null;
+    }
+  }, [history, loadThreadMessages]);
 
   const upsertHistoryItem = useCallback((input: {
     threadId: string;
@@ -264,6 +298,7 @@ export function useAgentThreadHistory(userId: string | undefined) {
     historyLoading,
     refreshHistory,
     loadThreadMessages,
+    loadThreadById,
     upsertHistoryItem,
   };
 }

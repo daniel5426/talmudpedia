@@ -45,12 +45,16 @@ from app.api.schemas.agents import (
     AgentListResponse,
     ExecuteAgentRequest,
     ExecuteAgentResponse,
+    CancelRunRequest,
 )
 from app.db.postgres.models.agents import AgentRun
 from sqlalchemy import select
 from typing import Optional
-from app.db.postgres.models.agent_threads import AgentThreadSurface
+from datetime import datetime
+from app.db.postgres.models.agent_threads import AgentThreadSurface, AgentThreadTurnStatus
+from app.db.postgres.models.agents import RunStatus
 from app.services.runtime_attachment_service import RuntimeAttachmentOwner, RuntimeAttachmentService
+from app.services.thread_service import ThreadService
 
 
 router = APIRouter(prefix="/agents", tags=["agents"])
@@ -943,6 +947,94 @@ async def resume_run_v2(
     
     await executor.resume_run(run_id, request)
     return {"status": "resumed"}
+
+
+@router.post("/runs/{run_id}/cancel", response_model=Dict[str, Any])
+async def cancel_run_v2(
+    run_id: UUID,
+    request: CancelRunRequest,
+    _: Dict[str, Any] = Depends(require_scopes("agents.execute")),
+    context: Dict[str, Any] = Depends(get_agent_context),
+    db: AsyncSession = Depends(get_db),
+):
+    run_result = await db.execute(select(AgentRun).where(AgentRun.id == run_id))
+    run = run_result.scalars().first()
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    if str(run.tenant_id) != str(context.get("tenant_id")):
+        raise HTTPException(status_code=403, detail="Tenant mismatch")
+
+    if not context.get("is_service"):
+        user = context.get("user")
+        if user is not None and not is_platform_admin_role(getattr(user, "role", None)):
+            allowed_user_ids = {
+                str(uid)
+                for uid in (run.user_id, run.initiator_user_id)
+                if uid is not None
+            }
+            if allowed_user_ids and str(user.id) not in allowed_user_ids:
+                raise HTTPException(status_code=403, detail="Run ownership mismatch")
+
+    status = str(getattr(run.status, "value", run.status))
+    if status in {RunStatus.completed.value, RunStatus.failed.value, RunStatus.cancelled.value}:
+        return {
+            "run_id": str(run.id),
+            "status": status,
+            "thread_id": str(run.thread_id) if run.thread_id else None,
+        }
+
+    partial_text = str(request.assistant_output_text or "").strip()
+    run.status = RunStatus.cancelled
+    run.completed_at = datetime.utcnow()
+    run.error_message = None
+
+    output_result = dict(run.output_result or {}) if isinstance(run.output_result, dict) else {}
+    messages = output_result.get("messages")
+    if not isinstance(messages, list):
+        messages = []
+    if partial_text:
+        messages.append({"role": "assistant", "content": partial_text})
+        output_result["final_output"] = partial_text
+    output_result["messages"] = messages
+    run.output_result = output_result
+
+    if run.thread_id:
+        thread_service = ThreadService(db)
+        input_text = None
+        attachment_ids: list[UUID] = []
+        if isinstance(run.input_params, dict):
+            raw_input = run.input_params.get("input_display_text") or run.input_params.get("input")
+            if isinstance(raw_input, str):
+                input_text = raw_input
+            raw_attachment_ids = run.input_params.get("attachment_ids")
+            if isinstance(raw_attachment_ids, list):
+                for item in raw_attachment_ids:
+                    try:
+                        attachment_ids.append(UUID(str(item)))
+                    except Exception:
+                        continue
+        await thread_service.start_turn(
+            thread_id=run.thread_id,
+            run_id=run.id,
+            user_input_text=input_text,
+            attachment_ids=attachment_ids,
+            metadata={"cancelled": True},
+        )
+        await thread_service.complete_turn(
+            run_id=run.id,
+            status=AgentThreadTurnStatus.cancelled,
+            assistant_output_text=partial_text or None,
+            usage_tokens=int(run.usage_tokens or 0),
+            metadata={"cancelled": True},
+        )
+
+    await db.commit()
+    return {
+        "run_id": str(run.id),
+        "status": RunStatus.cancelled.value,
+        "thread_id": str(run.thread_id) if run.thread_id else None,
+    }
 
 
 @router.get("/runs/{run_id}", response_model=Dict[str, Any])

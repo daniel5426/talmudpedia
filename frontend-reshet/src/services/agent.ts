@@ -354,6 +354,15 @@ export const agentService = {
     return httpClient.post<{ status: string }>(`/agents/runs/${runId}/resume`, payload);
   },
 
+  async cancelRun(runId: string, payload?: { assistantOutputText?: string }) {
+    return httpClient.post<{ run_id: string; status: string; thread_id?: string | null }>(
+      `/agents/runs/${runId}/cancel`,
+      {
+        assistant_output_text: payload?.assistantOutputText,
+      }
+    );
+  },
+
   async getRunStatus(runId: string, includeTree = false) {
     const path = includeTree
       ? `/agents/runs/${runId}?include_tree=true`

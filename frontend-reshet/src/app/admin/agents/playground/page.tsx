@@ -209,22 +209,19 @@ function PlaygroundContent() {
             return
         }
         const target = controller.history.find((item) => item.threadId === threadId)
-        if (!target) {
-            logPlaygroundDebug("history.hydration.skip.no-target", {
-                hydrationKey,
-                knownThreadIds: controller.history.map((item) => item.threadId),
-            })
-            return
-        }
-
         hydratedThreadRef.current = hydrationKey
-        logPlaygroundDebug("history.hydration.load", {
+        logPlaygroundDebug(target ? "history.hydration.load" : "history.hydration.load.direct", {
             hydrationKey,
             currentThreadId,
             urlThreadId: threadId,
+            knownThreadIds: controller.history.map((item) => item.threadId),
         })
         void (async () => {
-            await controller.loadHistoryChat(target)
+            if (target) {
+                await controller.loadHistoryChat(target)
+                return
+            }
+            await controller.loadHistoryChatById(threadId)
         })()
     }, [agentId, controller, currentThreadId, isListingLoading, isMetadataLoading, threadId])
 

@@ -92,6 +92,7 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
   history: AgentChatHistoryItem[];
   startNewChat: () => void;
   loadHistoryChat: (item: AgentChatHistoryItem) => Promise<AgentChatHistoryItem | null>;
+  loadHistoryChatById: (threadId: string) => Promise<AgentChatHistoryItem | null>;
 } {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -124,6 +125,7 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
   const messagesRef = useRef<ChatMessage[]>([]);
   const streamingContentRef = useRef<string>("");
   const activeStreamingIdRef = useRef<string | null>(null);
+  const currentRunIdRef = useRef<string | null>(null);
   const currentThreadIdRef = useRef<string | null>(null);
   const lastAgentIdRef = useRef<string | undefined>(agentId);
   const authUserId = useAuthStore((state) => state.user?.id);
@@ -132,6 +134,7 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
     historyLoading,
     refreshHistory,
     loadThreadMessages,
+    loadThreadById,
     upsertHistoryItem,
   } = useAgentThreadHistory(authUserId);
 
@@ -146,6 +149,10 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
   useEffect(() => {
     activeStreamingIdRef.current = activeStreamingId;
   }, [activeStreamingId]);
+
+  useEffect(() => {
+    currentRunIdRef.current = currentRunId;
+  }, [currentRunId]);
 
   useEffect(() => {
     currentThreadIdRef.current = currentThreadId;
@@ -234,9 +241,7 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
 
       setMessages((prev) => {
         const next = [...prev, assistantMsg];
-        if (reason !== "stop") {
-          persistHistory(next);
-        }
+        persistHistory(next);
         return next;
       });
     },
@@ -244,15 +249,25 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
   );
 
   const handleStop = useCallback(() => {
+    const partialText = streamingContentRef.current.trim();
+    const runId = currentRunIdRef.current;
     commitStreamingMessage("stop");
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
     }
+    if (runId) {
+      void agentService.cancelRun(runId, {
+        assistantOutputText: partialText || undefined,
+      }).catch((error) => {
+        console.error("Failed to cancel run", { runId, error });
+      });
+    }
     setActiveStreamingId(null);
     setStreamingContent("");
     setCurrentReasoning([]);
     setCurrentResponseBlocks([]);
+    setCurrentRunStatus("cancelled");
     setIsLoading(false);
   }, [commitStreamingMessage]);
 
@@ -312,6 +327,26 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
     });
     return resolved;
   }, [loadThreadMessages, resetExecutionState]);
+
+  const loadHistoryChatById = useCallback(async (threadId: string): Promise<AgentChatHistoryItem | null> => {
+    if (!threadId) return null;
+    logRunControllerDebug("load-history-chat-by-id.start", {
+      agentId,
+      requestedThreadId: threadId,
+      currentThreadId: currentThreadIdRef.current,
+    });
+    const resolved = await loadThreadById(threadId);
+    if (!resolved) return null;
+    resetExecutionState();
+    setCurrentThreadId(resolved.threadId || threadId);
+    setMessages(resolved.messages || []);
+    logRunControllerDebug("load-history-chat-by-id.done", {
+      agentId,
+      resolvedThreadId: resolved.threadId || threadId,
+      resolvedMessageCount: resolved.messages?.length || 0,
+    });
+    return resolved;
+  }, [agentId, loadThreadById, resetExecutionState]);
 
   const serializeConversationMessages = useCallback((source: ChatMessage[]) => {
     return source
@@ -692,6 +727,7 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
     history,
     startNewChat,
     loadHistoryChat,
+    loadHistoryChatById,
     handleSubmit,
     handleStop,
     handleCopy,

@@ -95,3 +95,7 @@ class ExecuteAgentResponse(BaseModel):
     steps: list[dict[str, Any]]
     messages: list[dict[str, Any]]
     usage: dict[str, Any]
+
+
+class CancelRunRequest(BaseModel):
+    assistant_output_text: Optional[str] = None
