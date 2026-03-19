@@ -38,22 +38,20 @@ Use a DB-backed registry pattern parallel to `ToolRegistry`.
 - `id`
 - `tenant_id` nullable
 - `name`
-- `slug`
 - `description`
 - `content`
-- `scope` (`tenant` by default, optional `global/system` later)
-- `status` (`draft`, `published`, `archived` or equivalent)
+- `scope` (`tenant` or `global`)
+- `status` (`active`, `archived`)
 - `version`
-- `ownership` (`manual`, optional `system`)
+- `ownership` (`manual`, `system`)
 - `managed_by`
 - `allowed_surfaces` JSON/string-list
 - `tags` JSON/string-list
 - `created_at`
 - `updated_at`
-- `published_at`
 
 `PromptLibraryVersion`
-- immutable snapshot of `content` and metadata at publish time
+- immutable snapshot of `content` and metadata on create, update, and rollback
 
 ## Scope Model
 
@@ -75,7 +73,7 @@ Use a string-level prompt reference token that can live inside any current text 
 Recommended token shape:
 
 ```text
-[[prompt:customer-support-classifier]]
+[[prompt:UUID]]
 ```
 
 This should be valid in:
@@ -89,6 +87,7 @@ Why this shape:
 - it avoids collisions with current `{{ variable }}` template syntax
 - it works without breaking the existing graph spec
 - it works inside JSON payloads where values must stay strings
+- it keeps persisted references stable even when prompt names change because identity is `id`-backed
 
 ## Resolution Strategy
 
@@ -96,21 +95,19 @@ Why this shape:
 
 Builder/forms should support inserting a prompt reference from a picker rather than forcing users to type the token manually.
 
-### Draft execution
+Editor interaction should be `@`-driven:
+- typing `@` filters prompts by current `name`
+- selecting a prompt inserts an ID-backed mention
+- the editor renders that mention as the current prompt name
+- persisted source remains `[[prompt:UUID]]`
 
-Draft surfaces may resolve against the latest accessible prompt version for fast iteration.
+### Runtime
 
-### Publish/runtime
+Prompts are always live.
 
-Published runtime should not dynamically fetch mutable prompt content by slug on every run.
+Runtime resolves `[[prompt:UUID]]` against the latest active accessible prompt content on every execution/materialization pass.
 
-Instead:
-1. authored objects keep the reference token
-2. publish/compile resolves prompt references to concrete content
-3. the published snapshot stores prompt-version bindings
-4. runtime executes against the published resolved snapshot
-
-This prevents silent behavior drift when a library prompt changes after an agent/tool/pipeline was published.
+Version history exists for audit and rollback, not for publish gating or runtime pinning.
 
 ## Surface Discovery Strategy
 
@@ -210,8 +207,8 @@ Recommended resolver behavior:
 
 Binding metadata should include at least:
 - `prompt_id`
-- `prompt_slug`
 - `prompt_version`
+- `prompt_name`
 - `surface`
 
 ## Why Token References Over Structured Field Objects
@@ -222,19 +219,17 @@ Token references are the cleanest first cut because they:
 - work inside nested JSON schema descriptions
 - allow gradual rollout by surface
 
-Structured prompt-binding objects can still be added later for richer UX, but they are not required to get strong reuse and correct architecture now.
+Structured prompt-binding objects can still be added later for richer UX, but they are not required to get strong reuse and correct architecture now. The editor can still render rich `@name` mentions while the persisted source stays ID-token based.
 
 ## Recommended Rollout
 
 1. Add the prompt-library registry and `/admin/prompts`.
-2. Add token insertion + prompt picker to shared text inputs.
-3. Add publish-time resolution and binding snapshots for agents/tools/pipelines.
+2. Add `@` mention insertion + prompt picker to shared text inputs.
+3. Add always-live prompt resolution for agents/tools/pipelines/artifacts at backend materialization/execution seams.
 4. Extend JSON schema editors to help insert prompt refs into `description` strings.
 5. Add usage indexing later so a prompt page can show “used by”.
 
 ## Open Decisions
 
-- exact status enum names for prompts
-- whether published prompt slugs are immutable
-- whether `allowed_surfaces` is enforced or advisory in v1
-- whether draft execution resolves latest draft or latest published by default
+- whether `allowed_surfaces` should stay exact-match only or support broader surface groups later
+- whether prompt usage should remain live-scanned or move to indexed materialization later

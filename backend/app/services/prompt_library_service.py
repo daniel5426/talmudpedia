@@ -76,7 +76,8 @@ class PromptLibraryService:
         return is_platform_admin_role(self._actor_role)
 
     def _scope_tenant_id(self, scope: PromptScope) -> UUID | None:
-        if scope == PromptScope.GLOBAL:
+        scope_value = getattr(scope, "value", scope)
+        if str(scope_value or "").strip().lower() == PromptScope.GLOBAL.value:
             if not self._can_manage_global():
                 raise PromptAccessError("Global prompts require platform admin privileges")
             return None
@@ -120,7 +121,7 @@ class PromptLibraryService:
     ) -> tuple[list[PromptLibrary], int]:
         conditions = [or_(PromptLibrary.tenant_id == self._tenant_id, PromptLibrary.tenant_id.is_(None))]
         if status is not None:
-            conditions.append(PromptLibrary.status == status)
+            conditions.append(PromptLibrary.status == getattr(status, "value", status))
         if q:
             pattern = f"%{str(q).strip().lower()}%"
             conditions.append(
@@ -150,7 +151,7 @@ class PromptLibraryService:
     ) -> list[PromptLibrary]:
         conditions = [
             or_(PromptLibrary.tenant_id == self._tenant_id, PromptLibrary.tenant_id.is_(None)),
-            PromptLibrary.status == PromptStatus.ACTIVE,
+            PromptLibrary.status == PromptStatus.ACTIVE.value,
         ]
         if q:
             pattern = f"%{str(q).strip().lower()}%"
@@ -193,9 +194,9 @@ class PromptLibraryService:
             name=str(data.name or "").strip(),
             description=data.description,
             content=str(data.content or ""),
-            scope=data.scope,
-            status=PromptStatus.ACTIVE,
-            ownership=PromptOwnership.MANUAL,
+            scope=getattr(data.scope, "value", data.scope),
+            status=PromptStatus.ACTIVE.value,
+            ownership=PromptOwnership.MANUAL.value,
             managed_by="prompts",
             allowed_surfaces=self._normalize_string_list(data.allowed_surfaces),
             tags=self._normalize_string_list(data.tags),
@@ -215,7 +216,8 @@ class PromptLibraryService:
 
     async def update_prompt(self, prompt_id: UUID, data: PromptUpdateData) -> PromptLibrary:
         prompt = await self.get_prompt(prompt_id)
-        if prompt.ownership == PromptOwnership.SYSTEM and not self._can_manage_global():
+        ownership = getattr(getattr(prompt, "ownership", None), "value", getattr(prompt, "ownership", None))
+        if str(ownership or "").strip().lower() == PromptOwnership.SYSTEM.value and not self._can_manage_global():
             raise PromptAccessError("System prompts are read-only")
 
         changed = False
@@ -257,13 +259,13 @@ class PromptLibraryService:
 
     async def archive_prompt(self, prompt_id: UUID) -> PromptLibrary:
         prompt = await self.get_prompt(prompt_id)
-        prompt.status = PromptStatus.ARCHIVED
+        prompt.status = PromptStatus.ARCHIVED.value
         await self._db.flush()
         return prompt
 
     async def restore_prompt(self, prompt_id: UUID) -> PromptLibrary:
         prompt = await self.get_prompt(prompt_id)
-        prompt.status = PromptStatus.ACTIVE
+        prompt.status = PromptStatus.ACTIVE.value
         await self._db.flush()
         return prompt
 

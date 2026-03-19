@@ -15,7 +15,7 @@ from app.agent.runtime.registry import RuntimeAdapterRegistry
 from app.agent.runtime.base import RuntimeState
 from app.agent.execution.types import ExecutionEvent, EventVisibility, ExecutionMode
 from app.agent.execution.durable_checkpointer import DurableMemorySaver
-from app.agent.execution.field_resolver import evaluate_template
+from app.agent.cel_engine import evaluate_template
 from app.agent.execution.trace_recorder import ExecutionTraceRecorder
 from app.db.postgres.models.agent_threads import AgentThreadSurface, AgentThreadTurnStatus
 from app.services.prompt_reference_resolver import PromptReferenceResolver

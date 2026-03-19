@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useState } from "react"
 import { ChevronDown, ChevronRight, Loader2, Plus, Trash2, Wrench } from "lucide-react"
 import { useRouter } from "next/navigation"
-
 import { Button } from "@/components/ui/button"
 import {
     Dialog,
@@ -18,7 +17,6 @@ import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { cn } from "@/lib/utils"
 import { agentService, Agent } from "@/services"
-
 const DEFAULT_AGENT_TOOL_INPUT_SCHEMA = {
     type: "object",
     properties: {
@@ -39,7 +37,6 @@ const DEFAULT_AGENT_TOOL_INPUT_SCHEMA = {
 type SchemaMode = "outline" | "drilldown" | "split" | "composer" | "canvas"
 type SurfaceTab = "input" | "input_ui"
 type SchemaNodeType = "string" | "number" | "boolean" | "object" | "array"
-
 type SchemaNode = {
     id: string
     name: string
@@ -55,7 +52,6 @@ type SchemaNode = {
     uiPlaceholder: string
     uiHelp: string
 }
-
 const SCHEMA_MODES: Array<{ id: SchemaMode; label: string; description: string }> = [
     { id: "outline", label: "Outline Tree", description: "Recursive tree with inline structure editing." },
     { id: "drilldown", label: "Breadcrumb Drilldown", description: "One level at a time with a path header." },
@@ -67,7 +63,6 @@ const SCHEMA_MODES: Array<{ id: SchemaMode; label: string; description: string }
 function createId() {
     return Math.random().toString(36).slice(2, 10)
 }
-
 function createNode(overrides: Partial<SchemaNode> = {}): SchemaNode {
     return {
         id: createId(),
@@ -86,7 +81,6 @@ function createNode(overrides: Partial<SchemaNode> = {}): SchemaNode {
         ...overrides,
     }
 }
-
 function normalizeSchemaType(raw: unknown): SchemaNodeType {
     if (raw === "number" || raw === "integer") return "number"
     if (raw === "boolean") return "boolean"
@@ -94,11 +88,9 @@ function normalizeSchemaType(raw: unknown): SchemaNodeType {
     if (raw === "object") return "object"
     return "string"
 }
-
 function isPlainObject(value: unknown): value is Record<string, unknown> {
     return !!value && typeof value === "object" && !Array.isArray(value)
 }
-
 function extractSchemaPatch(record: Record<string, unknown>, type: SchemaNodeType) {
     const patch: Record<string, unknown> = {}
     for (const [key, value] of Object.entries(record)) {
@@ -110,7 +102,6 @@ function extractSchemaPatch(record: Record<string, unknown>, type: SchemaNodeTyp
     }
     return Object.keys(patch).length > 0 ? JSON.stringify(patch, null, 2) : ""
 }
-
 function schemaToNode(name: string, schema: unknown, required = false): SchemaNode {
     const record = isPlainObject(schema) ? schema : {}
     const hasObjectShape = isPlainObject(record.properties)
@@ -140,7 +131,6 @@ function schemaToNode(name: string, schema: unknown, required = false): SchemaNo
 
     return node
 }
-
 function mergePatch(base: Record<string, unknown>, patchText: string) {
     if (!patchText.trim()) return base
     try {
@@ -151,7 +141,6 @@ function mergePatch(base: Record<string, unknown>, patchText: string) {
         return base
     }
 }
-
 function nodeToSchema(node: SchemaNode): Record<string, unknown> {
     const base: Record<string, unknown> = {}
     if (node.emitBaseType) {
@@ -181,7 +170,6 @@ function nodeToSchema(node: SchemaNode): Record<string, unknown> {
 
     return mergePatch(base, node.schemaPatchText)
 }
-
 function findNode(node: SchemaNode, id: string): SchemaNode | null {
     if (node.id === id) return node
     for (const child of node.children) {
@@ -193,7 +181,6 @@ function findNode(node: SchemaNode, id: string): SchemaNode | null {
     }
     return null
 }
-
 function findPath(node: SchemaNode, id: string, trail: SchemaNode[] = []): SchemaNode[] | null {
     const nextTrail = [...trail, node]
     if (node.id === id) return nextTrail
@@ -206,7 +193,6 @@ function findPath(node: SchemaNode, id: string, trail: SchemaNode[] = []): Schem
     }
     return null
 }
-
 function updateNode(node: SchemaNode, id: string, updater: (node: SchemaNode) => SchemaNode): SchemaNode {
     if (node.id === id) return updater(node)
     return {
@@ -215,7 +201,6 @@ function updateNode(node: SchemaNode, id: string, updater: (node: SchemaNode) =>
         item: node.item ? updateNode(node.item, id, updater) : null,
     }
 }
-
 function removeNode(node: SchemaNode, id: string): SchemaNode {
     return {
         ...node,
@@ -225,7 +210,6 @@ function removeNode(node: SchemaNode, id: string): SchemaNode {
         item: node.item?.id === id ? null : node.item ? removeNode(node.item, id) : null,
     }
 }
-
 function createChild(type: SchemaNodeType, name = "") {
     return createNode({
         name,
@@ -235,7 +219,6 @@ function createChild(type: SchemaNodeType, name = "") {
         item: type === "array" ? createNode({ name: "item", type: "string", required: true }) : null,
     })
 }
-
 function typeAccent(type: SchemaNodeType) {
     if (type === "object") return "text-sky-700 bg-sky-500/10"
     if (type === "array") return "text-amber-700 bg-amber-500/10"
@@ -243,7 +226,6 @@ function typeAccent(type: SchemaNodeType) {
     if (type === "number") return "text-fuchsia-700 bg-fuchsia-500/10"
     return "text-zinc-700 bg-zinc-500/10"
 }
-
 function FieldTypeSelect({
     value,
     onChange,
@@ -265,7 +247,6 @@ function FieldTypeSelect({
         </select>
     )
 }
-
 function NavigatorRow({
     node,
     depth,
@@ -338,7 +319,6 @@ function NavigatorRow({
         </div>
     )
 }
-
 export function ExportAgentToolDialog({
     open,
     agents,
@@ -358,7 +338,6 @@ export function ExportAgentToolDialog({
     const [selectedNodeId, setSelectedNodeId] = useState("")
     const [loading, setLoading] = useState(false)
     const [error, setError] = useState<string | null>(null)
-
     const selectedAgent = useMemo(
         () => agents.find((agent) => agent.id === selectedAgentId) ?? null,
         [agents, selectedAgentId]
@@ -367,7 +346,6 @@ export function ExportAgentToolDialog({
     const selectedNode = useMemo(() => findNode(rootNode, selectedNodeId) ?? rootNode, [rootNode, selectedNodeId])
     const selectedPath = useMemo(() => findPath(rootNode, selectedNode.id) ?? [rootNode], [rootNode, selectedNode.id])
     const currentDrillNode = selectedNode.type === "object" ? selectedNode : selectedPath.at(-2) ?? rootNode
-
     useEffect(() => {
         if (!open) return
         if (!selectedAgentId && agents.length > 0) {
@@ -386,7 +364,6 @@ export function ExportAgentToolDialog({
         setSelectedNodeId(nextRoot.id)
         setError(null)
     }, [open, selectedAgent])
-
     const updateSelectedNode = (patch: Partial<SchemaNode>) => {
         setRootNode((current) => updateNode(current, selectedNode.id, (node) => ({ ...node, ...patch })))
     }
@@ -399,7 +376,6 @@ export function ExportAgentToolDialog({
             }))
         )
     }
-
     const addChildToSelected = (type: SchemaNodeType) => {
         if (selectedNode.type !== "object") return
         const child = createChild(type)
@@ -412,7 +388,6 @@ export function ExportAgentToolDialog({
         )
         setSelectedNodeId(child.id)
     }
-
     const replaceArrayItem = (type: SchemaNodeType) => {
         if (selectedNode.type !== "array") return
         const item = createChild(type, "item")
@@ -426,14 +401,12 @@ export function ExportAgentToolDialog({
         )
         setSelectedNodeId(item.id)
     }
-
     const removeSelected = () => {
         if (selectedNode.id === rootNode.id) return
         const nextSelected = selectedPath.at(-2)?.id ?? rootNode.id
         setRootNode((current) => removeNode(current, selectedNode.id))
         setSelectedNodeId(nextSelected)
     }
-
     const renderDrilldown = () => {
         const path = findPath(rootNode, currentDrillNode.id) ?? [rootNode]
         return (
@@ -472,7 +445,6 @@ export function ExportAgentToolDialog({
             </div>
         )
     }
-
     const renderSplitTree = () => (
         <div className="grid gap-4 md:grid-cols-[260px_minmax(0,1fr)]">
             <div className="max-h-[320px] overflow-y-auto rounded-2xl bg-background/70 p-2">
@@ -510,7 +482,6 @@ export function ExportAgentToolDialog({
             </div>
         </div>
     )
-
     const renderComposer = () => (
         <div className="space-y-3">
             <div className="flex flex-wrap gap-2">
@@ -530,7 +501,6 @@ export function ExportAgentToolDialog({
             </div>
         </div>
     )
-
     const renderNavigator = () => {
         if (schemaMode === "drilldown") return renderDrilldown()
         if (schemaMode === "split") return renderSplitTree()
@@ -540,7 +510,6 @@ export function ExportAgentToolDialog({
         }
         return <NavigatorRow node={rootNode} depth={0} selectedId={selectedNode.id} onSelect={setSelectedNodeId} onToggle={handleToggleExpanded} style="outline" />
     }
-
     const handleSubmit = async () => {
         if (!selectedAgentId) {
             setError("Select an agent to export.")
@@ -564,7 +533,6 @@ export function ExportAgentToolDialog({
             setLoading(false)
         }
     }
-
     const advancedPatchError = useMemo(() => {
         if (!selectedNode.schemaPatchText.trim()) return null
         try {

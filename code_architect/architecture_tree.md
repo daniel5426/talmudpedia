@@ -28,6 +28,7 @@ backend/app/api/routers/embedded_agents_public.py
 backend/app/api/routers/tenant_api_keys.py
 backend/app/api/routers/agent_graph_mutations.py
 backend/app/api/routers/agent_tool_exports.py
+backend/app/api/routers/prompts.py
 backend/app/api/routers/rag_graph_mutations.py
 backend/app/api/routers/rag_operator_contracts.py
 backend/app/api/routers/artifacts.py
@@ -114,6 +115,7 @@ backend/app/db/postgres/session.py
 backend/app/db/postgres/models/
 backend/app/db/postgres/models/artifact_runtime.py
 backend/app/db/postgres/models/agent_threads.py
+backend/app/db/postgres/models/prompts.py
 backend/app/db/postgres/models/runtime_attachments.py
 backend/app/db/postgres/models/usage_quota.py
 backend/app/db/postgres/seeds/
@@ -125,6 +127,8 @@ backend/app/services/retrieval_service.py
 backend/app/services/rag_admin_service.py
 backend/app/services/model_resolver.py
 backend/app/services/model_temperature_policy.py
+backend/app/services/prompt_library_service.py
+backend/app/services/prompt_reference_resolver.py
 backend/app/services/credentials_service.py
 backend/app/services/integration_provider_catalog.py
 backend/app/services/registry_seeding.py

@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.postgres.models.agents import Agent
 from app.db.postgres.models.published_apps import PublishedApp
 from app.db.postgres.models.registry import ToolRegistry
+from app.services.prompt_reference_resolver import PromptReferenceResolver
 
 SUPPORTED_X_UI_KINDS = ("chart", "table", "stat")
 X_UI_KEY = "x-ui"
@@ -159,10 +160,17 @@ def _build_ui_hints(schema: dict[str, Any], input_schema: dict[str, Any], output
     return ui_hints
 
 
-def _serialize_tool(tool: ToolRegistry, *, reference: str) -> dict[str, Any]:
+def _serialize_tool(
+    tool: ToolRegistry,
+    *,
+    reference: str,
+    description: str | None = None,
+    input_schema: dict[str, Any] | None = None,
+    output_schema: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     schema = tool.schema if isinstance(tool.schema, dict) else {}
-    input_schema = deepcopy(schema.get("input") if isinstance(schema.get("input"), dict) else {})
-    output_schema = deepcopy(schema.get("output") if isinstance(schema.get("output"), dict) else {})
+    input_schema = deepcopy(input_schema if isinstance(input_schema, dict) else (schema.get("input") if isinstance(schema.get("input"), dict) else {}))
+    output_schema = deepcopy(output_schema if isinstance(output_schema, dict) else (schema.get("output") if isinstance(schema.get("output"), dict) else {}))
     status = _enum_text(tool.status)
 
     readiness_issues: list[str] = []
@@ -177,7 +185,7 @@ def _serialize_tool(tool: ToolRegistry, *, reference: str) -> dict[str, Any]:
         "references": [reference],
         "name": str(tool.name or ""),
         "slug": str(tool.slug or ""),
-        "description": str(tool.description or "") or None,
+        "description": description if description is not None else (str(tool.description or "") or None),
         "scope": "global" if tool.tenant_id is None else "tenant",
         "status": status,
         "implementation_type": _enum_text(tool.implementation_type),
@@ -238,6 +246,7 @@ async def build_published_app_agent_integration_contract(
 
     resolved_tools: list[dict[str, Any]] = []
     resolved_index: dict[str, int] = {}
+    prompt_resolver = PromptReferenceResolver(db, app.tenant_id)
     for raw_reference, tool_uuid in parsed_references:
         key = str(tool_uuid)
         tool = tools_by_id.get(key)
@@ -259,7 +268,21 @@ async def build_published_app_agent_integration_contract(
             continue
 
         resolved_index[key] = len(resolved_tools)
-        resolved_tools.append(_serialize_tool(tool, reference=raw_reference))
+        schema = tool.schema if isinstance(tool.schema, dict) else {}
+        resolved_description, resolved_input, resolved_output = await prompt_resolver.resolve_tool_payload(
+            description=tool.description,
+            input_schema=schema.get("input") if isinstance(schema.get("input"), dict) else {},
+            output_schema=schema.get("output") if isinstance(schema.get("output"), dict) else {},
+        )
+        resolved_tools.append(
+            _serialize_tool(
+                tool,
+                reference=raw_reference,
+                description=resolved_description,
+                input_schema=resolved_input,
+                output_schema=resolved_output,
+            )
+        )
 
     graph_definition = agent.graph_definition if isinstance(agent.graph_definition, dict) else {}
     nodes = graph_definition.get("nodes") if isinstance(graph_definition.get("nodes"), list) else []

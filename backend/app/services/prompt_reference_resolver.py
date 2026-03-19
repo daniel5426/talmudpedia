@@ -101,7 +101,8 @@ class PromptReferenceResolver:
 
     @staticmethod
     def _assert_prompt_allowed(prompt: PromptLibrary, *, surface: str | None) -> None:
-        if getattr(prompt, "status", None) != PromptStatus.ACTIVE:
+        status = getattr(getattr(prompt, "status", None), "value", getattr(prompt, "status", None))
+        if str(status or "").strip().lower() != PromptStatus.ACTIVE.value:
             raise PromptReferenceError(f"Referenced prompt {prompt.id} is archived")
         allowed_surfaces = _normalize_surface_list(getattr(prompt, "allowed_surfaces", []))
         if allowed_surfaces and surface and surface not in allowed_surfaces:

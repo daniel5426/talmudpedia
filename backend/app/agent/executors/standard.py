@@ -3,6 +3,7 @@ import logging
 import json
 import re
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.agent.execution.types import EventVisibility
@@ -25,6 +26,7 @@ from app.services.openui_support import (
 )
 from app.agent.core.llm_adapter import LLMProviderAdapter
 from app.agent.cel_engine import evaluate_template
+from app.services.prompt_reference_resolver import PromptReferenceResolver
 
 logger = logging.getLogger(__name__)
 
@@ -871,7 +873,25 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
                 )
             )
         result = await self.db.execute(stmt)
-        return result.scalars().all()
+        tools = list(result.scalars().all())
+        resolver = PromptReferenceResolver(self.db, self.tenant_id)
+        resolved_tools: list[Any] = []
+        for tool in tools:
+            schema = tool.schema if isinstance(tool.schema, dict) else {}
+            resolved_description, resolved_input, resolved_output = await resolver.resolve_tool_payload(
+                description=getattr(tool, "description", None),
+                input_schema=schema.get("input") if isinstance(schema.get("input"), dict) else {},
+                output_schema=schema.get("output") if isinstance(schema.get("output"), dict) else {},
+            )
+            columns = list(getattr(getattr(tool, "__table__", None), "columns", []))
+            tool_payload = {
+                column.name: getattr(tool, column.name)
+                for column in columns
+            }
+            tool_payload["description"] = resolved_description
+            tool_payload["schema"] = {"input": resolved_input, "output": resolved_output}
+            resolved_tools.append(SimpleNamespace(**tool_payload))
+        return resolved_tools
 
     def _buffer_tool_call_chunks(
         self,

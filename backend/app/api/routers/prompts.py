@@ -149,12 +149,13 @@ def _service_from_context(
     db: AsyncSession,
     principal: dict[str, Any],
 ) -> PromptLibraryService:
-    user = principal.get("user")
+    actor_user_id = principal.get("user_id")
+    actor_role = principal.get("role")
     return PromptLibraryService(
         db,
         tenant_id=(UUID(str(principal["tenant_id"])) if principal.get("tenant_id") else None),
-        actor_user_id=(user.id if user is not None else None),
-        actor_role=(getattr(user, "role", None) if user is not None else None),
+        actor_user_id=(UUID(str(actor_user_id)) if actor_user_id else None),
+        actor_role=(str(actor_role) if actor_role is not None else None),
         is_service=bool(principal.get("type") == "workload"),
     )
 
