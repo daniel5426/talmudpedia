@@ -15,8 +15,10 @@ from app.agent.runtime.registry import RuntimeAdapterRegistry
 from app.agent.runtime.base import RuntimeState
 from app.agent.execution.types import ExecutionEvent, EventVisibility, ExecutionMode
 from app.agent.execution.durable_checkpointer import DurableMemorySaver
+from app.agent.execution.field_resolver import evaluate_template
 from app.agent.execution.trace_recorder import ExecutionTraceRecorder
 from app.db.postgres.models.agent_threads import AgentThreadSurface, AgentThreadTurnStatus
+from app.services.prompt_reference_resolver import PromptReferenceResolver
 from app.services.runtime_attachment_service import RuntimeAttachmentOwner, RuntimeAttachmentService
 from app.services.thread_service import ThreadAccessError, ThreadService
 from app.services.usage_quota_service import UsageQuotaService
@@ -177,6 +179,39 @@ class AgentExecutorService:
             "assistant_ui_component_library_id": ui_output.get("component_library_id"),
             "assistant_ui_surface": ui_output.get("surface"),
         }
+
+    @staticmethod
+    def _build_paused_node_payload(
+        *,
+        node: dict[str, Any],
+        state: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        node_type = str(node.get("type") or "").strip().lower()
+        config = node.get("config") if isinstance(node.get("config"), dict) else {}
+        label = str((config or {}).get("label") or config.get("name") or node.get("id") or "").strip() or None
+        payload: dict[str, Any] = {
+            "id": str(node.get("id") or ""),
+            "type": node_type or None,
+            "name": label,
+        }
+        if node_type == "user_approval":
+            message = str(config.get("message") or "")
+            payload["interaction"] = {
+                "kind": "user_approval",
+                "message": evaluate_template(message, state) if message else "",
+                "require_comment": bool(config.get("require_comment")),
+                "timeout_seconds": config.get("timeout_seconds"),
+            }
+            return payload
+        if node_type == "human_input":
+            prompt = str(config.get("prompt") or "")
+            payload["interaction"] = {
+                "kind": "human_input",
+                "prompt": evaluate_template(prompt, state) if prompt else "",
+                "timeout_seconds": config.get("timeout_seconds"),
+            }
+            return payload
+        return payload
 
     async def start_run(
         self, 
@@ -580,6 +615,7 @@ class AgentExecutorService:
                     resolved_model_id = str(candidate)
             graph_payload = agent.graph_definition if isinstance(agent.graph_definition, dict) else {}
             graph_payload = self._apply_run_scoped_model_override(graph_payload, resolved_model_id)
+            graph_payload = await PromptReferenceResolver(db, agent.tenant_id).resolve_graph_definition(graph_payload)
             graph_def = AgentGraph(**graph_payload)
             compile_input_params = run_input_params
             if resume_payload and isinstance(resume_payload, dict):
@@ -744,11 +780,12 @@ class AgentExecutorService:
                 for next_id in next_ids:
                     node = node_index.get(next_id)
                     if node:
-                        next_nodes.append({
-                            "id": next_id,
-                            "type": node.type,
-                            "name": node.config.get("label", next_id),
-                        })
+                        next_nodes.append(
+                            self._build_paused_node_payload(
+                                node=node.model_dump(),
+                                state=snapshot.values if isinstance(snapshot.values, dict) else {},
+                            )
+                        )
                     else:
                         next_nodes.append({"id": next_id})
 

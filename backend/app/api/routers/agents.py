@@ -47,7 +47,7 @@ from app.api.schemas.agents import (
     ExecuteAgentResponse,
     CancelRunRequest,
 )
-from app.db.postgres.models.agents import AgentRun
+from app.db.postgres.models.agents import Agent, AgentRun
 from sqlalchemy import select
 from typing import Optional
 from datetime import datetime
@@ -1074,6 +1074,31 @@ async def get_run_status(
             "orchestration_group_id": str(run.orchestration_group_id) if run.orchestration_group_id else None,
         },
     }
+    if str(payload["status"]) == RunStatus.paused.value:
+        from app.agent.execution.service import AgentExecutorService
+        from app.services.prompt_reference_resolver import PromptReferenceResolver
+
+        agent = await db.get(Agent, run.agent_id)
+        checkpoint = run.checkpoint if isinstance(run.checkpoint, dict) else {}
+        next_ids = checkpoint.get("next")
+        if agent is not None and next_ids:
+            graph_payload = agent.graph_definition if isinstance(agent.graph_definition, dict) else {}
+            graph_payload = await PromptReferenceResolver(db, agent.tenant_id).resolve_graph_definition(graph_payload)
+            nodes = graph_payload.get("nodes") if isinstance(graph_payload.get("nodes"), list) else []
+            node_index = {str(node.get("id") or ""): node for node in nodes if isinstance(node, dict)}
+            resolved_next = []
+            for next_id in (next_ids if isinstance(next_ids, list) else [next_ids]):
+                node = node_index.get(str(next_id))
+                if node is None:
+                    resolved_next.append({"id": str(next_id)})
+                    continue
+                resolved_next.append(
+                    AgentExecutorService._build_paused_node_payload(
+                        node=node,
+                        state=checkpoint if isinstance(checkpoint, dict) else {},
+                    )
+                )
+            payload["paused_nodes"] = resolved_next
     if include_tree:
         from app.services.orchestration_kernel_service import OrchestrationKernelService
         payload["run_tree"] = await OrchestrationKernelService(db).query_tree(run_id=run.id)

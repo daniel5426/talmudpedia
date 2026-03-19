@@ -263,11 +263,15 @@ export function applyRuntimeEvent(
     }
     const lastBlock = blocks[blocks.length - 1];
     if (lastBlock?.kind === "ui" && lastBlock.format === "openui") {
+      const nextContent =
+        uiPayload.isDelta
+          ? `${lastBlock.content}${uiPayload.content}`
+          : uiPayload.content;
       return [
         ...blocks.slice(0, -1),
         {
           ...lastBlock,
-          content: uiPayload.content,
+          content: nextContent,
           componentLibraryId: uiPayload.componentLibraryId,
           surface: uiPayload.surface,
           ast: uiPayload.ast,
@@ -292,7 +296,9 @@ export function applyRuntimeEvent(
   return blocks;
 }
 
-function parseUiPayload(payload: Record<string, unknown>): Omit<TemplateUiBlock, "id" | "kind"> | null {
+type ParsedUiPayload = Omit<TemplateUiBlock, "id" | "kind"> & { isDelta: boolean };
+
+function parseUiPayload(payload: Record<string, unknown>): ParsedUiPayload | null {
   if (String(payload.format || "").trim().toLowerCase() !== "openui") {
     return null;
   }
@@ -311,6 +317,7 @@ function parseUiPayload(payload: Record<string, unknown>): Omit<TemplateUiBlock,
   return {
     format: "openui",
     content,
+    isDelta: finalContent == null && deltaContent != null,
     componentLibraryId:
       typeof payload.component_library_id === "string" ? payload.component_library_id : null,
     surface: typeof payload.surface === "string" ? payload.surface : null,

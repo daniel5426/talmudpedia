@@ -36,6 +36,15 @@ jobs:
           node-version: 20
           registry-url: https://registry.npmjs.org
 
+      - name: Configure npm auth
+        run: |
+          cat <<'EOF' > ~/.npmrc
+          //registry.npmjs.org/:_authToken=${NPM_TOKEN}
+          always-auth=true
+          EOF
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+
       - name: Resolve version plan
         id: version_plan
         run: |
@@ -137,6 +146,8 @@ jobs:
         if: steps.version_plan.outputs.should_publish == 'true' && github.ref_name == 'main'
         working-directory: packages/embed-sdk
         run: npm publish --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Commit version bump
         if: steps.version_plan.outputs.should_publish == 'true' && github.ref_name == 'main' && steps.version_plan.outputs.next_version != steps.version_plan.outputs.current_version

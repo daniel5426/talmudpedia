@@ -229,6 +229,11 @@ class LLMNodeExecutor(BaseNodeExecutor):
         logger.debug(f"Executing LLM node with config: {config.keys()}")
         
         system_prompt = config.get("system_prompt", None)
+        if isinstance(system_prompt, str) and system_prompt:
+            try:
+                system_prompt = evaluate_template(system_prompt, state)
+            except Exception as e:
+                logger.warning(f"Failed to interpolate system prompt: {e}")
         model_id = config.get("model_id")
         quota_max_tokens = _resolve_quota_max_output_tokens(state)
         configured_max_tokens = config.get("max_tokens")
@@ -1725,7 +1730,7 @@ def register_standard_operators():
                 {"name": "output_variable", "label": "Output Variable", "fieldType": "variable_selector", "required": False,
                  "description": "Select a state variable to return"},
                 {"name": "output_message", "label": "Output Message", "fieldType": "template_string", "required": False,
-                 "description": "Template message with {{ variable }} interpolation"}
+                 "description": "Template message with {{ variable }} interpolation", "prompt_capable": True, "prompt_surface": "end.output_message"}
             ]
         }
     ))
@@ -1772,7 +1777,7 @@ def register_standard_operators():
             "configFields": [
                 {"name": "name", "label": "Name", "fieldType": "string", "required": False, "description": "Agent display name"},
                 {"name": "model_id", "label": "Model", "fieldType": "model", "required": True, "description": "Select a chat model"},
-                {"name": "instructions", "label": "Instructions", "fieldType": "text", "required": False, "description": "System prompt with {{ variable }} support"},
+                {"name": "instructions", "label": "Instructions", "fieldType": "text", "required": False, "description": "System prompt with {{ variable }} support", "prompt_capable": True, "prompt_surface": "agent.instructions"},
                 {"name": "include_chat_history", "label": "Include Chat History", "fieldType": "boolean", "required": False, "default": True},
                 {"name": "reasoning_effort", "label": "Reasoning Effort", "fieldType": "select", "required": False, "default": "medium",
                  "options": [
@@ -1836,8 +1841,8 @@ def register_standard_operators():
             "configFields": [
                 {"name": "name", "label": "Name", "fieldType": "string", "required": False},
                 {"name": "model_id", "label": "Model", "fieldType": "model", "required": True, "description": "Model used for classification"},
-                {"name": "instructions", "label": "Instructions", "fieldType": "text", "required": False, "description": "Additional context for classification"},
-                {"name": "categories", "label": "Categories", "fieldType": "category_list", "required": True, "description": "Define classification categories"}
+                {"name": "instructions", "label": "Instructions", "fieldType": "text", "required": False, "description": "Additional context for classification", "prompt_capable": True, "prompt_surface": "classify.instructions"},
+                {"name": "categories", "label": "Categories", "fieldType": "category_list", "required": True, "description": "Define classification categories", "prompt_capable": True, "prompt_surface": "classify.categories.description"}
             ]
         }
     ))
@@ -1867,7 +1872,7 @@ def register_standard_operators():
             "outputType": "message",
             "configFields": [
                 {"name": "model_id", "label": "Model", "fieldType": "model", "required": True, "description": "Select a chat model"},
-                {"name": "system_prompt", "label": "System Prompt", "fieldType": "text", "required": False, "description": "Instructions for the LLM"},
+                {"name": "system_prompt", "label": "System Prompt", "fieldType": "text", "required": False, "description": "Instructions for the LLM", "prompt_capable": True, "prompt_surface": "llm.system_prompt"},
                 {"name": "temperature", "label": "Temperature", "fieldType": "number", "required": False, "default": 0.7, "description": "Creativity (0-1)"},
             ]
         }
@@ -2345,7 +2350,7 @@ def register_standard_operators():
             "configFields": [
                 {"name": "pipeline_id", "label": "Retrieval Pipeline", "fieldType": "retrieval_pipeline_select", "required": True, "description": "Select a Retrieval Pipeline"},
                 {"name": "query", "label": "Query Template", "fieldType": "template_string", "required": False, 
-                 "description": "Query with {{ variable }} interpolation. Leave empty to use last message."},
+                 "description": "Query with {{ variable }} interpolation. Leave empty to use last message.", "prompt_capable": True, "prompt_surface": "rag.query"},
                 {"name": "top_k", "label": "Max Results", "fieldType": "number", "required": False, "default": 10, "description": "Number of results to retrieve"}
             ]
         }
@@ -2368,7 +2373,7 @@ def register_standard_operators():
             "configFields": [
                 {"name": "knowledge_store_id", "label": "Knowledge Store", "fieldType": "knowledge_store_select", "required": True, "description": "Select a Knowledge Store"},
                 {"name": "query", "label": "Query Template", "fieldType": "template_string", "required": False, 
-                 "description": "Query with {{ variable }} interpolation. Leave empty to use last message."},
+                 "description": "Query with {{ variable }} interpolation. Leave empty to use last message.", "prompt_capable": True, "prompt_surface": "vector_search.query"},
                 {"name": "top_k", "label": "Max Results", "fieldType": "number", "required": False, "default": 10, "description": "Number of results to retrieve"}
             ]
         }
@@ -2398,7 +2403,7 @@ def register_standard_operators():
             "configFields": [
                 {"name": "name", "label": "Name", "fieldType": "string", "required": False},
                 {"name": "message", "label": "Message", "fieldType": "template_string", "required": False, 
-                 "description": "Message shown to user with {{ variable }} support"},
+                 "description": "Message shown to user with {{ variable }} support", "prompt_capable": True, "prompt_surface": "user_approval.message"},
                 {"name": "timeout_seconds", "label": "Timeout (seconds)", "fieldType": "number", "required": False, "default": 300},
                 {"name": "require_comment", "label": "Require Comment", "fieldType": "boolean", "required": False, "default": False}
             ]
@@ -2420,7 +2425,7 @@ def register_standard_operators():
             "inputType": "any",
             "outputType": "message",
             "configFields": [
-                {"name": "prompt", "label": "Prompt", "fieldType": "text", "required": False, "description": "Message shown to the human reviewer"},
+                {"name": "prompt", "label": "Prompt", "fieldType": "text", "required": False, "description": "Message shown to the human reviewer", "prompt_capable": True, "prompt_surface": "human_input.prompt"},
                 {"name": "timeout_seconds", "label": "Timeout (seconds)", "fieldType": "number", "required": False, "default": 300, "description": "Max wait time"}
             ]
         }

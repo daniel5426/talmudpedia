@@ -2,6 +2,7 @@ import logging
 from typing import Any, Dict, List
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, BaseMessage
 from app.agent.executors.base import BaseNodeExecutor, ValidationResult
+from app.agent.execution.field_resolver import evaluate_template
 from app.agent.core.llm_adapter import LLMProviderAdapter
 from app.services.model_resolver import ModelResolver
 logger = logging.getLogger(__name__)
@@ -35,14 +36,25 @@ class ClassifyNodeExecutor(BaseNodeExecutor):
             if not isinstance(category, dict):
                 continue
             name = str(category.get("name") or "").strip() or f"category_{idx}"
+            description = str(category.get("description", ""))
+            if description:
+                try:
+                    description = evaluate_template(description, state)
+                except Exception as exc:
+                    logger.warning(f"Failed to interpolate classify category description: {exc}")
             normalized_categories.append(
                 {
                     "name": name,
-                    "description": str(category.get("description", "")),
+                    "description": description,
                 }
             )
         model_id = config.get("model_id")
         instructions = config.get("instructions", "Classify the input.")
+        if instructions:
+            try:
+                instructions = evaluate_template(instructions, state)
+            except Exception as exc:
+                logger.warning(f"Failed to interpolate classify instructions: {exc}")
         
         # 1. Construct Classification Prompt
         category_lines = []

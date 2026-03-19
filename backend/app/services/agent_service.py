@@ -16,6 +16,7 @@ from app.db.postgres.models.registry import ModelRegistry, ToolRegistry
 from app.services.tool_binding_service import ToolBindingService
 from app.services.usage_quota_service import QuotaExceededError
 from app.services.workload_provisioning_service import WorkloadProvisioningService
+from app.services.prompt_reference_resolver import PromptReferenceError, PromptReferenceResolver
 from app.agent.graph.compiler import AgentCompiler
 from app.agent.graph.schema import AgentGraph
 from app.agent.registry import AgentOperatorRegistry
@@ -311,6 +312,19 @@ class AgentService:
             ) from exc
 
         compiler = AgentCompiler(db=self.db, tenant_id=self.tenant_id)
+        try:
+            await PromptReferenceResolver(self.db, self.tenant_id).validate_graph_definition(graph.model_dump())
+        except PromptReferenceError as exc:
+            raise AgentGraphValidationError(
+                [
+                    {
+                        "node_id": None,
+                        "edge_id": None,
+                        "message": str(exc),
+                        "severity": "error",
+                    }
+                ]
+            ) from exc
         errors = await compiler.validate(graph, agent_id=agent_id)
         normalized_errors = self._normalize_graph_errors(errors)
         critical_errors = [item for item in normalized_errors if item.get("severity") == "error"]

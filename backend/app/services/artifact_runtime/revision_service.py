@@ -13,6 +13,7 @@ from app.db.postgres.models.artifact_runtime import (
     ArtifactRevision,
     ArtifactStatus,
 )
+from app.services.prompt_reference_resolver import PromptReferenceError, PromptReferenceResolver
 
 from .source_utils import normalize_artifact_source, source_tree_hash
 
@@ -50,6 +51,7 @@ class ArtifactRevisionService:
             rag_contract=rag_contract,
             tool_contract=tool_contract,
         )
+        await self._validate_prompt_refs(tenant_id=tenant_id, tool_contract=tool_contract)
         source = normalize_artifact_source(
             source_files=source_files,
             entry_module_path=entry_module_path,
@@ -126,6 +128,7 @@ class ArtifactRevisionService:
             rag_contract=rag_contract,
             tool_contract=tool_contract,
         )
+        await self._validate_prompt_refs(tenant_id=artifact.tenant_id, tool_contract=tool_contract)
         if self._revision_matches_payload(
             revision=current_revision,
             display_name=display_name,
@@ -191,6 +194,7 @@ class ArtifactRevisionService:
             rag_contract=rag_contract,
             tool_contract=tool_contract,
         )
+        await self._validate_prompt_refs(tenant_id=artifact.tenant_id, tool_contract=tool_contract)
         current_revision = artifact.latest_draft_revision or artifact.latest_published_revision
         if current_revision is None:
             raise ValueError("Artifact is missing a current revision")
@@ -253,6 +257,7 @@ class ArtifactRevisionService:
             rag_contract=rag_contract,
             tool_contract=tool_contract,
         )
+        await self._validate_prompt_refs(tenant_id=tenant_id, tool_contract=tool_contract)
         revision = self._build_revision(
             artifact_id=artifact.id if artifact else None,
             tenant_id=tenant_id,
@@ -423,6 +428,27 @@ class ArtifactRevisionService:
             return
         if tool_contract is None or agent_contract is not None or rag_contract is not None:
             raise ValueError("tool_impl artifacts require only tool_contract")
+
+    async def _validate_prompt_refs(
+        self,
+        *,
+        tenant_id: UUID | None,
+        tool_contract: dict[str, Any] | None,
+    ) -> None:
+        if not isinstance(tool_contract, dict):
+            return
+        resolver = PromptReferenceResolver(self._db, tenant_id)
+        try:
+            await resolver.validate_schema_descriptions(
+                tool_contract.get("input_schema") if isinstance(tool_contract.get("input_schema"), dict) else {},
+                surface="artifact.tool_contract.description",
+            )
+            await resolver.validate_schema_descriptions(
+                tool_contract.get("output_schema") if isinstance(tool_contract.get("output_schema"), dict) else {},
+                surface="artifact.tool_contract.description",
+            )
+        except PromptReferenceError as exc:
+            raise ValueError(str(exc)) from exc
 
     @staticmethod
     def _build_manifest(

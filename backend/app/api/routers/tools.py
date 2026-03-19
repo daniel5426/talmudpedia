@@ -32,6 +32,7 @@ from app.services.artifact_runtime.deployment_service import ArtifactDeploymentS
 from app.services.artifact_runtime.registry_service import ArtifactRegistryService
 from app.db.postgres.models.artifact_runtime import ArtifactKind
 from app.services.builtin_tools import is_builtin_tools_v1_enabled
+from app.services.prompt_reference_resolver import PromptReferenceError, PromptReferenceResolver
 
 router = APIRouter(prefix="/tools", tags=["tools"])
 
@@ -792,6 +793,14 @@ async def create_tool(
     if impl_type == ToolImplementationType.RAG_PIPELINE:
         input_schema = deepcopy(input_schema or _PIPELINE_DEFAULT_INPUT_SCHEMA)
         output_schema = deepcopy(output_schema or _PIPELINE_DEFAULT_OUTPUT_SCHEMA)
+    try:
+        await PromptReferenceResolver(db, tid).validate_tool_payload(
+            description=request.description,
+            input_schema=input_schema,
+            output_schema=output_schema,
+        )
+    except PromptReferenceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     requested_status = request.status or ToolStatus.DRAFT
     _maybe_validate_builtin_registry_status(requested_status)
@@ -885,6 +894,15 @@ async def update_tool(
         if request.output_schema is not None:
             schema["output"] = request.output_schema
         tool.schema = schema
+
+    try:
+        await PromptReferenceResolver(db, tid).validate_tool_payload(
+            description=tool.description if request.description is None else request.description,
+            input_schema=((tool.schema or {}).get("input") if isinstance(tool.schema, dict) else {}),
+            output_schema=((tool.schema or {}).get("output") if isinstance(tool.schema, dict) else {}),
+        )
+    except PromptReferenceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     tool.config_schema = _compose_config_schema(
         current=tool.config_schema,

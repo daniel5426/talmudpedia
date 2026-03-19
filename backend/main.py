@@ -1047,6 +1047,7 @@ from app.api.routers import rag_graph_mutations as rag_graph_mutations_router
 from app.api.routers import rag_operator_contracts as rag_operator_contracts_router
 from app.api.routers import rag_custom_operators as rag_custom_operators_router
 from app.api.routers import models as models_router
+from app.api.routers import prompts as prompts_router
 from app.api.routers import tools as tools_router
 from app.api.routers import artifacts as artifacts_router
 from app.api.routers import artifact_runs as artifact_runs_router
@@ -1097,6 +1098,7 @@ from app.api.routers import knowledge_stores as knowledge_stores_router
 app.include_router(knowledge_stores_router.router, prefix="/admin/knowledge-stores", tags=["knowledge-stores"])
 
 app.include_router(models_router.router, tags=["models"])
+app.include_router(prompts_router.router, tags=["prompts"])
 app.include_router(tools_router.router, tags=["tools"])
 app.include_router(org_units_router.router, prefix="/api", tags=["org-units"])
 app.include_router(rbac_router.router, prefix="/api", tags=["rbac"])

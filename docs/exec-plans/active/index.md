@@ -1,6 +1,6 @@
 # Active Execution Plans
 
-Last Updated: 2026-03-18
+Last Updated: 2026-03-19
 
 This section holds work that is planned or currently in progress.
 
@@ -21,4 +21,5 @@ This section holds work that is planned or currently in progress.
 
 ## Current Plans
 - `autonomous_node_test_env_plan.md`
+- `model_registry_production_readiness_refactor_plan.md`
 - `tools_update_v1_plan.md`
