@@ -1,6 +1,6 @@
 # Tools Domain Spec
 
-Last Updated: 2026-03-18
+Last Updated: 2026-03-19
 
 This document is the canonical product/specification overview for the tools domain.
 
@@ -30,7 +30,7 @@ Current ownership classes are:
 - `agent_bound`
 - `system`
 
-These are returned in the `/tools` DTO so the UI can tell which rows are editable in the registry versus managed from another domain.
+These are now persisted on `tool_registry` and returned in the `/tools` DTO so the UI can tell which rows are editable in the registry versus managed from another domain.
 
 ## Current Tool Classes
 
@@ -40,7 +40,7 @@ Current derived tool classes are:
 - `artifact`
 - `custom`
 
-This classification is derived at the API layer rather than stored directly as a database column.
+This classification is still derived at the API layer rather than stored directly as a database column.
 
 ## Current Canonical Registry Shape
 
@@ -49,6 +49,7 @@ The logical tool record lives in `tool_registry` and currently carries:
 - input/output schema
 - config/execution metadata
 - implementation type
+- persisted ownership/management/source metadata
 - publish/version state
 - optional artifact binding fields
 
@@ -81,7 +82,7 @@ Current behavior includes:
 - create/update/publish/version flows for manual tools
 - tool-type filtering
 - sensitive config redaction on reads
-- explicit derived DTO fields for:
+- explicit DTO fields for:
   - `implementation_config`
   - `execution_config`
   - `ownership`

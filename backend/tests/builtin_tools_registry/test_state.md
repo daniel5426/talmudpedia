@@ -1,6 +1,6 @@
 # Built-in Tools Registry Tests
 
-Last Updated: 2026-03-18
+Last Updated: 2026-03-19
 
 ## Scope
 Covers built-in catalog behavior plus ownership-aware `/tools` control-plane behavior for system rows and owner-managed bound rows.
@@ -12,7 +12,8 @@ Covers built-in catalog behavior plus ownership-aware `/tools` control-plane beh
 - Global built-in catalog listing excludes tenant legacy built-in clone rows.
 - Legacy built-in instance routes remain removed (`404`).
 - Legacy tenant built-in clone rows can still be updated/deleted directly by ID for cleanup.
-- `/tools` DTO now exposes canonical derived config fields (`implementation_config`, `execution_config`) and explicit ownership metadata for manual vs system rows.
+- `/tools` DTO now exposes canonical config fields (`implementation_config`, `execution_config`) and explicit ownership metadata for manual vs system rows.
+- Manual and system tool creation paths now persist ownership/management metadata directly on `tool_registry`.
 - Direct `/tools` creation of `rag_pipeline` rows is rejected because pipeline tools are domain-owned.
 - Pipeline-bound rows reject registry-side update/publish and report managed ownership metadata through `/tools/{id}`.
 - Owner-managed bound rows now use generic “owning domain” guardrail messaging.

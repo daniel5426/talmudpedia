@@ -13,6 +13,7 @@ from app.db.postgres.models.registry import (
     ToolImplementationType,
     ToolRegistry,
     ToolStatus,
+    set_tool_management_metadata,
 )
 
 
@@ -80,6 +81,7 @@ async def _ensure_builtin_template(
         is_active=True,
         is_system=True,
     )
+    set_tool_management_metadata(template, ownership="system")
     db_session.add(template)
     await db_session.commit()
     await db_session.refresh(template)

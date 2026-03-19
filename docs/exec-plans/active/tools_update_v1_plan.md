@@ -1,6 +1,6 @@
 # Execution Plan: Tools Update V1
 
-Last Updated: 2026-03-18
+Last Updated: 2026-03-19
 
 ## Status: In Progress
 
@@ -40,9 +40,14 @@ Implemented in the current backend follow-up pass:
 - `rag_pipeline` is now the canonical authored taxonomy across graph/tool tests still under active use, while seed-time normalization upgrades legacy `rag_retrieval` DB rows to `rag_pipeline`
 - MCP runtime now enforces URL/host/header validation and returns normalized transport/protocol errors
 - agents now support a domain-native export-to-tool flow that creates owner-managed `agent_call` tool rows, syncs publish/delete lifecycle from the agent domain, and surfaces those rows as `agent_bound` in `/tools`
+- tool ownership metadata is now persisted first-class on `tool_registry` (`ownership`, `managed_by`, `source_object_type`, `source_object_id`) instead of existing only as API-derived metadata
+- tool write/sync paths now stamp persisted ownership metadata for manual, system, artifact-bound, pipeline-bound, and agent-bound rows
+- legacy rows are backfilled at migration time and `/tools` keeps a legacy fallback path for pre-backfill or test-created rows
 
 Still pending beyond this pass:
-- persistence-level ownership metadata is not yet first-class in the DB model; current ownership metadata is derived at the API layer
+- pipeline binding still does not support a separate model-facing tool name/slug beyond the pipeline identity
+- frontend coverage is still missing for the pipeline-page tool settings panel and registry redirect/open-editor actions
+- no dedicated migration-level regression currently asserts legacy `rag_retrieval` row normalization to `rag_pipeline`
 
 ## Slice 1: Ownership Clarification
 

@@ -1,4 +1,4 @@
-Last Updated: 2026-03-18
+Last Updated: 2026-03-19
 
 # Tool Bindings Test State
 
@@ -15,6 +15,7 @@ Domain-owned tool bindings for `tool_impl` artifacts, visual pipelines, and expo
 
 - creating a `tool_impl` artifact auto-creates a draft bound tool row
 - artifact-bound tool rows exposed through `/tools` now report explicit ownership/management metadata and registry action flags
+- artifact, pipeline, and agent export flows now persist ownership/source metadata directly on the bound `tool_registry` rows
 - updating a `tool_impl` artifact resynchronizes the bound tool schema/config
 - publishing a `tool_impl` artifact auto-publishes the bound tool and pins `artifact_revision_id`
 - deleting a `tool_impl` artifact deletes the bound tool row
