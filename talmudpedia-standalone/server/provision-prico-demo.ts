@@ -274,6 +274,91 @@ async function upsertEmitWidgetTool(): Promise<ToolRecord> {
 
   const slug = "emit-widget";
   const existing = (await listTools()).find((tool) => tool.slug === slug);
+  const formatSchema = {
+    type: "string",
+    enum: ["number", "currency", "percent"],
+  } as const;
+  const titleSchema = { type: "string" } as const;
+  const valueSchema = {
+    oneOf: [{ type: "string" }, { type: "number" }],
+  } as const;
+  const chartRowSchema = {
+    type: "object",
+    additionalProperties: true,
+  } as const;
+  const labelValueRowSchema = {
+    type: "object",
+    properties: {
+      label: { type: "string" },
+      value: { type: "number" },
+    },
+    required: ["label", "value"],
+    additionalProperties: true,
+  } as const;
+  const cartesianSpecSchema = {
+    oneOf: [
+      {
+        type: "object",
+        properties: {
+          data: { type: "array", minItems: 1, items: chartRowSchema },
+          xKey: { type: "string" },
+          yKey: { type: "string" },
+          seriesLabel: { type: "string" },
+          format: formatSchema,
+        },
+        required: ["data", "xKey", "yKey"],
+        additionalProperties: false,
+      },
+      {
+        type: "object",
+        properties: {
+          data: { type: "array", minItems: 1, items: labelValueRowSchema },
+          seriesLabel: { type: "string" },
+          format: formatSchema,
+        },
+        required: ["data"],
+        additionalProperties: false,
+      },
+    ],
+  } as const;
+  const pieSpecSchema = {
+    oneOf: [
+      {
+        type: "object",
+        properties: {
+          data: { type: "array", minItems: 1, items: chartRowSchema },
+          labelKey: { type: "string" },
+          valueKey: { type: "string" },
+          format: formatSchema,
+        },
+        required: ["data", "labelKey", "valueKey"],
+        additionalProperties: false,
+      },
+      {
+        type: "object",
+        properties: {
+          data: { type: "array", minItems: 1, items: labelValueRowSchema },
+          format: formatSchema,
+        },
+        required: ["data"],
+        additionalProperties: false,
+      },
+    ],
+  } as const;
+  const variant = (
+    widgetType: "stat" | "table" | "bar_chart" | "line_chart" | "pie_chart",
+    spec: Record<string, unknown>,
+  ) => ({
+    type: "object",
+    properties: {
+      widget_type: { type: "string", enum: [widgetType] },
+      title: titleSchema,
+      subtitle: titleSchema,
+      spec,
+    },
+    required: ["widget_type", "spec"],
+    additionalProperties: false,
+  });
   const payload = {
     name: "Emit Widget",
     slug,
@@ -281,21 +366,57 @@ async function upsertEmitWidgetTool(): Promise<ToolRecord> {
     scope: "tenant",
     implementation_type: "CUSTOM",
     input_schema: {
-      type: "object",
-      properties: {
-        widget_type: {
-          type: "string",
-          enum: ["stat", "table", "bar_chart", "line_chart", "pie_chart"],
-        },
-        title: { type: "string" },
-        subtitle: { type: "string" },
-        spec: {
+      oneOf: [
+        variant("stat", {
           type: "object",
-          additionalProperties: true,
-        },
-      },
-      required: ["widget_type", "spec"],
-      additionalProperties: false,
+          properties: {
+            value: valueSchema,
+            label: { type: "string" },
+            format: formatSchema,
+            trend: {
+              type: "object",
+              properties: {
+                value: { type: "number" },
+                direction: { type: "string", enum: ["up", "down", "flat"] },
+              },
+              required: ["value", "direction"],
+              additionalProperties: false,
+            },
+          },
+          required: ["value"],
+          additionalProperties: false,
+        }),
+        variant("table", {
+          type: "object",
+          properties: {
+            columns: {
+              type: "array",
+              minItems: 1,
+              items: {
+                type: "object",
+                properties: {
+                  key: { type: "string" },
+                  label: { type: "string" },
+                },
+                required: ["key", "label"],
+                additionalProperties: false,
+              },
+            },
+            rows: {
+              type: "array",
+              items: {
+                type: "object",
+                additionalProperties: true,
+              },
+            },
+          },
+          required: ["columns", "rows"],
+          additionalProperties: false,
+        }),
+        variant("bar_chart", cartesianSpecSchema),
+        variant("line_chart", cartesianSpecSchema),
+        variant("pie_chart", pieSpecSchema),
+      ],
     },
     output_schema: {
       type: "object",

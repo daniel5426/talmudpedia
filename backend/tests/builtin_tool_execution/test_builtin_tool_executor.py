@@ -10,6 +10,7 @@ from app.agent.execution.emitter import active_emitter
 from app.agent.executors.retrieval_runtime import RetrievalPipelineRuntime
 from app.agent.executors.tool import ToolNodeExecutor
 from app.db.postgres.models.registry import ToolStatus, IntegrationCredentialCategory
+from app.services.builtin_tools import BUILTIN_TEMPLATE_MAP
 
 
 class DummyDB:
@@ -60,6 +61,24 @@ def _make_tool(
         is_builtin_template=False,
         status=status,
     )
+
+
+def test_emit_widget_builtin_schema_is_typed_for_each_widget():
+    schema = BUILTIN_TEMPLATE_MAP["emit_widget"].input_schema
+
+    assert "oneOf" in schema
+    assert len(schema["oneOf"]) == 5
+
+    by_type = {
+        variant["properties"]["widget_type"]["enum"][0]: variant["properties"]["spec"]
+        for variant in schema["oneOf"]
+    }
+
+    assert by_type["stat"]["required"] == ["value"]
+    assert by_type["table"]["required"] == ["columns", "rows"]
+    assert "oneOf" in by_type["bar_chart"]
+    assert "oneOf" in by_type["line_chart"]
+    assert "oneOf" in by_type["pie_chart"]
 
 
 @pytest.mark.asyncio
