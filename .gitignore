@@ -65,5 +65,4 @@ yarn-error.log*
 */next-env.d.ts
 
 # accidental lockfiles in workspaces that already use other lockfile conventions
-/frontend-reshet/pnpm-lock.yaml
 /packages/runtime-sdk/pnpm-lock.yaml
