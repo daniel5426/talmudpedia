@@ -1,6 +1,6 @@
 # Tools Built-in Frontend Tests
 
-Last Updated: 2026-03-18
+Last Updated: 2026-03-19
 
 ## Scope
 Covers built-in tools UX under the single-list architecture, plus bucket/subtype classification behavior.
@@ -40,4 +40,4 @@ Covers built-in tools UX under the single-list architecture, plus bucket/subtype
 - Result: pass (`1 suite, 2 passed, 2 skipped`)
 
 ## Known gaps or follow-ups
-- Add dedicated coverage for the pipeline page tool settings panel (`Use as tool`, schema editing, compile refresh).
+- Add a focused tools-page test for the agent-bound "Open Editor" route.

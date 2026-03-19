@@ -145,6 +145,7 @@ Current boundary:
 Current runtime event additions:
 
 - `assistant.widget` is part of the public embed runtime contract
+- platform agents currently author those events through the built-in `emit_widget` tool
 - widget payloads are structured data, not generated HTML/React
 - old-chat widget replay should always come from `turns[].run_events`, not standalone-side tool-output inference
 

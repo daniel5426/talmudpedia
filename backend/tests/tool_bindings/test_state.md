@@ -38,5 +38,4 @@ Domain-owned tool bindings for `tool_impl` artifacts, visual pipelines, and expo
 
 ## Known Gaps / Follow-ups
 
-- No frontend coverage yet for the pipeline-page tool settings panel or the registry redirect/open-editor actions.
 - No dedicated migration-level assertions yet for legacy `rag_retrieval` rows upgrading to `rag_pipeline`.

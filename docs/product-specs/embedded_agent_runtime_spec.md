@@ -199,6 +199,11 @@ Current widget types:
 - `line_chart`
 - `pie_chart`
 
+Current production authoring path:
+
+- agents emit widgets by calling the built-in `emit_widget` tool
+- the tool validates widget payloads and produces replayable `assistant.widget` events
+
 ## Thread Detail Contract Boundary
 
 `GET /public/embed/agents/{agent_id}/threads/{thread_id}` returns thread summary plus persisted turns.

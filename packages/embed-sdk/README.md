@@ -174,6 +174,7 @@ Returned turn shape includes:
 Current widget event:
 
 - `assistant.widget`
+- current platform agents author it through the built-in `emit_widget` tool
 
 Current widget payload fields:
 

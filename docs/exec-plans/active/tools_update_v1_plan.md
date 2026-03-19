@@ -33,6 +33,7 @@ Implemented in the current pass:
   - artifact-bound and pipeline-bound managed metadata
   - direct `/tools` creation rejection for domain-owned types
   - owner-aware create-flow routing in the tools UI
+  - pipeline editor tool-settings panel load/save behavior
 
 Implemented in the current backend follow-up pass:
 - `FUNCTION` tools now bootstrap the process-local callable registry explicitly from runtime-owned module maps instead of depending on scattered import side effects
@@ -45,8 +46,6 @@ Implemented in the current backend follow-up pass:
 - legacy rows are backfilled at migration time and `/tools` keeps a legacy fallback path for pre-backfill or test-created rows
 
 Still pending beyond this pass:
-- pipeline binding slug remains pipeline-derived by design; only model-facing tool name is editable from the binding flow
-- frontend coverage is still missing for the pipeline-page tool settings panel and registry redirect/open-editor actions
 - no dedicated migration-level regression currently asserts legacy `rag_retrieval` row normalization to `rag_pipeline`
 
 ## Slice 1: Ownership Clarification

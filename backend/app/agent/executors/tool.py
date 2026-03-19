@@ -1095,6 +1095,27 @@ class ToolNodeExecutor(BaseNodeExecutor):
 
         raise ValueError(f"Unsupported widget_type: {widget_type}")
 
+    def _normalize_widget_spec(self, *, widget_type: str, spec: dict[str, Any]) -> dict[str, Any]:
+        normalized = dict(spec)
+
+        if widget_type in {"bar_chart", "line_chart"}:
+            data = normalized.get("data")
+            if isinstance(data, list) and data and all(isinstance(row, dict) for row in data):
+                if not normalized.get("xKey") and all("label" in row for row in data):
+                    normalized["xKey"] = "label"
+                if not normalized.get("yKey") and all("value" in row for row in data):
+                    normalized["yKey"] = "value"
+
+        if widget_type == "pie_chart":
+            data = normalized.get("data")
+            if isinstance(data, list) and data and all(isinstance(row, dict) for row in data):
+                if not normalized.get("labelKey") and all("label" in row for row in data):
+                    normalized["labelKey"] = "label"
+                if not normalized.get("valueKey") and all("value" in row for row in data):
+                    normalized["valueKey"] = "value"
+
+        return normalized
+
     async def _execute_emit_widget_builtin(
         self,
         *,
@@ -1111,7 +1132,7 @@ class ToolNodeExecutor(BaseNodeExecutor):
             raw_spec = implementation_config.get("spec")
         if not isinstance(raw_spec, dict):
             raise ValueError("emit_widget requires spec to be an object")
-        spec = dict(raw_spec)
+        spec = self._normalize_widget_spec(widget_type=widget_type, spec=dict(raw_spec))
         self._require_json_safe(spec, path="spec")
         self._validate_widget_spec(widget_type=widget_type, spec=spec)
 

@@ -1,6 +1,6 @@
 # Built-in Tool Execution Tests
 
-Last Updated: 2026-03-18
+Last Updated: 2026-03-19
 
 ## Scope
 Covers runtime behavior of Built-in Tools v1 dispatch and mode-based execution guardrails.
@@ -18,11 +18,13 @@ Covers runtime behavior of Built-in Tools v1 dispatch and mode-based execution g
 - `web_search` tenant credentials lookup via default Integration Credentials (`category=tool_provider`) when tool-local key is absent.
 - `web_search` fallback to provider env keys (`SERPER_API_KEY`, `TAVILY_API_KEY`, `EXA_API_KEY`) when no credential override is present.
 - `json_transform` and `datetime_utils` behavior contracts.
+- `emit_widget` validates widget payloads and emits client-safe `assistant.widget` events.
+- `emit_widget` rejects malformed widget specs before any UI event is emitted.
 
 ## Last run command + result
-- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/builtin_tool_execution/test_builtin_tool_executor.py`
-- Date/Time: 2026-03-18 19:08 Asia/Hebron
-- Result: pass (`11 passed`)
+- Command: `PYTHONPATH=/Users/danielbenassaya/Code/personal/talmudpedia/backend python3 -m pytest -q /Users/danielbenassaya/Code/personal/talmudpedia/backend/tests/builtin_tool_execution/test_builtin_tool_executor.py`
+- Date/Time: 2026-03-19 14:42 Asia/Hebron
+- Result: pass (`17 passed`)
 
 ## Known gaps or follow-ups
 - Add regression coverage for provider-specific malformed chunk payloads across SDK versions.
