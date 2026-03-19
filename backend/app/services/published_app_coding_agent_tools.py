@@ -22,7 +22,13 @@ from app.api.routers.published_apps_admin_files import (
 from app.db.postgres.engine import sessionmaker as get_session
 from app.db.postgres.models.agents import AgentRun
 from app.db.postgres.models.published_apps import PublishedApp, PublishedAppDraftDevSessionStatus, PublishedAppRevision, PublishedAppRevisionBuildStatus, PublishedAppRevisionKind
-from app.db.postgres.models.registry import ToolDefinitionScope, ToolImplementationType, ToolRegistry, ToolStatus
+from app.db.postgres.models.registry import (
+    ToolDefinitionScope,
+    ToolImplementationType,
+    ToolRegistry,
+    ToolStatus,
+    set_tool_management_metadata,
+)
 from app.services.published_app_agent_integration_contract import (
     build_published_app_agent_integration_contract,
 )
@@ -1641,6 +1647,7 @@ async def ensure_coding_agent_tools(db: AsyncSession) -> list[str]:
                 is_system=True,
                 published_at=datetime.now(timezone.utc),
             )
+            set_tool_management_metadata(tool, ownership="system")
             db.add(tool)
             await db.flush()
         else:
@@ -1655,6 +1662,7 @@ async def ensure_coding_agent_tools(db: AsyncSession) -> list[str]:
             tool.is_active = True
             tool.is_system = True
             tool.published_at = tool.published_at or datetime.now(timezone.utc)
+            set_tool_management_metadata(tool, ownership="system")
         tool_ids.append(str(tool.id))
 
     await db.flush()

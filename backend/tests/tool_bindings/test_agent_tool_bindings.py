@@ -113,6 +113,10 @@ async def test_export_agent_tool_creates_agent_bound_registry_row(client, db_ses
         assert tool.config_schema["agent_binding"]["agent_id"] == str(agent.id)
         assert tool.config_schema["implementation"]["target_agent_id"] == str(agent.id)
         assert tool.status == ToolStatus.DRAFT
+        assert tool.ownership == "agent_bound"
+        assert tool.managed_by == "agents"
+        assert tool.source_object_type == "agent"
+        assert tool.source_object_id == str(agent.id)
 
         tool_response = await client.get(f"/tools/{tool.id}")
         assert tool_response.status_code == 200, tool_response.text
@@ -147,6 +151,8 @@ async def test_publishing_agent_syncs_existing_exported_tool(db_session):
     assert published.status == AgentStatus.published
     assert synced_tool.status == ToolStatus.PUBLISHED
     assert synced_tool.config_schema["implementation"]["target_agent_id"] == str(agent.id)
+    assert synced_tool.ownership == "agent_bound"
+    assert synced_tool.source_object_id == str(agent.id)
 
     versions = (
         await db_session.execute(select(ToolVersion).where(ToolVersion.tool_id == exported.id))

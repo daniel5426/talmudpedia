@@ -222,6 +222,10 @@ async def test_tool_impl_artifact_routes_own_bound_tool_lifecycle(client, db_ses
         assert tool.status == ToolStatus.DRAFT
         assert tool.slug.startswith("artifact-tool-")
         assert tool.schema["input"]["properties"]["text"]["type"] == "string"
+        assert tool.ownership == "artifact_bound"
+        assert tool.managed_by == "artifacts"
+        assert tool.source_object_type == "artifact"
+        assert tool.source_object_id == artifact["id"]
 
         tool_response = await client.get(f"/tools/{tool.id}")
         assert tool_response.status_code == 200, tool_response.text
@@ -258,6 +262,8 @@ async def test_tool_impl_artifact_routes_own_bound_tool_lifecycle(client, db_ses
         assert tool.config_schema["timeout_s"] == 42
         assert tool.status == ToolStatus.DRAFT
         assert tool.artifact_revision_id is None
+        assert tool.ownership == "artifact_bound"
+        assert tool.source_object_id == artifact["id"]
 
         publish_response = await client.post(f"/admin/artifacts/{artifact['id']}/publish?tenant_slug={tenant.slug}")
         assert publish_response.status_code == 200, publish_response.text
@@ -318,6 +324,10 @@ async def test_pipeline_owned_tool_binding_enable_publish_disable_and_demote(cli
         assert tool.implementation_type == ToolImplementationType.RAG_PIPELINE
         assert tool.status == ToolStatus.DRAFT
         assert tool.executable_pipeline_id is None
+        assert tool.ownership == "pipeline_bound"
+        assert tool.managed_by == "pipelines"
+        assert tool.source_object_type == "pipeline"
+        assert tool.source_object_id == pipeline_id
         assert tool.schema["input"]["properties"]["text"]["description"] == "Normalized retrieval query"
 
         tool_response = await client.get(f"/tools/{tool.id}")
@@ -341,6 +351,8 @@ async def test_pipeline_owned_tool_binding_enable_publish_disable_and_demote(cli
         assert tool is not None
         assert tool.status == ToolStatus.PUBLISHED
         assert tool.executable_pipeline_id is not None
+        assert tool.ownership == "pipeline_bound"
+        assert tool.source_object_id == pipeline_id
         assert tool.schema["input"]["properties"]["text"]["description"] == "Normalized retrieval query"
 
         disable_response = await client.put(
@@ -387,6 +399,8 @@ async def test_pipeline_owned_tool_binding_enable_publish_disable_and_demote(cli
         assert tool is not None
         assert tool.status == ToolStatus.DRAFT
         assert tool.executable_pipeline_id is None
+        assert tool.ownership == "pipeline_bound"
+        assert tool.source_object_id == pipeline_id
     finally:
         app.dependency_overrides.pop(get_current_principal, None)
 
@@ -426,6 +440,8 @@ async def test_ingestion_pipeline_can_publish_as_tool(client, db_session, monkey
         assert tool.status == ToolStatus.PUBLISHED
         assert tool.implementation_type == ToolImplementationType.RAG_PIPELINE
         assert tool.executable_pipeline_id is not None
+        assert tool.ownership == "pipeline_bound"
+        assert tool.source_object_id == pipeline_id
         assert "base_path" in tool.schema["input"]["properties"]
     finally:
         app.dependency_overrides.pop(get_current_principal, None)

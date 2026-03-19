@@ -31,6 +31,25 @@ class ToolImplementationType(str, enum.Enum):
     ARTIFACT = "ARTIFACT"
     MCP = "MCP"
 
+class ToolOwnership(str, enum.Enum):
+    MANUAL = "manual"
+    ARTIFACT_BOUND = "artifact_bound"
+    PIPELINE_BOUND = "pipeline_bound"
+    AGENT_BOUND = "agent_bound"
+    SYSTEM = "system"
+
+class ToolManager(str, enum.Enum):
+    TOOLS = "tools"
+    ARTIFACTS = "artifacts"
+    PIPELINES = "pipelines"
+    AGENTS = "agents"
+    SYSTEM = "system"
+
+class ToolSourceObjectType(str, enum.Enum):
+    ARTIFACT = "artifact"
+    PIPELINE = "pipeline"
+    AGENT = "agent"
+
 class ModelProviderType(str, enum.Enum):
     OPENAI = "openai"
     ANTHROPIC = "anthropic"
@@ -83,6 +102,10 @@ class ToolRegistry(Base):
     status = Column(SQLEnum(ToolStatus), default=ToolStatus.DRAFT, nullable=False)
     version = Column(String, default="1.0.0", nullable=False)
     implementation_type = Column(SQLEnum(ToolImplementationType), default=ToolImplementationType.CUSTOM, nullable=False)
+    ownership = Column(String, nullable=True, index=True)
+    managed_by = Column(String, nullable=True, index=True)
+    source_object_type = Column(String, nullable=True, index=True)
+    source_object_id = Column(String, nullable=True, index=True)
     published_at = Column(DateTime(timezone=True), nullable=True)
 
     # Artifact Integration
@@ -119,6 +142,35 @@ class ToolRegistry(Base):
             sqlite_where=and_(tenant_id == None, is_builtin_template == True, builtin_key != None),
         ),
     )
+
+
+def get_tool_manager_value(ownership):
+    ownership_value = getattr(ownership, "value", ownership)
+    if ownership_value == ToolOwnership.AGENT_BOUND.value:
+        return ToolManager.AGENTS.value
+    if ownership_value == ToolOwnership.ARTIFACT_BOUND.value:
+        return ToolManager.ARTIFACTS.value
+    if ownership_value == ToolOwnership.PIPELINE_BOUND.value:
+        return ToolManager.PIPELINES.value
+    if ownership_value == ToolOwnership.SYSTEM.value:
+        return ToolManager.SYSTEM.value
+    return ToolManager.TOOLS.value
+
+
+def set_tool_management_metadata(
+    tool: "ToolRegistry",
+    *,
+    ownership,
+    managed_by=None,
+    source_object_type=None,
+    source_object_id=None,
+) -> None:
+    tool.ownership = getattr(ownership, "value", ownership)
+    tool.managed_by = getattr(managed_by, "value", managed_by) or get_tool_manager_value(tool.ownership)
+    tool.source_object_type = getattr(source_object_type, "value", source_object_type) or None
+    tool.source_object_id = str(source_object_id) if source_object_id not in (None, "") else None
+    if tool.source_object_type is None:
+        tool.source_object_id = None
 
 
 class ToolVersion(Base):

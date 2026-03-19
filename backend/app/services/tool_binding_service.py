@@ -18,6 +18,7 @@ from app.db.postgres.models.registry import (
     ToolRegistry,
     ToolStatus,
     ToolVersion,
+    set_tool_management_metadata,
 )
 from app.rag.pipeline.registry import ConfigFieldType, OperatorRegistry
 
@@ -103,6 +104,12 @@ class ToolBindingService:
                 is_active=True,
                 is_system=False,
             )
+            set_tool_management_metadata(
+                tool,
+                ownership="artifact_bound",
+                source_object_type="artifact",
+                source_object_id=artifact.id,
+            )
             self._db.add(tool)
             await self._db.flush()
             return tool
@@ -123,6 +130,12 @@ class ToolBindingService:
             tool.is_active = True
         tool.artifact_revision_id = None
         tool.published_at = None
+        set_tool_management_metadata(
+            tool,
+            ownership="artifact_bound",
+            source_object_type="artifact",
+            source_object_id=artifact.id,
+        )
         await self._db.flush()
         return tool
 
@@ -144,6 +157,12 @@ class ToolBindingService:
         tool.artifact_version = version
         tool.artifact_revision_id = revision.id
         tool.published_at = datetime.utcnow()
+        set_tool_management_metadata(
+            tool,
+            ownership="artifact_bound",
+            source_object_type="artifact",
+            source_object_id=artifact.id,
+        )
         self._db.add(
             ToolVersion(
                 tool_id=tool.id,
@@ -204,6 +223,12 @@ class ToolBindingService:
                 is_active=enabled,
                 is_system=False,
             )
+            set_tool_management_metadata(
+                tool,
+                ownership="pipeline_bound",
+                source_object_type="pipeline",
+                source_object_id=pipeline.id,
+            )
             self._db.add(tool)
             await self._db.flush()
             return tool
@@ -238,6 +263,12 @@ class ToolBindingService:
         else:
             tool.is_active = False
             tool.status = ToolStatus.DISABLED
+        set_tool_management_metadata(
+            tool,
+            ownership="pipeline_bound",
+            source_object_type="pipeline",
+            source_object_id=pipeline.id,
+        )
         await self._db.flush()
         return tool
 
@@ -259,6 +290,12 @@ class ToolBindingService:
         if tool.description in {None, "", previous_description}:
             tool.description = pipeline.description
         tool.version = _tool_semver(pipeline.version)
+        set_tool_management_metadata(
+            tool,
+            ownership="pipeline_bound",
+            source_object_type="pipeline",
+            source_object_id=pipeline.id,
+        )
         await self._db.flush()
         return tool
 
@@ -273,6 +310,12 @@ class ToolBindingService:
             tool.status = ToolStatus.DRAFT
             tool.is_active = True
             tool.published_at = None
+        set_tool_management_metadata(
+            tool,
+            ownership="pipeline_bound",
+            source_object_type="pipeline",
+            source_object_id=pipeline.id,
+        )
         await self._db.flush()
         return tool
 
@@ -302,6 +345,12 @@ class ToolBindingService:
         tool.is_active = True
         tool.version = _tool_semver(executable_pipeline.version)
         tool.published_at = datetime.utcnow()
+        set_tool_management_metadata(
+            tool,
+            ownership="pipeline_bound",
+            source_object_type="pipeline",
+            source_object_id=pipeline.id,
+        )
         self._db.add(
             ToolVersion(
                 tool_id=tool.id,
@@ -362,6 +411,12 @@ class ToolBindingService:
                 is_active=True,
                 is_system=False,
             )
+            set_tool_management_metadata(
+                tool,
+                ownership="agent_bound",
+                source_object_type="agent",
+                source_object_id=agent.id,
+            )
             self._db.add(tool)
             await self._db.flush()
         else:
@@ -381,6 +436,12 @@ class ToolBindingService:
             tool.is_active = True
             tool.is_system = False
             tool.published_at = datetime.utcnow() if desired_status == ToolStatus.PUBLISHED else None
+            set_tool_management_metadata(
+                tool,
+                ownership="agent_bound",
+                source_object_type="agent",
+                source_object_id=agent.id,
+            )
 
         await self._maybe_snapshot_published_tool(tool=tool, created_by=created_by)
         await self._db.flush()

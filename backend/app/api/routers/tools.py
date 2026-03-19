@@ -24,6 +24,8 @@ from app.db.postgres.models.registry import (
     ToolRegistry,
     ToolStatus,
     ToolVersion,
+    get_tool_manager_value,
+    set_tool_management_metadata,
 )
 from app.db.postgres.session import get_db
 from app.services.artifact_runtime.deployment_service import ArtifactDeploymentService
@@ -339,15 +341,7 @@ def _get_tool_ownership(tool: ToolRegistry | object, impl_type: ToolImplementati
 
 
 def _get_tool_manager(ownership: str) -> str:
-    if ownership == "agent_bound":
-        return "agents"
-    if ownership == "artifact_bound":
-        return "artifacts"
-    if ownership == "pipeline_bound":
-        return "pipelines"
-    if ownership == "system":
-        return "system"
-    return "tools"
+    return get_tool_manager_value(ownership)
 
 
 def _get_tool_source(tool: ToolRegistry | object, ownership: str) -> tuple[str | None, str | None]:
@@ -364,11 +358,41 @@ def _get_tool_source(tool: ToolRegistry | object, ownership: str) -> tuple[str |
     return None, None
 
 
-def _serialize_tool(tool: ToolRegistry | object) -> ToolResponse:
-    impl_type = _get_tool_impl_type(tool)
+def _tool_metadata_value(value: Any) -> str | None:
+    if value in (None, ""):
+        return None
+    return str(getattr(value, "value", value))
+
+
+def _resolve_tool_metadata(
+    tool: ToolRegistry | object,
+    impl_type: ToolImplementationType,
+) -> tuple[str, str, str | None, str | None]:
+    ownership = _tool_metadata_value(getattr(tool, "ownership", None))
+    managed_by = _tool_metadata_value(getattr(tool, "managed_by", None))
+    source_object_type = _tool_metadata_value(getattr(tool, "source_object_type", None))
+    source_object_id = _tool_metadata_value(getattr(tool, "source_object_id", None))
+
+    if ownership:
+        managed_by = managed_by or _get_tool_manager(ownership)
+        if ownership in {"artifact_bound", "pipeline_bound", "agent_bound"}:
+            derived_type, derived_id = _get_tool_source(tool, ownership)
+            source_object_type = source_object_type or derived_type
+            source_object_id = source_object_id or derived_id
+        else:
+            source_object_type = None
+            source_object_id = None
+        return ownership, managed_by, source_object_type, source_object_id
+
     ownership = _get_tool_ownership(tool, impl_type)
     managed_by = _get_tool_manager(ownership)
     source_object_type, source_object_id = _get_tool_source(tool, ownership)
+    return ownership, managed_by, source_object_type, source_object_id
+
+
+def _serialize_tool(tool: ToolRegistry | object) -> ToolResponse:
+    impl_type = _get_tool_impl_type(tool)
+    ownership, managed_by, source_object_type, source_object_id = _resolve_tool_metadata(tool, impl_type)
     config_schema = getattr(tool, "config_schema", {}) or {}
     implementation_config = _redact_sensitive_config((config_schema.get("implementation") if isinstance(config_schema, dict) else {}) or {})
     execution_config = _redact_sensitive_config((config_schema.get("execution") if isinstance(config_schema, dict) else {}) or {})
@@ -799,6 +823,7 @@ async def create_tool(
         is_active=requested_status != ToolStatus.DISABLED,
         is_system=False,
     )
+    set_tool_management_metadata(tool, ownership="manual")
     db.add(tool)
     await db.commit()
     await db.refresh(tool)
@@ -840,7 +865,7 @@ async def update_tool(
     ).scalar_one_or_none()
     if not tool:
         raise HTTPException(status_code=404, detail="Tool not found")
-    ownership = _get_tool_ownership(tool, _get_tool_impl_type(tool))
+    ownership, _, _, _ = _resolve_tool_metadata(tool, _get_tool_impl_type(tool))
     if ownership in {"artifact_bound", "pipeline_bound", "agent_bound"}:
         raise HTTPException(status_code=400, detail="This tool is managed by its owning domain")
     if tool.is_system:
@@ -934,7 +959,7 @@ async def publish_tool(
         raise HTTPException(status_code=400, detail="Cannot publish system tools")
     if _is_builtin_instance(tool):
         raise HTTPException(status_code=404, detail="Tool not found")
-    ownership = _get_tool_ownership(tool, _get_tool_impl_type(tool))
+    ownership, _, _, _ = _resolve_tool_metadata(tool, _get_tool_impl_type(tool))
     if ownership in {"artifact_bound", "pipeline_bound", "agent_bound"}:
         raise HTTPException(status_code=400, detail="Publish this tool from its owning domain")
 
@@ -1015,7 +1040,7 @@ async def delete_tool(
         raise HTTPException(status_code=400, detail="Cannot delete system tools")
     if _is_builtin_instance(tool):
         raise HTTPException(status_code=404, detail="Tool not found")
-    ownership = _get_tool_ownership(tool, _get_tool_impl_type(tool))
+    ownership, _, _, _ = _resolve_tool_metadata(tool, _get_tool_impl_type(tool))
     if ownership in {"artifact_bound", "pipeline_bound", "agent_bound"}:
         raise HTTPException(status_code=400, detail="Delete this tool from its owning domain")
 

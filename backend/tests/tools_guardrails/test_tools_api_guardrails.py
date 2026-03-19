@@ -63,12 +63,13 @@ async def _seed_agent_bound_tool(db_session, tenant_id):
         description="agent-bound tool",
         scope=ToolDefinitionScope.TENANT,
         schema={"input": {"type": "object"}, "output": {"type": "object"}},
-        config_schema={
-            "implementation": {"type": "agent_call", "target_agent_id": str(uuid4())},
-            "agent_binding": {"agent_id": str(uuid4()), "owned_by_source": True},
-        },
+        config_schema={"implementation": {"type": "agent_call", "target_agent_id": str(uuid4())}},
         status=ToolStatus.DRAFT,
         implementation_type=ToolImplementationType.AGENT_CALL,
+        ownership="agent_bound",
+        managed_by="agents",
+        source_object_type="agent",
+        source_object_id=str(uuid4()),
         is_active=True,
         is_system=False,
     )

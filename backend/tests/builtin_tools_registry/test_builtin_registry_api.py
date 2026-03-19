@@ -139,6 +139,10 @@ async def test_tool_dto_exposes_derived_config_and_ownership_metadata(client, db
     by_id = {item["id"]: item for item in response.json()["tools"]}
     manual_payload = by_id[manual_tool["id"]]
     system_payload = by_id[str(system_tool.id)]
+    manual_row = (
+        await db_session.execute(select(ToolRegistry).where(ToolRegistry.slug == manual_payload["slug"]))
+    ).scalar_one()
+    await db_session.refresh(system_tool)
 
     assert manual_payload["implementation_config"] == {
         "type": "http",
@@ -153,6 +157,10 @@ async def test_tool_dto_exposes_derived_config_and_ownership_metadata(client, db
     assert manual_payload["can_edit_in_registry"] is True
     assert manual_payload["can_publish_in_registry"] is True
     assert manual_payload["can_delete_in_registry"] is True
+    assert manual_row.ownership == "manual"
+    assert manual_row.managed_by == "tools"
+    assert manual_row.source_object_type is None
+    assert manual_row.source_object_id is None
 
     assert system_payload["implementation_config"]["function_name"] == "echo"
     assert system_payload["execution_config"]["timeout_s"] == 15
@@ -161,6 +169,10 @@ async def test_tool_dto_exposes_derived_config_and_ownership_metadata(client, db
     assert system_payload["can_edit_in_registry"] is False
     assert system_payload["can_publish_in_registry"] is False
     assert system_payload["can_delete_in_registry"] is False
+    assert system_tool.ownership == "system"
+    assert system_tool.managed_by == "system"
+    assert system_tool.source_object_type is None
+    assert system_tool.source_object_id is None
 
 
 @pytest.mark.asyncio

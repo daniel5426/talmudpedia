@@ -11,6 +11,7 @@ from app.db.postgres.models.registry import (
     ModelProviderBinding,
     ModelCapabilityType,
     ModelProviderType,
+    set_tool_management_metadata,
     ToolRegistry,
     ToolDefinitionScope,
     ToolStatus,
@@ -269,6 +270,7 @@ async def seed_platform_sdk_tool(db):
             is_system=True,
             published_at=datetime.utcnow(),
         )
+        set_tool_management_metadata(tool, ownership="system")
         db.add(tool)
     else:
         tool.name = "Platform SDK"
@@ -288,6 +290,7 @@ async def seed_platform_sdk_tool(db):
         tool.is_active = True
         tool.is_system = True
         tool.published_at = tool.published_at or datetime.utcnow()
+        set_tool_management_metadata(tool, ownership="system")
 
     await db.flush()
     await db.commit()
@@ -430,6 +433,7 @@ async def seed_builtin_tool_templates(db):
                 is_system=True,
                 published_at=datetime.utcnow(),
             )
+            set_tool_management_metadata(tool, ownership="system")
             db.add(tool)
         else:
             tool.name = spec.name
@@ -449,6 +453,7 @@ async def seed_builtin_tool_templates(db):
             tool.is_active = True
             tool.is_system = True
             tool.published_at = tool.published_at or datetime.utcnow()
+            set_tool_management_metadata(tool, ownership="system")
 
         seeded.append(tool)
 
@@ -527,6 +532,7 @@ async def seed_platform_architect_domain_tools(db) -> dict[str, str]:
                 is_system=True,
                 published_at=datetime.utcnow(),
             )
+            set_tool_management_metadata(tool, ownership="system")
             db.add(tool)
         else:
             tool.name = spec["name"]
@@ -546,6 +552,7 @@ async def seed_platform_architect_domain_tools(db) -> dict[str, str]:
             tool.is_active = True
             tool.is_system = True
             tool.published_at = tool.published_at or datetime.utcnow()
+            set_tool_management_metadata(tool, ownership="system")
         await db.flush()
         seeded[slug] = str(tool.id)
 

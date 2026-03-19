@@ -13,7 +13,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.postgres.engine import sessionmaker as get_session
 from app.db.postgres.models.agents import AgentRun
 from app.db.postgres.models.artifact_runtime import Artifact, ArtifactCodingSession, ArtifactCodingSharedDraft, ArtifactKind
-from app.db.postgres.models.registry import ToolDefinitionScope, ToolImplementationType, ToolRegistry, ToolStatus
+from app.db.postgres.models.registry import (
+    ToolDefinitionScope,
+    ToolImplementationType,
+    ToolRegistry,
+    ToolStatus,
+    set_tool_management_metadata,
+)
 from app.services.artifact_coding_shared_draft_service import ArtifactCodingSharedDraftService
 from app.services.artifact_runtime.registry_service import ArtifactRegistryService
 from app.services.tool_function_registry import register_tool_function
@@ -769,6 +775,7 @@ async def ensure_artifact_coding_tools(db: AsyncSession) -> list[str]:
                 is_system=True,
                 published_at=datetime.now(timezone.utc),
             )
+            set_tool_management_metadata(tool, ownership="system")
             db.add(tool)
             await db.flush()
         else:
@@ -783,6 +790,7 @@ async def ensure_artifact_coding_tools(db: AsyncSession) -> list[str]:
             tool.is_active = True
             tool.is_system = True
             tool.published_at = tool.published_at or datetime.now(timezone.utc)
+            set_tool_management_metadata(tool, ownership="system")
         tool_ids.append(str(tool.id))
     await db.flush()
     return tool_ids
