@@ -179,11 +179,20 @@ function buildRollingAverage(data: DailyDataPoint[], windowSize: number) {
 function toChartData(record?: Record<string, number> | null): DailyDataPoint[] {
   if (!record) return []
   return Object.entries(record)
+    .filter(([, value]) => value > 0)
     .sort((a, b) => b[1] - a[1])
     .map(([key, value]) => ({
       date: key.replace(/_/g, " "),
       value,
     }))
+}
+
+function formatCategoryLabel(value: string) {
+  return value
+    .split(/[_\s-]+/)
+    .filter(Boolean)
+    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
+    .join(" ")
 }
 
 function getRecordValue(
@@ -227,7 +236,7 @@ function GraphCard({
         onClick={onClick}
         className={cn(
           "text-left border rounded-lg p-4 transition-all",
-          "hover:border-muted-foreground/40 hover:shadow-sm",
+          "hover:border-muted-foreground/40",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
         )}
       >
@@ -253,6 +262,73 @@ function GraphCard({
       <BarChart data={data} height={160} color={color} showLabels={showLabels} />
     </div>
   )
+}
+
+function CategoryBarsCard({
+  title,
+  value,
+  subValue,
+  items,
+  color,
+  onClick,
+}: {
+  title: string
+  value: string | number
+  subValue?: string
+  items: DailyDataPoint[]
+  color: string
+  onClick?: () => void
+}) {
+  const maxValue = Math.max(...items.map((item) => item.value), 0)
+  const content = (
+    <>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-medium">{title}</h3>
+          {subValue ? <p className="mt-1 text-xs text-muted-foreground">{subValue}</p> : null}
+        </div>
+        <div className="text-xl font-semibold tabular-nums">{value}</div>
+      </div>
+
+      <div className="mt-4 space-y-3">
+        {items.length ? (
+          items.map((item) => (
+            <div key={item.date} className="space-y-1.5">
+              <div className="flex items-center justify-between gap-3 text-sm">
+                <span className="truncate text-muted-foreground">{formatCategoryLabel(item.date)}</span>
+                <span className="font-medium tabular-nums text-foreground">{item.value}</span>
+              </div>
+              <div className="h-2 overflow-hidden rounded-full bg-muted">
+                <div
+                  className="h-full rounded-full"
+                  style={{
+                    width: `${Math.max((item.value / (maxValue || 1)) * 100, 8)}%`,
+                    backgroundColor: color,
+                  }}
+                />
+              </div>
+            </div>
+          ))
+        ) : (
+          <p className="text-sm text-muted-foreground">No non-empty categories in this range.</p>
+        )}
+      </div>
+    </>
+  )
+
+  if (onClick) {
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        className="w-full rounded-lg border p-4 text-left transition-all hover:border-muted-foreground/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+      >
+        {content}
+      </button>
+    )
+  }
+
+  return <div className="w-full rounded-lg border p-4 text-left transition-all">{content}</div>
 }
 
 function StatusRow({ label, rate }: { label: string; rate: number }) {
@@ -300,11 +376,6 @@ export default function AdminStatsPage() {
     const resolved = resolveDateRange(days, appliedRange)
     return buildRangeDates(resolved.start, resolved.end)
   }, [days, appliedRange?.start, appliedRange?.end])
-
-  const emptyRangeSeries = useMemo(
-    () => rangeDates.map((date) => ({ date, value: 0 })),
-    [rangeDates]
-  )
 
   useEffect(() => {
     if (!isDateOpen) return
@@ -530,6 +601,23 @@ export default function AdminStatsPage() {
             </button>
           </div>
 
+          <Select
+            value={selectedAgentId || "__all_agents__"}
+            onValueChange={(value) => setSelectedAgentId(value === "__all_agents__" ? "" : value)}
+          >
+            <SelectTrigger className="w-[220px]">
+              <SelectValue placeholder="All agents" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all_agents__">All agents</SelectItem>
+              {agentOptions.map((agent) => (
+                <SelectItem key={agent.id} value={agent.id}>
+                  {agent.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
           <div className="relative" ref={datePopoverRef}>
             <button
               onClick={() => setIsDateOpen(!isDateOpen)}
@@ -547,7 +635,7 @@ export default function AdminStatsPage() {
             </button>
 
             {isDateOpen && (
-              <div className="absolute top-full mt-1.5 end-0 bg-background border rounded-lg shadow-lg p-3 z-50 w-[260px]">
+              <div className="absolute top-full mt-1.5 end-0 z-50 w-[260px] rounded-lg border bg-background p-3">
                 <div className="flex flex-col gap-2">
                   <div className="flex items-center gap-2">
                     <label className="text-xs text-muted-foreground w-8 shrink-0">From</label>
@@ -638,24 +726,6 @@ export default function AdminStatsPage() {
                     <div className="flex flex-col lg:flex-row lg:items-start gap-6 px-6 py-4">
                       <div className="flex-1 min-w-0">
                         <div className="space-y-6">
-                          <div className="flex items-center justify-end">
-                            <Select
-                              value={selectedAgentId || "__all_agents__"}
-                              onValueChange={(value) => setSelectedAgentId(value === "__all_agents__" ? "" : value)}
-                            >
-                              <SelectTrigger className="w-[240px]">
-                                <SelectValue placeholder="All agents" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="__all_agents__">All agents</SelectItem>
-                                {agentOptions.map((agent) => (
-                                  <SelectItem key={agent.id} value={agent.id}>
-                                    {agent.name}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          </div>
                           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4 items-start">
                             <MetricBlock
                               title="Users"
@@ -1017,7 +1087,7 @@ export default function AdminStatsPage() {
                             <MetricBlock
                               title="Tools"
                               value={formatCompact(resources.tool_count)}
-                              subValue={`${formatCompact(Object.keys(resources.tools_by_type).length)} types`}
+                              subValue={`${formatCompact(resourceToolsByTypeChart.length)} non-empty types`}
                               icon={Wrench}
                               onClick={() => setDetail("resources.tools")}
                             />
@@ -1031,14 +1101,14 @@ export default function AdminStatsPage() {
                             <MetricBlock
                               title="Models"
                               value={formatCompact(resources.model_count)}
-                              subValue={`${formatCompact(Object.keys(resources.models_by_capability).length)} capabilities`}
+                              subValue={`${formatCompact(resourceModelsByCapabilityChart.length)} active capabilities`}
                               icon={Cpu}
                               onClick={() => setDetail("resources.models")}
                             />
                             <MetricBlock
                               title="Artifacts"
                               value={formatCompact(resources.artifact_count)}
-                              subValue={`${formatCompact(Object.keys(resources.artifacts_by_category).length)} categories`}
+                              subValue={`${formatCompact(resourceArtifactsByCategoryChart.length)} non-empty categories`}
                               icon={Database}
                               onClick={() => setDetail("resources.artifacts")}
                             />
@@ -1058,33 +1128,28 @@ export default function AdminStatsPage() {
                             />
                           </div>
                           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 items-start">
-                            <GraphCard
+                            <CategoryBarsCard
                               title="Tools by Type"
-                              value={formatCompact(Object.keys(resources.tools_by_type).length)}
-                              subValue="Tool categories"
-                              data={resourceToolsByTypeChart}
+                              value={formatCompact(resourceToolsByTypeChart.length)}
+                              subValue="Non-empty tool categories"
+                              items={resourceToolsByTypeChart}
                               color="#06b6d4"
-                              showLabels={false}
                               onClick={() => setDetail("resources.tools")}
                             />
-                            <GraphCard
+                            <CategoryBarsCard
                               title="Models by Capability"
-                              value={formatCompact(Object.keys(resources.models_by_capability).length)}
-                              subValue="Capability groups"
-                              data={resourceModelsByCapabilityChart}
+                              value={formatCompact(resourceModelsByCapabilityChart.length)}
+                              subValue="Capabilities with usage"
+                              items={resourceModelsByCapabilityChart}
                               color="#8b5cf6"
-                              showLabels={false}
                               onClick={() => setDetail("resources.models")}
                             />
-                            <GraphCard
+                            <CategoryBarsCard
                               title="Artifacts by Category"
-                              value={formatCompact(Object.keys(resources.artifacts_by_category).length)}
-                              subValue="Artifact categories"
-                              data={resourceArtifactsByCategoryChart.length
-                                ? resourceArtifactsByCategoryChart
-                                : emptyRangeSeries}
+                              value={formatCompact(resourceArtifactsByCategoryChart.length)}
+                              subValue="Non-empty artifact categories"
+                              items={resourceArtifactsByCategoryChart}
                               color="#f97316"
-                              showLabels={false}
                               onClick={() => setDetail("resources.artifacts")}
                             />
                           </div>
@@ -1116,10 +1181,12 @@ export default function AdminStatsPage() {
                         <div>
                           <h3 className="text-sm font-medium mb-3">Tools by Type</h3>
                           <div className="space-y-2.5 text-sm">
-                            {Object.entries(resources.tools_by_type).map(([type, count]) => (
+                            {Object.entries(resources.tools_by_type)
+                              .filter(([, count]) => count > 0)
+                              .map(([type, count]) => (
                               <SummaryRow
                                 key={type}
-                                label={type.charAt(0).toUpperCase() + type.slice(1)}
+                                label={formatCategoryLabel(type)}
                                 value={count}
                               />
                             ))}

@@ -231,28 +231,6 @@ export function ThreadsTable({
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-2">
-        <Select
-          value={selectedAgentId || ALL_AGENTS_VALUE}
-          onValueChange={(value) => {
-            setAgentId(value === ALL_AGENTS_VALUE ? "" : value)
-            setPagination({ pageIndex: 0, pageSize: pagination.pageSize })
-          }}
-        >
-          <SelectTrigger className="w-[220px]">
-            <SelectValue placeholder="All agents" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value={ALL_AGENTS_VALUE}>All agents</SelectItem>
-            {agents.map((agent) => (
-              <SelectItem key={agent.id} value={agent.id}>
-                {agent.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-
       <DataTable
         columns={columns}
         data={threads}
@@ -269,6 +247,27 @@ export function ThreadsTable({
           setSearch(value)
           setPagination({ pageIndex: 0, pageSize: pagination.pageSize })
         }}
+        toolbarContent={(
+          <Select
+            value={selectedAgentId || ALL_AGENTS_VALUE}
+            onValueChange={(value) => {
+              setAgentId(value === ALL_AGENTS_VALUE ? "" : value)
+              setPagination({ pageIndex: 0, pageSize: pagination.pageSize })
+            }}
+          >
+            <SelectTrigger className="w-[220px]">
+              <SelectValue placeholder="All agents" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={ALL_AGENTS_VALUE}>All agents</SelectItem>
+              {agents.map((agent) => (
+                <SelectItem key={agent.id} value={agent.id}>
+                  {agent.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
       />
     </div>
   )

@@ -51,6 +51,7 @@ interface DataTableProps<TData, TValue> {
   pageCount?: number
   pagination?: PaginationState
   onPaginationChange?: (pagination: PaginationState) => void
+  toolbarContent?: React.ReactNode
 }
 
 export function DataTable<TData, TValue>({
@@ -66,6 +67,7 @@ export function DataTable<TData, TValue>({
   pageCount,
   pagination,
   onPaginationChange,
+  toolbarContent,
 }: DataTableProps<TData, TValue>) {
   const [sorting, setSorting] = React.useState<SortingState>([])
   const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>([])
@@ -122,30 +124,34 @@ export function DataTable<TData, TValue>({
 
   return (
     <div className="w-full">
-      <div className="flex items-center py-4 gap-2">
-        <Input
-          placeholder={filterPlaceholder}
-          value={filterValue ?? ((table.getColumn(filterColumn)?.getFilterValue() as string) ?? "")}
-          onChange={(event) => {
-            if (onFilterChange) {
-              onFilterChange(event.target.value)
-              return
-            }
-            table.getColumn(filterColumn)?.setFilterValue(event.target.value)
-          }}
-          className="max-w-sm"
-        />
-        
-        {selectedIds.length > 0 && (
-          <Button variant="destructive" size="sm" onClick={handleBulkDelete}>
-            <Trash2 className="mr-2 h-4 w-4" />
-            Delete ({selectedIds.length})
-          </Button>
-        )}
+      <div className="flex flex-wrap items-center justify-between gap-3 py-4">
+        <div className="flex flex-1 flex-wrap items-center gap-2">
+          <Input
+            placeholder={filterPlaceholder}
+            value={filterValue ?? ((table.getColumn(filterColumn)?.getFilterValue() as string) ?? "")}
+            onChange={(event) => {
+              if (onFilterChange) {
+                onFilterChange(event.target.value)
+                return
+              }
+              table.getColumn(filterColumn)?.setFilterValue(event.target.value)
+            }}
+            className="max-w-sm"
+          />
+
+          {toolbarContent}
+
+          {selectedIds.length > 0 && (
+            <Button variant="destructive" size="sm" onClick={handleBulkDelete}>
+              <Trash2 className="mr-2 h-4 w-4" />
+              Delete ({selectedIds.length})
+            </Button>
+          )}
+        </div>
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="outline" className="ml-auto">
+            <Button variant="outline">
               Columns <ChevronDown className="ml-2 h-4 w-4" />
             </Button>
           </DropdownMenuTrigger>

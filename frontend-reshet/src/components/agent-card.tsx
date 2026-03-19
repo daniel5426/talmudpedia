@@ -126,16 +126,31 @@ export function AgentCard({ agent, metrics, onOpen, onRun, onDelete, onPlaygroun
                     {agent.description || "No description provided."}
                 </p>
                 {metrics ? (
-                    <div className="mt-4 flex flex-wrap gap-2 text-[11px]">
-                        <span className="rounded-full bg-muted px-2 py-1 text-muted-foreground">
-                            {metrics.threads} threads
-                        </span>
-                        <span className="rounded-full bg-muted px-2 py-1 text-muted-foreground">
-                            {metrics.runs} runs / 7d
-                        </span>
-                        <span className="rounded-full bg-muted px-2 py-1 text-muted-foreground">
-                            {metrics.failureRate.toFixed(1)}% fail
-                        </span>
+                    <div className="mt-5 grid grid-cols-3 gap-2 border-t border-border/60 pt-4">
+                        <div className="rounded-lg border border-border/60 bg-background/60 px-3 py-2">
+                            <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                                Threads
+                            </div>
+                            <div className="mt-1 text-lg font-semibold tabular-nums text-foreground">
+                                {metrics.threads.toLocaleString()}
+                            </div>
+                        </div>
+                        <div className="rounded-lg border border-border/60 bg-background/60 px-3 py-2">
+                            <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                                Runs 7d
+                            </div>
+                            <div className="mt-1 text-lg font-semibold tabular-nums text-foreground">
+                                {metrics.runs.toLocaleString()}
+                            </div>
+                        </div>
+                        <div className="rounded-lg border border-border/60 bg-background/60 px-3 py-2">
+                            <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                                Fail Rate
+                            </div>
+                            <div className="mt-1 text-lg font-semibold tabular-nums text-foreground">
+                                {metrics.failureRate.toFixed(1)}%
+                            </div>
+                        </div>
                     </div>
                 ) : null}
             </div>

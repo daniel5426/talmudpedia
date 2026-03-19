@@ -298,26 +298,6 @@ export function UsersTable({
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-2">
-        <Select
-          value={actorType || ALL_TYPES_VALUE}
-          onValueChange={(value) => {
-            setActorType(value === ALL_TYPES_VALUE ? "" : value)
-            setPagination({ pageIndex: 0, pageSize: pagination.pageSize })
-          }}
-        >
-          <SelectTrigger className="w-[220px]">
-            <SelectValue placeholder="All actor types" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value={ALL_TYPES_VALUE}>All actor types</SelectItem>
-            <SelectItem value="platform_user">Platform users</SelectItem>
-            <SelectItem value="published_app_account">App accounts</SelectItem>
-            <SelectItem value="embedded_external_user">Embedded users</SelectItem>
-          </SelectContent>
-        </Select>
-      </div>
-
       <DataTable
         columns={columns}
         data={users}
@@ -333,6 +313,25 @@ export function UsersTable({
           setSearch(value)
           setPagination({ pageIndex: 0, pageSize: pagination.pageSize })
         }}
+        toolbarContent={(
+          <Select
+            value={actorType || ALL_TYPES_VALUE}
+            onValueChange={(value) => {
+              setActorType(value === ALL_TYPES_VALUE ? "" : value)
+              setPagination({ pageIndex: 0, pageSize: pagination.pageSize })
+            }}
+          >
+            <SelectTrigger className="w-[220px]">
+              <SelectValue placeholder="All actor types" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={ALL_TYPES_VALUE}>All actor types</SelectItem>
+              <SelectItem value="platform_user">Platform users</SelectItem>
+              <SelectItem value="published_app_account">App accounts</SelectItem>
+              <SelectItem value="embedded_external_user">Embedded users</SelectItem>
+            </SelectContent>
+          </Select>
+        )}
       />
 
       <Dialog open={isEditOpen} onOpenChange={setIsEditOpen}>
