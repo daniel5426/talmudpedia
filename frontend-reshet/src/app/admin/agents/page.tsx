@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import {
     Bot,
+    ChevronDown,
     Loader2,
     Plus,
     Search,
@@ -13,12 +14,18 @@ import {
 import { Button } from "@/components/ui/button"
 import { AdminPageHeader } from "@/components/admin/AdminPageHeader"
 import { Input } from "@/components/ui/input"
+import {
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuItem,
+    DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { CustomBreadcrumb } from "@/components/ui/custom-breadcrumb"
 import { Skeleton } from "@/components/ui/skeleton"
 import { agentService, adminService, Agent } from "@/services"
-import { AgentCard } from "@/components/agent-card"
+import { AgentCard, AGENT_METRIC_VARIANTS, type AgentMetricVariant } from "@/components/agent-card"
 import { CreateAgentDialog } from "@/components/agents/CreateAgentDialog"
 import {
     Dialog,
@@ -223,7 +230,8 @@ export default function AgentsPage() {
     const [isLoading, setIsLoading] = useState(true)
     const [error, setError] = useState<string | null>(null)
     const [searchQuery, setSearchQuery] = useState("")
-    const [agentMetrics, setAgentMetrics] = useState<Record<string, { threads: number; runs: number; failureRate: number }>>({})
+    const [agentMetrics, setAgentMetrics] = useState<Record<string, { threads: number; runs: number; failureRate: number; threadTrend: { date: string; value: number }[] }>>({})
+    const [metricVariant, setMetricVariant] = useState<AgentMetricVariant>("quiet-grid")
     const isCreateDialogOpen = searchParams.get("create") === "1"
     const isExportDialogOpen = searchParams.get("mode") === "export-tool"
 
@@ -239,12 +247,13 @@ export default function AgentsPage() {
                 adminService.getStatsSummary("agents", 7),
             ])
             setAgents(data.agents)
-            const nextMetrics: Record<string, { threads: number; runs: number; failureRate: number }> = {}
+            const nextMetrics: Record<string, { threads: number; runs: number; failureRate: number; threadTrend: { date: string; value: number }[] }> = {}
             for (const item of stats.agents?.agents || []) {
                 nextMetrics[item.id] = {
                     threads: item.thread_count,
                     runs: item.run_count,
                     failureRate: item.run_count > 0 ? (item.failed_count / item.run_count) * 100 : 0,
+                    threadTrend: item.threads_by_day || [],
                 }
             }
             setAgentMetrics(nextMetrics)
@@ -301,6 +310,26 @@ export default function AgentsPage() {
                     { label: "Agents", href: "/admin/agents", active: true },
                 ]} />
                 <div className="flex items-center gap-2">
+                    <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                            <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-8 gap-1.5"
+                                disabled={isLoading}
+                            >
+                                {AGENT_METRIC_VARIANTS.find((item) => item.id === metricVariant)?.label || "Metric Style"}
+                                <ChevronDown className="h-3.5 w-3.5" />
+                            </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                            {AGENT_METRIC_VARIANTS.map((item) => (
+                                <DropdownMenuItem key={item.id} onClick={() => setMetricVariant(item.id)}>
+                                    {item.label}
+                                </DropdownMenuItem>
+                            ))}
+                        </DropdownMenuContent>
+                    </DropdownMenu>
                     <div className="relative w-64">
                         <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/60" />
                         <Input
@@ -382,6 +411,7 @@ export default function AgentsPage() {
                                 key={agent.id}
                                 agent={agent}
                                 metrics={agentMetrics[agent.id]}
+                                metricVariant={metricVariant}
                                 onOpen={(a) => router.push(`/admin/agents/${a.id}/builder`)}
                                 onPlayground={(a) => router.push(`/admin/agents/playground?agentId=${a.id}`)}
                                 onDelete={handleDelete}

@@ -696,6 +696,29 @@ async def get_agent_stats(
     if agent_id:
         q_agents = q_agents.where(Agent.id == agent_id)
     agents_result = await db.execute(q_agents)
+
+    q_daily_threads = (
+        select(
+            AgentThread.agent_id.label("agent_id"),
+            func.date(AgentThread.created_at).label("date"),
+            func.count(AgentThread.id).label("value"),
+        )
+        .where(and_(
+            AgentThread.tenant_id == tenant_id,
+            AgentThread.created_at >= start,
+            AgentThread.created_at <= end,
+            AgentThread.agent_id.is_not(None),
+        ))
+        .group_by(AgentThread.agent_id, func.date(AgentThread.created_at))
+        .order_by(AgentThread.agent_id, func.date(AgentThread.created_at))
+    )
+    if agent_id:
+        q_daily_threads = q_daily_threads.where(AgentThread.agent_id == agent_id)
+    daily_threads_result = await db.execute(q_daily_threads)
+    thread_maps_by_agent: dict[str, dict[str, float]] = {}
+    for row in daily_threads_result.all():
+        agent_key = str(row.agent_id)
+        thread_maps_by_agent.setdefault(agent_key, {})[normalize_grouped_date(row.date)] = float(row.value)
     
     agents = []
     for agent, thread_count, run_count, failed_count, last_run_at, avg_duration_sec in agents_result.all():
@@ -705,6 +728,7 @@ async def get_agent_stats(
             slug=agent.slug,
             status=agent.status.value if agent.status else "unknown",
             thread_count=int(thread_count or 0),
+            threads_by_day=fill_daily_data(thread_maps_by_agent.get(str(agent.id), {}), start, end),
             run_count=run_count or 0,
             failed_count=failed_count or 0,
             last_run_at=last_run_at,

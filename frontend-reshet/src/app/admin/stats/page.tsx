@@ -565,6 +565,23 @@ export default function AdminStatsPage() {
           <span className="font-medium">Stats</span>
         </div>
         <div className="flex items-center gap-2">
+          <Select
+            value={selectedAgentId || "__all_agents__"}
+            onValueChange={(value) => setSelectedAgentId(value === "__all_agents__" ? "" : value)}
+          >
+            <SelectTrigger className="h-8 w-[220px]">
+              <SelectValue placeholder="All agents" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all_agents__">All agents</SelectItem>
+              {agentOptions.map((agent) => (
+                <SelectItem key={agent.id} value={agent.id}>
+                  {agent.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
           <div className="flex border rounded-md overflow-hidden">
             <button
               onClick={() => usePreset(7)}
@@ -601,28 +618,11 @@ export default function AdminStatsPage() {
             </button>
           </div>
 
-          <Select
-            value={selectedAgentId || "__all_agents__"}
-            onValueChange={(value) => setSelectedAgentId(value === "__all_agents__" ? "" : value)}
-          >
-            <SelectTrigger className="w-[220px]">
-              <SelectValue placeholder="All agents" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__all_agents__">All agents</SelectItem>
-              {agentOptions.map((agent) => (
-                <SelectItem key={agent.id} value={agent.id}>
-                  {agent.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-
           <div className="relative" ref={datePopoverRef}>
             <button
               onClick={() => setIsDateOpen(!isDateOpen)}
               className={cn(
-                "flex items-center gap-1.5 border rounded-md px-2.5 py-1.5 text-xs transition-colors",
+                "flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-xs transition-colors",
                 appliedRange
                   ? "border-primary/40 bg-primary-soft text-foreground font-medium"
                   : "text-muted-foreground hover:bg-muted/50"
@@ -673,7 +673,7 @@ export default function AdminStatsPage() {
             )}
           </div>
 
-          <Button variant="outline" size="sm" className="h-8 gap-2 text-xs">
+          <Button variant="outline" size="sm" className="h-8 gap-2 px-2.5 text-xs">
             <Download className="h-3.5 w-3.5" />
             Export
           </Button>

@@ -203,6 +203,7 @@ class AgentSummary(BaseModel):
     slug: str
     status: str
     thread_count: int
+    threads_by_day: list[DailyDataPoint]
     run_count: int
     failed_count: int
     last_run_at: Optional[datetime]

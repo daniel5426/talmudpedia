@@ -6,6 +6,7 @@ const pushMock = jest.fn()
 const replaceMock = jest.fn()
 const listAgentsMock = jest.fn()
 const exportAgentToolMock = jest.fn()
+const getStatsSummaryMock = jest.fn()
 
 const searchParamsState = { mode: "export-tool" as string | null }
 
@@ -29,6 +30,9 @@ jest.mock("@/services", () => ({
     listAgents: (...args: unknown[]) => listAgentsMock(...args),
     exportAgentTool: (...args: unknown[]) => exportAgentToolMock(...args),
   },
+  adminService: {
+    getStatsSummary: (...args: unknown[]) => getStatsSummaryMock(...args),
+  },
 }))
 
 describe("agents page export tool flow", () => {
@@ -50,6 +54,11 @@ describe("agents page export tool flow", () => {
         },
       ],
       total: 1,
+    })
+    getStatsSummaryMock.mockResolvedValue({
+      agents: {
+        agents: [],
+      },
     })
     exportAgentToolMock.mockResolvedValue({
       tool_id: "tool-1",

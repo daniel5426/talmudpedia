@@ -6,6 +6,7 @@ const pushMock = jest.fn()
 const replaceMock = jest.fn()
 const listAgentsMock = jest.fn()
 const deleteAgentMock = jest.fn()
+const getStatsSummaryMock = jest.fn()
 const clipboardWriteTextMock = jest.fn()
 
 jest.mock("next/navigation", () => ({
@@ -40,6 +41,9 @@ jest.mock("@/services", () => ({
     listAgents: (...args: unknown[]) => listAgentsMock(...args),
     deleteAgent: (...args: unknown[]) => deleteAgentMock(...args),
   },
+  adminService: {
+    getStatsSummary: (...args: unknown[]) => getStatsSummaryMock(...args),
+  },
 }))
 
 describe("agents page delete action", () => {
@@ -64,6 +68,11 @@ describe("agents page delete action", () => {
         },
       ],
       total: 1,
+    })
+    getStatsSummaryMock.mockResolvedValue({
+      agents: {
+        agents: [],
+      },
     })
     deleteAgentMock.mockResolvedValue({ success: true })
     clipboardWriteTextMock.mockResolvedValue(undefined)

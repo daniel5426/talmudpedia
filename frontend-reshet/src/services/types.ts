@@ -279,6 +279,7 @@ export interface AgentSummary {
   slug: string;
   status: string;
   thread_count: number;
+  threads_by_day: DailyDataPoint[];
   run_count: number;
   failed_count: number;
   last_run_at: string | null;
