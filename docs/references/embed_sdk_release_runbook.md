@@ -8,6 +8,7 @@ Use this when releasing `@agents24/embed-sdk`.
 
 1. Merge SDK changes to `main` with a releasable conventional commit, for example:
    - `fix(embed-sdk): add thread delete and turn run-events`
+   - `feat(embed-sdk): add runtime attachment support`
 2. Wait for `embed-sdk-release` to run.
 3. Confirm `release-please` creates or updates the release PR.
 4. Merge the release PR.
@@ -21,6 +22,8 @@ Use this when releasing `@agents24/embed-sdk`.
   - push to `main`
   - merge the release PR
 - A direct push to `main` does not publish the package by itself.
+- `embed-sdk-release` now runs only for embed-sdk related paths so unrelated `main` pushes do not create misleading successful no-op runs.
+- `embed-sdk-ci` fails fast when `packages/embed-sdk/**` changed but the PR title or merged `main` commit title is not `feat(embed-sdk): ...` or `fix(embed-sdk): ...`.
 
 ## npm Requirements
 
@@ -83,7 +86,7 @@ cat /Users/danielbenassaya/Code/personal/talmudpedia/packages/embed-sdk/package.
 
 Fix:
 - enable PR creation in repo settings
-- push a conventional commit such as `fix(embed-sdk): ...`
+- push or squash-merge with a title such as `fix(embed-sdk): ...` or `feat(embed-sdk): ...`
 
 ### Local publish fails with provenance error
 
