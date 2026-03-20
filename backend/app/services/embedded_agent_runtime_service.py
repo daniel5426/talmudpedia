@@ -126,10 +126,6 @@ async def list_public_run_events(*, db: AsyncSession, run_id: UUID) -> list[dict
         event_name = str(raw_event.get("event") or "").strip()
         if not event_name:
             continue
-        if event_name == "assistant.ui":
-            data = raw_event.get("data") if isinstance(raw_event.get("data"), dict) else {}
-            if not bool(data.get("is_final")):
-                continue
         is_allowed = (
             StreamAdapter._is_client_safe(raw_event.get("visibility"))
             or event_name in StreamAdapter._TOOL_LIFECYCLE_EVENTS

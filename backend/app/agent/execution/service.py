@@ -167,33 +167,6 @@ class AgentExecutorService:
 
     @staticmethod
     def _extract_turn_metadata(output_result: Dict[str, Any] | None) -> Dict[str, Any] | None:
-        ui_output = AgentExecutorService._extract_ui_output(output_result)
-        if not isinstance(ui_output, dict):
-            return None
-        if str(ui_output.get("format") or "").strip().lower() != "openui":
-            return None
-        return {
-            "assistant_ui_format": "openui",
-            "assistant_ui_component_library_id": ui_output.get("component_library_id"),
-            "assistant_ui_surface": ui_output.get("surface"),
-        }
-
-    @staticmethod
-    def _extract_ui_output(output_result: Dict[str, Any] | None) -> Dict[str, Any] | None:
-        if not isinstance(output_result, dict):
-            return None
-        top_level = output_result.get("ui_output")
-        if isinstance(top_level, dict):
-            return top_level
-        node_outputs = output_result.get("_node_outputs")
-        if not isinstance(node_outputs, dict):
-            return None
-        for value in node_outputs.values():
-            if not isinstance(value, dict):
-                continue
-            nested_ui = value.get("ui_output")
-            if isinstance(nested_ui, dict):
-                return nested_ui
         return None
 
     @staticmethod

@@ -1,6 +1,6 @@
 # Embedded Agent Runtime Spec
 
-Last Updated: 2026-03-19
+Last Updated: 2026-03-20
 
 This document defines the canonical v1 external embed/plugin contract for published agents used inside customer-owned applications.
 
@@ -174,31 +174,6 @@ The SDK does not currently expose:
 - retry, timeout, or abort controls
 - control-plane/admin operations
 
-## OpenUI Events
-
-The public embed runtime supports replayable OpenUI responses through the normal stream/history contract.
-
-- event name: `assistant.ui`
-- stage: `assistant`
-- delivery: live SSE stream and historical `turns[].run_events`
-
-Current payload fields:
-
-- `format` (`openui`)
-- `version`
-- `content`
-- `content_delta`
-- `ast`
-- `component_library_id`
-- `surface`
-- `is_final`
-
-Current production authoring path:
-
-- agent nodes can enable `generative_ui_mode = openui`
-- the runtime injects the OpenUI instructions automatically
-- the runtime emits replayable `assistant.ui` events
-
 ## Thread Detail Contract Boundary
 
 `GET /public/embed/agents/{agent_id}/threads/{thread_id}` returns thread summary plus persisted turns.
@@ -223,7 +198,7 @@ Important boundary:
 - `run_id` is exposed on turns
 - `run_events` provides ordered historical non-text public run events for that turn
 - these events are returned in `run-stream.v2` envelope shape
-- this is intended for replaying tool, reasoning, and widget history on old chats without bypassing the embed contract
+- this is intended for replaying tool and reasoning history on old chats without bypassing the embed contract
 - final assistant text still comes from `assistant_output_text`, not token replay
 
 ## Canonical Implementation References

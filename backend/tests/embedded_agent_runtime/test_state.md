@@ -13,10 +13,7 @@ Key scenarios covered:
 - Published agents stream successfully through `/public/embed/agents/{agent_id}/chat/stream`.
 - Stream responses emit `run-stream.v2` envelopes and `X-Thread-ID`.
 - Embedded runtime persists thread ownership and exposes scoped thread history.
-- Thread detail returns per-turn historical `run_events` for replaying old tool/reasoning/OpenUI UI.
-- Nested node `ui_output` is promoted into turn metadata so OpenUI chats replay as UI, not plain text.
-- OpenUI sanitizer reorders `root = ...` to the first statement to match the parser's actual root-selection behavior.
-- OpenUI completeness detection rejects truncated programs before they are treated as valid final UI.
+- Thread detail returns per-turn historical `run_events` for replaying old tool/reasoning activity.
 - Embedded runtime supports scoped thread deletion through the public embed surface.
 - Attachment upload works through the public embed surface and attachment metadata is returned on thread turns.
 - Document attachments are processed before execution and thread deletion removes stored attachment bytes.

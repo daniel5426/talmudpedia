@@ -16,7 +16,6 @@ from app.db.postgres.models.runtime_attachments import (
     RuntimeAttachment,
     RuntimeAttachmentStatus,
 )
-from app.services.openui_support import is_openui_content_complete, sanitize_openui_content
 from app.services.tenant_api_key_service import TenantAPIKeyService
 from tests.published_apps._helpers import seed_admin_tenant_and_agent
 
@@ -189,39 +188,6 @@ async def test_embedded_agent_thread_detail_includes_run_events_and_delete_route
             },
         },
     )
-    await recorder.save_event(
-        run_id,
-        db_session,
-        {
-            "event": "assistant.ui",
-            "visibility": "client_safe",
-            "data": {
-                "format": "openui",
-                "component_library_id": "openui-default-v1",
-                "surface": "chat_inline",
-                "content_delta": "root = Card([TextContent(\"Loading\")])",
-                "is_final": False,
-                "version": 1,
-            },
-        },
-    )
-    await recorder.save_event(
-        run_id,
-        db_session,
-        {
-            "event": "assistant.ui",
-            "visibility": "client_safe",
-            "data": {
-                "format": "openui",
-                "component_library_id": "openui-default-v1",
-                "surface": "chat_inline",
-                "content": "root = Card([TextContent(\"Bank concentration\")])",
-                "ast": None,
-                "is_final": True,
-                "version": 1,
-            },
-        },
-    )
     await db_session.commit()
 
     detail_resp = await client.get(
@@ -240,13 +206,8 @@ async def test_embedded_agent_thread_detail_includes_run_events_and_delete_route
         "reasoning.update",
         "tool.completed",
         "reasoning.update",
-        "assistant.ui",
     ]
-    assert [item["run_id"] for item in turn["run_events"]] == [str(run_id)] * 5
-    ui_event = turn["run_events"][-1]
-    assert ui_event["payload"]["format"] == "openui"
-    assert ui_event["payload"]["component_library_id"] == "openui-default-v1"
-    assert ui_event["payload"]["content"] == 'root = Card([TextContent("Bank concentration")])'
+    assert [item["run_id"] for item in turn["run_events"]] == [str(run_id)] * 4
 
     delete_resp = await client.delete(
         f"/public/embed/agents/{agent.id}/threads/{thread_id}",
@@ -454,53 +415,5 @@ async def test_embedded_agent_attachment_upload_processing_and_delete_cleanup(
     assert not storage_path.exists()
 
 
-def test_openui_sanitizer_moves_root_statement_to_the_top():
-    source = """header = CardHeader("Bank concentration", "Atlas Medical")
-chart = PieChart([slice1], "donut")
-slice1 = Slice("Bank A", 44.3)
-root = Card([header, chart])"""
-
-    sanitized = sanitize_openui_content(source)
-    lines = sanitized.splitlines()
-
-    assert lines[0] == 'root = Card([header, chart])'
-    assert 'header = CardHeader("Bank concentration", "Atlas Medical")' in sanitized
-    assert 'chart = PieChart([slice1], "donut")' in sanitized
-
-
-def test_openui_completeness_detector_rejects_truncated_program():
-    incomplete = """root = Card([header, chart])
-header = CardHeader("Bank concentration", "Atlas Medical")
-chart = PieChart([slice1, slice2], "donut")
-slice1 = Slice("Bank A", 44.3"""
-    complete = """root = Card([header, chart])
-header = CardHeader("Bank concentration", "Atlas Medical")
-chart = PieChart([slice1, slice2], "donut")
-slice1 = Slice("Bank A", 44.3)
-slice2 = Slice("Bank B", 24.1)"""
-
-    assert is_openui_content_complete(incomplete) is False
-    assert is_openui_content_complete(complete) is True
-
-
-def test_extract_turn_metadata_reads_nested_openui_output():
-    output_result = {
-        "_node_outputs": {
-            "prico_agent": {
-                "ui_output": {
-                    "format": "openui",
-                    "component_library_id": "openui-default-v1",
-                    "surface": "chat_inline",
-                    "content": 'root = Card([TextContent("hi")])',
-                }
-            }
-        }
-    }
-
-    metadata = AgentExecutorService._extract_turn_metadata(output_result)
-
-    assert metadata == {
-        "assistant_ui_format": "openui",
-        "assistant_ui_component_library_id": "openui-default-v1",
-        "assistant_ui_surface": "chat_inline",
-    }
+def test_extract_turn_metadata_returns_none_without_ui_metadata():
+    assert AgentExecutorService._extract_turn_metadata({"messages": []}) is None

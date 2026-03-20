@@ -19,7 +19,6 @@ Covers end-to-end agent tool-call execution flows for built-in tools through the
 - Production stream includes internal tool lifecycle events (`on_tool_start`/`on_tool_end`) and synthesized reasoning events.
 - Debug stream error path emits a terminal `tool.failed` event and marks the synthesized reasoning step as `failed` without inventing a successful completion.
 - Parallel-safe multi-tool calls emit reasoning steps per tool call with consistent per-step lifecycle states.
-- OpenUI agent mode emits `assistant.ui` deltas during generation before the final full OpenUI snapshot and terminal run completion.
 - Multiple agents with web-search/retrieval/mixed tools execute in production mode, with assertions for correct tool invocation and reasoning lifecycle per run.
 - API-level execution-panel parity tests (`/agents/{id}/stream?mode=debug`) cover the simplest user path (`gpt-5.2` + web search tool + user message), including:
   - successful call path with emitted tool lifecycle/reasoning events
@@ -41,9 +40,6 @@ Covers end-to-end agent tool-call execution flows for built-in tools through the
 - Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/agent_tool_usecases`
 - Date/Time: 2026-03-20 Asia/Hebron
 - Result: pass (`11 passed`)
-- Command: `PYTHONPATH=/Users/danielbenassaya/Code/personal/talmudpedia/backend python3 -m pytest -q backend/tests/agent_tool_usecases/test_agent_tool_reasoning_stream.py -k 'openui_mode_streams_ui_deltas_before_final_completion or tool_error_emits_failed_terminal_tool_event'`
-- Date/Time: 2026-03-20 18:34 Asia/Hebron
-- Result: pass (`2 passed, 4 deselected`)
 
 ## Manual Real-Provider Validation (No Mocks)
 - Date/Time: 2026-02-12 01:18 EET

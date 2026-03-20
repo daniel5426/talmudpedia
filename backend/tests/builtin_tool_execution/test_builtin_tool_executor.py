@@ -42,7 +42,7 @@ def _make_tool(
     )
 
 
-def test_openui_hard_cut_removes_widget_builtin_templates():
+def test_hard_cut_removes_widget_builtin_templates():
     assert "emit_widget" not in BUILTIN_TEMPLATE_MAP
 
 

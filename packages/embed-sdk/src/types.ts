@@ -67,17 +67,6 @@ export type EmbeddedAgentRuntimeDiagnostic = {
   message?: string;
 } & Record<string, unknown>;
 
-export type EmbeddedAgentUiPayload = {
-  format: "openui";
-  version: 1;
-  content?: string | null;
-  content_delta?: string | null;
-  ast?: Record<string, unknown> | null;
-  component_library_id?: string | null;
-  surface?: "chat_inline" | "app_canvas" | string | null;
-  is_final?: boolean;
-};
-
 type EmbeddedAgentRuntimeEventBase = {
   version: "run-stream.v2";
   seq: number;
@@ -89,18 +78,7 @@ type EmbeddedAgentRuntimeEventBase = {
   diagnostics: EmbeddedAgentRuntimeDiagnostic[];
 };
 
-export type EmbeddedAgentUiRuntimeEvent = Omit<
-  EmbeddedAgentRuntimeEventBase,
-  "event" | "stage" | "payload"
-> & {
-  event: "assistant.ui";
-  stage: "assistant";
-  payload: EmbeddedAgentUiPayload;
-};
-
-export type EmbeddedAgentRuntimeEvent =
-  | EmbeddedAgentUiRuntimeEvent
-  | EmbeddedAgentRuntimeEventBase;
+export type EmbeddedAgentRuntimeEvent = EmbeddedAgentRuntimeEventBase;
 
 export type StreamAgentResult = {
   threadId: string | null;

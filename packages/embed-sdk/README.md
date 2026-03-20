@@ -1,6 +1,6 @@
 # `@agents24/embed-sdk`
 
-Last Updated: 2026-03-19
+Last Updated: 2026-03-20
 
 `@agents24/embed-sdk` is the canonical server-only TypeScript SDK for Talmudpedia embedded-agent runtime.
 
@@ -169,23 +169,7 @@ Returned turn shape includes:
 - `completed_at`
 - `run_events`
 
-`run_events` contains ordered historical non-text `run-stream.v2` events for that turn, intended for replaying tool, reasoning, and OpenUI UI on old chats.
-
-Current generative UI event:
-
-- `assistant.ui`
-- current platform generative UI mode is OpenUI
-
-Current `assistant.ui` payload fields:
-
-- `format`
-- `version`
-- `content`
-- `content_delta`
-- `ast`
-- `component_library_id`
-- `surface`
-- `is_final`
+`run_events` contains ordered historical non-text `run-stream.v2` events for that turn, intended for replaying tool and reasoning activity on old chats.
 
 ### `deleteAgentThread(agentId, threadId, options)`
 

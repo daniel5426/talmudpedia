@@ -134,23 +134,6 @@ def normalize_filtered_event_to_v2(
             [{"message": str(err)}],
         )
 
-    if event_name == "assistant.ui":
-        return (
-            "assistant.ui",
-            "assistant",
-            {
-                "format": data.get("format") or "openui",
-                "version": data.get("version") or 1,
-                "content": data.get("content"),
-                "content_delta": data.get("content_delta"),
-                "ast": data.get("ast"),
-                "component_library_id": data.get("component_library_id"),
-                "surface": data.get("surface"),
-                "is_final": bool(data.get("is_final")),
-            },
-            [],
-        )
-
     if event_type == "reasoning":
         return "reasoning.update", "reasoning", dict(data or {}), []
 

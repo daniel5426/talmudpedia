@@ -19,14 +19,6 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Base
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field, create_model
 from app.services.model_resolver import ModelResolver
-from app.services.openui_support import (
-    OpenUIRuntimeConfig,
-    build_openui_payload,
-    build_openui_system_prompt,
-    is_openui_content_complete,
-    resolve_openui_runtime_config,
-    sanitize_openui_content,
-)
 from app.agent.core.llm_adapter import LLMProviderAdapter
 from app.agent.cel_engine import evaluate_template
 from app.services.prompt_reference_resolver import PromptReferenceResolver
@@ -1247,17 +1239,12 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
         emitter: Any,
         node_id: str,
         has_tool_signals: bool,
-        ui_mode: str,
     ) -> tuple[str, Optional[BaseMessage]]:
         if str(full_content).strip() or has_tool_signals:
             return full_content, last_message
 
         try:
-            fallback_instruction = (
-                "Respond using OpenUI Lang only. Do not call tools."
-                if ui_mode == "openui"
-                else "Respond to the user directly in plain text. Do not call tools. Keep it concise."
-            )
+            fallback_instruction = "Respond to the user directly in plain text. Do not call tools. Keep it concise."
             fallback_response = await adapter.ainvoke(
                 [
                     *conversation_messages,
@@ -1272,108 +1259,13 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
             )
             fallback_text = self._coerce_text_content(getattr(fallback_response, "content", ""))
             if fallback_text.strip():
-                if emitter and ui_mode != "openui":
+                if emitter:
                     emitter.emit_token(fallback_text, node_id)
                 return fallback_text, fallback_response
             return full_content, fallback_response
         except Exception as exc:
             logger.warning(f"Fallback text response generation failed: {exc}")
             return full_content, last_message
-
-    async def _repair_openui_response(
-        self,
-        *,
-        adapter: LLMProviderAdapter,
-        full_content: str,
-        conversation_messages: List[BaseMessage],
-        instructions: str,
-        temperature: float,
-        max_tokens: int,
-    ) -> str:
-        normalized = sanitize_openui_content(full_content)
-        if is_openui_content_complete(normalized):
-            return normalized
-
-        try:
-            fallback_response = await adapter.ainvoke(
-                [
-                    *conversation_messages,
-                    HumanMessage(
-                        content="Your previous OpenUI response was incomplete. Regenerate the full OpenUI Lang response from the beginning. Do not call tools.",
-                    ),
-                ],
-                system_prompt=instructions,
-                tools=None,
-                temperature=temperature,
-                max_tokens=max_tokens,
-            )
-            fallback_text = sanitize_openui_content(
-                self._coerce_text_content(getattr(fallback_response, "content", ""))
-            )
-            if is_openui_content_complete(fallback_text):
-                return fallback_text
-        except Exception as exc:
-            logger.warning(f"OpenUI repair generation failed: {exc}")
-
-        return normalized
-
-    def _emit_openui_delta(
-        self,
-        *,
-        emitter: Any,
-        node_id: str,
-        runtime_config: OpenUIRuntimeConfig,
-        chunk_text: str,
-    ) -> None:
-        if not emitter or not str(chunk_text or ""):
-            return
-        emitter.emit_internal_event(
-            "assistant.ui",
-            build_openui_payload(
-                content_delta=str(chunk_text),
-                runtime_config=runtime_config,
-                is_final=False,
-            ),
-            node_id=node_id,
-            category="generative_ui",
-            visibility=EventVisibility.CLIENT_SAFE,
-        )
-
-    def _flush_openui_statement_deltas(
-        self,
-        *,
-        emitter: Any,
-        node_id: str,
-        runtime_config: OpenUIRuntimeConfig,
-        pending_buffer: str,
-        force: bool = False,
-    ) -> str:
-        if not pending_buffer:
-            return ""
-
-        if force:
-            self._emit_openui_delta(
-                emitter=emitter,
-                node_id=node_id,
-                runtime_config=runtime_config,
-                chunk_text=pending_buffer,
-            )
-            return ""
-
-        last_newline = pending_buffer.rfind("\n")
-        if last_newline == -1:
-            return pending_buffer
-
-        ready = pending_buffer[: last_newline + 1]
-        remainder = pending_buffer[last_newline + 1 :]
-        if ready:
-            self._emit_openui_delta(
-                emitter=emitter,
-                node_id=node_id,
-                runtime_config=runtime_config,
-                chunk_text=ready,
-            )
-        return remainder
 
     async def execute(self, state: Dict[str, Any], config: Dict[str, Any], context: Dict[str, Any] = None) -> Dict[str, Any]:
         logger.debug(f"Executing Agent (Reasoning) node")
@@ -1440,12 +1332,6 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
             except Exception as e:
                 logger.warning(f"Failed to interpolate instructions: {e}")
 
-        openui_config = resolve_openui_runtime_config(config)
-        instructions = build_openui_system_prompt(
-            base_instructions=instructions,
-            runtime_config=openui_config,
-        )
-        
         # Execute
         try:
             adapter = LLMProviderAdapter(provider)
@@ -1456,7 +1342,6 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
                     "reasoning_effort": reasoning_effort,
                     "tools_count": len(tools),
                     "tool_execution_mode": tool_execution_mode,
-                    "generative_ui_mode": openui_config.mode,
                 })
 
             tool_records = await self._load_tool_records(tools)
@@ -1479,7 +1364,6 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
                 tool_call_buffers: Dict[str, Dict[str, Any]] = {}
                 tool_call_order: List[str] = []
                 last_message: Optional[BaseMessage] = None
-                pending_openui_delta = ""
 
                 # Stream tokens and buffer tool call chunks
                 try:
@@ -1496,15 +1380,7 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
                         token_content = chunk.message.content if hasattr(chunk, "message") else ""
                         if token_content:
                             full_content += token_content
-                            if openui_config.enabled:
-                                pending_openui_delta += token_content
-                                pending_openui_delta = self._flush_openui_statement_deltas(
-                                    emitter=emitter,
-                                    node_id=node_id,
-                                    runtime_config=openui_config,
-                                    pending_buffer=pending_openui_delta,
-                                )
-                            elif emitter:
+                            if emitter:
                                 emitter.emit_token(token_content, node_id)
                 except (NotImplementedError, Exception) as e:
                     logger.warning(f"Streaming failed/unsupported: {e}, using non-streaming")
@@ -1516,7 +1392,7 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
                         max_tokens=max_tokens,
                     )
                     full_content = response.content
-                    if not openui_config.enabled and emitter:
+                    if emitter:
                         emitter.emit_token(full_content, node_id)
                     last_message = response
 
@@ -1534,28 +1410,10 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
                     emitter=emitter,
                     node_id=node_id,
                     has_tool_signals=has_tool_signals,
-                    ui_mode=openui_config.mode,
                 )
 
                 if emitter:
                     emitter.emit_node_end(node_id, node_name, "agent", {"content_length": len(full_content)})
-
-                if openui_config.enabled:
-                    full_content = await self._repair_openui_response(
-                        adapter=adapter,
-                        full_content=full_content,
-                        conversation_messages=conversation_messages,
-                        instructions=instructions,
-                        temperature=temperature,
-                        max_tokens=max_tokens,
-                    )
-                    pending_openui_delta = self._flush_openui_statement_deltas(
-                        emitter=emitter,
-                        node_id=node_id,
-                        runtime_config=openui_config,
-                        pending_buffer=pending_openui_delta,
-                        force=True,
-                    )
 
                 # Handle structured output
                 result_content: Any = full_content
@@ -1638,18 +1496,6 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
                 conversation_messages.append(ai_message)
 
                 if not tool_calls:
-                    if openui_config.enabled and emitter and full_content.strip():
-                        emitter.emit_internal_event(
-                            "assistant.ui",
-                            build_openui_payload(
-                                content=str(full_content),
-                                runtime_config=openui_config,
-                                is_final=True,
-                            ),
-                            node_id=node_id,
-                            category="generative_ui",
-                            visibility=EventVisibility.CLIENT_SAFE,
-                        )
                     state_update = {
                         "messages": emitted_messages,
                         "state": {
@@ -1663,12 +1509,6 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
                         state_update["context"] = last_context
                     elif config.get("write_output_to_context") and isinstance(result_content, dict):
                         state_update["context"] = result_content
-                    if openui_config.enabled and full_content.strip():
-                        state_update["ui_output"] = build_openui_payload(
-                            content=str(full_content),
-                            runtime_config=openui_config,
-                            is_final=True,
-                        )
                     return state_update
 
                 resolved_calls: List[Dict[str, Any]] = []
@@ -1911,10 +1751,6 @@ def register_standard_operators():
                 "include_chat_history": {"type": "boolean", "title": "Include Chat History", "default": True},
                 "reasoning_effort": {"type": "string", "title": "Reasoning Effort", "enum": ["low", "medium", "high"]},
                 "output_format": {"type": "string", "title": "Output Format", "enum": ["text", "json"]},
-                "generative_ui_mode": {"type": "string", "title": "Generative UI", "enum": ["off", "openui"], "default": "off"},
-                "generative_ui_component_library_id": {"type": "string", "title": "OpenUI Component Library", "default": "openui-default-v1"},
-                "generative_ui_surface": {"type": "string", "title": "OpenUI Surface", "enum": ["chat_inline", "app_canvas"], "default": "chat_inline"},
-                "generative_ui_max_blocks": {"type": "number", "title": "OpenUI Max Blocks", "default": 6},
                 "tools": {"type": "array", "items": {"type": "string"}, "title": "Tools"},
                 "tool_execution_mode": {"type": "string", "title": "Tool Execution Mode", "enum": ["sequential", "parallel_safe"], "default": "sequential"},
                 "max_parallel_tools": {"type": "number", "title": "Max Parallel Tools", "default": 4},
@@ -1944,24 +1780,6 @@ def register_standard_operators():
                     {"value": "text", "label": "Text"},
                     {"value": "json", "label": "JSON"}
                  ]},
-                {"name": "generative_ui_mode", "label": "Generative UI", "fieldType": "select", "required": False, "default": "off",
-                 "options": [
-                    {"value": "off", "label": "Off"},
-                    {"value": "openui", "label": "OpenUI"}
-                 ]},
-                {"name": "generative_ui_component_library_id", "label": "OpenUI Library", "fieldType": "select", "required": False, "default": "openui-default-v1",
-                 "dependsOn": {"field": "generative_ui_mode", "equals": "openui"},
-                 "options": [
-                    {"value": "openui-default-v1", "label": "Default V1"}
-                 ]},
-                {"name": "generative_ui_surface", "label": "OpenUI Surface", "fieldType": "select", "required": False, "default": "chat_inline",
-                 "dependsOn": {"field": "generative_ui_mode", "equals": "openui"},
-                 "options": [
-                    {"value": "chat_inline", "label": "Chat Inline"},
-                    {"value": "app_canvas", "label": "App Canvas"}
-                 ]},
-                {"name": "generative_ui_max_blocks", "label": "OpenUI Max Blocks", "fieldType": "number", "required": False, "default": 6,
-                 "dependsOn": {"field": "generative_ui_mode", "equals": "openui"}},
                 {"name": "tools", "label": "Tools", "fieldType": "tool_list", "required": False, "description": "Attach tools to the agent"},
                 {"name": "temperature", "label": "Temperature", "fieldType": "number", "required": False, "description": "Override reasoning effort temperature"},
                 {"name": "tool_execution_mode", "label": "Tool Execution Mode", "fieldType": "select", "required": False, "default": "sequential",

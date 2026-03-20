@@ -38,7 +38,6 @@ import { cn } from "@/lib/utils";
 
 import { BotInputArea } from "./bot-input-area";
 import { useLocale } from "./locale-context";
-import { AssistantOpenUiBlock } from "./openui-block";
 import type {
   ComposerSubmitPayload,
   TemplateAttachment,
@@ -112,7 +111,7 @@ function taskTone(status: TemplateTaskBlock["status"]) {
   return "text-muted-foreground";
 }
 
-function renderBlock(block: TemplateRenderBlock, isStreaming: boolean) {
+function renderBlock(block: TemplateRenderBlock) {
   if (block.kind === "text") {
     return <MessageResponse key={block.id}>{block.content}</MessageResponse>;
   }
@@ -133,10 +132,6 @@ function renderBlock(block: TemplateRenderBlock, isStreaming: boolean) {
         </div>
       </Task>
     );
-  }
-
-  if (block.kind === "ui") {
-    return <AssistantOpenUiBlock key={block.id} block={block} isStreaming={isStreaming} />;
   }
 
   return (
@@ -226,7 +221,7 @@ export function ChatTimeline({
                 </>
               ) : (
                 <>
-                  {message.blocks?.map((block) => renderBlock(block, message.runStatus !== "completed"))}
+                  {message.blocks?.map((block) => renderBlock(block))}
                   {message.runStatus && message.runStatus !== "completed" && !message.plainText && !(message.blocks?.length) ? (
                     <div className="px-1 py-1 text-[0.90rem] text-muted-foreground">
                       <Shimmer>{locale === "he" ? "חושב..." : "Thinking..."}</Shimmer>

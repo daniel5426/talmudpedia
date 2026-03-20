@@ -10,7 +10,6 @@ import type {
   TemplateRenderBlock,
   TemplateTextBlock,
   TemplateThread,
-  TemplateUiBlock,
 } from "./types";
 
 const FALLBACK_PREVIEW = "Start a new conversation.";
@@ -97,21 +96,18 @@ export function mapThreadDetail(detail: AgentThreadDetailDto): TemplateThread {
       for (const event of turn.run_events || []) {
         blocks = applyRuntimeEvent(blocks, event);
       }
-      const isOpenUiTurn = String(turn.metadata?.assistant_ui_format || "").trim().toLowerCase() === "openui";
-      const textBlock: TemplateTextBlock | null = isOpenUiTurn
-        ? null
-        : {
-            id: `${turn.id}-assistant-text`,
-            kind: "text",
-            content: turn.assistant_output_text,
-          };
+      const textBlock: TemplateTextBlock = {
+        id: `${turn.id}-assistant-text`,
+        kind: "text",
+        content: turn.assistant_output_text,
+      };
       messages.push({
         id: `${turn.id}-assistant`,
         role: "assistant",
         createdAt: turn.completed_at || turn.created_at,
         runStatus: "completed",
-        text: isOpenUiTurn ? undefined : turn.assistant_output_text,
-        blocks: textBlock ? [...blocks, textBlock] : blocks,
+        text: turn.assistant_output_text,
+        blocks: [...blocks, textBlock],
       });
     } else if ((turn.run_events || []).length > 0) {
       let blocks: TemplateRenderBlock[] = [];
@@ -256,75 +252,5 @@ export function applyRuntimeEvent(
     ];
   }
 
-  if (event.event === "assistant.ui") {
-    const uiPayload = parseUiPayload(event.payload);
-    if (!uiPayload) {
-      return blocks;
-    }
-    const lastBlock = blocks[blocks.length - 1];
-    if (lastBlock?.kind === "ui" && lastBlock.format === "openui") {
-      const nextContent =
-        uiPayload.isDelta
-          ? `${lastBlock.content}${uiPayload.content}`
-          : uiPayload.content;
-      return [
-        ...blocks.slice(0, -1),
-        {
-          ...lastBlock,
-          content: nextContent,
-          componentLibraryId: uiPayload.componentLibraryId,
-          surface: uiPayload.surface,
-          ast: uiPayload.ast,
-        },
-      ];
-    }
-    return [
-      ...blocks,
-      {
-        id: createId(),
-        kind: "ui",
-        format: "openui",
-        content: uiPayload.content,
-        componentLibraryId: uiPayload.componentLibraryId,
-        surface: uiPayload.surface,
-        ast: uiPayload.ast,
-        version: 1,
-      },
-    ];
-  }
-
   return blocks;
-}
-
-type ParsedUiPayload = Omit<TemplateUiBlock, "id" | "kind"> & { isDelta: boolean };
-
-function parseUiPayload(payload: Record<string, unknown>): ParsedUiPayload | null {
-  if (String(payload.format || "").trim().toLowerCase() !== "openui") {
-    return null;
-  }
-  const finalContent =
-    typeof payload.content === "string"
-      ? payload.content
-      : null;
-  const deltaContent =
-    typeof payload.content_delta === "string"
-      ? payload.content_delta
-      : null;
-  const content = finalContent ?? deltaContent;
-  if (!content) {
-    return null;
-  }
-  return {
-    format: "openui",
-    content,
-    isDelta: finalContent == null && deltaContent != null,
-    componentLibraryId:
-      typeof payload.component_library_id === "string" ? payload.component_library_id : null,
-    surface: typeof payload.surface === "string" ? payload.surface : null,
-    ast:
-      payload.ast && typeof payload.ast === "object" && !Array.isArray(payload.ast)
-        ? (payload.ast as Record<string, unknown>)
-        : null,
-    version: 1,
-  };
 }

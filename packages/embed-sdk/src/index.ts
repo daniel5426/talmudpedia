@@ -18,7 +18,5 @@ export type {
   EmbeddedAgentThreadSummary,
   EmbeddedAgentThreadsResponse,
   EmbeddedAgentThreadTurn,
-  EmbeddedAgentUiPayload,
-  EmbeddedAgentUiRuntimeEvent,
   StreamAgentResult,
 } from "./types";

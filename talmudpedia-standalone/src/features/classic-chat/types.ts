@@ -50,17 +50,6 @@ export type TemplateSource = {
   href: string;
 };
 
-export type TemplateUiBlock = {
-  id: string;
-  kind: "ui";
-  format: "openui";
-  content: string;
-  componentLibraryId?: string | null;
-  surface?: string | null;
-  ast?: Record<string, unknown> | null;
-  version: 1;
-};
-
 export type TemplateSourcesBlock = {
   id: string;
   kind: "sources";
@@ -72,7 +61,6 @@ export type TemplateRenderBlock =
   | TemplateTextBlock
   | TemplateReasoningBlock
   | TemplateTaskBlock
-  | TemplateUiBlock
   | TemplateSourcesBlock;
 
 export type TemplateMessage = {
