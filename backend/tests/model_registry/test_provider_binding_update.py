@@ -11,8 +11,7 @@ from app.db.postgres.models.registry import (
     IntegrationCredentialCategory,
 )
 from app.db.postgres.models.identity import Tenant, User
-from app.api.routers.auth import get_current_user
-from app.api.dependencies import get_tenant_context
+from app.api.dependencies import get_current_principal, get_tenant_context
 
 
 @pytest.mark.asyncio
@@ -25,7 +24,6 @@ async def test_update_provider_binding_endpoint(client, db_session):
     model = ModelRegistry(
         tenant_id=tenant.id,
         name="Test Chat",
-        slug=f"test-chat-{uuid4().hex}",
         capability_type=ModelCapabilityType.CHAT,
         status=ModelStatus.ACTIVE,
         metadata_={},
@@ -59,13 +57,18 @@ async def test_update_provider_binding_endpoint(client, db_session):
 
     from main import app
 
-    async def override_get_current_user():
-        return user
-
     async def override_get_tenant_context():
         return {"tenant_id": str(tenant.id), "tenant": tenant}
 
-    app.dependency_overrides[get_current_user] = override_get_current_user
+    async def override_get_current_principal():
+        return {
+            "type": "user",
+            "user_id": str(user.id),
+            "tenant_id": str(tenant.id),
+            "scopes": ["*"],
+        }
+
+    app.dependency_overrides[get_current_principal] = override_get_current_principal
     app.dependency_overrides[get_tenant_context] = override_get_tenant_context
 
     response = await client.patch(

@@ -207,7 +207,7 @@ async def pick_model_slug(
     )
     result = await db_session.execute(stmt)
     model = result.scalar_one_or_none()
-    return model.slug if model else None
+    return str(model.id) if model else None
 
 
 async def get_chat_model_slug(db_session, tenant_id) -> Optional[str]:

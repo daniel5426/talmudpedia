@@ -1,6 +1,6 @@
 # Settings Hub Backend Tests
 
-Last Updated: 2026-02-09
+Last Updated: 2026-03-20
 
 ## Scope
 Tenant settings hub backend APIs:
@@ -18,11 +18,12 @@ Tenant settings hub backend APIs:
 - Tenant settings GET returns normalized values.
 - Tenant settings PATCH accepts valid default model pointers.
 - Tenant settings PATCH rejects capability mismatches and unknown models.
+- Tenant settings PATCH only accepts active model rows as defaults.
 
 ## Last Run
-- Command: `pytest backend/tests/settings_hub`
-- Date: 2026-02-09 17:56 EET
-- Result: Pass (7 passed)
+- Command: `python3 -m pytest -q backend/tests/settings_hub/test_tenant_defaults_settings.py`
+- Date: 2026-03-20
+- Result: Pass (4 passed)
 
 ## Known Gaps / Follow-ups
 - Add integration test for global admin editing another tenant.

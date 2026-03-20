@@ -8,7 +8,7 @@ import logging
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import select, or_
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -17,7 +17,8 @@ from app.db.postgres.models.registry import (
     ModelProviderType,
     ModelProviderBinding,
     ModelCapabilityType,
-    IntegrationCredentialCategory
+    IntegrationCredentialCategory,
+    ModelStatus,
 )
 from app.services.credentials_service import CredentialsService
 from app.agent.core.interfaces import LLMProvider
@@ -75,9 +76,12 @@ class ModelResolver:
         logger.debug(f"Resolving model {model_id} for tenant {self.tenant_id}")
         model = await self._get_model(model_id)
         if not model:
-            # Check if it was a direct provider model ID (e.g. "gpt-4o") for dev convenience?
-            # ideally NO, we want strict logical IDs.
             raise ModelResolverError(f"Model not found: {model_id}")
+
+        if model.status == ModelStatus.DISABLED:
+            raise ModelResolverError(f"Model '{model.name}' is disabled")
+        if model.status == ModelStatus.DEPRECATED:
+            logger.warning("Model '%s' is deprecated", model.name)
 
         logger.info(f"Resolved logical model: {model.name} ({model.id})")
 
@@ -114,19 +118,20 @@ class ModelResolver:
         policy: Optional[ModelResolutionPolicy] = None
     ) -> Optional[ModelProviderBinding]:
         """
-        Select the best binding for the current tenant.
-        Rule: Tenant Binding > Global Binding.
-        Rule: If Tenant Binding exists but is disabled -> STOP. (No fallback to global).
+        Select the best enabled binding for the current tenant.
+        Rule: enabled tenant binding > enabled global binding.
+        Rule: disabled bindings never block lower-priority enabled bindings.
         """
-        # Separate bindings
         tenant_bindings = []
         global_bindings = []
 
-        for b in model.providers:
-            if b.tenant_id == self.tenant_id:
-                tenant_bindings.append(b)
-            elif b.tenant_id is None:
-                global_bindings.append(b)
+        for binding in model.providers:
+            if not binding.is_enabled:
+                continue
+            if binding.tenant_id == self.tenant_id:
+                tenant_bindings.append(binding)
+            elif binding.tenant_id is None:
+                global_bindings.append(binding)
 
         # 1. Check Tenant Bindings
         def _sort_key(binding: ModelProviderBinding) -> tuple:
@@ -136,26 +141,14 @@ class ModelResolver:
             return (provider_rank, binding.priority)
 
         if tenant_bindings:
-            # Sort by policy priority (if provided), then binding priority
             tenant_bindings.sort(key=_sort_key if policy and policy.priority else lambda x: x.priority)
             best = tenant_bindings[0]
-            
-            if not best.is_enabled:
-                logger.warning(f"Tenant binding for {model.name} is explicitly disabled. Aborting resolution.")
-                return None
-            
             logger.info(f"Selected TENANT binding: {best.provider} -> {best.provider_model_id}")
             return best
 
-        # 2. Check Global Bindings
         if global_bindings:
             global_bindings.sort(key=_sort_key if policy and policy.priority else lambda x: x.priority)
             best = global_bindings[0]
-
-            if not best.is_enabled:
-                logger.warning(f"System binding for {model.name} is disabled.")
-                return None
-                
             logger.info(f"Selected GLOBAL binding: {best.provider} -> {best.provider_model_id}")
             return best
 
@@ -233,7 +226,7 @@ class ModelResolver:
             base_config={},
             credentials_ref=binding.credentials_ref,
             category=category,
-            provider_key=binding.provider.value,
+            provider_key=getattr(binding.provider, "value", str(binding.provider)),
             provider_variant=provider_variant,
         )
         api_key = credentials_payload.get("api_key") if credentials_payload else None
@@ -259,17 +252,14 @@ class ModelResolver:
         raise ModelResolverError(f"All models failed: {all_models}")
 
     async def _get_model(self, model_id: str) -> Optional[ModelRegistry]:
-        """Fetch model by ID/Slug with bindings."""
-        # Try UUID
+        """Fetch model by UUID with bindings."""
         try:
             mid = UUID(model_id)
-            clause = ModelRegistry.id == mid
         except ValueError:
-            clause = or_(ModelRegistry.slug == model_id, ModelRegistry.name == model_id)
-            
-        # Common query
+            return None
+
         stmt = select(ModelRegistry).where(
-            clause,
+            ModelRegistry.id == mid,
             ModelRegistry.is_active == True,
             or_(ModelRegistry.tenant_id == self.tenant_id, ModelRegistry.tenant_id == None)
         ).options(selectinload(ModelRegistry.providers))
@@ -305,7 +295,7 @@ class ModelResolver:
         Resolve a logical model ID to an EmbeddingProvider instance.
         
         Args:
-            model_id: The model ID, name, or slug
+            model_id: The model UUID
             required_capability: Expected capability type (for validation)
             
         Returns:
@@ -320,15 +310,12 @@ class ModelResolver:
         if not model:
             raise ModelResolverError(f"Model not found: {model_id}")
         
-        # Validate capability type
         if model.capability_type != required_capability:
             raise ModelResolverError(
                 f"Model '{model.name}' has capability '{model.capability_type.value}', "
                 f"expected '{required_capability.value}'"
             )
         
-        # Check model status
-        from app.db.postgres.models.registry import ModelStatus
         if model.status == ModelStatus.DEPRECATED:
             logger.warning(f"Model '{model.name}' is deprecated")
         elif model.status == ModelStatus.DISABLED:
@@ -336,22 +323,9 @@ class ModelResolver:
         
         logger.info(f"Resolved embedding model: {model.name} ({model.id})")
         
-        # Find active binding
-        active_bindings = [b for b in model.providers if b.is_enabled]
-        if not active_bindings:
+        binding = await self._resolve_binding(model)
+        if not binding:
             raise ModelResolverError(f"No active provider bindings for model: {model.name}")
-        
-        policy_data = model.default_resolution_policy or {}
-        priority_order = [p.lower() for p in policy_data.get("priority", [])]
-        if priority_order:
-            def _sort_key(binding: ModelProviderBinding) -> tuple:
-                provider_key = binding.provider.value if hasattr(binding.provider, "value") else str(binding.provider)
-                provider_rank = priority_order.index(provider_key) if provider_key in priority_order else len(priority_order)
-                return (provider_rank, binding.priority)
-            active_bindings.sort(key=_sort_key)
-            binding = active_bindings[0]
-        else:
-            binding = min(active_bindings, key=lambda x: x.priority)
         logger.info(f"Using provider: {binding.provider} -> {binding.provider_model_id}")
 
         credentials_payload, api_key, _ = await self._resolve_provider_credentials(

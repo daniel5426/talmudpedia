@@ -194,7 +194,6 @@ async def test_delete_credential_with_usage_requires_force_then_disconnects(clie
     model = ModelRegistry(
         tenant_id=tenant.id,
         name="Linked Model",
-        slug=f"linked-model-{uuid4().hex[:8]}",
         capability_type=ModelCapabilityType.CHAT,
         metadata_={},
     )

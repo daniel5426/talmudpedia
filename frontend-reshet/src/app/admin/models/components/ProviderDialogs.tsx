@@ -18,6 +18,7 @@ import {
   ModelProviderSummary,
   IntegrationCredential,
   LLM_PROVIDER_OPTIONS,
+  getModelProviderOptions,
 } from "@/services"
 
 export const PROVIDER_LABELS: Record<ModelProviderType, string> = Object.fromEntries(
@@ -37,11 +38,12 @@ export function AddProviderDialog({
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
   const [form, setForm] = useState<CreateProviderRequest>({
-    provider: "openai",
+    provider: getModelProviderOptions(model.capability_type)[0]?.key || "openai",
     provider_model_id: "",
     priority: 0,
     credentials_ref: undefined,
   })
+  const providerOptions = getModelProviderOptions(model.capability_type)
   const providerCredentials = credentials.filter(
     (cred) => cred.category === "llm_provider" && cred.provider_key === form.provider
   )
@@ -65,7 +67,11 @@ export function AddProviderDialog({
       }
       await modelsService.addProvider(model.id, payload)
       setOpen(false)
-      setForm({ provider: "openai", provider_model_id: "", priority: 0 })
+      setForm({
+        provider: providerOptions[0]?.key || "openai",
+        provider_model_id: "",
+        priority: 0,
+      })
       onAdded()
     } catch (error) {
       console.error("Failed to add provider", error)
@@ -95,7 +101,7 @@ export function AddProviderDialog({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {LLM_PROVIDER_OPTIONS.map((option) => (
+                {providerOptions.map((option) => (
                   <SelectItem key={option.key} value={option.key}>
                     {option.label}
                   </SelectItem>

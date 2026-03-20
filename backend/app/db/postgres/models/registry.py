@@ -202,7 +202,7 @@ class ModelRegistry(Base):
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=True, index=True)
     
     name = Column(String, nullable=False) # Display Name
-    slug = Column(String, nullable=False, index=True) # Unique identifier
+    system_key = Column(String, nullable=True, index=True) # System-managed seed/import key
     description = Column(String, nullable=True)
     
     capability_type = Column(SQLEnum(ModelCapabilityType), default=ModelCapabilityType.CHAT, nullable=False)
@@ -225,8 +225,28 @@ class ModelRegistry(Base):
     providers = relationship("ModelProviderBinding", back_populates="model", cascade="all, delete-orphan")
 
     __table_args__ = (
-        Index('uq_model_registry_slug_tenant', 'slug', 'tenant_id', unique=True, postgresql_where=(tenant_id != None)),
-        Index('uq_model_registry_slug_global', 'slug', unique=True, postgresql_where=(tenant_id == None)),
+        Index(
+            "uq_model_registry_system_key_global",
+            "system_key",
+            unique=True,
+            postgresql_where=and_(tenant_id == None, system_key != None),
+            sqlite_where=and_(tenant_id == None, system_key != None),
+        ),
+        Index(
+            "uq_model_registry_default_tenant_capability",
+            "tenant_id",
+            "capability_type",
+            unique=True,
+            postgresql_where=and_(tenant_id != None, is_default == True),
+            sqlite_where=and_(tenant_id != None, is_default == True),
+        ),
+        Index(
+            "uq_model_registry_default_global_capability",
+            "capability_type",
+            unique=True,
+            postgresql_where=and_(tenant_id == None, is_default == True),
+            sqlite_where=and_(tenant_id == None, is_default == True),
+        ),
     )
 
 

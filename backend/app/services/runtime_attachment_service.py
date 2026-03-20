@@ -416,14 +416,13 @@ class RuntimeAttachmentService:
         raise HTTPException(status_code=400, detail="Image attachments require a vision-capable model")
 
     async def _model_supports_vision(self, model_id: str) -> bool:
-        clause = None
         try:
-            clause = ModelRegistry.id == UUID(model_id)
+            parsed_model_id = UUID(model_id)
         except Exception:
-            clause = (ModelRegistry.slug == model_id) | (ModelRegistry.name == model_id)
+            return False
         result = await self.db.execute(
             select(ModelRegistry)
-            .where(clause)
+            .where(ModelRegistry.id == parsed_model_id)
             .options(selectinload(ModelRegistry.providers))
             .limit(1)
         )

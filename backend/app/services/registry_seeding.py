@@ -58,10 +58,9 @@ async def seed_global_models(db):
     print(f"Syncing {len(models_data)} Global Model Definitions...")
     
     for m_def in models_data:
-        # Check if model exists (Global)
         stmt = select(ModelRegistry).where(
-            ModelRegistry.slug == m_def["slug"],
-            ModelRegistry.tenant_id == None
+            ModelRegistry.system_key == m_def["system_key"],
+            ModelRegistry.tenant_id == None,
         )
         res = await db.execute(stmt)
         model = res.scalars().first()
@@ -76,18 +75,18 @@ async def seed_global_models(db):
         if not model:
             print(f"Creating model: {m_def['name']}...")
             model = ModelRegistry(
-                tenant_id=None, # Global
+                tenant_id=None,
                 name=m_def["name"],
-                slug=m_def["slug"],
+                system_key=m_def["system_key"],
                 capability_type=capability,
                 description=m_def["description"],
                 metadata_=m_def.get("metadata", {}),
-                is_active=True
+                is_active=True,
             )
             db.add(model)
-            await db.flush() # Get ID
+            await db.flush()
         else:
-            # Sync existing global model
+            model.system_key = m_def["system_key"]
             model.name = m_def["name"]
             model.description = m_def["description"]
             model.metadata_ = m_def.get("metadata", {})

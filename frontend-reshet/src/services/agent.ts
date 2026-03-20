@@ -33,7 +33,6 @@ export type ModelCapabilityType = 'chat' | 'completion' | 'embedding' | 'image' 
 export interface LogicalModel {
   id: string;
   name: string;
-  slug: string;
   description?: string;
   capability_type: ModelCapabilityType;
   metadata: Record<string, unknown>;
@@ -60,11 +59,13 @@ export interface ModelProviderSummary {
 
 export interface CreateModelRequest {
   name: string;
-  slug: string;
   description?: string;
   capability_type: ModelCapabilityType;
   metadata?: Record<string, unknown>;
   default_resolution_policy?: Record<string, unknown>;
+  is_default?: boolean;
+  is_active?: boolean;
+  status?: ModelStatus;
 }
 
 export interface UpdateModelRequest {

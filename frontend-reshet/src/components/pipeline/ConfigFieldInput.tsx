@@ -60,7 +60,7 @@ export function ModelSelectField({
           </SelectItem>
         ) : (
           models.map((model) => (
-            <SelectItem key={model.id} value={model.slug || model.id}>
+            <SelectItem key={model.id} value={model.id}>
               <div className="flex flex-col">
                 <span className="font-medium text-xs">{model.name}</span>
                 <span className="text-[10px] text-muted-foreground">

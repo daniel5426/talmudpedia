@@ -1,7 +1,7 @@
 [
     {
         "name": "GPT-5.4",
-        "slug": "gpt-5-4",
+        "system_key": "gpt-5-4",
         "capability_type": "chat",
         "description": "OpenAI's current flagship model for complex reasoning, coding, and agentic workflows.",
         "metadata": {
@@ -19,7 +19,7 @@
     },
     {
         "name": "GPT-5 Mini",
-        "slug": "gpt-5-mini",
+        "system_key": "gpt-5-mini",
         "capability_type": "chat",
         "description": "OpenAI's lower-latency GPT-5 model for high-volume production workloads.",
         "metadata": {
@@ -37,7 +37,7 @@
     },
     {
         "name": "GPT-5 Nano",
-        "slug": "gpt-5-nano",
+        "system_key": "gpt-5-nano",
         "capability_type": "chat",
         "description": "OpenAI's fastest and most cost-efficient GPT-5 variant for simple, high-throughput tasks.",
         "metadata": {
@@ -55,7 +55,7 @@
     },
     {
         "name": "Gemini 3.1 Pro Preview",
-        "slug": "gemini-3-1-pro-preview",
+        "system_key": "gemini-3-1-pro-preview",
         "capability_type": "chat",
         "description": "Google's current top Gemini reasoning model for complex multimodal and coding tasks.",
         "metadata": {
@@ -73,7 +73,7 @@
     },
     {
         "name": "Gemini 3 Flash Preview",
-        "slug": "gemini-3-flash-preview",
+        "system_key": "gemini-3-flash-preview",
         "capability_type": "chat",
         "description": "Google's current fast Gemini 3-series model with strong reasoning and multimodal support.",
         "metadata": {
@@ -91,7 +91,7 @@
     },
     {
         "name": "Claude Sonnet 4.6",
-        "slug": "claude-sonnet-4-6",
+        "system_key": "claude-sonnet-4-6",
         "capability_type": "chat",
         "description": "Anthropic's current Sonnet model for coding, long-context reasoning, and agent workflows.",
         "metadata": {
@@ -109,7 +109,7 @@
     },
     {
         "name": "Claude Opus 4.1",
-        "slug": "claude-opus-4-1",
+        "system_key": "claude-opus-4-1",
         "capability_type": "chat",
         "description": "Anthropic's highest-capability Opus model for the most demanding reasoning and coding tasks.",
         "metadata": {
@@ -127,7 +127,7 @@
     },
     {
         "name": "Grok 4",
-        "slug": "grok-4",
+        "system_key": "grok-4",
         "capability_type": "chat",
         "description": "xAI's frontier Grok model for advanced reasoning, coding, and vision tasks.",
         "metadata": {
@@ -145,7 +145,7 @@
     },
     {
         "name": "Grok 4.1 Fast Reasoning",
-        "slug": "grok-4-1-fast-reasoning",
+        "system_key": "grok-4-1-fast-reasoning",
         "capability_type": "chat",
         "description": "xAI's current fast high-context reasoning model optimized for agentic tool use.",
         "metadata": {
@@ -162,7 +162,7 @@
     },
     {
         "name": "Text Embedding 3 Large",
-        "slug": "text-embedding-3-large",
+        "system_key": "text-embedding-3-large",
         "capability_type": "embedding",
         "description": "OpenAI's most capable current embedding model.",
         "metadata": {
@@ -178,7 +178,7 @@
     },
     {
         "name": "Text Embedding 3 Small",
-        "slug": "text-embedding-3-small",
+        "system_key": "text-embedding-3-small",
         "capability_type": "embedding",
         "description": "OpenAI's smaller, lower-cost current embedding model.",
         "metadata": {

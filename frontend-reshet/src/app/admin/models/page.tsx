@@ -87,14 +87,6 @@ const CAPABILITY_LABELS: Record<ModelCapabilityType, string> = {
     audio: "Audio Processing",
 }
 
-const safeJsonStringify = (value: unknown) => {
-    try {
-        return JSON.stringify(value ?? {}, null, 2)
-    } catch {
-        return "{}"
-    }
-}
-
 function CapabilityBadge({ type }: { type: ModelCapabilityType }) {
     const Icon = CAPABILITY_ICONS[type] || Brain
     return (
@@ -121,18 +113,17 @@ function CreateModelDialog({ onCreated }: { onCreated: () => void }) {
     const [loading, setLoading] = useState(false)
     const [form, setForm] = useState<CreateModelRequest>({
         name: "",
-        slug: "",
         description: "",
         capability_type: "chat",
     })
 
     const handleCreate = async () => {
-        if (!form.name || !form.slug) return
+        if (!form.name) return
         setLoading(true)
         try {
             await modelsService.createModel(form)
             setOpen(false)
-            setForm({ name: "", slug: "", description: "", capability_type: "chat" })
+            setForm({ name: "", description: "", capability_type: "chat" })
             onCreated()
         } catch (error) {
             console.error("Failed to create model", error)
@@ -167,15 +158,6 @@ function CreateModelDialog({ onCreated }: { onCreated: () => void }) {
                         />
                     </div>
                     <div className="space-y-2">
-                        <Label htmlFor="slug">Slug (unique identifier)</Label>
-                        <Input
-                            id="slug"
-                            placeholder="gpt-4o"
-                            value={form.slug}
-                            onChange={(e) => setForm({ ...form, slug: e.target.value })}
-                        />
-                    </div>
-                    <div className="space-y-2">
                         <Label htmlFor="capability">Capability Type</Label>
                         <Select
                             value={form.capability_type}
@@ -203,7 +185,7 @@ function CreateModelDialog({ onCreated }: { onCreated: () => void }) {
                 </div>
                 <DialogFooter>
                     <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
-                    <Button onClick={handleCreate} disabled={!form.name || !form.slug || loading}>
+                    <Button onClick={handleCreate} disabled={!form.name || loading}>
                         {loading && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
                         Create
                     </Button>
@@ -226,8 +208,6 @@ function EditModelDialog({ model, onUpdated }: { model: LogicalModel; onUpdated:
         is_active: model.is_active ?? true,
         is_default: model.is_default ?? false,
     })
-    const [metadataText, setMetadataText] = useState(safeJsonStringify(model.metadata))
-    const [policyText, setPolicyText] = useState(safeJsonStringify(model.default_resolution_policy))
 
     useEffect(() => {
         if (open) {
@@ -238,8 +218,6 @@ function EditModelDialog({ model, onUpdated }: { model: LogicalModel; onUpdated:
                 is_active: model.is_active ?? true,
                 is_default: model.is_default ?? false,
             })
-            setMetadataText(safeJsonStringify(model.metadata))
-            setPolicyText(safeJsonStringify(model.default_resolution_policy))
             setError(null)
         }
     }, [open, model])
@@ -247,29 +225,8 @@ function EditModelDialog({ model, onUpdated }: { model: LogicalModel; onUpdated:
     const handleSave = async () => {
         setLoading(true)
         setError(null)
-        let metadata = {}
-        let policy = {}
         try {
-            metadata = metadataText.trim() ? JSON.parse(metadataText) : {}
-        } catch {
-            setError("Metadata must be valid JSON.")
-            setLoading(false)
-            return
-        }
-        try {
-            policy = policyText.trim() ? JSON.parse(policyText) : {}
-        } catch {
-            setError("Resolution policy must be valid JSON.")
-            setLoading(false)
-            return
-        }
-
-        try {
-            await modelsService.updateModel(model.id, {
-                ...form,
-                metadata,
-                default_resolution_policy: policy,
-            })
+            await modelsService.updateModel(model.id, form)
             setOpen(false)
             onUpdated()
         } catch (err) {
@@ -340,24 +297,6 @@ function EditModelDialog({ model, onUpdated }: { model: LogicalModel; onUpdated:
                             onCheckedChange={(v) => setForm({ ...form, is_default: v === true })}
                         />
                         <Label>Default for Capability</Label>
-                    </div>
-                    <div className="space-y-2">
-                        <Label>Metadata (JSON)</Label>
-                        <Textarea
-                            value={metadataText}
-                            onChange={(e) => setMetadataText(e.target.value)}
-                            className="font-mono text-xs"
-                            rows={6}
-                        />
-                    </div>
-                    <div className="space-y-2">
-                        <Label>Default Resolution Policy (JSON)</Label>
-                        <Textarea
-                            value={policyText}
-                            onChange={(e) => setPolicyText(e.target.value)}
-                            className="font-mono text-xs"
-                            rows={6}
-                        />
                     </div>
                     {error && (
                         <p className="text-sm text-destructive">{error}</p>
@@ -500,7 +439,6 @@ export default function ModelsPage() {
                                                 <CardTitle className="text-lg">{model.name}</CardTitle>
                                                 <StatusBadge status={model.status} />
                                             </div>
-                                            <CardDescription className="font-mono text-xs">{model.slug}</CardDescription>
                                             {model.description && (
                                                 <p className="text-sm text-muted-foreground mt-1">{model.description}</p>
                                             )}

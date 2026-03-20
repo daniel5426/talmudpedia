@@ -127,6 +127,7 @@ async def _validate_default_model_id(
             or_(ModelRegistry.tenant_id == tenant.id, ModelRegistry.tenant_id == None),
             ModelRegistry.capability_type == capability,
             ModelRegistry.status == ModelStatus.ACTIVE,
+            ModelRegistry.is_active == True,
         )
     )
     model = (await db.execute(stmt)).scalar_one_or_none()

@@ -20,7 +20,6 @@ async def test_resolve_credentials_prefers_integration_credentials(db_session):
     model = ModelRegistry(
         tenant_id=tenant_id,
         name="Test Chat",
-        slug="test-chat",
         capability_type=ModelCapabilityType.CHAT,
         status=ModelStatus.ACTIVE,
         metadata_={},
@@ -70,7 +69,6 @@ async def test_resolve_credentials_prefers_tenant_default_over_env_fallback(db_s
     model = ModelRegistry(
         tenant_id=tenant_id,
         name="Test Chat",
-        slug="test-chat-defaults",
         capability_type=ModelCapabilityType.CHAT,
         status=ModelStatus.ACTIVE,
         metadata_={},
@@ -119,7 +117,6 @@ async def test_resolve_credentials_falls_back_to_env_platform_default(db_session
     model = ModelRegistry(
         tenant_id=tenant_id,
         name="Test Chat",
-        slug="test-chat-platform-default",
         capability_type=ModelCapabilityType.CHAT,
         status=ModelStatus.ACTIVE,
         metadata_={},
@@ -154,7 +151,6 @@ async def test_resolve_embedding_uses_integration_credentials(db_session):
     model = ModelRegistry(
         tenant_id=tenant_id,
         name="Test Embed",
-        slug="test-embed",
         capability_type=ModelCapabilityType.EMBEDDING,
         status=ModelStatus.ACTIVE,
         metadata_={},

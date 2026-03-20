@@ -192,15 +192,13 @@ class AgentService:
     async def _model_exists(self, model_ref: str) -> bool:
         if not model_ref:
             return False
-        clause = None
         try:
-            clause = ModelRegistry.id == UUID(str(model_ref))
+            parsed_model_id = UUID(str(model_ref))
         except Exception:
-            text_ref = str(model_ref)
-            clause = or_(ModelRegistry.slug == text_ref, ModelRegistry.name == text_ref)
+            return False
         res = await self.db.execute(
             select(ModelRegistry.id).where(
-                clause,
+                ModelRegistry.id == parsed_model_id,
                 ModelRegistry.is_active.is_(True),
                 or_(ModelRegistry.tenant_id == self.tenant_id, ModelRegistry.tenant_id.is_(None)),
             ).limit(1)

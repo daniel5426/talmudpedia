@@ -54,7 +54,7 @@ async def get_openai_model_slug(db_session, tenant_id, capability: ModelCapabili
     provider_priority = case((ModelProviderBinding.tenant_id == tenant_id, 1), else_=0).desc()
 
     stmt = (
-        select(ModelRegistry.slug)
+        select(ModelRegistry.id)
         .join(ModelProviderBinding, ModelProviderBinding.model_id == ModelRegistry.id)
         .where(
             ModelRegistry.is_active == True,
@@ -71,7 +71,7 @@ async def get_openai_model_slug(db_session, tenant_id, capability: ModelCapabili
 
     result = await db_session.execute(stmt)
     row = result.first()
-    return row[0] if row else None
+    return str(row[0]) if row else None
 
 
 async def get_platform_sdk_tool_id(db_session) -> str:

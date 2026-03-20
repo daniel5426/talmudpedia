@@ -74,7 +74,6 @@ async def test_patch_tenant_settings_accepts_valid_defaults(client, db_session):
     chat_model = ModelRegistry(
         tenant_id=tenant.id,
         name="Chat Model",
-        slug="chat-model-default",
         capability_type=ModelCapabilityType.CHAT,
         status=ModelStatus.ACTIVE,
         metadata_={},
@@ -82,7 +81,6 @@ async def test_patch_tenant_settings_accepts_valid_defaults(client, db_session):
     embedding_model = ModelRegistry(
         tenant_id=tenant.id,
         name="Embedding Model",
-        slug="embed-model-default",
         capability_type=ModelCapabilityType.EMBEDDING,
         status=ModelStatus.ACTIVE,
         metadata_={},
@@ -136,7 +134,6 @@ async def test_patch_tenant_settings_rejects_invalid_capability(client, db_sessi
     wrong_model = ModelRegistry(
         tenant_id=tenant.id,
         name="Rerank Model",
-        slug="rerank-model-default",
         capability_type=ModelCapabilityType.RERANK,
         status=ModelStatus.ACTIVE,
         metadata_={},

@@ -1567,7 +1567,6 @@ export function ConfigPanel({
                     value: m.id,
                     label: m.name,
                     providerInfo: `${m.providers?.[0]?.provider} • ${m.providers?.[0]?.provider_model_id}`,
-                    slug: m.slug,
                 })))
                 setToolCatalog(toolsRes.tools || [])
                 setToolOptions((toolsRes.tools || []).map(t => ({
@@ -1612,7 +1611,7 @@ export function ConfigPanel({
         if (models.some((model) => model.value === currentModelId)) {
             return
         }
-        const match = models.find((model) => model.slug === currentModelId || model.label === currentModelId)
+        const match = models.find((model) => model.label === currentModelId)
         if (!match) {
             return
         }

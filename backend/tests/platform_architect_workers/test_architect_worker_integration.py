@@ -62,7 +62,6 @@ async def _seed_tenant_user_and_model(db_session):
     model = ModelRegistry(
         tenant_id=None,
         name="Unit Chat Model",
-        slug=f"unit-chat-{suffix}",
         capability_type=ModelCapabilityType.CHAT,
         status=ModelStatus.ACTIVE,
         is_active=True,

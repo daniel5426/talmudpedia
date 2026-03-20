@@ -5,6 +5,7 @@ import { modelsService, credentialsService } from "@/services"
 jest.mock("@/services", () => ({
   modelsService: {
     listModels: jest.fn(),
+    createModel: jest.fn(),
     updateModel: jest.fn(),
     updateProvider: jest.fn(),
     addProvider: jest.fn(),
@@ -28,6 +29,17 @@ jest.mock("@/services", () => ({
     { key: "local", label: "Local" },
     { key: "custom", label: "Custom" },
   ],
+  getModelProviderOptions: jest.fn((capability: string) => {
+    if (capability === "embedding") {
+      return [{ key: "openai", label: "OpenAI" }]
+    }
+    return [
+      { key: "openai", label: "OpenAI" },
+      { key: "anthropic", label: "Anthropic" },
+      { key: "google", label: "Google AI" },
+      { key: "xai", label: "xAI" },
+    ]
+  }),
 }))
 
 jest.mock("@/contexts/TenantContext", () => ({
@@ -42,7 +54,6 @@ const mockModels = [
   {
     id: "model-1",
     name: "Test Model",
-    slug: "test-model",
     description: "Test",
     capability_type: "chat",
     metadata: {},
@@ -108,6 +119,27 @@ describe("Models Registry", () => {
     fireEvent.click(saveButton)
 
     await waitFor(() => expect(modelsService.updateModel).toHaveBeenCalled())
+  })
+
+  it("creates a model without asking for a slug", async () => {
+    render(<ModelsPage />)
+
+    fireEvent.click(await screen.findByText("New Model"))
+    expect(screen.queryByLabelText(/slug/i)).not.toBeInTheDocument()
+
+    fireEvent.change(await screen.findByLabelText("Name"), {
+      target: { value: "Fresh Model" },
+    })
+    fireEvent.click(await screen.findByText("Create"))
+
+    await waitFor(() =>
+      expect(modelsService.createModel).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: "Fresh Model",
+          capability_type: "chat",
+        })
+      )
+    )
   })
 
   it("opens edit provider dialog and saves changes", async () => {

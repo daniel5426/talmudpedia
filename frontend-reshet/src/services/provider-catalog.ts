@@ -1,25 +1,52 @@
-import { ModelProviderType } from "./agent";
+import { ModelCapabilityType, ModelProviderType } from "./agent";
 
 export interface ProviderOption {
   key: string;
   label: string;
 }
 
-export const LLM_PROVIDER_OPTIONS: Array<{ key: ModelProviderType; label: string }> = [
-  { key: "openai", label: "OpenAI" },
-  { key: "azure", label: "Azure OpenAI" },
-  { key: "anthropic", label: "Anthropic" },
-  { key: "google", label: "Google AI" },
-  { key: "xai", label: "xAI" },
-  { key: "gemini", label: "Google Gemini" },
-  { key: "cohere", label: "Cohere" },
-  { key: "groq", label: "Groq" },
-  { key: "mistral", label: "Mistral" },
-  { key: "together", label: "Together AI" },
-  { key: "huggingface", label: "HuggingFace" },
-  { key: "local", label: "Local" },
-  { key: "custom", label: "Custom" },
-];
+type LLMProviderOption = { key: ModelProviderType; label: string };
+
+const MODEL_PROVIDER_OPTIONS_BY_CAPABILITY: Record<ModelCapabilityType, LLMProviderOption[]> = {
+  chat: [
+    { key: "openai", label: "OpenAI" },
+    { key: "anthropic", label: "Anthropic" },
+    { key: "google", label: "Google AI" },
+    { key: "xai", label: "xAI" },
+  ],
+  completion: [
+    { key: "openai", label: "OpenAI" },
+    { key: "anthropic", label: "Anthropic" },
+    { key: "google", label: "Google AI" },
+    { key: "xai", label: "xAI" },
+  ],
+  embedding: [{ key: "openai", label: "OpenAI" }],
+  vision: [
+    { key: "openai", label: "OpenAI" },
+    { key: "anthropic", label: "Anthropic" },
+    { key: "google", label: "Google AI" },
+    { key: "xai", label: "xAI" },
+  ],
+  image: [],
+  audio: [],
+  rerank: [],
+  speech_to_text: [],
+  text_to_speech: [],
+};
+
+export const LLM_PROVIDER_OPTIONS: LLMProviderOption[] = Array.from(
+  new Map(
+    Object.values(MODEL_PROVIDER_OPTIONS_BY_CAPABILITY)
+      .flat()
+      .map((option) => [option.key, option])
+  ).values()
+);
+
+export function getModelProviderOptions(
+  capability: ModelCapabilityType
+): LLMProviderOption[] {
+  return MODEL_PROVIDER_OPTIONS_BY_CAPABILITY[capability] || [];
+}
 
 export const VECTOR_STORE_PROVIDER_OPTIONS: ProviderOption[] = [
   { key: "pinecone", label: "Pinecone" },
