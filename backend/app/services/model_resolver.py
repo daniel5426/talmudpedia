@@ -190,7 +190,11 @@ class ModelResolver:
                 final_config[k] = v
 
         # 3. Instantiate
-        if binding.provider == ModelProviderType.OPENAI:
+        if binding.provider in (
+            ModelProviderType.OPENAI,
+            ModelProviderType.XAI,
+            ModelProviderType.ANTHROPIC,
+        ):
             return LangChainProviderAdapter(
                 provider=binding.provider,
                 model=binding.provider_model_id,

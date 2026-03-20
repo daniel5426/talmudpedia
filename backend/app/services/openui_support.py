@@ -48,7 +48,9 @@ slice1 = Slice("Bank A", 44.3)
 slice2 = Slice("Bank B", 24.1)
 slice3 = Slice("Bank C", 19.2)
 tableTitle = TextContent("Returned rows", "small-heavy")
-table = Table([Col("Bank", "string"), Col("Share (%)", "number")], [["Bank A", 44.3], ["Bank B", 24.1], ["Bank C", 19.2]])
+cols = [Col("Bank", "string"), Col("Share (%)", "number")]
+rows = [["Bank A", 44.3], ["Bank B", 24.1], ["Bank C", 19.2]]
+table = Table(cols, rows)
 note = Callout("info", "Data caveat", "Proxy values are being used.")""",
 )
 
@@ -115,9 +117,11 @@ def build_openui_system_prompt(
         "Prefer concise cards, tables, callouts, and charts over decorative layout.",
         "If data is partial, surface the caveat in the rendered UI with a callout.",
         "If no visual is warranted, render a small content-focused UI instead of plain text.",
-        "Define referenced nodes with `name = Component(...)` assignments, and make `root` the final composed UI tree.",
+        "Define referenced nodes with `name = Component(...)` assignments.",
+        "The first statement must be `root = Card(...)`. OpenUI renders the first statement as the root.",
         "For chat responses, `Card` children already stack vertically. Do not pass layout params to `Card`.",
-        "For tables, use `Table(cols, rows)` with `cols = [Col(\"Label\", \"string\"), Col(\"Amount\", \"number\")]`.",
+        "For tables, use `cols = [Col(...), Col(...)]`, `rows = [[...], [...]]`, then `table = Table(cols, rows)`.",
+        "Do not inline `Col(...)` constructors directly inside `Table(...)`.",
         "For pie charts, use `PieChart([Slice(...), Slice(...)])` or `PieChart([Slice(...), Slice(...)], \"donut\")`.",
         "For callouts, use exactly `Callout(variant, title, description)`.",
         "Allowed callout variants are only: neutral, info, warning, success, error.",
@@ -126,6 +130,7 @@ def build_openui_system_prompt(
         "For line and area charts, use labels plus `Series(...)` assignments.",
         "Do not invent props like `title`, `unit`, `legend`, `items`, `numeric_format`, or object-shaped tag values unless shown in the examples.",
         "Do not use Buttons, Button, Steps, TagBlock, RadarChart, ScatterChart, SectionBlock, or FollowUpBlock for PRICO responses.",
+        "Write statements in top-down order: root first, then referenced child nodes, then data arrays and leaf nodes.",
         "Avoid repeating the same assignments twice.",
         "Do not emit any heading before the first assignment.",
         "Do not explain the UI outside the UI. The entire assistant output must be valid OpenUI Lang.",
@@ -162,6 +167,7 @@ def build_openui_payload(
 
 
 _OPENUI_ASSIGNMENT_RE = re.compile(r"^\s*[A-Za-z_][A-Za-z0-9_]*\s*=")
+_OPENUI_ROOT_ASSIGNMENT_RE = re.compile(r"^\s*root\s*=")
 def sanitize_openui_content(content: str | None) -> str:
     raw = str(content or "").replace("\r\n", "\n").strip()
     if not raw:
@@ -173,4 +179,57 @@ def sanitize_openui_content(content: str | None) -> str:
         return raw
     lines = lines[first_assignment:]
 
+    root_index = next((index for index, line in enumerate(lines) if _OPENUI_ROOT_ASSIGNMENT_RE.match(line)), None)
+    if root_index is not None and root_index > 0:
+        root_line = lines[root_index]
+        remaining = lines[:root_index] + lines[root_index + 1 :]
+        lines = [root_line, *remaining]
+
     return "\n".join(lines).strip()
+
+
+def is_openui_content_complete(content: str | None) -> bool:
+    source = str(content or "").strip()
+    if not source:
+        return False
+
+    depth_paren = 0
+    depth_bracket = 0
+    depth_brace = 0
+    in_string = False
+    escaped = False
+
+    for char in source:
+        if in_string:
+            if escaped:
+                escaped = False
+                continue
+            if char == "\\":
+                escaped = True
+                continue
+            if char == '"':
+                in_string = False
+            continue
+
+        if char == '"':
+            in_string = True
+        elif char == "(":
+            depth_paren += 1
+        elif char == ")":
+            depth_paren -= 1
+        elif char == "[":
+            depth_bracket += 1
+        elif char == "]":
+            depth_bracket -= 1
+        elif char == "{":
+            depth_brace += 1
+        elif char == "}":
+            depth_brace -= 1
+
+        if depth_paren < 0 or depth_bracket < 0 or depth_brace < 0:
+            return False
+
+    if in_string or depth_paren != 0 or depth_bracket != 0 or depth_brace != 0:
+        return False
+
+    return bool(_OPENUI_ROOT_ASSIGNMENT_RE.search(source))

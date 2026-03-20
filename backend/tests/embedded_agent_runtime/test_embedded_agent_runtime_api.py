@@ -8,6 +8,7 @@ import pytest
 from sqlalchemy import func, select
 
 from app.agent.execution.trace_recorder import ExecutionTraceRecorder
+from app.agent.execution.service import AgentExecutorService
 from app.db.postgres.models.agents import Agent, AgentRun, AgentStatus
 from app.db.postgres.models.agent_threads import AgentThread, AgentThreadTurn, AgentThreadTurnStatus
 from app.db.postgres.models.runtime_attachments import (
@@ -15,6 +16,7 @@ from app.db.postgres.models.runtime_attachments import (
     RuntimeAttachment,
     RuntimeAttachmentStatus,
 )
+from app.services.openui_support import is_openui_content_complete, sanitize_openui_content
 from app.services.tenant_api_key_service import TenantAPIKeyService
 from tests.published_apps._helpers import seed_admin_tenant_and_agent
 
@@ -450,3 +452,55 @@ async def test_embedded_agent_attachment_upload_processing_and_delete_cleanup(
     assert delete_resp.status_code == 200
     assert delete_resp.json() == {"deleted": True}
     assert not storage_path.exists()
+
+
+def test_openui_sanitizer_moves_root_statement_to_the_top():
+    source = """header = CardHeader("Bank concentration", "Atlas Medical")
+chart = PieChart([slice1], "donut")
+slice1 = Slice("Bank A", 44.3)
+root = Card([header, chart])"""
+
+    sanitized = sanitize_openui_content(source)
+    lines = sanitized.splitlines()
+
+    assert lines[0] == 'root = Card([header, chart])'
+    assert 'header = CardHeader("Bank concentration", "Atlas Medical")' in sanitized
+    assert 'chart = PieChart([slice1], "donut")' in sanitized
+
+
+def test_openui_completeness_detector_rejects_truncated_program():
+    incomplete = """root = Card([header, chart])
+header = CardHeader("Bank concentration", "Atlas Medical")
+chart = PieChart([slice1, slice2], "donut")
+slice1 = Slice("Bank A", 44.3"""
+    complete = """root = Card([header, chart])
+header = CardHeader("Bank concentration", "Atlas Medical")
+chart = PieChart([slice1, slice2], "donut")
+slice1 = Slice("Bank A", 44.3)
+slice2 = Slice("Bank B", 24.1)"""
+
+    assert is_openui_content_complete(incomplete) is False
+    assert is_openui_content_complete(complete) is True
+
+
+def test_extract_turn_metadata_reads_nested_openui_output():
+    output_result = {
+        "_node_outputs": {
+            "prico_agent": {
+                "ui_output": {
+                    "format": "openui",
+                    "component_library_id": "openui-default-v1",
+                    "surface": "chat_inline",
+                    "content": 'root = Card([TextContent("hi")])',
+                }
+            }
+        }
+    }
+
+    metadata = AgentExecutorService._extract_turn_metadata(output_result)
+
+    assert metadata == {
+        "assistant_ui_format": "openui",
+        "assistant_ui_component_library_id": "openui-default-v1",
+        "assistant_ui_surface": "chat_inline",
+    }

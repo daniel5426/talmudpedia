@@ -71,7 +71,7 @@ describe("agents page export tool flow", () => {
   it("exports an agent as a tool from the export dialog", async () => {
     render(<AgentsPage />)
 
-    expect(await screen.findByText("Export Agent As Tool")).toBeInTheDocument()
+    expect(await screen.findByText("Export Agent as Tool")).toBeInTheDocument()
     fireEvent.change(screen.getByLabelText("Tool Name"), { target: { value: "Export Candidate Tool" } })
     fireEvent.click(screen.getByRole("button", { name: "Export Tool" }))
 
@@ -91,8 +91,7 @@ describe("agents page export tool flow", () => {
     render(<AgentsPage />)
 
     expect(await screen.findByText("Input Schema")).toBeInTheDocument()
-    fireEvent.click(screen.getByRole("button", { name: /Add string/i }))
-    fireEvent.change(screen.getByLabelText("Field Name"), {
+    fireEvent.change(screen.getByLabelText("Name"), {
       target: { value: "query" },
     })
     fireEvent.click(screen.getByRole("button", { name: "Export Tool" }))
@@ -104,7 +103,12 @@ describe("agents page export tool flow", () => {
           input_schema: expect.objectContaining({
             type: "object",
             properties: expect.objectContaining({
-              query: { type: "string" },
+              query: expect.objectContaining({
+                anyOf: [
+                  { type: "string" },
+                  { type: "object", additionalProperties: true },
+                ],
+              }),
             }),
           }),
         })
@@ -116,7 +120,7 @@ describe("agents page export tool flow", () => {
     render(<AgentsPage />)
 
     expect(await screen.findByText("Input Schema")).toBeInTheDocument()
-    fireEvent.click(screen.getByRole("button", { name: "Switch To JSON" }))
+    fireEvent.click(screen.getByText("Edit as JSON"))
     fireEvent.change(screen.getByLabelText("JSON Schema"), {
       target: {
         value: JSON.stringify(

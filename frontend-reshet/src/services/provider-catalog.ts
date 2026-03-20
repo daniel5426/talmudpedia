@@ -10,6 +10,7 @@ export const LLM_PROVIDER_OPTIONS: Array<{ key: ModelProviderType; label: string
   { key: "azure", label: "Azure OpenAI" },
   { key: "anthropic", label: "Anthropic" },
   { key: "google", label: "Google AI" },
+  { key: "xai", label: "xAI" },
   { key: "gemini", label: "Google Gemini" },
   { key: "cohere", label: "Cohere" },
   { key: "groq", label: "Groq" },
@@ -31,4 +32,3 @@ export const TOOL_PROVIDER_OPTIONS: ProviderOption[] = [
   { key: "tavily", label: "Tavily" },
   { key: "exa", label: "Exa" },
 ];
-

@@ -16,6 +16,7 @@ requests
 httpx>=0.27.0
 langgraph>=0.2.0
 langchain-openai
+langchain-anthropic
 langchain-google-genai
 motor
 google-cloud-speech

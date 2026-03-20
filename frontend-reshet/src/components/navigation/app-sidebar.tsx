@@ -141,6 +141,11 @@ const data = {
           url: "/admin/tools",
           icon: Settings2,
         },
+        {
+          title: "Prompt Library",
+          url: "/admin/prompt-library",
+          icon: Library,
+        },
       ],
     },
     {

@@ -28,6 +28,28 @@ class LangChainProviderAdapter(LLMProvider):
                 api_key=self.api_key,
                 **self.model_kwargs,
             )
+        if self.provider == ModelProviderType.XAI:
+            from langchain_openai import ChatOpenAI
+
+            return ChatOpenAI(
+                model=self.model_name,
+                api_key=self.api_key,
+                base_url="https://api.x.ai/v1",
+                **self.model_kwargs,
+            )
+        if self.provider == ModelProviderType.ANTHROPIC:
+            try:
+                from langchain_anthropic import ChatAnthropic
+            except Exception as exc:  # pragma: no cover - import guard
+                raise ImportError(
+                    "langchain-anthropic is required for Anthropic providers"
+                ) from exc
+
+            return ChatAnthropic(
+                model=self.model_name,
+                api_key=self.api_key,
+                **self.model_kwargs,
+            )
         if self.provider in (ModelProviderType.GOOGLE, ModelProviderType.GEMINI):
             try:
                 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -63,7 +85,7 @@ class LangChainProviderAdapter(LLMProvider):
         )
         if "max_tokens" in mapped:
             max_tokens = mapped.pop("max_tokens")
-            if self.provider == ModelProviderType.OPENAI:
+            if self.provider in (ModelProviderType.OPENAI, ModelProviderType.XAI):
                 mapped.setdefault("max_completion_tokens", max_tokens)
             elif self.provider in (ModelProviderType.GOOGLE, ModelProviderType.GEMINI):
                 mapped.setdefault("max_output_tokens", max_tokens)

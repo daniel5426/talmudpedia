@@ -158,6 +158,9 @@ export interface ConfigFieldSpec {
   group?: "what_to_run" | "permissions" | "routing" | "reliability"
   // Artifact-specific metadata for field mapping UI
   artifactInputs?: ArtifactInputField[]
+  // Prompt library: field supports @prompt mentions
+  prompt_capable?: boolean
+  prompt_surface?: string
 }
 
 export type AgentNode = Node<AgentNodeData, string>

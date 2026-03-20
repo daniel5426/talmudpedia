@@ -332,7 +332,7 @@ export default function PromptLibraryPage() {
 
   /* ── Render ── */
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full w-full flex-col">
       {/* Header */}
       <AdminPageHeader>
         <CustomBreadcrumb
@@ -368,7 +368,7 @@ export default function PromptLibraryPage() {
         </div>
 
         {/* Main area */}
-        <div className="flex-1 flex flex-col min-h-0 overflow-auto p-4 space-y-4">
+        <div className="flex-1 w-full flex flex-col min-h-0 overflow-auto p-4 space-y-4">
           {/* Search */}
           <div className="relative max-w-sm">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />

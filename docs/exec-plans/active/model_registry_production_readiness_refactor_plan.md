@@ -1,10 +1,15 @@
 # Execution Plan: Model Registry Production Readiness Refactor
 
-Last Updated: 2026-03-19
+Last Updated: 2026-03-20
 
 ## Status: Proposed
 
 This plan turns the current model registry into a production-ready control-plane subsystem with strict contracts, truthful runtime support, simple admin UX, and full integration coverage across the platform.
+
+Initial seed-catalog cleanup already landed:
+- stale seeded providers that the current resolver cannot execute were removed from `backend/app/db/postgres/seeds/models.json`
+- the seed catalog now tracks a smaller current set of OpenAI, Google, Anthropic, and xAI chat models plus current OpenAI embeddings
+- broader multi-provider expansion still belongs to the later provider-catalog and resolver-hardening slices in this plan
 
 ## Goals
 

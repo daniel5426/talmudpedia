@@ -22,6 +22,7 @@ from app.services.model_resolver import ModelResolver
 from app.services.openui_support import (
     build_openui_payload,
     build_openui_system_prompt,
+    is_openui_content_complete,
     resolve_openui_runtime_config,
     sanitize_openui_content,
 )
@@ -1249,6 +1250,43 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
             logger.warning(f"Fallback text response generation failed: {exc}")
             return full_content, last_message
 
+    async def _repair_openui_response(
+        self,
+        *,
+        adapter: LLMProviderAdapter,
+        full_content: str,
+        conversation_messages: List[BaseMessage],
+        instructions: str,
+        temperature: float,
+        max_tokens: int,
+    ) -> str:
+        normalized = sanitize_openui_content(full_content)
+        if is_openui_content_complete(normalized):
+            return normalized
+
+        try:
+            fallback_response = await adapter.ainvoke(
+                [
+                    *conversation_messages,
+                    HumanMessage(
+                        content="Your previous OpenUI response was incomplete. Regenerate the full OpenUI Lang response from the beginning. Do not call tools.",
+                    ),
+                ],
+                system_prompt=instructions,
+                tools=None,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+            fallback_text = sanitize_openui_content(
+                self._coerce_text_content(getattr(fallback_response, "content", ""))
+            )
+            if is_openui_content_complete(fallback_text):
+                return fallback_text
+        except Exception as exc:
+            logger.warning(f"OpenUI repair generation failed: {exc}")
+
+        return normalized
+
     async def execute(self, state: Dict[str, Any], config: Dict[str, Any], context: Dict[str, Any] = None) -> Dict[str, Any]:
         logger.debug(f"Executing Agent (Reasoning) node")
         
@@ -1411,7 +1449,14 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
                     emitter.emit_node_end(node_id, node_name, "agent", {"content_length": len(full_content)})
 
                 if openui_config.enabled:
-                    full_content = sanitize_openui_content(full_content)
+                    full_content = await self._repair_openui_response(
+                        adapter=adapter,
+                        full_content=full_content,
+                        conversation_messages=conversation_messages,
+                        instructions=instructions,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                    )
 
                 # Handle structured output
                 result_content: Any = full_content

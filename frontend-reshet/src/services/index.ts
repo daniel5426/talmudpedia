@@ -60,6 +60,17 @@ export type {
 export { agentService } from "./agent";
 export { modelsService } from "./models";
 export { toolsService } from "./tools";
+export { promptsService } from "./prompts";
+export type {
+  PromptRecord,
+  PromptListResponse,
+  PromptVersionRecord,
+  PromptUsageRecord,
+  PromptMentionRecord,
+  CreatePromptRequest,
+  UpdatePromptRequest,
+  PromptResolvePreviewResponse,
+} from "./prompts";
 export { credentialsService } from "./credentials";
 export { publishedAppsService } from "./published-apps";
 export {

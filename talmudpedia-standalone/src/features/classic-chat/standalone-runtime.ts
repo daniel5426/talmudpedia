@@ -161,6 +161,28 @@ export async function streamAgent(
   let buffer = "";
   let resolvedThreadId = response.headers.get("X-Thread-ID");
 
+  const processBlock = (block: string) => {
+    const lines = block.split("\n");
+    const payloadLines = lines
+      .filter((line) => line.startsWith("data: "))
+      .map((line) => line.slice(6));
+    if (payloadLines.length === 0) {
+      return;
+    }
+    const rawPayload = payloadLines.join("\n");
+    const parsed = JSON.parse(rawPayload) as unknown;
+    if (!isStandaloneRuntimeEvent(parsed)) {
+      return;
+    }
+    if (!resolvedThreadId && parsed.event === "run.accepted") {
+      const acceptedThreadId = parsed.payload.thread_id;
+      if (typeof acceptedThreadId === "string" && acceptedThreadId.trim()) {
+        resolvedThreadId = acceptedThreadId;
+      }
+    }
+    onEvent(parsed);
+  };
+
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
@@ -170,25 +192,14 @@ export async function streamAgent(
     while (separatorIndex !== -1) {
       const block = buffer.slice(0, separatorIndex);
       buffer = buffer.slice(separatorIndex + 2);
-      const lines = block.split("\n");
-      const payloadLines = lines
-        .filter((line) => line.startsWith("data: "))
-        .map((line) => line.slice(6));
-      if (payloadLines.length > 0) {
-        const rawPayload = payloadLines.join("\n");
-        const parsed = JSON.parse(rawPayload) as unknown;
-        if (isStandaloneRuntimeEvent(parsed)) {
-          if (!resolvedThreadId && parsed.event === "run.accepted") {
-            const acceptedThreadId = parsed.payload.thread_id;
-            if (typeof acceptedThreadId === "string" && acceptedThreadId.trim()) {
-              resolvedThreadId = acceptedThreadId;
-            }
-          }
-          onEvent(parsed);
-        }
-      }
+      processBlock(block);
       separatorIndex = buffer.indexOf("\n\n");
     }
+  }
+
+  const tail = buffer.trim();
+  if (tail) {
+    processBlock(tail);
   }
 
   return {

@@ -55,6 +55,7 @@ class ModelProviderType(str, enum.Enum):
     ANTHROPIC = "anthropic"
     GOOGLE = "google"
     AZURE = "azure"
+    XAI = "xai"
     GEMINI = "gemini"
     HUGGINGFACE = "huggingface"
     LOCAL = "local"

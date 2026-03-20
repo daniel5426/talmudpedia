@@ -1,211 +1,161 @@
 [
     {
-        "name": "GPT-4o (Omni)",
-        "slug": "gpt-4o",
+        "name": "GPT-5.4",
+        "slug": "gpt-5-4",
         "capability_type": "chat",
-        "description": "OpenAI's most advanced flagship multimodal model.",
+        "description": "OpenAI's current flagship model for complex reasoning, coding, and agentic workflows.",
         "metadata": {
-            "context_window": 128000,
-            "vision": true
-        },
-        "providers": [
-            {
-                "provider": "OPENAI",
-                "provider_model_id": "gpt-4o",
-                "priority": 0
-            },
-            {
-                "provider": "AZURE",
-                "provider_model_id": "gpt-4o",
-                "priority": 1,
-                "variant": "azure"
-            }
-        ]
-    },
-    {
-        "name": "GPT-4o Mini",
-        "slug": "gpt-4o-mini",
-        "capability_type": "chat",
-        "description": "Lightweight and ultra-fast OpenAI model.",
-        "metadata": {
-            "context_window": 128000
-        },
-        "providers": [
-            {
-                "provider": "OPENAI",
-                "provider_model_id": "gpt-4o-mini",
-                "priority": 0
-            }
-        ]
-    },
-    {
-        "name": "OpenAI o1",
-        "slug": "openai-o1",
-        "capability_type": "chat",
-        "description": "High-reasoning model for complex logic.",
-        "metadata": {
-            "context_window": 128000,
+            "context_window": 1050000,
+            "vision": true,
             "reasoning": true
         },
         "providers": [
             {
                 "provider": "OPENAI",
-                "provider_model_id": "o1",
+                "provider_model_id": "gpt-5.4",
                 "priority": 0
             }
         ]
     },
     {
-        "name": "Claude 3.7 Sonnet",
-        "slug": "claude-3-7-sonnet",
+        "name": "GPT-5 Mini",
+        "slug": "gpt-5-mini",
         "capability_type": "chat",
-        "description": "Anthropic's 2025 flagship model.",
+        "description": "OpenAI's lower-latency GPT-5 model for high-volume production workloads.",
         "metadata": {
-            "context_window": 200000
-        },
-        "providers": [
-            {
-                "provider": "ANTHROPIC",
-                "provider_model_id": "claude-3-7-sonnet",
-                "priority": 0
-            }
-        ]
-    },
-    {
-        "name": "Claude 3.5 Sonnet",
-        "slug": "claude-3-5-sonnet",
-        "capability_type": "chat",
-        "description": "Highly intelligent balanced model from Anthropic.",
-        "metadata": {
-            "context_window": 200000
-        },
-        "providers": [
-            {
-                "provider": "ANTHROPIC",
-                "provider_model_id": "claude-3-5-sonnet-latest",
-                "priority": 0
-            }
-        ]
-    },
-    {
-        "name": "Gemini 2.5 Pro",
-        "slug": "gemini-2-5-pro",
-        "capability_type": "chat",
-        "description": "Google's 2025 flagship with 1M+ context.",
-        "metadata": {
-            "context_window": 1000000
-        },
-        "providers": [
-            {
-                "provider": "GOOGLE",
-                "provider_model_id": "gemini-2.5-pro",
-                "priority": 0
-            }
-        ]
-    },
-    {
-        "name": "Gemini 2.5 Flash",
-        "slug": "gemini-2-5-flash",
-        "capability_type": "chat",
-        "description": "Google's fastest high-context model.",
-        "metadata": {
-            "context_window": 1000000
-        },
-        "providers": [
-            {
-                "provider": "GOOGLE",
-                "provider_model_id": "gemini-2.5-flash",
-                "priority": 0
-            }
-        ]
-    },
-    {
-        "name": "DeepSeek R1",
-        "slug": "deepseek-r1",
-        "capability_type": "chat",
-        "description": "Open reasoning model with o1-level performance.",
-        "metadata": {
-            "context_window": 64000,
+            "context_window": 400000,
+            "vision": true,
             "reasoning": true
         },
         "providers": [
             {
-                "provider": "GROQ",
-                "provider_model_id": "deepseek-r1-distill-llama-70b",
-                "priority": 0
-            },
-            {
-                "provider": "TOGETHER",
-                "provider_model_id": "deepseek-ai/DeepSeek-R1",
-                "priority": 1
-            }
-        ]
-    },
-    {
-        "name": "DeepSeek V3",
-        "slug": "deepseek-v3",
-        "capability_type": "chat",
-        "description": "DeepSeek's powerful 2025 flagship model.",
-        "metadata": {
-            "context_window": 128000
-        },
-        "providers": [
-            {
-                "provider": "TOGETHER",
-                "provider_model_id": "deepseek-ai/DeepSeek-V3",
+                "provider": "OPENAI",
+                "provider_model_id": "gpt-5-mini",
                 "priority": 0
             }
         ]
     },
     {
-        "name": "Llama 3.3 70B",
-        "slug": "llama-3-3-70b",
+        "name": "GPT-5 Nano",
+        "slug": "gpt-5-nano",
         "capability_type": "chat",
-        "description": "Meta's highly capable open-weight model.",
+        "description": "OpenAI's fastest and most cost-efficient GPT-5 variant for simple, high-throughput tasks.",
         "metadata": {
-            "context_window": 128000
+            "context_window": 400000,
+            "vision": true,
+            "reasoning": true
         },
         "providers": [
             {
-                "provider": "GROQ",
-                "provider_model_id": "llama-3.3-70b-versatile",
-                "priority": 0
-            },
-            {
-                "provider": "TOGETHER",
-                "provider_model_id": "meta-llama/Llama-3.3-70B-Instruct-Turbo",
-                "priority": 1
-            }
-        ]
-    },
-    {
-        "name": "Mistral Large 3",
-        "slug": "mistral-large-3",
-        "capability_type": "chat",
-        "description": "State-of-the-art open model from Mistral.",
-        "metadata": {
-            "context_window": 128000
-        },
-        "providers": [
-            {
-                "provider": "MISTRAL",
-                "provider_model_id": "mistral-large-latest",
+                "provider": "OPENAI",
+                "provider_model_id": "gpt-5-nano",
                 "priority": 0
             }
         ]
     },
     {
-        "name": "Command R+ (Cohere)",
-        "slug": "command-r-plus",
+        "name": "Gemini 3.1 Pro Preview",
+        "slug": "gemini-3-1-pro-preview",
         "capability_type": "chat",
-        "description": "Business-optimized model for RAG.",
+        "description": "Google's current top Gemini reasoning model for complex multimodal and coding tasks.",
         "metadata": {
-            "context_window": 128000
+            "context_window": 1000000,
+            "vision": true,
+            "reasoning": true
         },
         "providers": [
             {
-                "provider": "COHERE",
-                "provider_model_id": "command-r-plus",
+                "provider": "GOOGLE",
+                "provider_model_id": "gemini-3.1-pro-preview",
+                "priority": 0
+            }
+        ]
+    },
+    {
+        "name": "Gemini 3 Flash Preview",
+        "slug": "gemini-3-flash-preview",
+        "capability_type": "chat",
+        "description": "Google's current fast Gemini 3-series model with strong reasoning and multimodal support.",
+        "metadata": {
+            "context_window": 1000000,
+            "vision": true,
+            "reasoning": true
+        },
+        "providers": [
+            {
+                "provider": "GOOGLE",
+                "provider_model_id": "gemini-3-flash-preview",
+                "priority": 0
+            }
+        ]
+    },
+    {
+        "name": "Claude Sonnet 4.6",
+        "slug": "claude-sonnet-4-6",
+        "capability_type": "chat",
+        "description": "Anthropic's current Sonnet model for coding, long-context reasoning, and agent workflows.",
+        "metadata": {
+            "context_window": 1000000,
+            "vision": true,
+            "reasoning": true
+        },
+        "providers": [
+            {
+                "provider": "ANTHROPIC",
+                "provider_model_id": "claude-sonnet-4-6",
+                "priority": 0
+            }
+        ]
+    },
+    {
+        "name": "Claude Opus 4.1",
+        "slug": "claude-opus-4-1",
+        "capability_type": "chat",
+        "description": "Anthropic's highest-capability Opus model for the most demanding reasoning and coding tasks.",
+        "metadata": {
+            "context_window": 200000,
+            "vision": true,
+            "reasoning": true
+        },
+        "providers": [
+            {
+                "provider": "ANTHROPIC",
+                "provider_model_id": "claude-opus-4-1-20250805",
+                "priority": 0
+            }
+        ]
+    },
+    {
+        "name": "Grok 4",
+        "slug": "grok-4",
+        "capability_type": "chat",
+        "description": "xAI's frontier Grok model for advanced reasoning, coding, and vision tasks.",
+        "metadata": {
+            "context_window": 256000,
+            "vision": true,
+            "reasoning": true
+        },
+        "providers": [
+            {
+                "provider": "XAI",
+                "provider_model_id": "grok-4",
+                "priority": 0
+            }
+        ]
+    },
+    {
+        "name": "Grok 4.1 Fast Reasoning",
+        "slug": "grok-4-1-fast-reasoning",
+        "capability_type": "chat",
+        "description": "xAI's current fast high-context reasoning model optimized for agentic tool use.",
+        "metadata": {
+            "context_window": 2000000,
+            "reasoning": true
+        },
+        "providers": [
+            {
+                "provider": "XAI",
+                "provider_model_id": "grok-4-1-fast-reasoning",
                 "priority": 0
             }
         ]
@@ -214,7 +164,7 @@
         "name": "Text Embedding 3 Large",
         "slug": "text-embedding-3-large",
         "capability_type": "embedding",
-        "description": "High-dimensional embeddings from OpenAI.",
+        "description": "OpenAI's most capable current embedding model.",
         "metadata": {
             "dimension": 3072
         },
@@ -230,7 +180,7 @@
         "name": "Text Embedding 3 Small",
         "slug": "text-embedding-3-small",
         "capability_type": "embedding",
-        "description": "Compact and efficient embeddings from OpenAI.",
+        "description": "OpenAI's smaller, lower-cost current embedding model.",
         "metadata": {
             "dimension": 1536
         },

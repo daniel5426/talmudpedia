@@ -16,6 +16,7 @@ google-genai
 requests
 langgraph>=0.2.0
 langchain-openai
+langchain-anthropic
 langchain-text-splitters
 motor
 aiohttp

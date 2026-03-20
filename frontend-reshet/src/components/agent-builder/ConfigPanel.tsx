@@ -59,6 +59,15 @@ import { useTenant } from "@/contexts/TenantContext"
 import { KnowledgeStoreSelect } from "../shared/KnowledgeStoreSelect"
 import { RetrievalPipelineSelect } from "../shared/RetrievalPipelineSelect"
 import { SearchableResourceInput } from "../shared/SearchableResourceInput"
+import { PromptMentionInput } from "../shared/PromptMentionInput"
+import { PromptModal } from "../shared/PromptModal"
+import { promptsService } from "@/services/prompts"
+import {
+    parseToSegments,
+    serializeSegments,
+    fillMention as fillMentionSegment,
+    extractPromptIds,
+} from "@/lib/prompt-mentions"
 
 
 const CATEGORY_ICONS: Record<string, React.ElementType> = {
@@ -996,6 +1005,7 @@ function ConfigField({
     availableVariables,
     toolCatalog,
     fieldError,
+    onPromptMentionClick,
 }: {
     field: ConfigFieldSpec
     value: unknown
@@ -1008,6 +1018,7 @@ function ConfigField({
     availableVariables?: any[]
     toolCatalog: ToolDefinition[]
     fieldError?: string
+    onPromptMentionClick?: (promptId: string, fieldName: string, mentionIndex: number) => void
 }) {
     const isNumber = field.fieldType === "number"
     const isBoolean = field.fieldType === "boolean"
@@ -1175,6 +1186,21 @@ function ConfigField({
         }
 
         if (isText || isExpression) {
+            if (field.prompt_capable && field.fieldType !== "expression") {
+                return (
+                    <PromptMentionInput
+                        value={(value as string) ?? field.default ?? ""}
+                        onChange={(val) => onChange(val)}
+                        surface={field.prompt_surface}
+                        placeholder={field.description}
+                        multiline={true}
+                        className="resize-none min-h-[60px] border-none text-[13px] focus-visible:ring-1 focus-visible:ring-offset-0 placeholder:text-muted-foreground/40"
+                        onMentionClick={(promptId, mentionIndex) =>
+                            onPromptMentionClick?.(promptId, field.name, mentionIndex)
+                        }
+                    />
+                )
+            }
             return (
                 <SmartInput
                     value={(value as string) ?? field.default ?? ""}
@@ -1208,6 +1234,65 @@ function ConfigField({
         }
 
         if (isCategoryList) {
+            if (field.prompt_capable) {
+                // Render categories with prompt-mention support in description fields
+                const categories = (value as any[]) || []
+                return (
+                    <div className="space-y-2">
+                        {categories.map((cat, idx) => (
+                            <div key={idx} className="space-y-1.5 bg-muted/20 rounded-lg p-2 border border-border/30">
+                                <Input
+                                    value={cat.name || ""}
+                                    onChange={(e) => {
+                                        const updated = [...categories]
+                                        updated[idx] = { ...updated[idx], name: e.target.value }
+                                        onChange(updated)
+                                    }}
+                                    placeholder="Category name"
+                                    className="h-8 px-2 text-[11px] bg-background/50"
+                                />
+                                <PromptMentionInput
+                                    value={cat.description || ""}
+                                    onChange={(val) => {
+                                        const updated = [...categories]
+                                        updated[idx] = { ...updated[idx], description: val }
+                                        onChange(updated)
+                                    }}
+                                    surface="classify.categories.description"
+                                    placeholder="Category description (supports @prompt mentions)"
+                                    multiline={false}
+                                    className="min-h-[32px] h-8 text-[11px] border-none bg-background/50"
+                                    onMentionClick={(promptId, mentionIndex) =>
+                                        onPromptMentionClick?.(promptId, `${field.name}[${idx}].description`, mentionIndex)
+                                    }
+                                />
+                                <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-6 w-6 text-muted-foreground hover:text-destructive"
+                                    onClick={() => {
+                                        const updated = categories.filter((_, i) => i !== idx)
+                                        onChange(updated)
+                                    }}
+                                >
+                                    <Trash2 className="h-3 w-3" />
+                                </Button>
+                            </div>
+                        ))}
+                        <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => onChange([...categories, { name: "", description: "" }])}
+                            className="w-full h-8 text-xs border-dashed text-muted-foreground hover:text-foreground"
+                        >
+                            <Plus className="h-3 w-3 mr-1.5" />
+                            Add Category
+                        </Button>
+                    </div>
+                )
+            }
             return (
                 <ListEditor
                     items={(value as any[]) || []}
@@ -1441,6 +1526,12 @@ export function ConfigPanel({
     const [loading, setLoading] = useState(true)
     const [advancedMode, setAdvancedMode] = useState(false)
 
+    // Prompt modal state
+    const [promptModalOpen, setPromptModalOpen] = useState(false)
+    const [promptModalId, setPromptModalId] = useState<string | null>(null)
+    const [promptModalFieldName, setPromptModalFieldName] = useState<string | null>(null)
+    const [promptModalMentionIndex, setPromptModalMentionIndex] = useState<number>(0)
+
     const { currentTenant } = useTenant()
 
     useEffect(() => {
@@ -1548,6 +1639,57 @@ export function ConfigPanel({
         setLocalConfig(newConfig)
         onConfigChange(nodeId, newConfig)
     }
+
+    const handlePromptMentionClick = useCallback(
+        (promptId: string, fieldName: string, mentionIndex: number) => {
+            setPromptModalId(promptId)
+            setPromptModalFieldName(fieldName)
+            setPromptModalMentionIndex(mentionIndex)
+            setPromptModalOpen(true)
+        },
+        []
+    )
+
+    const handlePromptFill = useCallback(
+        async (promptId: string, content: string) => {
+            if (!promptModalFieldName) return
+            // Handle nested field names like "categories[0].description"
+            const bracketMatch = promptModalFieldName.match(/^(\w+)\[(\d+)\]\.(\w+)$/)
+            if (bracketMatch) {
+                const [, arrayField, indexStr, subField] = bracketMatch
+                const idx = parseInt(indexStr, 10)
+                const items = [...((localConfig[arrayField] as any[]) || [])]
+                if (items[idx]) {
+                    const currentText = String(items[idx][subField] || "")
+                    const nameMap: Record<string, string> = {}
+                    // Fetch name for this prompt
+                    try {
+                        const prompt = await promptsService.getPrompt(promptId)
+                        nameMap[promptId] = prompt.name
+                    } catch {
+                        nameMap[promptId] = "Prompt"
+                    }
+                    const segments = parseToSegments(currentText, nameMap)
+                    const newSegments = fillMentionSegment(segments, promptModalMentionIndex, content)
+                    items[idx] = { ...items[idx], [subField]: serializeSegments(newSegments) }
+                    handleFieldChange(arrayField, items)
+                }
+            } else {
+                const currentText = String(localConfig[promptModalFieldName] || "")
+                const nameMap: Record<string, string> = {}
+                try {
+                    const prompt = await promptsService.getPrompt(promptId)
+                    nameMap[promptId] = prompt.name
+                } catch {
+                    nameMap[promptId] = "Prompt"
+                }
+                const segments = parseToSegments(currentText, nameMap)
+                const newSegments = fillMentionSegment(segments, promptModalMentionIndex, content)
+                handleFieldChange(promptModalFieldName, serializeSegments(newSegments))
+            }
+        },
+        [promptModalFieldName, promptModalMentionIndex, localConfig, handleFieldChange]
+    )
 
     const dynamicSpec = operatorSpecs.length
         ? operatorSpecs.find((op) => op.type === data.nodeType)
@@ -1718,6 +1860,7 @@ export function ConfigPanel({
                                             availableVariables={availableVariables}
                                             toolCatalog={toolCatalog}
                                             fieldError={fieldErrors[field.name]}
+                                            onPromptMentionClick={handlePromptMentionClick}
                                         />
                                     ))}
                                 </div>
@@ -1745,6 +1888,14 @@ export function ConfigPanel({
                     </Badge>
                 </div>
             </div>
+
+            {/* Prompt mention modal */}
+            <PromptModal
+                promptId={promptModalId}
+                open={promptModalOpen}
+                onOpenChange={setPromptModalOpen}
+                onFill={handlePromptFill}
+            />
         </div>
     )
 }

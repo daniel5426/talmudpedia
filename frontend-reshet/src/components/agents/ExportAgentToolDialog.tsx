@@ -12,8 +12,21 @@ import {
     DialogHeader,
     DialogTitle,
 } from "@/components/ui/dialog"
+import {
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuItem,
+    DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { cn } from "@/lib/utils"
 import { agentService, Agent } from "@/services"
@@ -211,11 +224,7 @@ function createChild(type: SchemaNodeType, name = "") {
     })
 }
 function typeAccent(type: SchemaNodeType) {
-    if (type === "object") return "text-sky-700 bg-sky-500/10"
-    if (type === "array") return "text-amber-700 bg-amber-500/10"
-    if (type === "boolean") return "text-emerald-700 bg-emerald-500/10"
-    if (type === "number") return "text-fuchsia-700 bg-fuchsia-500/10"
-    return "text-zinc-700 bg-zinc-500/10"
+    return type
 }
 function FieldTypeSelect({
     value,
@@ -259,13 +268,13 @@ function NavigatorRow({
                 type="button"
                 onClick={() => onSelect(node.id)}
                 className={cn(
-                    "group flex w-full items-center gap-2 rounded-xl px-2 py-1.5 text-left transition-colors",
-                    selected ? "bg-foreground/[0.06] text-foreground" : "text-muted-foreground hover:bg-foreground/[0.03] hover:text-foreground"
+                    "group flex h-[22px] w-full items-center gap-1 text-left text-[13px] transition-colors duration-75",
+                    selected ? "bg-accent text-foreground" : "text-foreground hover:bg-accent"
                 )}
                 style={{ paddingLeft: depth * 14 + 8 }}
             >
                 <span
-                    className="flex h-4 w-4 items-center justify-center text-muted-foreground/70"
+                    className="flex h-4 w-4 shrink-0 items-center justify-center text-muted-foreground/60"
                     onClick={(event) => {
                         event.stopPropagation()
                         if (expandable) onToggle(node.id)
@@ -276,10 +285,9 @@ function NavigatorRow({
                 <span className="min-w-0 truncate text-sm">
                     {node.name || (node.type === "array" ? "item" : "field")}
                 </span>
-                <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.16em]", typeAccent(node.type))}>
-                    {node.type}
+                <span className="ml-auto pr-2 text-[10px] uppercase tracking-[0.08em] text-muted-foreground/60">
+                    {typeAccent(node.type)}
                 </span>
-                {node.required && node.name ? <span className="text-[10px] uppercase tracking-[0.16em] text-foreground/45">required</span> : null}
             </button>
             {node.expanded && node.type === "object"
                 ? node.children.map((child) => (
@@ -332,6 +340,7 @@ export function ExportAgentToolDialog({
 
     const selectedNode = useMemo(() => findNode(rootNode, selectedNodeId) ?? rootNode, [rootNode, selectedNodeId])
     const selectedPath = useMemo(() => findPath(rootNode, selectedNode.id) ?? [rootNode], [rootNode, selectedNode.id])
+    const visibleTreeNodes = rootNode.children
     useEffect(() => {
         if (!open) return
         if (!selectedAgentId && agents.length > 0) {
@@ -346,7 +355,7 @@ export function ExportAgentToolDialog({
         setDescription(selectedAgent.description || `Delegates to agent ${selectedAgent.name}.`)
         setEditorMode("builder")
         setRootNode(nextRoot)
-        setSelectedNodeId(nextRoot.id)
+        setSelectedNodeId(nextRoot.children[0]?.id ?? nextRoot.id)
         setJsonSchemaText(JSON.stringify(DEFAULT_AGENT_TOOL_INPUT_SCHEMA, null, 2))
         setSchemaEditorError(null)
         setError(null)
@@ -363,11 +372,10 @@ export function ExportAgentToolDialog({
             }))
         )
     }
-    const addChildToSelected = (type: SchemaNodeType) => {
-        if (selectedNode.type !== "object") return
+    const addChildToNode = (nodeId: string, type: SchemaNodeType) => {
         const child = createChild(type)
         setRootNode((current) =>
-            updateNode(current, selectedNode.id, (node) => ({
+            updateNode(current, nodeId, (node) => ({
                 ...node,
                 expanded: true,
                 children: [...node.children, child],
@@ -375,12 +383,11 @@ export function ExportAgentToolDialog({
         )
         setSelectedNodeId(child.id)
     }
-    const replaceArrayItem = (type: SchemaNodeType) => {
-        if (selectedNode.type !== "array") return
+    const replaceArrayItemOnNode = (nodeId: string, type: SchemaNodeType) => {
         const item = createChild(type, "item")
         item.required = true
         setRootNode((current) =>
-            updateNode(current, selectedNode.id, (node) => ({
+            updateNode(current, nodeId, (node) => ({
                 ...node,
                 expanded: true,
                 item,
@@ -390,95 +397,133 @@ export function ExportAgentToolDialog({
     }
     const removeSelected = () => {
         if (selectedNode.id === rootNode.id) return
-        const nextSelected = selectedPath.at(-2)?.id ?? rootNode.id
+        const nextSelected = selectedPath.at(-2)?.id ?? rootNode.children[0]?.id ?? rootNode.id
         setRootNode((current) => removeNode(current, selectedNode.id))
         setSelectedNodeId(nextSelected)
     }
+    const handleAddFromMenu = (type: SchemaNodeType) => {
+        if (selectedNode.type === "object") {
+            addChildToNode(selectedNode.id, type)
+            return
+        }
+        if (selectedNode.type === "array") {
+            replaceArrayItemOnNode(selectedNode.id, type)
+            return
+        }
+        const parent = selectedPath.at(-2) ?? rootNode
+        if (parent.type === "array") {
+            replaceArrayItemOnNode(parent.id, type)
+            return
+        }
+        addChildToNode(parent.id, type)
+    }
     const renderSplitTree = () => (
-        <div className="grid gap-4 md:grid-cols-[260px_minmax(0,1fr)]">
-            <div className="max-h-[320px] overflow-y-auto rounded-2xl bg-background/70 p-2">
-                <NavigatorRow node={rootNode} depth={0} selectedId={selectedNode.id} onSelect={setSelectedNodeId} onToggle={handleToggleExpanded} />
-            </div>
-            <div className="rounded-2xl bg-background/70 p-3">
-                <div className="mb-3 flex items-center justify-between">
-                    <div className="text-xs uppercase tracking-[0.16em] text-muted-foreground">
-                        {selectedNode.id === rootNode.id ? "Root object" : selectedNode.name || selectedNode.type}
-                    </div>
-                    {selectedNode.id !== rootNode.id ? (
-                        <Button type="button" variant="ghost" className="h-7 rounded-full px-2.5 text-xs text-destructive hover:bg-destructive/10" onClick={removeSelected}>
-                            <Trash2 className="mr-1 h-3.5 w-3.5" />
-                            Remove
-                        </Button>
-                    ) : null}
+        <div className="grid gap-3 md:grid-cols-[220px_minmax(0,1fr)]">
+            <div className="flex max-h-[320px] flex-col overflow-hidden rounded-md border border-border/60">
+                <div className="flex h-[32px] shrink-0 items-center justify-between border-b border-border/60 pl-3 pr-1.5">
+                    <span className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground/60">
+                        {visibleTreeNodes.length} fields
+                    </span>
+                    <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                            <button
+                                type="button"
+                                aria-label="Add field"
+                                className="flex h-[22px] w-[22px] items-center justify-center rounded-[3px] text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground"
+                                title="Add field"
+                            >
+                                <Plus className="h-[14px] w-[14px]" />
+                            </button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-40">
+                            {(["string", "number", "boolean", "object", "array"] as SchemaNodeType[]).map((type) => (
+                                <DropdownMenuItem key={type} onClick={() => handleAddFromMenu(type)}>
+                                    Add {type}
+                                </DropdownMenuItem>
+                            ))}
+                        </DropdownMenuContent>
+                    </DropdownMenu>
                 </div>
-                <div className="space-y-3">
-                    <div className="grid gap-3 md:grid-cols-[minmax(0,1.2fr)_160px_110px]">
-                        <div className="space-y-1">
-                            <Label htmlFor="selected-field-name">Field Name</Label>
-                            <Input
-                                id="selected-field-name"
-                                value={selectedNode.id === rootNode.id ? "input" : selectedNode.name}
-                                onChange={(event) => selectedNode.id !== rootNode.id && updateSelectedNode({ name: event.target.value })}
-                                disabled={selectedNode.id === rootNode.id}
-                                className="rounded-xl border-none bg-[#f7f4ee] shadow-none"
-                            />
+                <div className="flex-1 overflow-y-auto overflow-x-hidden py-0.5">
+                    {visibleTreeNodes.length === 0 ? (
+                        <p className="px-2 py-4 text-center text-xs text-muted-foreground">No fields yet.</p>
+                    ) : (
+                        visibleTreeNodes.map((node) => (
+                            <NavigatorRow key={node.id} node={node} depth={0} selectedId={selectedNode.id} onSelect={setSelectedNodeId} onToggle={handleToggleExpanded} />
+                        ))
+                    )}
+                </div>
+            </div>
+            <div className="min-h-0">
+                {selectedNode.id === rootNode.id ? (
+                    <div className="flex h-full items-center justify-center rounded-md border border-dashed border-border/40 px-3 py-6 text-sm text-muted-foreground">
+                        Select a field to edit its properties.
+                    </div>
+                ) : (
+                    <div className="space-y-3">
+                        <div className="flex items-center justify-between">
+                            <span className="text-xs font-medium text-muted-foreground">
+                                {selectedNode.name || selectedNode.type}
+                            </span>
+                            <button
+                                type="button"
+                                className="flex items-center gap-1 text-xs text-muted-foreground hover:text-destructive transition-colors"
+                                onClick={removeSelected}
+                            >
+                                <Trash2 className="h-3 w-3" />
+                                Remove
+                            </button>
                         </div>
-                        <div className="space-y-1">
-                            <Label>Type</Label>
-                            <div className="rounded-xl bg-[#f7f4ee]">
-                                <FieldTypeSelect
-                                    value={selectedNode.type}
-                                    onChange={(value) =>
-                                        updateSelectedNode({
-                                            type: value,
-                                            children: value === "object" ? selectedNode.children : [],
-                                            item: value === "array" ? selectedNode.item ?? createChild("string", "item") : null,
-                                        })
-                                    }
+                        <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_120px]">
+                            <div className="space-y-1">
+                                <Label htmlFor="selected-field-name" className="text-xs">Name</Label>
+                                <Input
+                                    id="selected-field-name"
+                                    value={selectedNode.name}
+                                    onChange={(event) => updateSelectedNode({ name: event.target.value })}
                                 />
+                            </div>
+                            <div className="space-y-1">
+                                <Label className="text-xs">Type</Label>
+                                <div className="rounded-md border border-input">
+                                    <FieldTypeSelect
+                                        value={selectedNode.type}
+                                        onChange={(value) =>
+                                            updateSelectedNode({
+                                                type: value,
+                                                children: value === "object" ? selectedNode.children : [],
+                                                item: value === "array" ? selectedNode.item ?? createChild("string", "item") : null,
+                                            })
+                                        }
+                                    />
+                                </div>
                             </div>
                         </div>
                         <div className="space-y-1">
-                            <Label>Required</Label>
-                            <label className="flex h-8 items-center gap-2 rounded-xl bg-[#f7f4ee] px-3 text-sm text-muted-foreground">
-                                <input
-                                    type="checkbox"
-                                    checked={selectedNode.required}
-                                    disabled={selectedNode.id === rootNode.id}
-                                    onChange={(event) => updateSelectedNode({ required: event.target.checked })}
-                                />
-                                Required
-                            </label>
+                            <Label htmlFor="selected-field-description" className="text-xs">Description</Label>
+                            <Input
+                                id="selected-field-description"
+                                placeholder="What this field is for..."
+                                value={selectedNode.description}
+                                onChange={(event) => updateSelectedNode({ description: event.target.value })}
+                            />
                         </div>
+                        <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer select-none">
+                            <input
+                                type="checkbox"
+                                checked={selectedNode.required}
+                                onChange={(event) => updateSelectedNode({ required: event.target.checked })}
+                                className="rounded"
+                            />
+                            Required
+                        </label>
+                        {selectedNode.type === "array" ? (
+                            <p className="text-xs text-muted-foreground">
+                                Array items are configured via the add menu in the tree.
+                            </p>
+                        ) : null}
                     </div>
-                    <div className="space-y-1">
-                        <Label htmlFor="selected-field-description">Description</Label>
-                        <Input
-                            id="selected-field-description"
-                            value={selectedNode.description}
-                            onChange={(event) => updateSelectedNode({ description: event.target.value })}
-                            className="rounded-xl border-none bg-[#f7f4ee] shadow-none"
-                        />
-                    </div>
-                </div>
-                <div className="mt-4 flex flex-wrap gap-2">
-                    {selectedNode.type === "object"
-                        ? (["string", "number", "boolean", "object", "array"] as SchemaNodeType[]).map((type) => (
-                              <Button key={type} type="button" variant="ghost" className="h-8 rounded-full bg-[#f7f4ee] px-3 text-xs hover:bg-[#ede8de]" onClick={() => addChildToSelected(type)}>
-                                  <Plus className="mr-1 h-3.5 w-3.5" />
-                                  Add {type}
-                              </Button>
-                          ))
-                        : null}
-                    {selectedNode.type === "array"
-                        ? (["string", "number", "boolean", "object", "array"] as SchemaNodeType[]).map((type) => (
-                              <Button key={type} type="button" variant="ghost" className="h-8 rounded-full bg-[#f7f4ee] px-3 text-xs hover:bg-[#ede8de]" onClick={() => replaceArrayItem(type)}>
-                                  <Plus className="mr-1 h-3.5 w-3.5" />
-                                  Set items to {type}
-                              </Button>
-                          ))
-                        : null}
-                </div>
+                )}
             </div>
         </div>
     )
@@ -494,7 +539,7 @@ export function ExportAgentToolDialog({
             const parsed = JSON.parse(jsonSchemaText)
             const nextRoot = schemaToNode("input", parsed, true)
             setRootNode(nextRoot)
-            setSelectedNodeId(nextRoot.id)
+            setSelectedNodeId(nextRoot.children[0]?.id ?? nextRoot.id)
             setSchemaEditorError(null)
             setEditorMode("builder")
         } catch {
@@ -539,85 +584,89 @@ export function ExportAgentToolDialog({
     }
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="sm:max-w-[980px] max-h-[88vh] overflow-hidden border-none bg-[#faf8f4] shadow-2xl">
-                <DialogHeader>
-                    <DialogTitle>Export Agent As Tool</DialogTitle>
+            <DialogContent className="sm:max-w-[860px] max-h-[88vh] overflow-hidden border-border bg-background shadow-2xl">
+                <DialogHeader className="px-2">
+                    <DialogTitle>Export Agent as Tool</DialogTitle>
                     <DialogDescription>
-                        Create or refresh an owner-managed `agent_call` tool for an agent.
+                        Create or refresh an owner-managed tool from an agent.
                     </DialogDescription>
                 </DialogHeader>
 
-                <div className="max-h-[calc(88vh-11rem)] space-y-5 overflow-y-auto py-2 pr-2">
-                    <div className="space-y-2">
-                        <Label htmlFor="export-agent-select">Agent</Label>
-                        <select
-                            id="export-agent-select"
-                            value={selectedAgentId}
-                            onChange={(event) => setSelectedAgentId(event.target.value)}
-                            className="flex h-10 w-full rounded-xl bg-white/80 px-3 py-2 text-sm outline-none"
-                        >
-                            {agents.length === 0 ? (
-                                <option value="">No agents available</option>
-                            ) : (
-                                agents.map((agent) => (
-                                    <option key={agent.id} value={agent.id}>
-                                        {agent.name}
-                                    </option>
-                                ))
-                            )}
-                        </select>
-                    </div>
-
-                    <div className="grid gap-4 md:grid-cols-2">
-                        <div className="space-y-2">
+                <div className="max-h-[calc(88vh-11rem)] space-y-4 overflow-y-auto py-2 p-2">
+                    <div className="grid gap-3 md:grid-cols-[200px_minmax(0,1fr)]">
+                        <div className="space-y-1.5">
+                            <Label htmlFor="export-agent-select">Agent</Label>
+                            <Select
+                                value={selectedAgentId}
+                                onValueChange={setSelectedAgentId}
+                            >
+                                <SelectTrigger id="export-agent-select" className="h-9 w-full">
+                                    <SelectValue placeholder="Select an agent" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    {agents.length === 0 ? (
+                                        <SelectItem value="__no_agents__" disabled>
+                                            No agents available
+                                        </SelectItem>
+                                    ) : (
+                                    agents.map((agent) => (
+                                        <SelectItem key={agent.id} value={agent.id}>
+                                            {agent.name}
+                                        </SelectItem>
+                                    ))
+                                    )}
+                                </SelectContent>
+                            </Select>
+                        </div>
+                        <div className="space-y-1.5">
                             <Label htmlFor="export-tool-name">Tool Name</Label>
-                            <Input id="export-tool-name" value={name} onChange={(event) => setName(event.target.value)} className="rounded-xl border-none bg-white/85 shadow-none" />
-                        </div>
-                        <div className="space-y-2">
-                            <Label htmlFor="export-tool-description">Description</Label>
-                            <Input id="export-tool-description" value={description} onChange={(event) => setDescription(event.target.value)} className="rounded-xl border-none bg-white/85 shadow-none" />
+                            <Input id="export-tool-name" value={name} onChange={(event) => setName(event.target.value)} />
                         </div>
                     </div>
 
-                    <div className="space-y-4 rounded-[28px] bg-[#f2eee7] p-4">
-                        <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
-                            <div>
-                                <Label>Input Schema</Label>
-                                <p className="mt-1 text-xs text-muted-foreground">
-                                    Split tree editor with a JSON fallback when you want raw control.
-                                </p>
-                            </div>
-                            <Button
+                    <div className="space-y-1.5">
+                        <Label htmlFor="export-tool-description">Description</Label>
+                        <Textarea
+                            id="export-tool-description"
+                            value={description}
+                            onChange={(event) => setDescription(event.target.value)}
+                            placeholder="Describe what this tool does..."
+                            className="min-h-[72px] resize-none text-sm"
+                        />
+                    </div>
+
+                    <div className="space-y-3">
+                        <div className="flex items-center justify-between">
+                            <Label className="text-sm">Input Schema</Label>
+                            <button
                                 type="button"
-                                variant="ghost"
-                                className="h-9 rounded-full bg-white/70 px-4 text-sm hover:bg-white"
+                                className="text-xs text-muted-foreground hover:text-foreground transition-colors"
                                 onClick={editorMode === "builder" ? switchToJson : switchToBuilder}
                             >
-                                {editorMode === "builder" ? "Switch To JSON" : "Back To Builder"}
-                            </Button>
+                                {editorMode === "builder" ? "Edit as JSON" : "Back to builder"}
+                            </button>
                         </div>
 
-                        <div className="rounded-[24px] bg-white/70 p-3">
-                            {editorMode === "builder" ? (
-                                renderSplitTree()
-                            ) : (
-                                <Textarea
-                                    aria-label="JSON Schema"
-                                    className="min-h-[360px] rounded-2xl border-none bg-[#f7f4ee] font-mono text-xs shadow-none"
-                                    value={jsonSchemaText}
-                                    onChange={(event) => {
-                                        setJsonSchemaText(event.target.value)
-                                        setSchemaEditorError(null)
-                                    }}
-                                />
-                            )}
-                        </div>
+                        {editorMode === "builder" ? (
+                            renderSplitTree()
+                        ) : (
+                            <Textarea
+                                id="json-schema-editor"
+                                aria-label="JSON Schema"
+                                className="min-h-[360px] font-mono text-xs"
+                                value={jsonSchemaText}
+                                onChange={(event) => {
+                                    setJsonSchemaText(event.target.value)
+                                    setSchemaEditorError(null)
+                                }}
+                            />
+                        )}
 
                         {schemaEditorError ? <div className="text-sm text-destructive">{schemaEditorError}</div> : null}
                     </div>
 
                     {error ? (
-                        <div className="rounded-2xl bg-destructive/8 px-3 py-2 text-sm text-destructive">
+                        <div className="rounded-lg bg-destructive/8 px-3 py-2 text-sm text-destructive">
                             {error}
                         </div>
                     ) : null}
