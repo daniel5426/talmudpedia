@@ -1,6 +1,6 @@
 # Architecture Tree (Curated)
 
-Last Updated: 2026-03-19
+Last Updated: 2026-03-20
 
 This file is a backend-only architecture map optimized for agent context efficiency.
 
@@ -48,16 +48,13 @@ backend/app/core/workload_jwt.py
 backend/app/core/runtime_urls.py
 
 backend/app/agent/
-backend/app/agent/config.py
 backend/app/agent/models.py
 backend/app/agent/registry.py
-backend/app/agent/factory.py
 backend/app/agent/resolution.py
 backend/app/agent/cel_engine.py
 backend/app/agent/agent_artifact_spec.py
 
 backend/app/agent/core/
-backend/app/agent/core/base.py
 backend/app/agent/core/interfaces.py
 backend/app/agent/core/llm_adapter.py
 backend/app/agent/core/state.py

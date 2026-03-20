@@ -4,6 +4,7 @@ import logging
 import os
 import pickle
 import threading
+import uuid
 from collections import defaultdict
 from pathlib import Path
 from typing import Any, Sequence
@@ -81,7 +82,7 @@ class DurableMemorySaver(MemorySaver):
                 },
                 "blobs": dict(self.blobs),
             }
-            temp_path = self._path.with_suffix(self._path.suffix + ".tmp")
+            temp_path = self._path.with_suffix(f"{self._path.suffix}.{uuid.uuid4().hex}.tmp")
             with temp_path.open("wb") as fh:
                 pickle.dump(payload, fh)
             temp_path.replace(self._path)

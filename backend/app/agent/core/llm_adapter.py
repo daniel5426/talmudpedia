@@ -1,4 +1,4 @@
-from typing import Any, AsyncGenerator, Dict, List, Optional, Union
+from typing import Any, AsyncGenerator, List, Optional
 import logging
 
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -50,14 +50,37 @@ class LLMProviderAdapter(BaseChatModel):
         to the callback manager, enabling LangGraph astream_events support.
         """
         full_content = ""
-        last_chunk = None
         
         # Use our own _astream implementation to ensure consistent token handling
         async for chunk in self._astream(messages, stop=stop, run_manager=run_manager, **kwargs):
-            full_content += chunk.message.content
-            last_chunk = chunk
+            full_content += self._stringify_content(chunk.message.content)
             
         return ChatResult(generations=[ChatGeneration(message=AIMessage(content=full_content))])
+
+    @staticmethod
+    def _stringify_content(content: Any) -> str:
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts: list[str] = []
+            for item in content:
+                if isinstance(item, str):
+                    parts.append(item)
+                    continue
+                if isinstance(item, dict):
+                    text = item.get("text")
+                    if text is not None:
+                        parts.append(str(text))
+                        continue
+                text = getattr(item, "text", None)
+                if text is not None:
+                    parts.append(str(text))
+                    continue
+                parts.append(str(item))
+            return "".join(parts)
+        if content is None:
+            return ""
+        return str(content)
 
     async def _astream(
         self,
@@ -79,10 +102,9 @@ class LLMProviderAdapter(BaseChatModel):
             async for chunk in self.provider.stream(messages, system_prompt=system_prompt, **kwargs):
                 if isinstance(chunk, AIMessageChunk):
                     msg_chunk = chunk
-                    content = msg_chunk.content
+                    content = self._stringify_content(msg_chunk.content)
 
-                    if content and not isinstance(content, str):
-                        content = str(content)
+                    if content != msg_chunk.content:
                         msg_chunk = msg_chunk.model_copy(update={"content": content})
 
                     lc_chunk = ChatGenerationChunk(message=msg_chunk)
@@ -131,23 +153,8 @@ class LLMProviderAdapter(BaseChatModel):
                      if hasattr(delta, "reasoning_content") and delta.reasoning_content:
                          reasoning_content = delta.reasoning_content
 
-                # Sanitize content if it's not a string (dict or Pydantic model)
-                if content and not isinstance(content, str):
-                    if isinstance(content, dict):
-                        if "text" in content:
-                            content = content["text"]
-                        elif "content" in content:
-                            content = content["content"]
-                        else:
-                            content = str(content)
-                    else:
-                        # Try attribute access for objects/models
-                        if hasattr(content, "text"):
-                            content = content.text
-                        elif hasattr(content, "content"):
-                            content = content.content
-                        else:
-                            content = str(content)
+                if content:
+                    content = self._stringify_content(content)
 
                 if content or reasoning_content:
                     msg_chunk = AIMessageChunk(content=str(content)) # Enforce string
@@ -164,10 +171,6 @@ class LLMProviderAdapter(BaseChatModel):
                         # Suppress noisy warning when run_manager is absent
                         logger.debug("run_manager is None, skipping on_llm_new_token")
                     yield lc_chunk
-                    
-        except Exception as e:
-            logger.error(f"Error in LLMProviderAdapter stream: {e}")
-            raise
                     
         except Exception as e:
             logger.error(f"Error in LLMProviderAdapter stream: {e}")

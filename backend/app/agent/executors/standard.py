@@ -20,6 +20,7 @@ from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field, create_model
 from app.services.model_resolver import ModelResolver
 from app.services.openui_support import (
+    OpenUIRuntimeConfig,
     build_openui_payload,
     build_openui_system_prompt,
     is_openui_content_complete,
@@ -890,6 +891,35 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
                 column.name: getattr(tool, column.name)
                 for column in columns
             }
+            if not tool_payload:
+                for attr in (
+                    "id",
+                    "tenant_id",
+                    "name",
+                    "slug",
+                    "description",
+                    "schema",
+                    "config_schema",
+                    "implementation_type",
+                    "ownership",
+                    "managed_by",
+                    "source_object_type",
+                    "source_object_id",
+                    "artifact_id",
+                    "artifact_version",
+                    "artifact_revision_id",
+                    "visual_pipeline_id",
+                    "executable_pipeline_id",
+                    "builtin_key",
+                    "builtin_template_id",
+                    "is_builtin_template",
+                    "is_active",
+                    "is_system",
+                ):
+                    if hasattr(tool, attr):
+                        tool_payload[attr] = getattr(tool, attr)
+            elif "config_schema" not in tool_payload and hasattr(tool, "config_schema"):
+                tool_payload["config_schema"] = getattr(tool, "config_schema")
             tool_payload["description"] = resolved_description
             tool_payload["schema"] = {"input": resolved_input, "output": resolved_output}
             resolved_tools.append(SimpleNamespace(**tool_payload))
@@ -1287,6 +1317,64 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
 
         return normalized
 
+    def _emit_openui_delta(
+        self,
+        *,
+        emitter: Any,
+        node_id: str,
+        runtime_config: OpenUIRuntimeConfig,
+        chunk_text: str,
+    ) -> None:
+        if not emitter or not str(chunk_text or ""):
+            return
+        emitter.emit_internal_event(
+            "assistant.ui",
+            build_openui_payload(
+                content_delta=str(chunk_text),
+                runtime_config=runtime_config,
+                is_final=False,
+            ),
+            node_id=node_id,
+            category="generative_ui",
+            visibility=EventVisibility.CLIENT_SAFE,
+        )
+
+    def _flush_openui_statement_deltas(
+        self,
+        *,
+        emitter: Any,
+        node_id: str,
+        runtime_config: OpenUIRuntimeConfig,
+        pending_buffer: str,
+        force: bool = False,
+    ) -> str:
+        if not pending_buffer:
+            return ""
+
+        if force:
+            self._emit_openui_delta(
+                emitter=emitter,
+                node_id=node_id,
+                runtime_config=runtime_config,
+                chunk_text=pending_buffer,
+            )
+            return ""
+
+        last_newline = pending_buffer.rfind("\n")
+        if last_newline == -1:
+            return pending_buffer
+
+        ready = pending_buffer[: last_newline + 1]
+        remainder = pending_buffer[last_newline + 1 :]
+        if ready:
+            self._emit_openui_delta(
+                emitter=emitter,
+                node_id=node_id,
+                runtime_config=runtime_config,
+                chunk_text=ready,
+            )
+        return remainder
+
     async def execute(self, state: Dict[str, Any], config: Dict[str, Any], context: Dict[str, Any] = None) -> Dict[str, Any]:
         logger.debug(f"Executing Agent (Reasoning) node")
         
@@ -1391,7 +1479,7 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
                 tool_call_buffers: Dict[str, Dict[str, Any]] = {}
                 tool_call_order: List[str] = []
                 last_message: Optional[BaseMessage] = None
-                openui_chunks: List[str] = []
+                pending_openui_delta = ""
 
                 # Stream tokens and buffer tool call chunks
                 try:
@@ -1409,7 +1497,13 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
                         if token_content:
                             full_content += token_content
                             if openui_config.enabled:
-                                openui_chunks.append(token_content)
+                                pending_openui_delta += token_content
+                                pending_openui_delta = self._flush_openui_statement_deltas(
+                                    emitter=emitter,
+                                    node_id=node_id,
+                                    runtime_config=openui_config,
+                                    pending_buffer=pending_openui_delta,
+                                )
                             elif emitter:
                                 emitter.emit_token(token_content, node_id)
                 except (NotImplementedError, Exception) as e:
@@ -1422,9 +1516,7 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
                         max_tokens=max_tokens,
                     )
                     full_content = response.content
-                    if openui_config.enabled:
-                        openui_chunks = [str(full_content or "")]
-                    elif emitter:
+                    if not openui_config.enabled and emitter:
                         emitter.emit_token(full_content, node_id)
                     last_message = response
 
@@ -1456,6 +1548,13 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
                         instructions=instructions,
                         temperature=temperature,
                         max_tokens=max_tokens,
+                    )
+                    pending_openui_delta = self._flush_openui_statement_deltas(
+                        emitter=emitter,
+                        node_id=node_id,
+                        runtime_config=openui_config,
+                        pending_buffer=pending_openui_delta,
+                        force=True,
                     )
 
                 # Handle structured output
@@ -1540,20 +1639,6 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
 
                 if not tool_calls:
                     if openui_config.enabled and emitter and full_content.strip():
-                        for chunk_text in openui_chunks:
-                            if not str(chunk_text or ""):
-                                continue
-                            emitter.emit_internal_event(
-                                "assistant.ui",
-                                build_openui_payload(
-                                    content_delta=str(chunk_text),
-                                    runtime_config=openui_config,
-                                    is_final=False,
-                                ),
-                                node_id=node_id,
-                                category="generative_ui",
-                                visibility=EventVisibility.CLIENT_SAFE,
-                            )
                         emitter.emit_internal_event(
                             "assistant.ui",
                             build_openui_payload(

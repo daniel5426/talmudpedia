@@ -1,6 +1,6 @@
 # Agent Execution Current State
 
-Last Updated: 2026-03-16
+Last Updated: 2026-03-20
 
 This document describes the current agent execution architecture as implemented in the backend.
 
@@ -13,9 +13,12 @@ Primary implementation points:
 - `backend/app/agent/graph/compiler.py`
 - `backend/app/agent/runtime/`
 - `backend/app/agent/execution/trace_recorder.py`
-- `backend/app/api/routers/agent.py`
 - `backend/app/api/routers/agents.py`
 - `backend/app/api/routers/agent_run_logs.py`
+
+Legacy note:
+- the old legacy `/chat` bootstrap route and the old `advanced_rag` / `simple_rag` workflow files were hard-removed on 2026-03-20
+- maintained execution paths now flow through the graph compiler, runtime adapter, model resolver, and executor stack listed above
 
 ## What Is Stable In The Current Code
 

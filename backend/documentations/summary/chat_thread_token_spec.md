@@ -1,6 +1,6 @@
 # Unified Execution + Quota Enforcement V2 Implementation Summary
 
-Last Updated: 2026-03-09
+Last Updated: 2026-03-20
 
 ## Objective
 Implement a reuse-first unification of non-coding agent execution on `AgentExecutorService`, enforce one V2 stream envelope across internal/public runtime surfaces, remove legacy workspace chat backend entrypoints, and add fast pre-run quota enforcement with reservation/counter settlement.
@@ -154,8 +154,8 @@ The historical `published_app_id + user_id` ownership model no longer applies to
 
 ## Validation and Test Runs
 - Backend suites:
-  - `pytest -q backend/tests/usage_quota backend/tests/published_apps backend/tests/published_apps_host_runtime backend/tests/legacy_chat_bootstrap backend/tests/agent_tool_usecases/test_agent_execution_panel_stream_api.py`
-  - Result: PASS (`32 passed`)
+  - `pytest -q backend/tests/usage_quota backend/tests/published_apps backend/tests/published_apps_host_runtime backend/tests/agent_tool_usecases/test_agent_execution_panel_stream_api.py`
+  - Result: PASS (historical run; command updated on 2026-03-20 to drop the removed legacy chat bootstrap slice)
 - Additional backend slices:
   - `pytest -q backend/tests/agent_api_context backend/tests/agent_resume_authorization`
   - Result: PASS (`5 passed`)

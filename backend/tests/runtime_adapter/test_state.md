@@ -1,5 +1,7 @@
 # Test State: Runtime Adapter Layer
 
+Last Updated: 2026-03-20
+
 **Scope**
 GraphIR → runtime adapter compilation and execution plumbing, runtime registry behavior, node factory fallback, and platform event emission via the adapter.
 
@@ -11,11 +13,12 @@ GraphIR → runtime adapter compilation and execution plumbing, runtime registry
 - LangGraph adapter compile/run/stream for minimal graph
 - Platform event emission from a node executor
 - Node factory behavior when executor is missing
+- Durable checkpointer persistence across saver reloads
 
 **Last Run**
-- Command: `TEST_USE_REAL_DB=0 pytest -q`
-- Date: 2026-02-04 16:59 EET
-- Result: Pass
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/runtime_adapter`
+- Date: 2026-03-20 Asia/Hebron
+- Result: pass (`5 passed`)
 
 **Known Gaps / Follow-ups**
-- No coverage for persistent checkpointers or multi-runtime adapters beyond a dummy stub
+- No coverage for multi-runtime adapters beyond a dummy stub

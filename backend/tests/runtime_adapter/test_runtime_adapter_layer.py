@@ -1,6 +1,10 @@
+from pathlib import Path
+
 import pytest
+from langgraph.checkpoint.base import empty_checkpoint
 
 from app.agent.executors.base import BaseNodeExecutor
+from app.agent.execution.durable_checkpointer import DurableMemorySaver
 from app.agent.executors.standard import register_standard_operators
 from app.agent.execution.emitter import active_emitter
 from app.agent.graph.ir import GraphIR, GraphIRNode, GraphIREdge
@@ -74,7 +78,7 @@ async def test_langgraph_adapter_compile_run_and_stream():
     events = []
     async for event in adapter.stream(executable, {"messages": []}, config={"run_id": "run-1", "mode": "debug"}):
         events.append(event)
-    assert events == []
+    assert [event.event for event in events] == ["node_start", "node_end", "node_start", "node_end"]
 
 
 @pytest.mark.asyncio
@@ -112,3 +116,23 @@ async def test_node_factory_missing_executor_returns_state():
     node_fn = build_node_fn(GraphIRNode(id="missing", type="not_registered"), tenant_id=None, db=None)
     result = await node_fn({"ok": True})
     assert result == {"ok": True}
+
+
+def test_durable_memory_saver_persists_checkpoints(tmp_path: Path):
+    path = tmp_path / "checkpoints.pkl"
+    saver = DurableMemorySaver(path=str(path))
+    config = {"configurable": {"thread_id": "thread-1", "checkpoint_ns": ""}}
+
+    stored_config = saver.put(
+        config,
+        empty_checkpoint(),
+        {"source": "test", "step": 1},
+        {"messages": 1},
+    )
+
+    reloaded = DurableMemorySaver(path=str(path))
+    checkpoint_tuple = reloaded.get_tuple(stored_config)
+
+    assert checkpoint_tuple is not None
+    assert checkpoint_tuple.metadata == {"source": "test", "step": 1}
+    assert checkpoint_tuple.config["configurable"]["thread_id"] == "thread-1"

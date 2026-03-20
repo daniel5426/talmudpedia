@@ -97,6 +97,17 @@ def _parse_sse_events(payload: str) -> list[dict]:
                             }
                         )
                         continue
+                    if event_name == "tool.failed":
+                        events.append(
+                            {
+                                "event": "tool.failed",
+                                "run_id": raw.get("run_id"),
+                                "span_id": payload_data.get("span_id"),
+                                "name": payload_data.get("tool"),
+                                "data": {"input": payload_data.get("input"), "error": payload_data.get("error")},
+                            }
+                        )
+                        continue
                     if event_name == "reasoning.update":
                         events.append({"type": "reasoning", "run_id": raw.get("run_id"), "data": payload_data})
                         continue
@@ -358,7 +369,7 @@ async def test_execution_panel_stream_user_path_web_search_can_fail_when_model_o
     query_error_events = [
         item
         for item in events
-        if item.get("event") == "error"
+        if item.get("event") == "tool.failed"
         and "web_search requires query" in str((item.get("data") or {}).get("error"))
     ]
     assert query_error_events

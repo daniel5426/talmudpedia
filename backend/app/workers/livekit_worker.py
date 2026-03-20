@@ -19,8 +19,6 @@ from livekit.agents import utils as lk_utils
 from livekit import rtc as lk_rtc
 from livekit.agents import tts as lk_tts
 
-from app.agent.components.llm.openai import OpenAILLM
-from app.agent.components.retrieval.vector import VectorRetriever
 from app.services.voice import VoiceSessionManager
 from app.db.connection import MongoDatabase
 
@@ -236,37 +234,10 @@ async def entrypoint(ctx: JobContext):
             traceback.print_exc()
             raise
             
-        print("[INIT] Initializing retriever...")
-        try:
-            retriever = VectorRetriever()
-            print("[INIT] Retriever initialized")
-        except Exception as e:
-            print(f"[INIT ERROR] Retriever initialization failed: {e}")
-            traceback.print_exc()
-            raise
-            
-        print("[INIT] Initializing LLM component...")
-        try:
-            llm_component = OpenAILLM('gpt-5-chat-latest')
-            print("[INIT] LLM component initialized")
-        except Exception as e:
-            print(f"[INIT ERROR] LLM initialization failed: {e}")
-            traceback.print_exc()
-            raise
-            
-        print("[INIT] Building RAG workflow...")
-        try:
-            from app.agent.workflows.advanced_rag import AdvancedRAGWorkflow
-            rag_agent = AdvancedRAGWorkflow(llm=llm_component, retriever=retriever)
-            rag_agent.compile()
-            print("[INIT] RAG workflow compiled successfully")
-        except Exception as e:
-            print(f"[INIT ERROR] RAG workflow build failed: {e}")
-            traceback.print_exc()
-            raise
-            
-        print("[INIT] Wrapping LLM adapter...")
-        llm_adapter = lk_langchain.LLMAdapter(graph=rag_agent.graph)
+        raise RuntimeError(
+            "Legacy LiveKit chat bootstrap was removed with the advanced_rag/simple_rag hard cut. "
+            "Migrate this worker to the maintained agents runtime before using voice chat."
+        )
         
         # Get STT prompt to filter it out from user messages
         stt_prompt_text = os.getenv("LIVEKIT_STT_PROMPT")

@@ -2,14 +2,29 @@
 
 Last Updated: 2026-03-20
 
-## Status: Proposed
+## Status: Active
 
 This plan turns the current model registry into a production-ready control-plane subsystem with strict contracts, truthful runtime support, simple admin UX, and full integration coverage across the platform.
 
-Initial seed-catalog cleanup already landed:
-- stale seeded providers that the current resolver cannot execute were removed from `backend/app/db/postgres/seeds/models.json`
-- the seed catalog now tracks a smaller current set of OpenAI, Google, Anthropic, and xAI chat models plus current OpenAI embeddings
-- broader multi-provider expansion still belongs to the later provider-catalog and resolver-hardening slices in this plan
+## Baseline Already Landed
+
+These items are now assumed by the rest of this plan:
+
+- the backend has been moved onto the LangChain v1 / LangGraph v1 dependency line
+- the seed catalog has already been refreshed away from stale legacy rows
+- Anthropic support has been wired into the provider adapter layer
+- xAI support has been wired into the provider adapter layer and model-provider enum
+- the current seed catalog now targets OpenAI, Google, Anthropic, and xAI chat models plus OpenAI embeddings
+
+Canonical dependency baseline:
+- `langgraph==1.0.4`
+- `langchain-core==1.2.20`
+- `langchain-openai==1.1.0`
+- `langchain-anthropic==1.4.0`
+- `langchain-google-genai==4.2.1`
+
+Related implementation note:
+- `docs/exec-plans/langchain_v1_langgraph_modernization.md`
 
 ## Goals
 
@@ -48,9 +63,10 @@ Initial seed-catalog cleanup already landed:
 
 ### Current gaps that this plan must close
 
-1. Seeded provider support is not truthful.
-- `backend/app/db/postgres/seeds/models.json` seeds Anthropic, Groq, Together, Mistral, Cohere, and others.
-- `backend/app/services/model_resolver.py` only instantiates a subset of providers for chat.
+1. Seeded provider support is only partially truthful.
+- the catalog is now much smaller and more current, but it still depends on provider/model IDs staying valid at rollout time
+- xAI naming stability is weaker than OpenAI/Google/Anthropic and needs explicit regression coverage
+- provider support outside the current big-labs set is still intentionally absent
 
 2. Model identity is ambiguous.
 - model lookup currently accepts UUID, slug, or name
@@ -71,7 +87,7 @@ Initial seed-catalog cleanup already landed:
 
 6. Provider metadata is too thin.
 - provider allowlisting exists
-- provider capability metadata, required credential keys, supported config fields, and runtime constraints do not
+- provider capability metadata, required credential keys, supported config fields, variant rules, and runtime constraints do not
 
 7. Admin UX is too raw for a production control plane.
 - slug is exposed as a required admin-authored field
@@ -103,12 +119,43 @@ At the end of this refactor:
 - display is based on model `name`, not a user-managed slug
 - if a stable non-UUID seed/import key is still needed, it is system-managed and not admin-authored
 - every visible provider/model combination is executable and validated
+- the big-labs baseline is covered explicitly:
+  - OpenAI
+  - Google
+  - Anthropic
+  - xAI
 - defaults are unique and deterministic
 - binding resolution is explicit, capability-aware, and fully tested
 - the admin UI uses simple structured controls rather than freeform JSON for common operations
 - every downstream integration has dedicated regression coverage
 
 ## Slice Roadmap
+
+## Slice 0: Baseline Verification And Freeze
+
+### Objective
+
+Turn the already-landed dependency and seed refresh into an explicit verified baseline before deeper refactors continue.
+
+### Scope
+
+- verify the LangChain v1 / LangGraph v1 provider stack works in the maintained runtime paths
+- verify the refreshed seed catalog syncs cleanly into a local database
+- verify the new Anthropic and xAI provider paths import and instantiate successfully
+- verify the Postgres enum migration for `xai` is applied and seedable
+- record any provider-specific caveats discovered during validation
+
+### Acceptance criteria
+
+- the repo has one explicit model-runtime dependency baseline
+- the refreshed seed catalog can be applied without manual DB surgery
+- Anthropic and xAI support is confirmed as real runtime support, not just code presence
+
+### Required tests
+
+- smoke tests for OpenAI, Google, Anthropic, and xAI provider instantiation
+- migration test for the `xai` enum addition
+- seed sync regression test against a fresh DB
 
 ## Slice 1: Identity Hard Cut
 
@@ -175,6 +222,11 @@ Create one canonical provider catalog that defines what is supported, for which 
   - supported config fields
   - runtime constraints such as temperature locking, vision support, tool-calling support, and reasoning-mode restrictions
 - drive both backend validation and frontend provider-option rendering from the same canonical source
+- keep the current big-labs set first-class and explicitly versioned in the manifest:
+  - OpenAI
+  - Google
+  - Anthropic
+  - xAI
 - prune or hide unsupported providers/models until their runtime adapters exist
 
 ### Touches
@@ -210,6 +262,7 @@ Make model resolution deterministic, explicit, fully adapter-backed, and product
 - make fallback policy explicit instead of implicit row ordering
 - validate model status and capability consistently for chat, embeddings, vision, audio, rerank, and future categories
 - ensure `requested_model_id` and `resolved_model_id` remain UUID-backed and accurate across run records
+- standardize provider-specific request shaping on the LangChain v1 baseline where possible instead of ad hoc per-call branching
 
 ### Touches
 
@@ -231,6 +284,11 @@ Make model resolution deterministic, explicit, fully adapter-backed, and product
 ### Required tests
 
 - provider adapter coverage tests per supported provider/capability
+- explicit big-labs coverage for:
+  - OpenAI chat
+  - Google chat
+  - Anthropic chat
+  - xAI chat
 - binding selection tests for:
   - tenant-only
   - global-only
@@ -332,6 +390,7 @@ Remove drift between the registry and the rest of the platform.
 - admin stats model and provider-binding reporting
 - agent graph mutation paths that set `model_id`
 - any SDK or service client contracts that still expose old model-registry fields
+- any LangChain-v1-specific adapter/output assumptions in maintained agent execution paths that could drift from registry/provider semantics
 
 ### Touches
 
@@ -394,6 +453,7 @@ Give the model registry first-class test coverage equal to its platform blast ra
 ### Test organization target
 
 Backend:
+- `backend/tests/model_registry_baseline/`
 - `backend/tests/model_registry_contract/`
 - `backend/tests/model_registry_resolution/`
 - `backend/tests/model_registry_integrations/`
@@ -418,6 +478,7 @@ Contract coverage:
 
 Resolution coverage:
 - each supported provider/capability
+- explicit latest-model coverage for the big labs seed set
 - credential precedence
 - tenant/global precedence
 - fallback policy
@@ -454,20 +515,22 @@ The final rollout should add registry-focused backend and frontend test commands
 
 ## Recommended Execution Order
 
-1. Slice 1: Identity Hard Cut
-2. Slice 2: Canonical Provider Catalog And Support Matrix
-3. Slice 3: Resolver Hardening And Runtime Truthfulness
-4. Slice 4: Defaults, Uniqueness, And Control-Plane Invariants
-5. Slice 5: Admin UX Simplification
-6. Slice 6: Downstream Integration Alignment
-7. Slice 7: Seeding, Migration, And Rollout Safety
-8. Slice 8: Full Coverage Test Program
+1. Slice 0: Baseline Verification And Freeze
+2. Slice 1: Identity Hard Cut
+3. Slice 2: Canonical Provider Catalog And Support Matrix
+4. Slice 3: Resolver Hardening And Runtime Truthfulness
+5. Slice 4: Defaults, Uniqueness, And Control-Plane Invariants
+6. Slice 5: Admin UX Simplification
+7. Slice 6: Downstream Integration Alignment
+8. Slice 7: Seeding, Migration, And Rollout Safety
+9. Slice 8: Full Coverage Test Program
 
 ## Release Gate
 
 Do not call this refactor complete until all of the following are true:
 
 - no slug-based model identity remains
+- OpenAI, Google, Anthropic, and xAI seeded paths all pass provider-resolution coverage
 - no unsupported provider/model rows are visible in the catalog
 - admin model management works without raw JSON editing for normal flows
 - settings, stats, RAG, attachments, and agent execution all pass registry integration suites
@@ -481,3 +544,4 @@ Do not call this refactor complete until all of the following are true:
 - `docs/product-specs/admin_stats_spec.md`
 - `docs/design-docs/platform_current_state.md`
 - `backend/documentations/agent_management_state.md`
+- `docs/exec-plans/langchain_v1_langgraph_modernization.md`

@@ -1,4 +1,3 @@
-from app.agent.config import AgentConfig
-from app.agent.factory import AgentFactory
+"""Agent package exports are intentionally empty after legacy chat removal."""
 
-__all__ = ["AgentFactory", "AgentConfig"]
+__all__: list[str] = []

@@ -1,6 +1,6 @@
 # Agent Tool Loop Tests
 
-Last Updated: 2026-02-12
+Last Updated: 2026-03-20
 
 ## Scope
 Tests for ReasoningNodeExecutor tool-call loop behavior with streaming tool-call deltas, safe parallel execution, timeouts, and fallback parsing.
@@ -19,6 +19,9 @@ Tests for ReasoningNodeExecutor tool-call loop behavior with streaming tool-call
 ## Last Run
 - Command: `pytest -q backend/tests/agent_tool_loop/test_tool_loop.py -vv`
 - Date/Time: 2026-02-12 01:19 EET
+- Result: pass (`7 passed`)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/agent_tool_loop`
+- Date/Time: 2026-03-20 Asia/Hebron
 - Result: pass (`7 passed`)
 
 ## Known Gaps / Follow-ups

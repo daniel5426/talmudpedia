@@ -143,7 +143,20 @@ async def _create_agent_with_tools(
     slug_suffix: str,
     tool_execution_mode: str = "sequential",
     max_parallel_tools: int = 2,
+    extra_agent_config: dict | None = None,
 ):
+    agent_config = {
+        "name": "Agent",
+        "model_id": "unit-model",
+        "tools": [str(tid) for tid in tool_ids],
+        "max_tool_iterations": 5,
+        "tool_execution_mode": tool_execution_mode,
+        "max_parallel_tools": max_parallel_tools,
+        "output_format": "text",
+    }
+    if isinstance(extra_agent_config, dict):
+        agent_config.update(extra_agent_config)
+
     graph = {
         "spec_version": "1.0",
         "nodes": [
@@ -152,15 +165,7 @@ async def _create_agent_with_tools(
                 "id": "agent",
                 "type": "agent",
                 "position": {"x": 180, "y": 0},
-                "config": {
-                    "name": "Agent",
-                    "model_id": "unit-model",
-                    "tools": [str(tid) for tid in tool_ids],
-                    "max_tool_iterations": 5,
-                    "tool_execution_mode": tool_execution_mode,
-                    "max_parallel_tools": max_parallel_tools,
-                    "output_format": "text",
-                },
+                "config": agent_config,
             },
             {"id": "end", "type": "end", "position": {"x": 360, "y": 0}, "config": {"output_message": "done"}},
         ],
@@ -616,6 +621,75 @@ async def test_parallel_tool_calls_emit_reasoning_steps_for_each_call(db_session
     assert len(statuses_by_step) == 2
     for statuses in statuses_by_step.values():
         assert statuses == ["active", "complete"]
+
+
+@pytest.mark.asyncio
+async def test_openui_mode_streams_ui_deltas_before_final_completion(db_session, monkeypatch):
+    tenant, user = await _seed_tenant_and_user(db_session)
+    suffix = uuid4().hex[:8]
+
+    provider = _FakeProvider(
+        responses=[
+            [
+                AIMessageChunk(content="root"),
+                AIMessageChunk(content=" ="),
+                AIMessageChunk(content=" Card([header])\n"),
+                AIMessageChunk(content='header = CardHeader("Bank concentration", "Atlas Medical")\n'),
+            ]
+        ]
+    )
+
+    async def fake_resolve(_self, _model_id):
+        return provider
+
+    monkeypatch.setattr(ModelResolver, "resolve", fake_resolve)
+
+    agent = await _create_agent_with_tools(
+        db_session,
+        tenant_id=tenant.id,
+        user_id=user.id,
+        tool_ids=[],
+        slug_suffix=f"openui-{suffix}",
+        extra_agent_config={
+            "generative_ui_mode": "openui",
+            "generative_ui_component_library_id": "openui-default-v1",
+            "generative_ui_surface": "chat_inline",
+        },
+    )
+
+    run, events = await _run_filtered_stream_events(
+        db_session,
+        agent_id=agent.id,
+        user_id=user.id,
+        mode=ExecutionMode.PRODUCTION,
+        user_input="Show bank concentration",
+    )
+
+    assert run.status == RunStatus.completed
+
+    ui_events = [event for event in events if event.get("event") == "assistant.ui"]
+    assert len(ui_events) >= 2
+
+    delta_events = [event for event in ui_events if (event.get("data") or {}).get("content_delta")]
+    assert len(delta_events) == 2
+    assert delta_events[0]["data"]["content_delta"] == 'root = Card([header])\n'
+    assert delta_events[1]["data"]["content_delta"] == 'header = CardHeader("Bank concentration", "Atlas Medical")\n'
+
+    final_event = ui_events[-1]
+    assert final_event["data"]["is_final"] is True
+    assert final_event["data"]["content"] == (
+        'root = Card([header])\nheader = CardHeader("Bank concentration", "Atlas Medical")'
+    )
+
+    run_completed_index = next(
+        index
+        for index, event in enumerate(events)
+        if event.get("event") == "run_status" and (event.get("data") or {}).get("status") == "completed"
+    )
+    first_ui_index = next(
+        index for index, event in enumerate(events) if event.get("event") == "assistant.ui"
+    )
+    assert first_ui_index < run_completed_index
 
 
 @pytest.mark.asyncio

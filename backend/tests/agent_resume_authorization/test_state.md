@@ -1,6 +1,6 @@
 # Agent Resume Authorization Tests
 
-Last Updated: 2026-02-11
+Last Updated: 2026-03-20
 
 ## Scope
 Covers authorization guardrails for `POST /agents/runs/{run_id}/resume` across tenant and user boundaries.
@@ -14,9 +14,9 @@ Covers authorization guardrails for `POST /agents/runs/{run_id}/resume` across t
 - Run owner can resume successfully.
 
 ## Last run command + result
-- Command: `pytest -q backend/tests/legacy_chat_bootstrap backend/tests/agent_resume_authorization backend/tests/tools_guardrails -vv`
-- Date/Time: 2026-02-11 22:17:10 EET
-- Result: pass (11 passed)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/agent_resume_authorization`
+- Date/Time: 2026-03-20 Asia/Hebron
+- Result: pending
 
 ## Known gaps or follow-ups
 - Add workload-principal coverage for runs with `workload_principal_id` set.
