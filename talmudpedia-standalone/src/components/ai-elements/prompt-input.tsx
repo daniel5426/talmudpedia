@@ -253,6 +253,11 @@ export const PromptInputProvider = ({
   const [textInput, setTextInput] = useState(initialTextInput);
   const clearInput = useCallback(() => setTextInput(""), []);
 
+  // Sync internal state with external initialInput changes
+  useEffect(() => {
+    setTextInput(initialTextInput);
+  }, [initialTextInput]);
+
   // ----- attachments state (global when wrapped)
   const [attachmentFiles, setAttachmentFiles] = useState<
     (FileUIPart & { id: string })[]

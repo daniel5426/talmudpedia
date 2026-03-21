@@ -72,15 +72,7 @@ export function ChatSidebar({
     ? session.displayName.slice(0, 2).toUpperCase()
     : "LU";
 
-  const handleChatScroll = React.useCallback(() => {
-    if (!chatListRef.current || !hasMoreHistory) return;
-    const node = chatListRef.current;
-    const reachedBottom =
-      node.scrollTop + node.clientHeight >= node.scrollHeight - 48;
-    if (reachedBottom) {
-      onLoadMoreHistory();
-    }
-  }, [hasMoreHistory, onLoadMoreHistory]);
+
 
 
   return (
@@ -99,17 +91,8 @@ export function ChatSidebar({
           }`}
         >
           {isExpanded ? (
-            <div className="flex-1 overflow-hidden">
-              <p
-                className={cn(
-                  "truncate font-semibold text-sidebar-foreground/60",
-                  locale === "he"
-                    ? "text-[0.92rem] leading-6 tracking-[0.01em]"
-                    : "text-xs uppercase tracking-[0.18em]",
-                )}
-              >
-                {locale === "he" ? "Prico AI" : "Prico AI"}
-              </p>
+            <div className="flex-1 overflow-hidden flex items-center">
+              <img src="/pricoLogo.png" alt="Prico AI Logo" className="h-6 w-auto object-contain" />
             </div>
           ) : null}
           <SidebarTrigger aria-label="Toggle sidebar" className="!size-8 cursor-pointer" />
@@ -149,7 +132,6 @@ export function ChatSidebar({
               <div className="min-h-0 flex-1 overflow-hidden rounded-2xl p-2">
                 <div
                   ref={chatListRef}
-                  onScroll={handleChatScroll}
                   className={cn(
                     "flex h-full flex-col gap-1 overflow-y-auto pl-2",
                     isRtl ? "text-right" : "text-left",
@@ -195,11 +177,7 @@ export function ChatSidebar({
                       </SidebarMenuItem>
                     ))}
                   </SidebarMenu>
-                  {hasMoreHistory ? (
-                    <div className="py-2 text-center text-xs text-muted-foreground">
-                      {locale === "he" ? "טוען עוד צ'אטים..." : "Loading more chats..."}
-                    </div>
-                  ) : null}
+
                 </div>
               </div>
             </SidebarGroup>

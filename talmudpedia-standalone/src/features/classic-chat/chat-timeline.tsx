@@ -188,7 +188,7 @@ export function ChatTimeline({
 
   return (
     <Conversation
-      className="flex min-h-0 flex-1 flex-col overflow-hidden"
+      className="flex min-h-0 flex-1 flex-col overflow-hidden no-scrollbar"
       onScrollCapture={(event) => {
         const target = event.target as HTMLElement;
         if (typeof target.scrollTop === "number") {

@@ -113,10 +113,20 @@ export function useClassicChatState() {
   const activeThread =
     threads.find((thread) => thread.id === activeThreadId) || threads[0] || null;
 
-  const visibleThreads = threads.slice(0, visibleHistoryCount);
+  const visibleThreads = threads
+    .filter((t) => !(t.isLoaded && t.messages.length === 0))
+    .slice(0, visibleHistoryCount);
   const hasMoreHistory = visibleHistoryCount < threads.length;
 
   const newChat = () => {
+    // If any initialized thread is empty, switch to the first (newest) empty one
+    const emptyThread = threads.find((t) => t.isLoaded && t.messages.length === 0);
+    if (emptyThread) {
+      setActiveThreadId(emptyThread.id);
+      setInputValue("");
+      return;
+    }
+
     const threadId = `local-${createId()}`;
     const nextThread: TemplateThread = {
       id: threadId,
@@ -128,7 +138,7 @@ export function useClassicChatState() {
     };
 
     startTransition(() => {
-    setThreads((current) => [nextThread, ...current]);
+      setThreads((current) => [nextThread, ...current]);
       setActiveThreadId(threadId);
       setInputValue("");
       setSubmitError(null);
@@ -439,15 +449,17 @@ export function useClassicChatState() {
   function upsertHydratedThread(detail: AgentThreadDetailDto) {
     const hydrated = mapThreadDetail(detail);
     setThreads((current) => {
-      const existing = current.find((thread) => thread.id === detail.id);
-      const merged = existing
-        ? {
-            ...hydrated,
-            preview: hydrated.preview || existing.preview,
-          }
-        : hydrated;
-      const remaining = current.filter((thread) => thread.id !== detail.id);
-      return [merged, ...remaining];
+      const existingIndex = current.findIndex((thread) => thread.id === detail.id);
+      if (existingIndex > -1) {
+        const merged = {
+          ...hydrated,
+          preview: hydrated.preview || current[existingIndex].preview,
+        };
+        const next = [...current];
+        next[existingIndex] = merged;
+        return next;
+      }
+      return [hydrated, ...current];
     });
   }
 }
