@@ -1,4 +1,4 @@
-import type { RefObject } from "react";
+import type { ReactElement, RefObject } from "react";
 
 import { Message, MessageContent, MessageResponse } from "@/components/ai-elements/message";
 import { Shimmer } from "@/components/ai-elements/shimmer";
@@ -78,7 +78,7 @@ export function AppsBuilderChatTimeline({
     );
   };
 
-  const renderedItems: JSX.Element[] = [];
+  const renderedItems: ReactElement[] = [];
   let index = 0;
 
   while (index < timeline.length) {

@@ -579,7 +579,7 @@ export function finalizeAssistantRenderBlocks(
   },
 ): ChatRenderBlock[] {
   const parsedText = extractStructuredAssistantText(finalContent);
-  const next = blocks.map((block) => {
+  const next: ChatRenderBlock[] = blocks.map((block) => {
     if (block.kind === "tool_call" && block.status === "running") {
       return { ...block, status: "complete" as const };
     }

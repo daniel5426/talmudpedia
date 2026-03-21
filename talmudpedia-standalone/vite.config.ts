@@ -6,11 +6,12 @@ import { defineConfig } from "vite"
 const usePolling = process.env.__APPS_VITE_USE_POLLING === "1"
 const pollingInterval = Number(process.env.__APPS_VITE_POLL_INTERVAL_MS || 250)
 const devApiTarget = process.env.VITE_DEV_API_TARGET || "http://127.0.0.1:3001"
+const isBuild = process.env.NODE_ENV === "production"
 
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react(), tailwindcss()],
-  base: "./",
+  base: isBuild ? "./" : "/",
   server:
     usePolling || devApiTarget
       ? {

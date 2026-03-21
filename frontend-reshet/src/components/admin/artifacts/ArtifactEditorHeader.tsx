@@ -4,7 +4,7 @@ import { Bot, ChevronDown, Database, Loader2, PanelLeft, Play, Plus, RefreshCw, 
 
 import { AdminPageHeader } from "@/components/admin/AdminPageHeader"
 import { ArtifactVersionsDropdown } from "@/components/admin/artifacts/ArtifactVersionsDropdown"
-import { CustomBreadcrumb } from "@/components/ui/custom-breadcrumb"
+import { CustomBreadcrumb, type BreadcrumbItemProps } from "@/components/ui/custom-breadcrumb"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -78,16 +78,26 @@ export function ArtifactEditorHeader({
   onRunTest,
   onSave,
 }: ArtifactEditorHeaderProps) {
+  const breadcrumbItems: BreadcrumbItemProps[] = [
+    { label: "Artifacts", href: "/admin/artifacts", active: viewMode === "list" },
+  ]
+
+  if (viewMode === "create") {
+    breadcrumbItems.push({ label: "New Artifact", active: true })
+  }
+
+  if (viewMode === "edit") {
+    breadcrumbItems.push({
+      label: displayName || "Edit Artifact",
+      active: true,
+      statusDot: hasUnsavedChanges ? "primary" : undefined,
+    })
+  }
+
   return (
     <AdminPageHeader contentClassName="h-12 items-center">
       <div className="flex min-w-0 flex-1 items-center gap-3">
-        <CustomBreadcrumb
-          items={[
-            { label: "Artifacts", href: "/admin/artifacts", active: viewMode === "list" },
-            ...(viewMode === "create" ? [{ label: "New Artifact", active: true }] : []),
-            ...(viewMode === "edit" ? [{ label: displayName || "Edit Artifact", active: true, statusDot: hasUnsavedChanges ? "primary" : undefined }] : []),
-          ]}
-        />
+        <CustomBreadcrumb items={breadcrumbItems} />
       </div>
       {viewMode === "list" ? (
         <div className="flex items-center gap-2">

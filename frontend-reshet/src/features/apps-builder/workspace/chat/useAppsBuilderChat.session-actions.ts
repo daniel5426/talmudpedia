@@ -168,6 +168,33 @@ export function useAppsBuilderChatSessionActions({
         throw err;
       }
 
+      if (submission.submission_status === "queued") {
+        mutateSession(resolvedSessionKey, (target) => {
+          target.timeline = target.timeline.map((item) =>
+            item.id === userTimelineId ? { ...item, userDeliveryStatus: "queued" } : item,
+          );
+          target.queuedPrompts = [createQueuedPrompt(promptText, resolvedModelId), ...target.queuedPrompts];
+        });
+        const queuedSessionId = String(submission.queue_item.chat_session_id || currentSessionId || "").trim();
+        const targetSessionKey = ensureSessionKeyByServerSessionId(resolvedSessionKey, queuedSessionId || null);
+        getSession(targetSessionKey).promptSubmissionInFlightRef.current = false;
+        if (targetSessionKey !== resolvedSessionKey) {
+          moveSessionTitleHint(resolvedSessionKey, targetSessionKey);
+        }
+        if (queuedSessionId) {
+          markSessionRunActive(queuedSessionId, submission.active_run_id, "running");
+          if (normalizeSessionKey(activeChatSessionIdRef.current) === resolvedSessionKey) {
+            activeChatSessionIdRef.current = queuedSessionId;
+            setActiveChatSessionId(queuedSessionId);
+          }
+        }
+        const targetSession = getSession(targetSessionKey);
+        targetSession.seenRunEventKeysRef.current = new Set();
+        streamStarted = true;
+        await consumeRunStreamForSession(targetSessionKey, submission.active_run_id, queuedSessionId || null);
+        return;
+      }
+
       const run = submission.run;
       const runSessionId = String(run.chat_session_id || currentSessionId || "").trim();
       const targetSessionKey = ensureSessionKeyByServerSessionId(resolvedSessionKey, runSessionId || null);

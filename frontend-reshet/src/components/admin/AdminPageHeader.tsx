@@ -14,6 +14,10 @@ function isScrollable(element: HTMLElement) {
   return /(auto|scroll|overlay)/.test(style.overflowY || style.overflow)
 }
 
+function hasScrolled(target: HTMLElement | Window) {
+  return target instanceof Window ? target.scrollY > 0 : target.scrollTop > 0
+}
+
 export function AdminPageHeader({
   children,
   className,
@@ -31,11 +35,7 @@ export function AdminPageHeader({
     let targets = new Set<HTMLElement | Window>()
 
     const syncScrollState = () => {
-      setIsScrolled(
-        Array.from(targets).some((target) =>
-          target === window ? window.scrollY > 0 : target.scrollTop > 0,
-        ),
-      )
+      setIsScrolled(Array.from(targets).some((target) => hasScrolled(target)))
     }
 
     const collectTargets = () => {
@@ -97,12 +97,14 @@ export function AdminPageHeader({
           })
         : null
 
-    observer?.observe(sibling, {
-      childList: true,
-      subtree: true,
-      attributes: true,
-      attributeFilter: ["class", "style", "data-admin-page-scroll"],
-    })
+    if (observer && sibling instanceof HTMLElement) {
+      observer.observe(sibling, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ["class", "style", "data-admin-page-scroll"],
+      })
+    }
 
     return () => {
       observer?.disconnect()

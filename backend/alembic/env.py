@@ -32,8 +32,26 @@ if config.config_file_name is not None:
 target_metadata = Base.metadata
 print(f"DEBUG: target_metadata.tables = {list(target_metadata.tables.keys())}")
 
+
+def _resolve_alembic_database_url() -> str:
+    explicit = (os.getenv("ALEMBIC_DATABASE_URL") or "").strip()
+    if explicit:
+        return explicit
+
+    target = (os.getenv("DB_TARGET") or "").strip().lower()
+    local_url = (os.getenv("DATABASE_URL_LOCAL") or "").strip()
+    remote_url = (os.getenv("DATABASE_URL") or "").strip()
+
+    if target == "local":
+        return local_url or DATABASE_URL
+    if target in {"remote", "supabase", "prod", "production"}:
+        return remote_url or DATABASE_URL
+
+    # Default local developer behavior: prefer the local DB URL when present.
+    return local_url or DATABASE_URL
+
 def run_migrations_offline() -> None:
-    url = config.get_main_option("sqlalchemy.url")
+    url = _resolve_alembic_database_url()
     context.configure(
         url=url,
         target_metadata=target_metadata,
@@ -53,7 +71,7 @@ def do_run_migrations(connection: Connection) -> None:
 async def run_async_migrations() -> None:
     configuration = config.get_section(config.config_ini_section)
     # Force use of psycopg (v3) instead of asyncpg for migrations
-    url = DATABASE_URL.replace("postgresql+asyncpg://", "postgresql+psycopg://")
+    url = _resolve_alembic_database_url().replace("postgresql+asyncpg://", "postgresql+psycopg://")
     if "postgresql+psycopg://" not in url:
              if "postgres://" in url:
                  url = url.replace("postgres://", "postgresql+psycopg://")

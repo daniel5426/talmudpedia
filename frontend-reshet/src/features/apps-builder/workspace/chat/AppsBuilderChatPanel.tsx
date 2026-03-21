@@ -145,11 +145,11 @@ export function AppsBuilderChatPanel({
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isVersionsOpen, setIsVersionsOpen] = useState(false);
   const [isScrolled, setIsScrolled] = useState(false);
-  const [scrollContainer, setScrollContainer] = useState<HTMLDivElement | null>(null);
+  const [scrollContainer, setScrollContainer] = useState<HTMLElement | null>(null);
   const topSentinelRef = useRef<HTMLDivElement>(null);
   const isLoadingOlderRef = useRef(false);
   const wasVersionsOpenRef = useRef(false);
-  const handleScrollContainerChange = useCallback((node: HTMLDivElement | null) => {
+  const handleScrollContainerChange = useCallback((node: HTMLElement | null) => {
     setScrollContainer((current) => (current === node ? current : node));
   }, []);
 

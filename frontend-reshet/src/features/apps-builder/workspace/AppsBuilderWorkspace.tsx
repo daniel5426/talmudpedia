@@ -1466,11 +1466,11 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
                                 <div key={domain.id} className="group flex items-center gap-3 rounded-md border border-border/60 px-4 py-3 transition-colors hover:bg-muted/30">
                                   <div className={cn(
                                     "flex h-8 w-8 shrink-0 items-center justify-center rounded-lg",
-                                    domain.status === "active" ? "bg-emerald-500/10" : "bg-amber-500/10",
+                                    domain.status === "approved" ? "bg-emerald-500/10" : "bg-amber-500/10",
                                   )}>
                                     <Globe className={cn(
                                       "h-4 w-4",
-                                      domain.status === "active" ? "text-emerald-500" : "text-amber-500",
+                                      domain.status === "approved" ? "text-emerald-500" : "text-amber-500",
                                     )} />
                                   </div>
                                   <div className="min-w-0 flex-1">
@@ -1480,7 +1480,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
                                         variant="secondary"
                                         className={cn(
                                           "text-[10px]",
-                                          domain.status === "active" && "bg-emerald-500/15 text-emerald-600 border-emerald-500/20",
+                                          domain.status === "approved" && "bg-emerald-500/15 text-emerald-600 border-emerald-500/20",
                                           domain.status === "pending" && "bg-amber-500/15 text-amber-600 border-amber-500/20",
                                           domain.status === "rejected" && "bg-red-500/15 text-red-600 border-red-500/20",
                                         )}

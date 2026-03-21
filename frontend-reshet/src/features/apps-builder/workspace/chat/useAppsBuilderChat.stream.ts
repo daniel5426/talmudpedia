@@ -170,6 +170,9 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
   let sawTerminalEvent = false;
   let terminalStatus: TerminalStatus | null = null;
   let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+  let pendingRead:
+    | Promise<{ ok: true; result: ReadableStreamReadResult<Uint8Array> } | { ok: false; error: unknown }>
+    | null = null;
   const logRunFailureDebug = (
     reason: string,
     details: Record<string, unknown> = {},
@@ -184,6 +187,16 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
       runSessionId: normalizedRunSessionId || null,
       ...details,
     });
+  };
+  const cancelActiveReader = () => {
+    const activeReader = reader;
+    if (!activeReader) {
+      return;
+    }
+    void activeReader.cancel().catch(() => undefined);
+    reader = null;
+    abortReaderRef.current = null;
+    pendingRead = null;
   };
 
   try {
@@ -235,9 +248,6 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
     let lastEventAt = Date.now();
     let maxDurationNoticeShown = false;
     let stallNoticeShown = false;
-    let pendingRead:
-      | Promise<{ ok: true; result: ReadableStreamReadResult<Uint8Array> } | { ok: false; error: unknown }>
-      | null = null;
     const yieldForPaint = async (): Promise<void> => {
       if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
         await new Promise<void>((resolve) => {
@@ -398,9 +408,7 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
         if (AUTO_CANCEL_RECOVERY_ENABLED) {
           sawRunFailure = true;
           await requestRecoveryCancel();
-          if (reader && typeof reader.cancel === "function") {
-            void reader.cancel().catch(() => undefined);
-          }
+          cancelActiveReader();
           break;
         }
         if (!maxDurationNoticeShown && isCurrentAttachment()) {
@@ -413,9 +421,7 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
         if (AUTO_CANCEL_RECOVERY_ENABLED) {
           sawRunFailure = true;
           await requestRecoveryCancel();
-          if (reader && typeof reader.cancel === "function") {
-            void reader.cancel().catch(() => undefined);
-          }
+          cancelActiveReader();
           break;
         }
         // Non-destructive stall handling: keep the run alive and continue polling.
@@ -435,11 +441,7 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
         if (reconciled) {
           break;
         }
-        if (reader && typeof reader.cancel === "function") {
-          void reader.cancel().catch(() => undefined);
-        }
-        reader = null;
-        abortReaderRef.current = null;
+        cancelActiveReader();
         logRunFailureDebug("stream_read_error", {
           error: readError instanceof Error ? readError.message : String(readError || ""),
         });
@@ -456,11 +458,7 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
           if (reconciled) {
             break;
           }
-          if (reader && typeof reader.cancel === "function") {
-            void reader.cancel().catch(() => undefined);
-          }
-          reader = null;
-          abortReaderRef.current = null;
+          cancelActiveReader();
         }
         break;
       }
@@ -677,12 +675,7 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
         }
 
         if (sawTerminalEvent) {
-          if (reader && typeof reader.cancel === "function") {
-            void reader.cancel().catch(() => undefined);
-          }
-          reader = null;
-          abortReaderRef.current = null;
-          pendingRead = null;
+          cancelActiveReader();
           break;
         }
 
@@ -887,10 +880,7 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
       onError(err instanceof Error ? err.message : "Failed to run coding agent");
     }
   } finally {
-    if (reader && typeof reader.cancel === "function") {
-      void reader.cancel().catch(() => undefined);
-    }
-    reader = null;
+    cancelActiveReader();
     if (!intentionalAbortRef.current && normalizedRunSessionId && onRunTerminalized) {
       try {
         await onRunTerminalized({

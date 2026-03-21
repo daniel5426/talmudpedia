@@ -29,7 +29,7 @@ export function FloatingPanel({
     autoHeight = false,
     offset = 0,
     shadow = "shadow-xs",
-    border = "border",
+    border = "border-[0.5px]",
     className
 }: FloatingPanelProps) {
     // Simplified translation logic for inline styles

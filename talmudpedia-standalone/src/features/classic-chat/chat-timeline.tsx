@@ -38,6 +38,7 @@ import { cn } from "@/lib/utils";
 
 import { BotInputArea } from "./bot-input-area";
 import { useLocale } from "./locale-context";
+import { useStreamingMessageView } from "./use-streaming-message-view";
 import type {
   ComposerSubmitPayload,
   TemplateAttachment,
@@ -173,15 +174,16 @@ export function ChatTimeline({
   onTopVisibilityChange,
 }: ChatTimelineProps) {
   const { locale } = useLocale();
-  const hasMessages = messages.length > 0;
+  const renderedMessages = useStreamingMessageView(messages);
+  const hasMessages = renderedMessages.length > 0;
 
   const timelineMessages = useMemo(
     () =>
-      messages.map((message) => ({
+      renderedMessages.map((message) => ({
         ...message,
         plainText: messageText(message),
       })),
-    [messages]
+    [renderedMessages]
   );
 
   return (

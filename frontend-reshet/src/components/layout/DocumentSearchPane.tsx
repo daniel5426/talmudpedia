@@ -5,7 +5,7 @@ import { DocumentSearchInputArea } from "@/components/DocumentSearchInputArea";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { GlassCard } from "@/components/ui/glass-card";
 import { useLayoutStore } from "@/lib/store/useLayoutStore";
-import { motion, AnimatePresence, LayoutGroup } from "framer-motion";
+import { motion, AnimatePresence, LayoutGroup } from "motion/react";
 import { searchService } from "@/services/search";
 import { openSource } from "@/lib/sourceUtils";
 import { BackgroundLogos } from "@/components/ui/background-logos";

@@ -343,7 +343,7 @@ function PipelineBuilderInner({
   return (
     <div className="relative flex h-full w-full overflow-hidden bg-background">
       {/* Floating Operator Catalog using shared component */}
-      <FloatingPanel position="left" border="border-none" visible={isCatalogVisible} className="w-64 z-40">
+      <FloatingPanel position="left" visible={isCatalogVisible} className="w-64 z-40">
         <NodeCatalog
           catalog={catalog}
           onDragStart={handleDragStart}
@@ -418,7 +418,7 @@ function PipelineBuilderInner({
 
       {/* Floating Configuration/Execution Panel using shared component */}
       {(selectedNode || selectedStepExecution) && (
-        <FloatingPanel position="right" visible={true} autoHeight={true} className="w-[400px]" border="border-none">
+        <FloatingPanel position="right" visible={true} autoHeight={true} className="w-[400px]">
           {selectedStepExecution ? (
             <ExecutionDetailsPanel
               step={selectedStepExecution}

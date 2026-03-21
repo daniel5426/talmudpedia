@@ -3,7 +3,7 @@ import { useEffect } from "react";
 import { useStickToBottomContext } from "@/components/ai-elements/conversation";
 
 type AppsBuilderChatScrollBindingsProps = {
-  onScrollContainerChange: (node: HTMLDivElement | null) => void;
+  onScrollContainerChange: (node: HTMLElement | null) => void;
 };
 
 export function AppsBuilderChatScrollBindings({

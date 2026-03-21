@@ -491,8 +491,6 @@ function SmartInput({
         }
     }
 
-    const Component = multiline ? Textarea : Input
-
     const suggestionList =
         suggestionType === "variables"
             ? filteredVariables.map(v => ({
@@ -507,6 +505,27 @@ function SmartInput({
             }))
 
     const hasSuggestions = showSuggestions && suggestionList.length > 0
+
+    const syncCursorPosition = () => {
+        const nextPosition = inputRef.current?.selectionStart || 0
+        setCursorPosition(nextPosition)
+    }
+
+    const sharedInputProps = {
+        value,
+        onChange: handleChange,
+        onKeyDown: (e: React.KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+            e.stopPropagation()
+            handleKeyDown(e)
+        },
+        onClick: syncCursorPosition,
+        onKeyUp: syncCursorPosition,
+        onSelect: syncCursorPosition,
+        onScroll: () => updateSuggestionPosition(),
+        placeholder,
+        className,
+        onBlur: () => setShowSuggestions(false),
+    }
 
     useEffect(() => {
         if (!hasSuggestions) {
@@ -527,32 +546,18 @@ function SmartInput({
 
     return (
         <div className="relative">
-            <Component
-                ref={inputRef}
-                value={value}
-                onChange={handleChange}
-                onKeyDown={(e) => {
-                    e.stopPropagation()
-                    handleKeyDown(e)
-                }}
-                onClick={() => {
-                    const nextPosition = inputRef.current?.selectionStart || 0
-                    setCursorPosition(nextPosition)
-                }}
-                onKeyUp={() => {
-                    const nextPosition = inputRef.current?.selectionStart || 0
-                    setCursorPosition(nextPosition)
-                }}
-                onSelect={() => {
-                    const nextPosition = inputRef.current?.selectionStart || 0
-                    setCursorPosition(nextPosition)
-                }}
-                onScroll={() => updateSuggestionPosition()}
-                placeholder={placeholder}
-                className={className}
-                onBlur={() => setShowSuggestions(false)}
-                rows={multiline ? 4 : 1}
-            />
+            {multiline ? (
+                <Textarea
+                    ref={inputRef as React.RefObject<HTMLTextAreaElement | null>}
+                    {...sharedInputProps}
+                    rows={4}
+                />
+            ) : (
+                <Input
+                    ref={inputRef as React.RefObject<HTMLInputElement | null>}
+                    {...sharedInputProps}
+                />
+            )}
             {hasSuggestions && (
                 <div
                     className="fixed z-[120] bg-popover text-popover-foreground shadow-md rounded-md border border-border p-1 max-h-[200px] overflow-auto"
