@@ -16,6 +16,9 @@ class AgentState(TypedDict):
 
     # Persistent user-defined state
     state: Annotated[Dict[str, Any], operator.or_]
+    state_types: Annotated[Dict[str, str], operator.or_]
+    workflow_input: Annotated[Dict[str, Any], operator.or_]
+    node_outputs: Annotated[Dict[str, Any], operator.or_]
 
     # Control flow
     next: Optional[str]

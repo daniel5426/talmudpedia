@@ -653,6 +653,7 @@ class AgentService:
                 "messages": data.messages or [],
                 "input": data.input,
                 "context": data.context or {},
+                "workflow_input": {"input_as_text": data.input or ""},
             }
             if data.input:
                 input_state["messages"].append({"role": "user", "content": data.input})
@@ -673,10 +674,12 @@ class AgentService:
             run = await self.db.get(AgentRun, run_id)
             result_state = run.output_result or {}
             messages = result_state.get("messages", [])
-            last_message = messages[-1] if messages else None
-            output_text = ""
-            if isinstance(last_message, dict):
-                output_text = last_message.get("content", "")
+            final_output = result_state.get("final_output")
+            output_text = final_output if isinstance(final_output, str) else ""
+            if not output_text:
+                last_message = messages[-1] if messages else None
+                if isinstance(last_message, dict):
+                    output_text = last_message.get("content", "")
 
             class ExecResult:
                 def __init__(self, run_id, output, steps, messages, usage):
@@ -688,7 +691,7 @@ class AgentService:
 
             return ExecResult(
                 run_id=str(run_id),
-                output={"text": output_text},
+                output={"value": final_output, "text": output_text},
                 steps=[],
                 messages=messages,
                 usage={"tokens": run.usage_tokens if run else 0},

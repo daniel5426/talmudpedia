@@ -144,6 +144,7 @@ export interface ConfigFieldSpec {
     | "spawn_targets"      // Orchestration spawn-group targets
     | "route_table"        // Router/Judge visual branch rows
     | "advanced_toggle"    // Optional advanced UX toggle
+    | "value_ref"          // Typed runtime value selector
   required: boolean
   default?: unknown
   description?: string
@@ -210,7 +211,6 @@ export const AGENT_NODE_SPECS: AgentNodeSpec[] = [
     outputType: "message",
     icon: "Play",
     configFields: [
-      { name: "input_variables", label: "Input Variables", fieldType: "variable_list", required: false, description: "Define expected input variables" },
       { name: "state_variables", label: "State Variables", fieldType: "variable_list", required: false, description: "Initialize persistent state variables" },
     ],
   },
@@ -222,10 +222,7 @@ export const AGENT_NODE_SPECS: AgentNodeSpec[] = [
     inputType: "any",
     outputType: "any",
     icon: "Square",
-    configFields: [
-      { name: "output_variable", label: "Output Variable", fieldType: "variable_selector", required: false, description: "Select a state variable to return" },
-      { name: "output_message", label: "Output Message", fieldType: "template_string", required: false, description: "Template with {{ variable }} interpolation" },
-    ],
+    configFields: [],
   },
   
   // ==========================================================================
@@ -357,6 +354,7 @@ export const AGENT_NODE_SPECS: AgentNodeSpec[] = [
     configFields: [
       { name: "name", label: "Name", fieldType: "string", required: false },
       { name: "model_id", label: "Model", fieldType: "model", required: true, description: "Model used for classification" },
+      { name: "input_source", label: "Input Source", fieldType: "value_ref", required: false, description: "Pick a value to classify" },
       { name: "instructions", label: "Instructions", fieldType: "text", required: false, description: "Additional context for classification" },
       { name: "categories", label: "Categories", fieldType: "category_list", required: true, description: "Define classification categories" },
     ],
@@ -394,7 +392,7 @@ export const AGENT_NODE_SPECS: AgentNodeSpec[] = [
     icon: "Database",
     configFields: [
       { name: "name", label: "Name", fieldType: "string", required: false },
-      { name: "assignments", label: "Assignments", fieldType: "assignment_list", required: true, description: "Variable assignments" },
+      { name: "assignments", label: "Assignments", fieldType: "assignment_list", required: true, description: "Typed state assignments with literal/expression or ValueRef sources" },
       { name: "is_expression", label: "Values are Expressions", fieldType: "boolean", required: false, default: true },
     ],
   },

@@ -45,6 +45,7 @@ import {
 } from "./types"
 import { normalizeBuilderNode, normalizeBuilderEdges } from "./graphspec"
 import { getRenderGraphForMode } from "./runtime-merge"
+import { useAgentGraphAnalysis } from "./useAgentGraphAnalysis"
 import { AgentExecutionEvent } from "@/services"
 import { AlertTriangle, LayoutGrid, Trash2 } from "lucide-react"
 
@@ -260,6 +261,7 @@ function AgentBuilderInner({
         executionEvents,
         runStatus: currentRunStatus,
     })
+    const { analysis: graphAnalysis } = useAgentGraphAnalysis(agentId, nodes as Node<AgentNodeData>[], edges)
 
     // History management using shared hook
     const {
@@ -881,11 +883,8 @@ function AgentBuilderInner({
                         data={safeSelectedNodeData}
                         onConfigChange={handleConfigChange}
                         onClose={() => setSelectedNodeId(null)}
-                        availableVariables={[
-                            // Flatten input and state variables from Start node
-                            ...((nodes.find(n => n.type === "start")?.data?.config?.input_variables as any[]) || []),
-                            ...((nodes.find(n => n.type === "start")?.data?.config?.state_variables as any[]) || [])
-                        ]}
+                        availableVariables={graphAnalysis?.inventory?.template_variables || []}
+                        graphAnalysis={graphAnalysis}
                     />
                 </FloatingPanel>
             )}

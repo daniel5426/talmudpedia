@@ -5,6 +5,16 @@ import { agentService, publishedAppsService } from "@/services";
 
 const pushMock = jest.fn();
 
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 jest.mock("@/services", () => ({
   agentService: {
     listAgents: jest.fn(),
@@ -175,5 +185,84 @@ describe("Apps admin page", () => {
         })
       );
     });
+  });
+
+  it("renders the apps list before create resources finish loading", async () => {
+    const agentsDeferred = deferred<{ agents: Array<Record<string, unknown>>; total: number }>();
+    const templatesDeferred = deferred<
+      Array<{
+        key: string;
+        name: string;
+        description: string;
+        thumbnail: string;
+        tags: string[];
+        entry_file: string;
+        style_tokens: Record<string, string>;
+      }>
+    >();
+    const authTemplatesDeferred = deferred<
+      Array<{
+        key: string;
+        name: string;
+        description: string;
+        thumbnail: string;
+        tags: string[];
+        style_tokens: Record<string, string>;
+      }>
+    >();
+
+    (agentService.listAgents as jest.Mock).mockReturnValueOnce(agentsDeferred.promise);
+    (publishedAppsService.listTemplates as jest.Mock).mockReturnValueOnce(templatesDeferred.promise);
+    (publishedAppsService.listAuthTemplates as jest.Mock).mockReturnValueOnce(authTemplatesDeferred.promise);
+
+    render(<AppsPage />);
+
+    expect(await screen.findByText("Support")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /add new/i }));
+    expect(screen.getByText("Loading published agents...")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Create App" })).toBeDisabled();
+
+    agentsDeferred.resolve({
+      agents: [
+        {
+          id: "agent-1",
+          tenant_id: "tenant-1",
+          name: "Published Agent",
+          slug: "published-agent",
+          status: "published",
+          version: 1,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        },
+      ],
+      total: 1,
+    });
+    templatesDeferred.resolve([
+      {
+        key: "chat-classic",
+        name: "Classic Dialogue",
+        description: "Classic",
+        thumbnail: "classic",
+        tags: ["chat"],
+        entry_file: "src/main.tsx",
+        style_tokens: {},
+      },
+    ]);
+    authTemplatesDeferred.resolve([
+      {
+        key: "auth-classic",
+        name: "Classic Auth",
+        description: "Classic auth layout",
+        thumbnail: "classic",
+        tags: ["default"],
+        style_tokens: {},
+      },
+    ]);
+
+    await waitFor(() => {
+      expect(screen.queryByText("Loading published agents...")).not.toBeInTheDocument();
+    });
+    expect(screen.getByText("Classic Dialogue")).toBeInTheDocument();
   });
 });

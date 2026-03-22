@@ -26,6 +26,43 @@ export interface AgentGraphDefinition {
   edges: any[];
 }
 
+export interface AgentGraphInventoryItem {
+  namespace: "workflow_input" | "state" | "node_output";
+  key: string;
+  type: string;
+  label?: string;
+  node_id?: string;
+  readonly?: boolean;
+  default_value?: unknown;
+}
+
+export interface AgentGraphNodeOutputGroup {
+  node_id: string;
+  node_type: string;
+  node_label: string;
+  fields: AgentGraphInventoryItem[];
+}
+
+export interface AgentGraphAnalysis {
+  spec_version: string;
+  inventory: {
+    workflow_input: AgentGraphInventoryItem[];
+    state: AgentGraphInventoryItem[];
+    node_outputs: AgentGraphNodeOutputGroup[];
+    template_variables: Array<{
+      name: string;
+      type: string;
+      label?: string;
+      namespace: string;
+      key: string;
+      node_id?: string;
+    }>;
+  };
+  operator_contracts: Record<string, Record<string, unknown>>;
+  errors: Array<Record<string, unknown>>;
+  warnings: Array<Record<string, unknown>>;
+}
+
 export type ModelStatus = 'active' | 'deprecated' | 'disabled';
 export type ModelProviderType = 'openai' | 'azure' | 'anthropic' | 'google' | 'xai' | 'cohere' | 'groq' | 'mistral' | 'together' | 'local' | 'gemini' | 'huggingface' | 'custom';
 export type ModelCapabilityType = 'chat' | 'completion' | 'embedding' | 'image' | 'vision' | 'audio' | 'rerank' | 'speech_to_text' | 'text_to_speech';
@@ -286,6 +323,8 @@ export interface AgentOperatorSpec {
   reads: string[];
   writes: string[];
   config_schema: Record<string, any>;
+  field_contracts?: Record<string, any>;
+  output_contract?: Record<string, any>;
   ui: Record<string, any>;
 }
 
@@ -321,6 +360,13 @@ export const agentService = {
 
   async getAgent(id: string) {
     return httpClient.get<Agent>(`/agents/${id}`);
+  },
+
+  async analyzeGraph(id: string, graphDefinition: AgentGraphDefinition) {
+    return httpClient.post<{ agent_id: string; graph_definition: AgentGraphDefinition; analysis: AgentGraphAnalysis }>(
+      `/agents/${id}/graph/analyze`,
+      { graph_definition: graphDefinition }
+    );
   },
 
   async createAgent(data: Partial<Agent>) {

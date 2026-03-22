@@ -265,9 +265,18 @@ class RestrictedCELEvaluator:
             user_state = state.get('state', {})
             if not isinstance(user_state, dict):
                 user_state = {}
+            workflow_input = state.get("workflow_input", {})
+            if not isinstance(workflow_input, dict):
+                workflow_input = {}
+            node_outputs = state.get("node_outputs", {})
+            if not isinstance(node_outputs, dict):
+                node_outputs = {}
             
             # Expose 'state' as the user-defined variables (most common access pattern)
             namespace['state'] = self._freeze(user_state)
+            namespace["workflow_input"] = self._freeze(workflow_input)
+            namespace["node_outputs"] = self._freeze(node_outputs)
+            namespace["upstream"] = self._freeze(node_outputs)
             
             # Also expose user state variables directly for convenience
             # (allows both state.counter and counter)
@@ -299,6 +308,8 @@ class RestrictedCELEvaluator:
                     break
         elif 'input' not in namespace:
             namespace['input'] = state.get('input', '') if state else ''
+        if "input_as_text" not in namespace:
+            namespace["input_as_text"] = namespace.get("workflow_input", {}).get("input_as_text", namespace.get("input", ""))
         
         return namespace
     

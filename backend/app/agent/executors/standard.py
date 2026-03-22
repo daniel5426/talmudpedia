@@ -7,6 +7,15 @@ from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.agent.execution.types import EventVisibility
+from app.agent.graph.contracts import (
+    build_default_end_output_bindings,
+    build_default_end_output_schema,
+    infer_runtime_value_type,
+    materialize_end_output,
+    normalize_state_variable_definition,
+    normalize_value_type,
+    value_types_compatible,
+)
 from app.agent.execution.tool_input_contracts import (
     get_tool_execution_config,
     get_tool_input_schema,
@@ -219,9 +228,17 @@ class StartNodeExecutor(BaseNodeExecutor):
     async def execute(self, state: Dict[str, Any], config: Dict[str, Any], context: Dict[str, Any] = None) -> Dict[str, Any]:
         logger.debug("Executing START node")
         
-        # Initialize state variables from config
         state_vars = config.get("state_variables", [])
-        input_vars = config.get("input_variables", [])
+        workflow_input = state.get("workflow_input", {})
+        if not isinstance(workflow_input, dict):
+            workflow_input = {}
+        input_as_text = workflow_input.get("input_as_text")
+        if input_as_text is None:
+            input_as_text = state.get("input")
+        workflow_input = {
+            "input_as_text": str(input_as_text or ""),
+            **workflow_input,
+        }
 
         from app.agent.execution.emitter import active_emitter
         emitter = active_emitter.get()
@@ -232,23 +249,41 @@ class StartNodeExecutor(BaseNodeExecutor):
                 node_id,
                 node_name,
                 "start",
-                {"state_variables": len(state_vars), "input_variables": len(input_vars)},
+                {"state_variables": len(state_vars), "workflow_inputs": len(workflow_input)},
             )
         
         initial_state = {}
+        state_types: Dict[str, str] = {}
         
         # Set up state variables with defaults
-        for var in state_vars:
-            name = var.get("name")
-            default = var.get("default")
-            if name:
-                initial_state[name] = default
-        
-        # Input variables are expected to come from the user input
-        # They're defined here for documentation/validation
-        
-        result = {"state": initial_state} if initial_state else {}
+        for raw_var in state_vars:
+            var = normalize_state_variable_definition(raw_var)
+            key = var.get("key")
+            value_type = normalize_value_type(var.get("type"))
+            if not key:
+                continue
+            state_types[key] = value_type
+            if "default_value" not in var:
+                continue
+            default = var.get("default_value")
+            if default is None or value_types_compatible(value_type, infer_runtime_value_type(default)):
+                initial_state[key] = default
+
+        result: Dict[str, Any] = {
+            "workflow_input": workflow_input,
+            "state": initial_state,
+            "state_types": state_types,
+        }
         if emitter:
+            emitter.emit_internal_event(
+                "workflow.start_seeded",
+                {
+                    "workflow_input": list(workflow_input.keys()),
+                    "state": list(initial_state.keys()),
+                },
+                node_id=node_id,
+                category="workflow_contract",
+            )
             emitter.emit_node_end(node_id, node_name, "start", {"keys": list(result.keys())})
         return result
 
@@ -261,9 +296,6 @@ class EndNodeExecutor(BaseNodeExecutor):
     
     async def execute(self, state: Dict[str, Any], config: Dict[str, Any], context: Dict[str, Any] = None) -> Dict[str, Any]:
         logger.debug("Executing END node")
-        
-        output_variable = config.get("output_variable")
-        output_message = config.get("output_message")
 
         from app.agent.execution.emitter import active_emitter
         emitter = active_emitter.get()
@@ -274,27 +306,50 @@ class EndNodeExecutor(BaseNodeExecutor):
                 node_id,
                 node_name,
                 "end",
-                {"output_variable": output_variable, "has_output_message": bool(output_message)},
+                {"has_schema": isinstance(config.get("output_schema"), dict)},
             )
         
         result = {}
-        
-        if output_variable:
-            # Extract from state
-            state_vars = state.get("state", {})
-            if output_variable in state_vars:
-                result["final_output"] = state_vars[output_variable]
-            elif output_variable in state:
-                result["final_output"] = state[output_variable]
-        
-        if output_message:
-            # Interpolate template with state
+
+        if isinstance(config.get("output_schema"), dict) or isinstance(config.get("output_bindings"), list):
             try:
-                interpolated = evaluate_template(output_message, state)
-                result["final_output"] = interpolated
+                result["final_output"] = materialize_end_output(config=config, state=state)
+                if emitter:
+                    emitter.emit_internal_event(
+                        "workflow.end_materialized",
+                        {
+                            "schema_name": (config.get("output_schema") or {}).get("name"),
+                            "binding_count": len(config.get("output_bindings") or []),
+                        },
+                        node_id=node_id,
+                        category="workflow_contract",
+                    )
             except Exception as e:
-                logger.warning(f"Failed to interpolate output message: {e}")
-                result["final_output"] = output_message
+                logger.warning(f"Failed to materialize end output: {e}")
+                if emitter:
+                    emitter.emit_internal_event(
+                        "workflow.end_validation_failed",
+                        {"error": str(e)},
+                        node_id=node_id,
+                        category="workflow_contract",
+                    )
+                raise
+        else:
+            output_variable = config.get("output_variable")
+            output_message = config.get("output_message")
+            if output_variable:
+                state_vars = state.get("state", {})
+                if output_variable in state_vars:
+                    result["final_output"] = state_vars[output_variable]
+                elif output_variable in state:
+                    result["final_output"] = state[output_variable]
+            if output_message:
+                try:
+                    interpolated = evaluate_template(output_message, state)
+                    result["final_output"] = interpolated
+                except Exception as e:
+                    logger.warning(f"Failed to interpolate output message: {e}")
+                    result["final_output"] = output_message
         
         if emitter:
             emitter.emit_node_end(node_id, node_name, "end", {"has_output": bool(result)})
@@ -1767,17 +1822,40 @@ def register_standard_operators():
         description="Entry point for the agent. Initialize variables here.",
         reads=[],
         writes=[AgentStateField.MESSAGE_HISTORY, AgentStateField.STATE_VARIABLES],
+        config_schema={
+            "type": "object",
+            "properties": {
+                "state_variables": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "key": {"type": "string"},
+                            "type": {"type": "string", "enum": ["string", "number", "boolean", "object", "list"]},
+                            "default_value": {},
+                        },
+                        "required": ["key", "type"],
+                    },
+                },
+            },
+            "additionalProperties": True,
+        },
+        field_contracts={
+            "state_variables": {"type": "state_variable_definitions"},
+        },
+        output_contract={
+            "fields": [],
+        },
         ui={
             "icon": "Play",
             "color": "#6b7280",
             "inputType": "any",
             "outputType": "message",
             "configFields": [
-                {"name": "input_variables", "label": "Input Variables", "fieldType": "variable_list", "required": False, 
-                 "description": "Define expected input variables with types"},
                 {"name": "state_variables", "label": "State Variables", "fieldType": "variable_list", "required": False,
                  "description": "Initialize persistent state variables with defaults"}
-            ]
+            ],
+            "workflowInputs": [{"key": "input_as_text", "type": "string", "label": "Input as text", "readonly": True}],
         }
     ))
     AgentExecutorRegistry.register("start", StartNodeExecutor)
@@ -1790,17 +1868,24 @@ def register_standard_operators():
         description="Exit point. Specify what to return.",
         reads=[AgentStateField.MESSAGE_HISTORY, AgentStateField.STATE_VARIABLES, AgentStateField.FINAL_OUTPUT],
         writes=[AgentStateField.FINAL_OUTPUT],
+        config_schema={
+            "type": "object",
+            "properties": {
+                "output_schema": {"type": "object", "additionalProperties": True},
+                "output_bindings": {"type": "array", "items": {"type": "object", "additionalProperties": True}},
+            },
+            "additionalProperties": True,
+        },
+        field_contracts={
+            "output_schema": {"type": "end_output_schema"},
+            "output_bindings": {"type": "schema_binding"},
+        },
         ui={
             "icon": "Square",
             "color": "#6b7280",
             "inputType": "any",
             "outputType": "any",
-            "configFields": [
-                {"name": "output_variable", "label": "Output Variable", "fieldType": "variable_selector", "required": False,
-                 "description": "Select a state variable to return"},
-                {"name": "output_message", "label": "Output Message", "fieldType": "template_string", "required": False,
-                 "description": "Template message with {{ variable }} interpolation", "prompt_capable": True, "prompt_surface": "end.output_message"}
-            ]
+            "configFields": []
         }
     ))
     AgentExecutorRegistry.register("end", EndNodeExecutor)
@@ -1879,6 +1964,26 @@ def register_standard_operators():
         description="Classify input into categories using LLM",
         reads=[AgentStateField.MESSAGE_HISTORY, AgentStateField.STATE_VARIABLES],
         writes=[AgentStateField.ROUTING_KEY, AgentStateField.BRANCH_TAKEN],
+        config_schema={
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "model_id": {"type": "string"},
+                "instructions": {"type": "string"},
+                "input_source": {"type": "object", "additionalProperties": True},
+                "categories": {"type": "array", "items": {"type": "object", "additionalProperties": True}},
+            },
+            "required": ["model_id", "categories"],
+        },
+        field_contracts={
+            "input_source": {"type": "value_ref", "allowed_types": ["string", "number", "boolean", "object", "list", "unknown"]},
+        },
+        output_contract={
+            "fields": [
+                {"key": "category", "type": "string", "label": "Category"},
+                {"key": "confidence", "type": "number", "label": "Confidence"},
+            ]
+        },
         ui={
             "icon": "ListFilter", # Will need to add this icon map in frontend
             "color": "#8b5cf6",
@@ -1888,6 +1993,7 @@ def register_standard_operators():
             "configFields": [
                 {"name": "name", "label": "Name", "fieldType": "string", "required": False},
                 {"name": "model_id", "label": "Model", "fieldType": "model", "required": True, "description": "Model used for classification"},
+                {"name": "input_source", "label": "Input Source", "fieldType": "value_ref", "required": False, "description": "Pick a value to classify"},
                 {"name": "instructions", "label": "Instructions", "fieldType": "text", "required": False, "description": "Additional context for classification", "prompt_capable": True, "prompt_surface": "classify.instructions"},
                 {"name": "categories", "label": "Categories", "fieldType": "category_list", "required": True, "description": "Define classification categories", "prompt_capable": True, "prompt_surface": "classify.categories.description"}
             ]
@@ -1967,6 +2073,32 @@ def register_standard_operators():
         description="Explicitly set state variables",
         reads=[AgentStateField.STATE_VARIABLES],
         writes=[AgentStateField.STATE_VARIABLES],
+        config_schema={
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "assignments": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "key": {"type": "string"},
+                            "type": {"type": "string", "enum": ["string", "number", "boolean", "object", "list"]},
+                            "value": {},
+                            "value_ref": {"type": "object", "additionalProperties": True},
+                        },
+                        "required": ["key"],
+                        "additionalProperties": True,
+                    },
+                },
+                "is_expression": {"type": "boolean"},
+            },
+            "required": ["assignments"],
+            "additionalProperties": True,
+        },
+        field_contracts={
+            "assignments": {"type": "state_assignment_list"},
+        },
         ui={
             "icon": "Database",
             "color": "#06b6d4",
@@ -1975,7 +2107,7 @@ def register_standard_operators():
             "configFields": [
                 {"name": "name", "label": "Name", "fieldType": "string", "required": False},
                 {"name": "assignments", "label": "Assignments", "fieldType": "assignment_list", "required": True,
-                 "description": "Variable assignments (value can be CEL expression)"},
+                 "description": "Typed state assignments with literal/expression or ValueRef sources"},
                 {"name": "is_expression", "label": "Values are Expressions", "fieldType": "boolean", "required": False, "default": True}
             ]
         }

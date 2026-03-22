@@ -171,20 +171,26 @@ class FieldResolver:
         # Handle known prefixes
         first = parts[0]
         
-        if first == "upstream":
-            # {{ upstream.node_id.field }}
+        if first in {"upstream", "node_outputs", "node_output"}:
+            # {{ upstream.node_id.field }} or {{ node_outputs.node_id.field }}
             if len(parts) < 3:
                 logger.warning(f"Invalid upstream path: {path}")
                 return None
             node_id = parts[1]
             field_path = parts[2:]
-            node_outputs = state.get("_node_outputs", {})
+            node_outputs = state.get("node_outputs", {})
+            if not isinstance(node_outputs, dict):
+                node_outputs = state.get("_node_outputs", {})
             node_output = node_outputs.get(node_id, {})
             return self._traverse(node_output, field_path)
         
         elif first == "state":
-            # {{ state.field }} or {{ state.nested.field }}
-            return self._traverse(state, parts[1:])
+            state_payload = state.get("state", {}) if isinstance(state, dict) else {}
+            return self._traverse(state_payload, parts[1:])
+
+        elif first == "workflow_input":
+            workflow_input = state.get("workflow_input", {}) if isinstance(state, dict) else {}
+            return self._traverse(workflow_input, parts[1:])
         
         else:
             # Shorthand: {{ messages }} -> state["messages"]

@@ -7,16 +7,7 @@ import {
     routeTableRowsToOutcomes,
     routeTableRowsToRouterRoutes,
 } from "./types"
-
-const ORCHESTRATION_V2_NODE_TYPES = new Set<AgentNodeType>([
-    "spawn_run",
-    "spawn_group",
-    "join",
-    "router",
-    "judge",
-    "replan",
-    "cancel_subtree",
-])
+import { buildDefaultEndOutputBindings, buildDefaultEndOutputSchema } from "./graph-contract"
 
 interface GraphSpecNormalizeOptions {
     specVersion?: string
@@ -92,6 +83,10 @@ export function normalizeBuilderNode(node: Node): Node<AgentNodeData> {
     const spec = getNodeSpec(nodeType)
     const rawConfig = raw.config ?? {}
     const config = { ...rawConfig }
+    if (nodeType === "end" && !config.output_schema && !config.output_variable && !config.output_message) {
+        config.output_schema = buildDefaultEndOutputSchema()
+        config.output_bindings = buildDefaultEndOutputBindings()
+    }
     const resolvedInputMappings = existing.inputMappings ?? raw.input_mappings
     if (resolvedInputMappings && !("input_mappings" in config)) {
         config["input_mappings"] = resolvedInputMappings
@@ -179,18 +174,7 @@ export function resolveGraphSpecVersion(
     nodes: Node<AgentNodeData>[],
     incomingVersion?: string
 ): string {
-    const hasOrchestrationV2Nodes = nodes.some((node) => {
-        const nodeType = (node.type || (node.data as AgentNodeData | undefined)?.nodeType) as AgentNodeType | undefined
-        return !!nodeType && ORCHESTRATION_V2_NODE_TYPES.has(nodeType)
-    })
-
-    if (hasOrchestrationV2Nodes) {
-        return "2.0"
-    }
-
-    if (incomingVersion) {
-        return incomingVersion
-    }
-
-    return "1.0"
+    void nodes
+    void incomingVersion
+    return "3.0"
 }

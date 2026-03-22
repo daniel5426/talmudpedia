@@ -36,7 +36,7 @@ describe("graphspec serialization", () => {
 
     const normalized = normalizeGraphSpecForSave(nodes, edges)
 
-    expect(normalized.spec_version).toBe("1.0")
+    expect(normalized.spec_version).toBe("3.0")
     expect((normalized.nodes[0] as any).input_mappings).toEqual({ query: "{{ state.q }}" })
     expect((normalized.nodes[0] as any).config).toEqual({ input_mappings: { query: "{{ state.q }}" } })
     expect((normalized.nodes[0] as any).data?.config).toBeUndefined()

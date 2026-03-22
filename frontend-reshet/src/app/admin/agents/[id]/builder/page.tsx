@@ -31,7 +31,7 @@ export default function AgentBuilderPage() {
     const [error, setError] = useState<string | null>(null)
 
     // Store current graph state for saving
-    const graphRef = useRef<AgentGraphDefinition>({ spec_version: "1.0", nodes: [], edges: [] })
+    const graphRef = useRef<AgentGraphDefinition>({ spec_version: "3.0", nodes: [], edges: [] })
 
     const loadAgent = useCallback(async () => {
         try {
@@ -43,7 +43,7 @@ export default function AgentBuilderPage() {
             // Initialize graph ref with loaded data
             if (data.graph_definition) {
                 graphRef.current = {
-                    spec_version: data.graph_definition.spec_version || "1.0",
+                    spec_version: data.graph_definition.spec_version || "3.0",
                     nodes: data.graph_definition.nodes || [],
                     edges: data.graph_definition.edges || [],
                 }

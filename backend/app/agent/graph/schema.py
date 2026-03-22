@@ -1,6 +1,4 @@
-"""
-Graph Schema - Pydantic models for agent graph validation.
-"""
+"""Graph Schema - Pydantic models for agent graph validation."""
 from enum import Enum
 from typing import Any, Optional
 from pydantic import BaseModel, Field, ConfigDict, model_validator
@@ -67,6 +65,11 @@ class AgentNode(BaseModel):
             if "input_mappings" not in data:
                 if "inputMappings" in data:
                     data["input_mappings"] = data.get("inputMappings")
+            nested_data = data.get("data") if isinstance(data.get("data"), dict) else {}
+            if "config" not in data and isinstance(nested_data.get("config"), dict):
+                data["config"] = nested_data.get("config")
+            if "input_mappings" not in data and "inputMappings" in nested_data:
+                data["input_mappings"] = nested_data.get("inputMappings")
         return data
 
 
@@ -117,6 +120,64 @@ class AgentGraph(BaseModel):
     
     def get_incoming_edges(self, node_id: str) -> list[AgentEdge]:
         return [e for e in self.edges if e.target == node_id]
+
+
+class StateVariableDefinition(BaseModel):
+    key: str
+    type: str
+    default_value: Optional[Any] = None
+
+    model_config = ConfigDict(extra="ignore")
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_fields(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if "key" not in data and "name" in data:
+                data["key"] = data.get("name")
+            if "default_value" not in data and "default" in data:
+                data["default_value"] = data.get("default")
+            if str(data.get("type") or "").strip().lower() == "array":
+                data["type"] = "list"
+        return data
+
+
+class ValueRef(BaseModel):
+    namespace: str
+    key: str
+    node_id: Optional[str] = None
+    expected_type: Optional[str] = None
+    label: Optional[str] = None
+
+    model_config = ConfigDict(extra="ignore")
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_fields(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            namespace = str(data.get("namespace") or "").strip().lower()
+            if namespace in {"node_outputs", "node_output", "upstream"}:
+                data["namespace"] = "node_output"
+            elif namespace:
+                data["namespace"] = namespace
+            if str(data.get("expected_type") or "").strip().lower() == "array":
+                data["expected_type"] = "list"
+        return data
+
+
+class EndOutputBinding(BaseModel):
+    json_pointer: str
+    value_ref: ValueRef
+
+    model_config = ConfigDict(extra="ignore")
+
+
+class EndOutputSchema(BaseModel):
+    name: Optional[str] = None
+    mode: str = "simple"
+    schema: dict[str, Any] = Field(default_factory=dict)
+
+    model_config = ConfigDict(extra="ignore")
 
 
 class MemoryConfig(BaseModel):

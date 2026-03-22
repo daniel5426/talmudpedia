@@ -20,23 +20,23 @@ const buildNode = (id: string, type: string, config: Record<string, unknown> = {
   },
 } as Node<AgentNodeData>)
 
-describe("graphspec v2 serialization", () => {
-  it("preserves loaded spec version when there are no v2 orchestration nodes", () => {
+describe("graphspec v3 serialization", () => {
+  it("always persists graph spec 3.0", () => {
     const nodes = [buildNode("n1", "start"), buildNode("n2", "agent")]
     const saved = normalizeGraphSpecForSave(nodes, [], { specVersion: "2.0" })
-    expect(saved.spec_version).toBe("2.0")
+    expect(saved.spec_version).toBe("3.0")
   })
 
-  it("forces v2 when orchestration nodes exist", () => {
+  it("keeps orchestration graphs on graph spec 3.0", () => {
     const nodes = [buildNode("n1", "start"), buildNode("n2", "spawn_group")]
     const saved = normalizeGraphSpecForSave(nodes, [], { specVersion: "1.0" })
-    expect(saved.spec_version).toBe("2.0")
+    expect(saved.spec_version).toBe("3.0")
   })
 
-  it("never downgrades v2 orchestration graphs to v1", () => {
+  it("never downgrades orchestration graphs below 3.0", () => {
     const nodes = [buildNode("n1", "join"), buildNode("n2", "judge")]
-    expect(resolveGraphSpecVersion(nodes, "1.0")).toBe("2.0")
-    expect(normalizeGraphSpecForSave(nodes, [], { specVersion: "1.0" }).spec_version).toBe("2.0")
+    expect(resolveGraphSpecVersion(nodes, "1.0")).toBe("3.0")
+    expect(normalizeGraphSpecForSave(nodes, [], { specVersion: "1.0" }).spec_version).toBe("3.0")
   })
 
   it("autogenerates idempotency defaults for orchestration spawn nodes", () => {
@@ -51,7 +51,7 @@ describe("graphspec v2 serialization", () => {
       }),
     ]
 
-    const saved = normalizeGraphSpecForSave(nodes, [], { specVersion: "2.0" })
+    const saved = normalizeGraphSpecForSave(nodes, [], { specVersion: "3.0" })
     const spawnRunConfig = (saved.nodes[0] as any).config as Record<string, unknown>
     const spawnGroupConfig = (saved.nodes[1] as any).config as Record<string, unknown>
 
@@ -71,7 +71,7 @@ describe("graphspec v2 serialization", () => {
         route_table: [{ name: "accept" }, { name: "reject" }],
       }),
     ]
-    const saved = normalizeGraphSpecForSave(nodes, [], { specVersion: "2.0" })
+    const saved = normalizeGraphSpecForSave(nodes, [], { specVersion: "3.0" })
     const routerConfig = (saved.nodes[0] as any).config as Record<string, unknown>
     const judgeConfig = (saved.nodes[1] as any).config as Record<string, unknown>
 

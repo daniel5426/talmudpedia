@@ -5,6 +5,7 @@ from uuid import UUID
 from langchain_core.messages import AIMessage
 
 from app.agent.registry import AgentExecutorRegistry
+from app.agent.graph.contracts import extract_runtime_node_output
 from app.agent.graph.ir import GraphIRNode
 
 logger = logging.getLogger(__name__)
@@ -72,10 +73,22 @@ def build_node_fn(node: GraphIRNode, tenant_id: Optional[UUID], db: Any):
             state_update = await executor.execute(state, node_config, context)
 
             if state_update and isinstance(state_update, dict):
-                node_outputs = state.get("_node_outputs", {})
-                safe_update = {k: v for k, v in state_update.items() if k != "_node_outputs"}
-                node_outputs[node.id] = safe_update
-                state_update["_node_outputs"] = node_outputs
+                node_outputs = state.get("node_outputs", {})
+                if not isinstance(node_outputs, dict):
+                    node_outputs = {}
+                legacy_node_outputs = state.get("_node_outputs", {})
+                if not isinstance(legacy_node_outputs, dict):
+                    legacy_node_outputs = {}
+                published_output = extract_runtime_node_output(
+                    node_type=node.type,
+                    state_update=state_update,
+                    previous_state=state,
+                )
+                if published_output:
+                    node_outputs[node.id] = published_output
+                    legacy_node_outputs[node.id] = published_output
+                    state_update["node_outputs"] = node_outputs
+                    state_update["_node_outputs"] = legacy_node_outputs
 
             return state_update
         except Exception as e:

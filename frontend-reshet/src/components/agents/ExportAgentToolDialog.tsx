@@ -1,15 +1,12 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { ChevronDown, ChevronRight, Loader2, Plus, Trash2, Wrench } from "lucide-react"
+import { ChevronDown, ChevronRight, Loader2, Plus, Trash2, Wrench, X } from "lucide-react"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import {
     Dialog,
     DialogContent,
-    DialogDescription,
-    DialogFooter,
-    DialogHeader,
     DialogTitle,
 } from "@/components/ui/dialog"
 import {
@@ -27,7 +24,6 @@ import {
     SelectTrigger,
     SelectValue,
 } from "@/components/ui/select"
-import { Textarea } from "@/components/ui/textarea"
 import { PromptMentionInput } from "@/components/shared/PromptMentionInput"
 import { PromptMentionJsonEditor, fillPromptMentionJsonToken } from "@/components/shared/PromptMentionJsonEditor"
 import { PromptModal } from "@/components/shared/PromptModal"
@@ -239,17 +235,18 @@ function FieldTypeSelect({
     onChange: (value: SchemaNodeType) => void
 }) {
     return (
-        <select
-            value={value}
-            onChange={(event) => onChange(event.target.value as SchemaNodeType)}
-            className="h-8 rounded-md bg-transparent px-1.5 text-sm text-foreground outline-none"
-        >
-            <option value="string">string</option>
-            <option value="number">number</option>
-            <option value="boolean">boolean</option>
-            <option value="object">object</option>
-            <option value="array">array</option>
-        </select>
+        <Select value={value} onValueChange={(v) => onChange(v as SchemaNodeType)}>
+            <SelectTrigger size="sm" className="h-7 w-full text-xs font-mono border-border/40">
+                <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+                {(["string", "number", "boolean", "object", "array"] as SchemaNodeType[]).map((t) => (
+                    <SelectItem key={t} value={t} className="text-xs font-mono">
+                        {t}
+                    </SelectItem>
+                ))}
+            </SelectContent>
+        </Select>
     )
 }
 function NavigatorRow({
@@ -273,25 +270,25 @@ function NavigatorRow({
                 type="button"
                 onClick={() => onSelect(node.id)}
                 className={cn(
-                    "group flex h-[22px] w-full items-center gap-1 text-left text-[13px] transition-colors duration-75",
-                    selected ? "bg-accent text-foreground" : "text-foreground hover:bg-accent"
+                    "group flex h-6 w-full items-center gap-1 text-left text-xs transition-colors duration-75",
+                    selected ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
                 )}
                 style={{ paddingLeft: depth * 14 + 8 }}
             >
                 <span
-                    className="flex h-4 w-4 shrink-0 items-center justify-center text-muted-foreground/60"
+                    className="flex h-4 w-4 shrink-0 items-center justify-center text-muted-foreground/50"
                     onClick={(event) => {
                         event.stopPropagation()
                         if (expandable) onToggle(node.id)
                     }}
                 >
-                    {expandable ? node.expanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" /> : <span className="h-1 w-1 rounded-full bg-current/40" />}
+                    {expandable ? node.expanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" /> : <span className="h-1 w-1 rounded-full bg-muted-foreground/30" />}
                 </span>
-                <span className="min-w-0 truncate text-sm">
+                <span className="min-w-0 truncate">
                     {node.name || (node.type === "array" ? "item" : "field")}
                 </span>
-                <span className="ml-auto pr-2 text-[10px] uppercase tracking-[0.08em] text-muted-foreground/60">
-                    {typeAccent(node.type)}
+                <span className="ml-auto pr-2 text-[10px] font-mono text-muted-foreground/40">
+                    {node.type}
                 </span>
             </button>
             {node.expanded && node.type === "object"
@@ -341,6 +338,7 @@ export function ExportAgentToolDialog({
     const [selectedNodeId, setSelectedNodeId] = useState("")
     const [jsonSchemaText, setJsonSchemaText] = useState(JSON.stringify(DEFAULT_AGENT_TOOL_INPUT_SCHEMA, null, 2))
     const [schemaEditorError, setSchemaEditorError] = useState<string | null>(null)
+    const [showMoreFields, setShowMoreFields] = useState(false)
     const [loading, setLoading] = useState(false)
     const [error, setError] = useState<string | null>(null)
     const selectedAgent = useMemo(
@@ -428,26 +426,27 @@ export function ExportAgentToolDialog({
         addChildToNode(parent.id, type)
     }
     const renderSplitTree = () => (
-        <div className="grid gap-3 md:grid-cols-[220px_minmax(0,1fr)]">
-            <div className="flex max-h-[320px] flex-col overflow-hidden rounded-md border border-border/60">
-                <div className="flex h-[32px] shrink-0 items-center justify-between border-b border-border/60 pl-3 pr-1.5">
-                    <span className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground/60">
-                        {visibleTreeNodes.length} fields
+        <div className="grid h-full grid-cols-[200px_minmax(0,1fr)]">
+            {/* Tree panel */}
+            <div className="flex flex-col min-h-0 border-r border-border/30 bg-muted/20">
+                <div className="flex h-7 shrink-0 items-center justify-between px-2.5 border-b border-border/20">
+                    <span className="text-[10px] font-semibold text-muted-foreground/50 uppercase tracking-wider">
+                        Fields · {visibleTreeNodes.length}
                     </span>
                     <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                             <button
                                 type="button"
                                 aria-label="Add field"
-                                className="flex h-[22px] w-[22px] items-center justify-center rounded-[3px] text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground"
+                                className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground/40 transition-colors hover:bg-accent hover:text-foreground"
                                 title="Add field"
                             >
-                                <Plus className="h-[14px] w-[14px]" />
+                                <Plus className="h-3 w-3" />
                             </button>
                         </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="w-40">
+                        <DropdownMenuContent align="end" className="w-36">
                             {(["string", "number", "boolean", "object", "array"] as SchemaNodeType[]).map((type) => (
-                                <DropdownMenuItem key={type} onClick={() => handleAddFromMenu(type)}>
+                                <DropdownMenuItem key={type} onClick={() => handleAddFromMenu(type)} className="text-xs">
                                     Add {type}
                                 </DropdownMenuItem>
                             ))}
@@ -456,7 +455,7 @@ export function ExportAgentToolDialog({
                 </div>
                 <div className="flex-1 overflow-y-auto overflow-x-hidden py-0.5">
                     {visibleTreeNodes.length === 0 ? (
-                        <p className="px-2 py-4 text-center text-xs text-muted-foreground">No fields yet.</p>
+                        <p className="px-3 py-8 text-center text-[11px] text-muted-foreground/50">No fields</p>
                     ) : (
                         visibleTreeNodes.map((node) => (
                             <NavigatorRow key={node.id} node={node} depth={0} selectedId={selectedNode.id} onSelect={setSelectedNodeId} onToggle={handleToggleExpanded} />
@@ -464,59 +463,61 @@ export function ExportAgentToolDialog({
                     )}
                 </div>
             </div>
-            <div className="min-h-0">
+
+            {/* Field editor */}
+            <div className="min-h-0 overflow-y-auto">
                 {selectedNode.id === rootNode.id ? (
-                    <div className="flex h-full items-center justify-center rounded-md border border-dashed border-border/40 px-3 py-6 text-sm text-muted-foreground">
-                        Select a field to edit its properties.
+                    <div className="flex h-full items-center justify-center">
+                        <p className="text-xs text-muted-foreground/40">Select a field to edit</p>
                     </div>
                 ) : (
-                    <div className="space-y-3">
+                    <div className="p-4 space-y-3">
                         <div className="flex items-center justify-between">
-                            <span className="text-xs font-medium text-muted-foreground">
-                                {selectedNode.name || selectedNode.type}
-                            </span>
+                            <span className="text-[10px] font-semibold text-muted-foreground/50 uppercase tracking-wider">Properties</span>
                             <button
                                 type="button"
-                                className="flex items-center gap-1 text-xs text-muted-foreground hover:text-destructive transition-colors"
+                                className="flex items-center gap-1 text-[11px] text-muted-foreground/50 hover:text-destructive transition-colors"
                                 onClick={removeSelected}
                             >
-                                <Trash2 className="h-3 w-3" />
+                                <Trash2 className="h-2.5 w-2.5" />
                                 Remove
                             </button>
                         </div>
-                        <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_120px]">
+
+                        <div className="grid grid-cols-[1fr_100px] gap-2">
                             <div className="space-y-1">
-                                <Label htmlFor="selected-field-name" className="text-xs">Name</Label>
+                                <Label className="text-[11px] text-muted-foreground/60">Name</Label>
                                 <Input
-                                    id="selected-field-name"
                                     value={selectedNode.name}
                                     onChange={(event) => updateSelectedNode({ name: event.target.value })}
+                                    placeholder="field_name"
+                                    className="h-7 text-xs"
                                 />
                             </div>
                             <div className="space-y-1">
-                                <Label className="text-xs">Type</Label>
-                                <div className="rounded-md border border-input">
-                                    <FieldTypeSelect
-                                        value={selectedNode.type}
-                                        onChange={(value) =>
-                                            updateSelectedNode({
-                                                type: value,
-                                                children: value === "object" ? selectedNode.children : [],
-                                                item: value === "array" ? selectedNode.item ?? createChild("string", "item") : null,
-                                            })
-                                        }
-                                    />
-                                </div>
+                                <Label className="text-[11px] text-muted-foreground/60">Type</Label>
+                                <FieldTypeSelect
+                                    value={selectedNode.type}
+                                    onChange={(value) =>
+                                        updateSelectedNode({
+                                            type: value,
+                                            children: value === "object" ? selectedNode.children : [],
+                                            item: value === "array" ? selectedNode.item ?? createChild("string", "item") : null,
+                                        })
+                                    }
+                                />
                             </div>
                         </div>
+
                         <div className="space-y-1">
-                            <Label htmlFor="selected-field-description" className="text-xs">Description</Label>
+                            <Label className="text-[11px] text-muted-foreground/60">Description</Label>
                             <PromptMentionInput
                                 id="selected-field-description"
                                 placeholder="What this field is for..."
                                 value={selectedNode.description}
                                 onChange={(description) => updateSelectedNode({ description })}
                                 multiline={false}
+                                className="text-xs"
                                 surface="agent_export.input_schema.description"
                                 onMentionClick={(promptId, mentionIndex) =>
                                     promptMentionModal.openPromptMentionModal(promptId, {
@@ -527,18 +528,20 @@ export function ExportAgentToolDialog({
                                 }
                             />
                         </div>
-                        <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer select-none">
+
+                        <label className="flex items-center gap-2 cursor-pointer select-none pt-0.5">
                             <input
                                 type="checkbox"
                                 checked={selectedNode.required}
                                 onChange={(event) => updateSelectedNode({ required: event.target.checked })}
-                                className="rounded"
+                                className="h-3.5 w-3.5 rounded border-border accent-primary"
                             />
-                            Required
+                            <span className="text-xs text-muted-foreground">Required</span>
                         </label>
+
                         {selectedNode.type === "array" ? (
-                            <p className="text-xs text-muted-foreground">
-                                Array items are configured via the add menu in the tree.
+                            <p className="text-[11px] text-muted-foreground/50 italic pt-1">
+                                Array items configured via the tree.
                             </p>
                         ) : null}
                     </div>
@@ -623,24 +626,17 @@ export function ExportAgentToolDialog({
     return (
         <>
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="sm:max-w-[860px] max-h-[88vh] overflow-hidden border-border bg-background shadow-2xl">
-                <DialogHeader className="px-2">
-                    <DialogTitle>Export Agent as Tool</DialogTitle>
-                    <DialogDescription>
-                        Create or refresh an owner-managed tool from an agent.
-                    </DialogDescription>
-                </DialogHeader>
+            <DialogContent showCloseButton={false} className="!max-w-[58rem] h-[80vh] flex flex-col p-0 gap-0 overflow-hidden">
+                <DialogTitle className="sr-only">Export Agent as Tool</DialogTitle>
 
-                <div className="max-h-[calc(88vh-11rem)] space-y-4 overflow-y-auto py-2 p-2">
-                    <div className="grid gap-3 md:grid-cols-[200px_minmax(0,1fr)]">
-                        <div className="space-y-1.5">
-                            <Label htmlFor="export-agent-select">Agent</Label>
-                            <Select
-                                value={selectedAgentId}
-                                onValueChange={setSelectedAgentId}
-                            >
-                                <SelectTrigger id="export-agent-select" className="h-9 w-full">
-                                    <SelectValue placeholder="Select an agent" />
+                {/* ── Header group (row + optional description, single bottom border) ── */}
+                <div className="shrink-0 border-b border-border/40">
+                    {/* Header row */}
+                    <div className="flex items-center justify-between gap-2 px-4 py-2">
+                        <div className="flex items-center gap-2 min-w-0 flex-1">
+                            <Select value={selectedAgentId} onValueChange={setSelectedAgentId}>
+                                <SelectTrigger size="sm" className="h-7 w-[150px] text-xs border-none bg-muted/40 shadow-none focus:ring-0">
+                                    <SelectValue placeholder="Select agent" />
                                 </SelectTrigger>
                                 <SelectContent>
                                     {agents.length === 0 ? (
@@ -648,87 +644,147 @@ export function ExportAgentToolDialog({
                                             No agents available
                                         </SelectItem>
                                     ) : (
-                                    agents.map((agent) => (
-                                        <SelectItem key={agent.id} value={agent.id}>
-                                            {agent.name}
-                                        </SelectItem>
-                                    ))
+                                        agents.map((agent) => (
+                                            <SelectItem key={agent.id} value={agent.id} className="text-xs">
+                                                {agent.name}
+                                            </SelectItem>
+                                        ))
                                     )}
                                 </SelectContent>
                             </Select>
+                            <div className="h-3.5 w-px bg-border/50 shrink-0" />
+                            <Input
+                                value={name}
+                                onChange={(e) => setName(e.target.value)}
+                                placeholder="Tool name..."
+                                className="h-7 text-xs font-medium border-none bg-transparent px-1 focus-visible:ring-0 shadow-none"
+                            />
                         </div>
-                        <div className="space-y-1.5">
-                            <Label htmlFor="export-tool-name">Tool Name</Label>
-                            <Input id="export-tool-name" value={name} onChange={(event) => setName(event.target.value)} />
-                        </div>
-                    </div>
 
-                    <div className="space-y-1.5">
-                        <Label htmlFor="export-tool-description">Description</Label>
-                        <PromptMentionInput
-                            id="export-tool-description"
-                            value={description}
-                            onChange={setDescription}
-                            placeholder="Describe what this tool does..."
-                            className="min-h-[72px] resize-none text-sm"
-                            surface="agent_export.description"
-                            onMentionClick={(promptId, mentionIndex) =>
-                                promptMentionModal.openPromptMentionModal(promptId, { kind: "description", mentionIndex })
-                            }
-                        />
-                    </div>
-
-                    <div className="space-y-3">
-                        <div className="flex items-center justify-between">
-                            <Label className="text-sm">Input Schema</Label>
-                            <button
-                                type="button"
-                                className="text-xs text-muted-foreground hover:text-foreground transition-colors"
-                                onClick={editorMode === "builder" ? switchToJson : switchToBuilder}
+                        <div className="flex items-center gap-1 shrink-0">
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                className={cn(
+                                    "h-7 w-7 p-0 text-muted-foreground hover:text-foreground",
+                                    showMoreFields && "text-foreground bg-muted"
+                                )}
+                                onClick={() => setShowMoreFields((v) => !v)}
+                                title="Description"
                             >
-                                {editorMode === "builder" ? "Edit as JSON" : "Back to builder"}
-                            </button>
-                        </div>
+                                <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", showMoreFields && "rotate-180")} />
+                            </Button>
 
-                        {editorMode === "builder" ? (
-                            renderSplitTree()
-                        ) : (
+                            <div className="flex items-center gap-0.5 rounded-md bg-muted/50 p-0.5">
+                                <button
+                                    type="button"
+                                    onClick={() => { if (editorMode === "json") switchToBuilder() }}
+                                    className={cn(
+                                        "px-2 py-0.5 rounded text-[11px] font-medium transition-colors",
+                                        editorMode === "builder"
+                                            ? "bg-background text-foreground shadow-sm"
+                                            : "text-muted-foreground hover:text-foreground"
+                                    )}
+                                >
+                                    Builder
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => { if (editorMode === "builder") switchToJson() }}
+                                    className={cn(
+                                        "px-2 py-0.5 rounded text-[11px] font-medium transition-colors",
+                                        editorMode === "json"
+                                            ? "bg-background text-foreground shadow-sm"
+                                            : "text-muted-foreground hover:text-foreground"
+                                    )}
+                                >
+                                    JSON
+                                </button>
+                            </div>
+
+                            <div className="h-3.5 w-px bg-border/50 mx-0.5" />
+
+                            <Button
+                                size="sm"
+                                onClick={handleSubmit}
+                                disabled={loading || agents.length === 0}
+                                className="h-6 gap-1 text-[11px]"
+                            >
+                                {loading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Wrench className="h-3 w-3" />}
+                                Export
+                            </Button>
+
+                            <div className="h-3.5 w-px bg-border/50 mx-0.5" />
+
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => onOpenChange(false)}
+                                className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
+                            >
+                                <X className="h-3.5 w-3.5" />
+                            </Button>
+                        </div>
+                    </div>
+
+                    {/* Description (seamless expand, no border between header and description) */}
+                    {showMoreFields && (
+                        <div className="px-4 pb-2.5">
+                            <PromptMentionInput
+                                id="export-tool-description"
+                                value={description}
+                                onChange={setDescription}
+                                placeholder="Describe what this tool does..."
+                                className="min-h-[48px] text-xs bg-muted/20 border-border/30"
+                                surface="agent_export.description"
+                                onMentionClick={(promptId, mentionIndex) =>
+                                    promptMentionModal.openPromptMentionModal(promptId, { kind: "description", mentionIndex })
+                                }
+                            />
+                        </div>
+                    )}
+                </div>
+
+                {/* ── Error bar ── */}
+                {(error || schemaEditorError) && (
+                    <div className="text-xs text-destructive bg-destructive/10 px-4 py-1.5 shrink-0">
+                        {error || schemaEditorError}
+                    </div>
+                )}
+
+                {/* ── Main content ── */}
+                <div className="flex-1 min-h-0 overflow-hidden">
+                    {editorMode === "builder" ? (
+                        renderSplitTree()
+                    ) : (
+                        <div className="h-full overflow-hidden p-4">
                             <PromptMentionJsonEditor
                                 id="json-schema-editor"
                                 aria-label="JSON Schema"
-                                className="min-h-[360px] font-mono text-xs"
+                                className="h-full font-mono text-xs"
                                 value={jsonSchemaText}
                                 onChange={(value) => {
                                     setJsonSchemaText(value)
                                     setSchemaEditorError(null)
                                 }}
-                                height="360px"
+                                height="100%"
                                 surface="agent_export.input_schema.description"
                                 onMentionClick={(promptId, tokenRange) =>
                                     promptMentionModal.openPromptMentionModal(promptId, { kind: "json_schema", tokenRange })
                                 }
                             />
-                        )}
-
-                        {schemaEditorError ? <div className="text-sm text-destructive">{schemaEditorError}</div> : null}
-                    </div>
-
-                    {error ? (
-                        <div className="rounded-lg bg-destructive/8 px-3 py-2 text-sm text-destructive">
-                            {error}
                         </div>
-                    ) : null}
+                    )}
                 </div>
 
-                <DialogFooter>
-                    <Button variant="outline" onClick={() => onOpenChange(false)} disabled={loading}>
-                        Cancel
-                    </Button>
-                    <Button onClick={handleSubmit} disabled={loading || agents.length === 0} className="gap-2">
-                        {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wrench className="h-4 w-4" />}
-                        Export Tool
-                    </Button>
-                </DialogFooter>
+                {/* ── Footer ── */}
+                <div className="flex items-center gap-2 px-4 py-1.5 border-t border-border/40 text-[11px] text-muted-foreground shrink-0">
+                    <span>{selectedAgent?.name || "—"}</span>
+                    <span className="text-muted-foreground/30">·</span>
+                    <span>{visibleTreeNodes.length} field{visibleTreeNodes.length !== 1 ? "s" : ""}</span>
+                    <span className="text-muted-foreground/30">·</span>
+                    <span className="capitalize">{editorMode}</span>
+                </div>
             </DialogContent>
         </Dialog>
         <PromptModal

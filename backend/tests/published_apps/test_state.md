@@ -1,6 +1,6 @@
 # Published Apps Backend Tests
 
-Last Updated: 2026-03-15
+Last Updated: 2026-03-22
 
 ## Scope of the feature
 - Admin CRUD for published apps and builder state primitives.
@@ -10,6 +10,7 @@ Last Updated: 2026-03-15
 
 ## Test files present
 - `backend/tests/published_apps/test_admin_apps_crud.py`
+- `backend/tests/published_apps/test_admin_apps_page_fetch_probe.py`
 - `backend/tests/published_apps/test_builder_agent_integration_contract.py`
 - `backend/tests/published_apps/test_template_catalog.py`
 - `backend/tests/published_apps/test_public_app_resolve_and_config.py`
@@ -17,6 +18,7 @@ Last Updated: 2026-03-15
 
 ## Key scenarios covered
 - Tenant admin can create/list/update/delete apps.
+- Apps admin page fetch contract is probe-covered for `/admin/apps`, `/agents?limit=500&compact=true`, `/admin/apps/templates`, and `/admin/apps/auth/templates`.
 - Initial app-create draft revision (`origin_kind=app_init`) auto-enqueues async build; enqueue failure marks revision build failed without blocking app creation.
 - Builder state includes app + template + current draft metadata.
 - Canonical app-create and builder tests use `template_key="classic-chat"`.
@@ -35,7 +37,14 @@ Last Updated: 2026-03-15
 - Command: `cd backend && PYTHONPATH=. pytest -x -q tests/published_apps/test_public_app_resolve_and_config.py tests/published_apps/test_public_chat_scope_and_persistence.py tests/published_apps/test_builder_agent_integration_contract.py tests/published_apps/test_template_catalog.py`
 - Date: 2026-03-15
 - Result: FAIL (`test_preview_asset_proxy_streams_dist_asset` expects `published_app_preview_token`, but runtime now sets `published_app_public_preview_token`)
+- Command: `cd backend && PYTHONPATH=. pytest -q tests/published_apps/test_admin_apps_page_fetch_probe.py`
+- Date: 2026-03-22
+- Result: PASS (`-k smoke`: 1 passed, 1 deselected, 7 warnings)
+- Command: `cd backend && PYTHONPATH=. pytest -q tests/published_apps/test_template_catalog.py`
+- Date: 2026-03-22
+- Result: PASS (3 passed, 1 warning)
 
 ## Known gaps or follow-ups
 - Add explicit regression tests for removed `/admin/apps/{app_id}/publish` route in this folder (currently covered under `backend/tests/app_versions/`).
 - Add expanded negative tests for cross-app preview token replay and long-lived preview auth refresh behavior.
+- Run the new `real_db` apps-page fetch probe regularly against the local tenant to catch latency regressions on real data volume.

@@ -1,6 +1,6 @@
 # Architecture Tree (Curated)
 
-Last Updated: 2026-03-20
+Last Updated: 2026-03-22
 
 This file is a backend-only architecture map optimized for agent context efficiency.
 
@@ -61,6 +61,7 @@ backend/app/agent/core/state.py
 
 backend/app/agent/graph/
 backend/app/agent/graph/compiler.py
+backend/app/agent/graph/contracts.py
 backend/app/agent/graph/runtime.py
 backend/app/agent/graph/executable.py
 backend/app/agent/graph/ir.py

@@ -107,22 +107,24 @@ def _normalize_file_path(pack_dir: Path, file_path: Path) -> str:
 
 def _load_template_files(pack_dir: Path) -> Dict[str, str]:
     files: Dict[str, str] = {}
-    for path in sorted(pack_dir.rglob("*")):
-        if not path.is_file():
-            continue
-        rel_path = _normalize_file_path(pack_dir, path)
-        rel_parts = Path(rel_path).parts
-        if any(part.startswith(".") for part in rel_parts):
-            continue
-        if any(part in IGNORED_TEMPLATE_DIRS for part in rel_parts):
-            continue
-        if rel_path in IGNORED_TEMPLATE_FILE_NAMES:
-            continue
-        if any(rel_path.endswith(suffix) for suffix in IGNORED_TEMPLATE_FILE_SUFFIXES):
-            continue
-        if rel_path == TEMPLATE_MANIFEST_NAME:
-            continue
-        files[rel_path] = path.read_text(encoding="utf-8")
+    for current_dir, dir_names, file_names in pack_dir.walk(top_down=True):
+        dir_names[:] = sorted(
+            name
+            for name in dir_names
+            if not name.startswith(".") and name not in IGNORED_TEMPLATE_DIRS
+        )
+        for file_name in sorted(file_names):
+            if file_name.startswith("."):
+                continue
+            path = current_dir / file_name
+            rel_path = _normalize_file_path(pack_dir, path)
+            if rel_path in IGNORED_TEMPLATE_FILE_NAMES:
+                continue
+            if any(rel_path.endswith(suffix) for suffix in IGNORED_TEMPLATE_FILE_SUFFIXES):
+                continue
+            if rel_path == TEMPLATE_MANIFEST_NAME:
+                continue
+            files[rel_path] = path.read_text(encoding="utf-8")
     return files
 
 

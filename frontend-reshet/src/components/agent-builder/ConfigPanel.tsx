@@ -54,6 +54,7 @@ import {
     SelectValue,
 } from "@/components/ui/select"
 import { modelsService, toolsService, ragAdminService, agentService, AgentOperatorSpec, LogicalModel, ToolDefinition } from "@/services"
+import type { AgentGraphAnalysis } from "@/services/agent"
 import { ToolPicker } from "./ToolPicker"
 import { useTenant } from "@/contexts/TenantContext"
 import { KnowledgeStoreSelect } from "../shared/KnowledgeStoreSelect"
@@ -63,6 +64,8 @@ import { PromptMentionInput } from "../shared/PromptMentionInput"
 import { PromptModal } from "../shared/PromptModal"
 import { usePromptMentionModal } from "../shared/usePromptMentionModal"
 import { fillMentionInValue } from "@/lib/prompt-mentions"
+import { EndContractEditor, SetStateAssignmentsEditor, StartContractEditor, ValueRefPicker } from "./GraphContractEditors"
+import { normalizeEndConfig } from "./graph-contract"
 
 
 const CATEGORY_ICONS: Record<string, React.ElementType> = {
@@ -103,6 +106,7 @@ interface ConfigPanelProps {
     onConfigChange: (nodeId: string, config: Record<string, unknown>) => void
     onClose: () => void
     availableVariables?: any[]
+    graphAnalysis?: AgentGraphAnalysis | null
 }
 
 interface ResourceOption {
@@ -1053,6 +1057,7 @@ function ConfigField({
     namespaces,
     agentOptions,
     availableVariables,
+    graphAnalysis,
     toolCatalog,
     fieldError,
     onPromptMentionClick,
@@ -1066,6 +1071,7 @@ function ConfigField({
     namespaces: ResourceOption[]
     agentOptions: ResourceOption[]
     availableVariables?: any[]
+    graphAnalysis?: AgentGraphAnalysis | null
     toolCatalog: ToolDefinition[]
     fieldError?: string
     onPromptMentionClick?: (promptId: string, fieldName: string, mentionIndex: number) => void
@@ -1093,6 +1099,7 @@ function ConfigField({
     const isScopeSubset = field.fieldType === "scope_subset"
     const isSpawnTargets = field.fieldType === "spawn_targets"
     const isRouteTable = field.fieldType === "route_table"
+    const isValueRef = field.fieldType === "value_ref"
 
     const renderInput = () => {
         if (isSelect && field.options) {
@@ -1432,6 +1439,16 @@ function ConfigField({
             )
         }
 
+        if (isValueRef) {
+            return (
+                <ValueRefPicker
+                    analysis={graphAnalysis}
+                    value={(value as any) || null}
+                    onChange={(next) => onChange(next)}
+                />
+            )
+        }
+
         if (isScopeSubset) {
             return (
                 <ScopeSubsetField
@@ -1564,7 +1581,8 @@ export function ConfigPanel({
     data,
     onConfigChange,
     onClose,
-    availableVariables
+    availableVariables,
+    graphAnalysis,
 }: ConfigPanelProps) {
     const [localConfig, setLocalConfig] = useState<Record<string, unknown>>(
         data.config || {}
@@ -1738,6 +1756,11 @@ export function ConfigPanel({
 
     const nodeSpec = resolvedSpec || getNodeSpec(data.nodeType)
     let configFields = ((data as any).configFields as ConfigFieldSpec[]) || nodeSpec?.configFields || []
+    if (data.nodeType === "start" || data.nodeType === "end") {
+        configFields = []
+    } else if (data.nodeType === "set_state") {
+        configFields = configFields.filter((field) => field.name !== "assignments")
+    }
     if (nodeSpec?.inputs && nodeSpec.inputs.length > 0) {
         configFields = [
             ...configFields,
@@ -1789,6 +1812,7 @@ export function ConfigPanel({
 
     const displayName = data.displayName || nodeSpec?.displayName || data.nodeType
     const category = data.category || nodeSpec?.category || "data"
+    const hasSpecialEditor = data.nodeType === "start" || data.nodeType === "end" || data.nodeType === "set_state"
 
     const color = CATEGORY_COLORS[category] || CATEGORY_COLORS.data
     const Icon = CATEGORY_ICONS[data.nodeType] || CATEGORY_ICONS[category] || Hash
@@ -1848,12 +1872,40 @@ export function ConfigPanel({
                     <p className="text-[11px] text-muted-foreground text-center py-8">
                         Loading resources...
                     </p>
-                ) : visibleConfigFields.length === 0 ? (
+                ) : visibleConfigFields.length === 0 && !hasSpecialEditor ? (
                     <div className="flex flex-col items-center justify-center py-8 text-center bg-muted/20 rounded-xl border border-dashed border-border/50">
                         <p className="text-[11px] text-muted-foreground font-medium">No parameters to configure</p>
                     </div>
                 ) : (
                     <>
+                        {data.nodeType === "start" && (
+                            <StartContractEditor
+                                value={localConfig.state_variables}
+                                onChange={(stateVariables) => handleFieldChange("state_variables", stateVariables)}
+                            />
+                        )}
+                        {data.nodeType === "end" && (
+                            <EndContractEditor
+                                value={normalizeEndConfig(localConfig)}
+                                analysis={graphAnalysis}
+                                onChange={(next) => {
+                                    const newConfig = {
+                                        ...localConfig,
+                                        output_schema: next.output_schema,
+                                        output_bindings: next.output_bindings,
+                                    }
+                                    setLocalConfig(newConfig)
+                                    onConfigChange(nodeId, newConfig)
+                                }}
+                            />
+                        )}
+                        {data.nodeType === "set_state" && (
+                            <SetStateAssignmentsEditor
+                                value={localConfig.assignments}
+                                analysis={graphAnalysis}
+                                onChange={(assignments) => handleFieldChange("assignments", assignments)}
+                            />
+                        )}
                         {[
                             { key: "what_to_run", title: "What to Run" },
                             { key: "permissions", title: "Permissions" },
@@ -1884,6 +1936,7 @@ export function ConfigPanel({
                                             namespaces={namespaces}
                                             agentOptions={agentOptions}
                                             availableVariables={availableVariables}
+                                            graphAnalysis={graphAnalysis}
                                             toolCatalog={toolCatalog}
                                             fieldError={fieldErrors[field.name]}
                                             onPromptMentionClick={handlePromptMentionClick}

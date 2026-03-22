@@ -23,6 +23,10 @@ class GraphPatchRequest(BaseModel):
     operations: list[dict[str, Any]] = Field(default_factory=list)
 
 
+class GraphAnalysisRequest(BaseModel):
+    graph_definition: dict[str, Any] = Field(default_factory=dict)
+
+
 class AddToolRequest(BaseModel):
     node_id: str
     tool_id: str
@@ -170,6 +174,27 @@ async def validate_agent_graph_patch(
             request=http_request,
             agent_id=agent_id,
             operation="agents.graph.validate_patch",
+            exc=exc,
+        )
+
+
+@router.post("/{agent_id}/graph/analyze", response_model=Dict[str, Any])
+async def analyze_agent_graph(
+    request: Request,
+    agent_id: UUID,
+    payload: GraphAnalysisRequest,
+    _: Dict[str, Any] = Depends(require_scopes("agents.read")),
+    context: Dict[str, Any] = Depends(get_agent_context),
+    db: AsyncSession = Depends(get_db),
+):
+    service = AgentGraphMutationService(db=db, tenant_id=context["tenant_id"])
+    try:
+        return await service.analyze_graph(agent_id, graph_definition=payload.graph_definition)
+    except Exception as exc:
+        _raise_agent_graph_http_error(
+            request=request,
+            agent_id=agent_id,
+            operation="agents.graph.analyze",
             exc=exc,
         )
 

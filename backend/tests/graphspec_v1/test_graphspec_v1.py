@@ -40,10 +40,15 @@ async def test_graphspec_v1_normalizes_legacy_fields():
 
 
 @pytest.mark.asyncio
-async def test_graphspec_version_validation_rejects_unknown_version():
+async def test_graphspec_version_validation_accepts_v3_and_rejects_unknown_version():
     compiler = AgentCompiler()
     graph = AgentGraph(spec_version="3.0", nodes=[], edges=[])
     errors = await compiler.validate(graph)
+    messages = [e.message for e in errors]
+    assert not any("Unsupported graph spec version" in m for m in messages)
+
+    invalid_graph = AgentGraph(spec_version="4.0", nodes=[], edges=[])
+    errors = await compiler.validate(invalid_graph)
     messages = [e.message for e in errors]
     assert any("Unsupported graph spec version" in m for m in messages)
 

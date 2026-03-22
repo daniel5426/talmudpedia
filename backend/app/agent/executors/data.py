@@ -11,6 +11,14 @@ from typing import Any, Dict, List
 
 from app.agent.executors.base import BaseNodeExecutor, ValidationResult
 from app.agent.cel_engine import evaluate_cel, validate_cel, CELValidationResult
+from app.agent.graph.contracts import (
+    infer_runtime_value_type,
+    normalize_set_state_assignment,
+    normalize_value_ref,
+    normalize_value_type,
+    resolve_runtime_value_ref,
+    value_types_compatible,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -144,21 +152,23 @@ class SetStateNodeExecutor(BaseNodeExecutor):
             errors.append("Set State node requires at least one assignment")
             return ValidationResult(valid=False, errors=errors)
         
-        for i, assignment in enumerate(assignments):
-            variable = assignment.get("variable")
+        for i, raw_assignment in enumerate(assignments):
+            assignment = normalize_set_state_assignment(raw_assignment)
+            variable = assignment.get("key")
             value = assignment.get("value")
+            value_ref = assignment.get("value_ref")
             
             if not variable:
-                errors.append(f"Assignment {i+1}: Missing variable name")
+                errors.append(f"Assignment {i+1}: Missing state key")
                 continue
             
             # Check variable name is valid (no dots for top-level)
             if '.' in variable:
-                errors.append(f"Assignment {i+1}: Variable name cannot contain dots. Use Transform for nested updates.")
+                errors.append(f"Assignment {i+1}: State key cannot contain dots. Use Transform for nested updates.")
                 continue
             
-            if value is None:
-                errors.append(f"Assignment {i+1}: Missing value")
+            if value is None and not isinstance(value_ref, dict):
+                errors.append(f"Assignment {i+1}: Missing value or value_ref")
                 continue
             
             # Validate CEL expression if it looks like one
@@ -200,18 +210,26 @@ class SetStateNodeExecutor(BaseNodeExecutor):
         current_state = state.get("state", {})
         if not isinstance(current_state, dict):
             current_state = {}
+        state_types = state.get("state_types", {})
+        if not isinstance(state_types, dict):
+            state_types = {}
         
         result = {}
+        next_state_types = dict(state_types)
         
-        for assignment in assignments:
-            variable = assignment.get("variable")
+        for raw_assignment in assignments:
+            assignment = normalize_set_state_assignment(raw_assignment)
+            variable = assignment.get("key")
             value = assignment.get("value")
             
             if not variable:
                 continue
             
             try:
-                if is_expression and isinstance(value, str):
+                if isinstance(assignment.get("value_ref"), dict):
+                    evaluated = resolve_runtime_value_ref(state=state, value_ref=normalize_value_ref(assignment.get("value_ref")))
+                    result[variable] = evaluated
+                elif is_expression and isinstance(value, str):
                     # Try to evaluate as CEL expression
                     try:
                         evaluated = evaluate_cel(value, state, context)
@@ -222,6 +240,17 @@ class SetStateNodeExecutor(BaseNodeExecutor):
                 else:
                     # Literal value
                     result[variable] = value
+
+                runtime_type = infer_runtime_value_type(result[variable])
+                declared_type = normalize_value_type(assignment.get("type"))
+                expected_type = normalize_value_type(next_state_types.get(variable))
+                if expected_type == "unknown" and declared_type != "unknown":
+                    expected_type = declared_type
+                if expected_type != "unknown" and not value_types_compatible(expected_type, runtime_type):
+                    raise ValueError(f"Set State type mismatch for '{variable}'")
+                if expected_type == "unknown":
+                    expected_type = runtime_type
+                next_state_types[variable] = expected_type
                     
                 logger.debug(f"Set State: {variable} = {result[variable]}")
                 
@@ -232,7 +261,7 @@ class SetStateNodeExecutor(BaseNodeExecutor):
         # Merge results into state variables
         updated_state = {**current_state, **result}
         
-        result_payload = {"state": updated_state}
+        result_payload = {"state": updated_state, "state_types": next_state_types}
         if emitter:
             emitter.emit_node_end(node_id, node_name, "set_state", {"keys": list(result.keys())})
         return result_payload

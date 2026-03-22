@@ -18,6 +18,7 @@ interface SearchableResourceInputProps {
   placeholder?: string;
   className?: string;
   resources: SearchableResourceOption[];
+  disabled?: boolean;
 }
 
 export function SearchableResourceInput({
@@ -26,6 +27,7 @@ export function SearchableResourceInput({
   placeholder,
   className,
   resources = [],
+  disabled = false,
 }: SearchableResourceInputProps) {
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -89,22 +91,25 @@ export function SearchableResourceInput({
         <Input
           value={query}
           onChange={(event) => {
+            if (disabled) return;
             setQuery(event.target.value);
             setShowSuggestions(true);
           }}
           onFocus={() => {
+            if (disabled) return;
             setIsFocused(true);
             setShowSuggestions(true);
           }}
           onKeyDown={handleKeyDown}
           placeholder={placeholder}
           className={cn(className, "pr-8")}
+          disabled={disabled}
           onBlur={() => {
             setIsFocused(false);
             setShowSuggestions(false);
           }}
         />
-        {query ? (
+        {query && !disabled ? (
           <button
             type="button"
             className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground/40 hover:text-muted-foreground"
@@ -118,7 +123,7 @@ export function SearchableResourceInput({
           </button>
         ) : null}
       </div>
-      {showSuggestions && filteredResources.length > 0 ? (
+      {showSuggestions && !disabled && filteredResources.length > 0 ? (
         <div className="absolute z-50 w-full mt-1 bg-popover text-popover-foreground shadow-md rounded-md border border-border p-1 max-h-[200px] overflow-auto">
           {filteredResources.map((resource, index) => (
             <div

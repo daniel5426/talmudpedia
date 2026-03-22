@@ -539,6 +539,14 @@ class AgentExecutorService:
         if isinstance(run_input_params, dict):
             run_input_params = dict(run_input_params)
             run_input_params["context"] = runtime_context
+            workflow_input = run_input_params.get("workflow_input")
+            if not isinstance(workflow_input, dict):
+                workflow_input = {}
+            workflow_input = {
+                "input_as_text": str(run_input_params.get("input") or workflow_input.get("input_as_text") or ""),
+                **workflow_input,
+            }
+            run_input_params["workflow_input"] = workflow_input
             # Keep auth/runtime context in persistent state bag too.
             # Top-level `context` is used by workflow logic and may be overwritten.
             existing_state = run_input_params.get("state")
@@ -550,6 +558,7 @@ class AgentExecutorService:
         else:
             run_input_params = {
                 "context": runtime_context,
+                "workflow_input": {"input_as_text": ""},
                 "state": {"context": dict(runtime_context)},
             }
 

@@ -8,11 +8,13 @@ import jsonschema
 from sqlalchemy import select
 
 from .schema import AgentGraph, AgentNode, AgentEdge, NodeType, EdgeType
+from .contracts import build_graph_analysis
 from app.agent.registry import AgentExecutorRegistry, AgentOperatorRegistry, AgentOperatorSpec, AgentStateField
 from app.agent.models import CompiledAgent
 from app.agent.graph.ir import (
     GRAPH_SPEC_V1,
     GRAPH_SPEC_V2,
+    GRAPH_SPEC_V3,
     ORCHESTRATION_V2_NODE_TYPES,
     GraphIR,
     GraphIRNode,
@@ -33,7 +35,7 @@ from app.services.orchestration_policy_service import (
 
 logger = logging.getLogger(__name__)
 
-SUPPORTED_GRAPH_SPEC_VERSIONS = {GRAPH_SPEC_V1, GRAPH_SPEC_V2}
+SUPPORTED_GRAPH_SPEC_VERSIONS = {GRAPH_SPEC_V1, GRAPH_SPEC_V2, GRAPH_SPEC_V3}
 
 class ValidationError(BaseModel):
     """Validation error for agent graph."""
@@ -82,8 +84,36 @@ class AgentCompiler:
 
         # 8. GraphSpec v2 orchestration compile-time invariants
         errors.extend(await self._validate_graphspec_v2_orchestration(graph, agent_id=agent_id))
+
+        # 9. Graph contract inventory / ValueRef validation
+        analysis = self.analyze(graph)
+        errors.extend(
+            ValidationError(
+                node_id=item.get("node_id"),
+                edge_id=item.get("edge_id"),
+                message=str(item.get("message") or "Graph validation failed"),
+                severity=str(item.get("severity") or "error"),
+            )
+            for item in analysis.get("errors", [])
+        )
+        errors.extend(
+            ValidationError(
+                node_id=item.get("node_id"),
+                edge_id=item.get("edge_id"),
+                message=str(item.get("message") or "Graph validation warning"),
+                severity=str(item.get("severity") or "warning"),
+            )
+            for item in analysis.get("warnings", [])
+        )
         
         return errors
+
+    def analyze(self, graph: AgentGraph) -> dict[str, Any]:
+        return build_graph_analysis(
+            graph=graph,
+            operator_lookup=lambda node_type: AgentOperatorRegistry.get(self._normalize_node_type(node_type)),
+            normalize_node_type=self._normalize_node_type,
+        )
 
     def _validate_structure(self, graph: AgentGraph) -> list[ValidationError]:
         errors = []
@@ -287,10 +317,10 @@ class AgentCompiler:
             for node in graph.nodes
         )
         effective_spec = graph.spec_version or GRAPH_SPEC_V1
-        if has_v2_orchestration_nodes and effective_spec != GRAPH_SPEC_V2:
+        if has_v2_orchestration_nodes and effective_spec not in {GRAPH_SPEC_V2, GRAPH_SPEC_V3}:
             errors.append(
                 ValidationError(
-                    message="GraphSpec v2 orchestration nodes require spec_version='2.0'"
+                    message="GraphSpec v2 orchestration nodes require spec_version='2.0' or '3.0'"
                 )
             )
         if has_v2_orchestration_nodes and not is_orchestration_surface_enabled(
@@ -873,6 +903,7 @@ class AgentCompiler:
             raise ValueError(f"Graph validation failed: {error_msg}")
 
         # 2. Build GraphIR
+        analysis = self.analyze(graph)
         graph_ir = self._build_graph_ir(graph, input_params=input_params)
 
         # 3. Create Compiled Snapshot
@@ -889,6 +920,7 @@ class AgentCompiler:
             hash=graph_hash
         )
         graph_ir.metadata["snapshot"] = snapshot.model_dump()
+        graph_ir.metadata["analysis"] = analysis
         return graph_ir
 
     @staticmethod

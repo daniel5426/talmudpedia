@@ -18,9 +18,10 @@ import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { agentService } from "@/services"
+import { buildDefaultEndOutputBindings, buildDefaultEndOutputSchema } from "@/components/agent-builder/graph-contract"
 
 const STARTER_GRAPH = {
-  spec_version: "1.0",
+  spec_version: "3.0",
   nodes: [
     {
       id: "start",
@@ -32,7 +33,10 @@ const STARTER_GRAPH = {
       id: "end",
       type: "end",
       position: { x: 240, y: 0 },
-      config: { output_message: "done" },
+      config: {
+        output_schema: buildDefaultEndOutputSchema(),
+        output_bindings: buildDefaultEndOutputBindings(),
+      },
     },
   ],
   edges: [

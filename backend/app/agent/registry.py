@@ -64,7 +64,9 @@ class AgentOperatorSpec(BaseModel):
     
     # Configuration
     config_schema: Dict[str, Any] = Field(default_factory=dict, description="JSON Schema for the node configuration")
-    
+    field_contracts: Dict[str, Any] = Field(default_factory=dict, description="Typed field metadata for builder/runtime contract")
+    output_contract: Dict[str, Any] = Field(default_factory=dict, description="Declared node output contract")
+
     # UI Metadata
     ui: Dict[str, Any] = Field(default_factory=dict, description="Frontend metadata (icon, color, etc.)")
 

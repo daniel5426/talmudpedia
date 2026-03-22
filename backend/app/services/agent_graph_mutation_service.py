@@ -6,6 +6,8 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agent.graph.compiler import AgentCompiler
+from app.agent.graph.schema import AgentGraph
 from app.agent.executors.standard import register_standard_operators
 from app.agent.registry import AgentOperatorRegistry
 from app.services.agent_service import AgentGraphValidationError, AgentService, UpdateAgentData
@@ -23,10 +25,24 @@ class AgentGraphMutationService:
     async def get_graph(self, agent_id: UUID) -> dict[str, Any]:
         agent = await self.agent_service.get_agent(agent_id)
         graph_definition = agent.graph_definition if isinstance(agent.graph_definition, dict) else {}
+        analysis = await self.analyze_graph(agent_id, graph_definition=graph_definition)
         return {
             "agent_id": str(agent.id),
             "agent_slug": agent.slug,
             "graph_definition": graph_definition,
+            "analysis": analysis["analysis"],
+        }
+
+    async def analyze_graph(self, agent_id: UUID, *, graph_definition: dict[str, Any]) -> dict[str, Any]:
+        agent = await self.agent_service.get_agent(agent_id)
+        register_standard_operators()
+        graph = AgentGraph(**graph_definition)
+        compiler = AgentCompiler(db=self.db, tenant_id=self.tenant_id)
+        analysis = compiler.analyze(graph)
+        return {
+            "agent_id": str(agent.id),
+            "graph_definition": graph.model_dump(),
+            "analysis": analysis,
         }
 
     async def validate_patch(self, agent_id: UUID, operations: list[dict[str, Any]]) -> dict[str, Any]:

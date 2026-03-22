@@ -3,6 +3,7 @@ from typing import Any, Dict, List
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, BaseMessage
 from app.agent.executors.base import BaseNodeExecutor, ValidationResult
 from app.agent.cel_engine import evaluate_template
+from app.agent.graph.contracts import normalize_value_ref, resolve_runtime_value_ref
 from app.agent.core.llm_adapter import LLMProviderAdapter
 from app.services.model_resolver import ModelResolver
 logger = logging.getLogger(__name__)
@@ -55,6 +56,12 @@ class ClassifyNodeExecutor(BaseNodeExecutor):
                 instructions = evaluate_template(instructions, state)
             except Exception as exc:
                 logger.warning(f"Failed to interpolate classify instructions: {exc}")
+
+        source_text = None
+        if isinstance(config.get("input_source"), dict):
+            source_value = resolve_runtime_value_ref(state=state, value_ref=normalize_value_ref(config.get("input_source")))
+            if source_value is not None:
+                source_text = source_value if isinstance(source_value, str) else str(source_value)
         
         # 1. Construct Classification Prompt
         category_lines = []
@@ -67,6 +74,9 @@ class ClassifyNodeExecutor(BaseNodeExecutor):
 
 Available Categories:
 {chr(10).join(category_lines)}
+
+Input To Classify:
+{source_text or ""}
 
 Based on the context, determine the most appropriate category.
 Respond ONLY with the category name. Do not include any other text."""

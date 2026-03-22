@@ -1,6 +1,6 @@
 # Published Apps Frontend Tests
 
-Last Updated: 2026-03-17
+Last Updated: 2026-03-22
 
 ## Scope
 Frontend coverage for published-apps admin and public runtime surfaces outside the new versions module.
@@ -30,6 +30,9 @@ Frontend coverage for published-apps admin and public runtime surfaces outside t
 - Result: Pass
 - Command: `cd frontend-reshet && npm test -- --runInBand src/__tests__/published_apps/preview_canvas_auth_channel.test.tsx --watch=false`
 - Date: 2026-03-17
+- Result: PASS (3 passed)
+- Command: `cd frontend-reshet && npm test -- --runInBand src/__tests__/published_apps/apps_admin_page.test.tsx --watch=false`
+- Date: 2026-03-22
 - Result: PASS (3 passed)
 
 ## Known Gaps / Follow-ups
