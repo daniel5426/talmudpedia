@@ -32,6 +32,11 @@ import { PipelineBuilder } from "@/components/pipeline"
 import { RunPipelineDialog } from "@/components/pipeline/RunPipelineDialog"
 import { Node, Edge } from "@xyflow/react"
 import { HeaderConfigEditor } from "@/components/builder"
+import { PromptMentionInput } from "@/components/shared/PromptMentionInput"
+import { PromptMentionJsonEditor, fillPromptMentionJsonToken } from "@/components/shared/PromptMentionJsonEditor"
+import { PromptModal } from "@/components/shared/PromptModal"
+import { usePromptMentionModal } from "@/components/shared/usePromptMentionModal"
+import { fillMentionInValue } from "@/lib/prompt-mentions"
 
 interface PipelineNodeData {
     operator: string
@@ -81,6 +86,10 @@ export default function PipelineEditorPage() {
     const [toolName, setToolName] = useState("")
     const [toolDescription, setToolDescription] = useState("")
     const [toolInputSchemaText, setToolInputSchemaText] = useState('{\n  "type": "object",\n  "properties": {},\n  "additionalProperties": false\n}')
+    const promptMentionModal = usePromptMentionModal<
+        | { kind: "description"; mentionIndex: number }
+        | { kind: "schema"; tokenRange: { from: number; to: number } }
+    >()
 
     // Sync runningJobId with URL param if it's missing (e.g. after hydration)
     useEffect(() => {
@@ -444,6 +453,16 @@ export default function PipelineEditorPage() {
         setIsRunDialogOpen(true)
     }, [ensureExecutableForRun])
 
+    const handlePromptFill = useCallback(async (_promptId: string, content: string) => {
+        const context = promptMentionModal.context
+        if (!context) return
+        if (context.kind === "description") {
+            setToolDescription((current) => fillMentionInValue(current, context.mentionIndex, content))
+            return
+        }
+        setToolInputSchemaText((current) => fillPromptMentionJsonToken(current, context.tokenRange, content))
+    }, [promptMentionModal.context])
+
     if (loading) {
         return (
             <div className="flex flex-col h-full w-full">
@@ -531,22 +550,28 @@ export default function PipelineEditorPage() {
                                                         Status: {toolBindingLoading ? "loading" : (toolBinding?.status || "draft")}
                                                     </span>
                                                 </div>
-                                                <Textarea
+                                                <PromptMentionInput
                                                     value={toolDescription}
-                                                    onChange={(event) => setToolDescription(event.target.value)}
+                                                    onChange={setToolDescription}
                                                     className="min-h-20 border-border/60 bg-muted/20"
                                                     placeholder="Describe when the agent should call this pipeline tool."
-                                                    disabled={toolBindingLoading}
+                                                    surface="pipeline.tool_binding.description"
+                                                    onMentionClick={(promptId, mentionIndex) =>
+                                                        promptMentionModal.openPromptMentionModal(promptId, { kind: "description", mentionIndex })
+                                                    }
                                                 />
                                             </div>
                                             <div className="space-y-2">
                                                 <span className="text-xs font-medium text-foreground/80">Tool input schema (JSON)</span>
-                                                <Textarea
+                                                <PromptMentionJsonEditor
                                                     value={toolInputSchemaText}
-                                                    onChange={(event) => setToolInputSchemaText(event.target.value)}
+                                                    onChange={setToolInputSchemaText}
                                                     className="min-h-52 font-mono text-xs border-border/60 bg-muted/20"
-                                                    placeholder='{"type":"object","properties":{}}'
-                                                    disabled={toolBindingLoading}
+                                                    height="208px"
+                                                    surface="pipeline.tool_binding.input_schema.description"
+                                                    onMentionClick={(promptId, tokenRange) =>
+                                                        promptMentionModal.openPromptMentionModal(promptId, { kind: "schema", tokenRange })
+                                                    }
                                                 />
                                             </div>
                                             <Button
@@ -721,6 +746,12 @@ export default function PipelineEditorPage() {
                 onOpenChange={setIsRunDialogOpen}
                 onRun={handleRunPipeline}
                 compileResult={compileResult}
+            />
+            <PromptModal
+                promptId={promptMentionModal.promptId}
+                open={promptMentionModal.open}
+                onOpenChange={promptMentionModal.handleOpenChange}
+                onFill={handlePromptFill}
             />
         </div>
     )

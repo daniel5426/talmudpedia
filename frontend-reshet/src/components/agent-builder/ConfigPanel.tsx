@@ -61,13 +61,8 @@ import { RetrievalPipelineSelect } from "../shared/RetrievalPipelineSelect"
 import { SearchableResourceInput } from "../shared/SearchableResourceInput"
 import { PromptMentionInput } from "../shared/PromptMentionInput"
 import { PromptModal } from "../shared/PromptModal"
-import { promptsService } from "@/services/prompts"
-import {
-    parseToSegments,
-    serializeSegments,
-    fillMention as fillMentionSegment,
-    extractPromptIds,
-} from "@/lib/prompt-mentions"
+import { usePromptMentionModal } from "../shared/usePromptMentionModal"
+import { fillMentionInValue } from "@/lib/prompt-mentions"
 
 
 const CATEGORY_ICONS: Record<string, React.ElementType> = {
@@ -257,6 +252,7 @@ function SmartInput({
     mode?: "template" | "expression" | "variable"
 }) {
     const inputRef = useRef<HTMLInputElement | HTMLTextAreaElement | null>(null)
+    const pendingSelectionRef = useRef<number | null>(null)
     const [showSuggestions, setShowSuggestions] = useState(false)
     const [cursorPosition, setCursorPosition] = useState(0)
     const [searchTerm, setSearchTerm] = useState("")
@@ -374,6 +370,26 @@ function SmartInput({
         return { type: "variables" as const, term: "" }
     }
 
+    const detectTemplateContext = (textBeforeCursor: string) => {
+        const aliasMatch = textBeforeCursor.match(/@([^\s@]*)$/)
+        if (aliasMatch) {
+            return {
+                term: aliasMatch[1],
+                replaceFrom: (aliasMatch.index ?? 0),
+            }
+        }
+
+        const legacyMatch = textBeforeCursor.match(/{{([^{}]*)$/)
+        if (legacyMatch) {
+            return {
+                term: legacyMatch[1].trim(),
+                replaceFrom: (legacyMatch.index ?? 0),
+            }
+        }
+
+        return null
+    }
+
     // Handle input change and detect suggestions based on mode
     const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
         const val = e.target.value
@@ -384,11 +400,11 @@ function SmartInput({
         const textBeforeCursor = val.slice(0, pos)
 
         if (mode === "template") {
-            const match = textBeforeCursor.match(/{{([^{}]*)$/)
-            if (match) {
+            const templateContext = detectTemplateContext(textBeforeCursor)
+            if (templateContext) {
                 setShowSuggestions(true)
                 setSuggestionType("variables")
-                setSearchTerm(match[1])
+                setSearchTerm(templateContext.term)
                 setSelectedIndex(0)
             } else {
                 setShowSuggestions(false)
@@ -428,10 +444,12 @@ function SmartInput({
         const textAfterCursor = value.slice(cursorPosition)
 
         if (mode === "template") {
-            const match = textBeforeCursor.match(/{{([^{}]*)$/)
-            if (match) {
-                const prefix = textBeforeCursor.slice(0, match.index! + 2) // keep {{
-                const newText = prefix + varName + "}}" + textAfterCursor
+            const templateContext = detectTemplateContext(textBeforeCursor)
+            if (templateContext) {
+                const prefix = textBeforeCursor.slice(0, templateContext.replaceFrom)
+                const insertText = `{{ ${varName} }}`
+                const newText = prefix + insertText + textAfterCursor
+                pendingSelectionRef.current = prefix.length + insertText.length
                 onChange(newText)
                 setShowSuggestions(false)
             }
@@ -442,6 +460,7 @@ function SmartInput({
         if (tokenMatch) {
             const prefix = textBeforeCursor.slice(0, textBeforeCursor.length - tokenMatch[0].length)
             const newText = prefix + varName + textAfterCursor
+            pendingSelectionRef.current = prefix.length + varName.length
             onChange(newText)
             setShowSuggestions(false)
             return
@@ -449,6 +468,7 @@ function SmartInput({
 
         const insertText = varName
         const newText = textBeforeCursor + insertText + textAfterCursor
+        pendingSelectionRef.current = textBeforeCursor.length + insertText.length
         onChange(newText)
         setShowSuggestions(false)
     }
@@ -543,6 +563,25 @@ function SmartInput({
             window.removeEventListener("scroll", handleViewportChange, true)
         }
     }, [hasSuggestions, updateSuggestionPosition])
+
+    useEffect(() => {
+        const pendingSelection = pendingSelectionRef.current
+        const element = inputRef.current
+        if (pendingSelection === null || !element) {
+            return
+        }
+
+        pendingSelectionRef.current = null
+        window.requestAnimationFrame(() => {
+            const currentElement = inputRef.current
+            if (!currentElement) {
+                return
+            }
+            currentElement.focus()
+            currentElement.setSelectionRange(pendingSelection, pendingSelection)
+            setCursorPosition(pendingSelection)
+        })
+    }, [value])
 
     return (
         <div className="relative">
@@ -1203,6 +1242,7 @@ function ConfigField({
                         value={(value as string) ?? field.default ?? ""}
                         onChange={(val) => onChange(val)}
                         surface={field.prompt_surface}
+                        availableVariables={availableVariables}
                         placeholder={field.description}
                         multiline={true}
                         className="resize-none min-h-[60px] border-none text-[13px] focus-visible:ring-1 focus-visible:ring-offset-0 placeholder:text-muted-foreground/40"
@@ -1270,6 +1310,7 @@ function ConfigField({
                                         onChange(updated)
                                     }}
                                     surface="classify.categories.description"
+                                    availableVariables={availableVariables}
                                     placeholder="Category description (supports @prompt mentions)"
                                     multiline={false}
                                     className="min-h-[32px] h-8 text-[11px] border-none bg-background/50"
@@ -1537,11 +1578,7 @@ export function ConfigPanel({
     const [loading, setLoading] = useState(true)
     const [advancedMode, setAdvancedMode] = useState(false)
 
-    // Prompt modal state
-    const [promptModalOpen, setPromptModalOpen] = useState(false)
-    const [promptModalId, setPromptModalId] = useState<string | null>(null)
-    const [promptModalFieldName, setPromptModalFieldName] = useState<string | null>(null)
-    const [promptModalMentionIndex, setPromptModalMentionIndex] = useState<number>(0)
+    const promptMentionModal = usePromptMentionModal<{ fieldName: string; mentionIndex: number }>()
 
     const { currentTenant } = useTenant()
 
@@ -1652,53 +1689,32 @@ export function ConfigPanel({
 
     const handlePromptMentionClick = useCallback(
         (promptId: string, fieldName: string, mentionIndex: number) => {
-            setPromptModalId(promptId)
-            setPromptModalFieldName(fieldName)
-            setPromptModalMentionIndex(mentionIndex)
-            setPromptModalOpen(true)
+            promptMentionModal.openPromptMentionModal(promptId, { fieldName, mentionIndex })
         },
-        []
+        [promptMentionModal]
     )
 
     const handlePromptFill = useCallback(
         async (promptId: string, content: string) => {
-            if (!promptModalFieldName) return
+            if (!promptMentionModal.context?.fieldName) return
+            const { fieldName, mentionIndex } = promptMentionModal.context
             // Handle nested field names like "categories[0].description"
-            const bracketMatch = promptModalFieldName.match(/^(\w+)\[(\d+)\]\.(\w+)$/)
+            const bracketMatch = fieldName.match(/^(\w+)\[(\d+)\]\.(\w+)$/)
             if (bracketMatch) {
                 const [, arrayField, indexStr, subField] = bracketMatch
                 const idx = parseInt(indexStr, 10)
                 const items = [...((localConfig[arrayField] as any[]) || [])]
                 if (items[idx]) {
                     const currentText = String(items[idx][subField] || "")
-                    const nameMap: Record<string, string> = {}
-                    // Fetch name for this prompt
-                    try {
-                        const prompt = await promptsService.getPrompt(promptId)
-                        nameMap[promptId] = prompt.name
-                    } catch {
-                        nameMap[promptId] = "Prompt"
-                    }
-                    const segments = parseToSegments(currentText, nameMap)
-                    const newSegments = fillMentionSegment(segments, promptModalMentionIndex, content)
-                    items[idx] = { ...items[idx], [subField]: serializeSegments(newSegments) }
+                    items[idx] = { ...items[idx], [subField]: fillMentionInValue(currentText, mentionIndex, content) }
                     handleFieldChange(arrayField, items)
                 }
             } else {
-                const currentText = String(localConfig[promptModalFieldName] || "")
-                const nameMap: Record<string, string> = {}
-                try {
-                    const prompt = await promptsService.getPrompt(promptId)
-                    nameMap[promptId] = prompt.name
-                } catch {
-                    nameMap[promptId] = "Prompt"
-                }
-                const segments = parseToSegments(currentText, nameMap)
-                const newSegments = fillMentionSegment(segments, promptModalMentionIndex, content)
-                handleFieldChange(promptModalFieldName, serializeSegments(newSegments))
+                const currentText = String(localConfig[fieldName] || "")
+                handleFieldChange(fieldName, fillMentionInValue(currentText, mentionIndex, content))
             }
         },
-        [promptModalFieldName, promptModalMentionIndex, localConfig, handleFieldChange]
+        [handleFieldChange, localConfig, promptMentionModal.context]
     )
 
     const dynamicSpec = operatorSpecs.length
@@ -1901,9 +1917,9 @@ export function ConfigPanel({
 
             {/* Prompt mention modal */}
             <PromptModal
-                promptId={promptModalId}
-                open={promptModalOpen}
-                onOpenChange={setPromptModalOpen}
+                promptId={promptMentionModal.promptId}
+                open={promptMentionModal.open}
+                onOpenChange={promptMentionModal.handleOpenChange}
                 onFill={handlePromptFill}
             />
         </div>

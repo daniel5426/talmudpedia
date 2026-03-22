@@ -314,16 +314,20 @@ export function ChatWorkspace({
   handleToggleVoiceMode,
   analyser,
   noBackground = false,
+  hideInputArea = false,
+  hideRetryAction = false,
   onOpenArtifact,
   isArtifactMessage,
   conversationScrollClassName,
 }: {
-  controller: ReturnType<typeof useChatController>;
+  controller: ChatController;
   chatId?: string;
   isVoiceModeActive: boolean;
   handleToggleVoiceMode: () => void;
   analyser?: AnalyserNode | null;
   noBackground?: boolean;
+  hideInputArea?: boolean;
+  hideRetryAction?: boolean;
   onOpenArtifact?: (messageId: string, content: string) => void;
   isArtifactMessage?: (content: string) => boolean;
   conversationScrollClassName?: string;
@@ -564,22 +568,27 @@ export function ChatWorkspace({
       )}
       <ConversationContent
         scrollClassName={conversationScrollClassName}
-        className={cn("flex-1 p-0 pt-13", !isEmptyState && "pb-30", isEmptyState && "h-full justify-center relative z-10")}
+        className={cn(
+          "flex-1 p-0 pt-13",
+          !isEmptyState && (hideInputArea ? "pb-8" : "pb-30"),
+          isEmptyState && "h-full justify-center relative z-10"
+        )}
       >
         {isEmptyState ? (
           <div className="flex w-full flex-col items-center text-center pb-34 animate-in fade-in slide-in-from-bottom-4 duration-500">
-            <p className="text-3xl font-semibold pb-6">
-              Ready when you are.</p>
+            <p className="text-3xl font-semibold pb-6">Ready when you are.</p>
 
-            <BotInputArea
-              textareaRef={controller.textareaRef}
-              handleSubmit={controller.handleSubmit}
-              isLoading={controller.isLoading}
-              isVoiceModeActive={isVoiceModeActive}
-              onToggleVoiceMode={handleToggleVoiceMode}
-              analyser={analyser}
-              animate={false}
-            />
+            {!hideInputArea && (
+              <BotInputArea
+                textareaRef={controller.textareaRef}
+                handleSubmit={controller.handleSubmit}
+                isLoading={controller.isLoading}
+                isVoiceModeActive={isVoiceModeActive}
+                onToggleVoiceMode={handleToggleVoiceMode}
+                analyser={analyser}
+                animate={false}
+              />
+            )}
           </div>
         ) : (
           <>
@@ -831,13 +840,15 @@ export function ChatWorkspace({
                                 <Code className="size-4" />
                               </MessageAction>
                             )}
-                            <MessageAction
-                              label="Retry"
-                              onClick={() => handleRetry(msg)}
-                              tooltip="Regenerate response"
-                            >
-                              <RefreshCcwIcon className="size-4" />
-                            </MessageAction>
+                            {!hideRetryAction && (
+                              <MessageAction
+                                label="Retry"
+                                onClick={() => handleRetry(msg)}
+                                tooltip="Regenerate response"
+                              >
+                                <RefreshCcwIcon className="size-4" />
+                              </MessageAction>
+                            )}
                             <MessageAction
                               label="Like"
                               onClick={() => handleLike(msg)}
@@ -933,7 +944,7 @@ export function ChatWorkspace({
         )}
       </ConversationContent>
 
-      {!isEmptyState && (
+      {!isEmptyState && !hideInputArea && (
         <div className="relative">
           <ConversationScrollButton className="bottom-full mb-3" />
           <BotInputArea

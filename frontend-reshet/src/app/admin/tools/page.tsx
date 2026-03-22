@@ -63,8 +63,13 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet"
 import { JsonViewer } from "@/components/ui/JsonViewer"
+import { PromptMentionInput } from "@/components/shared/PromptMentionInput"
+import { PromptMentionJsonEditor, fillPromptMentionJsonToken } from "@/components/shared/PromptMentionJsonEditor"
+import { PromptModal } from "@/components/shared/PromptModal"
+import { usePromptMentionModal } from "@/components/shared/usePromptMentionModal"
 import { cn } from "@/lib/utils"
 import { TOOL_BUCKETS, TOOL_SUBTYPES, filterTools, getToolBucket, getSubtypeLabel } from "@/lib/tool-types"
+import { fillMentionInValue } from "@/lib/prompt-mentions"
 
 /* ───────────────────────────── Constants ───────────────────────────── */
 
@@ -204,6 +209,11 @@ function CreateToolDialog({
 }) {
     const { direction } = useDirection()
     const [loading, setLoading] = useState(false)
+    const promptMentionModal = usePromptMentionModal<
+        | { kind: "description"; mentionIndex: number }
+        | { kind: "input_schema"; tokenRange: { from: number; to: number } }
+        | { kind: "output_schema"; tokenRange: { from: number; to: number } }
+    >()
     const [form, setForm] = useState<CreateToolRequest>({
         name: "",
         slug: "",
@@ -215,6 +225,8 @@ function CreateToolDialog({
         execution_config: {},
     })
     const [headersText, setHeadersText] = useState("{}")
+    const [inputSchemaText, setInputSchemaText] = useState('{\n  "type": "object",\n  "properties": {}\n}')
+    const [outputSchemaText, setOutputSchemaText] = useState('{\n  "type": "object",\n  "properties": {}\n}')
 
     useEffect(() => {
         if (open) {
@@ -229,6 +241,8 @@ function CreateToolDialog({
                 execution_config: {},
             })
             setHeadersText("{}")
+            setInputSchemaText('{\n  "type": "object",\n  "properties": {}\n}')
+            setOutputSchemaText('{\n  "type": "object",\n  "properties": {}\n}')
         }
     }, [open])
 
@@ -260,7 +274,13 @@ function CreateToolDialog({
         if (!form.name || !form.slug || !form.description) return
         setLoading(true)
         try {
-            await toolsService.createTool(form)
+            const inputSchema = JSON.parse(inputSchemaText)
+            const outputSchema = JSON.parse(outputSchemaText)
+            await toolsService.createTool({
+                ...form,
+                input_schema: inputSchema,
+                output_schema: outputSchema,
+            })
             onOpenChange(false)
             onCreated()
         } catch (error) {
@@ -269,6 +289,23 @@ function CreateToolDialog({
             setLoading(false)
         }
     }
+
+    const handlePromptFill = useCallback(async (_promptId: string, content: string) => {
+        const context = promptMentionModal.context
+        if (!context) return
+        if (context.kind === "description") {
+            setForm((current) => ({
+                ...current,
+                description: fillMentionInValue(current.description || "", context.mentionIndex, content),
+            }))
+            return
+        }
+        if (context.kind === "input_schema") {
+            setInputSchemaText((current) => fillPromptMentionJsonToken(current, context.tokenRange, content))
+            return
+        }
+        setOutputSchemaText((current) => fillPromptMentionJsonToken(current, context.tokenRange, content))
+    }, [promptMentionModal.context])
 
     const implementationConfig = (form.implementation_config || {}) as Record<string, any>
 
@@ -304,11 +341,15 @@ function CreateToolDialog({
                         </div>
                         <div className="space-y-2">
                             <Label className="text-xs font-medium text-muted-foreground">Description</Label>
-                            <Textarea
+                            <PromptMentionInput
                                 placeholder="Search the web for current information..."
                                 value={form.description}
-                                onChange={(e) => setForm({ ...form, description: e.target.value })}
-                                rows={2}
+                                onChange={(description) => setForm({ ...form, description })}
+                                surface="tool.description"
+                                className="min-h-[56px] border-input bg-background"
+                                onMentionClick={(promptId, mentionIndex) =>
+                                    promptMentionModal.openPromptMentionModal(promptId, { kind: "description", mentionIndex })
+                                }
                             />
                         </div>
                     </div>
@@ -483,24 +524,28 @@ function CreateToolDialog({
                     <div className="pt-2 border-t border-border/40 space-y-4">
                         <div className="space-y-2">
                             <Label className="text-xs font-medium text-muted-foreground">Input Schema (JSON)</Label>
-                            <Textarea
+                            <PromptMentionJsonEditor
                                 className="font-mono text-xs"
-                                rows={4}
-                                value={JSON.stringify(form.input_schema, null, 2)}
-                                onChange={(e) => {
-                                    try { setForm({ ...form, input_schema: JSON.parse(e.target.value) }) } catch { }
-                                }}
+                                height="160px"
+                                value={inputSchemaText}
+                                onChange={setInputSchemaText}
+                                surface="tool.input_schema.description"
+                                onMentionClick={(promptId, tokenRange) =>
+                                    promptMentionModal.openPromptMentionModal(promptId, { kind: "input_schema", tokenRange })
+                                }
                             />
                         </div>
                         <div className="space-y-2">
                             <Label className="text-xs font-medium text-muted-foreground">Output Schema (JSON)</Label>
-                            <Textarea
+                            <PromptMentionJsonEditor
                                 className="font-mono text-xs"
-                                rows={4}
-                                value={JSON.stringify(form.output_schema, null, 2)}
-                                onChange={(e) => {
-                                    try { setForm({ ...form, output_schema: JSON.parse(e.target.value) }) } catch { }
-                                }}
+                                height="160px"
+                                value={outputSchemaText}
+                                onChange={setOutputSchemaText}
+                                surface="tool.output_schema.description"
+                                onMentionClick={(promptId, tokenRange) =>
+                                    promptMentionModal.openPromptMentionModal(promptId, { kind: "output_schema", tokenRange })
+                                }
                             />
                         </div>
                     </div>
@@ -522,6 +567,12 @@ function CreateToolDialog({
                     </Button>
                 </DialogFooter>
             </DialogContent>
+            <PromptModal
+                promptId={promptMentionModal.promptId}
+                open={promptMentionModal.open}
+                onOpenChange={promptMentionModal.handleOpenChange}
+                onFill={handlePromptFill}
+            />
         </Dialog>
     )
 }

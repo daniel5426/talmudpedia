@@ -11,6 +11,9 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { JsonEditor } from "@/components/ui/json-editor"
 import { Textarea } from "@/components/ui/textarea"
+import { PromptMentionJsonEditor, fillPromptMentionJsonToken } from "@/components/shared/PromptMentionJsonEditor"
+import { PromptModal } from "@/components/shared/PromptModal"
+import { usePromptMentionModal } from "@/components/shared/usePromptMentionModal"
 import { ArtifactEditorHeader } from "@/components/admin/artifacts/ArtifactEditorHeader"
 import { ArtifactListView } from "@/components/admin/artifacts/ArtifactListView"
 import { ArtifactTestPanel } from "@/components/admin/artifacts/ArtifactTestPanel"
@@ -58,6 +61,7 @@ export default function ArtifactsPage() {
     const [artifactVersions, setArtifactVersions] = useState<ArtifactVersionListItem[]>([])
     const [loadingVersions, setLoadingVersions] = useState(false)
     const [applyingRevisionId, setApplyingRevisionId] = useState<string | null>(null)
+    const promptMentionModal = usePromptMentionModal<{ tokenRange: { from: number; to: number } }>()
     const lastWorkingDraftSignatureRef = useRef<string | null>(null)
     const workingDraftSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -548,7 +552,20 @@ export default function ArtifactsPage() {
                             <span className="text-[10px] text-muted-foreground">JSON</span>
                         </div>
                         <div className="h-[300px] w-full rounded-md border border-border/40 bg-muted/5 p-1 transition-colors hover:border-border/80 focus-within:border-primary">
-                            <JsonEditor value={currentContractValue} onChange={updateCurrentContract} height="100%" className="h-full border-0 bg-transparent" />
+                            {formData.kind === "tool_impl" ? (
+                                <PromptMentionJsonEditor
+                                    value={currentContractValue}
+                                    onChange={updateCurrentContract}
+                                    height="100%"
+                                    className="h-full border-0 bg-transparent"
+                                    surface="artifact.tool_contract.description"
+                                    onMentionClick={(promptId, tokenRange) =>
+                                        promptMentionModal.openPromptMentionModal(promptId, { tokenRange })
+                                    }
+                                />
+                            ) : (
+                                <JsonEditor value={currentContractValue} onChange={updateCurrentContract} height="100%" className="h-full border-0 bg-transparent" />
+                            )}
                         </div>
                     </div>
 
@@ -618,6 +635,12 @@ export default function ArtifactsPage() {
             setViewModeWithUrl("edit", resolvedArtifactId)
         })()
     }, [loadArtifactEditorState, selectedArtifact?.id, setViewModeWithUrl])
+    const handlePromptFill = useCallback(async (_promptId: string, content: string) => {
+        if (!promptMentionModal.context || formData.kind !== "tool_impl") {
+            return
+        }
+        updateFormData("tool_contract", fillPromptMentionJsonToken(formData.tool_contract, promptMentionModal.context.tokenRange, content))
+    }, [formData.kind, formData.tool_contract, promptMentionModal.context, updateFormData])
     const artifactCodingChat = useArtifactCodingChat({
         tenantSlug: currentTenant?.slug,
         tenantId: currentTenant?.id || null,
@@ -763,6 +786,12 @@ export default function ArtifactsPage() {
                     </Card>
                 </div>
             ) : null}
+            <PromptModal
+                promptId={promptMentionModal.promptId}
+                open={promptMentionModal.open}
+                onOpenChange={promptMentionModal.handleOpenChange}
+                onFill={handlePromptFill}
+            />
         </div>
     )
 }

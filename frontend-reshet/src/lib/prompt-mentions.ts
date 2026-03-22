@@ -113,3 +113,16 @@ export function hasPromptTokens(text: string): boolean {
   if (!text) return false;
   return new RegExp(PROMPT_TOKEN_RE.source).test(text);
 }
+
+/**
+ * Replace one prompt mention occurrence inside a persisted string with plain text.
+ */
+export function fillMentionInValue(
+  value: string,
+  mentionIndex: number,
+  fillText: string,
+  nameMap: Record<string, string> = {}
+): string {
+  const segments = parseToSegments(value, nameMap);
+  return serializeSegments(fillMention(segments, mentionIndex, fillText));
+}

@@ -34,12 +34,6 @@ export function ChatEmptyState({
           <img src="/pricoLogo.png" alt="Prico AI Logo" className="h-16 md:h-20 w-auto object-contain" />
         </div>
 
-        <a href="/widget-lab" className="mb-5">
-          <Badge variant="outline" className="rounded-full border-[#0B2A5B]/15 bg-white/80 px-3 py-1 text-[0.68rem] font-semibold tracking-[0.18em] text-[#0B2A5B] uppercase shadow-sm">
-            Open Widget Lab
-          </Badge>
-        </a>
-
         <BotInputArea
           errorMessage={errorMessage}
           inputValue={inputValue}

@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { ChevronDown, ChevronRight, Loader2, Plus, Trash2, Wrench } from "lucide-react"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
@@ -28,8 +28,13 @@ import {
     SelectValue,
 } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
+import { PromptMentionInput } from "@/components/shared/PromptMentionInput"
+import { PromptMentionJsonEditor, fillPromptMentionJsonToken } from "@/components/shared/PromptMentionJsonEditor"
+import { PromptModal } from "@/components/shared/PromptModal"
+import { usePromptMentionModal } from "@/components/shared/usePromptMentionModal"
 import { cn } from "@/lib/utils"
 import { agentService, Agent } from "@/services"
+import { fillMentionInValue } from "@/lib/prompt-mentions"
 const DEFAULT_AGENT_TOOL_INPUT_SCHEMA = {
     type: "object",
     properties: {
@@ -323,6 +328,11 @@ export function ExportAgentToolDialog({
     onOpenChange: (open: boolean) => void
 }) {
     const router = useRouter()
+    const promptMentionModal = usePromptMentionModal<
+        | { kind: "description"; mentionIndex: number }
+        | { kind: "json_schema"; tokenRange: { from: number; to: number } }
+        | { kind: "builder_description"; nodeId: string; mentionIndex: number }
+    >()
     const [selectedAgentId, setSelectedAgentId] = useState("")
     const [name, setName] = useState("")
     const [description, setDescription] = useState("")
@@ -501,11 +511,20 @@ export function ExportAgentToolDialog({
                         </div>
                         <div className="space-y-1">
                             <Label htmlFor="selected-field-description" className="text-xs">Description</Label>
-                            <Input
+                            <PromptMentionInput
                                 id="selected-field-description"
                                 placeholder="What this field is for..."
                                 value={selectedNode.description}
-                                onChange={(event) => updateSelectedNode({ description: event.target.value })}
+                                onChange={(description) => updateSelectedNode({ description })}
+                                multiline={false}
+                                surface="agent_export.input_schema.description"
+                                onMentionClick={(promptId, mentionIndex) =>
+                                    promptMentionModal.openPromptMentionModal(promptId, {
+                                        kind: "builder_description",
+                                        nodeId: selectedNode.id,
+                                        mentionIndex,
+                                    })
+                                }
                             />
                         </div>
                         <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer select-none">
@@ -582,7 +601,27 @@ export function ExportAgentToolDialog({
             setLoading(false)
         }
     }
+
+    const handlePromptFill = useCallback(async (_promptId: string, content: string) => {
+        const context = promptMentionModal.context
+        if (!context) return
+        if (context.kind === "description") {
+            setDescription((current) => fillMentionInValue(current, context.mentionIndex, content))
+            return
+        }
+        if (context.kind === "json_schema") {
+            setJsonSchemaText((current) => fillPromptMentionJsonToken(current, context.tokenRange, content))
+            return
+        }
+        setRootNode((current) =>
+            updateNode(current, context.nodeId, (node) => ({
+                ...node,
+                description: fillMentionInValue(node.description, context.mentionIndex, content),
+            }))
+        )
+    }, [promptMentionModal.context, setDescription, setJsonSchemaText, setRootNode])
     return (
+        <>
         <Dialog open={open} onOpenChange={onOpenChange}>
             <DialogContent className="sm:max-w-[860px] max-h-[88vh] overflow-hidden border-border bg-background shadow-2xl">
                 <DialogHeader className="px-2">
@@ -626,12 +665,16 @@ export function ExportAgentToolDialog({
 
                     <div className="space-y-1.5">
                         <Label htmlFor="export-tool-description">Description</Label>
-                        <Textarea
+                        <PromptMentionInput
                             id="export-tool-description"
                             value={description}
-                            onChange={(event) => setDescription(event.target.value)}
+                            onChange={setDescription}
                             placeholder="Describe what this tool does..."
                             className="min-h-[72px] resize-none text-sm"
+                            surface="agent_export.description"
+                            onMentionClick={(promptId, mentionIndex) =>
+                                promptMentionModal.openPromptMentionModal(promptId, { kind: "description", mentionIndex })
+                            }
                         />
                     </div>
 
@@ -650,15 +693,20 @@ export function ExportAgentToolDialog({
                         {editorMode === "builder" ? (
                             renderSplitTree()
                         ) : (
-                            <Textarea
+                            <PromptMentionJsonEditor
                                 id="json-schema-editor"
                                 aria-label="JSON Schema"
                                 className="min-h-[360px] font-mono text-xs"
                                 value={jsonSchemaText}
-                                onChange={(event) => {
-                                    setJsonSchemaText(event.target.value)
+                                onChange={(value) => {
+                                    setJsonSchemaText(value)
                                     setSchemaEditorError(null)
                                 }}
+                                height="360px"
+                                surface="agent_export.input_schema.description"
+                                onMentionClick={(promptId, tokenRange) =>
+                                    promptMentionModal.openPromptMentionModal(promptId, { kind: "json_schema", tokenRange })
+                                }
                             />
                         )}
 
@@ -683,5 +731,12 @@ export function ExportAgentToolDialog({
                 </DialogFooter>
             </DialogContent>
         </Dialog>
+        <PromptModal
+            promptId={promptMentionModal.promptId}
+            open={promptMentionModal.open}
+            onOpenChange={promptMentionModal.handleOpenChange}
+            onFill={handlePromptFill}
+        />
+        </>
     )
 }
