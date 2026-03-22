@@ -5,6 +5,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { flushSync } from "react-dom";
 
 import { HISTORY_PAGE_SIZE } from "./demo-data";
 import {
@@ -18,6 +19,7 @@ import {
 import {
   applyRuntimeEvent,
   createId,
+  isWidgetToolEvent,
   mapThreadDetail,
   mapRuntimeAttachment,
   mapThreadSummary,
@@ -238,14 +240,8 @@ export function useClassicChatState() {
     setActiveThreadId(threadId);
 
     try {
-      const { threadId: platformThreadId } = await streamAgent(
-        {
-          clientId: selectedClientId,
-          input: normalized || undefined,
-          attachmentIds,
-          threadId: threadId.startsWith("local-") ? undefined : threadId,
-        },
-        (event) => {
+      const applyStreamEvent = (event: Parameters<typeof streamAgent>[1] extends (event: infer T) => void ? T : never) => {
+        const updateThreads = () => {
           setThreads((prevThreads) => {
             const currentThread = prevThreads.find((t) => t.id === threadId);
             if (!currentThread) return prevThreads;
@@ -279,7 +275,24 @@ export function useClassicChatState() {
             const remaining = prevThreads.filter((t) => t.id !== threadId);
             return [updatedThread, ...remaining];
           });
+        };
+
+        if (event.event === "tool.started" && isWidgetToolEvent(event)) {
+          flushSync(updateThreads);
+          return;
+        }
+
+        updateThreads();
+      };
+
+      const { threadId: platformThreadId } = await streamAgent(
+        {
+          clientId: selectedClientId,
+          input: normalized || undefined,
+          attachmentIds,
+          threadId: threadId.startsWith("local-") ? undefined : threadId,
         },
+        applyStreamEvent,
       );
 
       if (platformThreadId && platformThreadId !== threadId) {

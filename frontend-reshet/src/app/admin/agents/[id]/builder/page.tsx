@@ -124,7 +124,7 @@ export default function AgentBuilderPage() {
     return (
         <div className="flex w-full flex-col h-screen overflow-hidden">
             {/* Header */}
-            <header className="shrink-0 bg-background z-[70]">
+            <header className="shrink-0 bg-background z-40">
                 <div className="flex h-12 items-center justify-between gap-4 px-4">
                     <div className="flex items-center gap-3">
                         <div className="flex items-center gap-2">

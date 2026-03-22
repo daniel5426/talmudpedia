@@ -1,6 +1,6 @@
 # Agent Tool Usecases Tests
 
-Last Updated: 2026-03-20
+Last Updated: 2026-03-22
 
 ## Scope
 Covers end-to-end agent tool-call execution flows for built-in tools through the real agent runtime path (`AgentExecutorService` -> `ReasoningNodeExecutor` -> `ToolNodeExecutor`).
@@ -17,6 +17,7 @@ Covers end-to-end agent tool-call execution flows for built-in tools through the
 - Agent run completes and persists tool outputs in final run state.
 - Debug stream emits synthesized reasoning step events (`active`/`complete`) for each successful tool invocation.
 - Production stream includes internal tool lifecycle events (`on_tool_start`/`on_tool_end`) and synthesized reasoning events.
+- Provider `content_blocks` tool-call output preserves the existing `reasoning.update` and tool lifecycle stream contract through the maintained agent runtime.
 - Debug stream error path emits a terminal `tool.failed` event and marks the synthesized reasoning step as `failed` without inventing a successful completion.
 - Parallel-safe multi-tool calls emit reasoning steps per tool call with consistent per-step lifecycle states.
 - Multiple agents with web-search/retrieval/mixed tools execute in production mode, with assertions for correct tool invocation and reasoning lifecycle per run.
@@ -40,6 +41,9 @@ Covers end-to-end agent tool-call execution flows for built-in tools through the
 - Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/agent_tool_usecases`
 - Date/Time: 2026-03-20 Asia/Hebron
 - Result: pass (`11 passed`)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/agent_tool_usecases/test_agent_tool_reasoning_stream.py -k 'debug_stream_generates_reasoning_steps_for_each_tool_and_step or production_stream_includes_internal_tool_and_reasoning_events or parallel_tool_calls_emit_reasoning_steps_for_each_call or multiple_agents_web_search_and_retrieval_calls_reflect_in_production_reasoning'`
+- Date/Time: 2026-03-22 Asia/Hebron
+- Result: pass (`4 passed, 1 deselected`)
 
 ## Manual Real-Provider Validation (No Mocks)
 - Date/Time: 2026-02-12 01:18 EET

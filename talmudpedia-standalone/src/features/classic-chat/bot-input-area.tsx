@@ -3,10 +3,12 @@ import { Paperclip, Square } from "lucide-react";
 import {
   type PromptInputMessage,
   PromptInput,
+  PromptInputAttachment,
   PromptInputActionAddAttachments,
   PromptInputActionMenu,
   PromptInputActionMenuContent,
   PromptInputActionMenuTrigger,
+  PromptInputAttachments,
   PromptInputBody,
   PromptInputButton,
   PromptInputFooter,
@@ -14,6 +16,7 @@ import {
   PromptInputSubmit,
   PromptInputTextarea,
   PromptInputTools,
+  usePromptInputAttachments,
 } from "@/components/ai-elements/prompt-input";
 import { cn } from "@/lib/utils";
 import { useLocale } from "./locale-context";
@@ -29,6 +32,16 @@ type BotInputAreaProps = {
   onSubmit: (payload: ComposerSubmitPayload) => void | Promise<void>;
 };
 
+function AttachmentButton({ title }: { title: string }) {
+  const attachments = usePromptInputAttachments();
+
+  return (
+    <PromptInputButton onClick={() => attachments.openFileDialog()} type="button" title={title}>
+      <Paperclip className="size-4" />
+    </PromptInputButton>
+  );
+}
+
 export function BotInputArea({
   className,
   compact = false,
@@ -43,6 +56,10 @@ export function BotInputArea({
   return (
     <div className={cn("w-full", compact ? "max-w-3xl" : "max-w-3xl", className)}>
       <PromptInputProvider initialInput={inputValue}>
+        <PromptInputAttachments>
+          {(attachment) => <PromptInputAttachment data={attachment} />}
+        </PromptInputAttachments>
+
         <PromptInput
           className={cn(
             "relative bg-muted/50 border-[0.4px] border-border/60 rounded-md",
@@ -77,12 +94,7 @@ export function BotInputArea({
                 </PromptInputActionMenuContent>
               </PromptInputActionMenu>
 
-              <PromptInputButton
-                type="button"
-                title={locale === "he" ? "הוסף הקשר" : "Add context"}
-              >
-                <Paperclip className="size-4" />
-              </PromptInputButton>
+              <AttachmentButton title={locale === "he" ? "הוסף הקשר" : "Add context"} />
             </PromptInputTools>
 
             <PromptInputSubmit status={isLoading ? "streaming" : undefined}>

@@ -57,11 +57,25 @@ export type TemplateSourcesBlock = {
   sources: TemplateSource[];
 };
 
+export type TemplateWidgetBundleBlock = {
+  id: string;
+  kind: "widget_bundle";
+  bundle: import("../prico-widgets/contract").PricoWidgetBundle;
+};
+
+export type TemplateWidgetLoadingBlock = {
+  id: string;
+  kind: "widget_loading";
+  spanId?: string;
+};
+
 export type TemplateRenderBlock =
   | TemplateTextBlock
   | TemplateReasoningBlock
   | TemplateTaskBlock
-  | TemplateSourcesBlock;
+  | TemplateSourcesBlock
+  | TemplateWidgetBundleBlock
+  | TemplateWidgetLoadingBlock;
 
 export type TemplateMessage = {
   id: string;

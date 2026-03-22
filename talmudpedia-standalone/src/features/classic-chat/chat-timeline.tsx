@@ -1,9 +1,6 @@
 import {
   Check,
   Copy,
-  FileAudio,
-  FileImage,
-  FileText,
   RefreshCcw,
   Search,
   ThumbsDown,
@@ -27,22 +24,24 @@ import {
   Message,
   MessageAction,
   MessageActions,
+  MessageAttachment,
+  MessageAttachments,
   MessageContent,
   MessageResponse,
 } from "@/components/ai-elements/message";
 import { Shimmer } from "@/components/ai-elements/shimmer";
-import {
-  Task,
-} from "@/components/ai-elements/task";
+import { Task } from "@/components/ai-elements/task";
+import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
+import { PricoWidgetBundleView } from "../prico-widgets/renderer";
 
 import { BotInputArea } from "./bot-input-area";
 import { useLocale } from "./locale-context";
 import { useStreamingMessageView } from "./use-streaming-message-view";
 import type {
   ComposerSubmitPayload,
-  TemplateAttachment,
   TemplateMessage,
+  TemplateReasoningBlock,
   TemplateRenderBlock,
   TemplateTaskBlock,
 } from "./types";
@@ -70,39 +69,27 @@ function messageText(message: TemplateMessage) {
   return firstTextBlock?.kind === "text" ? firstTextBlock.content : "";
 }
 
-function attachmentIcon(attachment: TemplateAttachment) {
-  if (attachment.kind === "audio") return FileAudio;
-  if (attachment.kind === "image") return FileImage;
-  return FileText;
-}
-
 function renderAttachments(message: TemplateMessage) {
   if (!message.attachments?.length) {
     return null;
   }
   return (
-    <div className="flex flex-wrap gap-2">
+    <MessageAttachments className="mb-1">
       {message.attachments.map((attachment) => {
-        const Icon = attachmentIcon(attachment);
         return (
-          <div
+          <MessageAttachment
             key={attachment.id}
-            className="flex max-w-full items-center gap-2 rounded-md border border-border/60 bg-background/70 px-2.5 py-2 text-xs"
-          >
-            {attachment.kind === "image" && attachment.previewUrl ? (
-              <img
-                alt={attachment.filename}
-                className="h-10 w-10 rounded object-cover"
-                src={attachment.previewUrl}
-              />
-            ) : (
-              <Icon className="size-4 shrink-0 text-muted-foreground" />
-            )}
-            <span className="truncate">{attachment.filename}</span>
-          </div>
+            data={{
+              filename: attachment.filename,
+              mediaType: attachment.mimeType,
+              type: "file",
+              url: attachment.previewUrl || "",
+            }}
+            className={attachment.kind === "image" ? undefined : "w-56"}
+          />
         );
       })}
-    </div>
+    </MessageAttachments>
   );
 }
 
@@ -110,6 +97,23 @@ function taskTone(status: TemplateTaskBlock["status"]) {
   if (status === "error") return "text-destructive";
   if (status === "running") return "text-foreground";
   return "text-muted-foreground";
+}
+
+function latestReasoningBlock(message: TemplateMessage): TemplateReasoningBlock | null {
+  const blocks = message.blocks || [];
+  for (let index = blocks.length - 1; index >= 0; index -= 1) {
+    const block = blocks[index];
+    if (block?.kind === "reasoning") {
+      return block;
+    }
+  }
+  return null;
+}
+
+function hasRunningTask(message: TemplateMessage): boolean {
+  return (message.blocks || []).some(
+    (block) => block.kind === "task" && block.status === "running",
+  );
 }
 
 function renderBlock(block: TemplateRenderBlock) {
@@ -135,6 +139,14 @@ function renderBlock(block: TemplateRenderBlock) {
     );
   }
 
+  if (block.kind === "widget_bundle") {
+    return <PricoWidgetBundleView key={block.id} bundle={block.bundle} />;
+  }
+
+  if (block.kind === "widget_loading") {
+    return <WidgetBundleSkeleton key={block.id} />;
+  }
+
   return (
     <InlineCitation key={block.id}>
       <InlineCitationCard>
@@ -145,7 +157,7 @@ function renderBlock(block: TemplateRenderBlock) {
           {block.sources.map((source) => (
             <InlineCitationSource
               key={source.id}
-              className="rounded-xl p-3"
+              className="rounded-md p-3"
               description={block.title}
               title={source.label}
               url={source.href}
@@ -154,6 +166,64 @@ function renderBlock(block: TemplateRenderBlock) {
         </InlineCitationCardBody>
       </InlineCitationCard>
     </InlineCitation>
+  );
+}
+
+function WidgetBundleSkeleton() {
+  return (
+    <div className="space-y-3">
+      <div className="space-y-1">
+        <Skeleton className="h-4 w-40" />
+        <Skeleton className="h-3 w-56" />
+      </div>
+
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-12">
+        {Array.from({ length: 4 }).map((_, index) => (
+          <div key={`kpi-${index}`} className="col-span-1 rounded-sm bg-muted/40 p-3 md:col-span-3">
+            <Skeleton className="h-3 w-20" />
+            <Skeleton className="mt-4 h-8 w-16" />
+          </div>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-12">
+        <div className="col-span-1 rounded-sm bg-muted/40 p-3 md:col-span-6">
+          <Skeleton className="h-3 w-28" />
+          <Skeleton className="mt-1 h-3 w-40" />
+          <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_160px]">
+            <Skeleton className="h-52 w-full rounded-full" />
+            <div className="space-y-2">
+              {Array.from({ length: 4 }).map((_, index) => (
+                <Skeleton key={`legend-${index}`} className="h-8 w-full" />
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div className="col-span-1 rounded-sm bg-muted/40 p-3 md:col-span-6">
+          <Skeleton className="h-3 w-32" />
+          <Skeleton className="mt-1 h-3 w-44" />
+          <div className="mt-4 space-y-3">
+            {Array.from({ length: 4 }).map((_, index) => (
+              <div key={`bar-${index}`} className="space-y-1">
+                <Skeleton className="h-3 w-24" />
+                <Skeleton className="h-8 w-full" />
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="rounded-sm bg-muted/40 p-3">
+        <Skeleton className="h-3 w-32" />
+        <div className="mt-4 space-y-2">
+          <Skeleton className="h-8 w-full" />
+          {Array.from({ length: 4 }).map((_, index) => (
+            <Skeleton key={`row-${index}`} className="h-10 w-full" />
+          ))}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -182,6 +252,8 @@ export function ChatTimeline({
       renderedMessages.map((message) => ({
         ...message,
         plainText: messageText(message),
+        latestReasoning: latestReasoningBlock(message),
+        hasRunningTask: hasRunningTask(message),
       })),
     [renderedMessages]
   );
@@ -210,6 +282,8 @@ export function ChatTimeline({
             from={message.role}
             className="w-full max-w-3xl"
           >
+            {message.role === "user" ? renderAttachments(message) : null}
+
             <MessageContent
               className={cn(
                 "gap-3",
@@ -217,13 +291,18 @@ export function ChatTimeline({
               )}
             >
               {message.role === "user" ? (
-                <>
-                  {message.plainText ? <MessageResponse>{message.plainText}</MessageResponse> : null}
-                  {renderAttachments(message)}
-                </>
+                <>{message.plainText ? <MessageResponse>{message.plainText}</MessageResponse> : null}</>
               ) : (
                 <>
                   {message.blocks?.map((block) => renderBlock(block))}
+                  {message.runStatus && message.runStatus !== "completed" && !message.hasRunningTask && message.latestReasoning ? (
+                    <div className="px-1 py-1 text-[0.90rem] text-muted-foreground">
+                      <Shimmer>
+                        {message.latestReasoning.steps[message.latestReasoning.steps.length - 1] ||
+                          (locale === "he" ? "חושב..." : "Reasoning...")}
+                      </Shimmer>
+                    </div>
+                  ) : null}
                   {message.runStatus && message.runStatus !== "completed" && !message.plainText && !(message.blocks?.length) ? (
                     <div className="px-1 py-1 text-[0.90rem] text-muted-foreground">
                       <Shimmer>{locale === "he" ? "חושב..." : "Thinking..."}</Shimmer>

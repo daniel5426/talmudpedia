@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.db.postgres.models.agent_threads import AgentThread, AgentThreadSurface
-from app.db.postgres.models.registry import ModelRegistry, ModelProviderBinding, ModelCapabilityType
+from app.db.postgres.models.registry import ModelRegistry, ModelCapabilityType
 from app.db.postgres.models.runtime_attachments import (
     AgentThreadTurnAttachment,
     RuntimeAttachment,
@@ -64,15 +64,6 @@ AUDIO_MIME_TYPES = {
     "audio/x-m4a",
     "audio/m4a",
 }
-VISION_MODEL_TOKENS = (
-    "gpt-4o",
-    "gpt-4.1",
-    "gemini-1.5",
-    "gemini-2",
-    "vision",
-)
-
-
 @dataclass
 class RuntimeAttachmentOwner:
     tenant_id: UUID
@@ -432,15 +423,8 @@ class RuntimeAttachmentService:
         if model.capability_type == ModelCapabilityType.VISION:
             return True
         metadata = dict(model.metadata_ or {})
-        if bool(metadata.get("supports_vision")):
+        if bool(metadata.get("supports_vision")) or bool(metadata.get("vision")):
             return True
-        return self._binding_supports_vision(model.providers or [])
-
-    def _binding_supports_vision(self, bindings: Sequence[ModelProviderBinding]) -> bool:
-        for binding in bindings:
-            provider_model_id = str(binding.provider_model_id or "").strip().lower()
-            if any(token in provider_model_id for token in VISION_MODEL_TOKENS):
-                return True
         return False
 
     def _build_user_message_content(

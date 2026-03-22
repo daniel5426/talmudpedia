@@ -1,3 +1,4 @@
+from dataclasses import dataclass, field
 from typing import Any, AsyncGenerator, List, Optional
 import logging
 
@@ -9,6 +10,184 @@ from langchain_core.callbacks import AsyncCallbackManagerForLLMRun
 from app.agent.core.interfaces import LLMProvider
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class _NormalizedMessagePayload:
+    text: str = ""
+    content_blocks: list[dict[str, Any]] = field(default_factory=list)
+    tool_calls: list[dict[str, Any]] = field(default_factory=list)
+    tool_call_chunks: list[dict[str, Any]] = field(default_factory=list)
+    reasoning: str = ""
+    citations: list[dict[str, Any]] = field(default_factory=list)
+    server_tool_results: list[dict[str, Any]] = field(default_factory=list)
+    response_metadata: dict[str, Any] = field(default_factory=dict)
+
+
+def _normalize_citation(annotation: Any) -> dict[str, Any] | None:
+    if not isinstance(annotation, dict) or annotation.get("type") != "citation":
+        return None
+    return {
+        key: value
+        for key, value in annotation.items()
+        if value is not None
+    }
+
+
+def _normalize_tool_call_shape(item: Any) -> dict[str, Any] | None:
+    if not isinstance(item, dict):
+        return None
+    normalized = {
+        key: value
+        for key, value in item.items()
+        if key in {"id", "name", "args", "index"}
+        and value is not None
+    }
+    if normalized and "id" not in normalized:
+        normalized["id"] = None
+    return normalized or None
+
+
+def _sanitize_content_block(block: Any) -> dict[str, Any] | None:
+    if not isinstance(block, dict):
+        return None
+    normalized = dict(block)
+    block_type = normalized.get("type")
+    if block_type in {"tool_call", "tool_call_chunk", "server_tool_call", "server_tool_call_chunk"}:
+        normalized.setdefault("id", None)
+    return normalized
+
+
+def _coerce_content_blocks(message: Any) -> list[dict[str, Any]]:
+    additional_kwargs = getattr(message, "additional_kwargs", None)
+    if isinstance(additional_kwargs, dict):
+        normalized_blocks = additional_kwargs.get("normalized_content_blocks")
+        if isinstance(normalized_blocks, list) and normalized_blocks:
+            return [
+                normalized
+                for block in normalized_blocks
+                if (normalized := _sanitize_content_block(block)) is not None
+            ]
+
+    raw_content = getattr(message, "content", None)
+    if isinstance(raw_content, list) and raw_content and all(isinstance(item, dict) for item in raw_content):
+        return [
+            normalized
+            for block in raw_content
+            if (normalized := _sanitize_content_block(block)) is not None
+        ]
+
+    blocks = getattr(message, "content_blocks", None)
+    if isinstance(blocks, list) and blocks:
+        return [
+            normalized
+            for block in blocks
+            if (normalized := _sanitize_content_block(block)) is not None
+        ]
+
+    content = raw_content
+    if isinstance(content, str) and content:
+        return [{"type": "text", "text": content}]
+    if isinstance(content, list):
+        normalized: list[dict[str, Any]] = []
+        for item in content:
+            if isinstance(item, dict):
+                sanitized = _sanitize_content_block(item)
+                if sanitized is not None:
+                    normalized.append(sanitized)
+            elif isinstance(item, str):
+                normalized.append({"type": "text", "text": item})
+        if normalized:
+            return normalized
+
+    tool_calls = getattr(message, "tool_calls", None)
+    if isinstance(tool_calls, list) and tool_calls:
+        normalized_calls: list[dict[str, Any]] = []
+        for call in tool_calls:
+            normalized_call = _sanitize_content_block(call)
+            if normalized_call is None:
+                continue
+            normalized_call.setdefault("type", "tool_call")
+            normalized_call.setdefault("id", None)
+            normalized_calls.append(normalized_call)
+        if normalized_calls:
+            return normalized_calls
+
+    reasoning = None
+    additional_kwargs = getattr(message, "additional_kwargs", None)
+    if isinstance(additional_kwargs, dict):
+        reasoning = additional_kwargs.get("reasoning_content")
+    if isinstance(reasoning, str) and reasoning:
+        return [{"type": "reasoning", "reasoning": reasoning}]
+    return []
+
+
+def _normalize_message_payload(message: Any) -> _NormalizedMessagePayload:
+    payload = _NormalizedMessagePayload()
+    payload.content_blocks = _coerce_content_blocks(message)
+    metadata = getattr(message, "response_metadata", None)
+    if isinstance(metadata, dict):
+        payload.response_metadata = dict(metadata)
+
+    for block in payload.content_blocks:
+        block_type = block.get("type")
+        if block_type == "text":
+            text = block.get("text")
+            if text is not None:
+                payload.text += str(text)
+            annotations = block.get("annotations")
+            if isinstance(annotations, list):
+                for annotation in annotations:
+                    citation = _normalize_citation(annotation)
+                    if citation is not None:
+                        payload.citations.append(citation)
+            continue
+        if block_type == "reasoning":
+            reasoning = block.get("reasoning")
+            if isinstance(reasoning, list):
+                payload.reasoning += "".join(str(item) for item in reasoning)
+            elif reasoning is not None:
+                payload.reasoning += str(reasoning)
+            continue
+        if block_type in {"tool_call", "server_tool_call"}:
+            normalized_call = _normalize_tool_call_shape(block)
+            if normalized_call:
+                payload.tool_calls.append(normalized_call)
+            continue
+        if block_type in {"tool_call_chunk", "server_tool_call_chunk"}:
+            normalized_chunk = _normalize_tool_call_shape(block)
+            if normalized_chunk:
+                payload.tool_call_chunks.append(normalized_chunk)
+            continue
+        if block_type == "server_tool_result":
+            payload.server_tool_results.append(
+                {key: value for key, value in block.items() if value is not None}
+            )
+
+    tool_calls = getattr(message, "tool_calls", None)
+    if isinstance(tool_calls, list):
+        for call in tool_calls:
+            normalized_call = _normalize_tool_call_shape(call)
+            if normalized_call and normalized_call not in payload.tool_calls:
+                payload.tool_calls.append(normalized_call)
+    tool_call_chunks = getattr(message, "tool_call_chunks", None)
+    if isinstance(tool_call_chunks, list):
+        for chunk in tool_call_chunks:
+            normalized_chunk = _normalize_tool_call_shape(chunk)
+            if normalized_chunk and normalized_chunk not in payload.tool_call_chunks:
+                payload.tool_call_chunks.append(normalized_chunk)
+
+    if not payload.text:
+        content = getattr(message, "content", None)
+        if content is not None:
+            payload.text = LLMProviderAdapter._stringify_content(content)
+
+    additional_kwargs = getattr(message, "additional_kwargs", None)
+    if isinstance(additional_kwargs, dict) and not payload.reasoning:
+        reasoning = additional_kwargs.get("reasoning_content")
+        if isinstance(reasoning, str):
+            payload.reasoning = reasoning
+    return payload
 
 class LLMProviderAdapter(BaseChatModel):
     """
@@ -49,13 +228,40 @@ class LLMProviderAdapter(BaseChatModel):
         Implementation of generate that uses streaming internally to emit tokens
         to the callback manager, enabling LangGraph astream_events support.
         """
-        full_content = ""
-        
-        # Use our own _astream implementation to ensure consistent token handling
+        aggregated = _NormalizedMessagePayload()
+
         async for chunk in self._astream(messages, stop=stop, run_manager=run_manager, **kwargs):
-            full_content += self._stringify_content(chunk.message.content)
-            
-        return ChatResult(generations=[ChatGeneration(message=AIMessage(content=full_content))])
+            message = chunk.message
+            normalized = _normalize_message_payload(message)
+            aggregated.text += normalized.text
+            aggregated.content_blocks.extend(normalized.content_blocks)
+            aggregated.tool_calls.extend(normalized.tool_calls)
+            aggregated.tool_call_chunks.extend(normalized.tool_call_chunks)
+            aggregated.reasoning += normalized.reasoning
+            aggregated.citations.extend(normalized.citations)
+            aggregated.server_tool_results.extend(normalized.server_tool_results)
+            if normalized.response_metadata:
+                aggregated.response_metadata = normalized.response_metadata
+
+        additional_kwargs: dict[str, Any] = {}
+        if aggregated.reasoning:
+            additional_kwargs["reasoning_content"] = aggregated.reasoning
+        if aggregated.citations:
+            additional_kwargs["citations"] = aggregated.citations
+        if aggregated.server_tool_results:
+            additional_kwargs["server_tool_results"] = aggregated.server_tool_results
+        if aggregated.content_blocks:
+            additional_kwargs["normalized_content_blocks"] = aggregated.content_blocks
+
+        message_kwargs: dict[str, Any] = {
+            "content": aggregated.text,
+            "additional_kwargs": additional_kwargs,
+            "response_metadata": aggregated.response_metadata,
+        }
+        if aggregated.tool_calls:
+            message_kwargs["tool_calls"] = aggregated.tool_calls
+        message = AIMessage(**message_kwargs)
+        return ChatResult(generations=[ChatGeneration(message=message)])
 
     @staticmethod
     def _stringify_content(content: Any) -> str:
@@ -100,81 +306,110 @@ class LLMProviderAdapter(BaseChatModel):
         
         try:
             async for chunk in self.provider.stream(messages, system_prompt=system_prompt, **kwargs):
-                if isinstance(chunk, AIMessageChunk):
-                    msg_chunk = chunk
-                    content = self._stringify_content(msg_chunk.content)
+                normalized_message = self._coerce_chunk_to_message(chunk)
+                normalized = _normalize_message_payload(normalized_message)
 
-                    if content != msg_chunk.content:
-                        msg_chunk = msg_chunk.model_copy(update={"content": content})
+                additional_kwargs: dict[str, Any] = {}
+                if normalized.reasoning:
+                    additional_kwargs["reasoning_content"] = normalized.reasoning
+                if normalized.citations:
+                    additional_kwargs["citations"] = normalized.citations
+                if normalized.server_tool_results:
+                    additional_kwargs["server_tool_results"] = normalized.server_tool_results
 
-                    lc_chunk = ChatGenerationChunk(message=msg_chunk)
-                    if run_manager:
-                        if content:
-                            await run_manager.on_llm_new_token(content, chunk=lc_chunk)
-                    else:
-                        logger.debug("run_manager is None, skipping on_llm_new_token")
+                if normalized.content_blocks:
+                    additional_kwargs["normalized_content_blocks"] = normalized.content_blocks
 
-                    yield lc_chunk
-                    continue
+                message_kwargs: dict[str, Any] = {
+                    "content": normalized.text,
+                    "additional_kwargs": additional_kwargs,
+                    "response_metadata": normalized.response_metadata,
+                }
+                if normalized.tool_calls:
+                    message_kwargs["tool_calls"] = normalized.tool_calls
+                if normalized.tool_call_chunks:
+                    message_kwargs["tool_call_chunks"] = normalized.tool_call_chunks
 
-                content = ""
-                
-                reasoning_content = ""
-
-                # 1. Handle OpenAI "responses" API chunks (delta based)
-                if hasattr(chunk, "type"):
-                    if chunk.type == "response.output_text.delta":
-                        content = getattr(chunk, "delta", "")
-                    elif chunk.type == "response.reasoning_text.delta":
-                        reasoning_content = getattr(chunk, "delta", "")
-                    elif chunk.type == "response.output_text.done":
-                        continue
-                    # Handle reasoning summary events (skip them)
-                    elif "reasoning" in chunk.type and "delta" not in chunk.type:
-                        continue
-                        
-                # 2. Handle Gemini chunks
-                elif hasattr(chunk, "text"):
-                    try:
-                        content = chunk.text
-                    except Exception:
-                        pass
-                
-                # 3. Handle raw string chunks
-                elif isinstance(chunk, str):
-                    content = chunk
-                
-                # 4. Handle standard OpenAI ChatCompletionChunk
-                elif hasattr(chunk, "choices") and hasattr(chunk.choices[0], "delta"):
-                     delta = chunk.choices[0].delta
-                     if hasattr(delta, "content") and delta.content:
-                         content = delta.content
-                     # Check for deepseek/refined-openai reasoning field
-                     if hasattr(delta, "reasoning_content") and delta.reasoning_content:
-                         reasoning_content = delta.reasoning_content
-
-                if content:
-                    content = self._stringify_content(content)
-
-                if content or reasoning_content:
-                    msg_chunk = AIMessageChunk(content=str(content)) # Enforce string
-                    if reasoning_content:
-                        msg_chunk.additional_kwargs["reasoning_content"] = reasoning_content
-                        
-                    lc_chunk = ChatGenerationChunk(message=msg_chunk)
-                    # Trigger the callback that LangGraph's astream_events monitors
-                    if run_manager:
-                        # We only stream content tokens to run_manager to avoid confusing it
-                        if content:
-                            await run_manager.on_llm_new_token(content, chunk=lc_chunk)
-                    else:
-                        # Suppress noisy warning when run_manager is absent
-                        logger.debug("run_manager is None, skipping on_llm_new_token")
-                    yield lc_chunk
-                    
+                msg_chunk = AIMessageChunk(**message_kwargs)
+                lc_chunk = ChatGenerationChunk(message=msg_chunk)
+                if run_manager and normalized.text:
+                    await run_manager.on_llm_new_token(normalized.text, chunk=lc_chunk)
+                elif run_manager is None:
+                    logger.debug("run_manager is None, skipping on_llm_new_token")
+                yield lc_chunk
         except Exception as e:
             logger.error(f"Error in LLMProviderAdapter stream: {e}")
             raise
+
+    def _coerce_chunk_to_message(self, chunk: Any) -> BaseMessage:
+        if isinstance(chunk, BaseMessage):
+            return chunk
+
+        block_type = getattr(chunk, "type", None)
+        if block_type == "response.output_text.delta":
+            return AIMessageChunk(content_blocks=[{"type": "text", "text": getattr(chunk, "delta", "")}])
+        if block_type == "response.reasoning_text.delta":
+            return AIMessageChunk(content_blocks=[{"type": "reasoning", "reasoning": getattr(chunk, "delta", "")}])
+        if block_type == "response.output_text.done":
+            return AIMessageChunk(content="")
+
+        if isinstance(chunk, str):
+            return AIMessageChunk(content_blocks=[{"type": "text", "text": chunk}])
+
+        raw_tool_calls = getattr(chunk, "tool_calls", None)
+        raw_tool_call_chunks = getattr(chunk, "tool_call_chunks", None)
+        raw_content = getattr(chunk, "content", None)
+        raw_additional_kwargs = getattr(chunk, "additional_kwargs", None)
+        raw_response_metadata = getattr(chunk, "response_metadata", None)
+        if (
+            raw_content is not None
+            or isinstance(raw_tool_calls, list)
+            or isinstance(raw_tool_call_chunks, list)
+        ):
+            message_kwargs: dict[str, Any] = {
+                "content": self._stringify_content(raw_content),
+                "additional_kwargs": dict(raw_additional_kwargs) if isinstance(raw_additional_kwargs, dict) else {},
+                "response_metadata": dict(raw_response_metadata) if isinstance(raw_response_metadata, dict) else {},
+            }
+            if isinstance(raw_tool_calls, list):
+                normalized_tool_calls = [
+                    normalized
+                    for item in raw_tool_calls
+                    if (normalized := _normalize_tool_call_shape(item)) is not None
+                ]
+                if normalized_tool_calls:
+                    message_kwargs["tool_calls"] = normalized_tool_calls
+            if isinstance(raw_tool_call_chunks, list):
+                normalized_tool_call_chunks = [
+                    normalized
+                    for item in raw_tool_call_chunks
+                    if (normalized := _normalize_tool_call_shape(item)) is not None
+                ]
+                if normalized_tool_call_chunks:
+                    message_kwargs["tool_call_chunks"] = normalized_tool_call_chunks
+            return AIMessageChunk(**message_kwargs)
+
+        text = getattr(chunk, "text", None)
+        if text is not None:
+            return AIMessageChunk(content_blocks=[{"type": "text", "text": text}])
+
+        if hasattr(chunk, "choices") and getattr(chunk, "choices", None):
+            try:
+                delta = chunk.choices[0].delta
+            except Exception:
+                delta = None
+            blocks: list[dict[str, Any]] = []
+            if delta is not None:
+                content = getattr(delta, "content", None)
+                if content:
+                    blocks.append({"type": "text", "text": content})
+                reasoning = getattr(delta, "reasoning_content", None)
+                if reasoning:
+                    blocks.append({"type": "reasoning", "reasoning": reasoning})
+            if blocks:
+                return AIMessageChunk(content_blocks=blocks)
+
+        return AIMessageChunk(content=self._stringify_content(chunk))
 
     def bind_tools(self, tools: List[Any], **kwargs: Any) -> Any:
         """Forward tool binding to the underlying provider if supported."""

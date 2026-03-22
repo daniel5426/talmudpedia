@@ -9,6 +9,7 @@ from uuid import UUID
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agent.execution.tool_input_contracts import sanitize_schema_dict
 from app.db.postgres.models.agents import Agent, AgentStatus
 from app.db.postgres.models.artifact_runtime import Artifact, ArtifactKind, ArtifactRevision
 from app.db.postgres.models.rag import ExecutablePipeline, PipelineJob, PipelineJobStatus, VisualPipeline
@@ -49,6 +50,10 @@ _DEFAULT_AGENT_INPUT_SCHEMA: dict[str, Any] = {
 }
 
 
+def _normalized_tool_io_schema(schema: dict[str, Any] | None) -> dict[str, Any]:
+    return sanitize_schema_dict(deepcopy(schema) if isinstance(schema, dict) else {})
+
+
 def _slugify(value: str, *, fallback: str) -> str:
     text = re.sub(r"[^a-z0-9]+", "-", str(value or "").strip().lower()).strip("-")
     return text or fallback
@@ -83,7 +88,11 @@ class ToolBindingService:
         slug = self._artifact_tool_slug(artifact)
         await self._ensure_slug_available(slug, exclude_tool_id=tool.id if tool else None)
 
-        schema = self._artifact_schema_from_revision(revision)
+        raw_schema = self._artifact_schema_from_revision(revision)
+        schema = {
+            "input": _normalized_tool_io_schema(raw_schema.get("input")),
+            "output": _normalized_tool_io_schema(raw_schema.get("output")),
+        }
         version = _tool_semver(revision.revision_number)
         if tool is None:
             tool = ToolRegistry(
@@ -212,8 +221,10 @@ class ToolBindingService:
                 description=description if description is not None else pipeline.description,
                 scope=ToolDefinitionScope.TENANT,
                 schema={
-                    "input": deepcopy(input_schema) if isinstance(input_schema, dict) else {"type": "object", "properties": {}, "additionalProperties": False},
-                    "output": deepcopy(_GENERIC_PIPELINE_OUTPUT_SCHEMA),
+                    "input": _normalized_tool_io_schema(
+                        input_schema if isinstance(input_schema, dict) else {"type": "object", "properties": {}, "additionalProperties": False}
+                    ),
+                    "output": _normalized_tool_io_schema(_GENERIC_PIPELINE_OUTPUT_SCHEMA),
                 },
                 config_schema={},
                 implementation_type=ToolImplementationType.RAG_PIPELINE,
@@ -254,10 +265,10 @@ class ToolBindingService:
 
         schema = dict(tool.schema or {})
         if isinstance(input_schema, dict):
-            schema["input"] = deepcopy(input_schema)
+            schema["input"] = _normalized_tool_io_schema(input_schema)
         else:
-            schema.setdefault("input", {"type": "object", "properties": {}, "additionalProperties": False})
-        schema["output"] = deepcopy(_GENERIC_PIPELINE_OUTPUT_SCHEMA)
+            schema.setdefault("input", _normalized_tool_io_schema({"type": "object", "properties": {}, "additionalProperties": False}))
+        schema["output"] = _normalized_tool_io_schema(_GENERIC_PIPELINE_OUTPUT_SCHEMA)
         tool.schema = schema
 
         if enabled:
@@ -339,8 +350,8 @@ class ToolBindingService:
         generated_input_schema = self.build_pipeline_input_schema(executable_pipeline)
         current_input_schema = ((tool.schema or {}).get("input") if isinstance(tool.schema, dict) else None) or {}
         tool.schema = {
-            "input": self.merge_generated_schema(current_input_schema, generated_input_schema),
-            "output": deepcopy(_GENERIC_PIPELINE_OUTPUT_SCHEMA),
+            "input": _normalized_tool_io_schema(self.merge_generated_schema(current_input_schema, generated_input_schema)),
+            "output": _normalized_tool_io_schema(_GENERIC_PIPELINE_OUTPUT_SCHEMA),
         }
         if not str(tool.name or "").strip():
             tool.name = pipeline.name
@@ -397,10 +408,10 @@ class ToolBindingService:
         desired_version = _tool_semver(agent.version)
         schema = dict(tool.schema or {}) if tool is not None and isinstance(tool.schema, dict) else {}
         if input_schema is not None:
-            schema["input"] = deepcopy(input_schema)
+            schema["input"] = _normalized_tool_io_schema(input_schema)
         else:
-            schema.setdefault("input", deepcopy(_DEFAULT_AGENT_INPUT_SCHEMA))
-        schema["output"] = deepcopy(_GENERIC_AGENT_OUTPUT_SCHEMA)
+            schema.setdefault("input", _normalized_tool_io_schema(_DEFAULT_AGENT_INPUT_SCHEMA))
+        schema["output"] = _normalized_tool_io_schema(_GENERIC_AGENT_OUTPUT_SCHEMA)
 
         if tool is None:
             tool = ToolRegistry(

@@ -10,6 +10,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
+from app.agent.execution.tool_input_contracts import sanitize_schema_dict
 from app.db.postgres.models.agents import Agent
 from app.db.postgres.models.artifact_runtime import Artifact, ArtifactRevision
 from app.db.postgres.models.prompts import PromptLibrary, PromptStatus
@@ -320,8 +321,12 @@ class PromptReferenceResolver:
         resolved_description = description
         if isinstance(description, str) and description:
             resolved_description, _ = await self.resolve_text(description, surface="tool.description")
-        resolved_input = await self.resolve_schema_descriptions(input_schema or {}, surface="tool.schema.description")
-        resolved_output = await self.resolve_schema_descriptions(output_schema or {}, surface="tool.schema.description")
+        resolved_input = sanitize_schema_dict(
+            await self.resolve_schema_descriptions(input_schema or {}, surface="tool.schema.description")
+        )
+        resolved_output = sanitize_schema_dict(
+            await self.resolve_schema_descriptions(output_schema or {}, surface="tool.schema.description")
+        )
         return resolved_description, resolved_input, resolved_output
 
     async def validate_tool_payload(

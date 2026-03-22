@@ -12,6 +12,7 @@ from app.agent.execution.tool_input_contracts import (
     get_tool_input_schema,
     is_strict_tool_input,
     parse_schema_dict,
+    sanitize_schema_dict,
 )
 from app.agent.executors.base import BaseNodeExecutor, ValidationResult
 from app.agent.registry import AgentOperatorRegistry, AgentOperatorSpec, AgentStateField, AgentExecutorRegistry
@@ -34,6 +35,99 @@ STRICT_PLATFORM_TOOL_SLUGS = frozenset(
     }
 )
 STRICT_PLATFORM_RAW_INPUT_KEY = "__strict_platform_raw_input__"
+
+
+def _tool_model_name(tool_name: str, suffix: str) -> str:
+    return f"{tool_name.title().replace('-', '_').replace(' ', '_')}{suffix}"
+
+
+def _json_schema_type_to_python(
+    schema: dict[str, Any],
+    *,
+    model_name: str,
+) -> Any:
+    any_of = schema.get("anyOf")
+    one_of = schema.get("oneOf")
+    union_specs = any_of if isinstance(any_of, list) else one_of if isinstance(one_of, list) else None
+    if union_specs:
+        non_null_specs = [
+            item for item in union_specs
+            if not (isinstance(item, dict) and item.get("type") == "null")
+        ]
+        if len(non_null_specs) == 1 and isinstance(non_null_specs[0], dict):
+            return _json_schema_type_to_python(non_null_specs[0], model_name=model_name)
+        return Any
+
+    schema_type = schema.get("type")
+    if isinstance(schema_type, list):
+        non_null_types = [item for item in schema_type if item != "null"]
+        if len(non_null_types) == 1:
+            schema_type = non_null_types[0]
+        else:
+            return Any
+
+    if schema_type == "string":
+        return str
+    if schema_type == "integer":
+        return int
+    if schema_type == "number":
+        return float
+    if schema_type == "boolean":
+        return bool
+    if schema_type == "array":
+        items = schema.get("items")
+        item_type = Any
+        if isinstance(items, dict):
+            item_type = _json_schema_type_to_python(items, model_name=f"{model_name}Item")
+        return List[item_type]
+    if schema_type == "object" or isinstance(schema.get("properties"), dict):
+        properties = schema.get("properties")
+        if not isinstance(properties, dict) or not properties:
+            return Dict[str, Any]
+        required = set(schema.get("required", []) or [])
+        fields: Dict[str, tuple[Any, Any]] = {}
+        for prop_name, prop_schema in properties.items():
+            if not isinstance(prop_schema, dict):
+                continue
+            child_type = _json_schema_type_to_python(prop_schema, model_name=f"{model_name}_{prop_name.title()}")
+            if prop_name not in required:
+                child_type = Optional[child_type]
+            description = prop_schema.get("description") if isinstance(prop_schema.get("description"), str) else None
+            default = ... if prop_name in required else None
+            field_def = Field(default=default, description=description) if description else default
+            fields[prop_name] = (child_type, field_def)
+        if not fields:
+            return Dict[str, Any]
+        return create_model(model_name, **fields)
+    return Any
+
+
+def _build_tool_args_schema(tool_name: str, input_schema: dict[str, Any]) -> type[BaseModel]:
+    model_name = _tool_model_name(tool_name, "Args")
+    if not isinstance(input_schema, dict) or input_schema.get("type") != "object":
+        return create_model(model_name, input=(Any, ...))
+
+    properties = input_schema.get("properties")
+    if not isinstance(properties, dict) or not properties:
+        return create_model(model_name)
+
+    required = set(input_schema.get("required", []) or [])
+    fields: Dict[str, tuple[Any, Any]] = {}
+    for prop_name, prop_schema in properties.items():
+        if not isinstance(prop_schema, dict):
+            continue
+        field_type = _json_schema_type_to_python(
+            prop_schema,
+            model_name=_tool_model_name(tool_name, f"_{prop_name.title()}"),
+        )
+        if prop_name not in required:
+            field_type = Optional[field_type]
+        description = prop_schema.get("description") if isinstance(prop_schema.get("description"), str) else None
+        default = ... if prop_name in required else None
+        field_def = Field(default=default, description=description) if description else default
+        fields[prop_name] = (field_type, field_def)
+
+    return create_model(model_name, **fields) if fields else create_model(model_name)
 
 
 def _normalize_model_tool_args(call_args: Any, tool_record: Any | None) -> dict[str, Any]:
@@ -791,27 +885,8 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
         tool_name = getattr(tool, "slug", None) or getattr(tool, "name", "tool")
         description = getattr(tool, "description", "") or ""
         schema = parse_schema_dict(getattr(tool, "schema", {}) or {})
-        input_schema = schema.get("input", {}) if isinstance(schema, dict) else {}
-
-        args_schema: type[BaseModel]
-        if isinstance(input_schema, dict) and input_schema.get("properties"):
-            props = input_schema.get("properties", {}) or {}
-            required = set(input_schema.get("required", []) or [])
-            fields: Dict[str, Any] = {}
-            for prop_name, prop_spec in props.items():
-                default = ... if prop_name in required else None
-                description = None
-                if isinstance(prop_spec, dict):
-                    desc_raw = prop_spec.get("description")
-                    if isinstance(desc_raw, str) and desc_raw.strip():
-                        description = desc_raw.strip()
-                field_def = Field(default=default, description=description) if description else default
-                fields[prop_name] = (Any, field_def)
-            model_name = tool_name.title().replace("-", "_").replace(" ", "_")
-            args_schema = create_model(f"{model_name}Args", **fields)
-        else:
-            model_name = tool_name.title().replace("-", "_").replace(" ", "_")
-            args_schema = create_model(f"{model_name}Args", input=(Any, ...))
+        input_schema = sanitize_schema_dict(schema.get("input", {}) if isinstance(schema, dict) else {}, tool_name=tool_name)
+        args_schema = _build_tool_args_schema(tool_name, input_schema)
 
         def _run(*args: Any, **kwargs: Any) -> Any:
             raise NotImplementedError("RegistryTool is for tool binding only")

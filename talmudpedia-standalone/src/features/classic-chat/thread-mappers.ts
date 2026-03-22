@@ -11,6 +11,7 @@ import type {
   TemplateTextBlock,
   TemplateThread,
 } from "./types";
+import { validatePricoWidgetBundle } from "../prico-widgets/contract";
 
 const FALLBACK_PREVIEW = "Start a new conversation.";
 
@@ -153,6 +154,8 @@ export function applyRuntimeEvent(
   blocks: TemplateRenderBlock[],
   event: StandaloneRuntimeEvent,
 ): TemplateRenderBlock[] {
+  const widgetToolResult = extractWidgetToolResult(event);
+
   if (event.event === "assistant.delta") {
     const content = String(event.payload.content || "");
     const lastBlock = blocks[blocks.length - 1];
@@ -202,6 +205,16 @@ export function applyRuntimeEvent(
   }
 
   if (event.event === "tool.started") {
+    if (isWidgetToolEvent(event)) {
+      return [
+        ...blocks,
+        {
+          id: createId(),
+          kind: "widget_loading",
+          spanId: typeof event.payload.span_id === "string" ? event.payload.span_id : undefined,
+        },
+      ];
+    }
     return [
       ...blocks,
       {
@@ -216,6 +229,55 @@ export function applyRuntimeEvent(
   }
 
   if (event.event === "tool.completed" || event.event === "tool.failed") {
+    const widgetLoadingIndex = [...blocks]
+      .map((block, index) => ({ block, index }))
+      .reverse()
+      .find(({ block }) => {
+        if (block.kind !== "widget_loading") {
+          return false;
+        }
+        const spanId = typeof event.payload.span_id === "string" ? event.payload.span_id : null;
+        if (!spanId) {
+          return true;
+        }
+        return block.spanId === spanId;
+      })?.index;
+
+    if (event.event === "tool.completed" && widgetToolResult) {
+      const parsed = validatePricoWidgetBundle(widgetToolResult.bundle);
+      if (!parsed.ok) {
+        const fallbackBlock = {
+          id: createId(),
+          kind: "text" as const,
+          content: "Unable to render widget bundle.",
+        };
+        if (typeof widgetLoadingIndex === "number") {
+          return [
+            ...blocks.slice(0, widgetLoadingIndex),
+            fallbackBlock,
+            ...blocks.slice(widgetLoadingIndex + 1),
+          ];
+        }
+        return [...blocks, fallbackBlock];
+      }
+      const nextBlock = {
+        id: createId(),
+        kind: "widget_bundle" as const,
+        bundle: parsed.bundle,
+      };
+      if (typeof widgetLoadingIndex === "number") {
+        return [
+          ...blocks.slice(0, widgetLoadingIndex),
+          nextBlock,
+          ...blocks.slice(widgetLoadingIndex + 1),
+        ];
+      }
+      return [...blocks, nextBlock];
+    }
+
+    if (event.event === "tool.failed" && typeof widgetLoadingIndex === "number") {
+      return blocks.filter((_, index) => index !== widgetLoadingIndex);
+    }
     const spanId = typeof event.payload.span_id === "string" ? event.payload.span_id : null;
     const taskIndex = [...blocks]
       .map((block, index) => ({ block, index }))
@@ -253,4 +315,51 @@ export function applyRuntimeEvent(
   }
 
   return blocks;
+}
+
+export function isWidgetToolEvent(event: StandaloneRuntimeEvent): boolean {
+  const toolSlug = String(event.payload.tool_slug || "").trim().toLowerCase();
+  const toolName = String(event.payload.tool || "").trim().toLowerCase();
+  return toolSlug === "prico-widget-output" || toolName === "prico widget output";
+}
+
+type WidgetToolResult = {
+  bundle: unknown;
+};
+
+function extractWidgetToolResult(event: StandaloneRuntimeEvent): WidgetToolResult | null {
+  if (!isWidgetToolEvent(event)) {
+    return null;
+  }
+  const output = unwrapWidgetOutput(event.payload.output);
+  if (!output) {
+    return null;
+  }
+  const bundle = output.bundle;
+  if (!bundle || typeof bundle !== "object") {
+    return null;
+  }
+  return {
+    bundle,
+  };
+}
+
+function unwrapWidgetOutput(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  if (record.kind === "prico_widget_bundle" && record.bundle && typeof record.bundle === "object") {
+    return record;
+  }
+  if (record.body && typeof record.body === "object") {
+    return unwrapWidgetOutput(record.body);
+  }
+  if (record.result && typeof record.result === "object") {
+    return unwrapWidgetOutput(record.result);
+  }
+  if (record.context && typeof record.context === "object") {
+    return unwrapWidgetOutput(record.context);
+  }
+  return null;
 }

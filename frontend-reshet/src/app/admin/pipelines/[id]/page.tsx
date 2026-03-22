@@ -465,7 +465,7 @@ export default function PipelineEditorPage() {
 
     return (
         <div className="flex flex-col h-full w-full">
-            <AdminPageHeader className="z-[70]">
+            <AdminPageHeader className="z-40">
                     <div className="flex items-center gap-3">
                         <CustomBreadcrumb
                             items={[

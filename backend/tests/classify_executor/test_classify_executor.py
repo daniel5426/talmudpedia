@@ -1,4 +1,5 @@
 import pytest
+from langchain_core.messages import AIMessageChunk
 
 from app.agent.executors.classify_executor import ClassifyNodeExecutor
 from app.agent.execution.emitter import active_emitter
@@ -107,3 +108,27 @@ async def test_classify_emits_start_and_end(monkeypatch):
     event_types = [e[0] for e in fake_emitter.events]
     assert "start" in event_types
     assert "end" in event_types
+
+
+@pytest.mark.asyncio
+async def test_classify_executor_accepts_content_block_response(monkeypatch):
+    class BlockProvider:
+        async def stream(self, messages, system_prompt=None, **kwargs):
+            yield AIMessageChunk(content_blocks=[{"type": "text", "text": "Beta"}])
+
+    async def fake_resolve(self, model_id):
+        return BlockProvider()
+
+    monkeypatch.setattr(ModelResolver, "resolve", fake_resolve)
+
+    executor = ClassifyNodeExecutor(tenant_id=None, db=None)
+    result = await executor.execute(
+        {"messages": [{"role": "user", "content": "hi"}]},
+        {
+            "model_id": "model-1",
+            "categories": [{"name": "Alpha"}, {"name": "Beta"}],
+        },
+        {"node_id": "classify-4"},
+    )
+
+    assert result["branch_taken"] == "Beta"

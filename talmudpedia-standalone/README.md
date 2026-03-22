@@ -1,6 +1,6 @@
 # Talmudpedia Standalone
 
-Last Updated: 2026-03-21
+Last Updated: 2026-03-22
 
 Standalone Vite app with Vercel-compatible serverless BFF routes for embedding a published Talmudpedia agent through the server-only `@agents24/embed-sdk`.
 
@@ -18,6 +18,7 @@ Important rule:
 - `/api/session`: local cookie-backed user identity
 - `/api/agent/*`: thread history and streaming chat routes
 - `/api/prico-tools/*`: local demo tool endpoints for the PRICO showcase
+- `/api/prico-tools/widget-output`: render-only JSON widget bundle validation for PRICO analytical UI
 
 ## Environment
 
@@ -26,7 +27,9 @@ Copy `.env.example` to `.env` and set:
 - `TALMUDPEDIA_BASE_URL`
 - `TALMUDPEDIA_EMBED_API_KEY`
 - `TALMUDPEDIA_AGENT_ID`
-- `TALMUDPEDIA_ADMIN_BEARER_TOKEN` for provisioning
+- `TALMUDPEDIA_ADMIN_BEARER_TOKEN` for provisioning, or:
+- `TALMUDPEDIA_ADMIN_EMAIL`
+- `TALMUDPEDIA_ADMIN_PASSWORD`
 - `TALMUDPEDIA_TENANT_ID` for provisioning
 - `SESSION_COOKIE_SECRET`
 - optional `PRICO_TOOL_BASE_URL`
@@ -66,6 +69,8 @@ To create the five local HTTP tools and the published PRICO demo agent in the pl
 pnpm provision:prico-demo
 ```
 
+The provisioner uses `TALMUDPEDIA_ADMIN_BEARER_TOKEN` when present. If it is unset, it automatically logs in through `/auth/login` using `TALMUDPEDIA_ADMIN_EMAIL` and `TALMUDPEDIA_ADMIN_PASSWORD`.
+
 The script prints the created agent id. Set `TALMUDPEDIA_AGENT_ID` in `.env` to that value before running the standalone app.
 
 ## PRICO Demo Runtime
@@ -73,6 +78,7 @@ The script prints the created agent id. Set `TALMUDPEDIA_AGENT_ID` in `.env` to 
 The standalone Vercel functions now host:
 
 - `/api/prico-tools/*` read-only demo endpoints for the five PRICO tool contracts
+- `/api/prico-tools/widget-output` render-only widget bundle contract for optional analytical chat UI
 - live SQL-backed PRICO reads when `PRICO_DB_*` is configured locally
 - local session state with a selected demo client
 - chat forwarding that injects selected client context into the embedded-agent request

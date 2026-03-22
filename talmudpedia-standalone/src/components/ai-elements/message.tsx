@@ -16,8 +16,8 @@ import { cjk } from "@streamdown/cjk";
 import { code } from "@streamdown/code";
 import { math } from "@streamdown/math";
 import { mermaid } from "@streamdown/mermaid";
-import type { UIMessage } from "ai";
-import { ChevronLeftIcon, ChevronRightIcon } from "lucide-react";
+import type { FileUIPart, UIMessage } from "ai";
+import { ChevronLeftIcon, ChevronRightIcon, PaperclipIcon, XIcon } from "lucide-react";
 import type { ComponentProps, HTMLAttributes, ReactElement } from "react";
 import {
   createContext,
@@ -64,6 +64,94 @@ export const MessageContent = ({
     {children}
   </div>
 );
+
+export type MessageAttachmentProps = HTMLAttributes<HTMLDivElement> & {
+  data: FileUIPart;
+  className?: string;
+  onRemove?: () => void;
+};
+
+export function MessageAttachment({
+  data,
+  className,
+  onRemove,
+  ...props
+}: MessageAttachmentProps) {
+  const filename = data.filename || "";
+  const isImage = Boolean(data.mediaType?.startsWith("image/") && data.url);
+  const attachmentLabel = filename || (isImage ? "Image" : "Attachment");
+
+  return (
+    <div
+      className={cn(
+        "group relative overflow-hidden rounded-lg border bg-background",
+        isImage ? "size-24" : "flex h-16 w-48 items-center gap-2 p-2",
+        className
+      )}
+      {...props}
+    >
+      {isImage ? (
+        <>
+          <img
+            alt={filename || "attachment"}
+            className="size-full object-cover"
+            src={data.url}
+          />
+          {onRemove ? (
+            <Button
+              aria-label="Remove attachment"
+              className="absolute right-1 top-1 size-6 rounded-full bg-background/80 p-0 opacity-0 backdrop-blur-sm transition-opacity hover:bg-background group-hover:opacity-100 [&>svg]:size-3"
+              onClick={(event) => {
+                event.stopPropagation();
+                onRemove();
+              }}
+              type="button"
+              variant="ghost"
+            >
+              <XIcon />
+              <span className="sr-only">Remove</span>
+            </Button>
+          ) : null}
+        </>
+      ) : (
+        <>
+          <div className="flex size-10 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
+            <PaperclipIcon className="size-5" />
+          </div>
+          <div className="flex min-w-0 flex-1 flex-col justify-center gap-0.5">
+            <span className="truncate text-sm font-medium leading-none">
+              {attachmentLabel}
+            </span>
+            <span className="truncate text-xs text-muted-foreground">
+              {data.mediaType}
+            </span>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+export type MessageAttachmentsProps = ComponentProps<"div">;
+
+export function MessageAttachments({
+  children,
+  className,
+  ...props
+}: MessageAttachmentsProps) {
+  if (!children) {
+    return null;
+  }
+
+  return (
+    <div
+      className={cn("ml-auto flex w-fit flex-wrap items-start gap-2", className)}
+      {...props}
+    >
+      {children}
+    </div>
+  );
+}
 
 export type MessageActionsProps = ComponentProps<"div">;
 

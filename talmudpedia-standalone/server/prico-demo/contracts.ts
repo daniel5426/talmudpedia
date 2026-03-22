@@ -1,3 +1,5 @@
+import type { PricoWidgetBundle, PricoWidgetRow } from "../../src/features/prico-widgets/contract.js";
+
 export type DemoClient = {
   id: string;
   name: string;
@@ -38,16 +40,21 @@ export type PricoToolErrorCode =
   | "DEAL_ID_REQUIRED"
   | "CLIENT_NOT_FOUND"
   | "DEAL_NOT_FOUND"
-  | "UNSUPPORTED_QUERY";
+  | "UNSUPPORTED_QUERY"
+  | "INVALID_WIDGET_DSL";
+
+export type PricoToolErrorDetails = Record<string, unknown> | null;
 
 export class PricoToolError extends Error {
   readonly code: PricoToolErrorCode;
   readonly status: number;
+  readonly details: PricoToolErrorDetails;
 
-  constructor(code: PricoToolErrorCode, message: string, status = 400) {
+  constructor(code: PricoToolErrorCode, message: string, status = 400, details: PricoToolErrorDetails = null) {
     super(message);
     this.code = code;
     this.status = status;
+    this.details = details;
   }
 }
 
@@ -68,6 +75,20 @@ export type ConcentrationRequest = DateWindowRequest;
 
 export type DealScopedRequest = BasePricoRequest & {
   deal_id: string;
+};
+
+export type PricoWidgetOutputRequest = {
+  screen_title?: string;
+  screen_subtitle?: string;
+  rows: PricoWidgetRow[];
+};
+
+export type PricoWidgetOutputResponse = {
+  kind: "prico_widget_bundle";
+  contract_version: "v1";
+  bundle: PricoWidgetBundle;
+  warnings?: string[];
+  notes?: string[];
 };
 
 export type PricoSummaryMetricSet = {

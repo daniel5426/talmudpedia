@@ -8,6 +8,19 @@ from jsonschema import ValidationError
 from jsonschema.validators import validator_for
 
 
+class ToolSchemaValidationError(ValueError):
+    def __init__(self, message: str, *, tool_name: str | None = None, schema_path: str | None = None):
+        self.tool_name = tool_name
+        self.schema_path = schema_path
+        parts = []
+        if tool_name:
+            parts.append(f"tool={tool_name}")
+        if schema_path:
+            parts.append(f"path={schema_path}")
+        prefix = f"[{' '.join(parts)}] " if parts else ""
+        super().__init__(prefix + message)
+
+
 def parse_schema_dict(raw: Any) -> dict[str, Any]:
     if isinstance(raw, dict):
         return raw
@@ -18,6 +31,154 @@ def parse_schema_dict(raw: Any) -> dict[str, Any]:
             return {}
         return parsed if isinstance(parsed, dict) else {}
     return {}
+
+
+_OPTIONAL_METADATA_KEYS = {
+    "description",
+    "title",
+    "format",
+    "default",
+    "examples",
+    "example",
+    "x-ui",
+    "$comment",
+}
+
+_SCHEMA_CONTAINER_KEYS = {
+    "properties",
+    "items",
+    "prefixItems",
+    "allOf",
+    "anyOf",
+    "oneOf",
+    "not",
+    "if",
+    "then",
+    "else",
+    "additionalProperties",
+}
+
+
+def _schema_path_to_string(path: tuple[str, ...]) -> str:
+    if not path:
+        return "input"
+    return "input." + ".".join(path)
+
+
+def _raise_schema_error(message: str, *, tool_name: str | None, path: tuple[str, ...]) -> None:
+    raise ToolSchemaValidationError(
+        message,
+        tool_name=tool_name,
+        schema_path=_schema_path_to_string(path),
+    )
+
+
+def sanitize_schema_dict(raw: Any, *, tool_name: str | None = None) -> dict[str, Any]:
+    schema = parse_schema_dict(raw)
+    if not schema:
+        return {}
+    sanitized = _sanitize_schema_node(schema, path=(), tool_name=tool_name)
+    if not isinstance(sanitized, dict):
+        _raise_schema_error("Schema root must be an object.", tool_name=tool_name, path=())
+    return sanitized
+
+
+def _sanitize_schema_node(node: Any, *, path: tuple[str, ...], tool_name: str | None) -> Any:
+    if node is None:
+        _raise_schema_error("Schema node cannot be null.", tool_name=tool_name, path=path)
+    if isinstance(node, bool):
+        return node
+    if not isinstance(node, dict):
+        _raise_schema_error("Schema node must be an object.", tool_name=tool_name, path=path)
+
+    sanitized: dict[str, Any] = {}
+    for key, value in node.items():
+        if value is None and key in _OPTIONAL_METADATA_KEYS:
+            continue
+        if key == "properties":
+            if not isinstance(value, dict):
+                _raise_schema_error("`properties` must be an object.", tool_name=tool_name, path=path + ("properties",))
+            props: dict[str, Any] = {}
+            for prop_name, prop_schema in value.items():
+                if not isinstance(prop_name, str) or not prop_name.strip():
+                    _raise_schema_error("Property names must be non-empty strings.", tool_name=tool_name, path=path + ("properties",))
+                props[prop_name] = _sanitize_schema_node(
+                    prop_schema,
+                    path=path + ("properties", prop_name),
+                    tool_name=tool_name,
+                )
+            sanitized[key] = props
+            continue
+        if key == "required":
+            if not isinstance(value, list):
+                _raise_schema_error("`required` must be an array.", tool_name=tool_name, path=path + ("required",))
+            required: list[str] = []
+            for idx, item in enumerate(value):
+                if not isinstance(item, str) or not item.strip():
+                    _raise_schema_error(
+                        "`required` entries must be non-empty strings.",
+                        tool_name=tool_name,
+                        path=path + ("required", str(idx)),
+                    )
+                required.append(item)
+            sanitized[key] = required
+            continue
+        if key == "items":
+            if isinstance(value, list):
+                sanitized[key] = [
+                    _sanitize_schema_node(item, path=path + ("items", str(idx)), tool_name=tool_name)
+                    for idx, item in enumerate(value)
+                ]
+            else:
+                sanitized[key] = _sanitize_schema_node(value, path=path + ("items",), tool_name=tool_name)
+            continue
+        if key == "prefixItems":
+            if not isinstance(value, list):
+                _raise_schema_error("`prefixItems` must be an array.", tool_name=tool_name, path=path + ("prefixItems",))
+            sanitized[key] = [
+                _sanitize_schema_node(item, path=path + ("prefixItems", str(idx)), tool_name=tool_name)
+                for idx, item in enumerate(value)
+            ]
+            continue
+        if key in {"allOf", "anyOf", "oneOf"}:
+            if not isinstance(value, list):
+                _raise_schema_error(f"`{key}` must be an array.", tool_name=tool_name, path=path + (key,))
+            sanitized[key] = [
+                _sanitize_schema_node(item, path=path + (key, str(idx)), tool_name=tool_name)
+                for idx, item in enumerate(value)
+            ]
+            continue
+        if key in {"not", "if", "then", "else"}:
+            sanitized[key] = _sanitize_schema_node(value, path=path + (key,), tool_name=tool_name)
+            continue
+        if key == "additionalProperties":
+            if isinstance(value, (bool, dict)):
+                sanitized[key] = (
+                    value
+                    if isinstance(value, bool)
+                    else _sanitize_schema_node(value, path=path + ("additionalProperties",), tool_name=tool_name)
+                )
+                continue
+            _raise_schema_error(
+                "`additionalProperties` must be a boolean or schema object.",
+                tool_name=tool_name,
+                path=path + ("additionalProperties",),
+            )
+        if value is None and key in _SCHEMA_CONTAINER_KEYS:
+            _raise_schema_error(f"`{key}` cannot be null.", tool_name=tool_name, path=path + (key,))
+        sanitized[key] = value
+
+    properties = sanitized.get("properties")
+    required = sanitized.get("required")
+    if isinstance(properties, dict) and isinstance(required, list):
+        missing = [item for item in required if item not in properties]
+        if missing:
+            _raise_schema_error(
+                f"`required` references unknown properties: {', '.join(missing)}.",
+                tool_name=tool_name,
+                path=path + ("required",),
+            )
+    return sanitized
 
 
 def get_tool_input_schema(tool: Any) -> dict[str, Any]:
@@ -199,9 +360,12 @@ def validate_tool_input_schema(tool: Any, input_data: Any) -> list[dict[str, str
         return []
 
     try:
+        input_schema = sanitize_schema_dict(input_schema, tool_name=getattr(tool, "slug", None) or getattr(tool, "name", None))
         validator_cls = validator_for(input_schema)
         validator_cls.check_schema(input_schema)
         validator = validator_cls(input_schema)
+    except ToolSchemaValidationError as exc:
+        return [{"path": exc.schema_path or "input", "message": str(exc)}]
     except Exception as exc:
         return [{"path": "", "message": f"Invalid tool input schema: {exc}"}]
 

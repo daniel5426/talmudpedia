@@ -54,8 +54,6 @@ type ChatSidebarProps = {
 
 export function ChatSidebar({
   activeThreadId,
-  hasMoreHistory,
-  onLoadMoreHistory,
   onNewChat,
   onRemoveThread,
   onSelectThread,
@@ -106,7 +104,7 @@ export function ChatSidebar({
               <SidebarMenuButton
                 onClick={onNewChat}
                 className={cn(
-                  "cursor-pointer",
+                  "cursor-pointer bg-[#E6C97A] hover:bg-[#C9A34D] text-[#0B2A5B] hover:text-[#0B2A5B] transition-colors",
                   locale === "he" ? "text-[0.90rem] font-medium leading-6" : "text-sm",
                 )}
                 tooltip={locale === "he" ? "צ'אט חדש" : "New chat"}
@@ -129,11 +127,11 @@ export function ChatSidebar({
               >
                 {locale === "he" ? "צ'אטים קודמים" : "Previous Chats"}
               </SidebarGroupLabel>
-              <div className="min-h-0 flex-1 overflow-hidden rounded-2xl p-2">
+              <div className="min-h-0 flex-1 overflow-hidden rounded-md p-2">
                 <div
                   ref={chatListRef}
                   className={cn(
-                    "flex h-full flex-col gap-1 overflow-y-auto pl-2",
+                    "flex h-full flex-col gap-1 overflow-y-auto pl-2 no-scrollbar",
                     isRtl ? "text-right" : "text-left",
                   )}
                 >
@@ -143,7 +141,7 @@ export function ChatSidebar({
                         <SidebarMenuButton
                           onClick={() => onSelectThread(thread.id)}
                           isActive={activeThreadId === thread.id}
-                          className="group justify-between gap-2 cursor-pointer"
+                          className="group justify-between gap-2 cursor-pointer data-active:bg-muted data-active:text-sidebar-foreground hover:bg-muted/50 active:bg-muted active:text-sidebar-foreground"
                         >
                           <span className="flex-1 truncate">{thread.title}</span>
                           <DropdownMenu>

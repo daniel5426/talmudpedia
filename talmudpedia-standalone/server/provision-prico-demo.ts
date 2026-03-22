@@ -22,7 +22,6 @@ type AgentRecord = {
 
 const requiredEnvKeys = [
   "TALMUDPEDIA_BASE_URL",
-  "TALMUDPEDIA_ADMIN_BEARER_TOKEN",
   "TALMUDPEDIA_TENANT_ID",
 ] as const;
 
@@ -40,17 +39,70 @@ function normalizeBaseUrl(value: string): string {
 
 const env = {
   baseUrl: normalizeBaseUrl(requireEnv("TALMUDPEDIA_BASE_URL")),
-  adminToken: requireEnv("TALMUDPEDIA_ADMIN_BEARER_TOKEN"),
   tenantId: requireEnv("TALMUDPEDIA_TENANT_ID"),
   toolBaseUrl:
     String(process.env.PRICO_TOOL_BASE_URL || "").trim() ||
     `http://127.0.0.1:${Number(process.env.PORT || 3001)}/api/prico-tools`,
   modelId: String(process.env.PRICO_AGENT_MODEL_ID || "").trim(),
+  adminToken: String(process.env.TALMUDPEDIA_ADMIN_BEARER_TOKEN || "").trim(),
+  adminEmail: String(process.env.TALMUDPEDIA_ADMIN_EMAIL || "").trim(),
+  adminPassword: String(process.env.TALMUDPEDIA_ADMIN_PASSWORD || "").trim(),
 };
 
-function headers() {
+type TokenResponse = {
+  access_token: string;
+  token_type: string;
+};
+
+let resolvedAdminTokenPromise: Promise<string> | null = null;
+
+async function resolveAdminToken(): Promise<string> {
+  if (resolvedAdminTokenPromise) {
+    return await resolvedAdminTokenPromise;
+  }
+
+  resolvedAdminTokenPromise = (async () => {
+    if (env.adminToken) {
+      return env.adminToken;
+    }
+
+    if (!env.adminEmail || !env.adminPassword) {
+      throw new Error(
+        "Missing admin auth. Set TALMUDPEDIA_ADMIN_BEARER_TOKEN or TALMUDPEDIA_ADMIN_EMAIL plus TALMUDPEDIA_ADMIN_PASSWORD.",
+      );
+    }
+
+    const body = new URLSearchParams();
+    body.set("username", env.adminEmail);
+    body.set("password", env.adminPassword);
+
+    const response = await fetch(`${env.baseUrl}/auth/login`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body,
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`POST /auth/login failed: ${response.status} ${text}`);
+    }
+
+    const payload = (await response.json()) as TokenResponse;
+    const token = String(payload.access_token || "").trim();
+    if (!token) {
+      throw new Error("POST /auth/login succeeded but no access_token was returned.");
+    }
+    return token;
+  })();
+
+  return await resolvedAdminTokenPromise;
+}
+
+async function headers() {
   return {
-    Authorization: `Bearer ${env.adminToken}`,
+    Authorization: `Bearer ${await resolveAdminToken()}`,
     "Content-Type": "application/json",
     "X-Tenant-ID": env.tenantId,
   };
@@ -60,7 +112,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${env.baseUrl}${path}`, {
     ...init,
     headers: {
-      ...headers(),
+      ...(await headers()),
       ...(init?.headers || {}),
     },
   });
@@ -76,7 +128,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 async function maybePublish(path: string): Promise<void> {
   const response = await fetch(`${env.baseUrl}${path}`, {
     method: "POST",
-    headers: headers(),
+    headers: await headers(),
   });
 
   if (response.ok) {
@@ -214,6 +266,45 @@ function toolDefinitions() {
         additionalProperties: false,
       },
     },
+    {
+      name: "PRICO Widget Output",
+      slug: "prico-widget-output",
+      description:
+        "Render-only widget bundle contract for PRICO standalone chat responses. " +
+        "Input must be strict JSON: { rows, optional screen_title, optional screen_subtitle }. " +
+        "Each row is { widgets: [...] }. Allowed widgets: kpi, pie, bar, compare, table, note. " +
+        "Use only the documented keys. Do not invent aliases or extra keys. " +
+        "KPI = {kind,id,span,title,value}. " +
+        "Pie/bar = {kind,id,span,title,data:[{label,value}]}. " +
+        "Compare = {kind,id,span,title,leftLabel,leftValue,rightLabel,rightValue,optional delta}. " +
+        "Table = {kind,id,span,title,columns,rows}. " +
+        "Note = {kind,id,span,title,text}. " +
+        "If the JSON bundle is invalid, this tool returns HTTP 400 with code INVALID_WIDGET_DSL and structured retry hints.",
+      path: "/widget-output",
+      input_schema: {
+        type: "object",
+        properties: {
+          screen_title: { type: "string" },
+          screen_subtitle: { type: "string" },
+          rows: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                widgets: {
+                  type: "array",
+                  items: { type: "object", additionalProperties: true },
+                },
+              },
+              required: ["widgets"],
+              additionalProperties: false,
+            },
+          },
+        },
+        required: ["rows"],
+        additionalProperties: false,
+      },
+    },
   ] as const;
 }
 
@@ -276,6 +367,28 @@ function buildAgentGraph(modelId: string, toolIds: string[]) {
     "Prefer deal-specific tools when the user asks about a concrete deal id.",
     "Always surface evidence notes and any data-quality caveats returned by the tools.",
     "If the available demo data is partial or missing, say so clearly.",
+    "Use the PRICO Widget Output tool only when visuals materially help comprehension.",
+    "Do not use the PRICO Widget Output tool for purely explanatory answers.",
+    "When you use the PRICO Widget Output tool, call it at most once per answer and bundle all widgets in that one call.",
+    "If PRICO Widget Output fails with code INVALID_WIDGET_DSL, read the returned hint, fix the JSON, and retry exactly once.",
+    "If the second PRICO Widget Output attempt fails, stop retrying and answer with text only.",
+    "Keep normal assistant text as the primary answer even when you also produce widgets.",
+    "For the widget tool, pass strict JSON only, never DSL, prose, or shorthand.",
+    "Use only these widget kinds: kpi, pie, bar, compare, table, note.",
+    "Use only these keys. Do not invent synonyms. Do not add extra keys.",
+    "Bundle shape: { screen_title?: string, screen_subtitle?: string, rows: [{ widgets: Widget[] }] }.",
+    "KPI shape: { kind: 'kpi', id: string, span: number, title: string, optional subtitle: string, optional footnote: string, value: string }.",
+    "Pie shape: { kind: 'pie', id: string, span: number, title: string, optional subtitle: string, optional footnote: string, data: [{ label: string, value: number }] }.",
+    "Bar shape: { kind: 'bar', id: string, span: number, title: string, optional subtitle: string, optional footnote: string, data: [{ label: string, value: number }] }.",
+    "Compare shape: { kind: 'compare', id: string, span: number, title: string, optional subtitle: string, optional footnote: string, leftLabel: string, leftValue: number, rightLabel: string, rightValue: number, optional delta: string }.",
+    "Table shape: { kind: 'table', id: string, span: number, title: string, optional subtitle: string, optional footnote: string, columns: string[], rows: string[][] }.",
+    "Note shape: { kind: 'note', id: string, span: number, title: string, optional subtitle: string, optional footnote: string, text: string }.",
+    "Row span must be at most 12.",
+    "Widget ids must be unique within the bundle.",
+    "Table rows must have the same number of cells as columns.",
+    "Use numeric values for chart and compare numbers, not strings.",
+    "Canonical example widget payload:",
+    '{"screen_title":"Client Activity","screen_subtitle":"Last 30 days","rows":[{"widgets":[{"kind":"kpi","id":"deals","span":3,"title":"Deals","value":"24"},{"kind":"kpi","id":"volume","span":3,"title":"Volume","value":"$12.4M"},{"kind":"kpi","id":"bank","span":3,"title":"Top Bank","value":"Hapoalim"},{"kind":"kpi","id":"currency","span":3,"title":"Top Currency","value":"USD"}]},{"widgets":[{"kind":"pie","id":"banks","span":6,"title":"Bank Concentration","data":[{"label":"Hapoalim","value":45},{"label":"Discount","value":30},{"label":"Leumi","value":25}]},{"kind":"table","id":"recent","span":6,"title":"Recent Deals","columns":["deal","date","bank"],"rows":[["1","2026-03-10","Hapoalim"],["2","2026-03-09","Discount"]]}]}]}.',
   ].join(" ");
 
   return {

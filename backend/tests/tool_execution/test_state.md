@@ -1,6 +1,6 @@
 # Tool Execution Tests
 
-Last Updated: 2026-03-18
+Last Updated: 2026-03-22
 
 ## Scope
 Validate MCP/function/agent-call execution paths in the `ToolNodeExecutor`.
@@ -13,6 +13,7 @@ Validate MCP/function/agent-call execution paths in the `ToolNodeExecutor`.
 - test_reasoning_tool_call_chunk_buffering.py
 - test_coding_agent_tool_path_resolution.py
 - test_artifact_runtime_tool_execution.py
+- test_llm_provider_content_blocks.py
 
 ## Key Scenarios Covered
 - MCP JSON-RPC request shape and successful result handling
@@ -26,6 +27,8 @@ Validate MCP/function/agent-call execution paths in the `ToolNodeExecutor`.
 - Reasoning-node input coercion decodes JSON-string `value` payloads and maps embedded path aliases.
 - Reasoning-node tool-call chunk buffering merges dict-style partial args (`path` + `content`) into one valid write payload.
 - Reasoning-node tool-call finalization prefers provider fallback tool-calls when chunked args cannot be parsed as JSON.
+- LangChain adapter normalizes `content_blocks` into runtime-compatible text, reasoning, tool-call chunks, citations, and built-in/server-tool result metadata.
+- Pre-bind tool schema validation rejects null/malformed property schema nodes before provider invocation and preserves nested object/array shapes in generated LangChain args schemas.
 - Function tool execution merges `args` payload with top-level execution context (preserves runtime metadata like `run_id`).
 - Function tool execution also decodes JSON-string `args` payloads before merge.
 - Coding-agent function tools fail fast with deterministic `TOOL_INPUT_VALIDATION_FAILED` when required fields are missing.
@@ -124,6 +127,9 @@ Validate MCP/function/agent-call execution paths in the `ToolNodeExecutor`.
 - Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/tool_execution/test_function_tool_execution.py backend/tests/tool_execution/test_mcp_tool_execution.py`
 - Date/Time: 2026-03-18 19:08 Asia/Hebron
 - Result: PASS (`24 passed`)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/tool_execution/test_llm_provider_content_blocks.py backend/tests/tool_execution/test_reasoning_tool_call_chunk_buffering.py`
+- Date/Time: 2026-03-22 Asia/Hebron
+- Result: PASS (`9 passed`)
 
 ## Known Gaps / Follow-ups
 - Add coverage for `agent_call` payload mode variants beyond sync (`spawn`/future orchestration modes).

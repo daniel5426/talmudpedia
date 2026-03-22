@@ -712,35 +712,41 @@ function ToolListField({
 
     return (
         <div className="space-y-2">
-            <div className="flex flex-wrap justify-between gap-2">
-                <div className="flex flex-wrap gap-1">
-                {selectedTools.length === 0 ? (
-                    <span className="text-[11px] text-muted-foreground">No tools selected</span>
-                ) : (
-                    selectedTools.map(tool => (
-                        <Badge key={tool.id} variant="secondary" className="text-[11px] flex items-center gap-1">
+            {/* Selected tools list */}
+            {selectedTools.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                    {selectedTools.map(tool => (
+                        <Badge
+                            key={tool.id}
+                            variant="secondary"
+                            className="text-xs flex items-center gap-1 pr-1"
+                        >
+                            <Wrench className="h-3 w-3 text-muted-foreground shrink-0" />
                             {tool.name}
                             <button
                                 type="button"
-                                className="ml-1 text-muted-foreground/70 hover:text-foreground"
+                                className="ml-0.5 rounded-sm p-0.5 text-muted-foreground/70 hover:text-foreground hover:bg-muted transition-colors"
                                 onClick={() => onChange(value.filter(id => id !== tool.id))}
                                 aria-label={`Remove ${tool.name}`}
                             >
                                 <X className="h-3 w-3" />
                             </button>
                         </Badge>
-                    ))
-                )}
+                    ))}
                 </div>
-                <Button
-                    variant="outline"
-                    size="icon"
-                    className="h-7 w-7 border-dashed"
-                    onClick={() => setOpen(true)}
-                >
-                    <Plus className="h-3.5 w-3.5" />
-                </Button>
-            </div>
+            )}
+
+            {/* Add tools button */}
+            <Button
+                variant="outline"
+                size="sm"
+                className="w-full h-8 border-dashed text-xs text-muted-foreground hover:text-foreground"
+                onClick={() => setOpen(true)}
+            >
+                <Plus className="h-3.5 w-3.5 mr-1.5" />
+                {selectedTools.length === 0 ? "Add tools" : "Manage tools"}
+            </Button>
+
             <ToolPicker
                 tools={toolCatalog}
                 value={value}

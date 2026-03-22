@@ -2,6 +2,7 @@ import {
   Suggestion,
   Suggestions,
 } from "@/components/ai-elements/suggestion";
+import { Badge } from "@/components/ui/badge";
 
 import { useLocale } from "./locale-context";
 import { BotInputArea } from "./bot-input-area";
@@ -24,14 +25,20 @@ export function ChatEmptyState({
   onSubmit,
   suggestions,
 }: ChatEmptyStateProps) {
-  const { locale } = useLocale();
+  useLocale();
 
   return (
     <div className="flex h-full w-full flex-col items-center justify-center px-4">
       <div className="flex w-full max-w-3xl flex-col items-center text-center pb-28 animate-in fade-in slide-in-from-bottom-4 duration-500">
-        <p className="text-3xl font-semibold pb-6 text-foreground">
-          {locale === "he" ? "מוכן כשאתה מוכן." : "Ready when you are."}
-        </p>
+        <div className="flex justify-center pb-8">
+          <img src="/pricoLogo.png" alt="Prico AI Logo" className="h-16 md:h-20 w-auto object-contain" />
+        </div>
+
+        <a href="/widget-lab" className="mb-5">
+          <Badge variant="outline" className="rounded-full border-[#0B2A5B]/15 bg-white/80 px-3 py-1 text-[0.68rem] font-semibold tracking-[0.18em] text-[#0B2A5B] uppercase shadow-sm">
+            Open Widget Lab
+          </Badge>
+        </a>
 
         <BotInputArea
           errorMessage={errorMessage}
@@ -45,7 +52,7 @@ export function ChatEmptyState({
           {suggestions.map((suggestion) => (
             <Suggestion
               key={suggestion}
-              className="rounded-full"
+              className="rounded-md text-sm py-1 px-5 h-auto transition-colors"
               onClick={() => onSubmit({ text: suggestion, files: [] })}
               suggestion={suggestion}
             />

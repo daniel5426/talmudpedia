@@ -17,6 +17,10 @@ class LangChainProviderAdapter(LLMProvider):
         self.model_name = model
         self.api_key = api_key
         self.model_kwargs = dict(kwargs or {})
+        # Keep provider-native messages intact and let the shared runtime adapter
+        # own content-block normalization. LangChain's v1 output rewrite can fail
+        # on provider-emitted tool blocks that omit an explicit `id` key.
+        self.model_kwargs.setdefault("output_version", "v0")
         self._base_model = self._build_model()
 
     def _build_model(self) -> Any:
