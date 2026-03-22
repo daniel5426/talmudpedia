@@ -18,6 +18,7 @@ import type {
   PricoNoteWidget,
   PricoTableWidget,
   PricoWidget,
+  PricoWidgetRow,
   PricoWidgetBundle,
 } from "./contract";
 
@@ -31,6 +32,9 @@ const WIDGET_COLORS = [
 
 function spanClass(span: number): string {
   if (span === 12) return "md:col-span-12";
+  if (span === 11) return "md:col-span-11";
+  if (span === 10) return "md:col-span-10";
+  if (span === 9) return "md:col-span-9";
   if (span === 8) return "md:col-span-8";
   if (span === 7) return "md:col-span-7";
   if (span === 6) return "md:col-span-6";
@@ -40,13 +44,47 @@ function spanClass(span: number): string {
   return "md:col-span-3";
 }
 
+function normalizeRow(row: PricoWidgetRow): PricoWidgetRow {
+  const widgets = row.widgets;
+  const totalSpan = widgets.reduce((sum, widget) => sum + widget.span, 0);
+
+  if (widgets.length === 1 && widgets[0]?.span !== 12) {
+    return {
+      widgets: widgets.map((widget) => ({ ...widget, span: 12 })),
+    };
+  }
+
+  if (totalSpan >= 12) {
+    return row;
+  }
+
+  if (widgets.length === 2) {
+    return {
+      widgets: widgets.map((widget) => ({ ...widget, span: 6 })),
+    };
+  }
+
+  if (widgets.length === 3) {
+    return {
+      widgets: widgets.map((widget) => ({ ...widget, span: 4 })),
+    };
+  }
+
+  if (widgets.length === 4) {
+    return {
+      widgets: widgets.map((widget) => ({ ...widget, span: 3 })),
+    };
+  }
+
+  return row;
+}
+
 function widgetShell(widget: PricoWidget, children: React.ReactNode) {
   return (
     <section
       key={widget.id}
       className={cn(
         "col-span-1 overflow-hidden rounded-sm bg-muted/40",
-        "md:col-span-12",
         spanClass(widget.span),
       )}
     >
@@ -212,6 +250,8 @@ type PricoWidgetBundleViewProps = {
 };
 
 export function PricoWidgetBundleView({ bundle }: PricoWidgetBundleViewProps) {
+  const normalizedRows = bundle.rows.map(normalizeRow);
+
   return (
     <div className="space-y-3">
       {bundle.title || bundle.subtitle ? (
@@ -220,7 +260,7 @@ export function PricoWidgetBundleView({ bundle }: PricoWidgetBundleViewProps) {
           {bundle.subtitle ? <div className="mt-0.5 text-xs text-muted-foreground">{bundle.subtitle}</div> : null}
         </div>
       ) : null}
-      {bundle.rows.map((row, index) => (
+      {normalizedRows.map((row, index) => (
         <div key={`row-${index}`} className="grid grid-cols-1 gap-3 md:grid-cols-12">
           {row.widgets.map((widget) => renderWidget(widget))}
         </div>
