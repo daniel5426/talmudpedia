@@ -64,8 +64,9 @@ import { PromptMentionInput } from "../shared/PromptMentionInput"
 import { PromptModal } from "../shared/PromptModal"
 import { usePromptMentionModal } from "../shared/usePromptMentionModal"
 import { fillMentionInValue } from "@/lib/prompt-mentions"
-import { EndContractEditor, SetStateAssignmentsEditor, StartContractEditor, ValueRefPicker } from "./GraphContractEditors"
-import { normalizeEndConfig } from "./graph-contract"
+import { SetStateAssignmentsEditor, ValueRefPicker } from "./GraphContractEditors"
+import { ClassifyNodeSettings, EndNodeSettings, StartNodeSettings } from "./ConfigPanelSpecialized"
+import { normalizeNodeContractConfig } from "./graph-contract"
 
 
 const CATEGORY_ICONS: Record<string, React.ElementType> = {
@@ -201,6 +202,12 @@ function validateOrchestrationNodeConfig(nodeType: string, config: Record<string
     }
 
     return issues
+}
+
+function hasExplicitEndOutputConfig(config: Record<string, unknown> | undefined | null): boolean {
+    if (!config || typeof config !== "object") return false
+    return Object.prototype.hasOwnProperty.call(config, "output_schema") ||
+        Object.prototype.hasOwnProperty.call(config, "output_bindings")
 }
 
 function shouldShowField(field: ConfigFieldSpec, config: Record<string, unknown>, isAdvanced: boolean): boolean {
@@ -1058,6 +1065,7 @@ function ConfigField({
     agentOptions,
     availableVariables,
     graphAnalysis,
+    fieldContract,
     toolCatalog,
     fieldError,
     onPromptMentionClick,
@@ -1072,6 +1080,7 @@ function ConfigField({
     agentOptions: ResourceOption[]
     availableVariables?: any[]
     graphAnalysis?: AgentGraphAnalysis | null
+    fieldContract?: Record<string, unknown>
     toolCatalog: ToolDefinition[]
     fieldError?: string
     onPromptMentionClick?: (promptId: string, fieldName: string, mentionIndex: number) => void
@@ -1100,6 +1109,9 @@ function ConfigField({
     const isSpawnTargets = field.fieldType === "spawn_targets"
     const isRouteTable = field.fieldType === "route_table"
     const isValueRef = field.fieldType === "value_ref"
+    const expectedValueRefTypes = Array.isArray(fieldContract?.allowed_types)
+        ? fieldContract.allowed_types.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+        : undefined
 
     const renderInput = () => {
         if (isSelect && field.options) {
@@ -1444,6 +1456,7 @@ function ConfigField({
                 <ValueRefPicker
                     analysis={graphAnalysis}
                     value={(value as any) || null}
+                    expectedTypes={expectedValueRefTypes}
                     onChange={(next) => onChange(next)}
                 />
             )
@@ -1585,7 +1598,7 @@ export function ConfigPanel({
     graphAnalysis,
 }: ConfigPanelProps) {
     const [localConfig, setLocalConfig] = useState<Record<string, unknown>>(
-        data.config || {}
+        normalizeNodeContractConfig(data.nodeType, data.config || {})
     )
     const [models, setModels] = useState<ResourceOption[]>([])
     const [toolOptions, setToolOptions] = useState<ResourceOption[]>([])
@@ -1595,13 +1608,16 @@ export function ConfigPanel({
     const [operatorSpecs, setOperatorSpecs] = useState<AgentOperatorSpec[]>([])
     const [loading, setLoading] = useState(true)
     const [advancedMode, setAdvancedMode] = useState(false)
+    const [endSchemaConfigured, setEndSchemaConfigured] = useState(
+        hasExplicitEndOutputConfig((data.config || {}) as Record<string, unknown>)
+    )
 
     const promptMentionModal = usePromptMentionModal<{ fieldName: string; mentionIndex: number }>()
 
     const { currentTenant } = useTenant()
 
     useEffect(() => {
-        const initialConfig = { ...(data.config || {}) } as Record<string, unknown>
+        const initialConfig = normalizeNodeContractConfig(data.nodeType, data.config || {})
         if (data.nodeType === "router") {
             if (!Array.isArray(initialConfig.route_table) && Array.isArray(initialConfig.routes)) {
                 initialConfig.route_table = normalizeRouteTableRows(initialConfig.routes)
@@ -1616,6 +1632,7 @@ export function ConfigPanel({
         }
         setLocalConfig(initialConfig)
         setAdvancedMode(false)
+        setEndSchemaConfigured(hasExplicitEndOutputConfig((data.config || {}) as Record<string, unknown>))
     }, [nodeId, data.config, data.nodeType])
 
     // Load available models and tools
@@ -1751,15 +1768,27 @@ export function ConfigPanel({
             configFields: ((dynamicSpec.ui?.configFields as ConfigFieldSpec[]) || []).length > 0
                 ? (dynamicSpec.ui?.configFields as ConfigFieldSpec[])
                 : (getNodeSpec(data.nodeType)?.configFields || []),
+            inputs: Array.isArray(dynamicSpec.ui?.inputs) ? dynamicSpec.ui.inputs as AgentNodeSpec["inputs"] : undefined,
+            outputs: Array.isArray(dynamicSpec.ui?.outputs) ? dynamicSpec.ui.outputs as AgentNodeSpec["outputs"] : undefined,
+            isArtifact: Boolean(dynamicSpec.ui?.isArtifact),
+            artifactId: dynamicSpec.ui?.artifactId as string | undefined,
+            artifactVersion: dynamicSpec.ui?.artifactVersion as string | undefined,
         }
         : undefined
 
     const nodeSpec = resolvedSpec || getNodeSpec(data.nodeType)
+    const fieldContracts = dynamicSpec?.field_contracts && typeof dynamicSpec.field_contracts === "object"
+        ? dynamicSpec.field_contracts as Record<string, Record<string, unknown>>
+        : {}
     let configFields = ((data as any).configFields as ConfigFieldSpec[]) || nodeSpec?.configFields || []
     if (data.nodeType === "start" || data.nodeType === "end") {
         configFields = []
     } else if (data.nodeType === "set_state") {
         configFields = configFields.filter((field) => field.name !== "assignments")
+    } else if (data.nodeType === "classify") {
+        configFields = configFields.filter(
+            (field) => !["name", "input_source", "categories", "model_id", "instructions"].includes(field.name)
+        )
     }
     if (nodeSpec?.inputs && nodeSpec.inputs.length > 0) {
         configFields = [
@@ -1812,17 +1841,30 @@ export function ConfigPanel({
 
     const displayName = data.displayName || nodeSpec?.displayName || data.nodeType
     const category = data.category || nodeSpec?.category || "data"
-    const hasSpecialEditor = data.nodeType === "start" || data.nodeType === "end" || data.nodeType === "set_state"
+    const hasSpecialEditor =
+        data.nodeType === "start" ||
+        data.nodeType === "end" ||
+        data.nodeType === "set_state" ||
+        data.nodeType === "classify"
 
     const color = CATEGORY_COLORS[category] || CATEGORY_COLORS.data
     const Icon = CATEGORY_ICONS[data.nodeType] || CATEGORY_ICONS[category] || Hash
+
+    const [contentAnimKey, setContentAnimKey] = useState(0)
+    const prevNodeIdRef = useRef(nodeId)
+    useEffect(() => {
+        if (prevNodeIdRef.current !== nodeId) {
+            prevNodeIdRef.current = nodeId
+            setContentAnimKey((k) => k + 1)
+        }
+    }, [nodeId])
 
     return (
         <div className="flex flex-col min-w-[320px]">
             <div className="p-3.5 flex items-center justify-between shrink-0">
                 <div className="flex items-center gap-2.5">
                     <div
-                        className="w-7 h-7 rounded-lg shrink-0 flex items-center justify-center"
+                        className="w-7 h-7 rounded-lg shrink-0 flex items-center justify-center transition-colors duration-300"
                         style={{ backgroundColor: color }}
                     >
                         <Icon className="h-4 w-4 text-foreground" />
@@ -1854,7 +1896,7 @@ export function ConfigPanel({
                 </Button>
             </div>
 
-            <div className="flex-1 overflow-y-auto px-3.5 pb-6 space-y-4 max-h-[60vh] scrollbar-none">
+            <div key={contentAnimKey} className="flex-1 overflow-y-auto px-3.5 pb-6 space-y-4 max-h-[60vh] scrollbar-none animate-in fade-in slide-in-from-bottom-1 duration-200">
                 {validationIssues.length > 0 && (
                     <div className="rounded-lg border border-red-200 bg-red-50/80 p-2 space-y-1">
                         <div className="flex items-center gap-1.5 text-[11px] font-semibold text-red-700">
@@ -1879,23 +1921,39 @@ export function ConfigPanel({
                 ) : (
                     <>
                         {data.nodeType === "start" && (
-                            <StartContractEditor
+                            <StartNodeSettings
                                 value={localConfig.state_variables}
                                 onChange={(stateVariables) => handleFieldChange("state_variables", stateVariables)}
                             />
                         )}
                         {data.nodeType === "end" && (
-                            <EndContractEditor
-                                value={normalizeEndConfig(localConfig)}
+                            <EndNodeSettings
+                                value={localConfig}
                                 analysis={graphAnalysis}
+                                isConfigured={endSchemaConfigured}
                                 onChange={(next) => {
                                     const newConfig = {
                                         ...localConfig,
                                         output_schema: next.output_schema,
                                         output_bindings: next.output_bindings,
                                     }
+                                    setEndSchemaConfigured(true)
                                     setLocalConfig(newConfig)
                                     onConfigChange(nodeId, newConfig)
+                                }}
+                            />
+                        )}
+                        {data.nodeType === "classify" && (
+                            <ClassifyNodeSettings
+                                value={localConfig}
+                                analysis={graphAnalysis}
+                                models={models}
+                                inputSourceAllowedTypes={Array.isArray(fieldContracts.input_source?.allowed_types)
+                                    ? fieldContracts.input_source.allowed_types as string[]
+                                    : undefined}
+                                onChange={(next) => {
+                                    setLocalConfig(next)
+                                    onConfigChange(nodeId, next)
                                 }}
                             />
                         )}
@@ -1937,6 +1995,7 @@ export function ConfigPanel({
                                             agentOptions={agentOptions}
                                             availableVariables={availableVariables}
                                             graphAnalysis={graphAnalysis}
+                                            fieldContract={fieldContracts[field.name]}
                                             toolCatalog={toolCatalog}
                                             fieldError={fieldErrors[field.name]}
                                             onPromptMentionClick={handlePromptMentionClick}

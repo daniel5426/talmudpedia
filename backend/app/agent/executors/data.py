@@ -263,5 +263,15 @@ class SetStateNodeExecutor(BaseNodeExecutor):
         
         result_payload = {"state": updated_state, "state_types": next_state_types}
         if emitter:
+            emitter.emit_internal_event(
+                "workflow.set_state_written",
+                {
+                    "keys": sorted(result.keys()),
+                    "types": {key: next_state_types.get(key) for key in sorted(result.keys())},
+                },
+                node_id=node_id,
+                category="workflow_contract",
+            )
+        if emitter:
             emitter.emit_node_end(node_id, node_name, "set_state", {"keys": list(result.keys())})
         return result_payload

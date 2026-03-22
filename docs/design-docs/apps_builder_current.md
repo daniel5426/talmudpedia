@@ -1,6 +1,6 @@
 # Apps Builder Current
 
-Last Updated: 2026-03-17
+Last Updated: 2026-03-22
 
 This document is the canonical current-state overview for the Apps Builder system.
 
@@ -13,6 +13,7 @@ Apps Builder covers draft editing, preview runtime, coding-agent execution, revi
 - Draft mode uses one shared draft-dev workspace per app with per-user attachment sessions.
 - The shared live draft-dev workspace is the canonical editable runtime surface; saved revisions are checkpoints, not workspace drivers.
 - Preview is a live Vite dev server running directly against the shared draft-dev workspace.
+- Sprite draft-preview startup now blocks on Vite preview readiness only and defers `opencode` service startup until the coding-agent path actually needs it.
 - Sprite preview uses Vite watch polling, not a custom preview-build snapshot watcher.
 - Coding-agent runs execute against the canonical shared workspace watched by the Vite preview runtime.
 - Live manual code edits are applied incrementally into the shared draft-dev workspace instead of full-workspace resyncs on every debounce.
@@ -79,6 +80,7 @@ Apps Builder covers draft editing, preview runtime, coding-agent execution, revi
 - Draft preview responses carry off-URL auth fields such as `preview_auth_token`.
 - Preview/runtime URLs use explicit runtime query context such as `runtime_mode`, `runtime_base_path`, and `runtime_token`.
 - The preview iframe is expected to keep a stable URL across routine auth-token refreshes; token rotation should not force full iframe reloads.
+- The builder preview UI now shows a structured warmup/loading state during draft-dev bootstrap instead of a plain unavailable message while no preview URL is attached yet.
 - Draft preview session responses now expose `workspace_revision_token` instead of preview-build ids/sequences.
 - Coding-agent APIs live under `/admin/apps/{app_id}/coding-agent/v2/*`.
 - Version preview inspection lives at `GET /admin/apps/{app_id}/versions/{version_id}/preview-runtime`.

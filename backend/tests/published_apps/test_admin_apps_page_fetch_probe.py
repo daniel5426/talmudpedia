@@ -70,6 +70,7 @@ def _print_probe_summary(title: str, results: list[TimedFetch]) -> None:
 async def _run_apps_page_probe(client, headers: dict[str, str]) -> tuple[list[TimedFetch], list[TimedFetch], float]:
     paths = [
         "/admin/apps",
+        "/admin/apps/stats?days=7",
         "/agents?limit=500&compact=true",
         "/admin/apps/templates",
         "/admin/apps/auth/templates",

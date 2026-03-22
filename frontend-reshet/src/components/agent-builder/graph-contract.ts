@@ -38,6 +38,21 @@ export interface SetStateAssignment {
   value_ref?: ValueRef
 }
 
+export function normalizeValueRef(value: unknown): ValueRef | undefined {
+  if (!value || typeof value !== "object") return undefined
+  const raw = value as Record<string, unknown>
+  const key = String(raw.key || "").trim()
+  if (!key) return undefined
+  const namespace = String(raw.namespace || "state").trim() as ValueRefNamespace
+  return {
+    namespace,
+    key,
+    node_id: raw.node_id ? String(raw.node_id).trim() || undefined : undefined,
+    expected_type: raw.expected_type ? String(raw.expected_type).trim() || undefined : undefined,
+    label: raw.label ? String(raw.label).trim() || undefined : undefined,
+  }
+}
+
 export function buildDefaultEndOutputSchema(): EndOutputSchemaConfig {
   return {
     name: "workflow_result",
@@ -100,16 +115,7 @@ export function normalizeSetStateAssignments(value: unknown): SetStateAssignment
         normalized.type = (type === "array" ? "list" : type) as SetStateAssignment["type"]
       }
       if ("value" in raw) normalized.value = raw.value
-      if (raw.value_ref && typeof raw.value_ref === "object") {
-        const valueRef = raw.value_ref as Record<string, unknown>
-        normalized.value_ref = {
-          namespace: (valueRef.namespace || "state") as ValueRefNamespace,
-          key: String(valueRef.key || "").trim(),
-          node_id: valueRef.node_id ? String(valueRef.node_id) : undefined,
-          expected_type: valueRef.expected_type ? String(valueRef.expected_type) : undefined,
-          label: valueRef.label ? String(valueRef.label) : undefined,
-        }
-      }
+      normalized.value_ref = normalizeValueRef(raw.value_ref)
       return normalized
     })
     .filter((item): item is SetStateAssignment => !!item)
@@ -128,24 +134,43 @@ export function normalizeEndConfig(value: unknown): { output_schema: EndOutputSc
     ? raw.output_bindings.reduce<EndOutputBinding[]>((acc, item) => {
         if (!item || typeof item !== "object") return acc
         const binding = item as Record<string, unknown>
-        const valueRef = binding.value_ref && typeof binding.value_ref === "object"
-          ? (binding.value_ref as ValueRef)
-          : null
+        const valueRef = normalizeValueRef(binding.value_ref)
         if (!valueRef) return acc
         acc.push({
           json_pointer: String(binding.json_pointer || "").trim(),
-          value_ref: {
-            namespace: (valueRef.namespace || "state") as ValueRefNamespace,
-            key: String(valueRef.key || "").trim(),
-            node_id: valueRef.node_id ? String(valueRef.node_id) : undefined,
-            expected_type: valueRef.expected_type ? String(valueRef.expected_type) : undefined,
-            label: valueRef.label ? String(valueRef.label) : undefined,
-          },
+          value_ref: valueRef,
         })
         return acc
       }, [])
     : buildDefaultEndOutputBindings()
   return { output_schema: outputSchema, output_bindings: outputBindings }
+}
+
+export function normalizeNodeContractConfig(nodeType: string, value: unknown): Record<string, unknown> {
+  const config = value && typeof value === "object" ? { ...(value as Record<string, unknown>) } : {}
+
+  if (nodeType === "start") {
+    config.state_variables = normalizeStateVariables(config.state_variables)
+  }
+
+  if (nodeType === "set_state") {
+    config.assignments = normalizeSetStateAssignments(config.assignments)
+  }
+
+  if (nodeType === "classify" && config.input_source && typeof config.input_source === "object") {
+    const normalized = normalizeValueRef(config.input_source)
+    if (normalized) {
+      config.input_source = normalized
+    }
+  }
+
+  if (nodeType === "end") {
+    const normalized = normalizeEndConfig(config)
+    config.output_schema = normalized.output_schema
+    config.output_bindings = normalized.output_bindings
+  }
+
+  return config
 }
 
 export interface ValueRefOption extends AgentGraphInventoryItem {

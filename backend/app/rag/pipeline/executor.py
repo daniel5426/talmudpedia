@@ -102,23 +102,26 @@ class PipelineExecutor:
                         # Source node - use job input params
                         input_data = self._get_runtime_input(job.input_params, step_id)
                     else:
-                        # Gather inputs from dependencies
-                        collected_data = []
-                        
-                        for dep_id in depends_on:
-                            if dep_id in results and results[dep_id].success:
-                                 res = results[dep_id]
-                                 if res.data is not None:
-                                     if isinstance(res.data, list):
-                                         collected_data.extend(res.data)
-                                     else:
-                                         collected_data.append(res.data)
-                                 
-                                 # Merge metadata
-                                 input_metadata.update(res.metadata)
-                        
-                        input_data = collected_data
-                    
+                        successful_dependencies = [
+                            results[dep_id]
+                            for dep_id in depends_on
+                            if dep_id in results and results[dep_id].success
+                        ]
+                        for res in successful_dependencies:
+                            input_metadata.update(res.metadata)
+
+                        if len(successful_dependencies) == 1:
+                            input_data = successful_dependencies[0].data
+                        else:
+                            collected_data = []
+                            for res in successful_dependencies:
+                                if res.data is not None:
+                                    if isinstance(res.data, list):
+                                        collected_data.extend(res.data)
+                                    else:
+                                        collected_data.append(res.data)
+                            input_data = collected_data
+
                     if step_exec:
                         # Log input data (be careful with size?)
                         # For now logging it all, maybe need truncation later
@@ -190,7 +193,19 @@ class PipelineExecutor:
 
                     # If this is an OUTPUT node (retrieval result) or STORAGE node, capture its output
                     if spec.category == OperatorCategory.OUTPUT:
-                        job.output = output.data
+                        terminal_output = {
+                            "final_output": output.data,
+                            "output_step_id": step_id,
+                            "output_operator": op_id,
+                            "metadata": output.metadata if isinstance(output.metadata, dict) else {},
+                        }
+                        if isinstance(output.data, dict):
+                            terminal_output.update(output.data)
+                        elif isinstance(output.data, list):
+                            terminal_output["results"] = output.data
+                        else:
+                            terminal_output["result"] = output.data
+                        job.output = terminal_output
                     elif spec.category == OperatorCategory.STORAGE:
                         # For storage nodes, we might want to capture metadata or counts
                         if job.output is None:

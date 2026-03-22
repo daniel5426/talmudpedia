@@ -81,6 +81,34 @@ class ConfigFieldSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+def data_type_contract_schema(data_type: DataType) -> Optional[Dict[str, Any]]:
+    if data_type == DataType.NONE:
+        return None
+    if data_type == DataType.QUERY:
+        return {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string"},
+                "query": {"type": "string"},
+                "filters": {"type": "object"},
+                "top_k": {"type": "integer"},
+            },
+            "additionalProperties": True,
+        }
+    if data_type in {
+        DataType.RAW_DOCUMENTS,
+        DataType.NORMALIZED_DOCUMENTS,
+        DataType.ENRICHED_DOCUMENTS,
+        DataType.CHUNKS,
+        DataType.SEARCH_RESULTS,
+        DataType.RERANKED_RESULTS,
+    }:
+        return {"type": "array"}
+    if data_type in {DataType.EMBEDDINGS, DataType.VECTORS, DataType.QUERY_EMBEDDINGS}:
+        return {"type": ["array", "object"]}
+    return {"type": ["object", "array", "string", "number", "boolean"]}
+
+
 class OperatorSpec(BaseModel):
     """
     Full specification of an operator.
@@ -133,6 +161,16 @@ class OperatorSpec(BaseModel):
 
     def get_required_field_names(self) -> Set[str]:
         return {f.name for f in self.required_config}
+
+    def resolved_input_schema(self) -> Optional[Dict[str, Any]]:
+        if isinstance(self.input_schema, dict) and self.input_schema:
+            return dict(self.input_schema)
+        return data_type_contract_schema(self.input_type)
+
+    def resolved_output_schema(self) -> Optional[Dict[str, Any]]:
+        if isinstance(self.output_schema, dict) and self.output_schema:
+            return dict(self.output_schema)
+        return data_type_contract_schema(self.output_type)
 
     def validate_config(self, config: Dict[str, Any]) -> List[str]:
         """Validate a configuration against this operator's spec."""

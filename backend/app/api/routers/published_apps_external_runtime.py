@@ -5,6 +5,7 @@ from urllib.parse import urlparse
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import (
@@ -28,7 +29,9 @@ from app.api.routers.published_apps_public import (
     _stream_chat_for_app,
 )
 from app.db.postgres.models.agent_threads import AgentThreadSurface
+from app.db.postgres.models.published_app_analytics import PublishedAppAnalyticsSurface
 from app.db.postgres.session import get_db
+from app.services.published_app_analytics_service import PublishedAppAnalyticsService
 from app.services.published_app_auth_service import PublishedAppAuthError, PublishedAppAuthService
 from app.services.runtime_attachment_service import RuntimeAttachmentOwner
 from app.services.thread_service import ThreadService
@@ -73,10 +76,21 @@ async def get_external_runtime_bootstrap(
     app_slug: str,
     request: Request,
     db: AsyncSession = Depends(get_db),
+    principal: Optional[Dict[str, Any]] = Depends(get_optional_published_app_principal),
 ):
     app = await _assert_published(db, app_slug)
+    matched_principal = _assert_principal_matches_app(app, principal)
     revision = await _get_published_ui_revision(db, app)
-    return _build_external_runtime_bootstrap(request=request, app=app, revision=revision)
+    response = JSONResponse(_build_external_runtime_bootstrap(request=request, app=app, revision=revision).model_dump())
+    await PublishedAppAnalyticsService(db).record_bootstrap(
+        request=request,
+        response=response,
+        app=app,
+        surface=PublishedAppAnalyticsSurface.external_runtime,
+        app_account_id=UUID(str(matched_principal["app_account_id"])) if matched_principal and matched_principal.get("app_account_id") else None,
+        session_id=UUID(str(matched_principal["session_id"])) if matched_principal and matched_principal.get("session_id") else None,
+    )
+    return response
 
 
 @router.post("/{app_slug}/auth/signup")

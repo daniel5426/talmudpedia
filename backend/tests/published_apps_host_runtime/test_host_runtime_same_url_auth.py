@@ -1,10 +1,12 @@
 import pytest
 from sqlalchemy import func, select
 
-from app.db.postgres.models.agent_threads import AgentThread
+from app.db.postgres.models.agent_threads import AgentThread, AgentThreadSurface, AgentThreadTurnStatus
+from app.db.postgres.models.agents import AgentRun
 from app.db.postgres.models.identity import User
 from app.db.postgres.models.published_apps import PublishedAppAccount, PublishedAppRevision, PublishedAppRevisionKind
 from app.services.security_bootstrap_service import SecurityBootstrapService
+from app.services.thread_service import ThreadService
 from tests.published_apps._helpers import seed_admin_tenant_and_agent, seed_published_app
 
 
@@ -259,6 +261,109 @@ async def test_host_thread_detail_is_scoped_to_app_account(client, db_session, m
         headers=_host_headers(app.slug),
     )
     assert thread_resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_host_thread_detail_includes_public_run_events(client, db_session, monkeypatch):
+    tenant, owner, _, agent = await seed_admin_tenant_and_agent(db_session)
+    app = await seed_published_app(
+        db_session,
+        tenant.id,
+        agent.id,
+        owner.id,
+        slug="thread-history-events-app",
+        auth_enabled=True,
+        auth_providers=["password"],
+    )
+
+    signup_resp = await client.post(
+        "/_talmudpedia/auth/signup",
+        headers=_host_headers(app.slug),
+        json={"email": "history-events@example.com", "password": "secret123"},
+    )
+    assert signup_resp.status_code == 200
+    signup_user = (
+        await db_session.execute(select(User).where(User.email == "history-events@example.com"))
+    ).scalar_one()
+    bootstrap = SecurityBootstrapService(db_session)
+    await bootstrap.ensure_default_roles(tenant.id)
+    await bootstrap.ensure_member_assignment(
+        tenant_id=tenant.id,
+        user_id=signup_user.id,
+        assigned_by=owner.id,
+    )
+    await db_session.commit()
+
+    async def fake_list_public_run_events(*, db, run_id):
+        return [
+            {
+                "version": "run-stream.v2",
+                "seq": 1,
+                "ts": "2026-03-22T00:00:00Z",
+                "event": "reasoning.update",
+                "run_id": str(run_id),
+                "stage": "assistant",
+                "payload": {"content": "Checking context"},
+                "diagnostics": [],
+            }
+        ]
+
+    monkeypatch.setattr(
+        "app.api.routers.published_apps_host_runtime.list_public_run_events",
+        fake_list_public_run_events,
+    )
+
+    app_account = (
+        await db_session.execute(
+            select(PublishedAppAccount).where(
+                PublishedAppAccount.published_app_id == app.id,
+                PublishedAppAccount.email == "history-events@example.com",
+            )
+        )
+    ).scalar_one()
+
+    thread_service = ThreadService(db_session)
+    resolved = await thread_service.resolve_or_create_thread(
+        tenant_id=tenant.id,
+        user_id=None,
+        app_account_id=app_account.id,
+        agent_id=agent.id,
+        published_app_id=app.id,
+        surface=AgentThreadSurface.published_host_runtime,
+        thread_id=None,
+        input_text="hydrate this thread",
+    )
+    run = AgentRun(
+        tenant_id=tenant.id,
+        agent_id=agent.id,
+        initiator_user_id=owner.id,
+        thread_id=resolved.thread.id,
+        input_params={"input": "hydrate this thread"},
+    )
+    db_session.add(run)
+    await db_session.flush()
+    await thread_service.start_turn(
+        thread_id=resolved.thread.id,
+        run_id=run.id,
+        user_input_text="hydrate this thread",
+    )
+    await thread_service.complete_turn(
+        run_id=run.id,
+        status=AgentThreadTurnStatus.completed,
+        assistant_output_text="History response",
+        usage_tokens=0,
+        metadata={"final_output": "History response"},
+    )
+    await db_session.commit()
+
+    thread_resp = await client.get(
+        f"/_talmudpedia/threads/{resolved.thread.id}",
+        headers=_host_headers(app.slug),
+    )
+    assert thread_resp.status_code == 200
+    payload = thread_resp.json()
+    assert len(payload["turns"]) == 1
+    assert payload["turns"][0]["run_events"][0]["event"] == "reasoning.update"
 
 
 @pytest.mark.asyncio

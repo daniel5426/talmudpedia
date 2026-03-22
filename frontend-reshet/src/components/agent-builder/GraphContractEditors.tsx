@@ -1,7 +1,7 @@
 "use client"
 
-import { useMemo } from "react"
-import { Plus, Trash2 } from "lucide-react"
+import { useEffect, useMemo, useRef, useState } from "react"
+import { Braces, Check, ChevronDown, Plus, Search, Trash2 } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -39,6 +39,24 @@ function decodeValueRef(raw: string): ValueRef | null {
   }
 }
 
+function getValueRefOptionMeta(
+  analysis: AgentGraphAnalysis | null | undefined,
+  value: ValueRef | null | undefined,
+) {
+  if (!value) return null
+  const groups = getValueRefGroups(analysis)
+  for (const group of groups) {
+    const option = group.options.find(
+      (candidate) =>
+        candidate.value_ref.namespace === value.namespace &&
+        candidate.value_ref.key === value.key &&
+        candidate.value_ref.node_id === value.node_id,
+    )
+    if (option) return option
+  }
+  return null
+}
+
 export function ValueRefPicker({
   analysis,
   value,
@@ -51,27 +69,121 @@ export function ValueRefPicker({
   expectedTypes?: string[]
 }) {
   const groups = useMemo(() => getValueRefGroups(analysis), [analysis])
+  const rootRef = useRef<HTMLDivElement | null>(null)
+  const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState("")
   const selected = encodeValueRef(value || undefined)
+  const selectedMeta = useMemo(() => getValueRefOptionMeta(analysis, value), [analysis, value])
+
+  useEffect(() => {
+    if (!open) setQuery("")
+  }, [open])
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false)
+    }
+    document.addEventListener("mousedown", handleClickOutside)
+    return () => document.removeEventListener("mousedown", handleClickOutside)
+  }, [])
+
+  const filteredGroups = useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase()
+    return groups
+      .map((group) => ({
+        ...group,
+        options: group.options.filter((option) => {
+          if (!isValueRefTypeCompatible(option.type, expectedTypes)) return false
+          if (!normalizedQuery) return true
+          const haystack = `${option.label || option.key} ${option.key} ${group.label} ${option.type}`.toLowerCase()
+          return haystack.includes(normalizedQuery)
+        }),
+      }))
+      .filter((group) => group.options.length > 0)
+  }, [expectedTypes, groups, query])
 
   return (
-    <select
-      value={selected}
-      onChange={(event) => onChange(decodeValueRef(event.target.value))}
-      className="h-9 w-full rounded-lg border-none bg-muted/40 px-3 text-[13px] focus:outline-none"
-    >
-      <option value="">Select a value...</option>
-      {groups.map((group) => (
-        <optgroup key={group.label} label={group.label}>
-          {group.options
-            .filter((option) => isValueRefTypeCompatible(option.type, expectedTypes))
-            .map((option) => (
-              <option key={`${group.label}:${option.node_id || "global"}:${option.key}`} value={encodeValueRef(option.value_ref)}>
-                {option.label || option.key} [{option.type}]
-              </option>
-            ))}
-        </optgroup>
-      ))}
-    </select>
+    <div ref={rootRef} className="relative w-full">
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-haspopup="listbox"
+        onClick={() => setOpen((current) => !current)}
+        className="flex h-9 w-full items-center justify-between gap-2 rounded-lg bg-muted/40 px-3 text-left border-none shadow-none transition hover:bg-muted/60"
+      >
+        {selectedMeta ? (
+          <div className="flex min-w-0 items-center gap-2">
+            <Braces className="h-3 w-3 shrink-0 text-emerald-600" />
+            <span className="truncate text-[13px] font-medium text-foreground">{selectedMeta.label || selectedMeta.key}</span>
+          </div>
+        ) : (
+          <span className="text-[13px] text-muted-foreground/40">Select value...</span>
+        )}
+        <div className="flex items-center gap-2">
+          {selectedMeta?.type ? (
+            <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground/60">
+              {selectedMeta.type}
+            </span>
+          ) : null}
+          <ChevronDown className={`h-3 w-3 text-muted-foreground/50 transition ${open ? "rotate-180" : ""}`} />
+        </div>
+      </button>
+
+      {open ? (
+        <div className="absolute left-0 top-[calc(100%+4px)] z-[60] w-full rounded-lg border border-border/60 bg-popover p-1.5 shadow-xl">
+          <div className="relative mb-1.5">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground/50" />
+            <Input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Search..."
+              className="h-8 rounded-md border-none bg-muted/40 pl-7 pr-2 text-[12px] shadow-none focus-visible:ring-1 focus-visible:ring-offset-0"
+            />
+          </div>
+
+          <div className="max-h-48 space-y-1.5 overflow-y-auto">
+            {filteredGroups.length === 0 ? (
+              <div className="px-2 py-3 text-[12px] text-muted-foreground/50">No matching values</div>
+            ) : (
+              filteredGroups.map((group) => (
+                <div key={group.label} className="space-y-0.5">
+                  <div className="px-2 pt-1 text-[9px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/50">
+                    {group.label}
+                  </div>
+                  {group.options.map((option) => {
+                    const encoded = encodeValueRef(option.value_ref)
+                    const isSelected = encoded === selected
+                    return (
+                      <button
+                        key={`${group.label}:${option.node_id || "global"}:${option.key}`}
+                        type="button"
+                        role="option"
+                        aria-selected={isSelected}
+                        onClick={() => {
+                          onChange(decodeValueRef(encoded))
+                          setOpen(false)
+                        }}
+                        className={`flex w-full items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left transition ${
+                          isSelected ? "bg-muted" : "hover:bg-muted/50"
+                        }`}
+                      >
+                        <div className="flex min-w-0 items-center gap-2">
+                          <Braces className={`h-3 w-3 shrink-0 ${isSelected ? "text-emerald-600" : "text-muted-foreground/40"}`} />
+                          <span className="truncate text-[12px] font-medium text-foreground">{option.label || option.key}</span>
+                        </div>
+                        <span className="text-[9px] font-medium uppercase tracking-wide text-muted-foreground/50">
+                          {option.type}
+                        </span>
+                      </button>
+                    )
+                  })}
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      ) : null}
+    </div>
   )
 }
 
@@ -218,6 +330,13 @@ export function EndContractEditor({
 }) {
   const normalized = normalizeEndConfig(value)
   const simpleRows = schemaToSimpleRows(normalized.output_schema.schema, normalized.output_bindings)
+  const [advancedDraft, setAdvancedDraft] = useState(
+    JSON.stringify(normalized.output_schema.schema || buildDefaultEndOutputSchema().schema, null, 2),
+  )
+
+  useEffect(() => {
+    setAdvancedDraft(JSON.stringify(normalized.output_schema.schema || buildDefaultEndOutputSchema().schema, null, 2))
+  }, [normalized.output_schema.schema])
 
   const updateSimpleRows = (rows: SimpleSchemaProperty[]) => {
     const outputSchema = simpleRowsToSchema(rows, normalized.output_schema.name)
@@ -231,6 +350,7 @@ export function EndContractEditor({
   }
 
   const setAdvancedSchema = (rawSchema: string) => {
+    setAdvancedDraft(rawSchema)
     try {
       const parsed = JSON.parse(rawSchema)
       onChange({
@@ -248,166 +368,205 @@ export function EndContractEditor({
 
   return (
     <div className="space-y-4">
-      <div className="space-y-2 rounded-xl border border-border/40 bg-muted/20 p-3">
-        <Label className="text-[11px] font-bold uppercase tracking-tight text-foreground/50">Schema</Label>
-        <div className="grid grid-cols-[1fr_auto] gap-2">
-          <Input
-            value={normalized.output_schema.name || ""}
-            onChange={(event) =>
-              onChange({
-                ...normalized,
-                output_schema: { ...normalized.output_schema, name: event.target.value },
-              })
-            }
-            placeholder="workflow_result"
-            className="h-8 bg-background/60 text-[12px]"
-          />
-          <select
-            value={normalized.output_schema.mode}
-            onChange={(event) =>
-              onChange({
-                ...normalized,
-                output_schema: { ...normalized.output_schema, mode: event.target.value as "simple" | "advanced" },
-              })
-            }
-            className="h-8 rounded-md border border-border/50 bg-background px-2 text-[12px]"
-          >
-            <option value="simple">Simple</option>
-            <option value="advanced">Advanced</option>
-          </select>
+      <div className="flex items-start justify-between gap-4">
+        <div className="space-y-0.5">
+          <h2 className="text-[13px] font-semibold text-foreground">Structured output (JSON)</h2>
+          <p className="text-[10px] text-muted-foreground/60">
+            The model will generate a JSON object that matches this schema.
+          </p>
         </div>
+        <div className="rounded-lg bg-muted/40 p-0.5">
+          <div className="grid grid-cols-2 gap-0.5">
+            {(["simple", "advanced"] as const).map((mode) => {
+              const active = normalized.output_schema.mode === mode
+              return (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() =>
+                    onChange({
+                      ...normalized,
+                      output_schema: { ...normalized.output_schema, mode },
+                    })
+                  }
+                  className={`rounded-md px-3 py-1.5 text-[11px] font-medium transition ${
+                    active ? "bg-background text-foreground shadow-sm" : "text-muted-foreground/60"
+                  }`}
+                >
+                  {mode[0].toUpperCase() + mode.slice(1)}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      </div>
 
-        {normalized.output_schema.mode === "advanced" ? (
+      {normalized.output_schema.mode === "advanced" ? (
+        <div className="space-y-3">
           <Textarea
-            defaultValue={JSON.stringify(normalized.output_schema.schema || buildDefaultEndOutputSchema().schema, null, 2)}
+            value={advancedDraft}
             onChange={(event) => setAdvancedSchema(event.target.value)}
-            className="min-h-[180px] bg-background/60 font-mono text-[12px]"
+            className="min-h-[280px] resize-none rounded-lg bg-muted/40 border-none px-3 py-2.5 font-mono text-[13px] leading-6 shadow-none focus-visible:ring-1 focus-visible:ring-offset-0"
           />
-        ) : (
           <div className="space-y-2">
-            {simpleRows.length === 0 ? (
-              <div className="text-[11px] text-muted-foreground">No output properties yet.</div>
-            ) : (
-              simpleRows.map((row, index) => (
-                <div key={`end-row-${index}`} className="grid grid-cols-[1.2fr_0.9fr_1.6fr_auto] gap-2 rounded-lg bg-background/60 p-2">
+            <div className="flex items-center justify-between px-0.5">
+              <Label className="text-[11px] font-bold uppercase tracking-tight text-foreground/50">Bindings</Label>
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() =>
+                  onChange({
+                    ...normalized,
+                    output_bindings: [
+                      ...normalized.output_bindings,
+                      { json_pointer: "/", value_ref: buildDefaultEndOutputBindings()[0].value_ref },
+                    ],
+                  })
+                }
+                className="h-7 rounded-lg px-2.5 text-[11px] text-muted-foreground hover:text-foreground"
+              >
+                <Plus className="mr-1 h-3 w-3" />
+                Add binding
+              </Button>
+            </div>
+            <div className="space-y-1.5">
+              {normalized.output_bindings.map((binding, index) => (
+                <div
+                  key={`binding-${index}`}
+                  className="grid grid-cols-[1fr_1.2fr_auto] gap-2 rounded-lg bg-muted/40 p-2"
+                >
                   <Input
-                    value={row.key}
+                    value={binding.json_pointer}
                     onChange={(event) => {
-                      const next = [...simpleRows]
-                      next[index] = { ...next[index], key: event.target.value }
-                      updateSimpleRows(next)
+                      const next = [...normalized.output_bindings]
+                      next[index] = { ...next[index], json_pointer: event.target.value }
+                      onChange({ ...normalized, output_bindings: next })
                     }}
-                    placeholder="property_name"
-                    className="h-8 text-[12px]"
+                    placeholder="/property"
+                    className="h-9 bg-background/60 border-none rounded-lg text-[13px] focus-visible:ring-1 focus-visible:ring-offset-0 placeholder:text-muted-foreground/40"
                   />
-                  <select
-                    value={row.type}
-                    onChange={(event) => {
-                      const next = [...simpleRows]
-                      next[index] = { ...next[index], type: event.target.value }
-                      updateSimpleRows(next)
-                    }}
-                    className="h-8 rounded-md border border-border/50 bg-background px-2 text-[12px]"
-                  >
-                    {STATE_TYPE_OPTIONS.map((option) => (
-                      <option key={option} value={option === "list" ? "array" : option}>
-                        {option}
-                      </option>
-                    ))}
-                  </select>
                   <ValueRefPicker
                     analysis={analysis}
-                    value={row.binding || undefined}
-                    expectedTypes={[row.type === "array" ? "list" : row.type]}
-                    onChange={(binding) => {
-                      const next = [...simpleRows]
-                      next[index] = { ...next[index], binding }
-                      updateSimpleRows(next)
+                    value={binding.value_ref}
+                    onChange={(valueRef) => {
+                      const next = [...normalized.output_bindings]
+                      next[index] = { ...next[index], value_ref: valueRef || buildDefaultEndOutputBindings()[0].value_ref }
+                      onChange({ ...normalized, output_bindings: next })
                     }}
                   />
                   <Button
                     type="button"
                     variant="ghost"
                     size="icon"
-                    className="h-8 w-8"
-                    onClick={() => updateSimpleRows(simpleRows.filter((_, rowIndex) => rowIndex !== index))}
+                    className="h-9 w-9 rounded-lg text-muted-foreground/50 hover:text-foreground"
+                    onClick={() =>
+                      onChange({
+                        ...normalized,
+                        output_bindings: normalized.output_bindings.filter((_, bindingIndex) => bindingIndex !== index),
+                      })
+                    }
                   >
-                    <Trash2 className="h-3.5 w-3.5" />
+                    <Trash2 className="h-3 w-3" />
                   </Button>
                 </div>
-              ))
-            )}
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="h-8 text-[11px]"
-              onClick={() => updateSimpleRows([...simpleRows, { key: "", type: "string", binding: null }])}
-            >
-              <Plus className="mr-1 h-3 w-3" />
-              Add Property
-            </Button>
+              ))}
+            </div>
           </div>
-        )}
-      </div>
-
-      {normalized.output_schema.mode === "advanced" && (
-        <div className="space-y-2 rounded-xl border border-border/40 bg-muted/20 p-3">
-          <div className="flex items-center justify-between">
-            <Label className="text-[11px] font-bold uppercase tracking-tight text-foreground/50">Bindings</Label>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="h-7 text-[11px]"
-              onClick={() =>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          <div className="space-y-1.5 px-0.5">
+            <Label className="text-[11px] font-bold uppercase tracking-tight text-foreground/50">Name</Label>
+            <Input
+              value={normalized.output_schema.name || ""}
+              onChange={(event) =>
                 onChange({
                   ...normalized,
-                  output_bindings: [...normalized.output_bindings, { json_pointer: "/", value_ref: buildDefaultEndOutputBindings()[0].value_ref }],
+                  output_schema: { ...normalized.output_schema, name: event.target.value },
                 })
               }
-            >
-              <Plus className="mr-1 h-3 w-3" />
-              Add
-            </Button>
+              placeholder="workflow_result"
+              className="h-9 bg-muted/40 border-none rounded-lg text-[13px] focus-visible:ring-1 focus-visible:ring-offset-0 placeholder:text-muted-foreground/40"
+            />
           </div>
-          {normalized.output_bindings.map((binding, index) => (
-            <div key={`binding-${index}`} className="grid grid-cols-[1fr_1.4fr_auto] gap-2 rounded-lg bg-background/60 p-2">
-              <Input
-                value={binding.json_pointer}
-                onChange={(event) => {
-                  const next = [...normalized.output_bindings]
-                  next[index] = { ...next[index], json_pointer: event.target.value }
-                  onChange({ ...normalized, output_bindings: next })
-                }}
-                placeholder="/property"
-                className="h-8 text-[12px]"
-              />
-              <ValueRefPicker
-                analysis={analysis}
-                value={binding.value_ref}
-                onChange={(valueRef) => {
-                  const next = [...normalized.output_bindings]
-                  next[index] = { ...next[index], value_ref: valueRef || buildDefaultEndOutputBindings()[0].value_ref }
-                  onChange({ ...normalized, output_bindings: next })
-                }}
-              />
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8"
-                onClick={() =>
-                  onChange({
-                    ...normalized,
-                    output_bindings: normalized.output_bindings.filter((_, bindingIndex) => bindingIndex !== index),
-                  })
-                }
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-              </Button>
+
+          <div className="space-y-2">
+            <Label className="text-[11px] font-bold uppercase tracking-tight text-foreground/50 px-0.5">Properties</Label>
+            <div>
+              <div className="grid grid-cols-[1.05fr_120px_1.15fr_36px] gap-2 px-1 pb-2 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/50">
+                <div>Name</div>
+                <div>Type</div>
+                <div>Value</div>
+                <div />
+              </div>
+
+              <div className="space-y-1.5">
+                {simpleRows.map((row, index) => (
+                  <div key={`end-row-${index}`} className="grid grid-cols-[1.05fr_120px_1.15fr_36px] gap-2">
+                    <div className="flex items-center gap-2">
+                      <div className="flex h-6 w-6 items-center justify-center rounded-md bg-muted text-muted-foreground">
+                        <Braces className="h-3 w-3" />
+                      </div>
+                      <Input
+                        value={row.key}
+                        onChange={(event) => {
+                          const next = [...simpleRows]
+                          next[index] = { ...next[index], key: event.target.value }
+                          updateSimpleRows(next)
+                        }}
+                        placeholder="property name"
+                        className="h-9 bg-muted/40 border-none rounded-lg text-[13px] focus-visible:ring-1 focus-visible:ring-offset-0 placeholder:text-muted-foreground/40"
+                      />
+                    </div>
+                    <select
+                      value={row.type}
+                      onChange={(event) => {
+                        const next = [...simpleRows]
+                        next[index] = { ...next[index], type: event.target.value }
+                        updateSimpleRows(next)
+                      }}
+                      className="h-9 rounded-lg bg-muted/40 border-none px-3 text-[13px] text-foreground outline-none focus:ring-1 focus:ring-offset-0"
+                    >
+                      {STATE_TYPE_OPTIONS.map((option) => (
+                        <option key={option} value={option === "list" ? "array" : option}>
+                          {option === "list" ? "list" : option}
+                        </option>
+                      ))}
+                    </select>
+                    <ValueRefPicker
+                      analysis={analysis}
+                      value={row.binding || undefined}
+                      expectedTypes={[row.type === "array" ? "list" : row.type]}
+                      onChange={(binding) => {
+                        const next = [...simpleRows]
+                        next[index] = { ...next[index], binding }
+                        updateSimpleRows(next)
+                      }}
+                    />
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-9 w-9 rounded-lg text-muted-foreground/50 hover:text-foreground"
+                      onClick={() => updateSimpleRows(simpleRows.filter((_, rowIndex) => rowIndex !== index))}
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </Button>
+                  </div>
+                ))}
+
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => updateSimpleRows([...simpleRows, { key: "", type: "string", binding: null }])}
+                  className="h-7 rounded-lg px-2.5 text-[11px] text-muted-foreground hover:text-foreground"
+                >
+                  <Plus className="mr-1 h-3 w-3" />
+                  Add property
+                </Button>
+              </div>
             </div>
-          ))}
+          </div>
         </div>
       )}
     </div>

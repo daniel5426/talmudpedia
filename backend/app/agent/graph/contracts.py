@@ -54,6 +54,51 @@ def schema_to_value_type(schema: Any) -> str:
     return "unknown"
 
 
+def contract_fields_from_schema(
+    schema: Any,
+    *,
+    fallback_key: str = "result",
+    labels_by_key: dict[str, str] | None = None,
+) -> list[dict[str, Any]]:
+    if not isinstance(schema, dict):
+        return []
+
+    labels = labels_by_key or {}
+    schema_type = schema_to_value_type(schema)
+    properties = schema.get("properties") if isinstance(schema.get("properties"), dict) else None
+
+    if schema_type == "object" and properties:
+        fields: list[dict[str, Any]] = []
+        for key, prop_schema in properties.items():
+            normalized_key = str(key or "").strip()
+            if not normalized_key:
+                continue
+            prop_dict = prop_schema if isinstance(prop_schema, dict) else {}
+            fields.append(
+                {
+                    "key": normalized_key,
+                    "type": schema_to_value_type(prop_dict),
+                    "label": str(labels.get(normalized_key) or prop_dict.get("title") or normalized_key).strip(),
+                }
+            )
+        if fields:
+            return fields
+
+    if not fallback_key:
+        return []
+
+    normalized_fallback = str(fallback_key).strip()
+    if not normalized_fallback:
+        return []
+    return [
+        {
+            "key": normalized_fallback,
+            "type": schema_type,
+            "label": str(labels.get(normalized_fallback) or normalized_fallback).strip(),
+        }
+    ]
+
+
 def value_types_compatible(expected: Any, actual: Any) -> bool:
     expected_type = normalize_value_type(expected)
     actual_type = normalize_value_type(actual)
@@ -186,6 +231,22 @@ def get_node_output_contract(
     config = dict(config or {})
     contract = operator_spec.output_contract if operator_spec and isinstance(getattr(operator_spec, "output_contract", None), dict) else {}
     fields = contract.get("fields") if isinstance(contract.get("fields"), list) else None
+
+    if fields is None:
+        artifact_output_schema = config.get("_artifact_output_schema")
+        artifact_ui = config.get("_artifact_node_ui") if isinstance(config.get("_artifact_node_ui"), dict) else {}
+        artifact_output_hints = artifact_ui.get("outputs") if isinstance(artifact_ui.get("outputs"), list) else []
+        artifact_labels = {
+            str(item.get("name") or "").strip(): str(item.get("label") or item.get("title") or item.get("name") or "").strip()
+            for item in artifact_output_hints
+            if isinstance(item, dict) and str(item.get("name") or "").strip()
+        }
+        if isinstance(artifact_output_schema, dict):
+            fields = contract_fields_from_schema(
+                artifact_output_schema,
+                fallback_key="result",
+                labels_by_key=artifact_labels,
+            )
 
     if fields is None:
         if node_type == "agent":
@@ -418,6 +479,10 @@ def build_graph_analysis(
             config=node.config if isinstance(node.config, dict) else {},
             operator_spec=operator_spec,
         )
+        if output_contract["fields"] and not operator_contracts[normalized_type]["output_contract"]:
+            operator_contracts[normalized_type]["output_contract"] = {
+                "fields": [dict(item) for item in output_contract["fields"]],
+            }
         node_output_lookup[node.id] = {item["key"]: item for item in output_contract["fields"]}
         if output_contract["fields"]:
             node_output_inventory.append(output_contract)
@@ -672,71 +737,123 @@ def _assign_json_pointer(target: Any, pointer: str, value: Any) -> None:
         raise ValueError(f"Cannot assign json pointer {pointer}")
 
 
-def extract_runtime_node_output(*, node_type: str, state_update: dict[str, Any], previous_state: dict[str, Any]) -> dict[str, Any]:
+def extract_runtime_node_output(
+    *,
+    node_type: str,
+    config: dict[str, Any] | None,
+    operator_spec: Any | None = None,
+    state_update: dict[str, Any],
+    previous_state: dict[str, Any],
+) -> dict[str, Any]:
     state_update = dict(state_update or {})
     previous_state = dict(previous_state or {})
+    raw_output: dict[str, Any] = {}
 
     if node_type in {"agent", "llm"}:
         state_payload = state_update.get("state") if isinstance(state_update.get("state"), dict) else {}
         last_output = state_payload.get("last_agent_output")
         if isinstance(last_output, (dict, list)):
-            return {"output_json": last_output}
-        if last_output is not None:
-            return {"output_text": str(last_output)}
-        return {}
+            raw_output = {"output_json": last_output}
+        elif last_output is not None:
+            raw_output = {"output_text": str(last_output)}
+        else:
+            raw_output = {}
 
-    if node_type == "tool":
+    elif node_type == "tool":
         tool_outputs = state_update.get("tool_outputs")
         if isinstance(tool_outputs, list) and tool_outputs:
-            return {"result": tool_outputs[0]}
-        if "context" in state_update:
-            return {"result": state_update.get("context")}
-        return {}
+            raw_output = {"result": tool_outputs[0]}
+        elif "context" in state_update:
+            raw_output = {"result": state_update.get("context")}
+        else:
+            raw_output = {}
 
-    if node_type in {"rag", "vector_search"}:
+    elif node_type in {"rag", "vector_search"}:
         rag_output = state_update.get("rag_output")
         if isinstance(rag_output, list):
-            return {"results": rag_output, "documents": rag_output}
-        context = state_update.get("context") if isinstance(state_update.get("context"), dict) else {}
-        search_results = context.get("search_results")
-        if isinstance(search_results, list):
-            return {"results": search_results, "documents": search_results}
-        return {}
+            raw_output = {"results": rag_output, "documents": rag_output}
+        else:
+            context = state_update.get("context") if isinstance(state_update.get("context"), dict) else {}
+            search_results = context.get("search_results")
+            if isinstance(search_results, list):
+                raw_output = {"results": search_results, "documents": search_results}
+            else:
+                raw_output = {}
 
-    if node_type == "classify":
+    elif node_type == "classify":
         payload = {
             "category": state_update.get("branch_taken") or state_update.get("classification_result"),
         }
         if state_update.get("confidence") is not None:
             payload["confidence"] = state_update.get("confidence")
-        return payload
+        raw_output = payload
 
-    if node_type == "transform":
+    elif node_type == "transform":
         if "transform_output" in state_update:
-            return {"output": state_update.get("transform_output")}
-        return {}
+            raw_output = {"output": state_update.get("transform_output")}
+        else:
+            raw_output = {}
 
-    if node_type == "human_input":
+    elif node_type == "human_input":
         messages = state_update.get("messages")
         if isinstance(messages, list) and messages:
             last = messages[-1]
             if isinstance(last, dict):
-                return {"input_text": last.get("content")}
-        return {}
+                raw_output = {"input_text": last.get("content")}
+            else:
+                raw_output = {}
+        else:
+            raw_output = {}
 
-    if node_type == "user_approval":
-        return {
+    elif node_type == "user_approval":
+        raw_output = {
             "approved": state_update.get("branch_taken") == "approve",
             "comment": (state_update.get("context") or {}).get("comment") if isinstance(state_update.get("context"), dict) else None,
         }
 
-    if node_type == "set_state":
+    elif node_type == "set_state":
         next_state = state_update.get("state") if isinstance(state_update.get("state"), dict) else {}
         prev_state = previous_state.get("state") if isinstance(previous_state.get("state"), dict) else {}
         changed: dict[str, Any] = {}
         for key, value in next_state.items():
             if prev_state.get(key) != value:
                 changed[key] = value
-        return changed
+        raw_output = changed
 
-    return {}
+    elif node_type == "end":
+        if "final_output" in state_update:
+            raw_output = {"final_output": state_update.get("final_output")}
+
+    elif isinstance(state_update, dict):
+        raw_output = {
+            str(key): value
+            for key, value in state_update.items()
+            if str(key).strip() and not str(key).startswith("_")
+        }
+
+    if node_type == "set_state":
+        return {}
+    if node_type == "end":
+        return raw_output
+
+    declared = get_node_output_contract(
+        node_id="_runtime",
+        node_type=node_type,
+        node_label=node_type,
+        config=config,
+        operator_spec=operator_spec,
+    )
+    declared_keys = {
+        str(item.get("key") or "").strip()
+        for item in declared.get("fields", [])
+        if isinstance(item, dict) and str(item.get("key") or "").strip()
+    }
+    if not declared_keys:
+        return {}
+    if declared_keys == {"result"} and "result" not in raw_output and raw_output:
+        return {"result": raw_output}
+    return {
+        key: value
+        for key, value in raw_output.items()
+        if key in declared_keys and value is not None
+    }

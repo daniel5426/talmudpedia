@@ -144,6 +144,9 @@ class AgentExecutorService:
     def _extract_assistant_output_text(output_result: Dict[str, Any] | None) -> str | None:
         if not isinstance(output_result, dict):
             return None
+        final_output = output_result.get("final_output")
+        if isinstance(final_output, str) and final_output.strip():
+            return final_output.strip()
         messages = output_result.get("messages")
         if isinstance(messages, list):
             # Runtime state usually carries full conversation history.
@@ -160,14 +163,16 @@ class AgentExecutorService:
                         last_assistant = text
             if last_assistant:
                 return last_assistant
-        final_output = output_result.get("final_output")
-        if isinstance(final_output, str) and final_output.strip():
-            return final_output.strip()
         return None
 
     @staticmethod
     def _extract_turn_metadata(output_result: Dict[str, Any] | None) -> Dict[str, Any] | None:
-        return None
+        if not isinstance(output_result, dict):
+            return None
+        metadata: Dict[str, Any] = {}
+        if "final_output" in output_result:
+            metadata["final_output"] = output_result.get("final_output")
+        return metadata or None
 
     @staticmethod
     def _build_paused_node_payload(
@@ -642,6 +647,23 @@ class AgentExecutorService:
                     metadata={"category": "lifecycle"},
                 )
             )
+            analysis = graph_ir.metadata.get("analysis") if isinstance(graph_ir.metadata, dict) else {}
+            inventory = analysis.get("inventory") if isinstance(analysis, dict) else {}
+            persist_event(
+                ExecutionEvent(
+                    event="workflow.inventory_snapshot",
+                    data={
+                        "workflow_input_count": len(inventory.get("workflow_input") or []),
+                        "state_count": len(inventory.get("state") or []),
+                        "node_output_group_count": len(inventory.get("node_outputs") or []),
+                    },
+                    run_id=str(run_id),
+                    span_id=str(run_id),
+                    name="AgentRun",
+                    visibility=EventVisibility.INTERNAL,
+                    metadata={"category": "workflow_contract", "mode": mode.value},
+                )
+            )
 
             # 3. Create Runtime Adapter + Executable
             adapter_cls = RuntimeAdapterRegistry.get_default()
@@ -793,6 +815,11 @@ class AgentExecutorService:
                     "status": final_status.value,
                     "next": snapshot.next,
                     "next_nodes": next_nodes or None,
+                    "final_output": (
+                        run.output_result.get("final_output")
+                        if final_status == RunStatus.completed and isinstance(run.output_result, dict)
+                        else None
+                    ),
                 },
                 run_id=str(run_id),
                 visibility=EventVisibility.CLIENT_SAFE,

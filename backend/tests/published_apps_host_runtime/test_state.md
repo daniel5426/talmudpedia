@@ -1,4 +1,4 @@
-Last Updated: 2026-03-15
+Last Updated: 2026-03-22
 
 # Test State: Published Apps Host Runtime (Same-URL Auth Gate)
 
@@ -22,9 +22,13 @@ Backend same-URL published app host runtime flow for `*.apps` domains:
   - Signed-up host users are granted tenant member RBAC assignment in test setup so delegated run scopes intersect correctly under strict runtime delegation
 - Host runtime history endpoints: `GET /_talmudpedia/threads`, `GET /_talmudpedia/threads/{thread_id}`
 - Host runtime thread detail is enforced by app-account ownership, not just app scope
+- Host runtime thread detail includes client-safe `run_events` for history rehydration parity
 - Legacy `/public/apps/{slug}` published runtime/auth/chat endpoints return `410`
 
 ## Last Run
+- Command: `pytest -q backend/tests/published_apps_host_runtime/test_host_runtime_same_url_auth.py`
+- Date/Time: 2026-03-22 (local run)
+- Result: PASS (`9 passed`, `7 warnings`)
 - Command: `cd backend && PYTHONPATH=. pytest -x -q tests/published_apps_host_runtime/test_host_runtime_same_url_auth.py`
 - Date/Time: 2026-03-15 (local run)
 - Result: PASS (8 passed, 6 warnings)

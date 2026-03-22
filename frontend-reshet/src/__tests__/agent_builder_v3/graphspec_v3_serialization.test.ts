@@ -36,4 +36,181 @@ describe("graphspec v3 serialization", () => {
     expect(config.output_schema).toBeDefined()
     expect(Array.isArray(config.output_bindings)).toBe(true)
   })
+
+  it("roundtrips saved v3 contract nodes without serialization drift", () => {
+    const rawNodes = [
+      buildNode("start", "start", {
+        state_variables: [{ key: "customer_name", type: "string", default_value: "Ada" }],
+      }),
+      buildNode("classify_1", "classify", {
+        model_id: "model-1",
+        input_source: { namespace: "workflow_input", key: "input_as_text", expected_type: "string" },
+        categories: [{ name: "support", description: "Support requests" }],
+      }),
+      buildNode("set_state_1", "set_state", {
+        assignments: [
+          {
+            key: "selected_category",
+            type: "string",
+            value_ref: {
+              namespace: "node_output",
+              node_id: "classify_1",
+              key: "category",
+              expected_type: "string",
+            },
+          },
+        ],
+      }),
+      buildNode("end", "end", {
+        output_schema: {
+          name: "result",
+          mode: "simple",
+          schema: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              reply: { type: "string" },
+            },
+            required: ["reply"],
+          },
+        },
+        output_bindings: [
+          {
+            json_pointer: "/reply",
+            value_ref: {
+              namespace: "state",
+              key: "selected_category",
+              expected_type: "string",
+            },
+          },
+        ],
+      }),
+    ]
+
+    const firstHydration = rawNodes.map(normalizeBuilderNode)
+    const firstSave = normalizeGraphSpecForSave(firstHydration, [])
+    const secondHydration = firstSave.nodes.map((node) => normalizeBuilderNode(node as Node<AgentNodeData>))
+    const secondSave = normalizeGraphSpecForSave(secondHydration, [])
+
+    expect(secondSave).toEqual(firstSave)
+  })
+
+  it("normalizes saved v3 special-node configs before edit and re-save", () => {
+    const savedGraphNodes = [
+      buildNode("start", "start", {
+        state_variables: [{ name: "customer_name", type: "string", default: "Ada" }],
+      }),
+      buildNode("classify_1", "classify", {
+        model_id: "model-1",
+        input_source: {
+          namespace: "workflow_input",
+          key: "input_as_text",
+          expected_type: "string",
+          label: "Workflow Input / input_as_text",
+        },
+        categories: [{ name: "support", description: "Support requests" }],
+      }),
+      buildNode("set_state_1", "set_state", {
+        assignments: [
+          {
+            variable: "selected_category",
+            value_type: "array",
+            value_ref: {
+              namespace: "node_output",
+              node_id: "classify_1",
+              key: "category",
+              expected_type: "string",
+              label: "Classifier / category",
+            },
+          },
+        ],
+      }),
+      buildNode("end", "end", {
+        output_schema: {
+          name: "result",
+          mode: "simple",
+          schema: {
+            type: "object",
+            additionalProperties: false,
+            properties: { reply: { type: "string" } },
+            required: ["reply"],
+          },
+        },
+        output_bindings: [
+          {
+            json_pointer: "/reply",
+            value_ref: {
+              namespace: "state",
+              key: "selected_category",
+              expected_type: "string",
+              label: "State / selected_category",
+            },
+          },
+        ],
+      }),
+    ]
+
+    const hydrated = savedGraphNodes.map(normalizeBuilderNode)
+    const startConfig = hydrated[0].data.config as Record<string, unknown>
+    const setStateConfig = hydrated[2].data.config as Record<string, unknown>
+
+    expect(startConfig.state_variables).toEqual([
+      { key: "customer_name", type: "string", default_value: "Ada" },
+    ])
+    expect(setStateConfig.assignments).toEqual([
+      {
+        key: "selected_category",
+        type: "list",
+        value_ref: {
+          namespace: "node_output",
+          node_id: "classify_1",
+          key: "category",
+          expected_type: "string",
+          label: "Classifier / category",
+        },
+      },
+    ])
+
+    const edited = hydrated.map((node) => {
+      if (node.id !== "end") return node
+      return {
+        ...node,
+        config: {
+          ...(node.config as Record<string, unknown>),
+          output_bindings: [
+            {
+              json_pointer: "/reply",
+              value_ref: {
+                namespace: "workflow_input",
+                key: "input_as_text",
+                expected_type: "string",
+              },
+            },
+          ],
+        },
+        data: {
+          ...node.data,
+          config: {
+            ...(node.data.config as Record<string, unknown>),
+            output_bindings: [
+              {
+                json_pointer: "/reply",
+                value_ref: {
+                  namespace: "workflow_input",
+                  key: "input_as_text",
+                  expected_type: "string",
+                },
+              },
+            ],
+          },
+        },
+      } as Node<AgentNodeData>
+    })
+
+    const saved = normalizeGraphSpecForSave(edited, [])
+    const reopened = saved.nodes.map((node) => normalizeBuilderNode(node as Node<AgentNodeData>))
+    const resaved = normalizeGraphSpecForSave(reopened, [])
+
+    expect(resaved).toEqual(saved)
+  })
 })

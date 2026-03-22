@@ -1,4 +1,4 @@
-Last Updated: 2026-03-11
+Last Updated: 2026-03-22
 
 # Test State
 
@@ -15,6 +15,7 @@ Agent artifact-node production pinning and tenant artifact execution routing.
 - production compile pins `_artifact_revision_id` for tenant artifact nodes
 - production compile rejects draft-only tenant artifacts
 - tenant artifact node execution delegates to `ArtifactExecutionService`
+- graph analysis derives tenant artifact node output contracts from `agent_contract.output_schema`
 
 ## Last Run
 
@@ -24,6 +25,9 @@ Agent artifact-node production pinning and tenant artifact execution routing.
 - Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/artifact_runtime/test_revision_service.py backend/tests/artifact_runtime/test_execution_service.py backend/tests/artifact_test_runs/test_artifact_test_run_api.py backend/tests/tool_execution/test_artifact_runtime_tool_execution.py backend/tests/agent_artifact_runtime/test_agent_artifact_runtime.py backend/tests/rag_artifact_runtime/test_rag_artifact_runtime.py backend/tests/platform_sdk_tool backend/tests/control_plane_sdk/test_client_and_modules.py`
 - Date: 2026-03-11 18:18 EET
 - Result: Pass (127 passed, 11 skipped)
+- Command: `pytest -q backend/tests/agent_artifact_runtime/test_agent_artifact_runtime.py`
+- Date: 2026-03-22
+- Result: Pass (4 tests)
 
 ## Known Gaps
 

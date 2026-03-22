@@ -85,6 +85,11 @@ from .published_apps import (
     PublishedAppUserMembership,
     PublishedAppUserMembershipStatus,
 )
+from .published_app_analytics import (
+    PublishedAppAnalyticsEvent,
+    PublishedAppAnalyticsEventType,
+    PublishedAppAnalyticsSurface,
+)
 from .artifact_runtime import (
     Artifact,
     ArtifactCodingMessage,

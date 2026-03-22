@@ -363,6 +363,7 @@ def exec_pipeline_to_dict(p: ExecutablePipeline) -> Dict[str, Any]:
 
 def job_to_dict(j: PipelineJob) -> Dict[str, Any]:
     """Convert PipelineJob model to dict response."""
+    final_output = j.output.get("final_output") if isinstance(j.output, dict) else j.output
     return {
         "id": str(j.id),
         "tenant_id": str(j.tenant_id),
@@ -370,6 +371,7 @@ def job_to_dict(j: PipelineJob) -> Dict[str, Any]:
         "status": j.status.value if hasattr(j.status, 'value') else j.status,
         "input_params": j.input_params or {},
         "output": j.output,
+        "final_output": final_output,
         "error_message": j.error_message,
         "created_at": j.created_at.isoformat() if j.created_at else None,
         "updated_at": j.updated_at.isoformat() if j.updated_at else None,

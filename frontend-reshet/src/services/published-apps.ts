@@ -29,6 +29,37 @@ export interface PublishedApp {
   published_at?: string | null;
 }
 
+export interface PublishedAppStatsSeries {
+  date: string;
+  value: number;
+}
+
+export interface PublishedAppStatsSummary {
+  app_id: string;
+  start_date: string;
+  end_date: string;
+  approximate: boolean;
+  visits: number;
+  unique_visitors: number;
+  agent_runs: number;
+  failed_runs: number;
+  tokens: number;
+  threads: number;
+  app_accounts: number;
+  active_sessions: number;
+  visits_by_day: PublishedAppStatsSeries[];
+  runs_by_day: PublishedAppStatsSeries[];
+  tokens_by_day: PublishedAppStatsSeries[];
+  visit_surface_breakdown: Record<string, number>;
+  visit_auth_state_breakdown: Record<string, number>;
+}
+
+export interface PublishedAppsStatsResponse {
+  start_date: string;
+  end_date: string;
+  items: PublishedAppStatsSummary[];
+}
+
 export interface PublishedAppTemplate {
   key: string;
   name: string;
@@ -248,6 +279,15 @@ export interface BuilderValidationResponse {
   diagnostics: Array<{ path?: string; message: string }>;
 }
 
+export interface PublishedAppExportOptions {
+  supported: boolean;
+  ready: boolean;
+  template_key: string;
+  source_kind?: string | null;
+  default_archive_name: string;
+  reason?: string | null;
+}
+
 export type CodingAgentDiagnostics = Array<{ message?: string; [key: string]: unknown }>;
 export type CodingAgentExecutionEngine = "opencode";
 
@@ -363,6 +403,21 @@ export interface CodingAgentAnswerQuestionRequest {
 }
 
 export const publishedAppsService = {
+  async listStats(options: { days?: number; startDate?: string; endDate?: string } = {}): Promise<PublishedAppsStatsResponse> {
+    const params = new URLSearchParams();
+    if (options.days != null) {
+      params.set("days", String(options.days));
+    }
+    if (options.startDate) {
+      params.set("start_date", options.startDate);
+    }
+    if (options.endDate) {
+      params.set("end_date", options.endDate);
+    }
+    const suffix = params.toString() ? `?${params.toString()}` : "";
+    return httpClient.get<PublishedAppsStatsResponse>(`/admin/apps/stats${suffix}`);
+  },
+
   async list(): Promise<PublishedApp[]> {
     return httpClient.get<PublishedApp[]>("/admin/apps");
   },
@@ -377,6 +432,24 @@ export const publishedAppsService = {
 
   async get(appId: string): Promise<PublishedApp> {
     return httpClient.get<PublishedApp>(`/admin/apps/${appId}`);
+  },
+
+  async getStats(
+    appId: string,
+    options: { days?: number; startDate?: string; endDate?: string } = {},
+  ): Promise<PublishedAppStatsSummary> {
+    const params = new URLSearchParams();
+    if (options.days != null) {
+      params.set("days", String(options.days));
+    }
+    if (options.startDate) {
+      params.set("start_date", options.startDate);
+    }
+    if (options.endDate) {
+      params.set("end_date", options.endDate);
+    }
+    const suffix = params.toString() ? `?${params.toString()}` : "";
+    return httpClient.get<PublishedAppStatsSummary>(`/admin/apps/${appId}/stats${suffix}`);
   },
 
   async getBuilderState(appId: string): Promise<BuilderStateResponse> {
@@ -537,6 +610,32 @@ export const publishedAppsService = {
     return httpClient.post<PublishedAppRevision>(`/admin/apps/${appId}/builder/template-reset`, {
       template_key: templateKey,
     });
+  },
+
+  async getExportOptions(appId: string): Promise<PublishedAppExportOptions> {
+    return httpClient.get<PublishedAppExportOptions>(`/admin/apps/${appId}/export/options`);
+  },
+
+  async downloadExportArchive(appId: string): Promise<{ blob: Blob; filename: string | null }> {
+    const response = await httpClient.requestRaw(`/admin/apps/${appId}/export/archive`, {
+      method: "POST",
+    });
+    if (!response.ok) {
+      let message = "Export failed";
+      try {
+        const payload = await response.json() as { detail?: string; message?: string; error?: string };
+        message = String(payload.detail || payload.message || payload.error || message);
+      } catch {
+        message = response.statusText || message;
+      }
+      throw new Error(message);
+    }
+    const disposition = response.headers.get("Content-Disposition") || "";
+    const match = /filename=\"?([^\";]+)\"?/i.exec(disposition);
+    return {
+      blob: await response.blob(),
+      filename: match?.[1] || null,
+    };
   },
 
   async submitCodingAgentPrompt(

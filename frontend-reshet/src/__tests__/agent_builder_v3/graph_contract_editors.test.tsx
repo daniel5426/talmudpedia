@@ -45,7 +45,7 @@ describe("graph contract editors", () => {
 
   it("filters End editor binding options by property type and emits structured value refs", () => {
     const onChange = jest.fn()
-    const { container } = render(
+    render(
       <EndContractEditor
         value={{
           output_schema: {
@@ -65,25 +65,15 @@ describe("graph contract editors", () => {
       />
     )
 
-    const selects = container.querySelectorAll("select")
-    const bindingSelect = selects[2] as HTMLSelectElement
-    const optionTexts = Array.from(bindingSelect.options).map((option) => option.text)
+    fireEvent.click(screen.getByRole("button", { name: /select value/i }))
 
-    expect(optionTexts).toContain("Input as text [string]")
-    expect(optionTexts).toContain("customer_name [string]")
-    expect(optionTexts).toContain("Classifier / category [string]")
-    expect(optionTexts).not.toContain("Classifier / confidence [number]")
+    expect(screen.getByText("Workflow Input")).toBeInTheDocument()
+    expect(screen.getByText("Input as text")).toBeInTheDocument()
+    expect(screen.getByText("customer_name")).toBeInTheDocument()
+    expect(screen.getByText("Classifier / category")).toBeInTheDocument()
+    expect(screen.queryByText("Classifier / confidence")).not.toBeInTheDocument()
 
-    fireEvent.change(bindingSelect, {
-      target: {
-        value: JSON.stringify({
-          namespace: "state",
-          key: "customer_name",
-          expected_type: "string",
-          label: "customer_name",
-        }),
-      },
-    })
+    fireEvent.click(screen.getByRole("option", { name: /customer_name/i }))
 
     expect(onChange).toHaveBeenLastCalledWith({
       output_schema: {

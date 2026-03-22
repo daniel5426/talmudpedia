@@ -170,6 +170,8 @@ class RetrievalPipelineRuntime:
     def normalize_results(raw_results: Any) -> list[Any]:
         if isinstance(raw_results, list):
             return raw_results
+        if isinstance(raw_results, dict) and "final_output" in raw_results:
+            return RetrievalPipelineRuntime.normalize_results(raw_results.get("final_output"))
         if isinstance(raw_results, dict) and "results" in raw_results:
             results = raw_results.get("results")
             return results if isinstance(results, list) else [results]

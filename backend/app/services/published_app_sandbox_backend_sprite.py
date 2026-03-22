@@ -236,7 +236,7 @@ class SpriteSandboxBackend(PublishedAppSandboxBackend):
             raise
         return payload if isinstance(payload, dict) else None
 
-    async def _ensure_services(self, *, sprite_name: str) -> None:
+    async def _ensure_preview_service(self, *, sprite_name: str) -> None:
         live_workspace_path = self._live_workspace_path()
         preview_command = (
             f"cd {shlex.quote(live_workspace_path)} && "
@@ -244,21 +244,12 @@ class SpriteSandboxBackend(PublishedAppSandboxBackend):
             f"__APPS_VITE_USE_POLLING=1 __APPS_VITE_POLL_INTERVAL_MS={self._preview_poll_interval_ms()} && "
             f"npm run dev -- --host 0.0.0.0 --port {self._preview_port()} --strictPort"
         )
-        opencode_command = str(
-            self.config.sprite_opencode_command
-            or f"cd {shlex.quote(live_workspace_path)} && "
-            f"(opencode serve --hostname 0.0.0.0 --port {self._opencode_port()} "
-            f"|| npx -y opencode-ai serve --hostname 0.0.0.0 --port {self._opencode_port()})"
-        ).strip()
         self._trace(
-            "sprite.ensure_services.plan",
+            "sprite.ensure_services.preview_plan",
             sprite_name=sprite_name,
             preview_service_name=self._preview_service_name(),
             preview_port=self._preview_port(),
             preview_command=preview_command,
-            opencode_service_name=self._opencode_service_name(),
-            opencode_port=self._opencode_port(),
-            opencode_command=opencode_command,
         )
         await self._put_service(
             sprite_name=sprite_name,
@@ -284,6 +275,22 @@ class SpriteSandboxBackend(PublishedAppSandboxBackend):
             live_args=preview_service.get("args") if isinstance(preview_service, dict) else None,
             live_http_port=preview_service.get("http_port") if isinstance(preview_service, dict) else None,
             live_state=preview_service.get("state") if isinstance(preview_service, dict) else None,
+        )
+
+    async def _ensure_opencode_service(self, *, sprite_name: str) -> None:
+        live_workspace_path = self._live_workspace_path()
+        opencode_command = str(
+            self.config.sprite_opencode_command
+            or f"cd {shlex.quote(live_workspace_path)} && "
+            f"(opencode serve --hostname 0.0.0.0 --port {self._opencode_port()} "
+            f"|| npx -y opencode-ai serve --hostname 0.0.0.0 --port {self._opencode_port()})"
+        ).strip()
+        self._trace(
+            "sprite.ensure_services.opencode_plan",
+            sprite_name=sprite_name,
+            opencode_service_name=self._opencode_service_name(),
+            opencode_port=self._opencode_port(),
+            opencode_command=opencode_command,
         )
         await self._put_service(
             sprite_name=sprite_name,
@@ -659,8 +666,34 @@ print(json.dumps({{"revision_token": revision_token}}, sort_keys=True))
     ) -> None:
         current_hash = await self._read_dependency_hash(sprite_name=sprite_name, workspace_path=workspace_path)
         if not force_install and current_hash == dependency_hash:
+            self._trace(
+                "sprite.dependencies.install_skipped",
+                sprite_name=sprite_name,
+                workspace_path=workspace_path,
+                dependency_hash=dependency_hash,
+            )
             return
-        command = ["bash", "-lc", "if [ -f package-lock.json ]; then npm ci; elif [ -f package.json ]; then npm install --no-audit --no-fund; fi"]
+        self._trace(
+            "sprite.dependencies.install_begin",
+            sprite_name=sprite_name,
+            workspace_path=workspace_path,
+            dependency_hash=dependency_hash,
+            force_install=bool(force_install),
+            has_existing_hash=bool(current_hash),
+        )
+        command = [
+            "bash",
+            "-lc",
+            (
+                "if [ -f pnpm-lock.yaml ] && command -v pnpm >/dev/null 2>&1; then "
+                "pnpm install --frozen-lockfile --prefer-offline; "
+                "elif [ -f package-lock.json ]; then "
+                "npm ci --no-audit --no-fund --prefer-offline; "
+                "elif [ -f package.json ]; then "
+                "npm install --no-audit --no-fund --prefer-offline; "
+                "fi"
+            ),
+        ]
         await self._exec(
             sprite_name=sprite_name,
             command=command,
@@ -680,6 +713,13 @@ print(json.dumps({{"revision_token": revision_token}}, sort_keys=True))
             workspace_path=workspace_path,
             dependency_hash=dependency_hash,
         )
+        self._trace(
+            "sprite.dependencies.install_done",
+            sprite_name=sprite_name,
+            workspace_path=workspace_path,
+            dependency_hash=dependency_hash,
+            force_install=bool(force_install),
+        )
 
     async def _ensure_preview_ready_with_repair(
         self,
@@ -698,7 +738,7 @@ print(json.dumps({{"revision_token": revision_token}}, sort_keys=True))
                 dependency_hash=dependency_hash,
                 force_install=True,
             )
-            await self._ensure_services(sprite_name=sprite_name)
+            await self._ensure_preview_service(sprite_name=sprite_name)
             await self._wait_for_preview_ready(sprite_name=sprite_name)
 
     def _backend_metadata(
@@ -823,26 +863,31 @@ print(json.dumps({{
     ) -> Dict[str, Any]:
         _ = tenant_id, user_id, revision_id, entry_file, idle_timeout_seconds, draft_dev_token
         sprite_name = self._sprite_name(prefix=self.config.sprite_name_prefix, app_id=app_id)
+        self._trace("sprite.start_session.begin", sprite_name=sprite_name, app_id=app_id, runtime_generation=runtime_generation)
         sprite = await self._ensure_sprite(sprite_name=sprite_name)
         sprite_url = str(sprite.get("url") or "").strip() or f"https://{sprite_name}.sprites.app"
+        self._trace("sprite.start_session.sprite_ready", sprite_name=sprite_name, sprite_url=sprite_url)
         await self._ensure_workspace_dirs(sprite_name=sprite_name)
+        self._trace("sprite.start_session.workspace_dirs_ready", sprite_name=sprite_name)
         revision_token = await self._sync_files_to_workspace(
             sprite_name=sprite_name,
             workspace_path=self._live_workspace_path(),
             files=dict(files or {}),
         )
+        self._trace("sprite.start_session.files_synced", sprite_name=sprite_name, revision_token=revision_token)
         await self._install_dependencies_if_needed(
             sprite_name=sprite_name,
             workspace_path=self._live_workspace_path(),
             dependency_hash=dependency_hash,
             force_install=False,
         )
-        await self._ensure_services(sprite_name=sprite_name)
+        await self._ensure_preview_service(sprite_name=sprite_name)
         await self._ensure_preview_ready_with_repair(
             sprite_name=sprite_name,
             workspace_path=self._live_workspace_path(),
             dependency_hash=dependency_hash,
         )
+        self._trace("sprite.start_session.preview_ready", sprite_name=sprite_name, revision_token=revision_token)
         return {
             "sandbox_id": sprite_name,
             "status": "serving",
@@ -874,26 +919,31 @@ print(json.dumps({{
     ) -> Dict[str, Any]:
         _ = entry_file, idle_timeout_seconds
         sprite_name = str(sandbox_id or "").strip()
+        self._trace("sprite.sync_session.begin", sprite_name=sprite_name, sandbox_id=sandbox_id)
         sprite = await self._ensure_sprite(sprite_name=sprite_name)
         sprite_url = str(sprite.get("url") or "").strip() or f"https://{sprite_name}.sprites.app"
+        self._trace("sprite.sync_session.sprite_ready", sprite_name=sprite_name, sprite_url=sprite_url)
         await self._ensure_workspace_dirs(sprite_name=sprite_name)
+        self._trace("sprite.sync_session.workspace_dirs_ready", sprite_name=sprite_name)
         revision_token = await self._sync_files_to_workspace(
             sprite_name=sprite_name,
             workspace_path=self._live_workspace_path(),
             files=dict(files or {}),
         )
+        self._trace("sprite.sync_session.files_synced", sprite_name=sprite_name, revision_token=revision_token)
         await self._install_dependencies_if_needed(
             sprite_name=sprite_name,
             workspace_path=self._live_workspace_path(),
             dependency_hash=dependency_hash,
             force_install=bool(install_dependencies),
         )
-        await self._ensure_services(sprite_name=sprite_name)
+        await self._ensure_preview_service(sprite_name=sprite_name)
         await self._ensure_preview_ready_with_repair(
             sprite_name=sprite_name,
             workspace_path=self._live_workspace_path(),
             dependency_hash=dependency_hash,
         )
+        self._trace("sprite.sync_session.preview_ready", sprite_name=sprite_name, revision_token=revision_token)
         metadata = self._backend_metadata(
             sprite_name=sprite_name,
             sprite_url=sprite_url,
@@ -1397,6 +1447,7 @@ print(json.dumps({{
     async def _build_opencode_client(self, *, sandbox_id: str):
         from app.services.opencode_server_client import OpenCodeServerClient, OpenCodeServerClientConfig
 
+        await self._ensure_opencode_service(sprite_name=sandbox_id)
         tunnel_base_url = await get_sprite_proxy_tunnel_manager().ensure_tunnel(
             api_base_url=self._api_base(),
             api_token=self._api_token(),

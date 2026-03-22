@@ -26,13 +26,18 @@ Landed in the current refactor pass:
 - grouped builder value-picker plumbing backed by live backend graph analysis
 - Start/End builder contract editors and classify `input_source` `ValueRef`
 - Set State typed assignment metadata, compiler/runtime validation, and builder editor support for `ValueRef` sources
+- ConfigPanel `ValueRef` fields now respect backend operator `field_contracts` type filtering
 - API-level graph-analysis route coverage and dedicated frontend tests for the Start/End contract editors and graph-analysis hook
+- runtime-producing standard nodes now declare stable output contracts and runtime publication is filtered through declared contracts
+- tenant artifact nodes now derive builder/runtime output contracts from artifact metadata, and artifact inputs now flow through the builder ConfigPanel field-mapping UI
+- execution tracing now records workflow inventory snapshots, set-state writes, node output publication, and End materialization/validation events
+- core execution helpers now prefer authoritative `final_output` over the last assistant message when persisting/rendering assistant text
+- added regression coverage for artifact contract analysis, workflow-contract trace emission, and saved v3 graph roundtrip parity
 
 Still pending from the full plan:
-- broader node-by-node output contract completion and artifact parity
 - RAG pipeline contract hardening and parity work
 - full API/route analysis coverage and exhaustive scenario/end-to-end tests
-- full ConfigPanel integration coverage for the backend-driven analysis loop
+- broader ConfigPanel interaction coverage through full builder session flows
 
 ## Core Product Decisions
 

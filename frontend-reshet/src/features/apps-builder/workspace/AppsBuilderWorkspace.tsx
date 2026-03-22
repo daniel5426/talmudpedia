@@ -7,6 +7,7 @@ import {
   Camera,
   Check,
   Copy,
+  Download,
   ExternalLink,
   Globe,
   KeyRound,
@@ -51,15 +52,18 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
+  agentService,
   isDraftDevFailureStatus,
   isDraftDevServingStatus,
   publishedAppsService,
 } from "@/services";
 import type {
+  Agent,
   BuilderStateResponse,
   DraftDevSessionResponse,
   PublishedAppAuthTemplate,
   PublishedAppDomain,
+  PublishedAppExportOptions,
   PublishedAppRevision,
   PublishedAppUser,
   RevisionConflictResponse,
@@ -185,7 +189,9 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
   const [isAuthTemplatesLoading, setIsAuthTemplatesLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [isSavingOverview, setIsSavingOverview] = useState(false);
+  const [isAgentsLoading, setIsAgentsLoading] = useState(true);
   const [authTemplates, setAuthTemplates] = useState<PublishedAppAuthTemplate[]>([]);
+  const [availableAgents, setAvailableAgents] = useState<Agent[]>([]);
   const [users, setUsers] = useState<PublishedAppUser[]>([]);
   const [domains, setDomains] = useState<PublishedAppDomain[]>([]);
   const [hasLoadedUsers, setHasLoadedUsers] = useState(false);
@@ -202,6 +208,8 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
   const [postRunHydrationPending, setPostRunHydrationPending] = useState(false);
   const saveBlockedByBackendLock = hasActiveCodingRunLock || postRunHydrationPending;
   const [isOpeningApp, setIsOpeningApp] = useState(false);
+  const [isExportingArchive, setIsExportingArchive] = useState(false);
+  const [exportOptions, setExportOptions] = useState<PublishedAppExportOptions | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [previewRoute, setPreviewRoute] = useState("/");
   const [previewReloadToken, setPreviewReloadToken] = useState(0);
@@ -321,8 +329,12 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     }
     setError(null);
     try {
-      const response = await publishedAppsService.getBuilderState(appId);
+      const [response, exportState] = await Promise.all([
+        publishedAppsService.getBuilderState(appId),
+        publishedAppsService.getExportOptions(appId),
+      ]);
       setState(response);
+      setExportOptions(exportState);
       hydrateFromRevision(response.current_draft_revision);
       hydrateFromBuilderSession(response.draft_dev);
     } catch (err) {
@@ -346,10 +358,26 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     }
   }, []);
 
+  const loadAgents = useCallback(async () => {
+    setIsAgentsLoading(true);
+    try {
+      const response = await agentService.listAgents({ limit: 500, compact: true, status: "published" });
+      setAvailableAgents(response.agents || []);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load agents");
+    } finally {
+      setIsAgentsLoading(false);
+    }
+  }, []);
+
   const refreshStateSilently = useCallback(async () => {
     try {
-      const response = await publishedAppsService.getBuilderState(appId);
+      const [response, exportState] = await Promise.all([
+        publishedAppsService.getBuilderState(appId),
+        publishedAppsService.getExportOptions(appId),
+      ]);
       setState(response);
+      setExportOptions(exportState);
       setCurrentRevisionId(response.current_draft_revision?.id || null);
       hydrateFromBuilderSession(response.draft_dev);
     } catch (err) {
@@ -408,6 +436,14 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
         ? sendBlockedReason
         : null;
   const isPublishDisabled = Boolean(publishDisabledReason);
+  const exportDisabledReason = isExportingArchive
+    ? "Export in progress..."
+    : exportOptions && !exportOptions.supported
+      ? exportOptions.reason || "Export is not supported for this app."
+      : exportOptions && !exportOptions.ready
+        ? exportOptions.reason || "Export is not ready yet."
+        : null;
+  const isExportDisabled = Boolean(exportDisabledReason);
   const inspectedPreviewFrameUrl = useMemo(() => {
     if (!inspectedPreviewUrl) {
       return null;
@@ -436,7 +472,8 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
   useEffect(() => {
     void loadState({ showInitialSkeleton: true });
     void loadAuthTemplates();
-  }, [loadAuthTemplates, loadState]);
+    void loadAgents();
+  }, [loadAgents, loadAuthTemplates, loadState]);
 
   useEffect(() => {
     if (!isInspectingVersion) {
@@ -497,6 +534,28 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     }
   }, [appId]);
 
+  const downloadExportArchive = useCallback(async () => {
+    setIsExportingArchive(true);
+    setError(null);
+    try {
+      const { blob, filename } = await publishedAppsService.downloadExportArchive(appId);
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = filename || `${state?.app.slug || "app"}-standalone-export.zip`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+      const nextOptions = await publishedAppsService.getExportOptions(appId);
+      setExportOptions(nextOptions);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to export app archive");
+    } finally {
+      setIsExportingArchive(false);
+    }
+  }, [appId, state?.app.slug]);
+
   useEffect(() => {
     if (activeTab !== "config") return;
     if (configSection === "users" && !hasLoadedUsers && !isUsersLoading) {
@@ -518,6 +577,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
         name: app.name,
         description: app.description || "",
         logo_url: app.logo_url || "",
+        agent_id: app.agent_id,
         visibility: app.visibility,
         auth_enabled: app.auth_enabled,
         auth_providers: app.auth_providers,
@@ -1037,6 +1097,26 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
                 <span className="inline-flex">
                   <Button
                     size="sm"
+                    variant="outline"
+                    className="h-7 gap-1.5 px-2.5 text-xs"
+                    onClick={() => void downloadExportArchive()}
+                    disabled={isExportDisabled}
+                  >
+                    {isExportingArchive ? <Loader2 className="h-3 w-3 animate-spin" /> : <Download className="h-3 w-3" />}
+                    Export
+                  </Button>
+                </span>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">
+                {exportDisabledReason || "Download standalone export archive"}
+              </TooltipContent>
+            </Tooltip>
+
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="inline-flex">
+                  <Button
+                    size="sm"
                     className="h-7 gap-1.5 px-2.5 text-xs"
                     onClick={publish}
                     disabled={isPublishDisabled}
@@ -1164,6 +1244,30 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
                           currentUrl={state.app.logo_url || ""}
                           onSave={(url) => updateLocalApp({ logo_url: url })}
                         />
+
+                        {/* ── Visibility ── */}
+                        <div className="mt-8 space-y-3">
+                          <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Agent</Label>
+                          {isAgentsLoading ? (
+                            <Skeleton className="h-10 w-full rounded-lg" />
+                          ) : (
+                            <Select
+                              value={state.app.agent_id}
+                              onValueChange={(value) => updateLocalApp({ agent_id: value })}
+                            >
+                              <SelectTrigger className="rounded-md">
+                                <SelectValue placeholder="Select agent..." />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {availableAgents.map((agent) => (
+                                  <SelectItem key={agent.id} value={agent.id}>
+                                    {agent.name}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          )}
+                        </div>
 
                         {/* ── Visibility ── */}
                         <div className="mt-8 space-y-3">

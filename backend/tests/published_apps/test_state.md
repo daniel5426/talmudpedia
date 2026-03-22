@@ -1,6 +1,6 @@
 # Published Apps Backend Tests
 
-Last Updated: 2026-03-22
+Last Updated: 2026-03-23
 
 ## Scope of the feature
 - Admin CRUD for published apps and builder state primitives.
@@ -10,7 +10,9 @@ Last Updated: 2026-03-22
 
 ## Test files present
 - `backend/tests/published_apps/test_admin_apps_crud.py`
+- `backend/tests/published_apps/test_admin_app_export.py`
 - `backend/tests/published_apps/test_admin_apps_page_fetch_probe.py`
+- `backend/tests/published_apps/test_app_stats_api.py`
 - `backend/tests/published_apps/test_builder_agent_integration_contract.py`
 - `backend/tests/published_apps/test_template_catalog.py`
 - `backend/tests/published_apps/test_public_app_resolve_and_config.py`
@@ -18,11 +20,14 @@ Last Updated: 2026-03-22
 
 ## Key scenarios covered
 - Tenant admin can create/list/update/delete apps.
-- Apps admin page fetch contract is probe-covered for `/admin/apps`, `/agents?limit=500&compact=true`, `/admin/apps/templates`, and `/admin/apps/auth/templates`.
+- Apps admin page fetch contract is probe-covered for `/admin/apps`, `/admin/apps/stats`, `/agents?limit=500&compact=true`, `/admin/apps/templates`, and `/admin/apps/auth/templates`.
+- Published-app analytics coverage verifies bootstrap view capture, 30-minute visit dedupe, authenticated bootstrap attribution, and `/admin/apps/stats` aggregation.
 - Initial app-create draft revision (`origin_kind=app_init`) auto-enqueues async build; enqueue failure marks revision build failed without blocking app creation.
 - Builder state includes app + template + current draft metadata.
+- Admin export options/archive exposes standalone export readiness and packages the current draft or live workspace snapshot.
 - Canonical app-create and builder tests use `template_key="classic-chat"`.
 - Template catalog ignores non-pack directories and returns an empty list when no valid manifest-backed packs exist.
+- Template catalog verifies the materialized classic-chat runtime overlay includes the shared `resolveRuntimeBasePath` export and attachment-aware `RuntimeInput`.
 - Public runtime/config endpoints enforce visibility and auth constraints.
 - Path-mode published auth/chat/runtime endpoints are removed (`410`), while admin user-management tests use host-runtime auth (`/_talmudpedia/*`).
 - Public preview stream uses token auth and persists run-native thread records.
@@ -43,6 +48,15 @@ Last Updated: 2026-03-22
 - Command: `cd backend && PYTHONPATH=. pytest -q tests/published_apps/test_template_catalog.py`
 - Date: 2026-03-22
 - Result: PASS (3 passed, 1 warning)
+- Command: `pytest -q backend/tests/published_apps/test_template_catalog.py`
+- Date: 2026-03-23
+- Result: PASS (4 passed, 1 warning)
+- Command: `cd backend && PYTHONPATH=. pytest -q tests/published_apps/test_admin_app_export.py`
+- Date: 2026-03-22
+- Result: PASS (2 passed, 7 warnings)
+- Command: `pytest -q backend/tests/published_apps/test_app_stats_api.py backend/tests/published_apps/test_admin_apps_page_fetch_probe.py`
+- Date: 2026-03-22
+- Result: PASS (4 passed, 1 skipped)
 
 ## Known gaps or follow-ups
 - Add explicit regression tests for removed `/admin/apps/{app_id}/publish` route in this folder (currently covered under `backend/tests/app_versions/`).

@@ -21,7 +21,9 @@ backend/app/api/dependencies.py
 backend/app/api/routers/
 backend/app/api/routers/sandbox_controller_dev_shim.py
 backend/app/api/routers/published_apps_builder_preview_proxy.py
+backend/app/api/routers/published_apps_admin_routes_stats.py
 backend/app/api/routers/published_apps_admin_routes_coding_agent_v2.py
+backend/app/api/routers/published_apps_admin_routes_export.py
 backend/app/api/routers/published_apps_host_runtime.py
 backend/app/api/routers/published_apps_external_runtime.py
 backend/app/api/routers/embedded_agents_public.py
@@ -113,6 +115,7 @@ backend/app/db/postgres/session.py
 backend/app/db/postgres/models/
 backend/app/db/postgres/models/artifact_runtime.py
 backend/app/db/postgres/models/agent_threads.py
+backend/app/db/postgres/models/published_app_analytics.py
 backend/app/db/postgres/models/prompts.py
 backend/app/db/postgres/models/runtime_attachments.py
 backend/app/db/postgres/models/usage_quota.py
@@ -196,6 +199,7 @@ backend/app/services/published_app_sandbox_backend_e2b.py
 backend/app/services/published_app_draft_dev_runtime.py
 backend/app/services/published_app_draft_dev_local_runtime.py
 backend/app/services/published_app_draft_dev_runtime_client.py
+backend/app/services/published_app_export_service.py
 backend/app/services/published_app_workspace_build_service.py
 backend/app/services/published_app_draft_revision_materializer.py
 backend/app/services/published_app_draft_dev_patching.py
@@ -218,6 +222,7 @@ backend/app/services/usage_quota_service.py
 backend/app/services/thread_service.py
 backend/app/services/admin_monitoring_service.py
 backend/app/services/openui_support.py
+backend/app/services/published_app_analytics_service.py
 backend/app/services/published_app_coding_agent_engines/base.py
 backend/app/services/published_app_coding_agent_engines/opencode_engine.py
 backend/app/services/published_app_coding_agent_engines/prompt_history.py

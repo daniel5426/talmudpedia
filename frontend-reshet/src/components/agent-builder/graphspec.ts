@@ -7,7 +7,7 @@ import {
     routeTableRowsToOutcomes,
     routeTableRowsToRouterRoutes,
 } from "./types"
-import { buildDefaultEndOutputBindings, buildDefaultEndOutputSchema } from "./graph-contract"
+import { normalizeNodeContractConfig } from "./graph-contract"
 
 interface GraphSpecNormalizeOptions {
     specVersion?: string
@@ -82,11 +82,7 @@ export function normalizeBuilderNode(node: Node): Node<AgentNodeData> {
     const nodeType = (raw.type || raw.nodeType || existing.nodeType || "transform") as AgentNodeType
     const spec = getNodeSpec(nodeType)
     const rawConfig = raw.config ?? {}
-    const config = { ...rawConfig }
-    if (nodeType === "end" && !config.output_schema && !config.output_variable && !config.output_message) {
-        config.output_schema = buildDefaultEndOutputSchema()
-        config.output_bindings = buildDefaultEndOutputBindings()
-    }
+    const config = normalizeNodeContractConfig(nodeType, rawConfig)
     const resolvedInputMappings = existing.inputMappings ?? raw.input_mappings
     if (resolvedInputMappings && !("input_mappings" in config)) {
         config["input_mappings"] = resolvedInputMappings
@@ -128,7 +124,9 @@ export function normalizeGraphSpecForSave(
     options: GraphSpecNormalizeOptions = {}
 ) {
     const normalizedNodes = nodes.map((node) => {
-        const normalizedConfig = normalizeOrchestrationConfig(node)
+        const orchestrationConfig = normalizeOrchestrationConfig(node)
+        const nodeType = ((node.type || node.data?.nodeType || "transform") as AgentNodeType)
+        const normalizedConfig = normalizeNodeContractConfig(nodeType, orchestrationConfig)
         const rawData = node.data ? { ...node.data } : undefined
         if (rawData) {
             delete (rawData as Record<string, unknown>).config

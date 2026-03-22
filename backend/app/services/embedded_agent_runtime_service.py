@@ -40,6 +40,11 @@ def _turns_to_messages(turns: list[AgentThreadTurn]) -> list[dict[str, Any]]:
     return messages
 
 
+def _turn_final_output(turn: AgentThreadTurn) -> Any:
+    metadata = turn.metadata_ if isinstance(turn.metadata_, dict) else {}
+    return metadata.get("final_output")
+
+
 def serialize_thread_summary(thread: AgentThread) -> dict[str, Any]:
     return {
         "id": str(thread.id),
@@ -63,6 +68,7 @@ def _serialize_turn_base(turn: AgentThreadTurn) -> dict[str, Any]:
         "turn_index": int(turn.turn_index or 0),
         "user_input_text": turn.user_input_text,
         "assistant_output_text": turn.assistant_output_text,
+        "final_output": _turn_final_output(turn),
         "status": turn.status.value if hasattr(turn.status, "value") else str(turn.status),
         "usage_tokens": int(turn.usage_tokens or 0),
         "metadata": dict(turn.metadata_ or {}),

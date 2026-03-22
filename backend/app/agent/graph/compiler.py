@@ -9,7 +9,7 @@ from sqlalchemy import select
 
 from .schema import AgentGraph, AgentNode, AgentEdge, NodeType, EdgeType
 from .contracts import build_graph_analysis
-from app.agent.registry import AgentExecutorRegistry, AgentOperatorRegistry, AgentOperatorSpec, AgentStateField
+from app.agent.registry import AgentExecutorRegistry, AgentOperatorRegistry, AgentStateField
 from app.agent.models import CompiledAgent
 from app.agent.graph.ir import (
     GRAPH_SPEC_V1,
@@ -57,6 +57,7 @@ class AgentCompiler:
 
     async def validate(self, graph: AgentGraph, *, agent_id: Optional[UUID] = None) -> list[ValidationError]:
         """Validate the graph structure, configuration, and data flow."""
+        graph = await self.resolve_runtime_references(graph, execution_mode="debug")
         errors = []
         from app.agent.executors.standard import register_standard_operators
         register_standard_operators()
@@ -155,6 +156,8 @@ class AgentCompiler:
             normalized_type = self._normalize_node_type(node.type)
             spec = AgentOperatorRegistry.get(normalized_type)
             if not spec:
+                if isinstance(node.config, dict) and node.config.get("_artifact_id"):
+                    continue
                 errors.append(ValidationError(node_id=node.id, message=f"Unknown node type: {node.type}"))
                 continue
             
@@ -810,51 +813,45 @@ class AgentCompiler:
             return None
         return str(value)
 
-    async def compile(
+    @staticmethod
+    def _clone_graph(graph: AgentGraph) -> AgentGraph:
+        return AgentGraph(**graph.model_dump())
+
+    async def resolve_runtime_references(
         self,
-        agent_id: UUID,
-        version: int,
         graph: AgentGraph,
-        config: Dict[str, Any] = None,
-        input_params: Optional[Dict[str, Any]] = None,
-        **kwargs
-    ) -> GraphIR:
+        *,
+        execution_mode: str = "debug",
+    ) -> AgentGraph:
         from app.agent.executors.artifact import ArtifactNodeExecutor
         from app.agent.resolution import ArtifactResolver, ToolResolver, RAGPipelineResolver, ResolutionError
-        
-        # 0. Resolve Components (Compile-time resolution)
-        # We start by verifying and resolving external references.
-        # This mutates the 'graph' object (or a copy) to bake in resolved IDs?
-        # Ideally we update the 'config' of the nodes.
-        
+
+        resolved_graph = self._clone_graph(graph)
         tool_resolver = ToolResolver(self.db, self.tenant_id)
         rag_resolver = RAGPipelineResolver(self.db, self.tenant_id)
         artifact_resolver = ArtifactResolver(self.db, self.tenant_id)
-        execution_mode = str((config or {}).get("mode") or "debug").strip().lower()
-        require_published_tools = execution_mode == "production"
-        
-        for node in graph.nodes:
+        require_published_tools = str(execution_mode or "debug").strip().lower() == "production"
+
+        for node in resolved_graph.nodes:
             if node.type == "tool":
                 tool_id = node.config.get("tool_id")
                 if tool_id:
                     try:
-                        resolved = await tool_resolver.resolve(UUID(tool_id), require_published=require_published_tools)
-                        # Optimization: we could store 'resolved_implementation' in config
-                        # node.config["_resolved"] = resolved
+                        await tool_resolver.resolve(UUID(tool_id), require_published=require_published_tools)
                     except ResolutionError as e:
                         raise ValueError(f"Tool resolution failed for node {node.id}: {e}")
-            
-            elif node.type == "rag":
+                continue
+
+            if node.type == "rag":
                 pipeline_id = node.config.get("pipeline_id")
                 if pipeline_id:
                     try:
-                        # RAG node config typically has 'pipeline_id'. 
-                        # We verify it exists.
                         await rag_resolver.resolve(UUID(pipeline_id))
                     except ResolutionError as e:
                         raise ValueError(f"RAG resolution failed for node {node.id}: {e}")
+                continue
 
-            elif node.type == "agent":
+            if node.type == "agent":
                 tools = node.config.get("tools") or []
                 if tools:
                     if not isinstance(tools, list):
@@ -867,33 +864,71 @@ class AgentCompiler:
                             )
                         except (ValueError, ResolutionError) as e:
                             raise ValueError(f"Agent node {node.id} tool resolution failed: {e}")
-            else:
+                continue
+
+            artifact_uuid = None
+            try:
+                artifact_uuid = UUID(str(node.type))
+            except Exception:
                 artifact_uuid = None
-                try:
-                    artifact_uuid = UUID(str(node.type))
-                except Exception:
-                    artifact_uuid = None
-                try:
-                    resolved_artifact = await artifact_resolver.resolve(
-                        str(node.type),
-                        require_published=require_published_tools,
-                    )
-                except ResolutionError as e:
-                    if artifact_uuid is not None:
-                        raise ValueError(f"Artifact resolution failed for node {node.id}: {e}")
-                    resolved_artifact = None
-                if resolved_artifact is not None:
-                    node.config = dict(node.config or {})
-                    node.config["_artifact_id"] = resolved_artifact.get("artifact_id") or str(node.type)
-                    if resolved_artifact.get("artifact_kind") == "tenant":
-                        node.config["_artifact_revision_id"] = resolved_artifact.get("artifact_revision_id")
-                    elif resolved_artifact.get("artifact_version"):
-                        node.config["_artifact_version"] = resolved_artifact.get("artifact_version")
-                    self._register_runtime_artifact_node(
-                        node_type=str(node.type),
-                        display_name=resolved_artifact.get("display_name") or str(node.type),
-                        executor_cls=ArtifactNodeExecutor,
-                    )
+            try:
+                resolved_artifact = await artifact_resolver.resolve(
+                    str(node.type),
+                    require_published=require_published_tools,
+                )
+            except ResolutionError as e:
+                if artifact_uuid is not None:
+                    raise ValueError(f"Artifact resolution failed for node {node.id}: {e}")
+                resolved_artifact = None
+            if resolved_artifact is None:
+                continue
+
+            agent_contract = (
+                dict(resolved_artifact.get("agent_contract") or {})
+                if isinstance(resolved_artifact.get("agent_contract"), dict)
+                else {}
+            )
+            node_ui = dict(agent_contract.get("node_ui") or {}) if isinstance(agent_contract.get("node_ui"), dict) else {}
+            node.config = dict(node.config or {})
+            node.config["_artifact_id"] = resolved_artifact.get("artifact_id") or str(node.type)
+            node.config["_artifact_display_name"] = resolved_artifact.get("display_name") or str(node.type)
+            node.config["_artifact_config_schema"] = (
+                dict(resolved_artifact.get("config_schema") or {})
+                if isinstance(resolved_artifact.get("config_schema"), dict)
+                else {}
+            )
+            node.config["_artifact_input_schema"] = (
+                dict(agent_contract.get("input_schema") or {})
+                if isinstance(agent_contract.get("input_schema"), dict)
+                else {}
+            )
+            node.config["_artifact_output_schema"] = (
+                dict(agent_contract.get("output_schema") or {})
+                if isinstance(agent_contract.get("output_schema"), dict)
+                else {}
+            )
+            node.config["_artifact_node_ui"] = node_ui
+            if resolved_artifact.get("artifact_kind") == "tenant":
+                node.config["_artifact_revision_id"] = resolved_artifact.get("artifact_revision_id")
+            elif resolved_artifact.get("artifact_version"):
+                node.config["_artifact_version"] = resolved_artifact.get("artifact_version")
+            self._register_runtime_artifact_node(
+                node_type=str(node.type),
+                executor_cls=ArtifactNodeExecutor,
+            )
+        return resolved_graph
+
+    async def compile(
+        self,
+        agent_id: UUID,
+        version: int,
+        graph: AgentGraph,
+        config: Dict[str, Any] = None,
+        input_params: Optional[Dict[str, Any]] = None,
+        **kwargs
+    ) -> GraphIR:
+        execution_mode = str((config or {}).get("mode") or "debug").strip().lower()
+        graph = await self.resolve_runtime_references(graph, execution_mode=execution_mode)
 
         # 1. Validate
         errors = await self.validate(graph, agent_id=agent_id)
@@ -927,22 +962,8 @@ class AgentCompiler:
     def _register_runtime_artifact_node(
         *,
         node_type: str,
-        display_name: str,
         executor_cls: type,
     ) -> None:
-        if AgentOperatorRegistry.get(node_type) is None:
-            AgentOperatorRegistry.register(
-                AgentOperatorSpec(
-                    type=node_type,
-                    category="action",
-                    display_name=display_name,
-                    description="Runtime-resolved artifact node",
-                    reads=[AgentStateField.STATE_VARIABLES, AgentStateField.CONTEXT],
-                    writes=[AgentStateField.STATE_VARIABLES],
-                    config_schema={},
-                    ui={"icon": "Package", "color": "#64748b"},
-                )
-            )
         if AgentExecutorRegistry.get_executor_cls(node_type) is None:
             AgentExecutorRegistry.register(node_type, executor_cls)
 

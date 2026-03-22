@@ -48,6 +48,9 @@ def test_rag_operator_schema_payload_exposes_visual_node_and_create_contract_det
 
     assert payload["required_config_fields"] == ["model_id"]
     assert payload["optional_config_fields"] == ["batch_size"]
+    assert payload["input_schema"]["type"] == "array"
+    assert payload["output_schema"]["type"] == ["array", "object"]
+    assert payload["terminal_output_schema"]["type"] == ["array", "object"]
     assert payload["visual_node_contract"]["required_fields"] == ["id", "category", "operator", "position"]
     assert payload["visual_node_contract"]["field_shapes"]["operator"]["const"] == "model_embedder"
     assert payload["visual_node_contract"]["example_node"]["operator"] == "model_embedder"

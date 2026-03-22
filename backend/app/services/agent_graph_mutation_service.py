@@ -38,7 +38,8 @@ class AgentGraphMutationService:
         register_standard_operators()
         graph = AgentGraph(**graph_definition)
         compiler = AgentCompiler(db=self.db, tenant_id=self.tenant_id)
-        analysis = compiler.analyze(graph)
+        resolved_graph = await compiler.resolve_runtime_references(graph, execution_mode="debug")
+        analysis = compiler.analyze(resolved_graph)
         return {
             "agent_id": str(agent.id),
             "graph_definition": graph.model_dump(),

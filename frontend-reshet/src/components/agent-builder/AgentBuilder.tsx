@@ -875,17 +875,18 @@ function AgentBuilderInner({
             )}
 
             {/* 3. Build Mode: Show Config Panel if node is selected */}
-            {mode === "build" && selectedNode && safeSelectedNodeData && (
-                <FloatingPanel position="right" visible={true} className="w-[400px]" autoHeight={true}>
-                    <ConfigPanel
-                        key={selectedNode.id}
-                        nodeId={selectedNode.id}
-                        data={safeSelectedNodeData}
-                        onConfigChange={handleConfigChange}
-                        onClose={() => setSelectedNodeId(null)}
-                        availableVariables={graphAnalysis?.inventory?.template_variables || []}
-                        graphAnalysis={graphAnalysis}
-                    />
+            {mode === "build" && (
+                <FloatingPanel position="right" visible={!!selectedNode} className="w-[400px]" autoHeight={true}>
+                    {selectedNode && safeSelectedNodeData && (
+                        <ConfigPanel
+                            nodeId={selectedNode.id}
+                            data={safeSelectedNodeData}
+                            onConfigChange={handleConfigChange}
+                            onClose={() => setSelectedNodeId(null)}
+                            availableVariables={graphAnalysis?.inventory?.template_variables || []}
+                            graphAnalysis={graphAnalysis}
+                        />
+                    )}
                 </FloatingPanel>
             )}
         </div>

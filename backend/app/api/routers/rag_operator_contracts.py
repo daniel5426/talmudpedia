@@ -179,6 +179,8 @@ def _operator_schema_payload(spec: Any) -> Dict[str, Any]:
     optional = [_config_field_payload(field) for field in list(getattr(spec, "optional_config", []) or [])]
     config_contract = _config_contract(required, optional)
     config_example = _config_example(required, optional)
+    input_schema = getattr(spec, "resolved_input_schema", lambda: getattr(spec, "input_schema", None))()
+    output_schema = getattr(spec, "resolved_output_schema", lambda: getattr(spec, "output_schema", None))()
     return {
         "operator_id": getattr(spec, "operator_id", None),
         "display_name": getattr(spec, "display_name", None),
@@ -194,6 +196,9 @@ def _operator_schema_payload(spec: Any) -> Dict[str, Any]:
         "optional_config": optional,
         "required_config_fields": [str(field.get("name")) for field in required if field.get("name")],
         "optional_config_fields": [str(field.get("name")) for field in optional if field.get("name")],
+        "input_schema": input_schema or {},
+        "output_schema": output_schema or {},
+        "terminal_output_schema": input_schema if getattr(getattr(spec, "category", None), "value", getattr(spec, "category", None)) == "output" else output_schema or {},
         "config_schema": config_contract,
         "visual_node_contract": _visual_node_contract(
             spec,

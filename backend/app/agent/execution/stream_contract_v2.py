@@ -117,6 +117,7 @@ def normalize_filtered_event_to_v2(
                 "status": status or None,
                 "next": data.get("next"),
                 "next_nodes": data.get("next_nodes"),
+                "final_output": data.get("final_output"),
             },
             diagnostics,
         )

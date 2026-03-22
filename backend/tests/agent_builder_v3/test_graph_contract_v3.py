@@ -3,6 +3,7 @@ from uuid import uuid4
 import pytest
 
 from app.agent.executors.data import SetStateNodeExecutor
+from app.agent.execution.service import AgentExecutorService
 from app.agent.executors.standard import register_standard_operators
 from app.agent.graph.compiler import AgentCompiler
 from app.agent.graph.contracts import materialize_end_output
@@ -178,3 +179,16 @@ async def test_graph_v3_rejects_set_state_value_ref_type_mismatch():
 
     errors = await compiler.validate(graph)
     assert any("type mismatch" in error.message for error in errors)
+
+
+def test_assistant_output_prefers_final_output_over_last_assistant_message():
+    output = AgentExecutorService._extract_assistant_output_text(
+        {
+            "final_output": "authoritative end output",
+            "messages": [
+                {"role": "assistant", "content": "stale assistant message"},
+            ],
+        }
+    )
+
+    assert output == "authoritative end output"

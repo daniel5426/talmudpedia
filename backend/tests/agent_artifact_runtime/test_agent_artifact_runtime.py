@@ -33,7 +33,7 @@ async def _seed_tenant_context(db_session):
     return tenant, user
 
 
-async def _create_artifact(db_session, tenant_id, created_by, *, publish: bool):
+async def _create_artifact(db_session, tenant_id, created_by, *, publish: bool, output_schema: dict | None = None):
     revisions = ArtifactRevisionService(db_session)
     artifact = await revisions.create_artifact(
         tenant_id=tenant_id,
@@ -51,8 +51,11 @@ async def _create_artifact(db_session, tenant_id, created_by, *, publish: bool):
             "state_reads": [],
             "state_writes": [],
             "input_schema": {"type": "object", "properties": {"query": {"type": "string"}}},
-            "output_schema": {"type": "object"},
-            "node_ui": {"icon": "Sparkles"},
+            "output_schema": output_schema or {"type": "object"},
+            "node_ui": {
+                "icon": "Sparkles",
+                "outputs": [{"name": "answer", "label": "Answer"}],
+            },
         },
     )
     if publish:
@@ -165,3 +168,32 @@ async def test_artifact_node_executor_routes_tenant_artifacts_through_shared_run
     assert captured["runtime"]["domain"].value == "agent"
     assert captured["runtime"]["queue_class"] == "artifact_prod_interactive"
     assert captured["runtime"]["input_payload"] == {"query": "hello"}
+
+
+@pytest.mark.asyncio
+async def test_artifact_analysis_uses_contract_output_schema(db_session):
+    tenant, user = await _seed_tenant_context(db_session)
+    artifact = await _create_artifact(
+        db_session,
+        tenant.id,
+        user.id,
+        publish=False,
+        output_schema={
+            "type": "object",
+            "properties": {
+                "answer": {"type": "string"},
+                "score": {"type": "number"},
+            },
+            "required": ["answer"],
+        },
+    )
+    compiler = AgentCompiler(tenant_id=tenant.id, db=db_session)
+
+    resolved = await compiler.resolve_runtime_references(_build_graph(str(artifact.id)), execution_mode="debug")
+    analysis = compiler.analyze(resolved)
+
+    artifact_outputs = next(item for item in analysis["inventory"]["node_outputs"] if item["node_id"] == "artifact")
+    assert artifact_outputs["fields"] == [
+        {"key": "answer", "type": "string", "label": "Answer"},
+        {"key": "score", "type": "number", "label": "score"},
+    ]

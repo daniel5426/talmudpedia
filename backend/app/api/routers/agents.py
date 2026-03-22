@@ -33,6 +33,7 @@ from app.services.agent_service import (
     AgentNotPublishedError,
 )
 from app.services.usage_quota_service import QuotaExceededError
+from app.agent.graph.contracts import contract_fields_from_schema, schema_to_value_type
 from app.agent.execution.stream_contract_v2 import (
     build_stream_v2_event,
     normalize_filtered_event_to_v2,
@@ -203,6 +204,114 @@ def handle_service_error(e: AgentServiceError):
 # Catalog Endpoint
 # =============================================================================
 
+def _artifact_field_type(json_type: str) -> str:
+    mapping = {
+        "string": "string",
+        "integer": "number",
+        "number": "number",
+        "boolean": "boolean",
+        "array": "text",
+        "object": "text",
+    }
+    return mapping.get(str(json_type or "").strip().lower(), "string")
+
+
+def _artifact_config_fields_from_schema(config_schema: dict[str, Any]) -> list[dict[str, Any]]:
+    properties = config_schema.get("properties") if isinstance(config_schema.get("properties"), dict) else {}
+    required = set(config_schema.get("required") or []) if isinstance(config_schema.get("required"), list) else set()
+    fields: list[dict[str, Any]] = []
+    for key, value in properties.items():
+        if not isinstance(value, dict):
+            value = {}
+        field: dict[str, Any] = {
+            "name": key,
+            "label": str(value.get("title") or key),
+            "fieldType": _artifact_field_type(value.get("type")),
+            "required": key in required,
+            "description": value.get("description"),
+        }
+        enum_values = value.get("enum")
+        if isinstance(enum_values, list) and enum_values:
+            field["fieldType"] = "select"
+            field["options"] = [{"value": str(item), "label": str(item)} for item in enum_values]
+        if "default" in value:
+            field["default"] = value.get("default")
+        fields.append(field)
+    return fields
+
+
+def _artifact_input_specs(input_schema: dict[str, Any], node_ui: dict[str, Any]) -> list[dict[str, Any]]:
+    properties = input_schema.get("properties") if isinstance(input_schema.get("properties"), dict) else {}
+    required = set(input_schema.get("required") or []) if isinstance(input_schema.get("required"), list) else set()
+    ui_inputs = node_ui.get("inputs") if isinstance(node_ui.get("inputs"), list) else []
+    input_labels = {
+        str(item.get("name") or "").strip(): str(item.get("label") or item.get("title") or item.get("name") or "").strip()
+        for item in ui_inputs
+        if isinstance(item, dict) and str(item.get("name") or "").strip()
+    }
+    specs: list[dict[str, Any]] = []
+    for key, value in properties.items():
+        if not isinstance(value, dict):
+            value = {}
+        specs.append(
+            {
+                "name": str(key),
+                "type": schema_to_value_type(value),
+                "required": key in required,
+                "default": value.get("default"),
+                "description": value.get("description"),
+                "label": input_labels.get(str(key)) or str(value.get("title") or key),
+            }
+        )
+    return specs
+
+
+async def _tenant_artifact_operator_specs(*, db: AsyncSession, tenant_id: UUID) -> list[dict[str, Any]]:
+    from app.db.postgres.models.artifact_runtime import ArtifactKind
+    from app.services.artifact_runtime.registry_service import ArtifactRegistryService
+
+    artifacts = await ArtifactRegistryService(db).list_accessible_artifacts(
+        tenant_id=tenant_id,
+        kind=ArtifactKind.AGENT_NODE,
+    )
+    specs: list[dict[str, Any]] = []
+    for artifact in artifacts:
+        revision = artifact.latest_draft_revision or artifact.latest_published_revision
+        if revision is None:
+            continue
+        agent_contract = dict(revision.agent_contract or {}) if revision.agent_contract is not None else {}
+        node_ui = dict(agent_contract.get("node_ui") or {}) if isinstance(agent_contract.get("node_ui"), dict) else {}
+        input_schema = dict(agent_contract.get("input_schema") or {}) if isinstance(agent_contract.get("input_schema"), dict) else {}
+        output_schema = dict(agent_contract.get("output_schema") or {}) if isinstance(agent_contract.get("output_schema"), dict) else {}
+        config_schema = dict(revision.config_schema or {}) if revision.config_schema is not None else {}
+        outputs = contract_fields_from_schema(output_schema, fallback_key="result")
+        specs.append(
+            {
+                "type": str(artifact.id),
+                "category": "action",
+                "display_name": str(revision.display_name or artifact.display_name),
+                "description": str(revision.description or artifact.description or "Artifact-backed node"),
+                "reads": list(agent_contract.get("state_reads") or []),
+                "writes": list(agent_contract.get("state_writes") or []),
+                "config_schema": config_schema,
+                "field_contracts": {},
+                "output_contract": {"fields": outputs},
+                "ui": {
+                    "icon": str(node_ui.get("icon") or "Package"),
+                    "color": str(node_ui.get("color") or "#64748b"),
+                    "inputType": str(node_ui.get("inputType") or "any"),
+                    "outputType": str(node_ui.get("outputType") or "context"),
+                    "configFields": _artifact_config_fields_from_schema(config_schema),
+                    "inputs": _artifact_input_specs(input_schema, node_ui),
+                    "outputs": outputs,
+                    "isArtifact": True,
+                    "artifactId": str(artifact.id),
+                    "artifactRevisionId": str(revision.id),
+                },
+            }
+        )
+    return specs
+
 @router.get("/operators")
 async def list_operators(
     context: Dict[str, Any] = Depends(get_agent_context),
@@ -218,7 +327,9 @@ async def list_operators(
     register_standard_operators()
     
     operators = AgentOperatorRegistry.list_operators()
-    return [op.model_dump() for op in operators]
+    payload = [op.model_dump() for op in operators]
+    payload.extend(await _tenant_artifact_operator_specs(db=db, tenant_id=context["tenant_id"]))
+    return payload
 
 
 @router.get("/nodes/catalog")

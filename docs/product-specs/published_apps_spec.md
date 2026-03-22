@@ -1,6 +1,6 @@
 # Published Apps Spec
 
-Last Updated: 2026-03-19
+Last Updated: 2026-03-22
 
 This document is the canonical product/specification overview for published apps.
 
@@ -20,6 +20,7 @@ Published apps let a tenant expose an agent-backed app experience with:
 The current product includes:
 - admin control plane under `/admin/apps`
 - app creation and management tied to tenant ownership
+- app analytics for admin list/detail surfaces
 - published-app runtime routes
 - builder preview and draft-development flows
 - published and draft revision pointers
@@ -55,6 +56,7 @@ The current product does not yet include:
 
 The current backend exposes these main published-app surfaces:
 - admin management and builder APIs under `/admin/apps`
+- app analytics APIs under `/admin/apps/stats` and `/admin/apps/{app_id}/stats`
 - preview runtime and discovery endpoints under `/public/apps`
 - external runtime/auth/history endpoints under `/public/external/apps`
 - hosted runtime/internal auth surface in `published_apps_host_runtime`
@@ -81,11 +83,14 @@ Important current behavior verified in code:
 - preview source-UI mode is also removed in favor of runtime/bootstrap flows
 - runtime attachments are upload-first and chat requests reference `attachment_ids`
 - thread detail payloads include attachment descriptors so replay preserves file context
+- runtime bootstrap records app bootstrap-view and visit-start analytics events
+- app analytics exclude preview bootstrap traffic by default and exclude builder coding-agent runs from runtime usage totals
 
 ## Data Model Shape
 
 Current app-related persistence includes:
 - published apps
+- analytics events
 - immutable revisions
 - user memberships
 - app accounts

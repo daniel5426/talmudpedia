@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ExternalLink,
   Globe,
@@ -14,10 +14,16 @@ import {
   Trash2,
 } from "lucide-react";
 
-import { CustomBreadcrumb } from "@/components/ui/custom-breadcrumb";
 import { AdminPageHeader } from "@/components/admin/AdminPageHeader";
+import {
+  AppRowStats,
+  AppRowStatsEmpty,
+  AppRowStatsSkeleton,
+} from "@/components/admin/apps/AppRowStats";
+import { SearchableResourceInput } from "@/components/shared/SearchableResourceInput";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { CustomBreadcrumb } from "@/components/ui/custom-breadcrumb";
 import {
   Dialog,
   DialogContent,
@@ -36,13 +42,14 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
-import { SearchableResourceInput } from "@/components/shared/SearchableResourceInput";
+import { cn } from "@/lib/utils";
 import { agentService, publishedAppsService } from "@/services";
 import type {
   Agent,
   PublishedApp,
   PublishedAppAuthProvider,
   PublishedAppAuthTemplate,
+  PublishedAppStatsSummary,
   PublishedAppTemplate,
 } from "@/services";
 
@@ -76,14 +83,14 @@ function relativeTime(dateStr: string): string {
 
 function AppRowSkeleton() {
   return (
-    <div className="flex items-center gap-4 px-4 py-3.5 border-b border-border/50">
-      <Skeleton className="h-9 w-9 rounded-lg shrink-0" />
+    <div className="flex items-center gap-4 border-b border-border/50 px-4 py-3.5">
+      <Skeleton className="h-9 w-9 shrink-0 rounded-lg" />
       <div className="flex-1 space-y-1.5">
         <Skeleton className="h-4 w-36" />
         <Skeleton className="h-3 w-24" />
       </div>
-      <Skeleton className="h-3 w-16 hidden md:block" />
-      <Skeleton className="h-3 w-20 hidden lg:block" />
+      <Skeleton className="hidden h-3 w-16 md:block" />
+      <Skeleton className="hidden h-3 w-20 lg:block" />
       <Skeleton className="h-3 w-12" />
     </div>
   );
@@ -102,6 +109,12 @@ export default function AppsPage() {
   const [createError, setCreateError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
+
+  const [statsDays, setStatsDays] = useState(7);
+  const [statsMap, setStatsMap] = useState<Map<string, PublishedAppStatsSummary>>(new Map());
+  const [isStatsLoading, setIsStatsLoading] = useState(false);
+  const [statsApproximate, setStatsApproximate] = useState(false);
+  const statsFetchRef = useRef(0);
 
   const [name, setName] = useState("");
   const [agentId, setAgentId] = useState("");
@@ -123,7 +136,7 @@ export default function AppsPage() {
 
   const agentMap = useMemo(() => {
     const map = new Map<string, Agent>();
-    publishedAgents.forEach((a) => map.set(a.id, a));
+    publishedAgents.forEach((agent) => map.set(agent.id, agent));
     return map;
   }, [publishedAgents]);
 
@@ -166,11 +179,37 @@ export default function AppsPage() {
     }
   }
 
+  const loadStats = useCallback(async (days: number) => {
+    const fetchId = ++statsFetchRef.current;
+    setIsStatsLoading(true);
+    try {
+      const response = await publishedAppsService.listStats({ days });
+      if (fetchId !== statsFetchRef.current) return;
+      const next = new Map<string, PublishedAppStatsSummary>();
+      for (const item of response.items) {
+        next.set(item.app_id, item);
+      }
+      setStatsMap(next);
+      setStatsApproximate(response.items.some((i) => i.approximate));
+    } catch {
+      if (fetchId !== statsFetchRef.current) return;
+      setStatsMap(new Map());
+    } finally {
+      if (fetchId === statsFetchRef.current) {
+        setIsStatsLoading(false);
+      }
+    }
+  }, []);
+
   useEffect(() => {
     void loadApps();
     void loadCreateResources();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    void loadStats(statsDays);
+  }, [statsDays, loadStats]);
 
   function resetCreateForm() {
     setName("");
@@ -237,12 +276,27 @@ export default function AppsPage() {
 
   return (
     <div className="flex h-screen w-full flex-col overflow-hidden bg-background">
-      {/* Header */}
       <AdminPageHeader>
         <CustomBreadcrumb
           items={[{ label: "Apps", href: "/admin/apps", active: true }]}
         />
         <div className="flex items-center gap-2">
+          <div className="hidden overflow-hidden rounded-md border md:flex">
+            {[7, 14, 30].map((d) => (
+              <button
+                key={d}
+                onClick={() => setStatsDays(d)}
+                className={cn(
+                  "px-2.5 py-1 text-[11px] transition-colors",
+                  statsDays === d
+                    ? "bg-muted font-medium text-foreground"
+                    : "text-muted-foreground hover:bg-muted/50"
+                )}
+              >
+                {d}d
+              </button>
+            ))}
+          </div>
           <div className="relative w-64">
             <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground/60" />
             <Input
@@ -267,7 +321,6 @@ export default function AppsPage() {
         </div>
       </AdminPageHeader>
 
-      {/* Content */}
       <main className="flex-1 overflow-y-auto" data-admin-page-scroll>
         {appsError && (
           <div className="mx-4 mt-3 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
@@ -277,19 +330,19 @@ export default function AppsPage() {
 
         {isAppsLoading ? (
           <div>
-            {Array.from({ length: 5 }).map((_, i) => (
-              <AppRowSkeleton key={i} />
+            {Array.from({ length: 5 }).map((_, index) => (
+              <AppRowSkeleton key={index} />
             ))}
           </div>
         ) : filteredApps.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-24 px-4 text-center">
-            <div className="flex h-14 w-14 items-center justify-center rounded-xl border-2 border-dashed border-border/60 mb-4">
+          <div className="flex flex-col items-center justify-center px-4 py-24 text-center">
+            <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-xl border-2 border-dashed border-border/60">
               <Globe className="h-6 w-6 text-muted-foreground/40" />
             </div>
-            <h3 className="text-sm font-medium text-foreground mb-1">
+            <h3 className="mb-1 text-sm font-medium text-foreground">
               {search ? "No apps match your search" : "No apps yet"}
             </h3>
-            <p className="text-sm text-muted-foreground/70 max-w-[300px] mb-5">
+            <p className="mb-5 max-w-[300px] text-sm text-muted-foreground/70">
               {search
                 ? "Try a different search term."
                 : "Deploy your first app from a published agent to get started."}
@@ -322,71 +375,70 @@ export default function AppsPage() {
                   href={`/admin/apps/${app.id}`}
                   className="group flex items-center gap-4 px-4 py-3.5 transition-colors hover:bg-muted/40"
                 >
-                  {/* App icon */}
-                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border/60 bg-muted/30 text-muted-foreground/70 group-hover:border-border group-hover:bg-muted/50 transition-colors">
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border/60 bg-muted/30 text-muted-foreground/70 transition-colors group-hover:border-border group-hover:bg-muted/50">
                     <Globe className="h-4 w-4" />
                   </div>
 
-                  {/* Name + slug */}
-                  <div className="flex-1 min-w-0">
+                  <div className="min-w-0 shrink-0">
                     <div className="flex items-center gap-2">
-                      <span className="text-sm font-medium text-foreground truncate">
+                      <span className="truncate text-sm font-medium text-foreground">
                         {app.name}
                       </span>
-                      <span className="flex items-center gap-1.5 shrink-0">
-                        <span
-                          className={`h-1.5 w-1.5 rounded-full ${status.color}`}
-                        />
-                        <span className="text-xs text-muted-foreground/70">
-                          {status.label}
-                        </span>
+                      <span className="flex shrink-0 items-center gap-1.5">
+                        <span className={`h-1.5 w-1.5 rounded-full ${status.color}`} />
+                        <span className="text-xs text-muted-foreground/70">{status.label}</span>
                       </span>
                     </div>
-                    <div className="flex items-center gap-2 mt-0.5">
-                      <span className="text-xs text-muted-foreground/60 font-mono truncate">
+                    <div className="mt-0.5 flex flex-wrap items-center gap-2">
+                      <span className="truncate font-mono text-xs text-muted-foreground/60">
                         /{app.slug}
                       </span>
-                      {agent && (
+                      {agent ? (
                         <>
                           <span className="text-muted-foreground/30">·</span>
-                          <span className="text-xs text-muted-foreground/60 truncate">
+                          <span className="truncate text-xs text-muted-foreground/60">
                             {agent.name}
                           </span>
                         </>
-                      )}
+                      ) : null}
                     </div>
                   </div>
 
-                  {/* Auth info */}
-                  <div className="hidden md:flex items-center gap-1.5 shrink-0">
-                    {app.auth_enabled ? (
-                      <span className="flex items-center gap-1 text-xs text-muted-foreground/60">
-                        <KeyRound className="h-3 w-3" />
-                        {providers.join(", ")}
-                      </span>
+                  <div className="min-w-0 flex-1 flex justify-center">
+                    {isStatsLoading && statsMap.size === 0 ? (
+                      <AppRowStatsSkeleton />
+                    ) : statsMap.has(app.id) ? (
+                      <AppRowStats
+                        stats={statsMap.get(app.id)!}
+                        approximate={statsApproximate}
+                      />
                     ) : (
-                      <span className="text-xs text-muted-foreground/40">
-                        No auth
-                      </span>
+                      <AppRowStatsEmpty />
                     )}
                   </div>
 
-                  {/* Updated time */}
-                  <span className="hidden lg:block text-xs text-muted-foreground/50 shrink-0 w-16 text-right">
-                    {relativeTime(app.updated_at)}
-                  </span>
+                  {app.auth_enabled ? (
+                    <div className="hidden items-center gap-1.5 text-xs text-muted-foreground/60 md:flex">
+                      <KeyRound className="h-3 w-3" />
+                      <span>{providers.join(", ")}</span>
+                    </div>
+                  ) : (
+                    <div className="hidden text-xs text-muted-foreground/40 md:block">
+                      No auth
+                    </div>
+                  )}
 
-                  {/* Actions */}
-                  <div
-                    onClick={(e) => e.preventDefault()}
-                    className="shrink-0"
-                  >
+                  <div className="hidden text-xs text-muted-foreground/50 lg:block">
+                    Updated {relativeTime(app.updated_at)}
+                  </div>
+
+                  <div onClick={(e) => e.preventDefault()}>
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
                         <Button
                           variant="ghost"
                           size="icon"
-                          className="h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground"
+                          className="h-7 w-7 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100"
                         >
                           <MoreHorizontal className="h-4 w-4" />
                         </Button>
@@ -418,7 +470,6 @@ export default function AppsPage() {
         )}
       </main>
 
-      {/* Create App Dialog */}
       <Dialog
         open={createDialogOpen}
         onOpenChange={(open) => {
@@ -437,17 +488,17 @@ export default function AppsPage() {
           <div className="grid gap-5 py-2 md:grid-cols-[1.1fr_1fr]">
             <div className="space-y-4">
               <div className="space-y-2">
-              <Label htmlFor="create-app-name" className="text-xs font-medium text-muted-foreground">
-                App Name
-              </Label>
-              <Input
-                id="create-app-name"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="Support Assistant"
-                className="h-9"
-              />
-            </div>
+                <Label htmlFor="create-app-name" className="text-xs font-medium text-muted-foreground">
+                  App Name
+                </Label>
+                <Input
+                  id="create-app-name"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="Support Assistant"
+                  className="h-9"
+                />
+              </div>
 
               <div className="space-y-2">
                 <Label className="text-xs font-medium text-muted-foreground">Published Agent</Label>
@@ -469,22 +520,22 @@ export default function AppsPage() {
 
               <div className="space-y-3">
                 <Label className="text-xs font-medium text-muted-foreground">Authentication</Label>
-                <div className="rounded-lg border border-border/60 divide-y divide-border/40">
-                  <label className="flex items-center justify-between px-3 py-2.5 cursor-pointer hover:bg-muted/30 transition-colors">
+                <div className="divide-y divide-border/40 rounded-lg border border-border/60">
+                  <label className="flex cursor-pointer items-center justify-between px-3 py-2.5 transition-colors hover:bg-muted/30">
                     <span className="text-sm">Require authentication</span>
                     <Checkbox
                       checked={authEnabled}
                       onCheckedChange={(checked) => setAuthEnabled(checked === true)}
                     />
                   </label>
-                  <label className="flex items-center justify-between px-3 py-2.5 cursor-pointer hover:bg-muted/30 transition-colors">
+                  <label className="flex cursor-pointer items-center justify-between px-3 py-2.5 transition-colors hover:bg-muted/30">
                     <span className="text-sm">Password provider</span>
                     <Checkbox
                       checked={providerPassword}
                       onCheckedChange={(checked) => setProviderPassword(checked === true)}
                     />
                   </label>
-                  <label className="flex items-center justify-between px-3 py-2.5 cursor-pointer hover:bg-muted/30 transition-colors">
+                  <label className="flex cursor-pointer items-center justify-between px-3 py-2.5 transition-colors hover:bg-muted/30">
                     <span className="text-sm">Google provider</span>
                     <Checkbox
                       checked={providerGoogle}
@@ -494,9 +545,7 @@ export default function AppsPage() {
                 </div>
               </div>
 
-              {createError && (
-                <p className="text-sm text-destructive">{createError}</p>
-              )}
+              {createError && <p className="text-sm text-destructive">{createError}</p>}
             </div>
 
             <div className="space-y-3">

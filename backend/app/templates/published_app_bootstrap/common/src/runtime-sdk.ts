@@ -3,12 +3,14 @@ import {
   fetchRuntimeBootstrap,
   type NormalizedRuntimeEvent,
   type RuntimeBootstrap,
-  type RuntimeInput,
+  type RuntimeInput as SdkRuntimeInput,
 } from "@talmudpedia/runtime-sdk";
 
 import runtimeConfig from "./runtime-config.json";
 
-export type { RuntimeInput };
+export type RuntimeInput = SdkRuntimeInput & {
+  attachment_ids?: string[];
+};
 
 export type RuntimeEvent = {
   type: string;
@@ -166,6 +168,28 @@ async function resolveBootstrap(basePath?: string): Promise<RuntimeBootstrap> {
     bootstrapPromise = fetchBootstrapFromConfig(query);
   }
   return bootstrapPromise;
+}
+
+function inferBasePathFromBootstrap(bootstrap: RuntimeBootstrap): string {
+  const streamPath =
+    bootstrap.chat_stream_path ||
+    (bootstrap.chat_stream_url
+      ? new URL(
+          bootstrap.chat_stream_url,
+          typeof window !== "undefined" ? window.location.origin : "http://localhost",
+        ).pathname
+      : "");
+  const normalized = String(streamPath || "").trim();
+  if (!normalized.endsWith("/chat/stream")) {
+    throw new Error("Runtime bootstrap is missing a valid chat stream path.");
+  }
+  const basePath = normalized.slice(0, -"/chat/stream".length);
+  return basePath || "/";
+}
+
+export async function resolveRuntimeBasePath(basePath?: string): Promise<string> {
+  const bootstrap = await resolveBootstrap(basePath);
+  return inferBasePathFromBootstrap(bootstrap);
 }
 
 function resolveTokenProvider(basePath?: string) {

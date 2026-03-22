@@ -676,10 +676,6 @@ class AgentService:
             messages = result_state.get("messages", [])
             final_output = result_state.get("final_output")
             output_text = final_output if isinstance(final_output, str) else ""
-            if not output_text:
-                last_message = messages[-1] if messages else None
-                if isinstance(last_message, dict):
-                    output_text = last_message.get("content", "")
 
             class ExecResult:
                 def __init__(self, run_id, output, steps, messages, usage):

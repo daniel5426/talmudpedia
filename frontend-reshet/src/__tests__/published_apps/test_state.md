@@ -17,6 +17,7 @@ Frontend coverage for published-apps admin and public runtime surfaces outside t
 
 ## Key Scenarios Covered
 - Apps admin page list/create/update behavior.
+- Apps admin page inline stats: fetch, display, loading skeleton, error degradation, date range switching.
 - Builder file-filter and blocked path rules.
 - Chat timeline/thread rendering behaviors.
 - Chat panel shimmer cutoff and scroll-fade activation.
@@ -33,7 +34,7 @@ Frontend coverage for published-apps admin and public runtime surfaces outside t
 - Result: PASS (3 passed)
 - Command: `cd frontend-reshet && npm test -- --runInBand src/__tests__/published_apps/apps_admin_page.test.tsx --watch=false`
 - Date: 2026-03-22
-- Result: PASS (3 passed)
+- Result: PASS (7 passed — 3 existing + 4 new stats tests)
 
 ## Known Gaps / Follow-ups
 - Workspace versions-first flows moved to `frontend-reshet/src/__tests__/apps_builder_versions/`.

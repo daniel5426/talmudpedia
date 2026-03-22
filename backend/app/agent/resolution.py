@@ -186,6 +186,8 @@ class ArtifactResolver(ComponentResolver):
             "artifact_revision_id": str(revision.id),
             "status": str(getattr(getattr(artifact, "status", None), "value", getattr(artifact, "status", ""))),
             "display_name": str(getattr(artifact, "display_name", artifact.id)),
+            "config_schema": dict(revision.config_schema or {}) if revision.config_schema is not None else {},
+            "agent_contract": dict(revision.agent_contract or {}) if revision.agent_contract is not None else {},
         }
 
 class RAGPipelineResolver(ComponentResolver):

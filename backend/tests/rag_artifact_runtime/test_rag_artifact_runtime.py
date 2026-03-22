@@ -225,6 +225,8 @@ async def test_pipeline_executor_routes_artifact_steps_to_background_queue(db_se
     assert captured["runtime"]["domain"].value == "rag"
     assert captured["runtime"]["revision_id"] == artifact.latest_published_revision_id
     assert job.status == PipelineJobStatus.COMPLETED
+    assert job.output["final_output"] == [{"id": "doc-1"}]
+    assert job.output["results"] == [{"id": "doc-1"}]
 
 
 @pytest.mark.asyncio

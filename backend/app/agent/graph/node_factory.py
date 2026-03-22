@@ -4,8 +4,8 @@ from uuid import UUID
 
 from langchain_core.messages import AIMessage
 
-from app.agent.registry import AgentExecutorRegistry
-from app.agent.graph.contracts import extract_runtime_node_output
+from app.agent.registry import AgentExecutorRegistry, AgentOperatorRegistry
+from app.agent.graph.contracts import extract_runtime_node_output, get_node_output_contract
 from app.agent.graph.ir import GraphIRNode
 
 logger = logging.getLogger(__name__)
@@ -81,6 +81,8 @@ def build_node_fn(node: GraphIRNode, tenant_id: Optional[UUID], db: Any):
                     legacy_node_outputs = {}
                 published_output = extract_runtime_node_output(
                     node_type=node.type,
+                    config=node_config,
+                    operator_spec=AgentOperatorRegistry.get(node.type),
                     state_update=state_update,
                     previous_state=state,
                 )
@@ -89,6 +91,29 @@ def build_node_fn(node: GraphIRNode, tenant_id: Optional[UUID], db: Any):
                     legacy_node_outputs[node.id] = published_output
                     state_update["node_outputs"] = node_outputs
                     state_update["_node_outputs"] = legacy_node_outputs
+                    if emitter:
+                        operator_spec = AgentOperatorRegistry.get(node.type)
+                        declared_contract = get_node_output_contract(
+                            node_id=node.id,
+                            node_type=node.type,
+                            node_label=node.config.get("label", node.id),
+                            config=node_config,
+                            operator_spec=operator_spec,
+                        )
+                        emitter.emit_internal_event(
+                            "workflow.node_output_published",
+                            {
+                                "node_type": node.type,
+                                "declared_output_keys": [
+                                    str(item.get("key") or "").strip()
+                                    for item in (declared_contract.get("fields") or [])
+                                    if isinstance(item, dict) and str(item.get("key") or "").strip()
+                                ],
+                                "published_output_keys": sorted(published_output.keys()),
+                            },
+                            node_id=node.id,
+                            category="workflow_contract",
+                        )
 
             return state_update
         except Exception as e:

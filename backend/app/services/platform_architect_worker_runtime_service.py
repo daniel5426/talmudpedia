@@ -152,6 +152,9 @@ class PlatformArchitectWorkerRuntimeService:
     def _extract_assistant_output_text(output_result: dict[str, Any] | None) -> str | None:
         if not isinstance(output_result, dict):
             return None
+        final_output = output_result.get("final_output")
+        if isinstance(final_output, str) and final_output.strip():
+            return final_output.strip()
         messages = output_result.get("messages")
         if isinstance(messages, list):
             last_assistant: str | None = None
@@ -166,9 +169,6 @@ class PlatformArchitectWorkerRuntimeService:
                         last_assistant = text
             if last_assistant:
                 return last_assistant
-        final_output = output_result.get("final_output")
-        if isinstance(final_output, str) and final_output.strip():
-            return final_output.strip()
         state = output_result.get("state")
         if isinstance(state, dict):
             last_output = state.get("last_agent_output")

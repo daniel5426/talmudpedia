@@ -21,6 +21,7 @@ jest.mock("@/services", () => ({
   },
   publishedAppsService: {
     list: jest.fn(),
+    listStats: jest.fn(),
     listTemplates: jest.fn(),
     listAuthTemplates: jest.fn(),
     create: jest.fn(),
@@ -42,6 +43,43 @@ jest.mock("next/link", () => {
 
 describe("Apps admin page", () => {
   beforeEach(() => {
+    (publishedAppsService.listStats as jest.Mock).mockResolvedValue({
+      start_date: "2026-03-15",
+      end_date: "2026-03-22",
+      items: [
+        {
+          app_id: "app-1",
+          start_date: "2026-03-15",
+          end_date: "2026-03-22",
+          approximate: false,
+          visits: 120,
+          unique_visitors: 45,
+          agent_runs: 30,
+          failed_runs: 2,
+          tokens: 5400,
+          threads: 10,
+          app_accounts: 8,
+          active_sessions: 3,
+          visits_by_day: [
+            { date: "2026-03-15", value: 10 },
+            { date: "2026-03-16", value: 20 },
+            { date: "2026-03-17", value: 15 },
+          ],
+          runs_by_day: [
+            { date: "2026-03-15", value: 5 },
+            { date: "2026-03-16", value: 8 },
+            { date: "2026-03-17", value: 4 },
+          ],
+          tokens_by_day: [
+            { date: "2026-03-15", value: 1000 },
+            { date: "2026-03-16", value: 2000 },
+            { date: "2026-03-17", value: 1500 },
+          ],
+          visit_surface_breakdown: {},
+          visit_auth_state_breakdown: {},
+        },
+      ],
+    });
     (publishedAppsService.list as jest.Mock).mockResolvedValue([
       {
         id: "app-1",
@@ -264,5 +302,66 @@ describe("Apps admin page", () => {
       expect(screen.queryByText("Loading published agents...")).not.toBeInTheDocument();
     });
     expect(screen.getByText("Classic Dialogue")).toBeInTheDocument();
+  });
+
+  it("fetches and displays inline stats for apps", async () => {
+    render(<AppsPage />);
+
+    await waitFor(() => expect(publishedAppsService.listStats).toHaveBeenCalledWith({ days: 7 }));
+    expect(await screen.findByText("Support")).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(screen.getByText("visits")).toBeInTheDocument();
+      expect(screen.getByText("runs")).toBeInTheDocument();
+      expect(screen.getByText("tok")).toBeInTheDocument();
+    });
+  });
+
+  it("shows app list while stats are still loading", async () => {
+    const statsDeferred = deferred<{
+      start_date: string;
+      end_date: string;
+      items: Array<Record<string, unknown>>;
+    }>();
+    (publishedAppsService.listStats as jest.Mock).mockReturnValueOnce(statsDeferred.promise);
+
+    render(<AppsPage />);
+
+    expect(await screen.findByText("Support")).toBeInTheDocument();
+
+    statsDeferred.resolve({
+      start_date: "2026-03-15",
+      end_date: "2026-03-22",
+      items: [],
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("no stats yet")).toBeInTheDocument();
+    });
+  });
+
+  it("degrades cleanly when stats fail to load", async () => {
+    (publishedAppsService.listStats as jest.Mock).mockRejectedValueOnce(new Error("Network error"));
+
+    render(<AppsPage />);
+
+    expect(await screen.findByText("Support")).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(screen.getByText("no stats yet")).toBeInTheDocument();
+    });
+  });
+
+  it("changes stats period when date range buttons are clicked", async () => {
+    render(<AppsPage />);
+
+    await waitFor(() => expect(publishedAppsService.listStats).toHaveBeenCalledWith({ days: 7 }));
+    expect(await screen.findByText("Support")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "30d" }));
+
+    await waitFor(() => {
+      expect(publishedAppsService.listStats).toHaveBeenCalledWith({ days: 30 });
+    });
   });
 });

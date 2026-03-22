@@ -66,3 +66,12 @@ def test_build_template_files_prunes_hidden_and_ignored_directories(tmp_path, mo
     assert "vite.config.ts" in files
     assert not any(path.startswith("node_modules/") for path in files)
     assert not any(path.startswith(".cache/") for path in files)
+
+
+def test_build_template_files_includes_updated_runtime_sdk_overlay():
+    files = template_service.build_template_files("classic-chat")
+
+    runtime_sdk = files["src/runtime-sdk.ts"]
+
+    assert "export async function resolveRuntimeBasePath" in runtime_sdk
+    assert "attachment_ids?: string[]" in runtime_sdk

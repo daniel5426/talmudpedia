@@ -8,6 +8,7 @@ This module defines the Operator Contract:
 """
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional, TypeVar, Generic
+import jsonschema
 from pydantic import BaseModel
 from datetime import datetime
 import asyncio
@@ -95,7 +96,13 @@ class OperatorExecutor(ABC):
         if self.spec.input_type != DataType.NONE:
             if input_data.data is None:
                 errors.append(f"Operator {self.operator_id} requires input data")
-        
+            schema = self.spec.resolved_input_schema()
+            if schema and input_data.data is not None:
+                try:
+                    jsonschema.validate(instance=input_data.data, schema=schema)
+                except jsonschema.ValidationError as exc:
+                    errors.append(f"Input schema validation failed: {exc.message}")
+
         return errors
     
     def validate_output(self, output_data: OperatorOutput) -> List[str]:
@@ -109,7 +116,13 @@ class OperatorExecutor(ABC):
         if self.spec.output_type != DataType.NONE:
             if output_data.data is None:
                 errors.append(f"Operator {self.operator_id} must produce output data")
-        
+            schema = self.spec.resolved_output_schema()
+            if schema and output_data.data is not None:
+                try:
+                    jsonschema.validate(instance=output_data.data, schema=schema)
+                except jsonschema.ValidationError as exc:
+                    errors.append(f"Output schema validation failed: {exc.message}")
+
         return errors
     
     def validate_config(self, config: Dict[str, Any]) -> List[str]:

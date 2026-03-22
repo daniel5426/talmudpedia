@@ -1,6 +1,6 @@
 "use client"
 
-import React from "react"
+import React, { useEffect, useRef, useState } from "react"
 import { cn } from "@/lib/utils"
 
 interface FloatingPanelProps {
@@ -25,13 +25,29 @@ export function FloatingPanel({
     position,
     visible,
     background = "bg-background/95",
-    fullHeight = false, 
+    fullHeight = false,
     autoHeight = false,
     offset = 0,
     shadow = "shadow-xs",
     border = "border-[0.5px]",
     className
 }: FloatingPanelProps) {
+    const sizerRef = useRef<HTMLDivElement>(null)
+    const [animatedHeight, setAnimatedHeight] = useState<number | undefined>(undefined)
+
+    useEffect(() => {
+        if (!autoHeight || !sizerRef.current) return
+        const ro = new ResizeObserver((entries) => {
+            const entry = entries[0]
+            if (entry) {
+                const h = entry.borderBoxSize?.[0]?.blockSize ?? entry.contentRect.height
+                setAnimatedHeight(h)
+            }
+        })
+        ro.observe(sizerRef.current)
+        return () => ro.disconnect()
+    }, [autoHeight])
+
     // Simplified translation logic for inline styles
     // We add an extra 100px to ensure it's fully off-screen even with shadows
     const translation = visible
@@ -61,15 +77,23 @@ export function FloatingPanel({
             )}
             style={style}
         >
-            <div className={cn(
-                "relative backdrop-blur-md flex flex-col overflow-hidden h-full",
-                shadow,
-                background,
-                !fullHeight ? "rounded-2xl " : "",
-                autoHeight && "h-auto",
-                border
-            )}>
-                {children}
+            <div
+                className={cn(
+                    "relative backdrop-blur-md flex flex-col overflow-hidden",
+                    autoHeight && "transition-[height] duration-300 ease-in-out",
+                    shadow,
+                    background,
+                    !fullHeight ? "rounded-2xl" : "",
+                    !autoHeight && "h-full",
+                    border
+                )}
+                style={autoHeight && animatedHeight != null ? { height: `${animatedHeight}px` } : undefined}
+            >
+                {autoHeight ? (
+                    <div ref={sizerRef}>{children}</div>
+                ) : (
+                    children
+                )}
             </div>
         </div>
     )

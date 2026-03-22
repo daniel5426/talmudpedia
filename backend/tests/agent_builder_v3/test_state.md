@@ -16,11 +16,12 @@ Graph Spec 3.0 contract analysis, graph-analysis API coverage, inventory validat
 - `set_state` writes typed `value_ref` assignments into workflow state
 - `set_state` rejects compile-time `ValueRef` type mismatches
 - End output schema bindings materialize authoritative `final_output`
+- assistant text extraction now prefers authoritative `final_output` over the last assistant message
 
 **Last Run**
 - Command: `pytest -q backend/tests/agent_builder_v3`
 - Date: 2026-03-22
-- Result: Pass (7 tests)
+- Result: Pass (8 tests)
 
 **Known Gaps / Follow-ups**
-- No runtime streaming test yet for published `node_outputs`
+- No route-level execution contract fixture yet for structured `final_output` responses

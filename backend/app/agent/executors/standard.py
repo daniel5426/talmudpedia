@@ -1919,6 +1919,12 @@ def register_standard_operators():
             },
             "required": ["model_id"]
         },
+        output_contract={
+            "fields": [
+                {"key": "output_text", "type": "string", "label": "Output Text"},
+                {"key": "output_json", "type": "unknown", "label": "Output JSON"},
+            ]
+        },
         ui={
             "icon": "Bot",
             "color": "#8b5cf6",
@@ -2018,6 +2024,12 @@ def register_standard_operators():
             },
             "required": ["model_id"]
         },
+        output_contract={
+            "fields": [
+                {"key": "output_text", "type": "string", "label": "Output Text"},
+                {"key": "output_json", "type": "unknown", "label": "Output JSON"},
+            ]
+        },
         ui={
             "icon": "Brain",
             "color": "#a78bfa",  # Lighter purple to indicate secondary
@@ -2046,6 +2058,11 @@ def register_standard_operators():
         description="Reshape data using expressions",
         reads=[AgentStateField.STATE_VARIABLES, AgentStateField.CONTEXT],
         writes=[AgentStateField.STATE_VARIABLES, AgentStateField.TRANSFORM_OUTPUT],
+        output_contract={
+            "fields": [
+                {"key": "output", "type": "unknown", "label": "Output"},
+            ]
+        },
         ui={
             "icon": "Sparkles",
             "color": "#06b6d4",
@@ -2501,6 +2518,11 @@ def register_standard_operators():
         description="Invoke a registered tool",
         reads=[AgentStateField.STATE_VARIABLES],
         writes=[AgentStateField.OBSERVATIONS, AgentStateField.CONTEXT],
+        output_contract={
+            "fields": [
+                {"key": "result", "type": "unknown", "label": "Result"},
+            ]
+        },
         ui={
             "icon": "Wrench",
             "color": "#3b82f6",
@@ -2521,6 +2543,12 @@ def register_standard_operators():
         description="Execute a Retrieval Pipeline",
         reads=[AgentStateField.MESSAGE_HISTORY, AgentStateField.STATE_VARIABLES],
         writes=[AgentStateField.CONTEXT],
+        output_contract={
+            "fields": [
+                {"key": "results", "type": "list", "label": "Results"},
+                {"key": "documents", "type": "list", "label": "Documents"},
+            ]
+        },
         ui={
             "icon": "Search",
             "color": "#3b82f6",
@@ -2544,6 +2572,12 @@ def register_standard_operators():
         description="Search a Knowledge Store directly",
         reads=[AgentStateField.MESSAGE_HISTORY, AgentStateField.STATE_VARIABLES],
         writes=[AgentStateField.CONTEXT],
+        output_contract={
+            "fields": [
+                {"key": "results", "type": "list", "label": "Results"},
+                {"key": "documents", "type": "list", "label": "Documents"},
+            ]
+        },
         ui={
             "icon": "Database",
             "color": "#3b82f6",
@@ -2573,6 +2607,12 @@ def register_standard_operators():
         description="Pause for user approval or rejection",
         reads=[AgentStateField.STATE_VARIABLES],
         writes=[AgentStateField.MESSAGE_HISTORY, AgentStateField.APPROVAL_STATUS, AgentStateField.ROUTING_KEY],
+        output_contract={
+            "fields": [
+                {"key": "approved", "type": "boolean", "label": "Approved"},
+                {"key": "comment", "type": "string", "label": "Comment"},
+            ]
+        },
         ui={
             "icon": "UserCheck",
             "color": "#10b981",
@@ -2598,6 +2638,11 @@ def register_standard_operators():
         description="Legacy human input. Use User Approval for new workflows.",
         reads=[],
         writes=[AgentStateField.MESSAGE_HISTORY],
+        output_contract={
+            "fields": [
+                {"key": "input_text", "type": "string", "label": "Input Text"},
+            ]
+        },
         ui={
             "icon": "UserCheck",
             "color": "#059669",  # Darker green to indicate legacy

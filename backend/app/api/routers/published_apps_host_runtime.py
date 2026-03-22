@@ -7,6 +7,7 @@ from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse, RedirectResponse, Response
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -39,9 +40,12 @@ from app.db.postgres.models.published_apps import (
 )
 from app.db.postgres.session import get_db
 from app.services.published_app_auth_service import PublishedAppAuthError, PublishedAppAuthService
+from app.services.published_app_analytics_service import PublishedAppAnalyticsService
+from app.db.postgres.models.published_app_analytics import PublishedAppAnalyticsSurface
 from app.services.published_app_auth_shell_renderer import render_published_app_auth_shell
 from app.services.thread_service import ThreadService
 from app.services.runtime_attachment_service import RuntimeAttachmentOwner, RuntimeAttachmentService
+from app.services.embedded_agent_runtime_service import list_public_run_events
 from app.services.published_app_bundle_storage import (
     PublishedAppBundleAssetNotFound,
     PublishedAppBundleStorage,
@@ -69,11 +73,16 @@ def _serialize_thread_summary(thread: Any) -> dict[str, Any]:
     }
 
 
-def _serialize_thread_detail(thread: Any) -> dict[str, Any]:
+def _turn_final_output(turn: Any) -> Any:
+    metadata = turn.metadata_ if isinstance(getattr(turn, "metadata_", None), dict) else {}
+    return metadata.get("final_output")
+
+
+async def _serialize_thread_detail(*, db: AsyncSession, thread: Any) -> dict[str, Any]:
     turns = sorted(list(thread.turns or []), key=lambda item: int(item.turn_index or 0))
-    return {
-        **_serialize_thread_summary(thread),
-        "turns": [
+    serialized_turns: list[dict[str, Any]] = []
+    for turn in turns:
+        serialized_turns.append(
             {
                 "id": str(turn.id),
                 "run_id": str(turn.run_id),
@@ -81,6 +90,7 @@ def _serialize_thread_detail(thread: Any) -> dict[str, Any]:
                 "status": turn.status.value if hasattr(turn.status, "value") else str(turn.status),
                 "user_input_text": turn.user_input_text,
                 "assistant_output_text": turn.assistant_output_text,
+                "final_output": _turn_final_output(turn),
                 "usage_tokens": int(turn.usage_tokens or 0),
                 "created_at": turn.created_at,
                 "completed_at": turn.completed_at,
@@ -90,9 +100,12 @@ def _serialize_thread_detail(thread: Any) -> dict[str, Any]:
                     for link in sorted(turn.attachment_links or [], key=lambda item: str(item.id))
                     if getattr(link, "attachment", None) is not None
                 ],
+                "run_events": await list_public_run_events(db=db, run_id=turn.run_id),
             }
-            for turn in turns
-        ],
+        )
+    return {
+        **_serialize_thread_summary(thread),
+        "turns": serialized_turns,
     }
 
 
@@ -673,14 +686,29 @@ async def host_runtime_bootstrap(
 ):
     app = await _resolve_host_app_or_404(db, request)
     principal, stale_cookie = await _resolve_optional_principal_from_cookie(db=db, request=request, expected_app=app)
+    response: JSONResponse
     if app.auth_enabled and principal is None:
         response = JSONResponse(status_code=401, content={"detail": "Authentication required"})
+        await PublishedAppAnalyticsService(db).record_bootstrap(
+            request=request,
+            response=response,
+            app=app,
+            surface=PublishedAppAnalyticsSurface.host_runtime,
+        )
         if stale_cookie:
             _clear_session_cookie(response=response, request=request)
         return response
     revision = await _get_published_ui_revision(db, app)
     bootstrap = _build_host_runtime_bootstrap(request=request, app=app, revision=revision)
     response = JSONResponse(bootstrap.model_dump())
+    await PublishedAppAnalyticsService(db).record_bootstrap(
+        request=request,
+        response=response,
+        app=app,
+        surface=PublishedAppAnalyticsSurface.host_runtime,
+        app_account_id=UUID(str(principal["app_account_id"])) if principal and principal.get("app_account_id") else None,
+        session_id=UUID(str(principal["session_id"])) if principal and principal.get("session_id") else None,
+    )
     if stale_cookie:
         _clear_session_cookie(response=response, request=request)
     return response
@@ -775,7 +803,7 @@ async def host_list_threads(
         "page": (skip // limit) + 1 if limit > 0 else 1,
         "pages": ((total + limit - 1) // limit) if limit > 0 else 1,
     }
-    response = JSONResponse(payload)
+    response = JSONResponse(jsonable_encoder(payload))
     if stale_cookie:
         _clear_session_cookie(response=response, request=request)
     return response
@@ -808,7 +836,7 @@ async def host_get_thread(
     if thread is None:
         raise HTTPException(status_code=404, detail="Thread not found")
 
-    response = JSONResponse(_serialize_thread_detail(thread))
+    response = JSONResponse(jsonable_encoder(await _serialize_thread_detail(db=db, thread=thread)))
     if stale_cookie:
         _clear_session_cookie(response=response, request=request)
     return response
