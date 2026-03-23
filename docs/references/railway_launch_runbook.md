@@ -74,7 +74,7 @@ Required values:
 
 - Railway healthcheck path is `/health`.
 - Run migrations before each deploy with `./scripts/railway_predeploy.sh`.
-- `backend/Procfile` remains the canonical uvicorn command source.
+- The backend start command is defined in `backend/railway.toml`.
 
 ### Worker
 
