@@ -1035,7 +1035,8 @@ app.add_middleware(
         r"^https?://("
         r"(localhost|127\.0\.0\.1)(:\d+)?|"
         r"([a-z0-9-]+\.)*apps\.localhost(?::\d+)?|"
-        r"([a-z0-9-]+\.)*preview\.local(?::\d+)?"
+        r"([a-z0-9-]+\.)*preview\.local(?::\d+)?|"
+        r"([a-z0-9-]+\.)*up\.railway\.app"
         r")$"
     ),
     allow_credentials=True,
