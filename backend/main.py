@@ -1011,6 +1011,21 @@ cors_origins = [
     'https://reshet-self.vercel.app'
 ]
 
+for env_key in ("CORS_ORIGINS", "PLATFORM_BASE_URL", "API_BASE_URL"):
+    env_value = os.getenv(env_key, "").strip()
+    if not env_value:
+        continue
+    for raw_origin in env_value.split(","):
+        origin = raw_origin.strip().rstrip("/")
+        if origin and origin not in cors_origins:
+            cors_origins.append(origin)
+
+railway_frontend_host = os.getenv("RAILWAY_SERVICE_FRONTEND_URL", "").strip()
+if railway_frontend_host:
+    railway_frontend_origin = f"https://{railway_frontend_host.removeprefix('https://').rstrip('/')}"
+    if railway_frontend_origin not in cors_origins:
+        cors_origins.append(railway_frontend_origin)
+
 # If credentials are true, Starlette prohibits ["*"] origins.
 # We handle this by ensuring specific origins are used if credentials are required.
 app.add_middleware(
