@@ -2,4 +2,4 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
-exec alembic upgrade head
+exec alembic upgrade heads

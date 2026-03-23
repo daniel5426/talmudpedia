@@ -14,7 +14,7 @@ from sqlalchemy.dialects import postgresql
 revision = "c3f4e5a6b7d8"
 down_revision = ("0a1b2c3d4e5f", "11e6a7c4b9d2", "a1b9d7c5e3f0", "aa19c4e7d2b1")
 branch_labels = None
-depends_on = None
+depends_on = ("1f2e3d4c5b6a",)
 
 
 agentthreadsurface = postgresql.ENUM(
