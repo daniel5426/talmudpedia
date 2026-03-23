@@ -1,7 +1,7 @@
 """add tool ownership persistence
 
 Revision ID: b7c8d9e0f1a2
-Revises: 1f2e3d4c5b6a, a4c9d2f7b6e1, c3f4e5a6b7d8, fd1a2b3c4d5e
+Revises: a4c9d2f7b6e1, c3f4e5a6b7d8, fd1a2b3c4d5e
 Create Date: 2026-03-19 18:20:00.000000
 """
 
@@ -14,13 +14,12 @@ import sqlalchemy as sa
 # revision identifiers, used by Alembic.
 revision: str = "b7c8d9e0f1a2"
 down_revision: Union[str, Sequence[str], None] = (
-    "1f2e3d4c5b6a",
     "a4c9d2f7b6e1",
     "c3f4e5a6b7d8",
     "fd1a2b3c4d5e",
 )
 branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = ("1f2e3d4c5b6a",)
 
 
 def _column_exists(inspector: sa.Inspector, table_name: str, column_name: str) -> bool:
