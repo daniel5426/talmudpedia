@@ -120,7 +120,7 @@ export default function AdminThreadPage() {
     setTraceLoadingByMessageId((prev) => ({ ...prev, [message.id]: true }))
     try {
       const steps = await buildExecutionStepsFromRunTrace(message.runId)
-      setExecutionSteps(steps)
+      setExecutionSteps(steps ?? [])
       setIsExecutionSidebarOpen(true)
     } catch (error) {
       console.error("Failed to load execution trace", error)
