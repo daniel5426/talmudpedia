@@ -1,352 +1,415 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
 import Link from "next/link";
 import {
   ArrowRight,
-  Terminal,
-  ChevronRight,
+  ChartColumnIncreasing,
+  GitBranch,
+  Layers3,
+  MoveRight,
+  Radar,
 } from "lucide-react";
 
-/* ───────────────────────────────────────────
-   V4 — TERMINAL / HACKER
-   Code-like typography, terminal-style sections,
-   phosphor green on dark, typing animations,
-   CRT scanline texture, monospace everything
-   ─────────────────────────────────────────── */
+const workflowSteps = [
+  {
+    title: "Author the graph",
+    copy: "Map agent logic, tools, and branching paths in one builder instead of scattered prompts.",
+  },
+  {
+    title: "Ground with knowledge",
+    copy: "Feed the run with ingestion pipelines, stores, and retrieval contracts you can audit later.",
+  },
+  {
+    title: "Ship the product",
+    copy: "Publish apps, track revisions, and trace exactly which runtime decisions led to outcomes.",
+  },
+] as const;
 
-function TypeWriter({ text, speed = 40 }: { text: string; speed?: number }) {
-  const [displayed, setDisplayed] = useState("");
-  const [showCursor, setShowCursor] = useState(true);
-  const started = useRef(false);
-  const ref = useRef<HTMLSpanElement>(null);
-
-  useEffect(() => {
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        if (entry.isIntersecting && !started.current) {
-          started.current = true;
-          let i = 0;
-          const interval = setInterval(() => {
-            if (i < text.length) {
-              setDisplayed(text.slice(0, i + 1));
-              i++;
-            } else {
-              clearInterval(interval);
-              setTimeout(() => setShowCursor(false), 2000);
-            }
-          }, speed);
-        }
-      },
-      { threshold: 0.5 }
-    );
-    if (ref.current) observer.observe(ref.current);
-    return () => observer.disconnect();
-  }, [text, speed]);
-
-  return (
-    <span ref={ref}>
-      {displayed}
-      {showCursor && (
-        <span className="animate-pulse text-[#39ff14]">▋</span>
-      )}
-    </span>
-  );
-}
-
-function TerminalBlock({
-  prompt,
-  output,
-  delay = "0ms",
-}: {
-  prompt: string;
-  output: string[];
-  delay?: string;
-}) {
-  const [visible, setVisible] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const observer = new IntersectionObserver(
-      ([entry]) => { if (entry.isIntersecting) setVisible(true); },
-      { threshold: 0.2 }
-    );
-    if (ref.current) observer.observe(ref.current);
-    return () => observer.disconnect();
-  }, []);
-
-  return (
-    <div
-      ref={ref}
-      style={{ transitionDelay: delay }}
-      className={`rounded-lg border border-[#39ff14]/10 bg-[#0a0f0a] p-5 font-mono transition-all duration-700 ${
-        visible ? "translate-y-0 opacity-100" : "translate-y-6 opacity-0"
-      }`}
-    >
-      <div className="mb-3 flex items-center gap-2 text-xs text-[#39ff14]/40">
-        <Terminal className="h-3 w-3" />
-        <span>talmudpedia</span>
-      </div>
-      <div className="text-sm">
-        <div className="flex gap-2">
-          <span className="text-[#39ff14]/60">$</span>
-          <span className="text-[#39ff14]">{prompt}</span>
-        </div>
-        <div className="mt-2 space-y-1">
-          {output.map((line, i) => (
-            <div key={i} className="text-[#39ff14]/40">
-              {line}
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
+const proofStats = [
+  ["18.4K", "monthly runs"],
+  ["4.7K", "knowledge hits"],
+  ["92%", "tool success rate"],
+  ["214", "published revisions"],
+] as const;
 
 export function LandingV4() {
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
-
   return (
-    <div className="relative min-h-screen bg-[#0a0f0a] font-mono text-[#39ff14] selection:bg-[#39ff14] selection:text-[#0a0f0a]">
-      {/* CRT scanline overlay */}
-      <div
-        className="pointer-events-none fixed inset-0 z-[60] opacity-[0.03]"
-        style={{
-          backgroundImage:
-            "repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.3) 2px, rgba(0,0,0,0.3) 4px)",
-        }}
-      />
+    <div className="relative min-h-screen overflow-hidden bg-[#f3f1eb] text-[#171717] selection:bg-[#111827] selection:text-white">
+      <style>{`@import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');`}</style>
 
-      {/* Ambient glow */}
-      <div className="pointer-events-none fixed inset-0 overflow-hidden">
-        <div className="absolute left-1/2 top-0 h-[400px] w-[600px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#39ff14]/[0.02] blur-[120px]" />
+      <div className="pointer-events-none fixed inset-0">
+        <div className="absolute left-[-10%] top-[8%] h-[26rem] w-[26rem] rounded-full bg-[#cfe7db] blur-[120px]" />
+        <div className="absolute right-[-8%] top-[24%] h-[30rem] w-[30rem] rounded-full bg-[#d8d3c4] blur-[140px]" />
       </div>
 
-      {/* Nav */}
-      <nav
-        className={`fixed top-0 z-50 w-full transition-all duration-700 ${
-          mounted ? "translate-y-0 opacity-100" : "-translate-y-4 opacity-0"
-        }`}
-      >
-        <div className="mx-auto flex max-w-6xl items-center justify-between border-b border-[#39ff14]/[0.06] px-6 py-4">
-          <div className="flex items-center gap-2">
-            <span className="text-[#39ff14]/60">~/</span>
-            <span className="text-xs text-[#39ff14]/80">talmudpedia</span>
+      <nav className="fixed top-0 z-50 w-full">
+        <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-5">
+          <div className="flex items-center gap-3">
+            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-[#171717] text-[11px] font-bold text-white">
+              TP
+            </div>
+            <span
+              className="text-[14px] font-bold tracking-[-0.03em]"
+              style={{ fontFamily: "'Plus Jakarta Sans', sans-serif" }}
+            >
+              Talmudpedia
+            </span>
           </div>
-          <div className="hidden items-center gap-6 md:flex">
-            {["--platform", "--agents", "--rag", "--docs"].map((cmd) => (
-              <span
-                key={cmd}
-                className="cursor-pointer text-[11px] text-[#39ff14]/30 transition-colors hover:text-[#39ff14]/70"
-              >
-                {cmd}
-              </span>
-            ))}
+
+          <div
+            className="hidden items-center gap-8 text-[13px] text-[#171717]/60 md:flex"
+            style={{ fontFamily: "'Plus Jakarta Sans', sans-serif" }}
+          >
+            <span>Platform</span>
+            <span>Analytics</span>
+            <span>Customers</span>
+            <span>Docs</span>
           </div>
+
           <Link
             href="/auth/login"
-            className="border border-[#39ff14]/20 px-4 py-1.5 text-[11px] text-[#39ff14]/60 transition-all duration-300 hover:border-[#39ff14]/40 hover:bg-[#39ff14]/5 hover:text-[#39ff14]"
+            className="rounded-full border border-[#171717]/12 bg-white/70 px-5 py-2.5 text-[13px] font-semibold text-[#171717] shadow-[0_12px_40px_rgba(23,23,23,0.08)] backdrop-blur-xl transition-all duration-300 hover:border-[#171717]/22"
+            style={{ fontFamily: "'Plus Jakarta Sans', sans-serif" }}
           >
-            $ login
+            Book a demo
           </Link>
         </div>
       </nav>
 
-      {/* Hero */}
-      <section className="relative flex min-h-screen flex-col items-center justify-center px-6 pt-20">
-        <div
-          className={`mx-auto max-w-4xl transition-all duration-1000 delay-200 ${
-            mounted ? "translate-y-0 opacity-100" : "translate-y-8 opacity-0"
-          }`}
-        >
-          <div className="mb-8 flex items-center gap-2 text-xs text-[#39ff14]/30">
-            <ChevronRight className="h-3 w-3" />
-            <span>system.boot</span>
-            <span className="ml-2 text-[#39ff14]/50">v2.0.0-beta</span>
-          </div>
-
-          <h1 className="text-4xl font-normal leading-[1.2] tracking-[-0.02em] md:text-6xl lg:text-7xl">
-            <span className="text-[#39ff14]/90">
-              <TypeWriter text="Multi-tenant AI infrastructure" speed={35} />
-            </span>
-          </h1>
-
-          <div className="mt-8 max-w-2xl border-l-2 border-[#39ff14]/20 pl-4">
-            <p className="text-sm leading-relaxed text-[#39ff14]/35">
-              Graph-based agent authoring. RAG pipeline compilation. Artifact
-              execution at the edge. Published app runtimes. Full governance
-              and tracing. One platform, zero compromises.
+      <section className="px-6 pb-16 pt-32 md:pb-24 md:pt-40">
+        <div className="mx-auto grid max-w-7xl gap-12 lg:grid-cols-[0.95fr_1.05fr] lg:items-center">
+          <div>
+            <p
+              className="text-[11px] uppercase tracking-[0.28em] text-[#2d6a4f]"
+              style={{ fontFamily: "'Plus Jakarta Sans', sans-serif" }}
+            >
+              Dub-inspired product storytelling
             </p>
-          </div>
 
-          <div className="mt-12 flex flex-col gap-3 sm:flex-row">
-            <Link
-              href="/auth/login"
-              className="group flex items-center gap-2 border border-[#39ff14] bg-[#39ff14] px-6 py-3 text-sm font-medium text-[#0a0f0a] transition-all duration-300 hover:bg-[#39ff14]/90"
+            <h1
+              className="mt-4 max-w-[11ch] text-[clamp(3.2rem,7vw,6rem)] leading-[0.96] tracking-[-0.06em]"
+              style={{ fontFamily: "'Instrument Serif', serif" }}
             >
-              <span>$ init --start</span>
-              <ArrowRight className="h-4 w-4 transition-transform duration-300 group-hover:translate-x-1" />
-            </Link>
-            <Link
-              href="/admin/apps"
-              className="flex items-center gap-2 border border-[#39ff14]/20 px-6 py-3 text-sm text-[#39ff14]/60 transition-all duration-300 hover:border-[#39ff14]/40 hover:text-[#39ff14]"
+              Measure what your AI product actually changes.
+            </h1>
+
+            <p
+              className="mt-6 max-w-xl text-[16px] leading-8 text-[#171717]/68"
+              style={{ fontFamily: "'Plus Jakarta Sans', sans-serif" }}
             >
-              $ explore --demo
-            </Link>
-          </div>
-        </div>
-      </section>
+              Talmudpedia connects graph execution, retrieval context, tool calls,
+              and published app revisions into one clean product signal. No vanity
+              metrics. Just the runtime path to customer outcomes.
+            </p>
 
-      {/* System Overview */}
-      <section className="px-6 pb-32">
-        <div className="mx-auto max-w-5xl">
-          <div className="mb-12 flex items-center gap-2 text-xs text-[#39ff14]/30">
-            <ChevronRight className="h-3 w-3" />
-            <span>platform.describe --modules</span>
-          </div>
-
-          <div className="grid gap-4 md:grid-cols-2">
-            <TerminalBlock
-              prompt="tp agent --info"
-              output={[
-                "Agent Graph Engine v2.0",
-                "├── Visual graph authoring",
-                "├── Node types: logic, tool, retrieval, orchestration",
-                "├── Compiled execution via runtime adapters",
-                "├── Threaded runs with persisted traces",
-                "└── Heterogeneous node execution support",
-              ]}
-              delay="0ms"
-            />
-            <TerminalBlock
-              prompt="tp rag --info"
-              output={[
-                "RAG Pipeline Engine v2.0",
-                "├── Graph-based operator registry",
-                "├── Ingestion: chunk, embed, crawl, store",
-                "├── Retrieval: semantic search, hybrid",
-                "├── Knowledge store abstraction",
-                "└── Vector backend providers",
-              ]}
-              delay="100ms"
-            />
-            <TerminalBlock
-              prompt="tp artifact --info"
-              output={[
-                "Artifact Runtime v2.0",
-                "├── Custom code as platform extensions",
-                "├── Edge execution via CF Workers",
-                "├── Types: tool, agent-node, rag-operator",
-                "├── Version control + diff support",
-                "└── AI coding assistant integration",
-              ]}
-              delay="200ms"
-            />
-            <TerminalBlock
-              prompt="tp apps --info"
-              output={[
-                "Published Apps Runtime v2.0",
-                "├── PRICO widget layout system",
-                "├── Embedded agent runtimes",
-                "├── Custom branding + domains",
-                "├── Interactive widget surfaces",
-                "└── End-user facing deployments",
-              ]}
-              delay="300ms"
-            />
-          </div>
-        </div>
-      </section>
-
-      {/* Architecture as code */}
-      <section className="px-6 pb-32">
-        <div className="mx-auto max-w-5xl">
-          <div className="rounded-lg border border-[#39ff14]/10 bg-[#0a0f0a] p-8">
-            <div className="mb-6 flex items-center gap-2 text-xs text-[#39ff14]/40">
-              <Terminal className="h-3 w-3" />
-              <span>architecture.yaml</span>
-            </div>
-            <pre className="text-sm leading-7 text-[#39ff14]/50">
-{`platform:
-  name: talmudpedia
-  type: multi-tenant-ai-platform
-
-  layers:
-    - name: foundation          # Layer 0
-      owns: [tenancy, auth, identity, policy]
-
-    - name: shared_resources    # Layer 1
-      owns: [models, tools, artifacts, providers]
-
-    - name: rag                 # Layer 2
-      owns: [pipelines, knowledge_stores, retrieval]
-
-    - name: agents              # Layer 3
-      owns: [graphs, execution, traces, reasoning]
-
-    - name: applications        # Layer 4
-      owns: [published_apps, widgets, runtimes]
-
-  guarantees:
-    tenant_isolation: `}<span className="text-[#39ff14]">strict</span>{`
-    execution_tracing: `}<span className="text-[#39ff14]">full</span>{`
-    governance: `}<span className="text-[#39ff14]">built_in</span></pre>
-          </div>
-        </div>
-      </section>
-
-      {/* Stats */}
-      <section className="px-6 pb-32">
-        <div className="mx-auto max-w-5xl">
-          <div className="grid gap-4 md:grid-cols-4">
-            {[
-              { cmd: "latency --p95", val: "<200ms" },
-              { cmd: "layers --count", val: "5" },
-              { cmd: "isolation --mode", val: "strict" },
-              { cmd: "edge --provider", val: "cf-workers" },
-            ].map((s) => (
-              <div
-                key={s.cmd}
-                className="border border-[#39ff14]/[0.06] bg-[#39ff14]/[0.02] p-5"
+            <div
+              className="mt-8 flex flex-col gap-3 sm:flex-row"
+              style={{ fontFamily: "'Plus Jakarta Sans', sans-serif" }}
+            >
+              <Link
+                href="/auth/login"
+                className="group inline-flex items-center justify-center gap-2 rounded-full bg-[#171717] px-7 py-4 text-[14px] font-semibold text-white transition-transform duration-300 hover:-translate-y-0.5"
               >
-                <div className="mb-2 text-[10px] text-[#39ff14]/30">
-                  $ tp {s.cmd}
+                Start free
+                <ArrowRight className="h-4 w-4 transition-transform duration-300 group-hover:translate-x-1" />
+              </Link>
+              <Link
+                href="/admin/apps"
+                className="inline-flex items-center justify-center rounded-full border border-[#171717]/12 bg-white/75 px-7 py-4 text-[14px] font-semibold text-[#171717] backdrop-blur-xl transition-all duration-300 hover:border-[#171717]/24"
+              >
+                Explore demo
+              </Link>
+            </div>
+
+            <div
+              className="mt-10 flex flex-wrap gap-6 text-[12px] text-[#171717]/52"
+              style={{ fontFamily: "'Plus Jakarta Sans', sans-serif" }}
+            >
+              <span>Graph compiler</span>
+              <span>Run events</span>
+              <span>App revisions</span>
+              <span>Role-based access</span>
+            </div>
+          </div>
+
+          <div>
+            <div className="grid gap-4 md:grid-cols-[1.05fr_0.95fr]">
+              <div className="rounded-[2rem] bg-[#171717] p-6 text-white shadow-[0_40px_100px_rgba(23,23,23,0.18)]">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p
+                      className="text-[11px] uppercase tracking-[0.2em] text-white/45"
+                      style={{ fontFamily: "'Plus Jakarta Sans', sans-serif" }}
+                    >
+                      App outcome funnel
+                    </p>
+                    <h2
+                      className="mt-2 text-[30px] leading-[1] tracking-[-0.05em]"
+                      style={{ fontFamily: "'Instrument Serif', serif" }}
+                    >
+                      12.8% publish-to-paid
+                    </h2>
+                  </div>
+                  <ChartColumnIncreasing className="h-5 w-5 text-[#9fe3c2]" />
                 </div>
-                <div className="text-2xl text-[#39ff14]/80">{s.val}</div>
+
+                <div className="mt-8 space-y-4">
+                  {[
+                    ["Runs", "18.4K", "bg-white/18"],
+                    ["Qualified sessions", "4.1K", "bg-white/26"],
+                    ["Revisions shipped", "214", "bg-[#9fe3c2] text-[#171717]"],
+                  ].map(([label, value, classes]) => (
+                    <div key={label} className="grid grid-cols-[1fr_auto] items-center gap-3">
+                      <span
+                        className="text-[12px] uppercase tracking-[0.18em] text-white/50"
+                        style={{ fontFamily: "'Plus Jakarta Sans', sans-serif" }}
+                      >
+                        {label}
+                      </span>
+                      <span
+                        className={`rounded-full px-3 py-1 text-[12px] font-semibold ${classes}`}
+                        style={{ fontFamily: "'Plus Jakarta Sans', sans-serif" }}
+                      >
+                        {value}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="mt-8 flex items-end gap-2">
+                  {[24, 44, 40, 62, 58, 82, 92].map((value, index) => (
+                    <div key={value} className="flex-1">
+                      <div
+                        className={`rounded-t-[999px] ${index === 6 ? "bg-[#9fe3c2]" : "bg-white/20"}`}
+                        style={{ height: `${value}px` }}
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <div className="rounded-[2rem] border border-[#171717]/10 bg-white/80 p-5 shadow-[0_20px_50px_rgba(23,23,23,0.06)] backdrop-blur-xl">
+                  <div className="flex items-center justify-between">
+                    <p
+                      className="text-[11px] uppercase tracking-[0.18em] text-[#171717]/45"
+                      style={{ fontFamily: "'Plus Jakarta Sans', sans-serif" }}
+                    >
+                      Runtime path
+                    </p>
+                    <Radar className="h-4 w-4 text-[#2d6a4f]" />
+                  </div>
+                  <div className="mt-4 space-y-3">
+                    {["Graph compile", "Knowledge retrieve", "Tool resolve", "App publish"].map((item) => (
+                      <div
+                        key={item}
+                        className="flex items-center justify-between rounded-2xl bg-[#f6f3ed] px-4 py-3"
+                      >
+                        <span
+                          className="text-[13px] text-[#171717]/72"
+                          style={{ fontFamily: "'Plus Jakarta Sans', sans-serif" }}
+                        >
+                          {item}
+                        </span>
+                        <MoveRight className="h-4 w-4 text-[#171717]/30" />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="rounded-[2rem] border border-[#171717]/10 bg-[#dfece6] p-5">
+                  <p
+                    className="text-[11px] uppercase tracking-[0.18em] text-[#2d6a4f]"
+                    style={{ fontFamily: "'Plus Jakarta Sans', sans-serif" }}
+                  >
+                    Customer proof
+                  </p>
+                  <p
+                    className="mt-3 text-[26px] leading-[1.02] tracking-[-0.04em] text-[#171717]"
+                    style={{ fontFamily: "'Instrument Serif', serif" }}
+                  >
+                    “We finally know which agent behavior drives product adoption.”
+                  </p>
+                  <p
+                    className="mt-4 text-[13px] text-[#171717]/62"
+                    style={{ fontFamily: "'Plus Jakarta Sans', sans-serif" }}
+                  >
+                    Yael Cohen, Growth Engineering at Meridian
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="px-6 py-16 md:py-24">
+        <div className="mx-auto max-w-7xl rounded-[2.2rem] border border-[#171717]/8 bg-white/72 px-6 py-8 shadow-[0_24px_80px_rgba(23,23,23,0.06)] backdrop-blur-xl md:px-8">
+          <div className="grid gap-8 lg:grid-cols-[0.85fr_1.15fr]">
+            <div>
+              <p
+                className="text-[11px] uppercase tracking-[0.26em] text-[#2d6a4f]"
+                style={{ fontFamily: "'Plus Jakarta Sans', sans-serif" }}
+              >
+                It starts with one run
+              </p>
+              <h2
+                className="mt-4 text-[clamp(2.2rem,5vw,4rem)] leading-[0.98] tracking-[-0.05em]"
+                style={{ fontFamily: "'Instrument Serif', serif" }}
+              >
+                From reasoning graph to governed release.
+              </h2>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-3">
+              {workflowSteps.map((step, index) => (
+                <div key={step.title} className="rounded-[1.7rem] bg-[#f6f3ed] p-6">
+                  <div
+                    className="flex h-10 w-10 items-center justify-center rounded-full bg-[#171717] text-[12px] font-semibold text-white"
+                    style={{ fontFamily: "'Plus Jakarta Sans', sans-serif" }}
+                  >
+                    0{index + 1}
+                  </div>
+                  <h3
+                    className="mt-5 text-[24px] leading-[1.02] tracking-[-0.04em]"
+                    style={{ fontFamily: "'Instrument Serif', serif" }}
+                  >
+                    {step.title}
+                  </h3>
+                  <p
+                    className="mt-3 text-[14px] leading-7 text-[#171717]/65"
+                    style={{ fontFamily: "'Plus Jakarta Sans', sans-serif" }}
+                  >
+                    {step.copy}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="px-6 pb-16 md:pb-24">
+        <div className="mx-auto max-w-7xl rounded-[2.2rem] bg-[#171717] px-8 py-10 text-white md:px-10">
+          <div className="flex flex-wrap items-center justify-between gap-5">
+            <div>
+              <p
+                className="text-[11px] uppercase tracking-[0.22em] text-white/45"
+                style={{ fontFamily: "'Plus Jakarta Sans', sans-serif" }}
+              >
+                Measure what matters
+              </p>
+              <h2
+                className="mt-3 text-[clamp(2.2rem,5vw,4rem)] leading-[0.98] tracking-[-0.05em]"
+                style={{ fontFamily: "'Instrument Serif', serif" }}
+              >
+                All your product signals, one board.
+              </h2>
+            </div>
+
+            <div className="flex items-center gap-2 rounded-full border border-white/12 px-4 py-2 text-[12px] text-white/68">
+              <GitBranch className="h-4 w-4" />
+              Graphs + RAG + Apps + Governance
+            </div>
+          </div>
+
+          <div className="mt-8 grid gap-4 md:grid-cols-4">
+            {proofStats.map(([value, label]) => (
+              <div key={label} className="rounded-[1.6rem] bg-white/6 p-5">
+                <p
+                  className="text-[11px] uppercase tracking-[0.18em] text-white/42"
+                  style={{ fontFamily: "'Plus Jakarta Sans', sans-serif" }}
+                >
+                  {label}
+                </p>
+                <p
+                  className="mt-3 text-[32px] tracking-[-0.05em]"
+                  style={{ fontFamily: "'Instrument Serif', serif" }}
+                >
+                  {value}
+                </p>
               </div>
             ))}
           </div>
+
+          <div className="mt-6 grid gap-4 lg:grid-cols-[1fr_0.8fr]">
+            <div className="rounded-[1.8rem] bg-white/6 p-6">
+              <div className="flex items-center justify-between">
+                <p
+                  className="text-[11px] uppercase tracking-[0.18em] text-white/42"
+                  style={{ fontFamily: "'Plus Jakarta Sans', sans-serif" }}
+                >
+                  Live event stream
+                </p>
+                <Layers3 className="h-4 w-4 text-[#9fe3c2]" />
+              </div>
+              <div className="mt-4 space-y-3">
+                {[
+                  "run.created · acquisition-assistant",
+                  "knowledge.query · 8 passages matched",
+                  "tool.success · billing.lookup",
+                  "revision.published · partner-portal-v12",
+                ].map((item) => (
+                  <div key={item} className="rounded-2xl bg-black/18 px-4 py-3 text-[13px] text-white/72">
+                    {item}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="rounded-[1.8rem] bg-[#9fe3c2] p-6 text-[#171717]">
+              <p
+                className="text-[11px] uppercase tracking-[0.18em] text-[#171717]/52"
+                style={{ fontFamily: "'Plus Jakarta Sans', sans-serif" }}
+              >
+                Why this works
+              </p>
+              <p
+                className="mt-4 text-[30px] leading-[1.02] tracking-[-0.05em]"
+                style={{ fontFamily: "'Instrument Serif', serif" }}
+              >
+                Because AI metrics without runtime context are just noise.
+              </p>
+            </div>
+          </div>
         </div>
       </section>
 
-      {/* CTA */}
-      <section className="px-6 pb-40">
-        <div className="mx-auto max-w-2xl text-center">
-          <div className="mb-6 text-xs text-[#39ff14]/30">
-            ready to deploy? initialize your tenant.
+      <section className="px-6 pb-24 md:pb-32">
+        <div className="mx-auto flex max-w-7xl flex-col items-start justify-between gap-6 rounded-[2.2rem] border border-[#171717]/10 bg-white/75 px-8 py-10 shadow-[0_22px_70px_rgba(23,23,23,0.06)] backdrop-blur-xl md:flex-row md:items-center">
+          <div>
+            <p
+              className="text-[11px] uppercase tracking-[0.22em] text-[#2d6a4f]"
+              style={{ fontFamily: "'Plus Jakarta Sans', sans-serif" }}
+            >
+              Ready to ship?
+            </p>
+            <h2
+              className="mt-3 text-[clamp(2.2rem,5vw,3.8rem)] leading-[0.98] tracking-[-0.05em]"
+              style={{ fontFamily: "'Instrument Serif', serif" }}
+            >
+              Build your AI product with signal, not guesswork.
+            </h2>
           </div>
-          <div className="mb-8 text-3xl text-[#39ff14]/80 md:text-4xl">
-            $ tp init --tenant your-org
+
+          <div className="flex flex-col gap-3 sm:flex-row">
+            <Link
+              href="/auth/login"
+              className="inline-flex items-center justify-center rounded-full bg-[#171717] px-7 py-4 text-[14px] font-semibold text-white transition-colors duration-300 hover:bg-black"
+              style={{ fontFamily: "'Plus Jakarta Sans', sans-serif" }}
+            >
+              Create account
+            </Link>
+            <Link
+              href="/admin/apps"
+              className="inline-flex items-center justify-center rounded-full border border-[#171717]/14 px-7 py-4 text-[14px] font-semibold text-[#171717] transition-colors duration-300 hover:bg-[#171717]/4"
+              style={{ fontFamily: "'Plus Jakarta Sans', sans-serif" }}
+            >
+              See apps
+            </Link>
           </div>
-          <Link
-            href="/auth/login"
-            className="group inline-flex items-center gap-2 border border-[#39ff14] bg-[#39ff14] px-8 py-4 text-sm font-medium text-[#0a0f0a] transition-all duration-300 hover:shadow-[0_0_30px_rgba(57,255,20,0.15)]"
-          >
-            Initialize now
-            <ArrowRight className="h-4 w-4 transition-transform duration-300 group-hover:translate-x-1" />
-          </Link>
         </div>
       </section>
-
-      {/* Footer */}
-      <footer className="border-t border-[#39ff14]/[0.06] px-6 py-6">
-        <div className="mx-auto flex max-w-5xl items-center justify-between text-[10px] text-[#39ff14]/20">
-          <span>© 2026 talmudpedia</span>
-          <span>PID 1 · uptime 99.99%</span>
-        </div>
-      </footer>
     </div>
   );
 }

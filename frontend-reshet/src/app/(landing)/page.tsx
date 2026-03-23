@@ -10,9 +10,9 @@ import { LandingV5 } from "@/components/landing/LandingV5";
 const versions = [
   { id: 1, label: "Dark Minimal", sub: "Linear / Obsidian" },
   { id: 2, label: "Light Editorial", sub: "Cursor" },
-  { id: 3, label: "Gradient Mesh", sub: "Vibrant SaaS" },
-  { id: 4, label: "Terminal", sub: "Hacker" },
-  { id: 5, label: "Bento Grid", sub: "Apple" },
+  { id: 3, label: "Outcome Mint", sub: "Dub / Growth" },
+  { id: 4, label: "Signal Studio", sub: "Dub / Product" },
+  { id: 5, label: "Origin Echo", sub: "Origin / Product" },
 ] as const;
 
 const components = {
