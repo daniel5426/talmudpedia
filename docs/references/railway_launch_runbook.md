@@ -75,6 +75,8 @@ Required values:
 - Railway healthcheck path is `/health`.
 - Run migrations before each deploy with `./scripts/railway_predeploy.sh`.
 - The backend start command is defined in `backend/railway.toml`.
+- Default Railway backend installs only `backend/requirements.txt`.
+- Local HuggingFace embedding support is intentionally split into `backend/requirements-local-embeddings.txt` so Railway does not download the full torch stack unless that feature is explicitly needed.
 
 ### Worker
 

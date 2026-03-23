@@ -1,0 +1,7 @@
+# Optional local embedding/runtime extras kept out of the default production
+# backend install because they pull in very large ML dependencies such as torch.
+#
+# Install this file only in environments that intentionally use
+# HuggingFace/sentence-transformers local embeddings.
+
+sentence-transformers>=2.2.0
