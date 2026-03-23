@@ -1,7 +1,7 @@
 """add tool ownership persistence
 
 Revision ID: b7c8d9e0f1a2
-Revises: 1f2e3d4c5b6a, a4c9d2f7b6e1, c3f4e5a6b7d8, fb9a1c2d3e4f
+Revises: 1f2e3d4c5b6a, a4c9d2f7b6e1, c3f4e5a6b7d8, fd1a2b3c4d5e
 Create Date: 2026-03-19 18:20:00.000000
 """
 
@@ -17,7 +17,7 @@ down_revision: Union[str, Sequence[str], None] = (
     "1f2e3d4c5b6a",
     "a4c9d2f7b6e1",
     "c3f4e5a6b7d8",
-    "fb9a1c2d3e4f",
+    "fd1a2b3c4d5e",
 )
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
