@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect, useMemo } from "react"
+import dynamic from "next/dynamic"
 import { useRouter, useSearchParams } from "next/navigation"
 import { Bot, Plus, Search, Wrench } from "lucide-react"
 
@@ -12,7 +13,11 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { agentService, adminService, Agent } from "@/services"
 import { AgentCard } from "@/components/agent-card"
 import { CreateAgentDialog } from "@/components/agents/CreateAgentDialog"
-import { ExportAgentToolDialog } from "@/components/agents/ExportAgentToolDialog"
+
+const ExportAgentToolDialog = dynamic(
+    () => import("@/components/agents/ExportAgentToolDialog").then((mod) => mod.ExportAgentToolDialog),
+    { ssr: false }
+)
 
 function AgentCardSkeleton() {
     return (

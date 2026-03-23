@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect, useRef, useCallback, useMemo, Suspense } from "react"
+import dynamic from "next/dynamic"
 import { useRouter, useSearchParams } from "next/navigation"
 import {
     Loader2,
@@ -27,7 +28,6 @@ import {
     SelectValue,
 } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
-import { ReactArtifactPane } from "@/components/ai-elements/ReactArtifactPane"
 import { useReactArtifactPanel } from "@/lib/react-artifacts/useReactArtifactPanel"
 import { parseReactArtifact } from "@/lib/react-artifacts/parseReactArtifact"
 import { useTenant } from "@/contexts/TenantContext"
@@ -36,6 +36,11 @@ import { ExecutionHistoryDropdown } from "@/components/agent-builder/ExecutionHi
 import { FloatingPanel } from "@/components/builder"
 import { cn } from "@/lib/utils"
 import type { AgentChatHistoryItem } from "@/hooks/useAgentThreadHistory"
+
+const ReactArtifactPane = dynamic(
+    () => import("@/components/ai-elements/ReactArtifactPane").then((mod) => mod.ReactArtifactPane),
+    { ssr: false }
+)
 
 const logPlaygroundDebug = (event: string, details?: Record<string, unknown>) => {
     if (process.env.NODE_ENV === "production") return
