@@ -252,7 +252,6 @@ class ModelSummary(BaseModel):
     """Summary of a model."""
     id: UUID
     name: str
-    slug: str
     capability_type: str
     status: str
     provider_count: int

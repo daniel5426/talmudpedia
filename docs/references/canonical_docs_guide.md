@@ -1,6 +1,6 @@
 # Canonical Docs Guide
 
-Last Updated: 2026-03-19
+Last Updated: 2026-03-23
 
 This guide lists the current canonical documentation entry points after the first documentation-system refactor.
 
@@ -58,6 +58,8 @@ This guide lists the current canonical documentation entry points after the firs
   - Published-app runtime SDK contract.
 - `docs/product-specs/agent_graph_spec.md`
   - Current agent graph contract shared by builder and compiler.
+- `docs/product-specs/rag_pipeline_spec.md`
+  - Current RAG pipeline builder/runtime contract and contract-discipline rules.
 - `docs/product-specs/artifacts_domain_spec.md`
   - Current artifact-domain behavior and lifecycle.
 - `docs/product-specs/tools_domain_spec.md`
@@ -74,6 +76,8 @@ This guide lists the current canonical documentation entry points after the firs
   - Use this alongside `packages/embed-sdk/README.md` for the server-only embed SDK contract and customer-backend architecture.
 - `docs/references/embed_sdk_release_runbook.md`
   - Operational runbook for releasing `@agents24/embed-sdk`, including direct GitHub Actions publish, npm auth, provenance, and fallback manual publish steps.
+- `docs/references/railway_launch_runbook.md`
+  - Canonical Railway deployment runbook for the core platform and its first production service split.
 
 ## Focused Current Detail Docs Still Under `backend/documentations/`
 

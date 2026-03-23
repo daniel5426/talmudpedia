@@ -1,6 +1,6 @@
 # Agent Graph Spec
 
-Last Updated: 2026-03-10
+Last Updated: 2026-03-23
 
 This document is the canonical graph-definition contract for the agent builder and backend compiler.
 
@@ -29,10 +29,15 @@ Persisted graph shape:
 
 - `1.0`
 - `2.0`
+- `3.0`
 
 Important current rule verified in code:
 - if the graph contains GraphSpec v2 orchestration node types, the effective version must be `2.0`
 - GraphSpec v2 orchestration is also feature-gated by tenant/surface checks in the backend compiler
+
+Current builder/runtime direction:
+- `3.0` is the active workflow-contract format for the Start/End refactor
+- `1.0` and `2.0` remain legacy compatibility shapes
 
 ## Node Contract
 
@@ -51,6 +56,126 @@ Current normalization behavior:
 - `inputMappings` is normalized to `input_mappings`
 - persisted functional config must live in `config`
 - builder-only metadata can live in `data`, but `data.config` is not the source of truth
+
+## Spec 3.0 Contract Additions
+
+GraphSpec `3.0` adds:
+- typed workflow/state inventory
+- explicit node output contracts
+- structured value references for data-binding fields
+- schema-driven `End`
+
+## Start Node Contract
+
+`Start` is the workflow contract owner in GraphSpec `3.0`.
+
+For current chat workflows:
+- `workflow_input.input_as_text: string` always exists as a built-in runtime variable
+- `input_as_text` is compiler-generated and read-only
+- persisted `Start` config stores state definitions, not editable workflow input variables
+
+Persisted `Start.config` shape:
+- `state_variables`
+
+`state_variables` entries:
+- `key`
+- `type`
+- `default_value` optional
+
+## Runtime Namespaces
+
+GraphSpec `3.0` standardizes runtime value lookup into:
+- `workflow_input`
+- `state`
+- `node_outputs`
+
+Rules:
+- `workflow_input` is immutable during a run
+- `state` is mutable workflow-global state
+- `node_outputs` is append-only per node execution result
+
+## ValueRef Contract
+
+Data-binding fields use a typed reference model instead of string interpolation as the primary contract.
+
+`ValueRef` fields:
+- `namespace`: `workflow_input | state | node_output`
+- `key`
+- `node_id` optional, required for `node_output`
+- `expected_type` optional
+- `label` optional, builder-facing only
+
+Canonical GraphSpec `3.0` uses `ValueRef` for fields whose meaning is “select a runtime value source”.
+
+## Node Output Contracts
+
+Every runtime-producing node must declare a stable output contract. This inventory is the canonical downstream source for:
+- builder pickers
+- type checks
+- `End` bindings
+- runtime publication filtering
+
+Current baseline output contracts:
+- `start`
+  - workflow input inventory only
+- `agent`
+  - `output_text`
+  - `output_json` when structured output exists
+- `llm`
+  - `output_text`
+  - `output_json` when structured output exists
+- `tool`
+  - `result`
+- `rag`
+  - `results`
+  - `documents`
+- `vector_search`
+  - `results`
+  - `documents`
+- `classify`
+  - `category`
+  - `confidence` when available
+- `transform`
+  - `output`
+- `human_input`
+  - `input_text`
+- `user_approval`
+  - `approved`
+  - `comment`
+- artifact-backed nodes
+  - output fields derived from artifact metadata
+
+`set_state` is state-writing, not output-primary.
+
+## End Node Contract
+
+GraphSpec `3.0` replaces legacy `End.output_variable` / `End.output_message` behavior with:
+- `output_schema`
+- `output_bindings`
+
+`output_schema` fields:
+- `name`
+- `mode`: `simple | advanced`
+- `schema`: JSON Schema
+
+`output_bindings` entries:
+- `json_pointer`
+- `value_ref`
+
+Rules:
+- `End` materializes the final workflow result from schema + bindings
+- required schema properties must have bindings
+- bindings are runtime references, not raw literals
+- `End` is the authoritative source of `final_output`
+
+## Execution Contract Boundary
+
+When `End` exists, public execution surfaces should treat `final_output` as authoritative.
+
+Implications:
+- execution results must expose `final_output`
+- chat/thread rendering may still expose assistant text separately
+- “last assistant message” is not the canonical workflow result when `End` is present
 
 ## Edge Contract
 

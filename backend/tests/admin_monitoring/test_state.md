@@ -1,6 +1,6 @@
 # Admin Monitoring Test State
 
-Last Updated: 2026-03-19
+Last Updated: 2026-03-23
 
 ## Scope
 Validate the unified monitored-users read model, thread attribution, and agent-scoped stats behavior for admin monitoring.
@@ -15,11 +15,12 @@ Validate the unified monitored-users read model, thread attribution, and agent-s
 - Actor thread history includes merged mapped-account threads
 - Thread list exposes actor and agent attribution and filters by agent
 - Agent stats can scope to a single agent and keep merged actor counts
+- Resource stats serialize slugless model-registry rows without crashing the admin stats summary
 
 ## Last Run
-- Command: `pytest -q backend/tests/admin_monitoring`
-- Date/Time: 2026-03-19 03:05:07 EET
-- Result: pass (4 passed)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/admin_monitoring/test_admin_monitoring_api.py`
+- Date/Time: 2026-03-23 Asia/Hebron
+- Result: PASS (`5 passed`)
 
 ## Known Gaps
 - Does not yet cover dashboard overview payload or frontend rendering.

@@ -75,6 +75,30 @@ const mockModels = [
       },
     ],
   },
+  {
+    id: "model-2",
+    name: "Embedding Model",
+    description: "Vectors",
+    capability_type: "embedding",
+    metadata: {},
+    default_resolution_policy: {},
+    version: 1,
+    status: "active",
+    tenant_id: "tenant-1",
+    created_at: "",
+    updated_at: "",
+    providers: [
+      {
+        id: "provider-2",
+        provider: "openai",
+        provider_model_id: "text-embedding-3-large",
+        priority: 0,
+        is_enabled: true,
+        config: {},
+        credentials_ref: null,
+      },
+    ],
+  },
 ]
 
 describe("Models Registry", () => {
@@ -163,6 +187,19 @@ describe("Models Registry", () => {
     render(<ModelsPage />)
 
     await waitFor(() => expect(modelsService.listModels).toHaveBeenCalled())
-    expect(await screen.findByText(/Platform Default/)).toBeInTheDocument()
+    expect((await screen.findAllByText(/Platform Default/)).length).toBeGreaterThan(0)
+  })
+
+  it("filters the models list from the search input", async () => {
+    render(<ModelsPage />)
+
+    await waitFor(() => expect(modelsService.listModels).toHaveBeenCalled())
+
+    fireEvent.change(await screen.findByPlaceholderText("Search models..."), {
+      target: { value: "embedding" },
+    })
+
+    expect(screen.getByText("Embedding Model")).toBeInTheDocument()
+    expect(screen.queryByText("Test Model")).not.toBeInTheDocument()
   })
 })

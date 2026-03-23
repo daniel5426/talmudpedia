@@ -65,15 +65,15 @@ describe("graph contract editors", () => {
       />
     )
 
-    fireEvent.click(screen.getByRole("button", { name: /select value/i }))
+    fireEvent.click(screen.getByRole("combobox", { name: /select value/i }))
 
     expect(screen.getByText("Workflow Input")).toBeInTheDocument()
-    expect(screen.getByText("Input as text")).toBeInTheDocument()
-    expect(screen.getByText("customer_name")).toBeInTheDocument()
-    expect(screen.getByText("Classifier / category")).toBeInTheDocument()
-    expect(screen.queryByText("Classifier / confidence")).not.toBeInTheDocument()
+    expect(screen.getByText("Input as text (string)")).toBeInTheDocument()
+    expect(screen.getByText("customer_name (string)")).toBeInTheDocument()
+    expect(screen.getByText("Classifier / category (string)")).toBeInTheDocument()
+    expect(screen.queryByText("Classifier / confidence (number)")).not.toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole("option", { name: /customer_name/i }))
+    fireEvent.click(screen.getByText("customer_name (string)"))
 
     expect(onChange).toHaveBeenLastCalledWith({
       output_schema: {
@@ -98,6 +98,48 @@ describe("graph contract editors", () => {
         },
       ],
     })
+  })
+
+  it("appends a new property row in the End simple editor", () => {
+    const onChange = jest.fn()
+
+    render(
+      <EndContractEditor
+        value={{
+          output_schema: {
+            name: "result",
+            mode: "simple",
+            schema: {
+              type: "object",
+              additionalProperties: false,
+              properties: { reply: { type: "string" } },
+              required: ["reply"],
+            },
+          },
+          output_bindings: [],
+        }}
+        analysis={analysis}
+        onChange={onChange}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole("button", { name: /add property/i }))
+
+    expect(onChange).toHaveBeenLastCalledWith({
+      output_schema: {
+        name: "result",
+        mode: "simple",
+        schema: {
+          type: "object",
+          additionalProperties: false,
+          properties: { reply: { type: "string" } },
+          required: ["reply"],
+        },
+      },
+      output_bindings: [],
+    })
+
+    expect(screen.getAllByPlaceholderText("property name")).toHaveLength(2)
   })
 
   it("supports typed set-state assignments with ValueRef sources", () => {

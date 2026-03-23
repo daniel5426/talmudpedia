@@ -24,7 +24,6 @@ import { Label } from "@/components/ui/label"
 import {
     Brain,
     Plus,
-    RefreshCw,
     Trash2,
     Loader2,
     Cpu,
@@ -321,6 +320,7 @@ export default function ModelsPage() {
     const [loading, setLoading] = useState(true)
     const [credentials, setCredentials] = useState<IntegrationCredential[]>([])
     const [filter, setFilter] = useState<ModelCapabilityType | "all">("all")
+    const [search, setSearch] = useState("")
 
     const fetchModels = useCallback(async () => {
         setLoading(true)
@@ -372,6 +372,21 @@ export default function ModelsPage() {
         }
     }
 
+    const normalizedSearch = search.trim().toLowerCase()
+    const visibleModels = models.filter((model) => {
+        if (!normalizedSearch) return true
+        const searchableValues = [
+            model.name,
+            model.description || "",
+            CAPABILITY_LABELS[model.capability_type] || model.capability_type,
+            ...model.providers.flatMap((provider) => [
+                PROVIDER_LABELS[provider.provider] || provider.provider,
+                provider.provider_model_id,
+            ]),
+        ]
+        return searchableValues.some((value) => value.toLowerCase().includes(normalizedSearch))
+    })
+
     return (
         <div className="flex flex-col h-full w-full" dir={direction}>
             <AdminPageHeader>
@@ -383,6 +398,15 @@ export default function ModelsPage() {
                     </div>
                 </div>
                 <div className="flex items-center gap-2">
+                    <div className="relative w-[260px]">
+                        <SearchIcon className={cn("absolute top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground", isRTL ? "right-3" : "left-3")} />
+                        <Input
+                            value={search}
+                            onChange={(e) => setSearch(e.target.value)}
+                            placeholder="Search models..."
+                            className={cn("h-9", isRTL ? "pr-9" : "pl-9")}
+                        />
+                    </div>
                     <Select value={filter} onValueChange={(v) => setFilter(v as ModelCapabilityType | "all")}>
                         <SelectTrigger className="h-9 w-[180px]">
                             <SelectValue placeholder="Filter by type" />
@@ -394,18 +418,6 @@ export default function ModelsPage() {
                             ))}
                         </SelectContent>
                     </Select>
-                    <Button
-                        variant="outline"
-                        size="sm"
-                        className="h-9"
-                        onClick={() => {
-                            fetchModels()
-                            fetchCredentials()
-                        }}
-                    >
-                        <RefreshCw className={cn("h-4 w-4", isRTL ? "ml-2" : "mr-2")} />
-                        Refresh
-                    </Button>
                     <CreateModelDialog onCreated={fetchModels} />
                 </div>
             </AdminPageHeader>
@@ -428,9 +440,19 @@ export default function ModelsPage() {
                             <CreateModelDialog onCreated={fetchModels} />
                         </CardContent>
                     </Card>
+                ) : visibleModels.length === 0 ? (
+                    <Card>
+                        <CardContent className="py-12 text-center">
+                            <SearchIcon className="mx-auto mb-4 h-12 w-12 text-muted-foreground" />
+                            <h3 className="mb-2 text-lg font-semibold">No Matching Models</h3>
+                            <p className="text-muted-foreground">
+                                Try a different search term or clear the current filter.
+                            </p>
+                        </CardContent>
+                    </Card>
                 ) : (
                     <div className="space-y-4">
-                        {models.map((model) => (
+                        {visibleModels.map((model) => (
                             <Card key={model.id}>
                                 <CardHeader className="pb-2">
                                     <div className={cn("flex items-start justify-between", isRTL ? "flex-row-reverse" : "flex-row")}>

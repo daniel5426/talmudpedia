@@ -64,12 +64,12 @@ function StatUnit({
   dimmed?: boolean;
 }) {
   return (
-    <span className="flex items-baseline gap-1 whitespace-nowrap">
-      <span className="text-[14px] tabular-nums text-foreground/80">
+    <span className="flex self-end items-end gap-1 whitespace-nowrap leading-none">
+      <span className="text-[24px] leading-none tabular-nums text-foreground/80">
         {value}
       </span>
       <span
-        className={`text-[12px] ${
+        className={`text-[12px] leading-none ${
           dimmed ? "text-muted-foreground/40" : "text-muted-foreground/50"
         }`}
       >
@@ -81,7 +81,7 @@ function StatUnit({
 
 export function AppRowStatsSkeleton() {
   return (
-    <div className="hidden items-center gap-3 xl:flex">
+    <div className="hidden items-end gap-3 xl:flex">
       <Skeleton className="h-3 w-10" />
       <Skeleton className="h-3 w-[52px]" />
       <Skeleton className="h-3 w-10" />
@@ -95,7 +95,7 @@ export function AppRowStatsSkeleton() {
 
 export function AppRowStatsEmpty() {
   return (
-    <div className="hidden items-center xl:flex">
+    <div className="hidden items-end xl:flex">
       <span className="text-[11px] text-muted-foreground/35"></span>
     </div>
   );
@@ -119,35 +119,33 @@ export function AppRowStats({
 
   return (
     <div
-      className="hidden items-center gap-4 xl:flex"
+      className="hidden items-end gap-4 xl:flex"
       title={approximate ? "Stats are approximate" : undefined}
     >
       <StatUnit label="visits" value={formatCompact(stats.visits)} />
       <MiniSparkline data={stats.visits_by_day} color="#8b5cf6" />
 
-      <span className="text-muted-foreground/20">·</span>
+      <span className="self-end leading-none text-muted-foreground/20">·</span>
 
       <StatUnit label="runs" value={formatCompact(stats.agent_runs)} />
       {stats.failed_runs > 0 && (
-        <span className="text-[11px] tabular-nums text-red-400/70">
+        <span className="self-end text-[11px] leading-none tabular-nums text-red-400/70">
           {stats.failed_runs}f
         </span>
       )}
       <MiniSparkline data={stats.runs_by_day} color="#3b82f6" />
 
-      <span className="text-muted-foreground/20">·</span>
+      <span className="self-end leading-none text-muted-foreground/20">·</span>
 
       <StatUnit label="tok" value={formatCompact(stats.tokens)} />
       <MiniSparkline data={stats.tokens_by_day} color="#10b981" />
 
-      <span className="text-muted-foreground/20">·</span>
+      <span className="self-end leading-none text-muted-foreground/20">·</span>
 
-      <StatUnit label="uniq" value={formatCompact(stats.unique_visitors)} dimmed />
       <StatUnit label="acct" value={formatCompact(stats.app_accounts)} dimmed />
-      <StatUnit label="sess" value={formatCompact(stats.active_sessions)} dimmed />
 
       {approximate && (
-        <span className="text-[10px] text-muted-foreground/30" title="Approximate values">
+        <span className="self-end text-[10px] leading-none text-muted-foreground/30" title="Approximate values">
           ~
         </span>
       )}

@@ -1,6 +1,6 @@
 # References Index
 
-Last Updated: 2026-03-17
+Last Updated: 2026-03-23
 
 This section is for stable supporting documentation used as lookup material by humans and agents.
 
@@ -31,3 +31,5 @@ This section is for stable supporting documentation used as lookup material by h
   - Current dependency and component inventory for the `classic-chat` published-app starter template.
 - `embedded_agent_sdk_standalone_integration_guide.md`
   - Canonical standalone-app integration guide for the server-only embed SDK.
+- `railway_launch_runbook.md`
+  - Canonical Railway launch runbook for the core platform, including backend, worker, Crawl4AI, Redis/Postgres, and R2 wiring.

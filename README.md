@@ -1,5 +1,7 @@
 # TalmudPedia: Enterprise AI Agent & RAG Platform
 
+Last Updated: 2026-03-23
+
 ## Overview
 A foundational AI Development and Execution OS for building, governing, and operating sophisticated AI systems at scale. Provides a unified control plane for models, data, tools, and reasoning workflows while remaining vendor-agnostic.
 
@@ -11,9 +13,9 @@ A foundational AI Development and Execution OS for building, governing, and oper
 
 ### Frontend
 ```bash
-cd frontend
-npm install
-npm run dev
+cd frontend-reshet
+pnpm install
+pnpm dev
 ```
 
 ### Backend

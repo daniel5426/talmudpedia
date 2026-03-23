@@ -1,7 +1,6 @@
 "use client";
 
 import * as React from "react";
-import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -23,24 +22,21 @@ import {
 import { useAuthStore } from "@/lib/store/useAuthStore";
 import { useState } from "react";
 
-export function KesherHeader() {
+export function PlatformHeader() {
   const [isOpen, setIsOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
   const user = useAuthStore((state) => state.user);
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated());
   const router = useRouter();
 
-  // Prevent hydration mismatch by only showing auth state after mount
   React.useEffect(() => {
     setMounted(true);
   }, []);
 
   const navItems = [
-    { name: "בית", link: "/" },
-    { name: "צ'אט", link: "/chat" },
-    { name: "החברה", link: "/company" },
-    { name: "בלוג", link: "/blog" },
-    { name: "צור קשר", link: "/contact" },
+    { name: "Overview", link: "/" },
+    { name: "Apps", link: "/admin/apps" },
+    { name: "Agents", link: "/admin/agents" },
   ];
 
   const getInitial = () => {
@@ -56,91 +52,101 @@ export function KesherHeader() {
   return (
     <div className="relative w-full">
       <Navbar className="top-4">
-        <NavBody>
-          {/* Logo and Title - Left side */}
-          <div className="flex items-center gap-2 relative z-30">
-            <Link href="/" className="relative h-10 w-10">
-              <Image
-                src="/kesher.png"
-                alt="Kesher Logo"
-                fill
-                className="object-contain"
-              />
-            </Link>
-            <span className="text-2xl font-bold">רשת</span>
-          </div>
+        <NavBody className="border border-white/10 bg-white/70 px-5 py-3 text-slate-900 backdrop-blur-xl">
+          <Link href="/" className="relative z-30 flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white text-sm font-semibold uppercase tracking-[0.25em] text-slate-900 shadow-sm">
+              TP
+            </div>
+            <div className="flex flex-col">
+              <span className="text-sm font-semibold uppercase tracking-[0.28em] text-slate-500">
+                Talmudpedia
+              </span>
+              <span className="text-sm text-slate-700">Platform</span>
+            </div>
+          </Link>
 
-          <NavItems items={navItems} />
+          <NavItems
+            items={navItems}
+            className="text-slate-600 hover:text-slate-900"
+          />
 
-          {/* Auth Section - Right side */}
           <div className="relative z-30">
             {mounted && isAuthenticated ? (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <button 
+                  <button
                     type="button"
-                    className="flex h-10 w-10 items-center justify-center rounded-full bg-primary text-primary-foreground font-semibold hover:opacity-90 transition-opacity cursor-pointer"
+                    className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-900 text-sm font-semibold text-white transition-opacity hover:opacity-90"
                   >
                     {getInitial()}
                   </button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align="start" className="w-48">
-                  <DropdownMenuItem dir="rtl"
+                <DropdownMenuContent align="end" className="w-48">
+                  <DropdownMenuItem
+                    onClick={() => router.push("/admin/dashboard")}
+                    className="cursor-pointer"
+                  >
+                    Open dashboard
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
                     onClick={() => router.push("/chat")}
                     className="cursor-pointer"
                   >
-                    התחל לשוחח
+                    Open workspace
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
             ) : (
               <Link href="/auth/login">
-                <InteractiveHoverButton>התחבר</InteractiveHoverButton>
+                <InteractiveHoverButton>Sign in</InteractiveHoverButton>
               </Link>
             )}
           </div>
         </NavBody>
 
-        <MobileNav>
+        <MobileNav className="rounded-[28px] border border-white/10 bg-white/80 px-4 py-3 text-slate-900 backdrop-blur-xl">
           <MobileNavHeader>
-            {/* Logo and Title - Left side */}
-            <div className="flex items-center gap-2">
-              <Link href="/" className="relative h-10 w-10">
-                <Image
-                  src="/kesher.png"
-                  alt="Kesher Logo"
-                  fill
-                  className="object-contain"
-                />
-              </Link>
-              <span className="text-2xl font-bold">רשת</span>
-            </div>
+            <Link href="/" className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white text-sm font-semibold uppercase tracking-[0.25em] text-slate-900 shadow-sm">
+                TP
+              </div>
+              <div className="flex flex-col">
+                <span className="text-xs font-semibold uppercase tracking-[0.28em] text-slate-500">
+                  Talmudpedia
+                </span>
+                <span className="text-sm text-slate-700">Platform</span>
+              </div>
+            </Link>
 
-            {/* Right side controls */}
             <div className="flex items-center gap-2">
-              {/* Auth Section - Mobile */}
               {mounted && isAuthenticated ? (
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
-                    <button 
+                    <button
                       type="button"
-                      className="flex h-10 w-10 items-center justify-center rounded-full bg-primary text-primary-foreground font-semibold hover:opacity-90 transition-opacity cursor-pointer"
+                      className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-900 text-sm font-semibold text-white transition-opacity hover:opacity-90"
                     >
                       {getInitial()}
                     </button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end" className="w-48">
                     <DropdownMenuItem
+                      onClick={() => router.push("/admin/dashboard")}
+                      className="cursor-pointer"
+                    >
+                      Open dashboard
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
                       onClick={() => router.push("/chat")}
                       className="cursor-pointer"
                     >
-                      התחל לשוחח
+                      Open workspace
                     </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
               ) : (
                 <Link href="/auth/login">
-                  <InteractiveHoverButton>התחבר</InteractiveHoverButton>
+                  <InteractiveHoverButton>Sign in</InteractiveHoverButton>
                 </Link>
               )}
 
@@ -151,13 +157,13 @@ export function KesherHeader() {
             </div>
           </MobileNavHeader>
           <MobileNavMenu isOpen={isOpen} onClose={() => setIsOpen(false)}>
-            <div className="flex flex-col gap-4">
-              {navItems.map((item, idx) => (
+            <div className="flex w-full flex-col gap-4">
+              {navItems.map((item) => (
                 <Link
-                  key={idx}
+                  key={item.link}
                   href={item.link}
                   onClick={() => setIsOpen(false)}
-                  className="text-lg font-medium text-neutral-600 dark:text-neutral-300"
+                  className="text-base font-medium text-slate-700"
                 >
                   {item.name}
                 </Link>

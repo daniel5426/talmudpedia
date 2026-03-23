@@ -1,6 +1,6 @@
 # Models Registry UI Tests
 
-Last Updated: 2026-03-20
+Last Updated: 2026-03-23
 
 ## Scope
 Models Registry page editing flows for logical models and provider bindings.
@@ -13,11 +13,12 @@ Models Registry page editing flows for logical models and provider bindings.
 - Edit Model dialog opens and triggers update call.
 - Edit Provider dialog opens and triggers update call.
 - Provider rows show `Platform Default (ENV)` when no explicit credential ref is set.
+- Search input filters the visible models list client-side.
 
 ## Last Run
 - Command: `pnpm test -- --runInBand src/__tests__/models_registry/models_registry.test.tsx`
-- Date: 2026-03-20
-- Result: Pass (1 suite, 4 tests)
+- Date: 2026-03-23
+- Result: Pass (1 suite, 5 tests)
 
 ## Known Gaps / Follow-ups
 - Add tests for capability-specific provider option filtering in the add-provider flow.

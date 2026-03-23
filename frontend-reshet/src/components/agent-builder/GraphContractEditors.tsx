@@ -1,12 +1,21 @@
 "use client"
 
-import { useEffect, useMemo, useRef, useState } from "react"
-import { Braces, Check, ChevronDown, Plus, Search, Trash2 } from "lucide-react"
+import { useEffect, useMemo, useState } from "react"
+import { Check, Plus, Trash2 } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import type { AgentGraphAnalysis } from "@/services/agent"
 import {
@@ -69,121 +78,44 @@ export function ValueRefPicker({
   expectedTypes?: string[]
 }) {
   const groups = useMemo(() => getValueRefGroups(analysis), [analysis])
-  const rootRef = useRef<HTMLDivElement | null>(null)
-  const [open, setOpen] = useState(false)
-  const [query, setQuery] = useState("")
   const selected = encodeValueRef(value || undefined)
-  const selectedMeta = useMemo(() => getValueRefOptionMeta(analysis, value), [analysis, value])
 
-  useEffect(() => {
-    if (!open) setQuery("")
-  }, [open])
-
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false)
-    }
-    document.addEventListener("mousedown", handleClickOutside)
-    return () => document.removeEventListener("mousedown", handleClickOutside)
-  }, [])
-
-  const filteredGroups = useMemo(() => {
-    const normalizedQuery = query.trim().toLowerCase()
-    return groups
-      .map((group) => ({
-        ...group,
-        options: group.options.filter((option) => {
-          if (!isValueRefTypeCompatible(option.type, expectedTypes)) return false
-          if (!normalizedQuery) return true
-          const haystack = `${option.label || option.key} ${option.key} ${group.label} ${option.type}`.toLowerCase()
-          return haystack.includes(normalizedQuery)
-        }),
-      }))
-      .filter((group) => group.options.length > 0)
-  }, [expectedTypes, groups, query])
+  const filteredGroups = useMemo(
+    () =>
+      groups
+        .map((group) => ({
+          ...group,
+          options: group.options.filter((option) => isValueRefTypeCompatible(option.type, expectedTypes)),
+        }))
+        .filter((group) => group.options.length > 0),
+    [expectedTypes, groups],
+  )
 
   return (
-    <div ref={rootRef} className="relative w-full">
-      <button
-        type="button"
-        aria-expanded={open}
-        aria-haspopup="listbox"
-        onClick={() => setOpen((current) => !current)}
-        className="flex h-9 w-full items-center justify-between gap-2 rounded-lg bg-muted/40 px-3 text-left border-none shadow-none transition hover:bg-muted/60"
+    <Select value={selected} onValueChange={(next) => onChange(decodeValueRef(next))}>
+      <SelectTrigger
+        aria-label="Select value"
+        className="h-9 w-full rounded-lg border-none bg-muted/40 text-[13px] shadow-none focus:ring-1 focus:ring-offset-0"
       >
-        {selectedMeta ? (
-          <div className="flex min-w-0 items-center gap-2">
-            <Braces className="h-3 w-3 shrink-0 text-emerald-600" />
-            <span className="truncate text-[13px] font-medium text-foreground">{selectedMeta.label || selectedMeta.key}</span>
-          </div>
-        ) : (
-          <span className="text-[13px] text-muted-foreground/40">Select value...</span>
-        )}
-        <div className="flex items-center gap-2">
-          {selectedMeta?.type ? (
-            <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground/60">
-              {selectedMeta.type}
-            </span>
-          ) : null}
-          <ChevronDown className={`h-3 w-3 text-muted-foreground/50 transition ${open ? "rotate-180" : ""}`} />
-        </div>
-      </button>
-
-      {open ? (
-        <div className="absolute left-0 top-[calc(100%+4px)] z-[60] w-full rounded-lg border border-border/60 bg-popover p-1.5 shadow-xl">
-          <div className="relative mb-1.5">
-            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground/50" />
-            <Input
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search..."
-              className="h-8 rounded-md border-none bg-muted/40 pl-7 pr-2 text-[12px] shadow-none focus-visible:ring-1 focus-visible:ring-offset-0"
-            />
-          </div>
-
-          <div className="max-h-48 space-y-1.5 overflow-y-auto">
-            {filteredGroups.length === 0 ? (
-              <div className="px-2 py-3 text-[12px] text-muted-foreground/50">No matching values</div>
-            ) : (
-              filteredGroups.map((group) => (
-                <div key={group.label} className="space-y-0.5">
-                  <div className="px-2 pt-1 text-[9px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/50">
-                    {group.label}
-                  </div>
-                  {group.options.map((option) => {
-                    const encoded = encodeValueRef(option.value_ref)
-                    const isSelected = encoded === selected
-                    return (
-                      <button
-                        key={`${group.label}:${option.node_id || "global"}:${option.key}`}
-                        type="button"
-                        role="option"
-                        aria-selected={isSelected}
-                        onClick={() => {
-                          onChange(decodeValueRef(encoded))
-                          setOpen(false)
-                        }}
-                        className={`flex w-full items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left transition ${
-                          isSelected ? "bg-muted" : "hover:bg-muted/50"
-                        }`}
-                      >
-                        <div className="flex min-w-0 items-center gap-2">
-                          <Braces className={`h-3 w-3 shrink-0 ${isSelected ? "text-emerald-600" : "text-muted-foreground/40"}`} />
-                          <span className="truncate text-[12px] font-medium text-foreground">{option.label || option.key}</span>
-                        </div>
-                        <span className="text-[9px] font-medium uppercase tracking-wide text-muted-foreground/50">
-                          {option.type}
-                        </span>
-                      </button>
-                    )
-                  })}
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-      ) : null}
-    </div>
+        <SelectValue placeholder="Select value..." />
+      </SelectTrigger>
+      <SelectContent className="rounded-xl border-border/50">
+        <SelectItem value="__none__">Select value...</SelectItem>
+        {filteredGroups.map((group) => (
+          <SelectGroup key={group.label}>
+            <SelectLabel>{group.label}</SelectLabel>
+            {group.options.map((option) => {
+              const encoded = encodeValueRef(option.value_ref)
+              return (
+                <SelectItem key={`${group.label}:${option.node_id || "global"}:${option.key}`} value={encoded}>
+                  {(option.label || option.key) + (option.type ? ` (${option.type})` : "")}
+                </SelectItem>
+              )
+            })}
+          </SelectGroup>
+        ))}
+      </SelectContent>
+    </Select>
   )
 }
 
@@ -329,16 +261,33 @@ export function EndContractEditor({
   onChange: (value: { output_schema: EndOutputSchemaConfig; output_bindings: EndOutputBinding[] }) => void
 }) {
   const normalized = normalizeEndConfig(value)
-  const simpleRows = schemaToSimpleRows(normalized.output_schema.schema, normalized.output_bindings)
-  const [advancedDraft, setAdvancedDraft] = useState(
-    JSON.stringify(normalized.output_schema.schema || buildDefaultEndOutputSchema().schema, null, 2),
+  const simpleRowsSignature = useMemo(
+    () =>
+      JSON.stringify({
+        schema: normalized.output_schema.schema,
+        bindings: normalized.output_bindings,
+      }),
+    [normalized.output_schema.schema, normalized.output_bindings],
   )
+  const advancedSchemaSignature = useMemo(
+    () => JSON.stringify(normalized.output_schema.schema || buildDefaultEndOutputSchema().schema, null, 2),
+    [normalized.output_schema.schema],
+  )
+  const [simpleRows, setSimpleRows] = useState<SimpleSchemaProperty[]>(() =>
+    schemaToSimpleRows(normalized.output_schema.schema, normalized.output_bindings),
+  )
+  const [advancedDraft, setAdvancedDraft] = useState(advancedSchemaSignature)
 
   useEffect(() => {
-    setAdvancedDraft(JSON.stringify(normalized.output_schema.schema || buildDefaultEndOutputSchema().schema, null, 2))
-  }, [normalized.output_schema.schema])
+    setSimpleRows(schemaToSimpleRows(normalized.output_schema.schema, normalized.output_bindings))
+  }, [simpleRowsSignature])
+
+  useEffect(() => {
+    setAdvancedDraft(advancedSchemaSignature)
+  }, [advancedSchemaSignature])
 
   const updateSimpleRows = (rows: SimpleSchemaProperty[]) => {
+    setSimpleRows(rows)
     const outputSchema = simpleRowsToSchema(rows, normalized.output_schema.name)
     const outputBindings = rows
       .filter((row) => row.key.trim() && row.binding)
@@ -504,9 +453,6 @@ export function EndContractEditor({
                 {simpleRows.map((row, index) => (
                   <div key={`end-row-${index}`} className="grid grid-cols-[1.05fr_120px_1.15fr_36px] gap-2">
                     <div className="flex items-center gap-2">
-                      <div className="flex h-6 w-6 items-center justify-center rounded-md bg-muted text-muted-foreground">
-                        <Braces className="h-3 w-3" />
-                      </div>
                       <Input
                         value={row.key}
                         onChange={(event) => {

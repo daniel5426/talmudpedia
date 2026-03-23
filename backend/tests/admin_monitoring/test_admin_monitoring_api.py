@@ -8,6 +8,7 @@ from app.core.security import create_access_token, get_password_hash
 from app.db.postgres.models.agent_threads import AgentThread, AgentThreadSurface, AgentThreadStatus
 from app.db.postgres.models.agents import Agent, AgentRun, AgentStatus, RunStatus
 from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Tenant, User
+from app.db.postgres.models.registry import ModelCapabilityType, ModelRegistry, ModelStatus
 from app.db.postgres.models.published_apps import PublishedApp, PublishedAppAccount
 from app.services.security_bootstrap_service import SecurityBootstrapService
 
@@ -257,3 +258,32 @@ async def test_agent_stats_can_scope_to_single_agent_and_merged_actor(client, db
     assert agents_payload["total_runs"] == 4
     assert agents_payload["top_users_by_runs"][0]["user_id"] == str(fixture["platform_user"].id)
     assert agents_payload["top_users_by_runs"][0]["count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_resource_stats_models_do_not_require_slug(client, db_session):
+    fixture = await _seed_monitoring_fixture(db_session)
+    headers = _auth_headers(str(fixture["owner"].id), str(fixture["tenant"].id), str(fixture["org_unit"].id))
+
+    db_session.add(
+        ModelRegistry(
+            tenant_id=fixture["tenant"].id,
+            name="Vision Model",
+            capability_type=ModelCapabilityType.VISION,
+            status=ModelStatus.ACTIVE,
+            metadata_={"vision": True},
+            is_active=True,
+        )
+    )
+    await db_session.commit()
+
+    response = await client.get(
+        "/admin/stats/summary?section=resources&days=30",
+        headers=headers,
+    )
+    assert response.status_code == 200
+
+    payload = response.json()["resources"]
+    assert payload["model_count"] >= 1
+    assert any(item["name"] == "Vision Model" for item in payload["models"])
+    assert all("slug" not in item for item in payload["models"])

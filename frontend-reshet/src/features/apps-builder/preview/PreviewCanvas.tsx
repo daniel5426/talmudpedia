@@ -4,7 +4,6 @@ import { forwardRef, useCallback, useEffect, useRef, useState, type MutableRefOb
 import { Loader2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import {
   isDraftDevFailureStatus,
@@ -90,30 +89,38 @@ function PreviewWarmupState({
   stage: "sandbox" | "dependencies" | "preview";
 }) {
   const steps: Array<{ key: "sandbox" | "dependencies" | "preview"; label: string }> = [
-    { key: "sandbox", label: "Create sandbox" },
-    { key: "dependencies", label: "Install dependencies" },
-    { key: "preview", label: "Connect preview" },
+    { key: "sandbox", label: "Starting sandbox" },
+    { key: "dependencies", label: "Installing dependencies" },
+    { key: "preview", label: "Connecting preview" },
   ];
   const activeIndex = steps.findIndex((step) => step.key === stage);
+  const currentStep = steps[Math.max(activeIndex, 0)]?.label || "Preparing preview";
 
   return (
-    <div className="w-full max-w-md overflow-hidden rounded-[28px] border border-border/60 bg-background/95 shadow-[0_24px_80px_-36px_rgba(15,23,42,0.45)] backdrop-blur">
-      <div className="relative overflow-hidden border-b border-border/60 px-5 py-5">
-        <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-emerald-500/70 to-transparent" />
-        <div className="flex items-center gap-4">
-          <div className="relative flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-emerald-500/25 bg-emerald-500/10 text-emerald-700">
-            <div className="absolute inset-1 rounded-full border border-emerald-500/20 animate-ping" />
-            <Loader2 className="relative h-4 w-4 animate-spin" />
+    <div className="w-full max-w-sm rounded-md border border-black/8 bg-white/92 px-5 py-4 shadow-[0_24px_60px_-40px_rgba(15,23,42,0.35)] backdrop-blur">
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <div className="text-[10px] font-medium uppercase tracking-[0.18em] text-muted-foreground/65">
+            Preview
           </div>
-          <div className="min-w-0">
-            <div className="text-sm font-semibold text-foreground">{title}</div>
-            <div className="mt-1 text-xs text-muted-foreground">{detail}</div>
+          <div className="mt-2 text-[15px] font-medium tracking-[-0.01em] text-foreground">
+            {title}
           </div>
+          <div className="mt-1 text-[12px] leading-5 text-muted-foreground">
+            {detail}
+          </div>
+        </div>
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-black/8 bg-black/[0.03] text-foreground/70">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
         </div>
       </div>
 
-      <div className="space-y-3 px-5 py-4">
-        <div className="grid grid-cols-3 gap-2">
+      <div className="mt-4 space-y-2">
+        <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+          <span>{currentStep}</span>
+          <span>Loading</span>
+        </div>
+        <div className="flex gap-1">
           {steps.map((step, index) => {
             const state =
               index < activeIndex ? "done" : index === activeIndex ? "active" : "pending";
@@ -121,40 +128,14 @@ function PreviewWarmupState({
               <div
                 key={step.key}
                 className={cn(
-                  "rounded-2xl border px-3 py-3 text-left transition-colors",
-                  state === "active" && "border-emerald-500/35 bg-emerald-500/8",
-                  state === "done" && "border-border/70 bg-muted/40",
-                  state === "pending" && "border-border/50 bg-muted/20",
+                  "h-[3px] flex-1 rounded-full transition-colors",
+                  state === "done" && "bg-foreground/55",
+                  state === "active" && "bg-foreground/80 animate-pulse",
+                  state === "pending" && "bg-black/8",
                 )}
-              >
-                <div className="flex items-center gap-2">
-                  <div
-                    className={cn(
-                      "h-2.5 w-2.5 rounded-full",
-                      state === "active" && "animate-pulse bg-emerald-500",
-                      state === "done" && "bg-foreground/65",
-                      state === "pending" && "bg-muted-foreground/30",
-                    )}
-                  />
-                  <span className="text-[11px] font-medium text-foreground/85">{step.label}</span>
-                </div>
-              </div>
+              />
             );
           })}
-        </div>
-
-        <div className="space-y-2 rounded-2xl border border-border/50 bg-muted/20 p-3">
-          <div className="flex items-center gap-2">
-            {Array.from({ length: 3 }).map((_, index) => (
-              <span
-                key={index}
-                className="h-2 w-2 rounded-full bg-foreground/70 animate-pulse"
-                style={{ animationDelay: `${index * 180}ms` }}
-              />
-            ))}
-          </div>
-          <Skeleton className="h-3 w-11/12" />
-          <Skeleton className="h-3 w-4/5" />
         </div>
       </div>
     </div>

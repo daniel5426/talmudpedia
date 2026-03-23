@@ -1055,9 +1055,8 @@ async def get_resource_stats(
         ModelSummary(
             id=m.id,
             name=m.name,
-            slug=m.slug,
-            capability_type=m.capability_type.value if m.capability_type else "unknown",
-            status=m.status.value if m.status else "unknown",
+            capability_type=normalize_grouped_enum(m.capability_type),
+            status=normalize_grouped_enum(m.status),
             provider_count=provider_count or 0
         )
         for m, provider_count in models_result.all()
