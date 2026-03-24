@@ -58,7 +58,7 @@ const logos = [
 
 export function LogoCloud() {
   return (
-    <section className="py-12 md:py-16 px-6 border-y border-gray-100">
+    <section className="py-12 md:py-16 px-6">
       <div className="max-w-4xl mx-auto">
         <p className="text-center text-xs font-medium text-gray-400 uppercase tracking-[0.15em] mb-8">
           Trusted by teams using

@@ -1,6 +1,6 @@
 # Railway Launch Runbook
 
-Last Updated: 2026-03-23
+Last Updated: 2026-03-24
 
 This is the canonical runbook for launching the core Talmudpedia platform on Railway.
 
@@ -36,6 +36,11 @@ Keep these systems external:
 
 Use `backend/railway.env.example` as the source template.
 
+Operational split:
+
+- local backend env: `backend/.env.local`
+- Railway sync source: `backend/.env.railway`
+
 Required groups:
 
 - relational database and Redis
@@ -60,6 +65,11 @@ Production defaults that must stay disabled:
 ### Frontend
 
 Use `frontend-reshet/railway.env.example` as the source template.
+
+Operational split:
+
+- local frontend env: `frontend-reshet/.env.local`
+- Railway sync source: `frontend-reshet/.env.railway`
 
 Required values:
 
@@ -119,6 +129,22 @@ Required values:
    - wildcard `*.apps.<domain>` for published apps
 9. Publish one app and verify host-based runtime.
 10. Run one `web_crawler` smoke test and one published-app smoke test.
+
+## Railway Env Sync
+
+Deployment env changes are not automatic from local `.env` files.
+
+Use the sync script after editing the dedicated Railway env files:
+
+```bash
+python3 backend/scripts/sync_railway_env.py --sync-worker
+```
+
+Dry-run mode:
+
+```bash
+python3 backend/scripts/sync_railway_env.py --sync-worker --dry-run
+```
 
 ## Validation Checklist
 

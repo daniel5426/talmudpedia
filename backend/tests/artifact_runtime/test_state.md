@@ -1,4 +1,4 @@
-Last Updated: 2026-03-16
+Last Updated: 2026-03-24
 
 # Test State
 
@@ -10,6 +10,7 @@ Artifact runtime revision and bundle lifecycle.
 
 - `test_revision_service.py`
 - `test_execution_service.py`
+- `test_outbound_auth_service.py`
 - `test_artifact_versions_api.py`
 - `test_artifact_working_draft_api.py`
 
@@ -32,6 +33,9 @@ Artifact runtime revision and bundle lifecycle.
 - create live artifact runs for `agent` and `rag` domains
 - enforce published-only execution for live domains
 - route background live runs to the configured queue class
+- issue run-scoped outbound grants without persisting raw secrets in run payloads
+- resolve brokered outbound auth headers from source-level credential references
+- reject unreferenced credentials, invalid grants, and disallowed outbound hosts
 - reject artifact handlers that do not implement the canonical three-argument contract
 - include source-tree payloads in the free-plan standard-worker test mode
 
@@ -55,10 +59,13 @@ Artifact runtime revision and bundle lifecycle.
 - Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/artifact_runtime/test_revision_service.py backend/tests/artifact_runtime/test_artifact_versions_api.py backend/tests/artifact_runtime/test_artifact_working_draft_api.py backend/tests/artifact_test_runs/test_artifact_test_run_api.py backend/tests/artifact_coding_agent/test_runtime_service.py backend/tests/platform_architect_workers/test_worker_runtime.py backend/tests/platform_architect_workers/test_architect_worker_integration.py backend/tests/control_plane_sdk/test_client_and_modules.py backend/tests/platform_sdk_tool/test_platform_sdk_sdk_parity.py backend/tests/platform_sdk_tool/test_platform_sdk_sdk_parity_additional_actions.py`
 - Date: 2026-03-16 19:41 EET
 - Result: Pass (145 passed)
+- Command: `python3 -m pytest -q backend/tests/artifact_runtime/test_revision_service.py backend/tests/artifact_runtime/test_execution_service.py backend/tests/artifact_runtime/test_outbound_auth_service.py backend/tests/artifact_test_runs/test_artifact_test_run_api.py`
+- Date: 2026-03-24 Asia/Hebron
+- Result: Pass (21 passed)
 
 ## Known Gaps
 
 - no real Cloudflare deploy API integration coverage yet
 - no migration script execution coverage yet
-- no outbound worker / secret-broker end-to-end coverage yet
+- no outbound worker end-to-end proxy coverage yet
 - no deployed free-plan worker smoke test yet after wrapper changes

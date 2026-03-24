@@ -1,6 +1,6 @@
 # Artifacts Domain Spec
 
-Last Updated: 2026-03-16
+Last Updated: 2026-03-24
 
 This document is the canonical product/specification overview for the artifact domain.
 
@@ -185,6 +185,23 @@ The runtime handler contract remains:
 ```python
 async def execute(inputs: dict, config: dict, context: dict) -> dict: ...
 ```
+
+## Credential Reference Rules
+
+Artifacts can declare brokered outbound credentials directly in source by inserting credential reference tokens.
+
+Current V1 rules:
+- authoring uses an `@` mention flow in the source editor, but the persisted source stores an immutable credential-id reference token
+- credentialed outbound access is HTTP-only and resolved per revision source tree, not by per-artifact binding config
+- supported categories are `llm_provider`, HTTP-native `vector_store`, `tool_provider`, and `custom`
+- non-HTTP vector backends remain out of scope for artifact outbound credentials
+
+Current runtime behavior:
+- artifact code does not receive raw secret values
+- credentialed outbound traffic must use the bundled `artifact_runtime_sdk.outbound_fetch(..., credential=...)` helper
+- the backend issues a short-lived outbound grant per run scoped to the credential ids referenced by the revision source
+- the outbound worker calls the internal broker endpoint and receives only `inject_headers`
+- user-supplied outbound headers cannot override broker-injected auth headers
 
 ## Current Queue Policy
 

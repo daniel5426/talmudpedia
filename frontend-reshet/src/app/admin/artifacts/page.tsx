@@ -6,23 +6,20 @@ import { useTenant } from "@/contexts/TenantContext"
 import { AgentArtifactContract, Artifact, ArtifactCapabilityConfig, ArtifactKind, ArtifactVersionListItem, RAGArtifactContract, ToolArtifactContract, artifactsService } from "@/services/artifacts"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Card } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
-import { Label } from "@/components/ui/label"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { JsonEditor } from "@/components/ui/json-editor"
-import { Textarea } from "@/components/ui/textarea"
-import { PromptMentionJsonEditor, fillPromptMentionJsonToken } from "@/components/shared/PromptMentionJsonEditor"
+import { fillPromptMentionJsonToken } from "@/components/shared/PromptMentionJsonEditor"
 import { PromptModal } from "@/components/shared/PromptModal"
 import { usePromptMentionModal } from "@/components/shared/usePromptMentionModal"
 import { ArtifactEditorHeader } from "@/components/admin/artifacts/ArtifactEditorHeader"
+import { ArtifactConfigPanel } from "@/components/admin/artifacts/ArtifactConfigPanel"
 import { ArtifactListView } from "@/components/admin/artifacts/ArtifactListView"
 import { ArtifactTestPanel } from "@/components/admin/artifacts/ArtifactTestPanel"
 import { ArtifactWorkspaceEditor } from "@/components/admin/artifacts/ArtifactWorkspaceEditor"
 import { ArtifactCodingChatPanel } from "@/features/artifact-coding/ArtifactCodingChatPanel"
 import { useArtifactCodingChat } from "@/features/artifact-coding/useArtifactCodingChat"
-import { ArtifactFormData, createFormDataForKind, initialFormData, RUNTIME_TARGET_OPTIONS } from "@/components/admin/artifacts/artifactEditorState"
-import { buildArtifactPayload, buildArtifactUpdatePayload, buildConvertPayload, contractEditorTitle, formDataFromArtifact, formDataFromDraftSnapshot, formDataFromArtifactVersion, kindLabel, serializeArtifactFormData, tryParseObject } from "@/components/admin/artifacts/artifactPageUtils"
+import { ArtifactFormData, createFormDataForKind, initialFormData } from "@/components/admin/artifacts/artifactEditorState"
+import { buildArtifactPayload, buildArtifactUpdatePayload, buildConvertPayload, formDataFromArtifact, formDataFromDraftSnapshot, formDataFromArtifactVersion, kindLabel, serializeArtifactFormData, tryParseObject } from "@/components/admin/artifacts/artifactPageUtils"
 import { Loader2 } from "lucide-react"
+import { credentialsService, IntegrationCredential } from "@/services"
 
 type ViewMode = "list" | "create" | "edit"
 const ARTIFACT_CODING_DRAFT_KEY_STORAGE_KEY = "artifact-coding-agent:create-draft-key"
@@ -50,6 +47,7 @@ export default function ArtifactsPage() {
     const [publishingId, setPublishingId] = useState<string | null>(null)
     const [converting, setConverting] = useState(false)
     const [artifacts, setArtifacts] = useState<Artifact[]>([])
+    const [availableCredentials, setAvailableCredentials] = useState<IntegrationCredential[]>([])
     const [selectedArtifact, setSelectedArtifact] = useState<Artifact | null>(null)
     const [formData, setFormData] = useState<ArtifactFormData>(initialFormData)
     const [convertTargetKind, setConvertTargetKind] = useState<ArtifactKind>("rag_operator")
@@ -100,6 +98,15 @@ export default function ArtifactsPage() {
         }
     }, [currentTenant?.slug])
 
+    const fetchAvailableCredentials = useCallback(async () => {
+        try {
+            const items = await credentialsService.listCredentials()
+            setAvailableCredentials(items)
+        } catch (error) {
+            console.error("Failed to fetch integration credentials", error)
+        }
+    }, [])
+
     const syncSelectedArtifact = useCallback((artifact: Artifact) => {
         setSelectedArtifact(artifact)
         setConvertTargetKind(artifact.kind === "agent_node" ? "rag_operator" : "agent_node")
@@ -126,6 +133,10 @@ export default function ArtifactsPage() {
     useEffect(() => {
         void fetchArtifacts({ showLoading: true })
     }, [fetchArtifacts])
+
+    useEffect(() => {
+        void fetchAvailableCredentials()
+    }, [fetchAvailableCredentials])
 
     const savedFormSignature = useMemo(() => {
         if (!selectedArtifact) return null
@@ -436,167 +447,6 @@ export default function ArtifactsPage() {
         updateFormData("tool_contract", value)
     }, [formData.kind, updateFormData])
 
-    const renderConfigContent = () => (
-        <div className="flex h-full w-full flex-col overflow-y-auto bg-background [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:bg-border">
-            <div className="mx-auto w-full max-w-5xl px-6 py-12 md:px-12">
-                <div className="mb-12">
-                    <h2 className="text-xl font-medium tracking-tight">Configuration Profile</h2>
-                    <p className="mt-1 text-sm text-muted-foreground/80">Properties, runtime targets, and boundary definitions.</p>
-                </div>
-
-                <div className="grid grid-cols-1 gap-x-5 gap-y-12 lg:grid-cols-2">
-                    {/* Identity Block */}
-                    <div className="space-y-6">
-                        <h3 className="flex items-center text-xs font-semibold uppercase tracking-widest text-muted-foreground">
-                            <span className="mr-3 text-primary">01</span> Identity
-                        </h3>
-
-                        <div className="group relative">
-                            <Label className="mb-2 block text-xs font-medium text-muted-foreground/60 transition-colors group-hover:text-foreground">Display Name</Label>
-                            <input
-                                value={formData.display_name}
-                                onChange={(e) => updateFormData("display_name", e.target.value)}
-                                className="w-full rounded-md border border-border/40 bg-transparent px-3 py-2 text-sm text-foreground outline-none shadow-none transition-colors hover:border-border focus:border-primary focus:ring-0"
-                                placeholder="e.g. Data Extractor Agent"
-                            />
-                        </div>
-
-                        <div className="group relative">
-                            <Label className="mb-2 block text-xs font-medium text-muted-foreground/60 transition-colors group-hover:text-foreground">Artifact Type</Label>
-                            <div className="flex h-[38px] w-full items-center rounded-md border border-border/40 bg-transparent px-3">
-                                <span className="text-sm">{kindLabel(formData.kind)}</span>
-                            </div>
-                        </div>
-
-                        <div className="group relative pt-2">
-                            <Label className="mb-2 block text-xs font-medium text-muted-foreground/60 transition-colors group-hover:text-foreground">Description</Label>
-                            <Textarea
-                                value={formData.description}
-                                onChange={(e) => updateFormData("description", e.target.value)}
-                                rows={3}
-                                placeholder="Briefly describe the artifact's purpose..."
-                                className="w-full resize-none rounded-md border border-border/40 bg-transparent p-3 text-sm text-foreground outline-none shadow-none transition-colors hover:border-border focus:border-primary focus:ring-0"
-                            />
-                        </div>
-                    </div>
-
-                    {/* Runtime Block */}
-                    <div className="space-y-6">
-                        <h3 className="flex items-center text-xs font-semibold uppercase tracking-widest text-muted-foreground">
-                            <span className="mr-3 text-primary">02</span> Execution
-                        </h3>
-
-                        <div className="group relative">
-                            <Label className="mb-2 block text-xs font-medium text-muted-foreground/60 transition-colors group-hover:text-foreground">Entry Module Path</Label>
-                            <input
-                                value={formData.entry_module_path}
-                                onChange={(e) => updateFormData("entry_module_path", e.target.value)}
-                                className="w-full rounded-md border border-border/40 bg-transparent px-3 py-2 font-mono text-sm text-foreground outline-none shadow-none transition-colors hover:border-border focus:border-primary focus:ring-0"
-                            />
-                        </div>
-
-                        <div className="group relative">
-                            <Label className="mb-2 block text-xs font-medium text-muted-foreground/60 transition-colors group-hover:text-foreground">Target Environment</Label>
-                            <Select value={formData.runtime_target} onValueChange={(value) => updateFormData("runtime_target", value)}>
-                                <SelectTrigger className="h-[38px] w-full rounded-md border border-border/40 bg-transparent px-3 text-sm shadow-none focus:ring-0 focus:ring-offset-0">
-                                    <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent className="rounded-md border-border">
-                                    {RUNTIME_TARGET_OPTIONS.map((option) => (
-                                        <SelectItem key={option.value} value={option.value} className="text-sm">{option.label}</SelectItem>
-                                    ))}
-                                </SelectContent>
-                            </Select>
-                        </div>
-
-                        <div className="group relative">
-                            <Label className="mb-2 block text-xs font-medium text-muted-foreground/60 transition-colors group-hover:text-foreground">Dependencies (CSV)</Label>
-                            <input
-                                value={formData.python_dependencies}
-                                onChange={(e) => updateFormData("python_dependencies", e.target.value)}
-                                className="w-full rounded-md border border-border/40 bg-transparent px-3 py-2 font-mono text-sm text-foreground outline-none shadow-none transition-colors hover:border-border focus:border-primary focus:ring-0"
-                                placeholder="requests, pydantic>=2.0"
-                            />
-                        </div>
-
-                        {viewMode === "edit" && selectedArtifact?.type === "draft" && selectedArtifact.owner_type === "tenant" && (
-                            <div className="mt-8 pt-4">
-                                <Label className="mb-2 block text-xs font-medium text-destructive/80 transition-colors group-hover:text-destructive">Danger Zone</Label>
-                                <div className="flex items-center gap-3 rounded-md border border-border/40 p-1">
-                                    <Select value={convertTargetKind} onValueChange={(value) => setConvertTargetKind(value as ArtifactKind)}>
-                                        <SelectTrigger className="h-[34px] w-full border-0 bg-transparent text-sm shadow-none focus:ring-0 focus:ring-offset-0">
-                                            <SelectValue placeholder="Convert kind to..." />
-                                        </SelectTrigger>
-                                        <SelectContent className="rounded-md border-border">
-                                            {PAGE_ARTIFACT_KIND_OPTIONS.filter((option) => option.value !== formData.kind).map((option) => (
-                                                <SelectItem key={option.value} value={option.value} className="text-sm">{option.label}</SelectItem>
-                                            ))}
-                                        </SelectContent>
-                                    </Select>
-                                    <Button variant="ghost" className="h-[34px] shrink-0 rounded-md px-2 text-xs font-medium text-destructive hover:bg-destructive/10 hover:text-destructive" onClick={handleConvertKind} disabled={converting}>
-                                        {converting ? <Loader2 className="h-3 w-3 animate-spin" /> : "Convert"}
-                                    </Button>
-                                </div>
-                            </div>
-                        )}
-                    </div>
-                </div>
-
-                {/* Declarations Block */}
-                <div className="mt-20 space-y-12">
-                    <div>
-                        <div className="mb-3 flex items-end justify-between">
-                            <h3 className="flex items-center text-xs font-semibold uppercase tracking-widest text-muted-foreground">
-                                <span className="mr-3 text-primary">03</span> {contractEditorTitle(formData.kind)}
-                            </h3>
-                            <span className="text-[10px] text-muted-foreground">JSON</span>
-                        </div>
-                        <div className="h-[300px] w-full rounded-md border border-border/40 bg-muted/5 p-1 transition-colors hover:border-border/80 focus-within:border-primary">
-                            {formData.kind === "tool_impl" ? (
-                                <PromptMentionJsonEditor
-                                    value={currentContractValue}
-                                    onChange={updateCurrentContract}
-                                    height="100%"
-                                    className="h-full border-0 bg-transparent"
-                                    surface="artifact.tool_contract.description"
-                                    onMentionClick={(promptId, tokenRange) =>
-                                        promptMentionModal.openPromptMentionModal(promptId, { tokenRange })
-                                    }
-                                />
-                            ) : (
-                                <JsonEditor value={currentContractValue} onChange={updateCurrentContract} height="100%" className="h-full border-0 bg-transparent" />
-                            )}
-                        </div>
-                    </div>
-
-                    <div>
-                        <div className="mb-3 flex items-end justify-between">
-                            <h3 className="flex items-center text-xs font-semibold uppercase tracking-widest text-muted-foreground">
-                                <span className="mr-3 text-primary">04</span> Runtime Capabilities
-                            </h3>
-                            <span className="text-[10px] text-muted-foreground">JSON</span>
-                        </div>
-                        <div className="h-[300px] w-full rounded-md border border-border/40 bg-muted/5 p-1 transition-colors hover:border-border/80 focus-within:border-primary">
-                            <JsonEditor value={formData.capabilities} onChange={(value) => updateFormData("capabilities", value)} height="100%" className="h-full border-0 bg-transparent" />
-                        </div>
-                    </div>
-
-                    <div>
-                        <div className="mb-3 flex items-end justify-between">
-                            <h3 className="flex items-center text-xs font-semibold uppercase tracking-widest text-muted-foreground">
-                                <span className="mr-3 text-primary">05</span> Configuration Schema
-                            </h3>
-                            <span className="text-[10px] text-muted-foreground">JSON SCHEMA</span>
-                        </div>
-                        <div className="h-[300px] w-full rounded-md border border-border/40 bg-muted/5 p-1 transition-colors hover:border-border/80 focus-within:border-primary">
-                            <JsonEditor value={formData.config_schema} onChange={(value) => updateFormData("config_schema", value)} height="100%" className="h-full border-0 bg-transparent" />
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    )
-
     const renderEditor = () => (
         <div className="relative w-full min-w-0 flex-1 overflow-hidden">
             <ArtifactWorkspaceEditor
@@ -607,7 +457,22 @@ export default function ArtifactsPage() {
                 onSourceFilesChange={(files) => updateFormData("source_files", files)}
                 sidebarOpen={sidebarOpen}
                 onSidebarOpenChange={setSidebarOpen}
-                configContent={renderConfigContent()}
+                availableCredentials={availableCredentials}
+                configContent={
+                    <ArtifactConfigPanel
+                        formData={formData}
+                        selectedArtifact={selectedArtifact}
+                        viewMode={viewMode}
+                        convertTargetKind={convertTargetKind}
+                        converting={converting}
+                        currentContractValue={currentContractValue}
+                        onUpdateFormData={updateFormData}
+                        onUpdateCurrentContract={updateCurrentContract}
+                        onConvertTargetKindChange={setConvertTargetKind}
+                        onConvertKind={handleConvertKind}
+                        onPromptMentionClick={(promptId, tokenRange) => promptMentionModal.openPromptMentionModal(promptId, { tokenRange })}
+                    />
+                }
             />
         </div>
     )

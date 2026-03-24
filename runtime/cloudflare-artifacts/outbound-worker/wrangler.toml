@@ -5,4 +5,3 @@ workers_dev = true
 
 [vars]
 BACKEND_SECRET_BROKER_URL = ""
-BACKEND_SHARED_SECRET = ""

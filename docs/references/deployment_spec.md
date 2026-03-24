@@ -207,6 +207,47 @@ Current tracked deployment files in repo:
 - [`deploy/crawl4ai/railway.toml`](/Users/danielbenassaya/Code/personal/talmudpedia/deploy/crawl4ai/railway.toml)
 - [`docs/references/railway_launch_runbook.md`](/Users/danielbenassaya/Code/personal/talmudpedia/docs/references/railway_launch_runbook.md)
 
+## Env File Workflow
+
+Use two separate env file classes:
+
+- local runtime
+  - backend: `backend/.env.local`
+  - frontend: `frontend-reshet/.env.local`
+- deployment sync source
+  - backend: `backend/.env.railway`
+  - frontend: `frontend-reshet/.env.railway`
+
+Rules:
+
+- local files are for local development only
+- `.env.railway` files are the intended source for Railway-managed deployed variables
+- changing local env files does not change Railway
+- changing `.env.railway` files does not change Railway until sync is run
+
+Backend local env loading now prefers:
+
+1. `backend/.env.local`
+2. `backend/.env`
+
+Deployment sync command:
+
+```bash
+python3 backend/scripts/sync_railway_env.py --sync-worker
+```
+
+That command:
+
+- syncs `backend/.env.railway` into `backend`
+- syncs `backend/.env.railway` into `backend-worker` when `--sync-worker` is used
+- syncs `frontend-reshet/.env.railway` into `frontend`
+
+Safe verification mode:
+
+```bash
+python3 backend/scripts/sync_railway_env.py --sync-worker --dry-run
+```
+
 ## Known Drift From Intended Production Spec
 
 The current deployment does not yet match the intended launch runbook in these ways:

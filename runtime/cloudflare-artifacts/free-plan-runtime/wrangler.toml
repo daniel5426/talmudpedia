@@ -1,7 +1,7 @@
 name = "artifact-free-plan-runtime"
 main = "src/main.py"
 compatibility_date = "2026-03-11"
-compatibility_flags = ["python_workers"]
+compatibility_flags = ["python_workers", "global_fetch_strictly_public"]
 workers_dev = true
 
 [vars]

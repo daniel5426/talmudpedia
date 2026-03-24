@@ -1,29 +1,25 @@
 export interface Env {
   BACKEND_SECRET_BROKER_URL: string;
   BACKEND_SHARED_SECRET: string;
+  artifact_outbound_grant?: string;
+  artifact_allowed_hosts?: string[];
 }
-
-type ProxyRequest = {
-  url: string;
-  method?: string;
-  headers?: Record<string, string>;
-  body?: string | null;
-  tenant_id?: string;
-  run_id?: string;
-  revision_id?: string;
-  secret_capabilities?: string[];
-  allowed_hosts?: string[];
-};
 
 function isAllowed(url: URL, allowedHosts: string[]): boolean {
   return allowedHosts.includes(url.host);
 }
 
+const CREDENTIAL_HEADER = "x-artifact-credential-id";
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
-    const payload = (await request.json()) as ProxyRequest;
-    const target = new URL(payload.url);
-    const allowedHosts = payload.allowed_hosts || [];
+    const credentialId = request.headers.get(CREDENTIAL_HEADER) || "";
+    const grant = String(env.artifact_outbound_grant || "");
+    if (!credentialId || !grant) {
+      return Response.json({ detail: { message: "credential_id and grant are required" } }, { status: 400 });
+    }
+    const target = new URL(request.url);
+    const allowedHosts = Array.isArray(env.artifact_allowed_hosts) ? env.artifact_allowed_hosts : [];
     if (!isAllowed(target, allowedHosts)) {
       return Response.json(
         {
@@ -46,23 +42,24 @@ export default {
         "content-type": "application/json",
       },
       body: JSON.stringify({
-        tenant_id: payload.tenant_id,
-        run_id: payload.run_id,
-        revision_id: payload.revision_id,
-        secret_capabilities: payload.secret_capabilities || [],
+        grant,
+        credential_id: credentialId,
         url: target.toString(),
       }),
     });
+    if (!brokerResponse.ok) {
+      return new Response(brokerResponse.body, {
+        status: brokerResponse.status,
+        headers: brokerResponse.headers,
+      });
+    }
     const brokerData = (await brokerResponse.json()) as { inject_headers?: Record<string, string> };
-    const headers = new Headers(payload.headers || {});
+    const headers = new Headers(request.headers);
+    headers.delete(CREDENTIAL_HEADER);
     for (const [key, value] of Object.entries(brokerData.inject_headers || {})) {
       headers.set(key, value);
     }
-    const upstream = await fetch(target.toString(), {
-      method: payload.method || "GET",
-      headers,
-      body: payload.body || undefined,
-    });
+    const upstream = await fetch(new Request(request, { headers }));
     return new Response(upstream.body, {
       status: upstream.status,
       headers: upstream.headers,

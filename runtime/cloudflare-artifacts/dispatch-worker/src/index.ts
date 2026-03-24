@@ -14,8 +14,9 @@ type DispatchRequest = {
   inputs?: unknown;
   config?: Record<string, unknown>;
   context?: Record<string, unknown>;
-  secret_capabilities?: string[];
   allowed_hosts?: string[];
+  outbound_grant?: string;
+  outbound_base_url?: string;
 };
 
 export default {
@@ -31,6 +32,10 @@ export default {
       limits: {
         cpuMs: payload.limits?.cpu_ms,
         subRequests: payload.limits?.subrequests,
+      },
+      outbound: {
+        artifact_outbound_grant: payload.outbound_grant || "",
+        artifact_allowed_hosts: payload.allowed_hosts || [],
       },
     });
 

@@ -72,6 +72,7 @@ export type {
   PromptResolvePreviewResponse,
 } from "./prompts";
 export { credentialsService } from "./credentials";
+export { artifactsService } from "./artifacts";
 export { publishedAppsService } from "./published-apps";
 export {
   isDraftDevServingStatus,
@@ -167,6 +168,27 @@ export type {
   PublishedRuntimeDescriptor,
   PreviewRuntimeDescriptor,
 } from "./published-runtime";
+
+export type {
+  Artifact,
+  ArtifactCapabilityConfig,
+  ArtifactKind,
+  ArtifactRun,
+  ArtifactRunCreateResponse,
+  ArtifactRunEvent,
+  ArtifactRunEventsResponse,
+  ArtifactRunStatus,
+  ArtifactType,
+  ArtifactVersion,
+  ArtifactVersionListItem,
+  ArtifactWorkingDraft,
+  ArtifactWorkingDraftUpdateRequest,
+  ArtifactCreateRequest,
+  ArtifactUpdateRequest,
+  ArtifactConvertKindRequest,
+  ArtifactTestRequest,
+  ArtifactTestResponse,
+} from "./artifacts";
 
 export type {
   IntegrationCredential,

@@ -43,7 +43,13 @@ def resolve_backend_env_file(
                 root / ".env.test.example",
             ]
         )
-    candidates.append(root / ".env")
+    else:
+        candidates.extend(
+            [
+                root / ".env.local",
+                root / ".env",
+            ]
+        )
 
     for candidate in candidates:
         if candidate.exists():

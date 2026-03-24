@@ -2,8 +2,10 @@
 
 import type { PointerEvent as ReactPointerEvent } from "react"
 import { useCallback, useMemo, useRef, useState } from "react"
-import { CodeEditor } from "@/components/ui/code-editor"
+import { ArtifactCredentialCodeEditor } from "@/components/admin/artifacts/ArtifactCredentialCodeEditor"
+import { normalizeCredentialMentionLabels } from "@/lib/credential-mentions"
 import { cn } from "@/lib/utils"
+import { IntegrationCredential } from "@/services"
 import { ArtifactSourceFile } from "@/services/artifacts"
 import {
   ChevronDown,
@@ -33,6 +35,7 @@ interface ArtifactWorkspaceEditorProps {
   onSidebarOpenChange?: (open: boolean) => void
   /** Slot rendered as the content of the config file. */
   configContent?: React.ReactNode
+  availableCredentials?: IntegrationCredential[]
 }
 
 type TreeNode = {
@@ -147,6 +150,7 @@ export function ArtifactWorkspaceEditor({
   sidebarOpen: controlledSidebarOpen,
   onSidebarOpenChange,
   configContent,
+  availableCredentials = [],
 }: ArtifactWorkspaceEditorProps) {
   const palette = {
     appBg: "bg-background",
@@ -829,9 +833,10 @@ export function ArtifactWorkspaceEditor({
               {configContent}
             </div>
           ) : (
-            <CodeEditor
-              value={activeFile?.content ?? ""}
+            <ArtifactCredentialCodeEditor
+              value={normalizeCredentialMentionLabels(activeFile?.content ?? "", availableCredentials)}
               onChange={updateActiveContent}
+              credentials={availableCredentials}
               height="100%"
               className="h-full w-full border-0 rounded-md"
               onScroll={setIsScrolled}

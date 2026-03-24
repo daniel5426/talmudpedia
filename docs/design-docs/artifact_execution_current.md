@@ -1,6 +1,6 @@
 # Artifact Execution Current State
 
-Last Updated: 2026-03-11
+Last Updated: 2026-03-24
 
 This document is the canonical current-state architecture overview for artifact execution.
 
@@ -104,6 +104,15 @@ When the repo is running in `standard_worker_test` mode:
 - dispatch goes to the shared free-plan Worker URL
 - the request carries `source_files`, `entry_module_path`, and inputs/config/context directly
 
+Current outbound credential flow for artifacts is now brokered:
+- artifact source files can contain source-level credential references such as `@{Display Name|credential-id}`
+- the backend mints a short-lived run-scoped outbound grant during dispatch
+- that grant is scoped to the credential ids referenced by the revision source tree
+- the dispatch payload carries that transient grant and the outbound proxy base URL, not raw secrets
+- artifact code must use the bundled `artifact_runtime_sdk.outbound_fetch(...)` helper for credentialed HTTP access
+- the outbound worker asks the backend broker for `inject_headers` on each request and applies them server-side
+- raw credential values are not persisted in artifact run config/context payloads
+
 ## Current Worker/Queue Model
 
 Current queue classes in the system include:
@@ -135,6 +144,7 @@ Areas still evolving:
 - stronger worker scheduling/fairness controls
 - fully hardened multi-worker deployment model
 - migration of repo builtin artifacts onto the same broader runtime model
+- outbound worker end-to-end proxy coverage in tests
 
 Important current reality:
 - queue fairness still relies on the existing queue classes and worker consumption behavior
@@ -142,6 +152,7 @@ Important current reality:
 - interactive traffic is better isolated than before because it uses a separate queue class, but fairness within a queue is still limited by the current Celery/worker model
 - tenant artifacts are now constrained to a Workers-compatible Python model rather than the previous backend bundle/worker sandbox assumptions
 - per-artifact Python dependency installation is not active in the temporary `standard_worker_test` mode; that mode is for runtime-path validation, not final dependency fidelity
+- direct raw secret access inside artifact code is out of contract; credentialed access is HTTP-only through the outbound helper/proxy path
 
 ## Canonical Implementation References
 

@@ -10,6 +10,7 @@ import {
   ToolArtifactContract,
 } from "@/services/artifacts";
 import { ArtifactFormData, createFormDataForKind } from "@/components/admin/artifacts/artifactEditorState";
+import { canonicalizeCredentialMentions } from "@/lib/credential-mentions";
 
 export function parseObjectJson(text: string, label: string): Record<string, unknown> {
   let parsed: unknown;
@@ -137,7 +138,10 @@ export function buildArtifactPayload(formData: ArtifactFormData): ArtifactCreate
     description: formData.description || undefined,
     kind: formData.kind,
     runtime: {
-      source_files: formData.source_files,
+      source_files: formData.source_files.map((file) => ({
+        ...file,
+        content: canonicalizeCredentialMentions(file.content),
+      })),
       entry_module_path: formData.entry_module_path,
       python_dependencies: splitDependencies(formData.python_dependencies),
       runtime_target: formData.runtime_target,
@@ -157,7 +161,10 @@ export function buildArtifactUpdatePayload(formData: ArtifactFormData): Artifact
     display_name: formData.display_name,
     description: formData.description || undefined,
     runtime: {
-      source_files: formData.source_files,
+      source_files: formData.source_files.map((file) => ({
+        ...file,
+        content: canonicalizeCredentialMentions(file.content),
+      })),
       entry_module_path: formData.entry_module_path,
       python_dependencies: splitDependencies(formData.python_dependencies),
       runtime_target: formData.runtime_target,

@@ -92,6 +92,37 @@ def test_free_plan_runtime_executes_package_import_tree():
     assert payload["data"]["result"]["value"] == 42
 
 
+def test_free_plan_runtime_executes_artifact_runtime_sdk_before_entry_module():
+    module = _load_worker_module()
+    worker = module.Default()
+    request = _FakeRequest(
+        {
+            "run_id": "run-sdk-1",
+            "entry_module_path": "main.py",
+            "source_files": [
+                {
+                    "path": "main.py",
+                    "content": (
+                        "from artifact_runtime_sdk import outbound_fetch\n\n"
+                        "async def execute(inputs, config, context):\n"
+                        "    return {'callable': bool(outbound_fetch)}\n"
+                    ),
+                },
+            ],
+            "inputs": {},
+            "config": {},
+            "context": {},
+        }
+    )
+
+    response = asyncio.run(worker.fetch(request))
+    payload = json.loads(response.body)
+
+    assert response.status == 200
+    assert payload["data"]["status"] == "completed"
+    assert payload["data"]["result"]["callable"] is True
+
+
 def test_free_plan_runtime_returns_json_detail_for_module_load_failure():
     module = _load_worker_module()
     worker = module.Default()

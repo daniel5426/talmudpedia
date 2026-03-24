@@ -18,6 +18,7 @@ from app.db.postgres.models.artifact_runtime import (
 from .cloudflare_dispatch_client import CloudflareDispatchClient
 from .cloudflare_dispatch_client import CloudflareDispatchHTTPError
 from .deployment_service import ArtifactDeploymentService
+from .outbound_auth_service import mint_outbound_grant, resolve_outbound_allowed_hosts
 from .policy_service import ArtifactConcurrencyLimitExceeded, ArtifactRuntimePolicyService
 from .registry_service import ArtifactRegistryService
 from .revision_service import ArtifactRevisionService
@@ -88,7 +89,6 @@ class ArtifactExecutionService:
                 or source.entry_module_path != revision.entry_module_path
                 or requested_dependencies != list(revision.python_dependencies or [])
             )
-
         if should_materialize:
             revision = await self._revisions.create_ephemeral_revision(
                 tenant_id=tenant_id,
@@ -309,6 +309,15 @@ class ArtifactExecutionService:
         )
         await self._db.commit()
 
+        outbound_allowed_hosts = {
+            str(item or "").strip().lower()
+            for item in list((run.context_payload or {}).get("allowed_hosts") or [])
+            if str(item or "").strip()
+        }
+        for host in list((run.revision.capabilities or {}).get("allowed_hosts") or []):
+            host_value = str(host or "").strip().lower()
+            if host_value:
+                outbound_allowed_hosts.add(host_value)
         request_payload = {
             "tenant_id": str(run.tenant_id),
             "run_id": str(run.id),
@@ -324,16 +333,23 @@ class ArtifactExecutionService:
             "inputs": run.input_payload,
             "config": dict(run.config_payload or {}),
             "context": dict(run.context_payload or {}),
-            "secret_capabilities": list((run.context_payload or {}).get("secret_capabilities") or []),
-            "allowed_hosts": list((run.context_payload or {}).get("allowed_hosts") or []),
+            "allowed_hosts": sorted(outbound_allowed_hosts),
         }
-        if artifact_cloudflare_runtime_mode() == RUNTIME_MODE_STANDARD_WORKER_TEST:
-            request_payload["source_files"] = list(run.revision.source_files or [])
-            request_payload["entry_module_path"] = run.revision.entry_module_path
-            request_payload["python_dependencies"] = list(run.revision.python_dependencies or [])
-
         client = CloudflareDispatchClient()
         try:
+            request_payload["allowed_hosts"] = await resolve_outbound_allowed_hosts(
+                db=self._db,
+                tenant_id=run.tenant_id,
+                revision=run.revision,
+                base_allowed_hosts=outbound_allowed_hosts,
+            )
+            outbound_grant = mint_outbound_grant(run=run, revision=run.revision)
+            if outbound_grant:
+                request_payload["outbound_grant"] = outbound_grant
+            if artifact_cloudflare_runtime_mode() == RUNTIME_MODE_STANDARD_WORKER_TEST:
+                request_payload["source_files"] = list(run.revision.source_files or [])
+                request_payload["entry_module_path"] = run.revision.entry_module_path
+                request_payload["python_dependencies"] = list(run.revision.python_dependencies or [])
             response = await client.execute(request_payload)
         except Exception as exc:
             run = await self._runs.get_run(run_id=run_id)
@@ -362,6 +378,18 @@ class ArtifactExecutionService:
                                 "status": "failed",
                                 "message": str(exc),
                                 "error_payload": error_payload,
+                            },
+                        },
+                    }
+                ,
+                    {
+                        "event_type": "dispatch_request_debug",
+                        "payload": {
+                            "event": "dispatch_request_debug",
+                            "name": "dispatch_request_debug",
+                            "data": {
+                                "allowed_hosts": list(request_payload.get("allowed_hosts") or []),
+                                "has_outbound_grant": bool(request_payload.get("outbound_grant")),
                             },
                         },
                     }

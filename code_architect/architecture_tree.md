@@ -1,6 +1,6 @@
 # Architecture Tree (Curated)
 
-Last Updated: 2026-03-22
+Last Updated: 2026-03-24
 
 This file is a backend-only architecture map optimized for agent context efficiency.
 
@@ -34,6 +34,7 @@ backend/app/api/routers/prompts.py
 backend/app/api/routers/rag_graph_mutations.py
 backend/app/api/routers/rag_operator_contracts.py
 backend/app/api/routers/artifacts.py
+backend/app/api/routers/artifact_runtime_internal.py
 backend/app/api/routers/artifact_runs.py
 backend/app/api/routers/artifact_coding_agent.py
 backend/app/api/schemas/
@@ -161,6 +162,7 @@ backend/app/services/artifact_runtime/run_service.py
 backend/app/services/artifact_runtime/source_utils.py
 backend/app/services/artifact_runtime/workers_validation.py
 backend/app/services/artifact_runtime/cloudflare_package_builder.py
+backend/app/services/artifact_runtime/outbound_auth_service.py
 backend/app/services/artifact_runtime/cloudflare_client.py
 backend/app/services/artifact_runtime/cloudflare_dispatch_client.py
 backend/app/services/artifact_runtime/deployment_service.py

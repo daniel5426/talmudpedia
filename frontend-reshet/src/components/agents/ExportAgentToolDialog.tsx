@@ -240,7 +240,7 @@ function FieldTypeSelect({
 }) {
     return (
         <Select value={value} onValueChange={(v) => onChange(v as SchemaNodeType)}>
-            <SelectTrigger className={cn("h-9 w-full rounded-lg border-none bg-muted/40 text-[13px] font-mono shadow-none focus:ring-1 focus:ring-ring focus:ring-offset-0", className)}>
+            <SelectTrigger className={cn("h-9 w-full text-[13px] font-mono", className)}>
                 <SelectValue />
             </SelectTrigger>
             <SelectContent>

@@ -6,6 +6,7 @@ from sqlalchemy import select
 
 from app.db.postgres.models.artifact_runtime import ArtifactRun
 from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Tenant, User
+from app.db.postgres.models.registry import IntegrationCredential, IntegrationCredentialCategory
 from app.services.artifact_runtime.execution_service import ArtifactExecutionService
 from app.services.artifact_runtime.handler_runner import invoke_artifact_handler
 from app.services.artifact_runtime.cloudflare_dispatch_client import CloudflareDispatchHTTPError
@@ -370,3 +371,84 @@ async def test_handler_runner_requires_modern_three_argument_contract():
 
     with pytest.raises(TypeError, match="exactly \\(inputs, config, context\\)"):
         await invoke_artifact_handler(execute, ["a", {"b": 1}], {"mode": "strict"}, {"domain": "rag"})
+
+
+@pytest.mark.asyncio
+async def test_execute_live_run_issues_outbound_grant_without_persisting_secrets(db_session, monkeypatch):
+    tenant, user = await _seed_tenant_context(db_session)
+    credential = IntegrationCredential(
+        tenant_id=tenant.id,
+        category=IntegrationCredentialCategory.LLM_PROVIDER,
+        provider_key="openai",
+        display_name="OpenAI Runtime",
+        credentials={"api_key": "super-secret-key"},
+        is_enabled=True,
+        is_default=True,
+    )
+    db_session.add(credential)
+    await db_session.flush()
+
+    artifact = await ArtifactRevisionService(db_session).create_artifact(
+        tenant_id=tenant.id,
+        created_by=user.id,
+        display_name="Bound Runtime Artifact",
+        description=None,
+        kind="tool_impl",
+        source_files=[{"path": "main.py", "content": f'def execute(inputs, config, context):\n    return {{"credential": "@{{{credential.display_name}|{credential.id}}}"}}\n'}],
+        entry_module_path="main.py",
+        python_dependencies=[],
+        runtime_target="cloudflare_workers",
+        capabilities={"network_access": True, "allowed_hosts": []},
+        config_schema={},
+        tool_contract={"input_schema": {"type": "object"}, "output_schema": {"type": "object"}, "side_effects": [], "execution_mode": "interactive", "tool_ui": {}},
+    )
+    await ArtifactRevisionService(db_session).publish_latest_draft(artifact)
+    await db_session.commit()
+
+    captured = {}
+
+    async def fake_ensure_deployment(self, *, revision, namespace, tenant_id=None):
+        return SimpleNamespace(
+            worker_name="cf-worker",
+            deployment_id="dep-bound",
+            version_id="ver-bound",
+            build_hash=revision.build_hash,
+        )
+
+    async def fake_execute(self, payload):
+        captured["request"] = payload
+        return SimpleNamespace(
+            status="completed",
+            result={"ok": True},
+            error=None,
+            stdout_excerpt="",
+            stderr_excerpt="",
+            duration_ms=5,
+            worker_id="cf-worker",
+            sandbox_session_id="dispatch-bound",
+            events=[],
+            runtime_metadata={"provider": "cloudflare_workers"},
+        )
+
+    monkeypatch.setenv("ARTIFACT_CF_OUTBOUND_BASE_URL", "https://outbound.example")
+    monkeypatch.setattr("app.services.artifact_runtime.deployment_service.ArtifactDeploymentService.ensure_deployment", fake_ensure_deployment)
+    monkeypatch.setattr("app.services.artifact_runtime.cloudflare_dispatch_client.CloudflareDispatchClient.execute", fake_execute)
+
+    run = await ArtifactExecutionService(db_session).execute_live_run(
+        tenant_id=tenant.id,
+        created_by=user.id,
+        revision_id=artifact.latest_published_revision_id,
+        domain="tool",
+        queue_class="artifact_prod_interactive",
+        input_payload={"value": 1},
+        config_payload={"mode": "secure"},
+        context_payload={},
+    )
+
+    assert run is not None
+    assert captured["request"]["allowed_hosts"] == ["api.openai.com"]
+    assert captured["request"]["outbound_base_url"] == "https://outbound.example"
+    assert captured["request"]["outbound_grant"]
+    assert "api_key" not in captured["request"]["config"]
+    assert "api_key" not in captured["request"]["context"]
+    assert "super-secret-key" not in str(captured["request"])

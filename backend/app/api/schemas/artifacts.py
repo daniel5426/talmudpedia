@@ -6,7 +6,6 @@ from typing import Any, Dict, Literal, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
-
 class ArtifactType(str, Enum):
     DRAFT = "draft"
     PUBLISHED = "published"
