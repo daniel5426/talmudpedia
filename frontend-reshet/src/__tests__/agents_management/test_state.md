@@ -1,6 +1,6 @@
 # Agents Management Test State
 
-Last Updated: 2026-03-19
+Last Updated: 2026-03-24
 
 ## Scope
 Frontend Agents page management actions, including delete flow wiring and export-to-tool dialog behavior.
@@ -18,10 +18,11 @@ Frontend Agents page management actions, including delete flow wiring and export
 - The export dialog lets the user switch to raw JSON editing and export from that mode.
 
 ## Last run command + date/time + result
-- Command: `npm test -- --runInBand src/__tests__/agents_management/agents_page_export_tool.test.tsx`
-- Date/Time: 2026-03-19 20:39 EET
+- Command: `pnpm --dir frontend-reshet test -- --runInBand src/__tests__/agents_management/agents_page_export_tool.test.tsx`
+- Date/Time: 2026-03-24 19:44 EET
 - Result: pass (`1 suite, 3 tests`)
 
 ## Known gaps or follow-ups
 - Add a test for cancel path (`window.confirm` returns false).
 - Add integration test to verify list refresh/error banner behavior after failed deletion.
+- Browser-level coverage still does not verify real CodeMirror scrolling behavior in the JSON tab.

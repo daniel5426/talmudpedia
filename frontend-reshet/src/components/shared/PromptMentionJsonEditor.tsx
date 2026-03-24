@@ -301,7 +301,7 @@ export function PromptMentionJsonEditor({
 
   return (
     <div ref={rootRef} className="relative">
-      <div className={cn("rounded-md border border-input overflow-hidden", className)}>
+      <div className={cn("min-h-0 rounded-md border border-input overflow-hidden", className)}>
         <CodeMirror
           id={id}
           aria-label={ariaLabel}
@@ -321,7 +321,7 @@ export function PromptMentionJsonEditor({
             allowMultipleSelections: false,
             indentOnInput: true,
           }}
-          className="text-xs"
+          className="h-full text-xs [&_.cm-editor]:h-full [&_.cm-focused]:outline-none [&_.cm-gutters]:min-h-full [&_.cm-scroller]:overflow-auto"
         />
       </div>
 

@@ -21,6 +21,59 @@ jest.mock("@/components/agents/CreateAgentDialog", () => ({
   CreateAgentDialog: () => null,
 }))
 
+jest.mock("@/components/shared/PromptMentionInput", () => ({
+  PromptMentionInput: ({
+    id,
+    value,
+    onChange,
+    placeholder,
+    multiline,
+  }: {
+    id?: string
+    value: string
+    onChange: (value: string) => void
+    placeholder?: string
+    multiline?: boolean
+  }) =>
+    multiline ? (
+      <textarea
+        id={id}
+        aria-label={id === "export-tool-description" ? "Description" : undefined}
+        value={value}
+        placeholder={placeholder}
+        onChange={(event) => onChange(event.target.value)}
+      />
+    ) : (
+      <input
+        id={id}
+        aria-label={id === "selected-field-description" ? "Description" : undefined}
+        value={value}
+        placeholder={placeholder}
+        onChange={(event) => onChange(event.target.value)}
+      />
+    ),
+}))
+
+jest.mock("@/components/shared/PromptMentionJsonEditor", () => ({
+  PromptMentionJsonEditor: ({
+    id,
+    value,
+    onChange,
+  }: {
+    id?: string
+    value: string
+    onChange: (value: string) => void
+  }) => (
+    <textarea
+      id={id}
+      aria-label="JSON Schema"
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+    />
+  ),
+  fillPromptMentionJsonToken: (value: string) => value,
+}))
+
 jest.mock("@/components/direction-provider", () => ({
   useDirection: () => ({ direction: "ltr" }),
 }))
@@ -90,11 +143,11 @@ describe("agents page export tool flow", () => {
   it("uses the split tree editor and lets the user add a field", async () => {
     render(<AgentsPage />)
 
-    expect(await screen.findByText("Input Schema")).toBeInTheDocument()
+    expect(await screen.findByText("Properties")).toBeInTheDocument()
     fireEvent.change(screen.getByLabelText("Name"), {
       target: { value: "query" },
     })
-    fireEvent.click(screen.getByRole("button", { name: "Export Tool" }))
+    fireEvent.click(screen.getByRole("button", { name: /export tool/i }))
 
     await waitFor(() => {
       expect(exportAgentToolMock).toHaveBeenCalledWith(
@@ -119,8 +172,8 @@ describe("agents page export tool flow", () => {
   it("lets the user switch to raw json editing", async () => {
     render(<AgentsPage />)
 
-    expect(await screen.findByText("Input Schema")).toBeInTheDocument()
-    fireEvent.click(screen.getByText("Edit as JSON"))
+    expect(await screen.findByText("Properties")).toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: /edit as json/i }))
     fireEvent.change(screen.getByLabelText("JSON Schema"), {
       target: {
         value: JSON.stringify(
@@ -136,7 +189,7 @@ describe("agents page export tool flow", () => {
         ),
       },
     })
-    fireEvent.click(screen.getByRole("button", { name: "Export Tool" }))
+    fireEvent.click(screen.getByRole("button", { name: /export tool/i }))
 
     await waitFor(() => {
       expect(exportAgentToolMock).toHaveBeenCalledWith(

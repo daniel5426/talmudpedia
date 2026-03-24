@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button"
 import {
     Dialog,
     DialogContent,
+    DialogDescription,
     DialogTitle,
 } from "@/components/ui/dialog"
 import {
@@ -224,24 +225,27 @@ function createChild(type: SchemaNodeType, name = "") {
         item: type === "array" ? createNode({ name: "item", type: "string", required: true }) : null,
     })
 }
-function typeAccent(type: SchemaNodeType) {
-    return type
-}
+const propertyLabelClassName = "text-[11px] font-bold uppercase tracking-tight text-foreground/50"
+const propertyControlClassName = "h-9 text-[13px]"
+const propertyTextareaClassName = "min-h-[104px] px-3 py-2 text-[13px] placeholder:text-muted-foreground/40"
+
 function FieldTypeSelect({
     value,
     onChange,
+    className,
 }: {
     value: SchemaNodeType
     onChange: (value: SchemaNodeType) => void
+    className?: string
 }) {
     return (
         <Select value={value} onValueChange={(v) => onChange(v as SchemaNodeType)}>
-            <SelectTrigger size="sm" className="h-7 w-full text-xs font-mono border-border/40">
+            <SelectTrigger className={cn("h-9 w-full rounded-lg border-none bg-muted/40 text-[13px] font-mono shadow-none focus:ring-1 focus:ring-ring focus:ring-offset-0", className)}>
                 <SelectValue />
             </SelectTrigger>
             <SelectContent>
                 {(["string", "number", "boolean", "object", "array"] as SchemaNodeType[]).map((t) => (
-                    <SelectItem key={t} value={t} className="text-xs font-mono">
+                    <SelectItem key={t} value={t} className="text-[13px] font-mono">
                         {t}
                     </SelectItem>
                 ))}
@@ -472,78 +476,88 @@ export function ExportAgentToolDialog({
                     </div>
                 ) : (
                     <div className="p-4 space-y-3">
-                        <div className="flex items-center justify-between">
-                            <span className="text-[10px] font-semibold text-muted-foreground/50 uppercase tracking-wider">Properties</span>
-                            <button
-                                type="button"
-                                className="flex items-center gap-1 text-[11px] text-muted-foreground/50 hover:text-destructive transition-colors"
-                                onClick={removeSelected}
-                            >
-                                <Trash2 className="h-2.5 w-2.5" />
-                                Remove
-                            </button>
-                        </div>
-
-                        <div className="grid grid-cols-[1fr_100px] gap-2">
-                            <div className="space-y-1">
-                                <Label className="text-[11px] text-muted-foreground/60">Name</Label>
-                                <Input
-                                    value={selectedNode.name}
-                                    onChange={(event) => updateSelectedNode({ name: event.target.value })}
-                                    placeholder="field_name"
-                                    className="h-7 text-xs"
-                                />
+                        <div className="rounded-xl border border-border/40 bg-background/70 p-4 shadow-sm">
+                            <div className="flex items-start justify-between gap-3">
+                                <div className="space-y-1">
+                                    <span className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground/55">Properties</span>
+                                    <p className="text-[12px] text-muted-foreground/70">
+                                        Define the selected field using the same contract controls used in node settings.
+                                    </p>
+                                </div>
+                                <button
+                                    type="button"
+                                    className="inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-[12px] font-medium text-muted-foreground/65 transition-colors hover:bg-destructive/8 hover:text-destructive"
+                                    onClick={removeSelected}
+                                >
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                    Remove
+                                </button>
                             </div>
-                            <div className="space-y-1">
-                                <Label className="text-[11px] text-muted-foreground/60">Type</Label>
-                                <FieldTypeSelect
-                                    value={selectedNode.type}
-                                    onChange={(value) =>
-                                        updateSelectedNode({
-                                            type: value,
-                                            children: value === "object" ? selectedNode.children : [],
-                                            item: value === "array" ? selectedNode.item ?? createChild("string", "item") : null,
+
+                            <div className="mt-4 grid gap-3 md:grid-cols-[minmax(0,1fr)_176px] md:items-start">
+                                <div className="space-y-1.5">
+                                    <Label className={propertyLabelClassName}>Name</Label>
+                                    <Input
+                                        aria-label="Name"
+                                        value={selectedNode.name}
+                                        onChange={(event) => updateSelectedNode({ name: event.target.value })}
+                                        placeholder="field_name"
+                                        className={propertyControlClassName}
+                                    />
+                                </div>
+                                <div className="space-y-1.5">
+                                    <Label className={propertyLabelClassName}>Type</Label>
+                                    <FieldTypeSelect
+                                        value={selectedNode.type}
+                                        onChange={(value) =>
+                                            updateSelectedNode({
+                                                type: value,
+                                                children: value === "object" ? selectedNode.children : [],
+                                                item: value === "array" ? selectedNode.item ?? createChild("string", "item") : null,
+                                            })
+                                        }
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="mt-3 space-y-1.5">
+                                <Label className={propertyLabelClassName}>Description</Label>
+                                <PromptMentionInput
+                                    id="selected-field-description"
+                                    placeholder="Explain what this field means, when it should be sent, and any constraints."
+                                    value={selectedNode.description}
+                                    onChange={(description) => updateSelectedNode({ description })}
+                                    multiline
+                                    className={propertyTextareaClassName}
+                                    surface="agent_export.input_schema.description"
+                                    onMentionClick={(promptId, mentionIndex) =>
+                                        promptMentionModal.openPromptMentionModal(promptId, {
+                                            kind: "builder_description",
+                                            nodeId: selectedNode.id,
+                                            mentionIndex,
                                         })
                                     }
                                 />
                             </div>
+
+                            <div className="mt-4 flex flex-wrap items-center gap-3 rounded-lg bg-muted/35 px-3 py-2.5">
+                                <label className="flex cursor-pointer items-center gap-2 select-none">
+                                    <input
+                                        type="checkbox"
+                                        checked={selectedNode.required}
+                                        onChange={(event) => updateSelectedNode({ required: event.target.checked })}
+                                        className="h-4 w-4 rounded border-border accent-primary"
+                                    />
+                                    <span className="text-[13px] font-medium text-foreground/85">Required field</span>
+                                </label>
+
+                                {selectedNode.type === "array" ? (
+                                    <span className="text-[12px] text-muted-foreground/70">
+                                        Array item shape is configured from the tree.
+                                    </span>
+                                ) : null}
+                            </div>
                         </div>
-
-                        <div className="space-y-1">
-                            <Label className="text-[11px] text-muted-foreground/60">Description</Label>
-                            <PromptMentionInput
-                                id="selected-field-description"
-                                placeholder="What this field is for..."
-                                value={selectedNode.description}
-                                onChange={(description) => updateSelectedNode({ description })}
-                                multiline={false}
-                                className="text-xs"
-                                surface="agent_export.input_schema.description"
-                                onMentionClick={(promptId, mentionIndex) =>
-                                    promptMentionModal.openPromptMentionModal(promptId, {
-                                        kind: "builder_description",
-                                        nodeId: selectedNode.id,
-                                        mentionIndex,
-                                    })
-                                }
-                            />
-                        </div>
-
-                        <label className="flex items-center gap-2 cursor-pointer select-none pt-0.5">
-                            <input
-                                type="checkbox"
-                                checked={selectedNode.required}
-                                onChange={(event) => updateSelectedNode({ required: event.target.checked })}
-                                className="h-3.5 w-3.5 rounded border-border accent-primary"
-                            />
-                            <span className="text-xs text-muted-foreground">Required</span>
-                        </label>
-
-                        {selectedNode.type === "array" ? (
-                            <p className="text-[11px] text-muted-foreground/50 italic pt-1">
-                                Array items configured via the tree.
-                            </p>
-                        ) : null}
                     </div>
                 )}
             </div>
@@ -628,6 +642,9 @@ export function ExportAgentToolDialog({
         <Dialog open={open} onOpenChange={onOpenChange}>
             <DialogContent showCloseButton={false} className="!max-w-[58rem] h-[80vh] flex flex-col p-0 gap-0 overflow-hidden">
                 <DialogTitle className="sr-only">Export Agent as Tool</DialogTitle>
+                <DialogDescription className="sr-only">
+                    Configure the exported tool metadata and input schema before creating it.
+                </DialogDescription>
 
                 {/* ── Header group (row + optional description, single bottom border) ── */}
                 <div className="shrink-0 border-b border-border/40">
@@ -654,6 +671,7 @@ export function ExportAgentToolDialog({
                             </Select>
                             <div className="h-3.5 w-px bg-border/50 shrink-0" />
                             <Input
+                                aria-label="Tool Name"
                                 value={name}
                                 onChange={(e) => setName(e.target.value)}
                                 placeholder="Tool name..."
@@ -678,6 +696,7 @@ export function ExportAgentToolDialog({
                             <div className="flex items-center gap-0.5 rounded-md bg-muted/50 p-0.5">
                                 <button
                                     type="button"
+                                    aria-label="Builder"
                                     onClick={() => { if (editorMode === "json") switchToBuilder() }}
                                     className={cn(
                                         "px-2 py-0.5 rounded text-[11px] font-medium transition-colors",
@@ -690,6 +709,7 @@ export function ExportAgentToolDialog({
                                 </button>
                                 <button
                                     type="button"
+                                    aria-label="Edit as JSON"
                                     onClick={() => { if (editorMode === "builder") switchToJson() }}
                                     className={cn(
                                         "px-2 py-0.5 rounded text-[11px] font-medium transition-colors",
@@ -706,6 +726,7 @@ export function ExportAgentToolDialog({
 
                             <Button
                                 size="sm"
+                                aria-label="Export Tool"
                                 onClick={handleSubmit}
                                 disabled={loading || agents.length === 0}
                                 className="h-6 gap-1 text-[11px]"
@@ -729,18 +750,23 @@ export function ExportAgentToolDialog({
 
                     {/* Description (seamless expand, no border between header and description) */}
                     {showMoreFields && (
-                        <div className="px-4 pb-2.5">
-                            <PromptMentionInput
-                                id="export-tool-description"
-                                value={description}
-                                onChange={setDescription}
-                                placeholder="Describe what this tool does..."
-                                className="min-h-[48px] text-xs bg-muted/20 border-border/30"
-                                surface="agent_export.description"
-                                onMentionClick={(promptId, mentionIndex) =>
-                                    promptMentionModal.openPromptMentionModal(promptId, { kind: "description", mentionIndex })
-                                }
-                            />
+                        <div className="px-4 pb-3">
+                            <div className="rounded-xl bg-muted/25 p-3">
+                                <div className="space-y-1.5">
+                                    <Label htmlFor="export-tool-description" className={propertyLabelClassName}>Description</Label>
+                                    <PromptMentionInput
+                                        id="export-tool-description"
+                                        value={description}
+                                        onChange={setDescription}
+                                        placeholder="Describe what this tool does, what it expects, and what it returns."
+                                        className={propertyTextareaClassName}
+                                        surface="agent_export.description"
+                                        onMentionClick={(promptId, mentionIndex) =>
+                                            promptMentionModal.openPromptMentionModal(promptId, { kind: "description", mentionIndex })
+                                        }
+                                    />
+                                </div>
+                            </div>
                         </div>
                     )}
                 </div>
@@ -754,14 +780,15 @@ export function ExportAgentToolDialog({
 
                 {/* ── Main content ── */}
                 <div className="flex-1 min-h-0 overflow-hidden">
+                    <span className="sr-only">Input Schema</span>
                     {editorMode === "builder" ? (
                         renderSplitTree()
                     ) : (
-                        <div className="h-full overflow-hidden p-4">
+                        <div className="h-full min-h-0 overflow-hidden p-4">
                             <PromptMentionJsonEditor
                                 id="json-schema-editor"
                                 aria-label="JSON Schema"
-                                className="h-full font-mono text-xs"
+                                className="h-full min-h-0 font-mono text-xs"
                                 value={jsonSchemaText}
                                 onChange={(value) => {
                                     setJsonSchemaText(value)

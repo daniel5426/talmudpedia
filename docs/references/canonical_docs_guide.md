@@ -1,6 +1,6 @@
 # Canonical Docs Guide
 
-Last Updated: 2026-03-23
+Last Updated: 2026-03-24
 
 This guide lists the current canonical documentation entry points after the first documentation-system refactor.
 
@@ -78,6 +78,8 @@ This guide lists the current canonical documentation entry points after the firs
   - Operational runbook for releasing `@agents24/embed-sdk`, including direct GitHub Actions publish, npm auth, provenance, and fallback manual publish steps.
 - `docs/references/railway_launch_runbook.md`
   - Canonical Railway deployment runbook for the core platform and its first production service split.
+- `docs/references/deployment_spec.md`
+  - Canonical current-state hosting and deployment spec for the actual live Railway environment, including deployment drift and unresolved gaps.
 
 ## Focused Current Detail Docs Still Under `backend/documentations/`
 

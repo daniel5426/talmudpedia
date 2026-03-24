@@ -322,7 +322,7 @@ export default function PipelinesPage() {
               </div>
             </div>
 
-            <Card>
+            <Card className="p-0">
               <PipelinesTable
                 pipelines={pipelines}
                 onDelete={handleDelete}
