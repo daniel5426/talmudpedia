@@ -13,6 +13,8 @@ from app.api.schemas.artifacts import (
     ArtifactCreate,
     ArtifactPublishResponse,
     ArtifactRunCreateResponse,
+    ArtifactSourceValidationRequest,
+    ArtifactSourceValidationResponse,
     ArtifactSchema,
     ArtifactTestRequest,
     ArtifactType,
@@ -32,6 +34,7 @@ from app.services.artifact_runtime.deployment_service import ArtifactDeploymentS
 from app.services.artifact_runtime.execution_service import ArtifactExecutionService
 from app.services.artifact_runtime.registry_service import ArtifactRegistryService
 from app.services.artifact_runtime.revision_service import ArtifactRevisionService
+from app.services.artifact_runtime.runtime_secret_service import validate_source_files_for_editor
 from app.services.tool_binding_service import ToolBindingService
 
 router = APIRouter(prefix="/admin/artifacts", tags=["artifacts"])
@@ -244,6 +247,21 @@ async def get_artifact(
     if artifact is None:
         raise HTTPException(status_code=404, detail="Artifact not found")
     return _artifact_to_schema(artifact, include_code=True)
+
+
+@router.post("/validate-source", response_model=ArtifactSourceValidationResponse)
+async def validate_artifact_source(
+    request: ArtifactSourceValidationRequest,
+    tenant_slug: Optional[str] = None,
+    artifact_ctx=Depends(get_artifact_context),
+):
+    _tenant, _user, _db = artifact_ctx
+    diagnostics = validate_source_files_for_editor(
+        language=getattr(request.language, "value", request.language),
+        source_files=[_model_dump(item) for item in request.source_files],
+        dependencies=list(request.dependencies or []),
+    )
+    return ArtifactSourceValidationResponse(diagnostics=diagnostics)
 
 
 def _artifact_form_snapshot(artifact: ArtifactModel) -> dict[str, Any]:

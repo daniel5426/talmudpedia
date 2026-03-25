@@ -26,6 +26,8 @@ import {
 interface ArtifactWorkspaceEditorProps {
   sourceFiles: ArtifactSourceFile[]
   language: ArtifactLanguage
+  tenantSlug?: string
+  dependencies?: string
   activeFilePath: string
   entryModulePath?: string
   onActiveFileChange: (path: string) => void
@@ -139,6 +141,13 @@ function moveFilePath(oldPath: string, newParent: string, fileName: string): str
   return newParent ? `${newParent}/${fileName}` : fileName
 }
 
+function editorLanguageForPath(path: string): "python" | "javascript" | "typescript" {
+  const normalized = String(path || "").toLowerCase()
+  if (normalized.endsWith(".ts") || normalized.endsWith(".mts")) return "typescript"
+  if (normalized.endsWith(".js") || normalized.endsWith(".mjs")) return "javascript"
+  return "python"
+}
+
 /* ------------------------------------------------------------------ */
 /*  Component                                                          */
 /* ------------------------------------------------------------------ */
@@ -146,6 +155,8 @@ function moveFilePath(oldPath: string, newParent: string, fileName: string): str
 export function ArtifactWorkspaceEditor({
   sourceFiles,
   language,
+  tenantSlug,
+  dependencies,
   activeFilePath,
   entryModulePath,
   onActiveFileChange,
@@ -842,7 +853,11 @@ export function ArtifactWorkspaceEditor({
             </div>
           ) : (
             <ArtifactCredentialCodeEditor
-              language={language}
+              editorLanguage={editorLanguageForPath(activeFile?.path ?? activeFilePath)}
+              sourceFiles={sourceFiles}
+              activeFilePath={activeFile?.path ?? activeFilePath}
+              tenantSlug={tenantSlug}
+              dependencies={dependencies}
               value={normalizeCredentialMentionLabels(activeFile?.content ?? "", availableCredentials)}
               onChange={updateActiveContent}
               credentials={availableCredentials}

@@ -37,6 +37,7 @@ Artifact runtime revision, deploy, and dispatch-time credential lifecycle.
 - rewrite deployed artifact source to `context.credentials[...]`
 - inject resolved credential values only through run-time dispatch context
 - reject disabled, missing, or non-scalar runtime credentials
+- validate Python editor diagnostics for syntax errors and missing declared dependencies
 - reject artifact handlers that do not implement the canonical three-argument contract
 - send worker-for-platforms dispatch payloads without raw source uploads and without persisted secrets
 - package Python dependencies through the official `pywrangler` deploy pipeline instead of custom vendoring
@@ -75,6 +76,9 @@ Artifact runtime revision, deploy, and dispatch-time credential lifecycle.
 - Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/artifact_runtime/test_runtime_secret_service.py backend/tests/artifact_runtime/test_revision_service.py backend/tests/artifact_runtime/test_execution_service.py backend/tests/artifact_runtime/test_free_plan_runtime_worker.py`
 - Date: 2026-03-25 Asia/Hebron
 - Result: Pass (30 passed)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/artifact_runtime/test_runtime_secret_service.py backend/tests/artifact_runtime/test_revision_service.py backend/tests/artifact_runtime/test_execution_service.py backend/tests/artifact_runtime/test_free_plan_runtime_worker.py`
+- Date: 2026-03-25 Asia/Hebron
+- Result: Pass (32 passed)
 
 ## Known Gaps
 

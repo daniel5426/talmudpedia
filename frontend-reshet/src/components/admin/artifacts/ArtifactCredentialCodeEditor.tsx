@@ -3,15 +3,28 @@
 import { useCallback, useEffect, useRef } from "react"
 import Editor, { type Monaco, OnMount } from "@monaco-editor/react"
 import { useTheme } from "next-themes"
+import ts from "typescript"
 import { IntegrationCredential } from "@/services"
-import type { ArtifactLanguage } from "@/services/artifacts"
+import { artifactsService, ArtifactSourceFile } from "@/services/artifacts"
 import { buildCredentialMentionToken } from "@/lib/credential-mentions"
 import { cn } from "@/lib/utils"
+
+type ArtifactEditorLanguage = "python" | "javascript" | "typescript"
+
+const ARTIFACT_DEP_MARKER_OWNER = "artifact-dependencies"
+const ARTIFACT_SYNTAX_MARKER_OWNER = "artifact-syntax"
+const JS_IMPORT_RE = /\b(?:import|export)\s+(?:[^"'`]*?\s+from\s+)?["'`]([^"'`]+)["'`]/g
+const JS_DYNAMIC_IMPORT_RE = /\bimport\s*\(\s*["'`]([^"'`]+)["'`]\s*\)/g
+const ALLOWED_BARE_IMPORTS = new Set(["cloudflare:workers"])
 
 interface ArtifactCredentialCodeEditorProps {
   value: string
   onChange: (value: string) => void
-  language: ArtifactLanguage
+  editorLanguage: ArtifactEditorLanguage
+  sourceFiles?: ArtifactSourceFile[]
+  activeFilePath?: string
+  tenantSlug?: string
+  dependencies?: string
   credentials: IntegrationCredential[]
   height?: string | number
   className?: string
@@ -32,7 +45,11 @@ function getMentionQuery(line: string, column: number): { query: string; fromCol
 export function ArtifactCredentialCodeEditor({
   value,
   onChange,
-  language,
+  editorLanguage,
+  sourceFiles = [],
+  activeFilePath,
+  tenantSlug,
+  dependencies = "",
   credentials,
   height = "100%",
   className,
@@ -41,6 +58,10 @@ export function ArtifactCredentialCodeEditor({
   const { resolvedTheme } = useTheme()
   const credentialsRef = useRef(credentials)
   const completionDisposablesRef = useRef<Array<{ dispose: () => void }>>([])
+  const monacoRef = useRef<Monaco | null>(null)
+  const editorRef = useRef<Parameters<OnMount>[0] | null>(null)
+  const pythonValidationTimerRef = useRef<number | null>(null)
+  const pythonValidationSeqRef = useRef(0)
 
   useEffect(() => {
     credentialsRef.current = credentials
@@ -50,10 +71,11 @@ export function ArtifactCredentialCodeEditor({
     return () => {
       completionDisposablesRef.current.forEach((item) => item.dispose())
       completionDisposablesRef.current = []
+      if (pythonValidationTimerRef.current) {
+        window.clearTimeout(pythonValidationTimerRef.current)
+      }
     }
   }, [])
-
-  const editorLanguage = language === "javascript" ? "typescript" : "python"
 
   const buildCompletionProvider = useCallback((monaco: Monaco) => ({
     triggerCharacters: ["@"],
@@ -88,10 +110,182 @@ export function ArtifactCredentialCodeEditor({
     },
   }), [])
 
+  const configureJsRuntime = useCallback((monaco: Monaco) => {
+    monaco.languages.typescript.javascriptDefaults.setCompilerOptions({
+      allowJs: true,
+      checkJs: true,
+      module: monaco.languages.typescript.ModuleKind.ESNext,
+      moduleResolution: monaco.languages.typescript.ModuleResolutionKind.NodeJs,
+      allowSyntheticDefaultImports: true,
+      esModuleInterop: true,
+      noEmit: true,
+    })
+
+    const declaredDependencies = dependencies
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean)
+
+    const extraLibs = declaredDependencies.map((dependency, index) => ({
+      content: [
+        `declare module "${dependency}" {`,
+        "  const value: any;",
+        "  export default value;",
+        "}",
+      ].join("\n"),
+      filePath: `file:///artifact-node_modules/${dependency}/index.d.ts#artifact-${index}`,
+    }))
+
+    monaco.languages.typescript.javascriptDefaults.setExtraLibs(extraLibs)
+    monaco.languages.typescript.typescriptDefaults.setExtraLibs(extraLibs)
+  }, [dependencies])
+
+  const applyDependencyMarkers = useCallback(() => {
+    const monaco = monacoRef.current
+    const editor = editorRef.current
+    const model = editor?.getModel()
+    if (!monaco || !model) return
+    if (editorLanguage === "python") {
+      monaco.editor.setModelMarkers(model, ARTIFACT_DEP_MARKER_OWNER, [])
+      return
+    }
+
+    const dependencySet = new Set(
+      dependencies
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean),
+    )
+
+    const markers: Array<{
+      startLineNumber: number
+      startColumn: number
+      endLineNumber: number
+      endColumn: number
+      message: string
+      severity: number
+    }> = []
+
+    const addMarkers = (regex: RegExp) => {
+      for (const match of model.getValue().matchAll(regex)) {
+        const specifier = String(match[1] || "").trim()
+        if (!specifier) continue
+        if (specifier.startsWith(".") || specifier.startsWith("/") || specifier.startsWith("node:")) continue
+        if (ALLOWED_BARE_IMPORTS.has(specifier)) continue
+        if (dependencySet.has(specifier)) continue
+        const fullMatch = match[0] || ""
+        const specifierOffsetInMatch = fullMatch.lastIndexOf(specifier)
+        const startOffset = (match.index || 0) + Math.max(0, specifierOffsetInMatch)
+        const endOffset = startOffset + specifier.length
+        const startPos = model.getPositionAt(startOffset)
+        const endPos = model.getPositionAt(endOffset)
+        markers.push({
+          startLineNumber: startPos.lineNumber,
+          startColumn: startPos.column,
+          endLineNumber: endPos.lineNumber,
+          endColumn: endPos.column,
+          message: `Cannot resolve module '${specifier}'. Add it to artifact dependencies.`,
+          severity: monaco.MarkerSeverity.Error,
+        })
+      }
+    }
+
+    addMarkers(JS_IMPORT_RE)
+    addMarkers(JS_DYNAMIC_IMPORT_RE)
+    monaco.editor.setModelMarkers(model, ARTIFACT_DEP_MARKER_OWNER, markers)
+  }, [dependencies, editorLanguage])
+
+  const applyJsSyntaxMarkers = useCallback(() => {
+    const monaco = monacoRef.current
+    const editor = editorRef.current
+    const model = editor?.getModel()
+    if (!monaco || !model || editorLanguage === "python") return
+
+    const sourceFile = ts.createSourceFile(
+      editorLanguage === "typescript" ? "artifact.ts" : "artifact.js",
+      model.getValue(),
+      ts.ScriptTarget.Latest,
+      true,
+      editorLanguage === "typescript" ? ts.ScriptKind.TS : ts.ScriptKind.JS,
+    )
+
+    const markers = (sourceFile.parseDiagnostics || []).map((diagnostic) => {
+      const start = diagnostic.start ?? 0
+      const length = diagnostic.length ?? 1
+      const startPos = model.getPositionAt(start)
+      const endPos = model.getPositionAt(start + Math.max(length, 1))
+      return {
+        startLineNumber: startPos.lineNumber,
+        startColumn: startPos.column,
+        endLineNumber: endPos.lineNumber,
+        endColumn: endPos.column,
+        message: ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n"),
+        severity: monaco.MarkerSeverity.Error,
+      }
+    })
+    monaco.editor.setModelMarkers(model, ARTIFACT_SYNTAX_MARKER_OWNER, markers)
+  }, [editorLanguage])
+
+  const applyPythonSyntaxMarkers = useCallback(async (nextValue?: string) => {
+    const monaco = monacoRef.current
+    const editor = editorRef.current
+    const model = editor?.getModel()
+    if (!monaco || !model) return
+    if (editorLanguage !== "python") {
+      monaco.editor.setModelMarkers(model, ARTIFACT_SYNTAX_MARKER_OWNER, [])
+      return
+    }
+
+    const filePath = String(activeFilePath || model.uri.path.split("/").pop() || "main.py")
+    const currentValue = nextValue ?? model.getValue()
+    const nextSourceFiles = (sourceFiles.length ? sourceFiles : [{ path: filePath, content: currentValue }]).map((file) =>
+      file.path === filePath ? { ...file, content: currentValue } : file,
+    )
+    const seq = ++pythonValidationSeqRef.current
+
+    try {
+      const result = await artifactsService.validateSource(
+        {
+          language: "python",
+          source_files: nextSourceFiles,
+          dependencies: dependencies
+            .split(",")
+            .map((item) => item.trim())
+            .filter(Boolean),
+        },
+        tenantSlug,
+      )
+      if (seq !== pythonValidationSeqRef.current) return
+      const markers = (result.diagnostics || [])
+        .filter((item) => item.path === filePath)
+        .map((item) => ({
+          startLineNumber: item.line,
+          startColumn: item.column,
+          endLineNumber: item.end_line,
+          endColumn: item.end_column,
+          message: item.message,
+          severity: monaco.MarkerSeverity.Error,
+        }))
+      monaco.editor.setModelMarkers(model, ARTIFACT_SYNTAX_MARKER_OWNER, markers)
+    } catch {
+      if (seq !== pythonValidationSeqRef.current) return
+    }
+  }, [activeFilePath, editorLanguage, sourceFiles, tenantSlug])
+
   const handleMount: OnMount = useCallback((editor, monaco) => {
+    monacoRef.current = monaco
+    editorRef.current = editor
     editor.focus()
     if (onScroll) {
       editor.onDidScrollChange((event) => onScroll(event.scrollTop > 0))
+    }
+
+    configureJsRuntime(monaco)
+    applyDependencyMarkers()
+    if (editorLanguage === "python") {
+      void applyPythonSyntaxMarkers()
+    } else {
+      applyJsSyntaxMarkers()
     }
 
     completionDisposablesRef.current.forEach((item) => item.dispose())
@@ -100,7 +294,18 @@ export function ArtifactCredentialCodeEditor({
       monaco.languages.registerCompletionItemProvider("javascript", buildCompletionProvider(monaco)),
       monaco.languages.registerCompletionItemProvider("typescript", buildCompletionProvider(monaco)),
     ]
-  }, [buildCompletionProvider, onScroll])
+  }, [applyDependencyMarkers, applyJsSyntaxMarkers, applyPythonSyntaxMarkers, buildCompletionProvider, configureJsRuntime, editorLanguage, onScroll])
+
+  useEffect(() => {
+    if (!monacoRef.current) return
+    configureJsRuntime(monacoRef.current)
+    applyDependencyMarkers()
+    if (editorLanguage === "python") {
+      void applyPythonSyntaxMarkers()
+    } else {
+      applyJsSyntaxMarkers()
+    }
+  }, [applyDependencyMarkers, applyJsSyntaxMarkers, applyPythonSyntaxMarkers, configureJsRuntime, editorLanguage, sourceFiles, tenantSlug])
 
   return (
     <div className={cn("relative overflow-hidden rounded-md", className)}>
@@ -108,7 +313,22 @@ export function ArtifactCredentialCodeEditor({
         height={height}
         language={editorLanguage}
         value={value}
-        onChange={(nextValue) => onChange(nextValue || "")}
+        onChange={(nextValue) => {
+          onChange(nextValue || "")
+          queueMicrotask(() => {
+            applyDependencyMarkers()
+            if (editorLanguage === "python") {
+              if (pythonValidationTimerRef.current) {
+                window.clearTimeout(pythonValidationTimerRef.current)
+              }
+              pythonValidationTimerRef.current = window.setTimeout(() => {
+                void applyPythonSyntaxMarkers(nextValue || "")
+              }, 250)
+            } else {
+              applyJsSyntaxMarkers()
+            }
+          })
+        }}
         onMount={handleMount}
         theme={resolvedTheme === "dark" ? "vs-dark" : "vs"}
         options={{

@@ -218,6 +218,27 @@ class ArtifactTestRequest(BaseModel):
     tool_contract: Optional[ToolArtifactContract] = None
 
 
+class ArtifactSourceValidationRequest(BaseModel):
+    language: ArtifactLanguage
+    source_files: list[ArtifactSourceFile] = Field(default_factory=list)
+    dependencies: list[str] = Field(default_factory=list)
+
+
+class ArtifactSourceValidationDiagnostic(BaseModel):
+    path: str
+    message: str
+    line: int = 1
+    column: int = 1
+    end_line: int = 1
+    end_column: int = 1
+    severity: Literal["error"] = "error"
+    code: Optional[str] = None
+
+
+class ArtifactSourceValidationResponse(BaseModel):
+    diagnostics: list[ArtifactSourceValidationDiagnostic] = Field(default_factory=list)
+
+
 class ArtifactTestResponse(BaseModel):
     success: bool
     data: Optional[Any] = None

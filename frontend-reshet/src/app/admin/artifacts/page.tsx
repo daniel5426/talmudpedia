@@ -458,6 +458,8 @@ export default function ArtifactsPage() {
         <div className="relative w-full min-w-0 flex-1 overflow-hidden">
             <ArtifactWorkspaceEditor
               language={formData.language}
+              tenantSlug={currentTenant?.slug}
+              dependencies={formData.dependencies}
               sourceFiles={formData.source_files}
                 activeFilePath={activeFilePath}
                 entryModulePath={formData.entry_module_path}

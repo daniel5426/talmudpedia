@@ -9,6 +9,7 @@ from app.services.artifact_runtime.runtime_secret_service import (
     collect_runtime_credential_refs,
     resolve_runtime_credentials,
     rewrite_source_files_for_context_credentials,
+    validate_source_files_for_editor,
 )
 from types import SimpleNamespace
 
@@ -157,3 +158,32 @@ def test_rewrite_source_files_with_runtime_secrets_rewrites_to_context_credentia
     assert source_files[0]["content"] == f'API_KEY = "@{{{credential_id}}}"\n'
     assert "context['credentials']" in rewritten[0]["content"]
     assert credential_id in rewritten[0]["content"]
+
+
+def test_validate_source_files_for_editor_reports_python_missing_dependency():
+    diagnostics = validate_source_files_for_editor(
+        language="python",
+        source_files=[{"path": "main.py", "content": "import openai\n"}],
+        dependencies=[],
+    )
+
+    assert len(diagnostics) == 1
+    assert diagnostics[0]["code"] == "PYTHON_MISSING_DEPENDENCY"
+    assert "openai" in diagnostics[0]["message"]
+
+
+def test_validate_source_files_for_editor_allows_python_declared_stdlib_and_local_modules():
+    diagnostics = validate_source_files_for_editor(
+        language="python",
+        source_files=[
+            {
+                "path": "main.py",
+                "content": "import json\nimport helpers\nfrom pkg.client import build\nimport openai\n",
+            },
+            {"path": "helpers.py", "content": "VALUE = 1\n"},
+            {"path": "pkg/client.py", "content": "def build():\n    return 1\n"},
+        ],
+        dependencies=["openai"],
+    )
+
+    assert diagnostics == []

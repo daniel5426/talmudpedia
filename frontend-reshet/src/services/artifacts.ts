@@ -138,6 +138,21 @@ export interface ArtifactTestResponse {
   stderr_excerpt?: string;
 }
 
+export interface ArtifactSourceValidationDiagnostic {
+  path: string;
+  message: string;
+  line: number;
+  column: number;
+  end_line: number;
+  end_column: number;
+  severity: "error";
+  code?: string;
+}
+
+export interface ArtifactSourceValidationResponse {
+  diagnostics: ArtifactSourceValidationDiagnostic[];
+}
+
 export interface ArtifactRun {
   id: string;
   artifact_id?: string;
@@ -386,6 +401,14 @@ export const artifactsService = {
   createTestRun: async (data: ArtifactTestRequest, tenantSlug?: string): Promise<ArtifactRunCreateResponse> => {
     const url = tenantSlug ? `/admin/artifacts/test-runs?tenant_slug=${tenantSlug}` : "/admin/artifacts/test-runs";
     return httpClient.post<ArtifactRunCreateResponse>(url, data);
+  },
+
+  validateSource: async (
+    data: { language: ArtifactLanguage; source_files: ArtifactSourceFile[]; dependencies?: string[] },
+    tenantSlug?: string,
+  ): Promise<ArtifactSourceValidationResponse> => {
+    const url = tenantSlug ? `/admin/artifacts/validate-source?tenant_slug=${tenantSlug}` : "/admin/artifacts/validate-source";
+    return httpClient.post<ArtifactSourceValidationResponse>(url, data);
   },
 
   getRun: async (runId: string, tenantSlug?: string): Promise<ArtifactRun> => {
