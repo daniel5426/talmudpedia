@@ -1,6 +1,6 @@
 # Product Specs Index
 
-Last Updated: 2026-03-10
+Last Updated: 2026-03-25
 
 This section is for canonical product behavior and user-facing contracts.
 
@@ -31,6 +31,8 @@ This section is for canonical product behavior and user-facing contracts.
   - Current runtime SDK contract for hosted and externally hosted published apps.
 - `agent_graph_spec.md`
   - Current persisted agent graph contract, including GraphSpec v1 and v2 behavior.
+- `artifact_coding_agent_spec.md`
+  - Current artifact-coding-agent behavior, scope rules, tool surface, and chat/runtime contract.
 - `artifacts_domain_spec.md`
   - Current artifact-domain behavior, lifecycle, and data model.
 - `tools_domain_spec.md`

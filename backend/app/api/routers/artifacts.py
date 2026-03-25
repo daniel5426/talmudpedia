@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
@@ -11,6 +12,8 @@ from app.api.dependencies import ensure_sensitive_action_approved, get_current_p
 from app.api.schemas.artifacts import (
     ArtifactConvertKindRequest,
     ArtifactCreate,
+    ArtifactDependencyAnalysisRequest,
+    ArtifactDependencyAnalysisResponse,
     ArtifactPublishResponse,
     ArtifactRunCreateResponse,
     ArtifactSourceValidationRequest,
@@ -23,6 +26,8 @@ from app.api.schemas.artifacts import (
     ArtifactVersionSchema,
     ArtifactWorkingDraftResponse,
     ArtifactWorkingDraftUpdateRequest,
+    PythonPackageVerificationRequest,
+    PythonPackageVerificationResponse,
 )
 from app.services.artifact_coding_agent_tools import _initial_snapshot_for_kind, _serialize_form_state
 from app.services.artifact_coding_shared_draft_service import ArtifactCodingSharedDraftService
@@ -31,13 +36,16 @@ from app.db.postgres.models.artifact_runtime import ArtifactKind, ArtifactOwnerT
 from app.db.postgres.models.identity import OrgMembership, Tenant
 from app.db.postgres.session import get_db
 from app.services.artifact_runtime.deployment_service import ArtifactDeploymentService
+from app.services.artifact_runtime.dependency_registry import analyze_artifact_dependencies, verify_python_package_exists
 from app.services.artifact_runtime.execution_service import ArtifactExecutionService
+from app.services.artifact_runtime.policy_service import ArtifactConcurrencyLimitExceeded
 from app.services.artifact_runtime.registry_service import ArtifactRegistryService
 from app.services.artifact_runtime.revision_service import ArtifactRevisionService
 from app.services.artifact_runtime.runtime_secret_service import validate_source_files_for_editor
 from app.services.tool_binding_service import ToolBindingService
 
 router = APIRouter(prefix="/admin/artifacts", tags=["artifacts"])
+_DUPLICATE_NAME_SUFFIX_RE = re.compile(r"^(?P<base>.*?)(?: \((?P<index>\d+)\))?$")
 
 
 async def _resolve_tenant_from_artifact_if_missing(
@@ -146,6 +154,36 @@ def _parse_artifact_uuid(raw: str | None) -> UUID | None:
         return UUID(str(raw))
     except Exception:
         return None
+
+
+def _duplicate_name_base(display_name: str) -> str:
+    raw = str(display_name or "").strip()
+    if not raw:
+        return "Untitled Artifact"
+    match = _DUPLICATE_NAME_SUFFIX_RE.match(raw)
+    base = str(match.group("base") if match else raw).strip()
+    return base or raw
+
+
+def _next_duplicate_display_name(display_name: str, existing_names: list[str]) -> str:
+    base = _duplicate_name_base(display_name)
+    taken_indexes: set[int] = set()
+    for candidate in existing_names:
+        candidate_raw = str(candidate or "").strip()
+        if not candidate_raw:
+            continue
+        match = _DUPLICATE_NAME_SUFFIX_RE.match(candidate_raw)
+        if not match:
+            continue
+        candidate_base = str(match.group("base") or "").strip()
+        if candidate_base != base:
+            continue
+        suffix = match.group("index")
+        taken_indexes.add(int(suffix) if suffix is not None else 0)
+    next_index = 1
+    while next_index in taken_indexes:
+        next_index += 1
+    return f"{base} ({next_index})"
 
 
 def _artifact_to_schema(artifact: ArtifactModel, *, include_code: bool = False) -> ArtifactSchema:
@@ -262,6 +300,32 @@ async def validate_artifact_source(
         dependencies=list(request.dependencies or []),
     )
     return ArtifactSourceValidationResponse(diagnostics=diagnostics)
+
+
+@router.post("/analyze-dependencies", response_model=ArtifactDependencyAnalysisResponse)
+async def analyze_artifact_dependencies_route(
+    request: ArtifactDependencyAnalysisRequest,
+    tenant_slug: Optional[str] = None,
+    artifact_ctx=Depends(get_artifact_context),
+):
+    _tenant, _user, _db = artifact_ctx
+    rows = analyze_artifact_dependencies(
+        language=getattr(request.language, "value", request.language),
+        source_files=[_model_dump(item) for item in request.source_files],
+        dependencies=list(request.dependencies or []),
+    )
+    return ArtifactDependencyAnalysisResponse(rows=rows)
+
+
+@router.post("/verify-python-package", response_model=PythonPackageVerificationResponse)
+async def verify_python_package_route(
+    request: PythonPackageVerificationRequest,
+    tenant_slug: Optional[str] = None,
+    artifact_ctx=Depends(get_artifact_context),
+):
+    _tenant, _user, _db = artifact_ctx
+    result = await verify_python_package_exists(request.package_name)
+    return PythonPackageVerificationResponse(**result)
 
 
 def _artifact_form_snapshot(artifact: ArtifactModel) -> dict[str, Any]:
@@ -580,6 +644,61 @@ async def convert_artifact_kind(
     return _artifact_to_schema(refreshed, include_code=True)
 
 
+@router.post("/{artifact_id}/duplicate", response_model=ArtifactSchema)
+async def duplicate_artifact(
+    artifact_id: str,
+    tenant_slug: Optional[str] = None,
+    _: Dict[str, Any] = Depends(require_scopes("artifacts.write")),
+    artifact_ctx=Depends(get_artifact_context),
+):
+    tenant, user, db = artifact_ctx
+    if tenant is None:
+        raise HTTPException(status_code=400, detail="Tenant context required")
+    artifact_uuid = _parse_artifact_uuid(artifact_id)
+    if artifact_uuid is None:
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    registry = ArtifactRegistryService(db)
+    source_artifact = await registry.get_accessible_artifact(
+        artifact_id=artifact_uuid,
+        tenant_id=tenant.id,
+    )
+    if source_artifact is None:
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    source_revision = source_artifact.latest_draft_revision or source_artifact.latest_published_revision
+    if source_revision is None:
+        raise HTTPException(status_code=409, detail="Artifact is missing a current revision")
+    accessible_artifacts = await registry.list_accessible_artifacts(tenant_id=tenant.id)
+    duplicate_name = _next_duplicate_display_name(
+        source_artifact.display_name,
+        [artifact.display_name for artifact in accessible_artifacts],
+    )
+    duplicated = await ArtifactRevisionService(db).create_artifact(
+        tenant_id=tenant.id,
+        created_by=user.id if user else None,
+        display_name=duplicate_name,
+        description=source_artifact.description,
+        kind=getattr(source_artifact.kind, "value", source_artifact.kind),
+        owner_type=ArtifactOwnerType.TENANT.value,
+        source_files=list(source_revision.source_files or []),
+        entry_module_path=source_revision.entry_module_path,
+        language=getattr(source_revision.language, "value", source_revision.language),
+        dependencies=list(source_revision.python_dependencies or []),
+        runtime_target=str(source_revision.runtime_target or "cloudflare_workers"),
+        capabilities=dict(source_revision.capabilities or {}),
+        config_schema=dict(source_revision.config_schema or {}),
+        agent_contract=dict(source_revision.agent_contract or {}) if source_revision.agent_contract is not None else None,
+        rag_contract=dict(source_revision.rag_contract or {}) if source_revision.rag_contract is not None else None,
+        tool_contract=dict(source_revision.tool_contract or {}) if source_revision.tool_contract is not None else None,
+    )
+    try:
+        await ToolBindingService(db).sync_artifact_tool_binding(duplicated)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    await db.commit()
+    refreshed = await registry.get_tenant_artifact(artifact_id=duplicated.id, tenant_id=tenant.id)
+    return _artifact_to_schema(refreshed, include_code=True)
+
+
 @router.delete("/{artifact_id}")
 async def delete_artifact(
     artifact_id: str,
@@ -627,24 +746,27 @@ async def create_unsaved_test_run(
     )
     if tenant is None:
         raise HTTPException(status_code=400, detail="Tenant context required")
-    run = await ArtifactExecutionService(db).start_test_run(
-        tenant_id=tenant.id,
-        created_by=user.id if user else None,
-        artifact_id=_parse_artifact_uuid(request.artifact_id),
-        source_files=[_model_dump(item) for item in request.source_files],
-        entry_module_path=request.entry_module_path,
-        input_data=request.input_data,
-        config=request.config or {},
-        dependencies=list(request.dependencies or []),
-        language=getattr(request.language, "value", request.language) if getattr(request, "language", None) else None,
-        kind=getattr(request.kind, "value", request.kind) if getattr(request, "kind", None) else None,
-        runtime_target=getattr(request, "runtime_target", None),
-        capabilities=dict(getattr(request, "capabilities", None) or {}),
-        config_schema=dict(getattr(request, "config_schema", None) or {}),
-        agent_contract=_model_dump(request.agent_contract) if getattr(request, "agent_contract", None) is not None else None,
-        rag_contract=_model_dump(request.rag_contract) if getattr(request, "rag_contract", None) is not None else None,
-        tool_contract=_model_dump(request.tool_contract) if getattr(request, "tool_contract", None) is not None else None,
-    )
+    try:
+        run = await ArtifactExecutionService(db).start_test_run(
+            tenant_id=tenant.id,
+            created_by=user.id if user else None,
+            artifact_id=_parse_artifact_uuid(request.artifact_id),
+            source_files=[_model_dump(item) for item in request.source_files],
+            entry_module_path=request.entry_module_path,
+            input_data=request.input_data,
+            config=request.config or {},
+            dependencies=list(request.dependencies or []),
+            language=getattr(request.language, "value", request.language) if getattr(request, "language", None) else None,
+            kind=getattr(request.kind, "value", request.kind) if getattr(request, "kind", None) else None,
+            runtime_target=getattr(request, "runtime_target", None),
+            capabilities=dict(getattr(request, "capabilities", None) or {}),
+            config_schema=dict(getattr(request, "config_schema", None) or {}),
+            agent_contract=_model_dump(request.agent_contract) if getattr(request, "agent_contract", None) is not None else None,
+            rag_contract=_model_dump(request.rag_contract) if getattr(request, "rag_contract", None) is not None else None,
+            tool_contract=_model_dump(request.tool_contract) if getattr(request, "tool_contract", None) is not None else None,
+        )
+    except ArtifactConcurrencyLimitExceeded as exc:
+        raise HTTPException(status_code=429, detail=str(exc))
     return ArtifactRunCreateResponse(run_id=str(run.id), status=str(getattr(run.status, "value", run.status)))
 
 

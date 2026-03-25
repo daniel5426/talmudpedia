@@ -1,6 +1,7 @@
 import {
   buildArtifactPayload,
   formDataFromArtifact,
+  getArtifactLanguageWarningPaths,
 } from "@/components/admin/artifacts/artifactPageUtils";
 import { createFormDataForKind } from "@/components/admin/artifacts/artifactEditorState";
 import { buildCredentialMentionToken, extractCredentialMentionIds, normalizeCredentialMentionLabels } from "@/lib/credential-mentions";
@@ -90,5 +91,25 @@ describe("artifactPageUtils and credential mentions", () => {
 
     const formData = formDataFromArtifact(artifact);
     expect(Object.prototype.hasOwnProperty.call(formData, "credential_bindings")).toBe(false);
+  });
+
+  it("warns only for opposite-language code files and ignores neutral files", () => {
+    expect(
+      getArtifactLanguageWarningPaths("javascript", [
+        { path: "main.js" },
+        { path: "helper.py" },
+        { path: "notes.txt" },
+        { path: "data.json" },
+      ]),
+    ).toEqual(["helper.py"]);
+
+    expect(
+      getArtifactLanguageWarningPaths("python", [
+        { path: "main.py" },
+        { path: "helper.ts" },
+        { path: "notes.txt" },
+        { path: "data.json" },
+      ]),
+    ).toEqual(["helper.ts"]);
   });
 });

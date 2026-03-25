@@ -35,6 +35,13 @@ def artifact_run_task_eager() -> bool:
     return bool(os.getenv("PYTEST_CURRENT_TEST"))
 
 
+TERMINAL_ARTIFACT_RUN_STATUSES = {
+    ArtifactRunStatus.COMPLETED,
+    ArtifactRunStatus.FAILED,
+    ArtifactRunStatus.CANCELLED,
+}
+
+
 class ArtifactExecutionService:
     def __init__(self, db: AsyncSession):
         self._db = db
@@ -115,7 +122,7 @@ class ArtifactExecutionService:
             tenant_id=tenant_id,
             artifact=artifact,
             revision=revision,
-            input_payload={"value": input_data},
+            input_payload=input_data,
             config_payload=dict(config or {}),
             context_payload={
                 "tenant_id": str(tenant_id),
@@ -144,8 +151,41 @@ class ArtifactExecutionService:
             ],
         )
         await self._db.commit()
-        await self.enqueue_run(run.id)
-        return run
+        try:
+            await self.enqueue_run(run.id)
+        except ArtifactConcurrencyLimitExceeded as exc:
+            run = await self._runs.get_run(run_id=run.id)
+            if run is not None:
+                await self._runs.mark_failed(
+                    run,
+                    error_payload={"message": str(exc), "code": "TENANT_ARTIFACT_CAPACITY_EXCEEDED"},
+                    stdout_excerpt=None,
+                    stderr_excerpt=None,
+                    duration_ms=0,
+                )
+                await self._runs.add_events(
+                    run,
+                    [
+                        {
+                            "event_type": "dispatch_rejected",
+                            "payload": {
+                                "event": "dispatch_rejected",
+                                "name": "dispatch_rejected",
+                                "data": {"message": str(exc), "queue_class": run.queue_class},
+                            },
+                        }
+                    ],
+                )
+                await self._db.commit()
+            raise
+        except Exception:
+            logger.exception("Artifact test run failed during enqueue/dispatch", extra={"run_id": str(run.id)})
+            refreshed_run = await self._runs.get_run(run_id=run.id)
+            if refreshed_run is not None and refreshed_run.status in TERMINAL_ARTIFACT_RUN_STATUSES:
+                return refreshed_run
+            raise
+        refreshed_run = await self._runs.get_run(run_id=run.id)
+        return refreshed_run or run
 
     async def execute_live_run(
         self,
@@ -437,9 +477,7 @@ class ArtifactExecutionService:
         while True:
             run = await self._runs.get_run(run_id=run_id)
             if run is not None and run.status in {
-                ArtifactRunStatus.COMPLETED,
-                ArtifactRunStatus.FAILED,
-                ArtifactRunStatus.CANCELLED,
+                *TERMINAL_ARTIFACT_RUN_STATUSES,
             }:
                 return run
             if asyncio.get_running_loop().time() >= deadline:

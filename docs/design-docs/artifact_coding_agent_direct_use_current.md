@@ -1,6 +1,6 @@
 # Artifact Coding Agent Direct Use Current State
 
-Last Updated: 2026-03-16
+Last Updated: 2026-03-25
 
 This document describes the current `artifact-coding-agent` runtime across the artifact page and architect worker delegation.
 
@@ -52,9 +52,18 @@ Current scope model:
 The artifact coding agent uses dedicated `FUNCTION` tools, not sandbox shell tools.
 
 Current tool groups:
-- context/read: form state, file listing, file reads, search
+- context/read: form state, file listing, file reads, search, credential metadata listing
 - mutation: file edits, metadata/runtime updates, kind/contract updates
 - validation: run artifact test, fetch last test result
+
+Current authoring rules now include:
+- artifacts may use `python` or `javascript`
+- create-mode draft setup may choose `language`, but persisted artifacts must not mutate language
+- credential references should be discovered from safe credential metadata and inserted only as exact `@{credential-id}` source literals
+- mixed/embedded credential strings are rejected by contract
+- when a request implies a different artifact or incompatible language change inside an existing locked session, the agent should refuse briefly, explain that the request is outside the current artifact scope, and stop
+- the agent should not ask the caller to open another session, create another artifact, or dump a scaffold by default when refusing for scope conflict
+- this same scope-refusal behavior now applies in both artifact-page chat and architect worker delegation; the architect decides any follow-up orchestration outside the coding agent
 
 Mutation tools update only the shared working-draft snapshot for the current artifact scope and return:
 - a short summary
@@ -63,9 +72,15 @@ Mutation tools update only the shared working-draft snapshot for the current art
 
 The frontend uses those tool results to update the live artifact editor state immediately.
 
+Current chat-history/timeline behavior:
+- streamed assistant text is preserved as ordered timeline segments around tool calls instead of being merged into one assistant bubble for the whole run
+- session-detail history now includes assistant delta events as well as tool events so reload can reconstruct `assistant -> tool -> assistant` ordering
+- the artifact chat still has its own UI surface, but it now uses the same timeline segmentation model as the app-builder/playground chat
+
 Hard-cut scope rule:
 - the agent only edits the current bound draft
 - scope switching and persistence are owned by the caller surface, not by the agent
+- this rule is the same for artifact-page chat and architect delegation; the coding agent itself never proposes or performs cross-artifact handoff
 
 The same session/shared-draft runtime is reused by:
 - the artifact page
@@ -74,6 +89,10 @@ The same session/shared-draft runtime is reused by:
 ## Validation Path
 
 `artifact_coding_run_test` snapshots the current session draft and calls the canonical artifact runtime through `ArtifactExecutionService.start_test_run(...)`.
+
+Current test-input contract:
+- the tool forwards the caller-provided `input_data` directly as artifact runtime `inputs`
+- validation runs do not add a legacy `{ "value": ... }` wrapper around test payloads
 
 This keeps authoring validation aligned with the real Cloudflare artifact execution path instead of a separate local coding sandbox.
 

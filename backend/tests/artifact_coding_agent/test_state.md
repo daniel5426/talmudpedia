@@ -1,6 +1,6 @@
 # Artifact Coding Agent Tests
 
-Last Updated: 2026-03-16
+Last Updated: 2026-03-25
 
 ## Scope
 
@@ -16,7 +16,7 @@ Track backend coverage for the artifact-coding agent runtime across locked draft
 - lightweight seed-based draft initialization builds a canonical initial snapshot without falling back to a generic `agent_node`
 - relinking from `draft_key` to `artifact_id` without creating a second shared draft
 - scope-free architect-created sessions keep a stable direct `shared_draft_id` link and do not create a second shared draft on later resolution
-- artifact coding agent profile includes explicit delegated-worker instructions and the canonical `BLOCKING QUESTION:` blocker prefix
+- artifact coding agent profile includes delegated-worker instructions while keeping artifact-scope refusals brief and surface-agnostic
 - helper-tool/session state export returns canonical `platform_assets_create_input` and `platform_assets_update_input`
 - helper-tool/session state export returns canonical artifact payloads without a draft/authored slug field
 - saved artifact session hydration rebuilds the working snapshot from the canonical artifact row
@@ -26,8 +26,13 @@ Track backend coverage for the artifact-coding agent runtime across locked draft
 - architect-worker continuation now stays separate from true orchestrator/system instructions, so only explicit orchestrator control turns map to model-facing `system`
 - runtime state serialization now exposes `persistence_readiness` separately from `verification_state`
 - artifact test tools now enforce one active test run at a time and add a server-side `artifact_coding_await_last_test_result` wait path for Cloudflare cold-start / queue delay
+- artifact test tools now return ordered run events and a failure summary so the agent can inspect why a test failed
 - delegated artifact-worker instructions now tell the model to start one test run, wait for terminal result, and avoid `queued` polling loops
 - delegated artifact-worker instructions now include an explicit draft-readiness checklist for new artifacts, covering display_name, kind, source files, entry module, runtime target, capabilities, config schema, dependencies, and the matching contract payload
+- delegated artifact-worker instructions now cover both `python` and `javascript`, create-only language selection, safe credential-reference authoring, and `tool_impl` lifecycle boundaries
+- artifact coding runtime can build javascript create-mode starter drafts from seed input
+- artifact coding tool surface now includes safe credential metadata listing for `@{credential-id}` authoring without exposing secret values
+- scope-conflict prompt behavior now refuses briefly without asking for new sessions, new artifacts, or scaffold follow-up
 
 ## Last Run
 
@@ -73,6 +78,15 @@ Track backend coverage for the artifact-coding agent runtime across locked draft
 - Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/artifact_coding_agent/test_runtime_service.py backend/tests/platform_architect_runtime/test_architect_seeding.py`
 - Date: 2026-03-16 20:12 EET
 - Result: PASS (`15 passed, 1 warning`)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/artifact_coding_agent/test_runtime_service.py`
+- Date: 2026-03-25 12:46 EET
+- Result: PASS (`13 passed, 2 warnings`)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/artifact_coding_agent/test_runtime_service.py`
+- Date: 2026-03-25 Asia/Hebron
+- Result: PASS (`14 passed, 2 warnings`)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/artifact_runtime/test_execution_service.py backend/tests/artifact_test_runs/test_artifact_test_run_api.py backend/tests/artifact_coding_agent/test_runtime_service.py`
+- Date: 2026-03-25 Asia/Hebron
+- Result: PASS (`34 passed, 7 warnings`)
 
 ## Known Gaps
 

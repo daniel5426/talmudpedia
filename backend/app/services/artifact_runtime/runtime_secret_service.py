@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import ast
 import re
-import sys
 from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
@@ -10,12 +9,13 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.postgres.models.artifact_runtime import ArtifactRevision
+from app.services.artifact_runtime.dependency_registry import dependency_diagnostics_for_editor
 from app.services.credentials_service import CredentialsService
+from .workers_validation import is_javascript_code_path, is_python_code_path
 
 
 CREDENTIAL_REFERENCE_RE = re.compile(r"@\{(?:[^{}|]*\|)?([0-9a-fA-F-]{36})\}")
 DEFAULT_SECRET_FIELDS = ("api_key", "token", "secret", "access_token", "password")
-PYTHON_STDLIB_MODULES = set(getattr(sys, "stdlib_module_names", set())) | {"__future__"}
 JS_LITERAL_RE = re.compile(r"(?P<quote>['\"])@\{(?:[^{}|]*\|)?(?P<id>[0-9a-fA-F-]{36})\}(?P=quote)")
 
 
@@ -54,69 +54,37 @@ def validate_source_files_for_editor(
     dependencies: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     normalized_language = str(language or "python").strip().lower()
-    if normalized_language != "python":
-        return []
     diagnostics: list[dict[str, Any]] = []
-    parsed_trees: list[tuple[str, ast.AST]] = []
-    for item in list(source_files or []):
-        path = str((item or {}).get("path") or "")
-        content = str((item or {}).get("content") or "")
-        try:
-            parsed_trees.append((path, ast.parse(content, filename=path)))
-        except SyntaxError as exc:
-            line = int(exc.lineno or 1)
-            column = max(1, int(exc.offset or 1))
-            diagnostics.append(
-                {
-                    "path": path,
-                    "message": str(exc.msg or "Invalid Python syntax"),
-                    "line": line,
-                    "column": column,
-                    "end_line": line,
-                    "end_column": column + 1,
-                    "severity": "error",
-                    "code": "PYTHON_SYNTAX_ERROR",
-                }
-            )
-    declared_dependencies = {
-        _normalize_python_dependency_name(item)
-        for item in list(dependencies or [])
-        if _normalize_python_dependency_name(item)
-    }
-    local_modules = _collect_local_python_modules(source_files)
-    for path, tree in parsed_trees:
-        for node in ast.walk(tree):
-            imported_names: list[tuple[str, int, int]] = []
-            if isinstance(node, ast.Import):
-                imported_names = [
-                    (alias.name.split(".")[0], int(getattr(node, "lineno", 1) or 1), int(getattr(node, "col_offset", 0) or 0) + 1)
-                    for alias in node.names
-                ]
-            elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
-                imported_names = [
-                    (str(node.module).split(".")[0], int(getattr(node, "lineno", 1) or 1), int(getattr(node, "col_offset", 0) or 0) + 1)
-                ]
-            for module_name, line, column in imported_names:
-                normalized_module_name = _normalize_python_dependency_name(module_name)
-                if (
-                    not normalized_module_name
-                    or normalized_module_name in PYTHON_STDLIB_MODULES
-                    or normalized_module_name in local_modules
-                    or normalized_module_name in declared_dependencies
-                ):
-                    continue
+    if normalized_language == "python":
+        for item in list(source_files or []):
+            path = str((item or {}).get("path") or "")
+            content = str((item or {}).get("content") or "")
+            if not is_python_code_path(path):
+                continue
+            try:
+                ast.parse(content, filename=path)
+            except SyntaxError as exc:
+                line = int(exc.lineno or 1)
+                column = max(1, int(exc.offset or 1))
                 diagnostics.append(
                     {
                         "path": path,
-                        "message": f"Cannot resolve module '{module_name}'. Add it to artifact dependencies.",
+                        "message": str(exc.msg or "Invalid Python syntax"),
                         "line": line,
                         "column": column,
                         "end_line": line,
-                        "end_column": column + len(module_name),
+                        "end_column": column + 1,
                         "severity": "error",
-                        "code": "PYTHON_MISSING_DEPENDENCY",
+                        "code": "PYTHON_SYNTAX_ERROR",
                     }
                 )
+    diagnostics.extend(
+        dependency_diagnostics_for_editor(
+            language=normalized_language,
+            source_files=source_files,
+            dependencies=dependencies,
+        )
+    )
     return diagnostics
 
 
@@ -126,6 +94,10 @@ def collect_runtime_credential_refs(*, language: str, source_files: list[dict[st
     for item in list(source_files or []):
         path = str((item or {}).get("path") or "")
         content = str((item or {}).get("content") or "")
+        if normalized_language == "python" and not is_python_code_path(path):
+            continue
+        if normalized_language != "python" and not is_javascript_code_path(path):
+            continue
         refs = (
             _collect_python_credential_refs(path=path, content=content)
             if normalized_language == "python"
@@ -174,8 +146,14 @@ def rewrite_source_files_for_context_credentials(
         path = str((item or {}).get("path") or "")
         content = str((item or {}).get("content") or "")
         if normalized_language == "python":
+            if not is_python_code_path(path):
+                rewritten.append({"path": path, "content": content})
+                continue
             rewritten_content = _rewrite_python_content(content=content, path=path)
         else:
+            if not is_javascript_code_path(path):
+                rewritten.append({"path": path, "content": content})
+                continue
             rewritten_content = _rewrite_js_content(content=content, path=path)
         rewritten.append({"path": path, "content": rewritten_content})
     return rewritten
@@ -215,33 +193,6 @@ def _default_scalar_secret(payload: dict[str, Any] | None) -> str | None:
         if isinstance(value, str) and value:
             return value
     return None
-
-
-def _normalize_python_dependency_name(raw: str | None) -> str:
-    value = str(raw or "").strip().lower()
-    if not value:
-        return ""
-    value = value.split("[", 1)[0].strip()
-    for separator in ("==", ">=", "<=", "~=", "!=", ">", "<"):
-        if separator in value:
-            value = value.split(separator, 1)[0].strip()
-    return value.replace("-", "_")
-
-
-def _collect_local_python_modules(source_files: list[dict[str, Any]] | None) -> set[str]:
-    modules: set[str] = set()
-    for item in list(source_files or []):
-        path = str((item or {}).get("path") or "").strip("/")
-        if not path or not path.endswith(".py"):
-            continue
-        parts = [segment for segment in path.split("/") if segment]
-        if not parts:
-            continue
-        if len(parts) == 1:
-            modules.add(parts[0][:-3].lower())
-            continue
-        modules.add(parts[0].lower())
-    return modules
 
 
 def _collect_python_credential_refs(*, path: str, content: str) -> list[str]:

@@ -15,7 +15,7 @@ import { useDirection } from "@/components/direction-provider"
 import { cn } from "@/lib/utils"
 import { mapTurnsToMessages } from "@/hooks/useAgentThreadHistory"
 import type { ExecutionStep } from "@/services/run-trace-steps"
-import { buildExecutionStepsFromRunTrace } from "@/services/run-trace-steps"
+import { loadRunTraceInspection } from "@/services/run-trace-steps"
 import { adminService } from "@/services"
 
 type RuntimeAttachmentDto = {
@@ -65,6 +65,7 @@ export default function AdminThreadPage() {
   const [loading, setLoading] = useState(true)
   const [traceLoadingByMessageId, setTraceLoadingByMessageId] = useState<Record<string, boolean>>({})
   const [executionSteps, setExecutionSteps] = useState<ExecutionStep[]>([])
+  const [traceCopyText, setTraceCopyText] = useState<string | null>(null)
   const [isExecutionSidebarOpen, setIsExecutionSidebarOpen] = useState(false)
   const [liked, setLiked] = useState<Record<string, boolean>>({})
   const [disliked, setDisliked] = useState<Record<string, boolean>>({})
@@ -119,8 +120,9 @@ export default function AdminThreadPage() {
     if (!message.runId) return
     setTraceLoadingByMessageId((prev) => ({ ...prev, [message.id]: true }))
     try {
-      const steps = await buildExecutionStepsFromRunTrace(message.runId)
-      setExecutionSteps(steps ?? [])
+      const loaded = await loadRunTraceInspection(message.runId)
+      setExecutionSteps(loaded?.steps ?? [])
+      setTraceCopyText(loaded?.serialized ?? null)
       setIsExecutionSidebarOpen(true)
     } catch (error) {
       console.error("Failed to load execution trace", error)
@@ -258,7 +260,7 @@ export default function AdminThreadPage() {
           className="z-30 hidden w-80 lg:block"
           fullHeight={false}
         >
-          <ExecutionSidebar steps={executionSteps} className="w-full" />
+          <ExecutionSidebar steps={executionSteps} copyText={traceCopyText} className="w-full" />
         </FloatingPanel>
       </main>
     </div>

@@ -89,6 +89,9 @@ async def test_architect_worker_tools_seed_expected_slugs(db_session):
         "seed_snapshot",
     ]
     assert binding_prepare_schema["properties"]["draft_seed"]["required"] == ["kind"]
+    assert binding_prepare_schema["properties"]["draft_seed"]["properties"]["language"]["enum"] == ["python", "javascript"]
+    assert "dependencies" in binding_prepare_schema["properties"]["draft_snapshot"]["properties"]
+    assert "python_dependencies" not in binding_prepare_schema["properties"]["draft_snapshot"]["properties"]
     create_branch = next(
         variant
         for variant in binding_prepare_schema["oneOf"]
@@ -119,7 +122,24 @@ async def test_binding_prepare_schema_accepts_lightweight_seed_and_rejects_old_s
             "binding_type": "artifact_shared_draft",
             "prepare_mode": "create_new_draft",
             "title_prompt": "Create a tool artifact draft",
-            "draft_seed": {"kind": "tool_impl"},
+            "draft_seed": {"kind": "tool_impl", "language": "javascript"},
+        },
+    ) == []
+
+    assert validate_tool_input_schema(
+        tool,
+        {
+            "binding_type": "artifact_shared_draft",
+            "prepare_mode": "seed_snapshot",
+            "title_prompt": "Seed a javascript snapshot",
+            "draft_snapshot": {
+                "kind": "tool_impl",
+                "display_name": "Seeded Tool",
+                "language": "javascript",
+                "entry_module_path": "main.js",
+                "source_files": [{"path": "main.js", "content": "export async function execute() { return {}; }"}],
+                "dependencies": ["zod"],
+            },
         },
     ) == []
 
@@ -410,6 +430,12 @@ def test_architect_graph_instructions_include_async_worker_flow():
     assert "agents.create_shell" in instructions
     assert "rag.create_pipeline_shell" in instructions
     assert "draft_seed.kind" in instructions
+    assert "draft_seed.language" in instructions
+    assert "Language selection belongs to create flow only" in instructions
+    assert "artifact_coding_list_credentials" in instructions
+    assert "exact @{credential-id} string literals" in instructions
+    assert "create or update a tool_impl artifact" in instructions
+    assert "publish the tool so it pins artifact_revision_id" in instructions
     assert "Do not invent non-canonical binding fields such as create, files, entrypoint, or text." in instructions
     assert "artifact-coding-agent-call" not in instructions
     assert "artifact-coding-session-prepare" not in instructions

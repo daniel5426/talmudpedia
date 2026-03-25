@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.db.postgres.models.artifact_runtime import ArtifactKind, ArtifactRun, ArtifactRunStatus
+from app.db.postgres.models.artifact_runtime import ArtifactKind, ArtifactRun, ArtifactRunEvent, ArtifactRunStatus
 from app.services.artifact_coding_agent_tools import (
     DEFAULT_AGENT_CONTRACT,
     DEFAULT_CAPABILITIES,
@@ -17,6 +17,7 @@ from app.services.artifact_coding_agent_tools import (
     get_session,
 )
 from app.services.artifact_runtime.execution_service import ArtifactExecutionService
+from app.services.artifact_runtime.run_service import ArtifactRunService
 from app.services.tool_function_registry import register_tool_function
 
 DEFAULT_TEST_WAIT_TIMEOUT_SECONDS = 120.0
@@ -70,9 +71,36 @@ def _artifact_test_payload_from_snapshot(
     return payload
 
 
-def _serialize_test_run_result(test_run: ArtifactRun, *, wait_timed_out: bool = False, waited_seconds: float | None = None) -> dict[str, Any]:
+def _serialize_test_run_event(event: ArtifactRunEvent) -> dict[str, Any]:
+    return {
+        "sequence": event.sequence,
+        "timestamp": event.timestamp.isoformat() if getattr(event, "timestamp", None) else None,
+        "event_type": event.event_type,
+        "payload": dict(event.payload or {}),
+    }
+
+
+def _summarize_test_run_failure(test_run: ArtifactRun) -> str | None:
+    error_payload = dict(test_run.error_payload or {}) if test_run.error_payload is not None else {}
+    message = error_payload.get("message")
+    if isinstance(message, str) and message.strip():
+        return message.strip()
+    for excerpt in (test_run.stderr_excerpt, test_run.stdout_excerpt):
+        if isinstance(excerpt, str) and excerpt.strip():
+            return excerpt.strip()
+    return None
+
+
+def _serialize_test_run_result(
+    test_run: ArtifactRun,
+    *,
+    events: list[ArtifactRunEvent] | None = None,
+    wait_timed_out: bool = False,
+    waited_seconds: float | None = None,
+) -> dict[str, Any]:
     status = getattr(test_run.status, "value", str(test_run.status))
     terminal = test_run.status in TERMINAL_TEST_RUN_STATUSES
+    serialized_events = [_serialize_test_run_event(event) for event in (events or [])]
     return {
         "ok": True,
         "has_test_result": True,
@@ -87,6 +115,9 @@ def _serialize_test_run_result(test_run: ArtifactRun, *, wait_timed_out: bool = 
         "stderr_excerpt": test_run.stderr_excerpt,
         "duration_ms": test_run.duration_ms,
         "runtime_metadata": dict(test_run.runtime_metadata or {}),
+        "failure_summary": _summarize_test_run_failure(test_run),
+        "event_count": len(serialized_events),
+        "events": serialized_events,
     }
 
 
@@ -163,11 +194,13 @@ async def artifact_coding_await_last_test_result(payload: Any) -> dict[str, Any]
         session, shared_draft, _run, _artifact = await _resolve_session_context(db, tool_payload)
         if shared_draft.last_test_run_id is None:
             return {"ok": True, "has_test_result": False, "wait_timed_out": False}
+        run_service = ArtifactRunService(db)
         current_test_run = await db.get(ArtifactRun, shared_draft.last_test_run_id)
         if current_test_run is None:
             return {"ok": True, "has_test_result": False, "wait_timed_out": False}
         if current_test_run.status in TERMINAL_TEST_RUN_STATUSES:
-            return _serialize_test_run_result(current_test_run, wait_timed_out=False, waited_seconds=0.0)
+            events = await run_service.list_events(run_id=current_test_run.id)
+            return _serialize_test_run_result(current_test_run, events=events, wait_timed_out=False, waited_seconds=0.0)
 
         execution_service = ArtifactExecutionService(db)
         waited_run = await execution_service.wait_for_terminal_state(
@@ -176,8 +209,10 @@ async def artifact_coding_await_last_test_result(payload: Any) -> dict[str, Any]
         )
         if waited_run is None:
             return {"ok": True, "has_test_result": False, "wait_timed_out": True, "waited_seconds": timeout_seconds}
+        events = await run_service.list_events(run_id=waited_run.id)
         return _serialize_test_run_result(
             waited_run,
+            events=events,
             wait_timed_out=waited_run.status not in TERMINAL_TEST_RUN_STATUSES,
             waited_seconds=timeout_seconds,
         )
@@ -193,4 +228,5 @@ async def artifact_coding_get_last_test_result(payload: Any) -> dict[str, Any]:
         test_run = await db.get(ArtifactRun, shared_draft.last_test_run_id)
         if test_run is None:
             return {"ok": True, "has_test_result": False, "wait_timed_out": False}
-        return _serialize_test_run_result(test_run)
+        events = await ArtifactRunService(db).list_events(run_id=test_run.id)
+        return _serialize_test_run_result(test_run, events=events)

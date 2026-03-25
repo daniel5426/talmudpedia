@@ -1,4 +1,4 @@
-Last Updated: 2026-03-16
+Last Updated: 2026-03-25
 
 # Test State
 
@@ -18,8 +18,12 @@ Artifact test-run APIs and queued execution lifecycle on the modern run-based ar
 - execute only the run-based `/admin/artifacts/test-runs` surface; the legacy wrapper is removed
 - execute an unsaved `/admin/artifacts/test-runs` request without `tenant_slug` by using principal tenant context
 - cancel a queued test run
+- return runtime queue status for artifact-page test runs
+- return HTTP 429 when eager artifact-page test execution hits tenant capacity
+- return HTTP 200 with a failed run id when eager artifact-page dispatch crashes after run creation
 - resolve or reuse a `staging` deployment and dispatch through the Cloudflare runtime path
 - assert artifact-page test runs stay on `domain="test"` and `queue_class="artifact_test"`
+- pass artifact-page test input through as the raw worker `inputs` payload
 
 ## Last Run
 
@@ -38,6 +42,15 @@ Artifact test-run APIs and queued execution lifecycle on the modern run-based ar
 - Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/artifact_test_runs/test_artifact_test_run_api.py`
 - Date: 2026-03-16 19:41 EET
 - Result: Pass (`3 passed`)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/artifact_test_runs/test_artifact_test_run_api.py`
+- Date: 2026-03-25 Asia/Hebron
+- Result: Pass (5 passed, 7 warnings)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/artifact_runtime/test_execution_service.py backend/tests/artifact_test_runs/test_artifact_test_run_api.py backend/tests/artifact_coding_agent/test_runtime_service.py`
+- Date: 2026-03-25 Asia/Hebron
+- Result: Pass (34 passed, 7 warnings)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/artifact_runtime/test_execution_service.py backend/tests/artifact_test_runs/test_artifact_test_run_api.py`
+- Date: 2026-03-25 Asia/Hebron
+- Result: Pass (21 passed, 7 warnings)
 
 ## Known Gaps
 

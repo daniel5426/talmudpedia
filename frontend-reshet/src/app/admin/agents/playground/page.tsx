@@ -64,7 +64,7 @@ function PlaygroundContent() {
     const clearingThreadRef = useRef(false)
 
     const controller = useAgentRunController(agentId || undefined)
-    const { executionSteps, currentThreadId } = controller
+    const { executionSteps, currentThreadId, inspectedTraceCopyText } = controller
     const { direction } = useDirection()
     const { currentTenant } = useTenant()
     const authUser = useAuthStore((state) => state.user)
@@ -500,6 +500,7 @@ function PlaygroundContent() {
                 >
                     <ExecutionSidebar
                         steps={executionSteps}
+                        copyText={inspectedTraceCopyText}
                         className="w-full"
                     />
                 </FloatingPanel>

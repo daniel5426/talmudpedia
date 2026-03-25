@@ -61,6 +61,7 @@ Most existing long-form documentation still lives in `backend/documentations/`. 
 - `docs/product-specs/runtime_sdk_host_anywhere_spec.md`
 - `docs/product-specs/agent_graph_spec.md`
 - `docs/product-specs/rag_pipeline_spec.md`
+- `docs/product-specs/artifact_coding_agent_spec.md`
 - `docs/product-specs/artifacts_domain_spec.md`
 - `docs/product-specs/tools_domain_spec.md`
 - `docs/product-specs/admin_stats_spec.md`

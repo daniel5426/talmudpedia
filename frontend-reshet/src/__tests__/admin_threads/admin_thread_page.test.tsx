@@ -4,7 +4,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import AdminThreadPage from "@/app/admin/threads/[threadId]/page"
 import { adminService } from "@/services"
 import { mapTurnsToMessages } from "@/hooks/useAgentThreadHistory"
-import { buildExecutionStepsFromRunTrace } from "@/services/run-trace-steps"
+import { loadRunTraceInspection } from "@/services/run-trace-steps"
 
 const mockParams = { threadId: "thread-1" }
 
@@ -23,7 +23,7 @@ jest.mock("@/hooks/useAgentThreadHistory", () => ({
 }))
 
 jest.mock("@/services/run-trace-steps", () => ({
-  buildExecutionStepsFromRunTrace: jest.fn(),
+  loadRunTraceInspection: jest.fn(),
 }))
 
 jest.mock("@/components/direction-provider", () => ({
@@ -81,8 +81,9 @@ jest.mock("@/components/builder", () => ({
 }))
 
 jest.mock("@/app/admin/agents/playground/ExecutionSidebar", () => ({
-  ExecutionSidebar: ({ steps }: { steps: Array<{ name: string }> }) => (
+  ExecutionSidebar: ({ steps, copyText }: { steps: Array<{ name: string }>; copyText?: string | null }) => (
     <div data-testid="execution-sidebar">
+      {copyText ? <button type="button">Copy full trace</button> : null}
       {steps.map((step) => (
         <div key={step.name}>{step.name}</div>
       ))}
@@ -92,7 +93,7 @@ jest.mock("@/app/admin/agents/playground/ExecutionSidebar", () => ({
 
 const mockedAdminService = adminService as jest.Mocked<typeof adminService>
 const mockedMapTurnsToMessages = mapTurnsToMessages as jest.MockedFunction<typeof mapTurnsToMessages>
-const mockedBuildExecutionStepsFromRunTrace = buildExecutionStepsFromRunTrace as jest.MockedFunction<typeof buildExecutionStepsFromRunTrace>
+const mockedLoadRunTraceInspection = loadRunTraceInspection as jest.MockedFunction<typeof loadRunTraceInspection>
 
 describe("admin thread page", () => {
   beforeEach(() => {
@@ -114,15 +115,23 @@ describe("admin thread page", () => {
         runId: "run-1",
       },
     ])
-    mockedBuildExecutionStepsFromRunTrace.mockResolvedValue([
-      {
-        id: "step-1",
-        name: "Search library",
-        type: "tool",
-        status: "completed",
-        timestamp: new Date("2026-03-22T10:00:01Z"),
+    mockedLoadRunTraceInspection.mockResolvedValue({
+      response: {
+        run_id: "run-1",
+        event_count: 1,
+        events: [{ event: "tool.failed" }],
       },
-    ])
+      serialized: JSON.stringify({ run_id: "run-1", event_count: 1, events: [{ event: "tool.failed" }] }, null, 2),
+      steps: [
+        {
+          id: "step-1",
+          name: "Search library",
+          type: "tool",
+          status: "completed",
+          timestamp: new Date("2026-03-22T10:00:01Z"),
+        },
+      ],
+    })
   })
 
   it("renders a read-only playground-style thread view with inline header metadata and trace toggle", async () => {
@@ -137,9 +146,10 @@ describe("admin thread page", () => {
     fireEvent.click(screen.getByRole("button", { name: "Trace" }))
 
     await waitFor(() => {
-      expect(mockedBuildExecutionStepsFromRunTrace).toHaveBeenCalledWith("run-1")
+      expect(mockedLoadRunTraceInspection).toHaveBeenCalledWith("run-1")
       expect(screen.getByTestId("floating-panel")).toBeInTheDocument()
       expect(screen.getByText("Search library")).toBeInTheDocument()
+      expect(screen.getByRole("button", { name: "Copy full trace" })).toBeInTheDocument()
     })
   })
 })

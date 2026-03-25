@@ -48,6 +48,7 @@ jest.mock("@/hooks/useAgentRunController", () => {
   return {
     useAgentRunController: () => {
       const [executionSteps, setExecutionSteps] = React.useState<any[]>([]);
+      const [inspectedTraceCopyText, setInspectedTraceCopyText] = React.useState<string | null>(null);
       return {
         messages: [
           {
@@ -73,6 +74,7 @@ jest.mock("@/hooks/useAgentRunController", () => {
         currentRunId: null,
         currentRunStatus: null,
         currentThreadId: mockControllerState.currentThreadId,
+        inspectedTraceCopyText,
         isPaused: false,
         pendingApproval: false,
         historyLoading: false,
@@ -94,6 +96,7 @@ jest.mock("@/hooks/useAgentRunController", () => {
               timestamp: new Date("2026-03-12T10:00:01Z"),
             },
           ]);
+          setInspectedTraceCopyText(JSON.stringify({ run_id: "run-1", events: [{ event: "tool.failed" }] }, null, 2));
         }),
         handleSourceClick: jest.fn(),
         upsertLiveVoiceMessage: jest.fn(),
@@ -208,8 +211,9 @@ jest.mock("@/components/builder", () => ({
 }));
 
 jest.mock("@/app/admin/agents/playground/ExecutionSidebar", () => ({
-  ExecutionSidebar: ({ steps }: { steps: Array<{ name: string }> }) => (
+  ExecutionSidebar: ({ steps, copyText }: { steps: Array<{ name: string }>; copyText?: string | null }) => (
     <div data-testid="execution-sidebar">
+      {copyText ? <button type="button">Copy full trace</button> : null}
       {steps.map((step) => (
         <div key={step.name}>{step.name}</div>
       ))}
@@ -271,6 +275,7 @@ describe("playground trace sidebar", () => {
     });
 
     expect(screen.getByText("Search library")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Copy full trace" })).toBeInTheDocument();
     expect(screen.getByText("Saved answer")).toBeInTheDocument();
   });
 

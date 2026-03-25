@@ -33,10 +33,16 @@ def test_platform_architect_graph_is_single_agent_topology():
     assert "agents.create_shell" in instructions
     assert "rag.create_pipeline_shell" in instructions
     assert "draft_seed.kind" in instructions
+    assert "draft_seed.language" in instructions
+    assert "Language selection belongs to create flow only" in instructions
     assert "Do not construct a full draft_snapshot for normal artifact creation" in instructions
     assert "top-level action and payload" in instructions
     assert "Never wrap a tool call inside query, text, value" in instructions
     assert "Artifact-coding delegated workers edit the shared draft only" in instructions
+    assert "artifact_coding_list_credentials" in instructions
+    assert "exact @{credential-id} string literals" in instructions
+    assert "create or update a tool_impl artifact" in instructions
+    assert "publish the tool so it pins artifact_revision_id" in instructions
     assert "Do not ask a worker to mutate runtime-owned fields like persistence_readiness" in instructions
     assert "agents.graph.add_tool_to_agent_node" in instructions
     assert "rag.operators.catalog" in instructions

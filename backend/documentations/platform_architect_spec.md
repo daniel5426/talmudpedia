@@ -1,6 +1,6 @@
 # Platform Architect Spec
 
-Last Updated: 2026-03-17
+Last Updated: 2026-03-25
 
 ## Purpose
 This file is the focused current-state reference for the seeded `platform-architect` runtime.
@@ -214,7 +214,9 @@ Recent live runs isolated the next unresolved problems:
   - Root cause was missing commits between separate mutating architect worker tool calls.
 
 - The delegated artifact worker mode is now explicit, but live behavior is still inconsistent.
-  - The artifact coding agent profile instructs architect-spawned workers to complete `architect_worker_task` autonomously, persist their own draft when the task requires save/create/update, and avoid user-facing scope switching in locked sessions.
+  - The artifact coding agent profile instructs architect-spawned workers to complete `architect_worker_task` autonomously from the shared draft, honor create-only language selection, use safe credential metadata for `@{credential-id}` references, and avoid cross-artifact workflow suggestions in locked sessions.
+  - Artifact persistence remains architect-owned through `architect-worker-binding-persist-artifact`; the worker edits and validates draft state only.
+  - When the delegated request really requires a different artifact or incompatible language, the worker should refuse briefly and stop. The architect, not the worker, decides whether to create a new artifact/binding and spawn a different worker.
   - Some live runs still show the worker behaving like a chatty editor instead of executing the delegated task directly.
 
 - Session-to-shared-draft resolution for fresh architect-created bindings is structurally weak.

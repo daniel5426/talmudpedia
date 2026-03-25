@@ -1,16 +1,17 @@
 import uuid
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import select
 
-from app.db.postgres.models.artifact_runtime import ArtifactRun
+from app.db.postgres.models.artifact_runtime import ArtifactRun, ArtifactRunStatus
 from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Tenant, User
 from app.db.postgres.models.registry import IntegrationCredential, IntegrationCredentialCategory
 from app.services.artifact_runtime.execution_service import ArtifactExecutionService
 from app.services.artifact_runtime.handler_runner import invoke_artifact_handler
 from app.services.artifact_runtime.cloudflare_dispatch_client import CloudflareDispatchHTTPError
-from app.services.artifact_runtime.policy_service import ArtifactConcurrencyLimitExceeded
+from app.services.artifact_runtime.policy_service import ArtifactConcurrencyLimitExceeded, ArtifactRuntimePolicyService
 from app.services.artifact_runtime.revision_service import ArtifactRevisionService
 
 
@@ -298,7 +299,11 @@ async def test_interactive_run_fails_fast_when_tenant_capacity_is_exhausted(db_s
     artifact = await _create_artifact(db_session, tenant.id, user.id, publish=True, kind="agent_node")
 
     async def deny_capacity(self, *, tenant_id, queue_class):
-        raise ArtifactConcurrencyLimitExceeded("capacity exceeded")
+        raise ArtifactConcurrencyLimitExceeded(
+            queue_class=queue_class,
+            active_count=5,
+            concurrency_limit=5,
+        )
 
     monkeypatch.setattr(
         "app.services.artifact_runtime.policy_service.ArtifactRuntimePolicyService.assert_capacity",
@@ -317,6 +322,52 @@ async def test_interactive_run_fails_fast_when_tenant_capacity_is_exhausted(db_s
             config_payload={},
             context_payload={},
         )
+
+
+@pytest.mark.asyncio
+async def test_test_queue_defaults_to_concurrency_limit_10(db_session):
+    tenant, _user = await _seed_tenant_context(db_session)
+
+    snapshot = await ArtifactRuntimePolicyService(db_session).get_snapshot(
+        tenant_id=tenant.id,
+        queue_class="artifact_test",
+    )
+
+    assert snapshot.concurrency_limit == 10
+
+
+@pytest.mark.asyncio
+async def test_policy_service_reconciles_stale_artifact_test_runs(db_session):
+    tenant, user = await _seed_tenant_context(db_session)
+    artifact = await _create_artifact(db_session, tenant.id, user.id, publish=True, kind="tool_impl")
+    stale_started_at = datetime.now(timezone.utc) - timedelta(minutes=30)
+    stale_run = ArtifactRun(
+        tenant_id=tenant.id,
+        artifact_id=artifact.id,
+        revision_id=artifact.latest_published_revision_id,
+        domain="test",
+        status=ArtifactRunStatus.RUNNING,
+        queue_class="artifact_test",
+        started_at=stale_started_at,
+        created_at=stale_started_at,
+        runtime_metadata={},
+    )
+    db_session.add(stale_run)
+    await db_session.commit()
+
+    status = await ArtifactRuntimePolicyService(db_session).get_queue_status(
+        tenant_id=tenant.id,
+        queue_class="artifact_test",
+    )
+    await db_session.commit()
+
+    refreshed_run = await db_session.get(ArtifactRun, stale_run.id)
+    assert status.active_count == 0
+    assert status.concurrency_limit == 10
+    assert refreshed_run is not None
+    assert refreshed_run.status == ArtifactRunStatus.FAILED
+    assert refreshed_run.error_payload["code"] == "STALE_ARTIFACT_TEST_RUN_RECONCILED"
+    assert refreshed_run.runtime_metadata["stale_reconciled"] is True
 
 
 @pytest.mark.asyncio
@@ -364,6 +415,36 @@ async def test_execute_live_run_persists_worker_http_500_details(db_session, mon
     assert failed_run.error_payload["http_status"] == 500
     assert failed_run.error_payload["dispatch_detail"]["code"] == "WORKER_CRASH"
     assert "worker crashed" in failed_run.error_payload["message"]
+
+
+def test_dispatch_http_error_promotes_nested_upstream_root_cause():
+    error = CloudflareDispatchHTTPError(
+        status_code=500,
+        message="Dispatch worker returned HTTP 500 for https://artifact.example/execute: Dispatched worker returned an error response.",
+        response_text=(
+            '{"detail":{"code":"DISPATCH_UPSTREAM_ERROR","message":"Dispatched worker returned an error response.",'
+            '"upstream_detail":{"code":"WORKER_MODULE_LOAD_FAILED","message":"No module named missing_package",'
+            '"traceback":"Traceback..."}}}'
+        ),
+        response_json={
+            "detail": {
+                "code": "DISPATCH_UPSTREAM_ERROR",
+                "message": "Dispatched worker returned an error response.",
+                "upstream_detail": {
+                    "code": "WORKER_MODULE_LOAD_FAILED",
+                    "message": "No module named missing_package",
+                    "traceback": "Traceback...",
+                },
+            }
+        },
+        url="https://artifact.example/execute",
+    )
+
+    payload = error.to_error_payload()
+
+    assert payload["dispatch_detail"]["code"] == "DISPATCH_UPSTREAM_ERROR"
+    assert payload["dispatch_root_cause"]["code"] == "WORKER_MODULE_LOAD_FAILED"
+    assert payload["dispatch_root_cause"]["message"] == "No module named missing_package"
 
 
 @pytest.mark.asyncio
@@ -516,3 +597,110 @@ async def test_execute_live_run_rejects_disabled_credential_at_runtime(db_sessio
             config_payload={},
             context_payload={},
         )
+
+
+@pytest.mark.asyncio
+async def test_start_test_run_returns_failed_run_when_eager_dispatch_crashes(db_session, monkeypatch):
+    tenant, user = await _seed_tenant_context(db_session)
+    artifact = await _create_artifact(db_session, tenant.id, user.id, publish=True, kind="tool_impl")
+    monkeypatch.setenv("ARTIFACT_RUN_TASK_EAGER", "1")
+
+    async def fake_ensure_deployment(self, *, revision, namespace, tenant_id=None):
+        return SimpleNamespace(
+            worker_name="artifact-test-worker",
+            deployment_id="dep-test-500",
+            version_id="ver-test-500",
+            build_hash=revision.build_hash,
+        )
+
+    async def fake_execute(self, payload):
+        raise CloudflareDispatchHTTPError(
+            status_code=500,
+            message="Dispatch worker returned HTTP 500 for https://artifact-test-runtime.example/execute: worker crashed",
+            response_text='{"detail":{"code":"WORKER_CRASH","message":"worker crashed","traceback":"boom"}}',
+            response_json={"detail": {"code": "WORKER_CRASH", "message": "worker crashed", "traceback": "boom"}},
+            url="https://artifact-test-runtime.example/execute",
+        )
+
+    monkeypatch.setattr("app.services.artifact_runtime.deployment_service.ArtifactDeploymentService.ensure_deployment", fake_ensure_deployment)
+    monkeypatch.setattr("app.services.artifact_runtime.cloudflare_dispatch_client.CloudflareDispatchClient.execute", fake_execute)
+
+    run = await ArtifactExecutionService(db_session).start_test_run(
+        tenant_id=tenant.id,
+        created_by=user.id,
+        artifact_id=artifact.id,
+        source_files=None,
+        entry_module_path=None,
+        input_data={"client_id": "32001"},
+        config={},
+        dependencies=None,
+        language=None,
+        kind=None,
+        runtime_target=None,
+        capabilities=None,
+        config_schema=None,
+        agent_contract=None,
+        rag_contract=None,
+        tool_contract=None,
+    )
+
+    assert str(getattr(run.status, "value", run.status)) == "failed"
+    assert run.error_payload["code"] == "CLOUDFLARE_DISPATCH_HTTP_ERROR"
+    assert run.error_payload["dispatch_detail"]["code"] == "WORKER_CRASH"
+    assert "worker crashed" in run.error_payload["message"]
+
+
+@pytest.mark.asyncio
+async def test_start_test_run_passes_raw_input_payload_to_dispatch(db_session, monkeypatch):
+    tenant, user = await _seed_tenant_context(db_session)
+    artifact = await _create_artifact(db_session, tenant.id, user.id, publish=True, kind="tool_impl")
+    monkeypatch.setenv("ARTIFACT_RUN_TASK_EAGER", "1")
+    captured: dict[str, object] = {}
+
+    async def fake_ensure_deployment(self, *, revision, namespace, tenant_id=None):
+        return SimpleNamespace(
+            worker_name="artifact-test-worker",
+            deployment_id="dep-test-raw",
+            version_id="ver-test-raw",
+            build_hash=revision.build_hash,
+        )
+
+    async def fake_execute(self, payload):
+        captured["inputs"] = payload["inputs"]
+        return SimpleNamespace(
+            status="completed",
+            result={"ok": True},
+            error=None,
+            stdout_excerpt="",
+            stderr_excerpt="",
+            duration_ms=1,
+            worker_id="artifact-test-worker",
+            sandbox_session_id="dispatch-test-raw",
+            events=[],
+            runtime_metadata={},
+        )
+
+    monkeypatch.setattr("app.services.artifact_runtime.deployment_service.ArtifactDeploymentService.ensure_deployment", fake_ensure_deployment)
+    monkeypatch.setattr("app.services.artifact_runtime.cloudflare_dispatch_client.CloudflareDispatchClient.execute", fake_execute)
+
+    run = await ArtifactExecutionService(db_session).start_test_run(
+        tenant_id=tenant.id,
+        created_by=user.id,
+        artifact_id=artifact.id,
+        source_files=None,
+        entry_module_path=None,
+        input_data={"client_id": "32001"},
+        config={},
+        dependencies=None,
+        language=None,
+        kind=None,
+        runtime_target=None,
+        capabilities=None,
+        config_schema=None,
+        agent_contract=None,
+        rag_contract=None,
+        tool_contract=None,
+    )
+
+    assert str(getattr(run.status, "value", run.status)) == "completed"
+    assert captured["inputs"] == {"client_id": "32001"}

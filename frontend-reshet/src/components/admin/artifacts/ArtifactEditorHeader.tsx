@@ -27,6 +27,7 @@ type ArtifactEditorHeaderProps = {
   sidebarOpen: boolean
   isAgentPanelOpen: boolean
   isPublishing: boolean
+  isPublished: boolean
   isSaving: boolean
   disableSave: boolean
   showPublish: boolean
@@ -59,6 +60,7 @@ export function ArtifactEditorHeader({
   sidebarOpen,
   isAgentPanelOpen,
   isPublishing,
+  isPublished,
   isSaving,
   disableSave,
   showPublish,
@@ -156,17 +158,6 @@ export function ArtifactEditorHeader({
           >
             <PanelLeft className="!size-[17px]" />
           </Button>
-          {showPublish ? (
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={onPublish}
-              disabled={isPublishing || isSaving}
-            >
-              {isPublishing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}
-              Publish
-            </Button>
-          ) : null}
           {showVersions ? (
             <ArtifactVersionsDropdown
               open={versionsOpen}
@@ -201,6 +192,17 @@ export function ArtifactEditorHeader({
             {isSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
             Save
           </Button>
+          {showPublish || isPublished ? (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={isPublished ? undefined : onPublish}
+              disabled={isPublished || isPublishing || isSaving}
+            >
+              {isPublishing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}
+              {isPublished ? "Published" : "Publish"}
+            </Button>
+          ) : null}
         </div>
       )}
     </AdminPageHeader>

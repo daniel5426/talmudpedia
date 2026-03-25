@@ -16,7 +16,7 @@ import {
   sortChatRenderBlocks,
 } from "@/services/chat-presentation";
 import {
-  buildExecutionStepsFromRunTrace,
+  loadRunTraceInspection,
   type ExecutionStep,
 } from "@/services/run-trace-steps";
 import { useAuthStore } from "@/lib/store/useAuthStore";
@@ -86,6 +86,7 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
   currentRunId: string | null;
   currentRunStatus: AgentRunStatus["status"] | null;
   currentThreadId: string | null;
+  inspectedTraceCopyText: string | null;
   isPaused: boolean;
   pendingApproval: boolean;
   historyLoading: boolean;
@@ -101,6 +102,7 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
   const [currentResponseBlocks, setCurrentResponseBlocks] = useState<ChatRenderBlock[]>([]);
   const [liveExecutionSteps, setLiveExecutionSteps] = useState<ExecutionStep[]>([]);
   const [inspectedTraceSteps, setInspectedTraceSteps] = useState<ExecutionStep[] | null>(null);
+  const [inspectedTraceCopyText, setInspectedTraceCopyText] = useState<string | null>(null);
   const [liked, setLiked] = useState<Record<string, boolean>>({});
   const [disliked, setDisliked] = useState<Record<string, boolean>>({});
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
@@ -175,6 +177,7 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
     setCurrentResponseBlocks([]);
     setLiveExecutionSteps([]);
     setInspectedTraceSteps(null);
+    setInspectedTraceCopyText(null);
     setLastThinkingDurationMs(null);
     setActiveStreamingId(null);
     setCurrentRunId(null);
@@ -290,6 +293,7 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
     setIsPaused(false);
     setPendingApproval(false);
     setInspectedTraceSteps(null);
+    setInspectedTraceCopyText(null);
     reasoningRef.current = [];
     lastReasoningRef.current = [];
     responseBlocksRef.current = [];
@@ -366,6 +370,7 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
     commitStreamingMessage("new");
     handleStop();
     setInspectedTraceSteps(null);
+    setInspectedTraceCopyText(null);
     const abortController = new AbortController();
     abortControllerRef.current = abortController;
 
@@ -684,9 +689,10 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
     if (!msg.runId) return;
     setTraceLoadingByMessageId((prev) => ({ ...prev, [msg.id]: true }));
     try {
-      const steps = await buildExecutionStepsFromRunTrace(msg.runId);
-      if (!steps || steps.length === 0) return;
-      setInspectedTraceSteps(steps);
+      const loaded = await loadRunTraceInspection(msg.runId);
+      if (!loaded) return;
+      setInspectedTraceSteps(loaded.steps);
+      setInspectedTraceCopyText(loaded.serialized);
     } catch (error) {
       console.error("Failed to load run trace", { runId: msg.runId, error });
     } finally {
@@ -721,6 +727,7 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
     currentRunId,
     currentRunStatus,
     currentThreadId: effectiveCurrentThreadId,
+    inspectedTraceCopyText,
     isPaused,
     pendingApproval,
     historyLoading,

@@ -158,6 +158,7 @@ backend/app/services/artifact_runtime/bundle_storage.py
 backend/app/services/artifact_runtime/execution_service.py
 backend/app/services/artifact_runtime/run_service.py
 backend/app/services/artifact_runtime/source_utils.py
+backend/app/services/artifact_runtime/dependency_registry.py
 backend/app/services/artifact_runtime/workers_validation.py
 backend/app/services/artifact_runtime/cloudflare_package_builder.py
 backend/app/services/artifact_runtime/runtime_secret_service.py

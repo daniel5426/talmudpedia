@@ -12,6 +12,12 @@ export interface ExecutionStep {
 
 type FetchRunEvents = (runId: string) => Promise<AgentRunEventsResponse>;
 
+export interface LoadedRunTrace {
+  response: AgentRunEventsResponse;
+  steps: ExecutionStep[];
+  serialized: string;
+}
+
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -268,11 +274,22 @@ export async function buildExecutionStepsFromRunTrace(
   runId: string,
   fetchRunEvents: FetchRunEvents = agentService.getRunEvents,
 ): Promise<ExecutionStep[] | undefined> {
+  const loaded = await loadRunTraceInspection(runId, fetchRunEvents);
+  return loaded?.steps.length ? loaded.steps : undefined;
+}
+
+export async function loadRunTraceInspection(
+  runId: string,
+  fetchRunEvents: FetchRunEvents = agentService.getRunEvents,
+): Promise<LoadedRunTrace | undefined> {
   const normalizedRunId = String(runId || "").trim();
   if (!normalizedRunId) return undefined;
 
   const response = await fetchRunEvents(normalizedRunId);
   const rawEvents = Array.isArray(response.events) ? response.events : [];
-  const steps = buildExecutionStepsFromRunEvents(rawEvents);
-  return steps.length > 0 ? steps : undefined;
+  return {
+    response,
+    steps: buildExecutionStepsFromRunEvents(rawEvents),
+    serialized: JSON.stringify(response, null, 2),
+  };
 }

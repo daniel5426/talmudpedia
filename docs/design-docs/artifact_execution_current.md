@@ -46,7 +46,9 @@ Current behavior:
 - resolve saved draft/published revision or materialize an ephemeral revision from request source files
 - resolve or create a `staging` deployment by build hash
 - create run and initial events
+- pass `input_data` through as the worker `inputs` payload without wrapping it under `value`
 - dispatch through the Cloudflare Dispatch Worker eagerly or through Celery depending on queue mode
+- when eager local/test execution fails after the run row is created, return the failed run id/status instead of surfacing only a transport-level HTTP 500
 
 ### Live agent execution
 
@@ -74,6 +76,16 @@ Artifact-backed RAG operators already call `ArtifactExecutionService.execute_liv
 10. Dispatch Worker routes to the per-revision User Worker
 11. User Worker executes deployed code and runs `execute(inputs, config, context)`
 12. persist final run state and ordered run events
+
+## Current Debugging Surface
+
+Artifact execution debugging currently relies on the persisted run row plus ordered run events.
+
+Current guarantees:
+- dispatch HTTP failures are persisted onto `artifact_runs.error_payload`
+- Cloudflare dispatch detail payloads are retained when the worker returns structured JSON error detail
+- eager artifact test-run creation returns the persisted failed run so callers can inspect `/admin/artifact-runs/{run_id}` and `/admin/artifact-runs/{run_id}/events`
+- artifact coding-agent test tools expose the latest test run's ordered event trail alongside `result_payload`, `error_payload`, stdout/stderr excerpts, and runtime metadata
 
 ## Worker Topology
 
@@ -185,6 +197,14 @@ Important current reality:
 - Python dependency support now follows Cloudflare's official `pywrangler` pipeline and therefore inherits Workers Python / Pyodide package constraints
 - the `pywrangler` pipeline itself is working for lightweight Python workers, but package compatibility is still narrower than normal server Python
 - the `openai` Python SDK currently imports too heavily for this runtime and should not be treated as a supported artifact dependency
+- artifact dependency analysis now uses a backend-owned registry to distinguish:
+  - built-in imports
+  - platform-verified runtime-provided imports
+  - Pyodide catalog imports
+  - declared dependencies
+- only the platform-verified runtime-provided set suppresses dependency lint by default; broader Pyodide catalog entries are visible in the dependency table but still require explicit declaration unless promoted into the verified set
+- the admin artifact config surface now derives dependency rows from current source imports plus declared dependencies instead of treating dependencies as a raw CSV-only field
+- Python dependency adds in the admin UI now verify package existence against PyPI before adding a declared dependency
 
 ## Canonical Implementation References
 

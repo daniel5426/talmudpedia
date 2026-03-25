@@ -26,20 +26,24 @@ interface CustomBreadcrumbProps {
 
 export function CustomBreadcrumb({ items }: CustomBreadcrumbProps) {
   return (
-    <Breadcrumb>
-      <BreadcrumbList>
+    <Breadcrumb className="max-w-full min-w-0">
+      <BreadcrumbList className="max-w-full min-w-0 flex-nowrap">
         {items.map((item, index) => (
           <React.Fragment key={index}>
-            <BreadcrumbItem>
+            <BreadcrumbItem className="min-w-0 max-w-full">
               {item.active ? (
-                <BreadcrumbPage className="inline-flex items-center gap-2">
-                  <span>{item.label}</span>
+                <BreadcrumbPage className="inline-flex max-w-full min-w-0 items-center gap-2">
+                  <span className="block max-w-[12rem] truncate sm:max-w-[18rem] md:max-w-[24rem]" title={item.label}>
+                    {item.label}
+                  </span>
                   {item.statusDot === "primary" ? <span className="h-2 w-2 rounded-full bg-primary" /> : null}
                 </BreadcrumbPage>
               ) : (
                 <BreadcrumbLink asChild>
-                  <Link href={item.href || "#"} className="inline-flex items-center gap-2">
-                    <span>{item.label}</span>
+                  <Link href={item.href || "#"} className="inline-flex max-w-full min-w-0 items-center gap-2">
+                    <span className="block max-w-[12rem] truncate sm:max-w-[18rem] md:max-w-[24rem]" title={item.label}>
+                      {item.label}
+                    </span>
                     {item.statusDot === "primary" ? <span className="h-2 w-2 rounded-full bg-primary" /> : null}
                   </Link>
                 </BreadcrumbLink>

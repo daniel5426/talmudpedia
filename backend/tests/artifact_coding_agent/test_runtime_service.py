@@ -7,7 +7,8 @@ import pytest
 from sqlalchemy import select
 
 from app.db.postgres.models.agents import AgentRun, RunStatus
-from app.db.postgres.models.artifact_runtime import ArtifactCodingSession, ArtifactCodingSharedDraft, ArtifactRun, ArtifactRunDomain, ArtifactRunStatus
+from app.db.postgres.models.artifact_runtime import ArtifactCodingSession, ArtifactCodingSharedDraft, ArtifactRun, ArtifactRunDomain, ArtifactRunEvent, ArtifactRunStatus
+from app.db.postgres.models.registry import IntegrationCredential, IntegrationCredentialCategory
 from app.services.artifact_coding_shared_draft_service import ArtifactCodingSharedDraftService
 from app.db.postgres.models.identity import Tenant, User
 from app.services.artifact_coding_chat_history_service import ArtifactCodingChatHistoryService
@@ -15,6 +16,11 @@ from app.services.artifact_coding_agent_profile import ensure_artifact_coding_ag
 from app.services.artifact_coding_agent_test_tools import (
     artifact_coding_await_last_test_result,
     artifact_coding_run_test,
+)
+from app.services.artifact_coding_agent_tools import (
+    artifact_coding_create_file,
+    artifact_coding_list_credentials,
+    artifact_coding_set_entry_module,
 )
 from app.services.artifact_coding_runtime_service import ArtifactCodingRuntimeService
 from app.services.artifact_runtime.revision_service import ArtifactRevisionService
@@ -214,6 +220,27 @@ async def test_build_initial_snapshot_from_seed_uses_seed_kind_without_agent_nod
     assert snapshot["display_name"] == "Seeded Tool"
     assert snapshot["entry_module_path"] == "src/main.py"
     assert snapshot["source_files"][0]["path"] == "src/main.py"
+
+
+@pytest.mark.asyncio
+async def test_build_initial_snapshot_from_seed_supports_javascript_create_mode(db_session):
+    tenant, user = await _seed_tenant_and_user(db_session)
+    await ensure_artifact_coding_agent_profile(db_session, tenant.id, actor_user_id=user.id)
+
+    runtime = ArtifactCodingRuntimeService(db_session)
+    snapshot = runtime.build_initial_snapshot_from_seed(
+        {
+            "kind": "tool_impl",
+            "language": "javascript",
+            "display_name": "Seeded JS Tool",
+        }
+    )
+
+    assert snapshot["kind"] == "tool_impl"
+    assert snapshot["language"] == "javascript"
+    assert snapshot["entry_module_path"] == "main.js"
+    assert snapshot["source_files"][0]["path"] == "main.js"
+    assert "export async function execute" in snapshot["source_files"][0]["content"]
 
 
 @pytest.mark.asyncio
@@ -536,9 +563,124 @@ async def test_artifact_coding_agent_profile_includes_delegated_worker_mode_inst
     assert "BLOCKING QUESTION:" in instructions
     assert "artifact_coding_await_last_test_result" in instructions
     assert "queued or running" in instructions
-    assert "display_name, kind, runtime.source_files, runtime.entry_module_path, runtime.runtime_target, capabilities, config_schema" in instructions
+    assert "Artifacts may use either python or javascript language lanes." in instructions
+    assert "Language is selected during create flow and must not be changed after the artifact has been persisted." in instructions
+    assert "Use artifact_coding_list_credentials when you need to reference an existing credential." in instructions
+    assert "Credential references must use exact string literals of the form @{credential-id}." in instructions
+    assert "If the current locked session is already bound to an existing persisted artifact and the request implies a new artifact or a different language" in instructions
+    assert "outside the current artifact scope and cannot be completed from this chat" in instructions
+    assert "Do not tell the caller to open another session, create another artifact, or continue elsewhere" in instructions
+    assert "Do not emit scaffolds, suggested source files, or workflow steps by default when refusing for scope conflict." in instructions
+    assert "display_name, kind, language, source_files, entry_module_path, runtime_target, capabilities, config_schema" in instructions
     assert "exactly one kind-matching contract payload" in instructions
     assert "entry_module_path points to a real file in source_files" in instructions
+    assert "kind=tool_impl" in instructions
+    assert "Tool identity, binding, and publish pinning are separate follow-up lifecycle steps" in instructions
+
+
+@pytest.mark.asyncio
+async def test_artifact_coding_list_credentials_returns_safe_metadata_only(db_session):
+    tenant, user = await _seed_tenant_and_user(db_session)
+    agent = await ensure_artifact_coding_agent_profile(db_session, tenant.id, actor_user_id=user.id)
+    runtime = ArtifactCodingRuntimeService(db_session)
+    prepared = await runtime.prepare_session(
+        tenant_id=tenant.id,
+        user_id=user.id,
+        agent_id=agent.id,
+        title_prompt="Credential listing",
+        artifact_id=None,
+        draft_key=None,
+        chat_session_id=None,
+        draft_snapshot=runtime.build_initial_snapshot_from_seed({"kind": "tool_impl"}),
+        replace_snapshot=True,
+    )
+    worker_run = await _create_artifact_coding_worker_run(
+        db_session,
+        tenant=tenant,
+        user=user,
+        agent=agent,
+        session=prepared.session,
+        shared_draft=prepared.shared_draft,
+    )
+    db_session.add(
+        IntegrationCredential(
+            tenant_id=tenant.id,
+            category=IntegrationCredentialCategory.TOOL_PROVIDER,
+            provider_key="search_api",
+            provider_variant=None,
+            display_name="Search API Key",
+            credentials={"api_key": "super-secret"},
+            is_enabled=True,
+            is_default=False,
+        )
+    )
+    await db_session.commit()
+
+    @asynccontextmanager
+    async def _session_override():
+        yield db_session
+
+    from app.services import artifact_coding_agent_tools as artifact_tools_module
+
+    original_session = artifact_tools_module.get_session
+    artifact_tools_module.get_session = _session_override
+    try:
+        result = await artifact_coding_list_credentials({"run_id": str(worker_run.id)})
+    finally:
+        artifact_tools_module.get_session = original_session
+
+    assert result["credentials"] == [
+        {
+            "id": result["credentials"][0]["id"],
+            "name": "Search API Key",
+            "category": "tool_provider",
+        }
+    ]
+    assert "credentials" in result
+    assert "super-secret" not in str(result)
+
+
+@pytest.mark.asyncio
+async def test_artifact_coding_set_entry_module_rejects_language_mismatch(db_session):
+    tenant, user = await _seed_tenant_and_user(db_session)
+    agent = await ensure_artifact_coding_agent_profile(db_session, tenant.id, actor_user_id=user.id)
+    runtime = ArtifactCodingRuntimeService(db_session)
+    prepared = await runtime.prepare_session(
+        tenant_id=tenant.id,
+        user_id=user.id,
+        agent_id=agent.id,
+        title_prompt="Reject mismatched entry module",
+        artifact_id=None,
+        draft_key=None,
+        chat_session_id=None,
+        draft_snapshot=runtime.build_initial_snapshot_from_seed({"kind": "tool_impl", "language": "python"}),
+        replace_snapshot=True,
+    )
+    worker_run = await _create_artifact_coding_worker_run(
+        db_session,
+        tenant=tenant,
+        user=user,
+        agent=agent,
+        session=prepared.session,
+        shared_draft=prepared.shared_draft,
+    )
+
+    @asynccontextmanager
+    async def _session_override():
+        yield db_session
+
+    from app.services import artifact_coding_agent_tools as artifact_tools_module
+
+    original_session = artifact_tools_module.get_session
+    artifact_tools_module.get_session = _session_override
+    try:
+        await artifact_coding_create_file(
+            {"run_id": str(worker_run.id), "path": "main.js", "content": "export async function execute() { return {}; }\n"}
+        )
+        with pytest.raises(ValueError, match="not compatible with artifact language"):
+            await artifact_coding_set_entry_module({"run_id": str(worker_run.id), "path": "main.js"})
+    finally:
+        artifact_tools_module.get_session = original_session
 
 
 @pytest.mark.asyncio
@@ -670,6 +812,88 @@ async def test_artifact_coding_await_last_test_result_waits_for_terminal_state(d
     assert result["is_terminal"] is True
     assert result["wait_timed_out"] is False
     assert result["result_payload"] == {"passed": True}
+
+
+@pytest.mark.asyncio
+async def test_artifact_coding_get_last_test_result_includes_ordered_events(db_session, monkeypatch):
+    tenant, user = await _seed_tenant_and_user(db_session)
+    agent = await ensure_artifact_coding_agent_profile(db_session, tenant.id, actor_user_id=user.id)
+    runtime = ArtifactCodingRuntimeService(db_session)
+    prepared = await runtime.prepare_session(
+        tenant_id=tenant.id,
+        user_id=user.id,
+        agent_id=agent.id,
+        title_prompt="Get artifact test event trail",
+        artifact_id=None,
+        draft_key=None,
+        chat_session_id=None,
+        draft_snapshot=runtime.build_initial_snapshot_from_seed({"kind": "tool_impl"}),
+        replace_snapshot=True,
+    )
+    worker_run = await _create_artifact_coding_worker_run(
+        db_session,
+        tenant=tenant,
+        user=user,
+        agent=agent,
+        session=prepared.session,
+        shared_draft=prepared.shared_draft,
+    )
+    failed_test_run = ArtifactRun(
+        tenant_id=tenant.id,
+        revision_id=uuid4(),
+        artifact_id=None,
+        domain=ArtifactRunDomain.TEST,
+        status=ArtifactRunStatus.FAILED,
+        queue_class="artifact_test",
+        sandbox_backend="cloudflare_workers",
+        input_payload={},
+        config_payload={},
+        context_payload={},
+        error_payload={"message": "worker crashed", "code": "CLOUDFLARE_DISPATCH_HTTP_ERROR"},
+        runtime_metadata={"worker_name": "cf-worker"},
+    )
+    db_session.add(failed_test_run)
+    await db_session.flush()
+    db_session.add_all(
+        [
+            ArtifactRunEvent(
+                run_id=failed_test_run.id,
+                sequence=1,
+                event_type="dispatch_started",
+                payload={"data": {"worker_name": "cf-worker"}},
+            ),
+            ArtifactRunEvent(
+                run_id=failed_test_run.id,
+                sequence=2,
+                event_type="dispatch_finished",
+                payload={"data": {"status": "failed"}},
+            ),
+        ]
+    )
+    prepared.shared_draft.last_test_run_id = failed_test_run.id
+    await db_session.commit()
+
+    @asynccontextmanager
+    async def _session_override():
+        yield db_session
+
+    monkeypatch.setattr(
+        "app.services.artifact_coding_agent_test_tools.get_session",
+        _session_override,
+    )
+
+    from app.services.artifact_coding_agent_test_tools import artifact_coding_get_last_test_result
+
+    result = await artifact_coding_get_last_test_result({"run_id": str(worker_run.id)})
+
+    assert result["has_test_result"] is True
+    assert result["status"] == "failed"
+    assert result["failure_summary"] == "worker crashed"
+    assert result["event_count"] == 2
+    assert [event["event_type"] for event in result["events"]] == [
+        "dispatch_started",
+        "dispatch_finished",
+    ]
 
 
 @pytest.mark.asyncio

@@ -142,3 +142,66 @@ async def test_artifact_version_endpoints_list_and_get_saved_revisions(client, d
         assert first_version["runtime"]["source_files"][0]["content"].strip().endswith("{'step': 1}")
     finally:
         app.dependency_overrides.pop(get_current_principal, None)
+
+
+@pytest.mark.asyncio
+async def test_duplicate_artifact_creates_tenant_copy_with_incremented_name(client, db_session):
+    tenant, user = await _seed_tenant_context(db_session)
+    app.dependency_overrides[get_current_principal] = _override_principal(tenant.id, user)
+
+    try:
+        create_response = await client.post(
+            f"/admin/artifacts?tenant_slug={tenant.slug}",
+            json={
+                "display_name": "Email Validator",
+                "description": "duplicate coverage",
+                "kind": "tool_impl",
+                "runtime": {
+                    "language": "javascript",
+                    "source_files": [{"path": "main.js", "content": "export async function execute(inputs, config, context) { return { ok: true } }\n"}],
+                    "entry_module_path": "main.js",
+                    "dependencies": [],
+                    "runtime_target": "cloudflare_workers",
+                },
+                "config_schema": {},
+                "capabilities": {},
+                "tool_contract": {
+                    "input_schema": {"type": "object"},
+                    "output_schema": {"type": "object"},
+                    "side_effects": [],
+                    "execution_mode": "sync",
+                    "tool_ui": {},
+                },
+            },
+        )
+        assert create_response.status_code == 200, create_response.text
+        original = create_response.json()
+
+        duplicate_one = await client.post(
+            f"/admin/artifacts/{original['id']}/duplicate?tenant_slug={tenant.slug}",
+            json={},
+        )
+        assert duplicate_one.status_code == 200, duplicate_one.text
+        first_copy = duplicate_one.json()
+        assert first_copy["id"] != original["id"]
+        assert first_copy["display_name"] == "Email Validator (1)"
+        assert first_copy["kind"] == original["kind"]
+        assert first_copy["runtime"]["language"] == "javascript"
+        assert first_copy["runtime"]["entry_module_path"] == "main.js"
+
+        duplicate_two = await client.post(
+            f"/admin/artifacts/{original['id']}/duplicate?tenant_slug={tenant.slug}",
+            json={},
+        )
+        assert duplicate_two.status_code == 200, duplicate_two.text
+        second_copy = duplicate_two.json()
+        assert second_copy["display_name"] == "Email Validator (2)"
+
+        list_response = await client.get(f"/admin/artifacts?tenant_slug={tenant.slug}")
+        assert list_response.status_code == 200, list_response.text
+        names = [item["display_name"] for item in list_response.json()]
+        assert names.count("Email Validator") == 1
+        assert "Email Validator (1)" in names
+        assert "Email Validator (2)" in names
+    finally:
+        app.dependency_overrides.pop(get_current_principal, None)

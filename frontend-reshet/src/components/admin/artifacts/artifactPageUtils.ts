@@ -1,6 +1,7 @@
 import {
   AgentArtifactContract,
   Artifact,
+  ArtifactLanguage,
   ArtifactCapabilityConfig,
   ArtifactCreateRequest,
   ArtifactKind,
@@ -226,4 +227,24 @@ export function serializeArtifactFormData(formData: ArtifactFormData): string {
     ...formData,
     source_files: formData.source_files.map((file) => ({ path: file.path, content: file.content })),
   });
+}
+
+function isPythonPath(path: string): boolean {
+  return String(path || "").trim().toLowerCase().endsWith(".py");
+}
+
+function isJavascriptPath(path: string): boolean {
+  const normalized = String(path || "").trim().toLowerCase();
+  return normalized.endsWith(".js") || normalized.endsWith(".mjs") || normalized.endsWith(".ts") || normalized.endsWith(".mts");
+}
+
+export function getArtifactLanguageWarningPaths(
+  language: ArtifactLanguage,
+  sourceFiles: Array<{ path: string }>,
+): string[] {
+  return Array.from(new Set(
+    sourceFiles
+      .map((file) => String(file.path || "").trim())
+      .filter((path) => path && (language === "python" ? isJavascriptPath(path) : isPythonPath(path))),
+  )).sort();
 }

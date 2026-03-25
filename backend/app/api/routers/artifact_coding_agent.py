@@ -185,7 +185,7 @@ async def _get_session_for_user_or_404(
     return session
 
 
-def _normalize_trace_tool_events(
+def _normalize_trace_events(
     *,
     run_id: UUID,
     raw_events: list[dict[str, Any]],
@@ -195,7 +195,8 @@ def _normalize_trace_tool_events(
         if not isinstance(item, dict):
             continue
         event_name = str(item.get("event") or "").strip()
-        if event_name not in {"on_tool_start", "on_tool_end"}:
+        event_type = str(item.get("type") or "").strip()
+        if event_name not in {"on_tool_start", "on_tool_end", "tool.failed"} and event_name != "token" and event_type != "token":
             continue
         mapped, stage, payload, diagnostics = normalize_filtered_event_to_v2(raw_event=item)
         normalized.append(
@@ -254,7 +255,7 @@ async def _build_session_detail_response(
             if run is None or run.tenant_id != tenant_id:
                 continue
             raw_events = await recorder.list_events(db, run_id)
-            run_events.extend(_normalize_trace_tool_events(run_id=run_id, raw_events=raw_events))
+            run_events.extend(_normalize_trace_events(run_id=run_id, raw_events=raw_events))
     return ArtifactCodingChatSessionDetailResponse(
         session=ArtifactCodingChatSessionResponse(**history.serialize_session(session)),
         messages=[ArtifactCodingChatMessageResponse(**history.serialize_message(item)) for item in messages],

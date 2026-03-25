@@ -1,6 +1,6 @@
 # Canonical Docs Guide
 
-Last Updated: 2026-03-24
+Last Updated: 2026-03-25
 
 This guide lists the current canonical documentation entry points after the first documentation-system refactor.
 
@@ -60,6 +60,8 @@ This guide lists the current canonical documentation entry points after the firs
   - Current agent graph contract shared by builder and compiler.
 - `docs/product-specs/rag_pipeline_spec.md`
   - Current RAG pipeline builder/runtime contract and contract-discipline rules.
+- `docs/product-specs/artifact_coding_agent_spec.md`
+  - Current artifact-coding-agent product/runtime contract across artifact-page chat and architect worker delegation.
 - `docs/product-specs/artifacts_domain_spec.md`
   - Current artifact-domain behavior and lifecycle.
 - `docs/product-specs/tools_domain_spec.md`

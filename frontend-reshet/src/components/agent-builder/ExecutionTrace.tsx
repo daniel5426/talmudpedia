@@ -34,14 +34,14 @@ interface ExecutionTraceProps {
 
 export function ExecutionTrace({ steps, className, showHeader = false, title = "Execution Trace" }: ExecutionTraceProps) {
     return (
-        <div className={cn("flex flex-col h-full bg-background", className)}>
+        <div className={cn("flex h-full min-h-0 flex-col bg-background", className)}>
             {showHeader && (
                 <div className="p-4 border-b bg-background flex items-center gap-2">
                     <h2 className="font-semibold text-sm uppercase tracking-wider">{title}</h2>
                 </div>
             )}
 
-            <ScrollArea className="flex-1">
+            <ScrollArea className="min-h-0 flex-1">
                 <div className="p-4 space-y-4">
                     {steps.length === 0 ? (
                         <div className="flex flex-col items-center justify-center py-12 text-muted-foreground gap-2">

@@ -1,9 +1,16 @@
 "use client"
 
-import { Bot, Database, Edit, Loader2, Package, Trash2, Upload, Wrench } from "lucide-react"
+import { Bot, Copy, Database, Edit, Loader2, MoreHorizontal, Package, Trash2, Upload, Wrench } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import type { Artifact, ArtifactKind } from "@/services/artifacts"
 import { kindLabel } from "@/components/admin/artifacts/artifactPageUtils"
@@ -14,6 +21,7 @@ type ArtifactListViewProps = {
   onEditArtifact: (artifact: Artifact) => void
   onDeleteArtifact: (artifact: Artifact) => void
   onPublishArtifact: (artifact: Artifact) => void
+  onDuplicateArtifact: (artifact: Artifact) => void
 }
 
 function kindIcon(kind: ArtifactKind) {
@@ -28,6 +36,7 @@ export function ArtifactListView({
   onEditArtifact,
   onDeleteArtifact,
   onPublishArtifact,
+  onDuplicateArtifact,
 }: ArtifactListViewProps) {
   return (
     <div className="m-4 space-y-3">
@@ -69,7 +78,13 @@ export function ArtifactListView({
                           <Icon className="h-4 w-4" />
                         </div>
                         <div className="flex flex-col">
-                          <span>{artifact.display_name}</span>
+                          <button
+                            type="button"
+                            className="w-fit cursor-pointer text-left transition hover:text-primary"
+                            onClick={() => onEditArtifact(artifact)}
+                          >
+                            {artifact.display_name}
+                          </button>
                           <span className="text-xs text-muted-foreground">{kindLabel(artifact.kind)}</span>
                         </div>
                       </div>
@@ -82,27 +97,41 @@ export function ArtifactListView({
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground">{artifact.version}</TableCell>
                     <TableCell className="text-right">
-                      <div className="flex justify-end gap-1">
-                        {artifact.type === "draft" && artifact.owner_type === "tenant" ? (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            title="Publish"
-                            onClick={() => onPublishArtifact(artifact)}
-                            disabled={publishingId === artifact.id}
-                          >
-                            {publishingId === artifact.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="icon" aria-label={`Actions for ${artifact.display_name}`}>
+                            <MoreHorizontal className="h-4 w-4" />
                           </Button>
-                        ) : null}
-                        <Button variant="ghost" size="icon" onClick={() => onEditArtifact(artifact)}>
-                          <Edit className="h-4 w-4" />
-                        </Button>
-                        {artifact.owner_type === "tenant" ? (
-                          <Button variant="ghost" size="icon" onClick={() => onDeleteArtifact(artifact)}>
-                            <Trash2 className="h-4 w-4 text-destructive" />
-                          </Button>
-                        ) : null}
-                      </div>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem onClick={() => onEditArtifact(artifact)}>
+                            <Edit className="mr-2 h-4 w-4" />
+                            Edit
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => onDuplicateArtifact(artifact)}>
+                            <Copy className="mr-2 h-4 w-4" />
+                            Duplicate
+                          </DropdownMenuItem>
+                          {artifact.type === "draft" && artifact.owner_type === "tenant" ? (
+                            <DropdownMenuItem
+                              onClick={() => onPublishArtifact(artifact)}
+                              disabled={publishingId === artifact.id}
+                            >
+                              {publishingId === artifact.id ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}
+                              Publish
+                            </DropdownMenuItem>
+                          ) : null}
+                          {artifact.owner_type === "tenant" ? (
+                            <>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem onClick={() => onDeleteArtifact(artifact)} className="text-destructive">
+                                <Trash2 className="mr-2 h-4 w-4" />
+                                Delete
+                              </DropdownMenuItem>
+                            </>
+                          ) : null}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     </TableCell>
                   </TableRow>
                 )

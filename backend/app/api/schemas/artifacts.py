@@ -239,6 +239,43 @@ class ArtifactSourceValidationResponse(BaseModel):
     diagnostics: list[ArtifactSourceValidationDiagnostic] = Field(default_factory=list)
 
 
+class ArtifactDependencyAnalysisRequest(BaseModel):
+    language: ArtifactLanguage
+    source_files: list[ArtifactSourceFile] = Field(default_factory=list)
+    dependencies: list[str] = Field(default_factory=list)
+
+
+class ArtifactDependencyRow(BaseModel):
+    name: str
+    normalized_name: str
+    declared_spec: Optional[str] = None
+    classification: Literal["builtin", "runtime_provided", "declared"]
+    source: Literal["builtin", "runtime_registry", "runtime_catalog", "declared"]
+    status: str
+    note: Optional[str] = None
+    imported: bool = False
+    declared: bool = False
+    can_remove: bool = False
+    can_add: bool = False
+    needs_declaration: bool = False
+
+
+class ArtifactDependencyAnalysisResponse(BaseModel):
+    rows: list[ArtifactDependencyRow] = Field(default_factory=list)
+
+
+class PythonPackageVerificationRequest(BaseModel):
+    package_name: str
+
+
+class PythonPackageVerificationResponse(BaseModel):
+    package_name: str
+    normalized_name: str
+    status: Literal["exists", "not_found", "invalid", "lookup_failed"]
+    exists: bool = False
+    error_message: Optional[str] = None
+
+
 class ArtifactTestResponse(BaseModel):
     success: bool
     data: Optional[Any] = None
@@ -287,6 +324,12 @@ class ArtifactRunSchema(BaseModel):
 class ArtifactRunCreateResponse(BaseModel):
     run_id: str
     status: ArtifactRunStatus
+
+
+class ArtifactRuntimeQueueStatusSchema(BaseModel):
+    queue_class: str
+    active_count: int
+    concurrency_limit: int
 
 
 class ArtifactRunEventSchema(BaseModel):

@@ -1,14 +1,18 @@
 import uuid
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
 from app.api.dependencies import get_current_principal
+from app.db.postgres.models.artifact_runtime import ArtifactRun, ArtifactRunStatus
 from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Tenant, User
+from app.services.artifact_runtime.cloudflare_dispatch_client import CloudflareDispatchHTTPError
+from app.services.artifact_runtime.policy_service import ArtifactConcurrencyLimitExceeded
 from main import app
 
 
 ARTIFACT_CODE = """def execute(inputs, config, context):
-    payload = inputs.get("value")
+    payload = inputs
     return {
         "received": payload,
         "config": config,
@@ -55,7 +59,7 @@ def _override_principal(tenant_id, user):
 
 
 def _mock_dispatch_result(payload):
-    value = payload.get("inputs", {}).get("value")
+    value = payload.get("inputs")
     return {
         "status": "completed",
         "result": {
@@ -192,7 +196,7 @@ async def test_unsaved_artifact_test_run_uses_principal_tenant_context_without_t
             json={
                 "source_files": [{"path": "main.py", "content": ARTIFACT_CODE}],
                 "entry_module_path": "main.py",
-                "input_data": {"value": ["hello"]},
+                "input_data": ["hello"],
                 "config": {"mode": "demo"},
                 "dependencies": [],
                 "kind": "rag_operator",
@@ -270,5 +274,152 @@ async def test_artifact_test_run_can_be_cancelled_while_queued(client, db_sessio
         status_response = await client.get(f"/admin/artifact-runs/{run_id}?tenant_slug={tenant.slug}")
         assert status_response.status_code == 200, status_response.text
         assert status_response.json()["status"] == "cancelled"
+    finally:
+        app.dependency_overrides.pop(get_current_principal, None)
+
+
+@pytest.mark.asyncio
+async def test_artifact_runtime_status_endpoint_reports_active_count_and_limit(client, db_session):
+    tenant, user = await _seed_tenant_context(db_session)
+    app.dependency_overrides[get_current_principal] = _override_principal(tenant.id, user)
+
+    try:
+        stale_safe_started_at = datetime.now(timezone.utc) - timedelta(minutes=1)
+        run = ArtifactRun(
+            tenant_id=tenant.id,
+            revision_id=uuid.uuid4(),
+            domain="test",
+            status=ArtifactRunStatus.RUNNING,
+            queue_class="artifact_test",
+            started_at=stale_safe_started_at,
+            created_at=stale_safe_started_at,
+            runtime_metadata={},
+        )
+        db_session.add(run)
+        await db_session.commit()
+
+        response = await client.get(f"/admin/artifact-runs/runtime-status?tenant_slug={tenant.slug}")
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert payload == {
+            "queue_class": "artifact_test",
+            "active_count": 1,
+            "concurrency_limit": 10,
+        }
+    finally:
+        app.dependency_overrides.pop(get_current_principal, None)
+
+
+@pytest.mark.asyncio
+async def test_unsaved_artifact_test_run_returns_429_when_capacity_is_exhausted(client, db_session, monkeypatch):
+    monkeypatch.setenv("ARTIFACT_RUN_TASK_EAGER", "1")
+    tenant, user = await _seed_tenant_context(db_session)
+    app.dependency_overrides[get_current_principal] = _override_principal(tenant.id, user)
+
+    async def deny_capacity(self, *, tenant_id, queue_class):
+        raise ArtifactConcurrencyLimitExceeded(
+            queue_class=queue_class,
+            active_count=10,
+            concurrency_limit=10,
+        )
+
+    monkeypatch.setattr(
+        "app.services.artifact_runtime.policy_service.ArtifactRuntimePolicyService.assert_capacity",
+        deny_capacity,
+    )
+
+    try:
+        response = await client.post(
+            "/admin/artifacts/test-runs",
+            json={
+                "source_files": [{"path": "main.py", "content": ARTIFACT_CODE}],
+                "entry_module_path": "main.py",
+                "input_data": ["hello"],
+                "config": {"mode": "demo"},
+                "dependencies": [],
+                "kind": "rag_operator",
+                "runtime_target": "cloudflare_workers",
+                "config_schema": {},
+                "rag_contract": {
+                    "operator_category": "transform",
+                    "pipeline_role": "processor",
+                    "input_schema": {"type": "object"},
+                    "output_schema": {"type": "object"},
+                    "execution_mode": "background",
+                },
+            },
+        )
+        assert response.status_code == 429, response.text
+        assert response.json()["detail"] == "Tenant concurrency limit reached for artifact_test: 10/10"
+    finally:
+        app.dependency_overrides.pop(get_current_principal, None)
+
+
+@pytest.mark.asyncio
+async def test_unsaved_artifact_test_run_returns_failed_run_payload_when_eager_dispatch_crashes(client, db_session, monkeypatch):
+    monkeypatch.setenv("ARTIFACT_RUN_TASK_EAGER", "1")
+    tenant, user = await _seed_tenant_context(db_session)
+    app.dependency_overrides[get_current_principal] = _override_principal(tenant.id, user)
+
+    async def fake_ensure_deployment(self, *, revision, namespace, tenant_id=None):
+        return type(
+            "_Deployment",
+            (),
+            {
+                "worker_name": "staging-worker",
+                "deployment_id": "dep-500",
+                "version_id": "ver-500",
+                "build_hash": revision.build_hash,
+            },
+        )()
+
+    async def fake_execute(self, payload):
+        raise CloudflareDispatchHTTPError(
+            status_code=500,
+            message="Dispatch worker returned HTTP 500 for https://artifact-test-runtime.example/execute: worker crashed",
+            response_text='{"detail":{"code":"WORKER_CRASH","message":"worker crashed","traceback":"boom"}}',
+            response_json={"detail": {"code": "WORKER_CRASH", "message": "worker crashed", "traceback": "boom"}},
+            url="https://artifact-test-runtime.example/execute",
+        )
+
+    monkeypatch.setattr("app.services.artifact_runtime.deployment_service.ArtifactDeploymentService.ensure_deployment", fake_ensure_deployment)
+    monkeypatch.setattr("app.services.artifact_runtime.cloudflare_dispatch_client.CloudflareDispatchClient.execute", fake_execute)
+
+    try:
+        response = await client.post(
+            "/admin/artifacts/test-runs",
+            json={
+                "source_files": [{"path": "main.py", "content": ARTIFACT_CODE}],
+                "entry_module_path": "main.py",
+                "input_data": ["hello"],
+                "config": {"mode": "demo"},
+                "dependencies": [],
+                "kind": "rag_operator",
+                "runtime_target": "cloudflare_workers",
+                "config_schema": {},
+                "rag_contract": {
+                    "operator_category": "transform",
+                    "pipeline_role": "processor",
+                    "input_schema": {"type": "object"},
+                    "output_schema": {"type": "object"},
+                    "execution_mode": "background",
+                },
+            },
+        )
+        assert response.status_code == 200, response.text
+        run_id = response.json()["run_id"]
+
+        status_response = await client.get(f"/admin/artifact-runs/{run_id}")
+        assert status_response.status_code == 200, status_response.text
+        run_payload = status_response.json()
+        assert run_payload["status"] == "failed"
+        assert run_payload["error_payload"]["code"] == "CLOUDFLARE_DISPATCH_HTTP_ERROR"
+        assert run_payload["error_payload"]["dispatch_detail"]["code"] == "WORKER_CRASH"
+
+        events_response = await client.get(f"/admin/artifact-runs/{run_id}/events")
+        assert events_response.status_code == 200, events_response.text
+        event_types = [event["event_type"] for event in events_response.json()["events"]]
+        assert "dispatch_finished" in event_types
+        assert "dispatch_request_debug" in event_types
     finally:
         app.dependency_overrides.pop(get_current_principal, None)

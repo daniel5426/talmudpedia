@@ -7,6 +7,34 @@ from typing import Any
 import httpx
 
 
+def _nested_detail_dict(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    current = value
+    seen: set[int] = set()
+    while isinstance(current, dict) and id(current) not in seen:
+        seen.add(id(current))
+        nested = current.get("upstream_detail")
+        if not isinstance(nested, dict):
+            return current
+        current = nested
+    return current if isinstance(current, dict) else None
+
+
+def _best_detail_message(detail: Any) -> str | None:
+    nested = _nested_detail_dict(detail)
+    if not isinstance(nested, dict):
+        return None
+    for key in ("message", "error"):
+        value = nested.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    code = nested.get("code")
+    if isinstance(code, str) and code.strip():
+        return code.strip()
+    return None
+
+
 @dataclass(frozen=True)
 class CloudflareDispatchResult:
     status: str
@@ -38,6 +66,9 @@ class CloudflareDispatchHTTPError(RuntimeError):
         self.url = url
 
     def to_error_payload(self) -> dict[str, Any]:
+        detail = self.response_json.get("detail") if isinstance(self.response_json, dict) else None
+        dispatch_detail = detail if isinstance(detail, dict) else None
+        root_cause_detail = _nested_detail_dict(dispatch_detail)
         payload: dict[str, Any] = {
             "code": "CLOUDFLARE_DISPATCH_HTTP_ERROR",
             "message": str(self),
@@ -47,9 +78,10 @@ class CloudflareDispatchHTTPError(RuntimeError):
         }
         if isinstance(self.response_json, dict):
             payload["response_json"] = self.response_json
-            detail = self.response_json.get("detail")
-            if isinstance(detail, dict):
-                payload["dispatch_detail"] = detail
+            if dispatch_detail is not None:
+                payload["dispatch_detail"] = dispatch_detail
+            if root_cause_detail is not None:
+                payload["dispatch_root_cause"] = root_cause_detail
         return payload
 
 
@@ -74,10 +106,9 @@ class CloudflareDispatchClient:
             message = f"Dispatch worker returned HTTP {response.status_code} for {response.request.url}"
             if isinstance(body, dict):
                 detail = body.get("detail")
-                if isinstance(detail, dict):
-                    detail_message = detail.get("message") or detail.get("error") or detail.get("code")
-                    if detail_message:
-                        message = f"{message}: {detail_message}"
+                detail_message = _best_detail_message(detail)
+                if detail_message:
+                    message = f"{message}: {detail_message}"
                 elif isinstance(detail, str) and detail.strip():
                     message = f"{message}: {detail.strip()}"
             raise CloudflareDispatchHTTPError(

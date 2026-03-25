@@ -4,6 +4,29 @@ export interface Env {
   BACKEND_SHARED_SECRET: string;
 }
 
+function nestedDetail(detail: unknown): Record<string, unknown> | undefined {
+  if (!detail || typeof detail !== "object") return undefined;
+  let current = detail as Record<string, unknown>;
+  const seen = new Set<Record<string, unknown>>();
+  while (!seen.has(current)) {
+    seen.add(current);
+    const upstream = current.upstream_detail;
+    if (!upstream || typeof upstream !== "object") return current;
+    current = upstream as Record<string, unknown>;
+  }
+  return current;
+}
+
+function bestDetailMessage(detail: unknown): string | undefined {
+  const nested = nestedDetail(detail);
+  if (!nested) return undefined;
+  for (const key of ["message", "error", "code"] as const) {
+    const value = nested[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return undefined;
+}
+
 type DispatchRequest = {
   worker_name: string;
   namespace: string;
@@ -62,13 +85,16 @@ export default {
           data && typeof data === "object" && "detail" in data
             ? (data as { detail?: unknown }).detail
             : undefined;
+        const rootCause = nestedDetail(detail);
+        const rootCauseMessage = bestDetailMessage(detail);
         return Response.json(
           {
             detail: {
               code: "DISPATCH_UPSTREAM_ERROR",
-              message: "Dispatched worker returned an error response.",
+              message: rootCauseMessage || "Dispatched worker returned an error response.",
               upstream_status: upstream.status,
               upstream_detail: detail,
+              upstream_root_cause: rootCause,
               upstream_text: upstreamText.slice(0, 4000),
             },
           },

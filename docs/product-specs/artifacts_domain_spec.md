@@ -82,6 +82,8 @@ Current behavior:
 - reopening an existing artifact page should hydrate from the current persisted working draft before falling back to the latest saved revision
 - the agent cannot switch to another artifact scope
 - the agent does not persist artifacts; persistence remains owned by the artifact page or the architect binding flow
+- if a request implies a different artifact identity or an incompatible language change for an existing persisted artifact, the agent must refuse briefly and stop instead of mutating the current draft
+- the coding agent must not ask the caller to open another session, create another artifact, or continue in a different scope unless explicitly asked what to do next
 - Save still creates a new immutable artifact revision/version when used from the page UI
 - Publish remains explicit and now auto-saves first when the editor has unsaved changes
 - create mode is supported before first artifact save through a temporary `draft_key`
@@ -92,6 +94,11 @@ Current transcript roles for artifact coding chat are:
 - `orchestrator`
 
 Stored `orchestrator` turns remain visible in chat history but are mapped to model-facing `system` messages.
+
+Current chat transcript/timeline behavior:
+- streamed assistant text and tool calls are part of one ordered chat timeline
+- assistant text emitted before and after tool calls must remain visible as separate assistant segments
+- session-detail history includes assistant delta events and tool events so timeline order can be reconstructed on reload
 
 ### Publish
 
@@ -162,6 +169,17 @@ Shared runtime/base configuration now includes:
 - `capabilities`
 - `config_schema`
 
+Current dependency authoring behavior:
+- `runtime.dependencies` stores only user-declared dependency strings
+- built-in, verified runtime-provided, and broader Pyodide-catalog imports are derived from language, source imports, and a backend-owned platform registry
+- the admin config surface exposes a dedicated Dependency tab with:
+  - an add bar
+  - derived dependency rows
+  - status/source metadata
+  - row-level add/remove actions
+- Python dependency adds are verified against PyPI before they are inserted into `runtime.dependencies`
+- Pyodide catalog entries are shown in the dependency table, but only the platform-verified runtime-provided subset suppresses dependency lint by default
+
 Kind-specific contract payloads are:
 - `agent_contract`
   - `state_reads`
@@ -187,6 +205,11 @@ The runtime handler contract remains:
 ```python
 async def execute(inputs: dict, config: dict, context: dict) -> dict: ...
 ```
+
+Current artifact test-run input contract:
+- `/admin/artifacts/test-runs` passes request `input_data` through directly as runtime `inputs`
+- the test runtime does not wrap author-provided payloads under `value`
+- artifacts that need a field such as `client_id` must read it from `inputs["client_id"]` / `inputs.client_id`, not from `inputs["value"]`
 
 ## Credential Reference Rules
 

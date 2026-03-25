@@ -1,0 +1,142 @@
+[
+  {
+    "ishur_iska": 299101,
+    "code_matbea_1_1": 1,
+    "code_matbea_1_2": 40,
+    "total_1_1": 250000.0,
+    "total_1_2": 888500.0,
+    "mimush_1": 3.554,
+    "spot_1": 3.551,
+    "principal_amount": 250000.0
+  },
+  {
+    "ishur_iska": 299102,
+    "code_matbea_1_1": 1,
+    "code_matbea_1_2": 40,
+    "total_1_1": 360000.0,
+    "total_1_2": 1289160.0,
+    "mimush_1": 3.581,
+    "spot_1": 3.567,
+    "principal_amount": 360000.0
+  },
+  {
+    "ishur_iska": 299103,
+    "code_matbea_1_1": 1,
+    "code_matbea_1_2": 40,
+    "total_1_1": 350000.0,
+    "total_1_2": 1263150.0,
+    "mimush_1": 3.609,
+    "spot_1": 3.598,
+    "principal_amount": 350000.0
+  },
+  {
+    "ishur_iska": 299104,
+    "code_matbea_1_1": 1,
+    "code_matbea_1_2": 40,
+    "total_1_1": 330000.0,
+    "total_1_2": 1165230.0,
+    "mimush_1": 3.531,
+    "spot_1": 3.523,
+    "principal_amount": 330000.0
+  },
+  {
+    "ishur_iska": 299105,
+    "code_matbea_1_1": 1,
+    "code_matbea_1_2": 40,
+    "total_1_1": 220000.0,
+    "total_1_2": 779460.0,
+    "mimush_1": 3.543,
+    "spot_1": 3.541,
+    "principal_amount": 220000.0
+  },
+  {
+    "ishur_iska": 299201,
+    "code_matbea_1_1": 6,
+    "code_matbea_1_2": 40,
+    "total_1_1": 320000.0,
+    "total_1_2": 1311040.0,
+    "mimush_1": 4.097,
+    "spot_1": 4.081,
+    "principal_amount": 320000.0
+  },
+  {
+    "ishur_iska": 299202,
+    "code_matbea_1_1": 6,
+    "code_matbea_1_2": 40,
+    "total_1_1": 180000.0,
+    "total_1_2": 735840.0,
+    "mimush_1": 4.088,
+    "spot_1": 4.086,
+    "principal_amount": 180000.0
+  },
+  {
+    "ishur_iska": 299203,
+    "code_matbea_1_1": 6,
+    "code_matbea_1_2": 40,
+    "total_1_1": 350000.0,
+    "total_1_2": 1446200.0,
+    "mimush_1": 4.132,
+    "spot_1": 4.118,
+    "principal_amount": 350000.0
+  },
+  {
+    "ishur_iska": 299204,
+    "code_matbea_1_1": 6,
+    "code_matbea_1_2": 40,
+    "total_1_1": 325000.0,
+    "total_1_2": 1339325.0,
+    "mimush_1": 4.121,
+    "spot_1": 4.112,
+    "principal_amount": 325000.0
+  },
+  {
+    "ishur_iska": 299205,
+    "code_matbea_1_1": 6,
+    "code_matbea_1_2": 40,
+    "total_1_1": 280000.0,
+    "total_1_2": 1147440.0,
+    "mimush_1": 4.098,
+    "spot_1": 4.089,
+    "principal_amount": 280000.0
+  },
+  {
+    "ishur_iska": 299301,
+    "code_matbea_1_1": 5,
+    "code_matbea_1_2": 40,
+    "total_1_1": 330000.0,
+    "total_1_2": 1588290.0,
+    "mimush_1": 4.813,
+    "spot_1": 4.801,
+    "principal_amount": 330000.0
+  },
+  {
+    "ishur_iska": 299302,
+    "code_matbea_1_1": 5,
+    "code_matbea_1_2": 40,
+    "total_1_1": 375000.0,
+    "total_1_2": 1815750.0,
+    "mimush_1": 4.842,
+    "spot_1": 4.829,
+    "principal_amount": 375000.0
+  },
+  {
+    "ishur_iska": 299303,
+    "code_matbea_1_1": 5,
+    "code_matbea_1_2": 40,
+    "total_1_1": 240000.0,
+    "total_1_2": 1149840.0,
+    "mimush_1": 4.791,
+    "spot_1": 4.788,
+    "principal_amount": 240000.0
+  },
+  {
+    "ishur_iska": 299304,
+    "code_matbea_1_1": 5,
+    "code_matbea_1_2": 40,
+    "total_1_1": 390000.0,
+    "total_1_2": 1882920.0,
+    "mimush_1": 4.828,
+    "spot_1": 4.816,
+    "principal_amount": 390000.0
+  }
+]

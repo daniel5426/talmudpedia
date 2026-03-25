@@ -20,12 +20,14 @@ import {
   ArtifactTestResponse,
   ToolArtifactContract,
 } from "@/services/artifacts"
+import { buildArtifactTestInputJson, resolveArtifactInputSchema, validateArtifactTestInput } from "@/services/artifactTestInput"
 import {
   CheckCircle2,
   ChevronDown,
   ChevronUp,
   Loader2,
   Play,
+  RotateCcw,
   Terminal,
   XCircle,
 } from "lucide-react"
@@ -55,6 +57,7 @@ const MIN_OPEN_HEIGHT = 260
 const MAX_OPEN_HEIGHT = 720
 const CLOSED_HEIGHT = 44
 const RUNTIME_PANEL_HEIGHT_STORAGE_KEY = "artifact-test-panel-height"
+const INPUT_VALIDATION_ERROR_LIMIT = 6
 
 function formatPhase(event: ArtifactRunEvent | null): string {
   if (!event) return "Synthesizing execution environment..."
@@ -67,7 +70,17 @@ function formatPhase(event: ArtifactRunEvent | null): string {
 function summarizeFailure(run: ArtifactRun | null): string {
   if (!run) return "Artifact test run failed"
   const errorPayload = (run.error_payload || {}) as Record<string, unknown>
+  const dispatchRootCause =
+    errorPayload.dispatch_root_cause && typeof errorPayload.dispatch_root_cause === "object"
+      ? (errorPayload.dispatch_root_cause as Record<string, unknown>)
+      : null
+  const dispatchDetail =
+    errorPayload.dispatch_detail && typeof errorPayload.dispatch_detail === "object"
+      ? (errorPayload.dispatch_detail as Record<string, unknown>)
+      : null
   return (
+    (dispatchRootCause && typeof dispatchRootCause.message === "string" ? dispatchRootCause.message : null) ||
+    (dispatchDetail && typeof dispatchDetail.message === "string" ? dispatchDetail.message : null) ||
     (typeof errorPayload.message === "string" ? errorPayload.message : null) ||
     run.stderr_excerpt ||
     run.stdout_excerpt ||
@@ -91,16 +104,27 @@ export function ArtifactTestPanel({
   onOpenChange,
   agentPanelOpen,
 }: ArtifactTestPanelProps) {
+  const inputSchema = resolveArtifactInputSchema(kind, {
+    agentContract,
+    ragContract,
+    toolContract,
+  })
+  const generatedInput = buildArtifactTestInputJson(
+    Object.keys(inputSchema).length > 0
+      ? inputSchema
+      : { type: "array", items: { type: "object" }, example: JSON.parse(INITIAL_INPUT) },
+  )
   const [isOpen, setIsOpen] = useState(false)
   const [isTesting, setIsTesting] = useState(false)
   const [testTab, setTestTab] = useState("input")
-  const [testInput, setTestInput] = useState(INITIAL_INPUT)
+  const [testInput, setTestInput] = useState(generatedInput)
   const [testConfig, setTestConfig] = useState(INITIAL_CONFIG)
   const [runId, setRunId] = useState<string | null>(null)
   const [events, setEvents] = useState<ArtifactRunEvent[]>([])
   const [legacyResult, setLegacyResult] = useState<ArtifactTestResponse | null>(null)
   const pollTimerRef = useRef<number | null>(null)
   const resizeStateRef = useRef<{ startY: number; startHeight: number } | null>(null)
+  const lastGeneratedInputRef = useRef(generatedInput)
   const [openHeight, setOpenHeight] = useState(() => {
     if (typeof window === "undefined") return DEFAULT_OPEN_HEIGHT
     const storedHeight = window.localStorage.getItem(RUNTIME_PANEL_HEIGHT_STORAGE_KEY)
@@ -133,6 +157,15 @@ export function ArtifactTestPanel({
       document.body.style.userSelect = ""
     }
   }, [])
+
+  useEffect(() => {
+    const shouldReplace =
+      testInput.trim().length === 0 ||
+      testInput === lastGeneratedInputRef.current
+    if (!shouldReplace) return
+    lastGeneratedInputRef.current = generatedInput
+    setTestInput(generatedInput)
+  }, [generatedInput, testInput])
 
   useEffect(() => {
     if (!runId || !isTesting) return
@@ -185,6 +218,27 @@ export function ArtifactTestPanel({
     }
   }, [isTesting, runId, tenantSlug])
 
+  let parsedInputData: unknown = null
+  let inputParseError: string | null = null
+  try {
+    parsedInputData = JSON.parse(testInput)
+  } catch {
+    inputParseError = "Input JSON is invalid."
+  }
+  const inputValidationErrors =
+    inputParseError || parsedInputData === null
+      ? []
+      : validateArtifactTestInput(parsedInputData, inputSchema)
+  const visibleInputValidationErrors = inputValidationErrors.slice(0, INPUT_VALIDATION_ERROR_LIMIT)
+  const hasInputValidationErrors = Boolean(inputParseError) || inputValidationErrors.length > 0
+
+  const resetInputToSchemaExample = () => {
+    lastGeneratedInputRef.current = generatedInput
+    setTestInput(generatedInput)
+    setTestTab("input")
+    setLegacyResult(null)
+  }
+
   const handleTestRun = async () => {
     setIsOpen(true)
     setIsTesting(true)
@@ -201,6 +255,18 @@ export function ArtifactTestPanel({
         setIsTesting(false)
         setTestTab("input")
         setLegacyResult({ success: false, data: null, error_message: "Invalid Input JSON", execution_time_ms: 0 })
+        return
+      }
+      const validationErrors = validateArtifactTestInput(inputData, inputSchema)
+      if (validationErrors.length > 0) {
+        setIsTesting(false)
+        setTestTab("input")
+        setLegacyResult({
+          success: false,
+          data: null,
+          error_message: validationErrors.join("\n"),
+          execution_time_ms: 0,
+        })
         return
       }
       try {
@@ -360,7 +426,40 @@ export function ArtifactTestPanel({
         {isOpen && (
           <div className="flex-1 min-h-0 relative">
               <TabsContent value="input" className="absolute inset-0 m-0">
-                <CodeEditor value={testInput} onChange={setTestInput} language="json" className="h-full rounded-md border-0" />
+                <div className="h-full flex flex-col relative">
+                  <div className="absolute right-5 top-3 z-10 flex items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      className="h-7 w-fit px-2 bg-background/95"
+                      onClick={resetInputToSchemaExample}
+                      title="Reset to schema example"
+                      aria-label="Reset to schema example"
+                    >
+                      <RotateCcw className="h-1.5 w-1.5" /> reset
+                    </Button>
+                  </div>
+                  {visibleInputValidationErrors.length > 0 && (
+                    <div className="border-b border-rose-500/20 bg-rose-500/5 px-4 py-2 pr-14 text-xs text-rose-300">
+                      {visibleInputValidationErrors.map((error) => (
+                        <p key={error}>{error}</p>
+                      ))}
+                      {inputValidationErrors.length > visibleInputValidationErrors.length && (
+                        <p>
+                          {inputValidationErrors.length - visibleInputValidationErrors.length} more validation error
+                          {inputValidationErrors.length - visibleInputValidationErrors.length === 1 ? "" : "s"} hidden.
+                        </p>
+                      )}
+                    </div>
+                  )}
+                  <CodeEditor
+                    value={testInput}
+                    onChange={(value) => setTestInput(value)}
+                    language="json"
+                    className="flex-1 rounded-md border-0"
+                  />
+                </div>
               </TabsContent>
               <TabsContent value="config" className="absolute inset-0 m-0">
                 <CodeEditor value={testConfig} onChange={setTestConfig} language="json" className="h-full rounded-md border-0" />

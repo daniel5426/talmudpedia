@@ -7,7 +7,13 @@ import {
   type ArtifactCodingModelOption,
 } from "@/services/artifacts";
 
-import { TimelineItem, timelineId } from "./chat-model";
+import {
+  buildArtifactCodingTimeline,
+  finalizeRunningToolItems,
+  finalizeStreamingAssistantSegment,
+  TimelineItem,
+  timelineId,
+} from "./chat-model";
 import {
   TERMINAL_RUN_EVENTS,
   parsePendingQuestionPayload,
@@ -39,67 +45,7 @@ function createClientMessageId(): string {
 }
 
 function buildTimelineFromDetail(detail: ArtifactCodingChatSessionDetail): TimelineItem[] {
-  const eventsByRunId = new Map<string, typeof detail.run_events>();
-  for (const event of detail.run_events || []) {
-    const list = eventsByRunId.get(event.run_id) || [];
-    list.push(event);
-    eventsByRunId.set(event.run_id, list);
-  }
-  const timeline: TimelineItem[] = [];
-  for (const message of detail.messages || []) {
-    if (message.role === "user") {
-      timeline.push({
-        id: message.id,
-        kind: "user",
-        title: "You",
-        description: message.content,
-        userDeliveryStatus: "sent",
-        runId: message.run_id,
-      });
-      continue;
-    }
-    if (message.role === "orchestrator") {
-      timeline.push({
-        id: message.id,
-        kind: "orchestrator",
-        title: "Orchestrator",
-        description: message.content,
-        runId: message.run_id,
-      });
-      continue;
-    }
-    const runEvents = eventsByRunId.get(message.run_id) || [];
-    const latestToolEvents = new Map<string, TimelineItem>();
-    for (const event of runEvents) {
-      if (!event.event.startsWith("tool.")) continue;
-      const output = event.payload || {};
-      const toolOutput = output.output && typeof output.output === "object" ? output.output as Record<string, unknown> : {};
-      const toolCallId = String(output.span_id || timelineId("tool-call"));
-      const toolName = String(output.tool || output.display_name || "tool");
-      latestToolEvents.set(toolCallId, {
-        id: `tool-history-${toolCallId}`,
-        kind: "tool",
-        title: String(toolOutput.summary || output.summary || toolName),
-        toolCallId,
-        toolStatus: event.event === "tool.failed" ? "failed" : event.event === "tool.started" ? "running" : "completed",
-        toolName,
-        toolPath: typeof toolOutput.path === "string" ? toolOutput.path : undefined,
-        toolDetail: typeof toolOutput.summary === "string" ? toolOutput.summary : undefined,
-        runId: message.run_id,
-      });
-    }
-    if (latestToolEvents.size > 0) {
-      timeline.push(...latestToolEvents.values());
-    }
-    timeline.push({
-      id: message.id,
-      kind: "assistant",
-      title: "Assistant",
-      description: message.content,
-      runId: message.run_id,
-    });
-  }
-  return timeline;
+  return buildArtifactCodingTimeline(detail.messages || [], detail.run_events || []);
 }
 
 export function useArtifactCodingChat({
@@ -232,7 +178,9 @@ export function useArtifactCodingChat({
     const decoder = new TextDecoder();
     let buffer = "";
     let assistantText = "";
-    const currentAssistantStreamId = `assistant-${runId}`;
+    let terminalStatus: "completed" | "failed" | "cancelled" | "paused" | null = null;
+    let currentAssistantStreamId: string | null = null;
+    let assistantSegmentIndex = 0;
     setActiveRunIdsBySession((current) => ({ ...current, [sessionKey]: runId }));
     setIsStopping(false);
     while (true) {
@@ -247,6 +195,11 @@ export function useArtifactCodingChat({
         const event = parseSse(frame);
         if (!event) continue;
         if (event.event === "assistant.delta") {
+          if (!currentAssistantStreamId) {
+            currentAssistantStreamId = `assistant-${runId}-seg${assistantSegmentIndex}`;
+            assistantSegmentIndex += 1;
+            assistantText = "";
+          }
           assistantText += String(event.payload?.content || "");
           updateTimelineForSession(sessionKey, (current) => {
             const existingIndex = current.findIndex((item) => item.kind === "assistant" && item.assistantStreamId === currentAssistantStreamId);
@@ -255,23 +208,28 @@ export function useArtifactCodingChat({
               next[existingIndex] = { ...next[existingIndex], description: assistantText };
               return next;
             }
-            return [...current, { id: timelineId("assistant"), kind: "assistant", title: "Assistant", description: assistantText, assistantStreamId: currentAssistantStreamId, runId }];
+            return [...current, { id: timelineId("assistant"), kind: "assistant", title: "Assistant", description: assistantText, assistantStreamId: currentAssistantStreamId || undefined, runId }];
           });
           continue;
         }
-        if (event.event === "tool.started" || event.event === "tool.completed") {
+        if (event.event === "tool.started" || event.event === "tool.completed" || event.event === "tool.failed") {
+          updateTimelineForSession(sessionKey, (current) => finalizeStreamingAssistantSegment(current, currentAssistantStreamId));
+          currentAssistantStreamId = null;
+          assistantText = "";
           const payload = (event.payload || {}) as Record<string, unknown>;
           const output = payload.output && typeof payload.output === "object" ? payload.output as Record<string, unknown> : {};
           const toolCallId = String(payload.span_id || timelineId("tool"));
           const toolName = String(payload.tool || "tool");
           updateTimelineForSession(sessionKey, (current) => {
             const existingIndex = current.findIndex((item) => item.kind === "tool" && item.toolCallId === toolCallId);
+            const toolStatus = event.event === "tool.started" ? "running" : event.event === "tool.failed" ? "failed" : "completed";
             const nextItem: TimelineItem = {
               id: existingIndex >= 0 ? current[existingIndex].id : timelineId("tool"),
               kind: "tool",
               title: String(output.summary || payload.summary || toolName),
               toolCallId,
-              toolStatus: event.event === "tool.started" ? "running" : "completed",
+              toolStatus,
+              tone: toolStatus === "failed" ? "error" : toolStatus === "completed" ? "success" : undefined,
               toolName,
               toolPath: typeof output.path === "string" ? output.path : undefined,
               toolDetail: typeof output.summary === "string" ? output.summary : undefined,
@@ -306,9 +264,15 @@ export function useArtifactCodingChat({
           setPendingQuestionsBySession((current) => ({ ...current, [sessionKey]: maybeQuestion }));
         }
         if (TERMINAL_RUN_EVENTS.has(event.event)) {
+          terminalStatus = parseTerminalRunStatus(event.event.replace("run.", ""));
           setActiveRunIdsBySession((current) => ({ ...current, [sessionKey]: null }));
           setActiveThinkingBySession((current) => ({ ...current, [sessionKey]: "" }));
-          const terminal = parseTerminalRunStatus(event.event.replace("run.", ""));
+          const terminal = terminalStatus;
+          if (terminal === "completed" || terminal === "failed" || terminal === "cancelled") {
+            updateTimelineForSession(sessionKey, (current) =>
+              finalizeRunningToolItems(current, terminal === "completed" ? "completed" : "failed", runId),
+            );
+          }
           if (terminal !== "paused") {
             setPendingQuestionsBySession((current) => ({ ...current, [sessionKey]: null }));
             await refreshSessions();
@@ -322,6 +286,7 @@ export function useArtifactCodingChat({
     abortReaderMapRef.current.delete(sessionKey);
     setActiveRunIdsBySession((current) => ({ ...current, [sessionKey]: null }));
     setActiveThinkingBySession((current) => ({ ...current, [sessionKey]: "" }));
+    updateTimelineForSession(sessionKey, (current) => finalizeStreamingAssistantSegment(current, currentAssistantStreamId));
     await refreshSessions();
     if (activeSessionRef.current === sessionId) {
       await loadSessionDetail(sessionId);

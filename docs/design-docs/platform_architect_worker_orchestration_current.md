@@ -1,6 +1,6 @@
 # Platform Architect Worker Orchestration Current State
 
-Last Updated: 2026-03-17
+Last Updated: 2026-03-25
 
 This document is the canonical design reference for the current `platform-architect` worker orchestration model.
 
@@ -60,7 +60,7 @@ V1 supports exactly one binding type:
 Normal create flow for this binding is now lightweight:
 - `prepare_mode=create_new_draft`
 - required: `title_prompt`, `draft_seed.kind`
-- optional: `draft_seed.display_name`, `draft_seed.description`, `draft_seed.entry_module_path`, `draft_seed.runtime_target`, `draft_key`, `replace_snapshot`
+- optional: `draft_seed.display_name`, `draft_seed.description`, `draft_seed.language`, `draft_seed.entry_module_path`, `draft_seed.runtime_target`, `draft_key`, `replace_snapshot`
 
 Advanced snapshot seeding still exists but is not the architect’s normal path:
 - `prepare_mode=seed_snapshot`
@@ -98,6 +98,7 @@ Important boundary:
 The backend now owns initial draft construction for the normal create path:
 - the architect provides only the draft seed
 - the backend generates the canonical initial snapshot from the artifact kind defaults
+- create-mode draft seeds may also choose the initial artifact language, which controls the default starter file/template
 - the architect no longer needs to author files, contract blobs, or runtime defaults just to start the worker flow
 
 Artifact session contract:
@@ -110,6 +111,7 @@ Artifact session contract:
 Current explicit contract rule:
 - normal `create_new_draft` rejects full `draft_snapshot`
 - advanced `seed_snapshot` accepts full canonical snapshots only
+- canonical snapshots use `language` and `dependencies`; old `python_dependencies` is not part of the current worker-binding contract
 - guessed fields like `create`, `files`, `entrypoint`, and `text` now fail fast under strict validation
 
 ## Architect-Facing Shell Actions
@@ -209,7 +211,8 @@ The latest live runs exposed several root-cause gaps that are not yet resolved:
   - The fix was to commit successful mutating architect worker tools before returning.
 
 - The artifact worker delegated-mode gap is partially improved but not fully solved.
-  - The artifact coding agent profile now instructs delegated workers to complete `architect_worker_task` autonomously from the current shared draft and to use the artifact-coding runtime directly for create/update persistence when required.
+  - The artifact coding agent profile now instructs delegated workers to complete `architect_worker_task` autonomously from the current shared draft, honor create-only language selection, discover credential references through safe metadata, and leave persistence to the architect binding flow.
+  - The worker is also now strictly artifact-scoped in delegated mode: if the request really requires a different artifact or incompatible language, it should refuse briefly and stop rather than asking to open another session or proposing cross-artifact workflow steps. The architect owns any follow-up creation/spawn decision.
   - Some live runs still show the worker falling back to chatty editor behavior instead of executing the requested mutations.
 
 - The session/shared-draft drift bug is fixed.

@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.postgres.engine import sessionmaker as get_session
 from app.db.postgres.models.agents import AgentRun
 from app.db.postgres.models.artifact_runtime import Artifact, ArtifactCodingSession, ArtifactCodingSharedDraft, ArtifactKind
+from app.db.postgres.models.registry import IntegrationCredential, IntegrationCredentialCategory
 from app.db.postgres.models.registry import (
     ToolDefinitionScope,
     ToolImplementationType,
@@ -76,15 +77,47 @@ DEFAULT_JS_SOURCE = """export async function execute(inputs, config, context) {
 """
 
 
-def _initial_snapshot_for_kind(kind: str) -> dict[str, Any]:
+def _normalize_language(language: str | None) -> str:
+    raw = str(language or "python").strip().lower()
+    if raw not in {"python", "javascript"}:
+        raise ValueError("Unsupported artifact language")
+    return raw
+
+
+def _default_entry_module_for_language(language: str) -> str:
+    return "main.js" if language == "javascript" else "main.py"
+
+
+def _default_source_for_language(language: str) -> str:
+    return DEFAULT_JS_SOURCE if language == "javascript" else DEFAULT_SOURCE
+
+
+def _entry_module_extension_for_language(language: str) -> str:
+    return ".js" if language == "javascript" else ".py"
+
+
+def _validate_entry_module_language_compatibility(*, language: str, entry_module_path: str) -> None:
+    normalized_language = _normalize_language(language)
+    normalized_path = _normalize_path(entry_module_path)
+    required_suffix = _entry_module_extension_for_language(normalized_language)
+    if not normalized_path.endswith(required_suffix):
+        raise ValueError(
+            f"Entry module {normalized_path!r} is not compatible with artifact language {normalized_language!r}; "
+            f"expected a path ending in {required_suffix}"
+        )
+
+
+def _initial_snapshot_for_kind(kind: str, *, language: str = "python") -> dict[str, Any]:
     normalized_kind = _normalize_kind(kind)
+    normalized_language = _normalize_language(language)
+    entry_module_path = _default_entry_module_for_language(normalized_language)
     return {
         "display_name": "",
         "description": "",
         "kind": normalized_kind,
-        "language": "python",
-        "source_files": [{"path": "main.py", "content": DEFAULT_SOURCE}],
-        "entry_module_path": "main.py",
+        "language": normalized_language,
+        "source_files": [{"path": entry_module_path, "content": _default_source_for_language(normalized_language)}],
+        "entry_module_path": entry_module_path,
         "dependencies": "",
         "runtime_target": "cloudflare_workers",
         "capabilities": json.dumps(DEFAULT_CAPABILITIES, indent=2),
@@ -194,10 +227,14 @@ def _serialize_form_state(snapshot: dict[str, Any]) -> dict[str, Any]:
     normalized.setdefault("display_name", "")
     normalized.setdefault("description", "")
     normalized["kind"] = kind
-    normalized["language"] = str(normalized.get("language") or "python").strip() or "python"
+    normalized["language"] = _normalize_language(normalized.get("language"))
     normalized["source_files"] = _normalize_file_list(normalized)
-    default_entry_module = "main.js" if normalized["language"] == "javascript" else "main.py"
+    default_entry_module = _default_entry_module_for_language(normalized["language"])
     normalized["entry_module_path"] = str(normalized.get("entry_module_path") or default_entry_module).strip() or default_entry_module
+    _validate_entry_module_language_compatibility(
+        language=normalized["language"],
+        entry_module_path=normalized["entry_module_path"],
+    )
     normalized["dependencies"] = str(normalized.get("dependencies") or normalized.get("python_dependencies") or "")
     normalized["runtime_target"] = str(normalized.get("runtime_target") or "cloudflare_workers")
     normalized["capabilities"] = _format_json_object(
@@ -301,6 +338,8 @@ async def artifact_coding_get_context(payload: Any) -> dict[str, Any]:
         files = _normalize_file_list(snapshot)
         return {
             "artifact_id": str(artifact.id) if artifact else None,
+            "has_persisted_artifact": artifact is not None,
+            "is_create_mode": artifact is None,
             "session_id": str(session.id),
             "run_id": str(run.id),
             "draft_key": session.draft_key,
@@ -319,6 +358,44 @@ async def artifact_coding_get_context(payload: Any) -> dict[str, Any]:
             "files": [{"path": item["path"], "bytes": len(item["content"].encode("utf-8"))} for item in files],
             "active_contract_field": _current_contract_field(snapshot["kind"]),
             "last_test_run_id": str(shared_draft.last_test_run_id) if shared_draft.last_test_run_id else None,
+        }
+
+
+@register_tool_function("artifact_coding_list_credentials")
+async def artifact_coding_list_credentials(payload: Any) -> dict[str, Any]:
+    tool_payload = payload if isinstance(payload, dict) else {}
+    async with get_session() as db:
+        _session, _shared_draft, run, _artifact = await _resolve_session_context(db, tool_payload)
+        stmt = (
+            select(IntegrationCredential)
+            .where(
+                IntegrationCredential.tenant_id == run.tenant_id,
+                IntegrationCredential.is_enabled == True,
+                IntegrationCredential.category.in_(
+                    [
+                        IntegrationCredentialCategory.LLM_PROVIDER,
+                        IntegrationCredentialCategory.VECTOR_STORE,
+                        IntegrationCredentialCategory.TOOL_PROVIDER,
+                        IntegrationCredentialCategory.CUSTOM,
+                    ]
+                ),
+            )
+            .order_by(
+                IntegrationCredential.category.asc(),
+                IntegrationCredential.provider_key.asc(),
+                IntegrationCredential.display_name.asc(),
+            )
+        )
+        credentials = (await db.execute(stmt)).scalars().all()
+        return {
+            "credentials": [
+                {
+                    "id": str(item.id),
+                    "name": item.display_name,
+                    "category": str(getattr(item.category, "value", item.category)),
+                }
+                for item in credentials
+            ]
         }
 
 
@@ -709,7 +786,8 @@ ARTIFACT_CODING_TOOL_SPECS: list[dict[str, Any]] = [
     {"slug": "artifact-coding-delete-file", "name": "Artifact Coding Delete File", "description": "Delete a draft file.", "function_name": "artifact_coding_delete_file", "timeout_s": 60, "is_pure": False, "schema": _tool_schema(properties={"path": {"type": "string"}}, required=["path"])},
     {"slug": "artifact-coding-rename-file", "name": "Artifact Coding Rename File", "description": "Rename a draft file.", "function_name": "artifact_coding_rename_file", "timeout_s": 60, "is_pure": False, "schema": _tool_schema(properties={"from_path": {"type": "string"}, "to_path": {"type": "string"}}, required=["from_path", "to_path"])},
     {"slug": "artifact-coding-set-entry-module", "name": "Artifact Coding Set Entry Module", "description": "Set the entry module path.", "function_name": "artifact_coding_set_entry_module", "timeout_s": 30, "is_pure": False, "schema": _tool_schema(properties={"path": {"type": "string"}}, required=["path"])},
-    {"slug": "artifact-coding-set-dependencies", "name": "Artifact Coding Set Dependencies", "description": "Set Python dependencies for the draft.", "function_name": "artifact_coding_set_dependencies", "timeout_s": 30, "is_pure": False, "schema": _tool_schema(properties={"dependencies": {"anyOf": [{"type": "array", "items": {"type": "string"}}, {"type": "string"}]}})},
+    {"slug": "artifact-coding-list-credentials", "name": "Artifact Coding List Credentials", "description": "List available credential references for the current tenant scope using safe metadata only.", "function_name": "artifact_coding_list_credentials", "timeout_s": 30, "is_pure": True, "schema": _tool_schema(properties={})},
+    {"slug": "artifact-coding-set-dependencies", "name": "Artifact Coding Set Dependencies", "description": "Set artifact dependencies for the draft.", "function_name": "artifact_coding_set_dependencies", "timeout_s": 30, "is_pure": False, "schema": _tool_schema(properties={"dependencies": {"anyOf": [{"type": "array", "items": {"type": "string"}}, {"type": "string"}]}})},
     {"slug": "artifact-coding-set-metadata", "name": "Artifact Coding Set Metadata", "description": "Update artifact metadata fields.", "function_name": "artifact_coding_set_metadata", "timeout_s": 30, "is_pure": False, "schema": _tool_schema(properties={"display_name": {"type": "string"}, "description": {"type": "string"}})},
     {"slug": "artifact-coding-set-kind", "name": "Artifact Coding Set Kind", "description": "Change the artifact kind and contract shape.", "function_name": "artifact_coding_set_kind", "timeout_s": 30, "is_pure": False, "schema": _tool_schema(properties={"kind": {"type": "string", "enum": [item.value for item in ArtifactKind]}, "contract_payload": {"type": "object"}}, required=["kind"])},
     {"slug": "artifact-coding-set-config-schema", "name": "Artifact Coding Set Config Schema", "description": "Update the artifact config schema JSON.", "function_name": "artifact_coding_set_config_schema", "timeout_s": 30, "is_pure": False, "schema": _tool_schema(properties={"config_schema": {"type": "object"}}, required=["config_schema"])},

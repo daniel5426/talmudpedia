@@ -7,9 +7,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import require_scopes
-from app.api.schemas.artifacts import ArtifactRunEventSchema, ArtifactRunSchema
+from app.api.schemas.artifacts import ArtifactRunEventSchema, ArtifactRunSchema, ArtifactRuntimeQueueStatusSchema
 from app.db.postgres.models.artifact_runtime import ArtifactRunStatus
 from app.services.artifact_runtime.execution_service import ArtifactExecutionService
+from app.services.artifact_runtime.policy_service import ArtifactRuntimePolicyService
 from app.services.artifact_runtime.run_service import ArtifactRunService
 
 from .artifacts import get_artifact_context
@@ -35,6 +36,27 @@ def _serialize_run(run) -> ArtifactRunSchema:
         created_at=run.created_at,
         started_at=run.started_at,
         finished_at=run.finished_at,
+    )
+
+
+@router.get("/runtime-status", response_model=ArtifactRuntimeQueueStatusSchema)
+async def get_artifact_runtime_status(
+    tenant_slug: Optional[str] = None,
+    queue_class: str = "artifact_test",
+    _: Dict[str, Any] = Depends(require_scopes("artifacts.write")),
+    artifact_ctx=Depends(get_artifact_context),
+):
+    tenant, _user, db = artifact_ctx
+    if tenant is None:
+        raise HTTPException(status_code=400, detail="Tenant context required")
+    status = await ArtifactRuntimePolicyService(db).get_queue_status(
+        tenant_id=tenant.id,
+        queue_class=queue_class,
+    )
+    return ArtifactRuntimeQueueStatusSchema(
+        queue_class=status.queue_class,
+        active_count=status.active_count,
+        concurrency_limit=status.concurrency_limit,
     )
 
 

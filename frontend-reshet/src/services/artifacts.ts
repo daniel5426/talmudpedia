@@ -153,6 +153,33 @@ export interface ArtifactSourceValidationResponse {
   diagnostics: ArtifactSourceValidationDiagnostic[];
 }
 
+export interface ArtifactDependencyRow {
+  name: string;
+  normalized_name: string;
+  declared_spec?: string | null;
+  classification: "builtin" | "runtime_provided" | "declared";
+  source: "builtin" | "runtime_registry" | "runtime_catalog" | "declared";
+  status: string;
+  note?: string | null;
+  imported: boolean;
+  declared: boolean;
+  can_remove: boolean;
+  can_add: boolean;
+  needs_declaration: boolean;
+}
+
+export interface ArtifactDependencyAnalysisResponse {
+  rows: ArtifactDependencyRow[];
+}
+
+export interface PythonPackageVerificationResponse {
+  package_name: string;
+  normalized_name: string;
+  status: "exists" | "not_found" | "invalid" | "lookup_failed";
+  exists: boolean;
+  error_message?: string | null;
+}
+
 export interface ArtifactRun {
   id: string;
   artifact_id?: string;
@@ -220,6 +247,12 @@ export interface ArtifactRunEvent {
 export interface ArtifactRunCreateResponse {
   run_id: string;
   status: ArtifactRunStatus;
+}
+
+export interface ArtifactRuntimeQueueStatus {
+  queue_class: string;
+  active_count: number;
+  concurrency_limit: number;
 }
 
 export interface ArtifactRunEventsResponse {
@@ -393,6 +426,11 @@ export const artifactsService = {
     return httpClient.post<Artifact>(url, data);
   },
 
+  duplicate: async (id: string, tenantSlug?: string): Promise<Artifact> => {
+    const url = tenantSlug ? `/admin/artifacts/${id}/duplicate?tenant_slug=${tenantSlug}` : `/admin/artifacts/${id}/duplicate`;
+    return httpClient.post<Artifact>(url, {});
+  },
+
   delete: async (id: string, tenantSlug?: string): Promise<void> => {
     const url = tenantSlug ? `/admin/artifacts/${id}?tenant_slug=${tenantSlug}` : `/admin/artifacts/${id}`;
     await httpClient.delete(url);
@@ -403,12 +441,39 @@ export const artifactsService = {
     return httpClient.post<ArtifactRunCreateResponse>(url, data);
   },
 
+  getRuntimeQueueStatus: async (
+    queueClass = "artifact_test",
+    tenantSlug?: string,
+  ): Promise<ArtifactRuntimeQueueStatus> => {
+    const encodedQueueClass = encodeURIComponent(queueClass);
+    const url = tenantSlug
+      ? `/admin/artifact-runs/runtime-status?tenant_slug=${tenantSlug}&queue_class=${encodedQueueClass}`
+      : `/admin/artifact-runs/runtime-status?queue_class=${encodedQueueClass}`;
+    return httpClient.get<ArtifactRuntimeQueueStatus>(url);
+  },
+
   validateSource: async (
     data: { language: ArtifactLanguage; source_files: ArtifactSourceFile[]; dependencies?: string[] },
     tenantSlug?: string,
   ): Promise<ArtifactSourceValidationResponse> => {
     const url = tenantSlug ? `/admin/artifacts/validate-source?tenant_slug=${tenantSlug}` : "/admin/artifacts/validate-source";
     return httpClient.post<ArtifactSourceValidationResponse>(url, data);
+  },
+
+  analyzeDependencies: async (
+    data: { language: ArtifactLanguage; source_files: ArtifactSourceFile[]; dependencies?: string[] },
+    tenantSlug?: string,
+  ): Promise<ArtifactDependencyAnalysisResponse> => {
+    const url = tenantSlug ? `/admin/artifacts/analyze-dependencies?tenant_slug=${tenantSlug}` : "/admin/artifacts/analyze-dependencies";
+    return httpClient.post<ArtifactDependencyAnalysisResponse>(url, data);
+  },
+
+  verifyPythonPackage: async (
+    data: { package_name: string },
+    tenantSlug?: string,
+  ): Promise<PythonPackageVerificationResponse> => {
+    const url = tenantSlug ? `/admin/artifacts/verify-python-package?tenant_slug=${tenantSlug}` : "/admin/artifacts/verify-python-package";
+    return httpClient.post<PythonPackageVerificationResponse>(url, data);
   },
 
   getRun: async (runId: string, tenantSlug?: string): Promise<ArtifactRun> => {

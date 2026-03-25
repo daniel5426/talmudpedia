@@ -21,7 +21,9 @@ from app.services.artifact_coding_agent_tools import (
     DEFAULT_CONFIG_SCHEMA,
     DEFAULT_RAG_CONTRACT,
     DEFAULT_TOOL_CONTRACT,
+    _default_entry_module_for_language,
     _initial_snapshot_for_kind,
+    _normalize_language,
     _normalize_kind,
     _normalize_path,
     _normalize_file_list,
@@ -62,7 +64,8 @@ class ArtifactCodingRuntimeService:
         kind = str(draft_seed.get("kind") or "").strip()
         if not kind:
             raise ValueError("draft_seed.kind is required")
-        snapshot = _initial_snapshot_for_kind(_normalize_kind(kind))
+        language = _normalize_language(draft_seed.get("language"))
+        snapshot = _initial_snapshot_for_kind(_normalize_kind(kind), language=language)
         for field_name in ("display_name", "description"):
             value = draft_seed.get(field_name)
             if isinstance(value, str):
@@ -548,7 +551,7 @@ class ArtifactCodingRuntimeService:
             "runtime": {
                 "language": language,
                 "source_files": _normalize_file_list(snapshot),
-                "entry_module_path": snapshot.get("entry_module_path") or ("main.js" if language == "javascript" else "main.py"),
+                "entry_module_path": snapshot.get("entry_module_path") or _default_entry_module_for_language(language),
                 "dependencies": dependencies,
                 "runtime_target": snapshot.get("runtime_target") or "cloudflare_workers",
             },

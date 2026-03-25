@@ -1,9 +1,12 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useTenant } from "@/contexts/TenantContext"
-import { AgentArtifactContract, Artifact, ArtifactCapabilityConfig, ArtifactKind, ArtifactLanguage, ArtifactVersionListItem, RAGArtifactContract, ToolArtifactContract, artifactsService } from "@/services/artifacts"
+import { useSidebar } from "@/components/ui/sidebar"
+import { AgentArtifactContract, Artifact, ArtifactCapabilityConfig, ArtifactKind, ArtifactLanguage, ArtifactRuntimeQueueStatus, ArtifactVersionListItem, RAGArtifactContract, ToolArtifactContract, artifactsService } from "@/services/artifacts"
+import { Button } from "@/components/ui/button"
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Card } from "@/components/ui/card"
 import { fillPromptMentionJsonToken } from "@/components/shared/PromptMentionJsonEditor"
@@ -17,7 +20,7 @@ import { ArtifactWorkspaceEditor } from "@/components/admin/artifacts/ArtifactWo
 import { ArtifactCodingChatPanel } from "@/features/artifact-coding/ArtifactCodingChatPanel"
 import { useArtifactCodingChat } from "@/features/artifact-coding/useArtifactCodingChat"
 import { ArtifactFormData, createFormDataForKind, initialFormData } from "@/components/admin/artifacts/artifactEditorState"
-import { buildArtifactPayload, buildArtifactUpdatePayload, buildConvertPayload, formDataFromArtifact, formDataFromDraftSnapshot, formDataFromArtifactVersion, kindLabel, serializeArtifactFormData, tryParseObject } from "@/components/admin/artifacts/artifactPageUtils"
+import { buildArtifactPayload, buildArtifactUpdatePayload, buildConvertPayload, formDataFromArtifact, formDataFromDraftSnapshot, formDataFromArtifactVersion, getArtifactLanguageWarningPaths, kindLabel, serializeArtifactFormData, tryParseObject } from "@/components/admin/artifacts/artifactPageUtils"
 import { Loader2 } from "lucide-react"
 import { credentialsService, IntegrationCredential } from "@/services"
 
@@ -35,6 +38,7 @@ function getDefaultActiveFilePath(formData: ArtifactFormData): string {
 
 export default function ArtifactsPage() {
     const { currentTenant } = useTenant()
+    const { setOpen: setAppSidebarOpen, setOpenMobile: setAppSidebarOpenMobile, isMobile } = useSidebar()
     const router = useRouter()
     const searchParams = useSearchParams()
     const modeParam = searchParams.get("mode") as ViewMode | null
@@ -60,9 +64,18 @@ export default function ArtifactsPage() {
     const [artifactVersions, setArtifactVersions] = useState<ArtifactVersionListItem[]>([])
     const [loadingVersions, setLoadingVersions] = useState(false)
     const [applyingRevisionId, setApplyingRevisionId] = useState<string | null>(null)
+    const [testRuntimeStatus, setTestRuntimeStatus] = useState<ArtifactRuntimeQueueStatus | null>(null)
+    const [publishWarningOpen, setPublishWarningOpen] = useState(false)
     const promptMentionModal = usePromptMentionModal<{ tokenRange: { from: number; to: number } }>()
     const lastWorkingDraftSignatureRef = useRef<string | null>(null)
     const workingDraftSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+    const collapseAppSidebarOnEnter = useEffectEvent(() => {
+        if (isMobile) {
+            setAppSidebarOpenMobile(false)
+            return
+        }
+        setAppSidebarOpen(false)
+    })
 
     useEffect(() => {
         if (typeof window === "undefined") return
@@ -108,6 +121,19 @@ export default function ArtifactsPage() {
         }
     }, [])
 
+    const fetchTestRuntimeStatus = useCallback(async () => {
+        if (!currentTenant?.slug || viewMode === "list") {
+            setTestRuntimeStatus(null)
+            return
+        }
+        try {
+            const status = await artifactsService.getRuntimeQueueStatus("artifact_test", currentTenant.slug)
+            setTestRuntimeStatus(status)
+        } catch (error) {
+            console.error("Failed to fetch artifact runtime status", error)
+        }
+    }, [currentTenant?.slug, viewMode])
+
     const syncSelectedArtifact = useCallback((artifact: Artifact) => {
         setSelectedArtifact(artifact)
         setConvertTargetKind(artifact.kind === "agent_node" ? "rag_operator" : "agent_node")
@@ -138,6 +164,17 @@ export default function ArtifactsPage() {
     useEffect(() => {
         void fetchAvailableCredentials()
     }, [fetchAvailableCredentials])
+
+    useEffect(() => {
+        void fetchTestRuntimeStatus()
+        if (!currentTenant?.slug || viewMode === "list") {
+            return
+        }
+        const intervalId = window.setInterval(() => {
+            void fetchTestRuntimeStatus()
+        }, 5000)
+        return () => window.clearInterval(intervalId)
+    }, [currentTenant?.slug, fetchTestRuntimeStatus, viewMode])
 
     const savedFormSignature = useMemo(() => {
         if (!selectedArtifact) return null
@@ -185,6 +222,11 @@ export default function ArtifactsPage() {
         setConvertTargetKind(kind === "agent_node" ? "rag_operator" : "agent_node")
         setViewMode("create")
     }, [])
+
+    useEffect(() => {
+        if (viewMode === "list") return
+        collapseAppSidebarOnEnter()
+    }, [viewMode])
 
     useEffect(() => {
         if (loading) return
@@ -399,7 +441,28 @@ export default function ArtifactsPage() {
         }
     }
 
+    const handleDuplicate = async (artifact: Artifact) => {
+        try {
+            const duplicated = await artifactsService.duplicate(artifact.id, currentTenant?.slug)
+            await fetchArtifacts()
+            await loadArtifactEditorState(duplicated.id)
+            setViewModeWithUrl("edit", duplicated.id)
+        } catch (error) {
+            console.error("Failed to duplicate artifact", error)
+            alert(error instanceof Error ? error.message : "Failed to duplicate artifact")
+        }
+    }
+
     const handlePublishFromEditor = async () => {
+        if (!selectedArtifact) return
+        if (getArtifactLanguageWarningPaths(formData.language, formData.source_files).length > 0) {
+            setPublishWarningOpen(true)
+            return
+        }
+        await handlePublishFromEditorIgnoringWarnings()
+    }
+
+    const handlePublishFromEditorIgnoringWarnings = async () => {
         if (!selectedArtifact) return
         if (hasUnsavedChanges) {
             const savedArtifact = await handleSave()
@@ -471,6 +534,7 @@ export default function ArtifactsPage() {
                 configContent={
                     <ArtifactConfigPanel
                         formData={formData}
+                        tenantSlug={currentTenant?.slug}
                         selectedArtifact={selectedArtifact}
                         viewMode={viewMode}
                         convertTargetKind={convertTargetKind}
@@ -547,12 +611,38 @@ export default function ArtifactsPage() {
 
     return (
         <div className="flex h-full w-full min-w-0 flex-col overflow-hidden">
+            <Dialog open={publishWarningOpen} onOpenChange={setPublishWarningOpen}>
+                <DialogContent>
+                    <DialogHeader>
+                        <DialogTitle>Publish with opposite-language code files?</DialogTitle>
+                        <DialogDescription>
+                            This artifact contains code files from the opposite language lane. Non-code files are fine and will be ignored here. These opposite-language code files will stay on the artifact, but they are not valid code for the active runtime lane.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-2 text-sm">
+                        {getArtifactLanguageWarningPaths(formData.language, formData.source_files).map((path) => (
+                            <div key={path} className="rounded-md border px-3 py-2 text-muted-foreground">
+                                {path}
+                            </div>
+                        ))}
+                    </div>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setPublishWarningOpen(false)}>
+                            Cancel
+                        </Button>
+                        <Button onClick={() => { setPublishWarningOpen(false); void handlePublishFromEditorIgnoringWarnings() }}>
+                            Publish anyway
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
             <ArtifactEditorHeader
                 viewMode={viewMode}
                 displayName={formData.display_name}
                 sidebarOpen={sidebarOpen}
                 isAgentPanelOpen={artifactCodingChat.isAgentPanelOpen}
                 isPublishing={publishingId === selectedArtifact?.id}
+                isPublished={Boolean(viewMode === "edit" && selectedArtifact?.type === "published" && selectedArtifact.owner_type === "tenant")}
                 isSaving={saving}
                 disableSave={false}
                 showPublish={Boolean(viewMode === "edit" && selectedArtifact?.type === "draft" && selectedArtifact.owner_type === "tenant")}
@@ -583,6 +673,9 @@ export default function ArtifactsPage() {
                             artifacts={artifacts}
                             publishingId={publishingId}
                             onEditArtifact={(artifact) => setViewModeWithUrl("edit", artifact.id)}
+                            onDuplicateArtifact={(artifact) => {
+                                void handleDuplicate(artifact)
+                            }}
                             onDeleteArtifact={(artifact) => {
                                 void handleDelete(artifact)
                             }}

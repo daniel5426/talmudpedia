@@ -12,6 +12,7 @@ from app.services.artifact_runtime.bundle_builder import ArtifactBundleBuilder
 from app.services.artifact_runtime.cloudflare_package_builder import CloudflareArtifactPackageBuilder
 from app.services.artifact_runtime.registry_service import ArtifactRegistryService
 from app.services.artifact_runtime.revision_service import ArtifactRevisionService
+from app.services.artifact_runtime.workers_validation import ArtifactWorkersCompatibilityError
 
 
 async def _seed_tenant_context(db_session):
@@ -184,6 +185,58 @@ async def test_revision_service_does_not_create_new_revision_for_noop_update(db_
     assert int(revision_count or 0) == 1
 
 
+@pytest.mark.asyncio
+async def test_revision_service_rejects_language_mutation_for_persisted_artifact(db_session):
+    tenant, user = await _seed_tenant_context(db_session)
+
+    service = ArtifactRevisionService(db_session)
+    artifact = await service.create_artifact(
+        tenant_id=tenant.id,
+        created_by=user.id,
+        display_name="Immutable Language",
+        description="language lock",
+        kind="tool_impl",
+        language="python",
+        source_files=[{"path": "main.py", "content": "def execute(inputs, config, context):\n    return {'ok': True}\n"}],
+        entry_module_path="main.py",
+        dependencies=[],
+        runtime_target="cloudflare_workers",
+        capabilities={"network_access": False},
+        config_schema={"type": "object"},
+        tool_contract={
+            "input_schema": {"type": "object"},
+            "output_schema": {"type": "object"},
+            "side_effects": [],
+            "execution_mode": "interactive",
+            "tool_ui": {},
+        },
+    )
+    await db_session.commit()
+    artifact = await ArtifactRegistryService(db_session).get_tenant_artifact(artifact_id=artifact.id, tenant_id=tenant.id)
+
+    with pytest.raises(ValueError, match="Artifact language is immutable"):
+        await service.update_artifact(
+            artifact,
+            updated_by=user.id,
+            display_name="Immutable Language",
+            description="language lock",
+            source_files=[{"path": "main.js", "content": "export async function execute(inputs, config, context) { return { ok: true }; }\n"}],
+            entry_module_path="main.js",
+            language="javascript",
+            dependencies=[],
+            runtime_target="cloudflare_workers",
+            capabilities={"network_access": False},
+            config_schema={"type": "object"},
+            tool_contract={
+                "input_schema": {"type": "object"},
+                "output_schema": {"type": "object"},
+                "side_effects": [],
+                "execution_mode": "interactive",
+                "tool_ui": {},
+            },
+        )
+
+
 def test_bundle_builder_hash_is_stable_for_same_revision_payload():
     class _Revision:
         id = uuid.uuid4()
@@ -256,6 +309,50 @@ def test_cloudflare_package_builder_records_declared_python_dependencies():
 
     package = CloudflareArtifactPackageBuilder().build_revision_package(_Revision(), namespace="staging")
     assert package.metadata["dependency_manifest"]["declared"] == ["openai"]
+
+
+def test_cloudflare_package_builder_allows_neutral_files_and_keeps_mismatched_code_as_text():
+    class _Revision:
+        id = uuid.uuid4()
+        artifact_id = uuid.uuid4()
+        tenant_id = uuid.uuid4()
+        kind = "tool_impl"
+        language = "javascript"
+        entry_module_path = "main.js"
+        python_dependencies = []
+        manifest_json = {}
+        source_files = [
+            {"path": "main.js", "content": "export async function execute(inputs, config, context) { return { ok: true }; }\n"},
+            {"path": "notes.txt", "content": "hello"},
+            {"path": "config.json", "content": "{\"ok\":true}"},
+            {"path": "helper.py", "content": "def execute(inputs, config, context):\n    return {'ok': True}\n"},
+        ]
+        runtime_target = "cloudflare_workers"
+
+    package = CloudflareArtifactPackageBuilder().build_revision_package(_Revision(), namespace="staging")
+    module_by_name = {module["name"]: module for module in package.modules}
+
+    assert module_by_name["src/artifact/main.js"]["type"] == "esm"
+    assert module_by_name["src/artifact/notes.txt"]["type"] == "text"
+    assert module_by_name["src/artifact/config.json"]["type"] == "text"
+    assert module_by_name["src/artifact/helper.py"]["type"] == "text"
+
+
+def test_cloudflare_package_builder_rejects_entry_module_that_does_not_match_language_lane():
+    class _Revision:
+        id = uuid.uuid4()
+        artifact_id = uuid.uuid4()
+        tenant_id = uuid.uuid4()
+        kind = "tool_impl"
+        language = "javascript"
+        entry_module_path = "main.py"
+        python_dependencies = []
+        manifest_json = {}
+        source_files = [{"path": "main.py", "content": "def execute(inputs, config, context):\n    return {'ok': True}\n"}]
+        runtime_target = "cloudflare_workers"
+
+    with pytest.raises(ArtifactWorkersCompatibilityError, match="JavaScript Workers artifacts must use a JS/TS entry module"):
+        CloudflareArtifactPackageBuilder().build_revision_package(_Revision(), namespace="staging")
 
 
 @pytest.mark.asyncio

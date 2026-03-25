@@ -280,7 +280,7 @@ class ArtifactTenantRuntimePolicy(Base):
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), primary_key=True)
     interactive_concurrency_limit = Column(Integer, nullable=False, default=5)
     background_concurrency_limit = Column(Integer, nullable=False, default=2)
-    test_concurrency_limit = Column(Integer, nullable=False, default=2)
+    test_concurrency_limit = Column(Integer, nullable=False, default=10)
     interactive_cpu_ms = Column(Integer, nullable=False, default=30000)
     background_cpu_ms = Column(Integer, nullable=False, default=60000)
     test_cpu_ms = Column(Integer, nullable=False, default=30000)

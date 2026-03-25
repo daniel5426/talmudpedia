@@ -219,7 +219,7 @@ export function ArtifactCodingChatPanel({
       <div className="flex min-h-0 flex-1 flex-col px-3 pb-2 pt-1">
         <Conversation className="flex min-h-0 flex-1 flex-col transition-all">
           <ArtifactCodingChatScrollBindings onScrollContainerChange={handleScrollContainerChange} />
-          <ConversationContent className="gap-2 px-0 py-0 pb-3">
+          <ConversationContent className="gap-2 px-0 py-0 pb-30">
             <ArtifactCodingChatTimeline
               timeline={timeline}
               isSending={isSending}

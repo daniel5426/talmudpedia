@@ -68,6 +68,7 @@ def _artifact_snapshot_schema() -> dict[str, Any]:
             "kind": {"type": "string", "enum": [item.value for item in ArtifactKind]},
             "display_name": {"type": "string"},
             "description": {"type": "string"},
+            "language": {"type": "string", "enum": ["python", "javascript"]},
             "source_files": {
                 "type": "array",
                 "items": {
@@ -81,7 +82,12 @@ def _artifact_snapshot_schema() -> dict[str, Any]:
                 },
             },
             "entry_module_path": {"type": "string"},
-            "python_dependencies": {"type": "string"},
+            "dependencies": {
+                "anyOf": [
+                    {"type": "array", "items": {"type": "string"}},
+                    {"type": "string"},
+                ]
+            },
             "runtime_target": {"type": "string"},
             "capabilities": {"type": "object"},
             "config_schema": {"type": "object"},
@@ -101,6 +107,7 @@ def _artifact_draft_seed_schema() -> dict[str, Any]:
             "kind": {"type": "string", "enum": [item.value for item in ArtifactKind]},
             "display_name": {"type": "string"},
             "description": {"type": "string"},
+            "language": {"type": "string", "enum": ["python", "javascript"]},
             "entry_module_path": {"type": "string"},
             "runtime_target": {"type": "string"},
         },
@@ -235,20 +242,38 @@ ARCHITECT_WORKER_TOOL_SPECS: list[dict[str, Any]] = [
             required=["binding_type", "prepare_mode"],
             one_of=[
                 {
-                    "properties": {"prepare_mode": {"const": "reuse_existing"}},
+                    "properties": {
+                        "binding_type": {"type": "string"},
+                        "prepare_mode": {"const": "reuse_existing"},
+                        "binding_id": {"type": "string"},
+                    },
                     "required": ["binding_type", "prepare_mode", "binding_id"],
                 },
                 {
-                    "properties": {"prepare_mode": {"const": "attach_existing_artifact"}},
+                    "properties": {
+                        "binding_type": {"type": "string"},
+                        "prepare_mode": {"const": "attach_existing_artifact"},
+                        "artifact_id": {"type": "string"},
+                    },
                     "required": ["binding_type", "prepare_mode", "artifact_id"],
                 },
                 {
-                    "properties": {"prepare_mode": {"const": "create_new_draft"}},
+                    "properties": {
+                        "binding_type": {"type": "string"},
+                        "prepare_mode": {"const": "create_new_draft"},
+                        "title_prompt": {"type": "string"},
+                        "draft_seed": _artifact_draft_seed_schema(),
+                    },
                     "required": ["binding_type", "prepare_mode", "title_prompt", "draft_seed"],
                     "not": {"required": ["draft_snapshot"]},
                 },
                 {
-                    "properties": {"prepare_mode": {"const": "seed_snapshot"}},
+                    "properties": {
+                        "binding_type": {"type": "string"},
+                        "prepare_mode": {"const": "seed_snapshot"},
+                        "title_prompt": {"type": "string"},
+                        "draft_snapshot": _artifact_snapshot_schema(),
+                    },
                     "required": ["binding_type", "prepare_mode", "title_prompt", "draft_snapshot"],
                     "not": {"required": ["draft_seed"]},
                 },

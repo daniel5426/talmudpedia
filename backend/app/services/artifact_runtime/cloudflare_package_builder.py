@@ -8,7 +8,7 @@ from app.db.postgres.models.artifact_runtime import ArtifactRevision
 
 from .runtime_secret_service import prepare_deployable_source_files
 from .source_utils import source_tree_hash
-from .workers_validation import validate_workers_compatibility
+from .workers_validation import is_javascript_code_path, is_python_code_path, validate_workers_compatibility
 
 PYTHON_RUNTIME_WRAPPER_VERSION = "cloudflare-workers-w4p-python-v7"
 JS_RUNTIME_WRAPPER_VERSION = "cloudflare-workers-w4p-js-v2"
@@ -32,7 +32,12 @@ class CloudflareArtifactPackageBuilder:
         language = str(getattr(revision.language, "value", revision.language) or "python")
         source_files = list(revision.source_files or [])
         dependencies = list(revision.python_dependencies or [])
-        validate_workers_compatibility(language=language, source_files=source_files, dependencies=dependencies)
+        validate_workers_compatibility(
+            language=language,
+            source_files=source_files,
+            dependencies=dependencies,
+            entry_module_path=revision.entry_module_path,
+        )
         prepared = prepare_deployable_source_files(language=language, revision=revision)
         compatibility_date = JS_COMPATIBILITY_DATE if language == "javascript" else PYTHON_COMPATIBILITY_DATE
         compatibility_flags = JS_COMPATIBILITY_FLAGS if language == "javascript" else PYTHON_COMPATIBILITY_FLAGS
@@ -91,7 +96,7 @@ def _build_python_modules(source_files: list[dict[str, str]], entry_module_path:
         {"name": "__artifact_bootstrap.py", "content": _python_runtime_main_module(entry_module_path), "type": "python"}
     ]
     for item in source_files:
-        modules.append({"name": item["path"], "content": item["content"], "type": "python"})
+        modules.append({"name": item["path"], "content": item["content"], "type": "python" if is_python_code_path(item["path"]) else "text"})
     return modules
 
 
@@ -160,7 +165,7 @@ def _build_javascript_modules(source_files: list[dict[str, str]], entry_module_p
     modules: list[dict[str, Any]] = [{"name": "src/index.ts", "content": _javascript_runtime_module(entry_module_path), "type": "esm"}]
     for item in source_files:
         target = f"src/artifact/{str(PurePosixPath(item['path']))}"
-        modules.append({"name": target, "content": item["content"], "type": "esm"})
+        modules.append({"name": target, "content": item["content"], "type": "esm" if is_javascript_code_path(item["path"]) else "text"})
     return modules
 
 

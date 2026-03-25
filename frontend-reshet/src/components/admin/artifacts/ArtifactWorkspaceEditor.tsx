@@ -1,6 +1,6 @@
 "use client"
 
-import type { PointerEvent as ReactPointerEvent } from "react"
+import type { ChangeEvent } from "react"
 import { useCallback, useMemo, useRef, useState } from "react"
 import { ArtifactCredentialCodeEditor } from "@/components/admin/artifacts/ArtifactCredentialCodeEditor"
 import { normalizeCredentialMentionLabels } from "@/lib/credential-mentions"
@@ -16,6 +16,7 @@ import {
   FolderOpen,
   FolderPlus,
   Settings2,
+  Upload,
   X,
 } from "lucide-react"
 
@@ -148,6 +149,11 @@ function editorLanguageForPath(path: string): "python" | "javascript" | "typescr
   return "python"
 }
 
+function normalizeImportedPath(file: File): string {
+  const rawPath = String((file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name || "").trim()
+  return rawPath.replaceAll("\\", "/").replace(/^\/+/, "").split("/").filter(Boolean).join("/")
+}
+
 /* ------------------------------------------------------------------ */
 /*  Component                                                          */
 /* ------------------------------------------------------------------ */
@@ -227,6 +233,7 @@ export function ArtifactWorkspaceEditor({
   // ---- drag state for file tree ----
   const [draggingNode, setDraggingNode] = useState<string | null>(null)
   const [dropTargetDir, setDropTargetDir] = useState<string | null>(null)
+  const importInputRef = useRef<HTMLInputElement | null>(null)
 
   // ---- scroll state for tab transition effect ----
   const [isScrolled, setIsScrolled] = useState(false)
@@ -275,6 +282,43 @@ export function ArtifactWorkspaceEditor({
     if (!isTreeOpen) setIsTreeOpen(true)
   }, [sourceFiles, onSourceFilesChange, isTreeOpen, setIsTreeOpen])
 
+  const handleImportFiles = useCallback(async (event: ChangeEvent<HTMLInputElement>) => {
+    const selectedFiles = Array.from(event.target.files || [])
+    if (selectedFiles.length === 0) return
+
+    const importedEntries = await Promise.all(
+      selectedFiles.map(async (file) => ({
+        path: normalizeImportedPath(file),
+        content: await file.text(),
+      }))
+    )
+    const validEntries = importedEntries.filter((entry) => entry.path)
+    if (validEntries.length === 0) {
+      event.target.value = ""
+      return
+    }
+
+    const nextByPath = new Map(sourceFiles.map((file) => [file.path, file] as const))
+    validEntries.forEach((entry) => {
+      nextByPath.set(entry.path, entry)
+    })
+    const nextFiles = Array.from(nextByPath.values()).sort((left, right) => left.path.localeCompare(right.path))
+
+    onSourceFilesChange(nextFiles)
+    setOpenTabs((prev) => {
+      const next = [...prev]
+      validEntries.forEach((entry) => {
+        if (!next.includes(entry.path)) next.push(entry.path)
+      })
+      return next
+    })
+    if (!sourceFiles.some((file) => file.path === activeFilePath) && validEntries[0]?.path) {
+      activatePath(validEntries[0].path)
+    }
+    if (!isTreeOpen) setIsTreeOpen(true)
+    event.target.value = ""
+  }, [activeFilePath, isTreeOpen, onSourceFilesChange, setIsTreeOpen, sourceFiles])
+
   const handleDeleteFile = (path: string) => {
     if (path === entryModulePath || sourceFiles.length <= 1) return
     const next = sourceFiles.filter((f) => f.path !== path)
@@ -303,7 +347,7 @@ export function ArtifactWorkspaceEditor({
   }
 
   /* ---- sidebar resize via border ---- */
-  const handleSidebarBorderPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
+  const handleSidebarBorderPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     e.preventDefault()
     e.stopPropagation()
     isResizingSidebar.current = true
@@ -315,7 +359,7 @@ export function ArtifactWorkspaceEditor({
     document.body.style.userSelect = "none"
   }
 
-  const handleSidebarBorderPointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
+  const handleSidebarBorderPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!resizeSidebarStart.current) return
     const delta = e.clientX - resizeSidebarStart.current.x
     if (Math.abs(delta) > 3) didDragSidebar.current = true
@@ -330,7 +374,7 @@ export function ArtifactWorkspaceEditor({
     }
   }
 
-  const handleSidebarBorderPointerUp = (e: ReactPointerEvent<HTMLDivElement>) => {
+  const handleSidebarBorderPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!resizeSidebarStart.current) return
     const wasClick = !didDragSidebar.current
     resizeSidebarStart.current = null
@@ -590,6 +634,13 @@ export function ArtifactWorkspaceEditor({
 
   return (
     <div className={cn("flex h-full min-h-0 min-w-0 overflow-hidden", palette.appBg, palette.text)}>
+      <input
+        ref={importInputRef}
+        type="file"
+        multiple
+        className="hidden"
+        onChange={handleImportFiles}
+      />
       {/* -------- SIDEBAR -------- */}
       <div
         className={cn(
@@ -627,6 +678,18 @@ export function ArtifactWorkspaceEditor({
                   title="New file"
                 >
                   <FilePlus2 className="h-[14px] w-[14px]" />
+                </button>
+                <button
+                  type="button"
+                  className={cn(
+                    "flex h-[22px] w-[22px] items-center justify-center rounded-[3px] transition-colors",
+                    palette.dim,
+                    palette.buttonHover
+                  )}
+                  onClick={() => importInputRef.current?.click()}
+                  title="Import files"
+                >
+                  <Upload className="h-[14px] w-[14px]" />
                 </button>
                 <button
                   type="button"
