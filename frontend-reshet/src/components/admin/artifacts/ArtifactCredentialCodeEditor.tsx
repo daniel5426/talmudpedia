@@ -10,6 +10,9 @@ import { buildCredentialMentionToken } from "@/lib/credential-mentions"
 import { cn } from "@/lib/utils"
 
 type ArtifactEditorLanguage = "python" | "javascript" | "typescript"
+type ParsedSourceFile = ts.SourceFile & {
+  parseDiagnostics?: readonly ts.DiagnosticWithLocation[]
+}
 
 const ARTIFACT_DEP_MARKER_OWNER = "artifact-dependencies"
 const ARTIFACT_SYNTAX_MARKER_OWNER = "artifact-syntax"
@@ -203,7 +206,7 @@ export function ArtifactCredentialCodeEditor({
       ts.ScriptTarget.Latest,
       true,
       editorLanguage === "typescript" ? ts.ScriptKind.TS : ts.ScriptKind.JS,
-    )
+    ) as ParsedSourceFile
 
     const markers = (sourceFile.parseDiagnostics || []).map((diagnostic) => {
       const start = diagnostic.start ?? 0
