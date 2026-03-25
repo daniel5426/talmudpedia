@@ -39,7 +39,7 @@ export function finalizeRunningToolItems(
   runId?: string | null,
 ): TimelineItem[] {
   let changed = false;
-  const next = timeline.map((item) => {
+  const next = timeline.map((item): TimelineItem => {
     if (item.kind !== "tool" || item.toolStatus !== "running") return item;
     if (runId && item.runId !== runId) return item;
     changed = true;

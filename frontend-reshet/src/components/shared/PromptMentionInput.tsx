@@ -7,6 +7,7 @@ import { promptsService } from "@/services/prompts"
 import type { PromptMentionRecord } from "@/services/prompts"
 import {
   extractPromptIds,
+  fillMention,
   parseToSegments,
   serializeSegments,
   type MentionSegment,
