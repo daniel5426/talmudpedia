@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import json
+import os
 import re
 from dataclasses import dataclass
 from types import SimpleNamespace
@@ -48,6 +49,45 @@ STRICT_PLATFORM_RAW_INPUT_KEY = "__strict_platform_raw_input__"
 
 def _tool_model_name(tool_name: str, suffix: str) -> str:
     return f"{tool_name.title().replace('-', '_').replace(' ', '_')}{suffix}"
+
+
+def _tool_result_max_chars() -> int:
+    raw = str(os.getenv("AGENT_TOOL_RESULT_MAX_CHARS") or "6000").strip()
+    try:
+        value = int(raw)
+    except Exception:
+        value = 6000
+    return max(512, value)
+
+
+def _truncate_tool_result_text(text: str, *, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    return text[:limit] + "... [truncated]"
+
+
+def _truncate_tool_result_payload(payload: Any, *, limit: int) -> Any:
+    if payload is None or isinstance(payload, (bool, int, float)):
+        return payload
+    if isinstance(payload, str):
+        return _truncate_tool_result_text(payload, limit=limit)
+    if isinstance(payload, (dict, list)):
+        try:
+            rendered = json.dumps(payload, ensure_ascii=False)
+        except Exception:
+            rendered = str(payload)
+        if len(rendered) <= limit:
+            return payload
+        return {
+            "_truncated": True,
+            "_original_type": type(payload).__name__,
+            "_original_chars": len(rendered),
+            "preview": _truncate_tool_result_text(rendered, limit=limit),
+        }
+    rendered = str(payload)
+    if len(rendered) <= limit:
+        return payload
+    return _truncate_tool_result_text(rendered, limit=limit)
 
 
 def _json_schema_type_to_python(
@@ -114,11 +154,11 @@ def _json_schema_type_to_python(
 def _build_tool_args_schema(tool_name: str, input_schema: dict[str, Any]) -> type[BaseModel]:
     model_name = _tool_model_name(tool_name, "Args")
     if not isinstance(input_schema, dict) or input_schema.get("type") != "object":
-        return create_model(model_name, input=(Any, ...))
+        return create_model(model_name, input=(Dict[str, Any], ...))
 
     properties = input_schema.get("properties")
     if not isinstance(properties, dict) or not properties:
-        return create_model(model_name)
+        return create_model(model_name, input=(Optional[Dict[str, Any]], None))
 
     required = set(input_schema.get("required", []) or [])
     fields: Dict[str, tuple[Any, Any]] = {}
@@ -1732,6 +1772,10 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
                 for call in resolved_calls:
                     result = execution_results.get(call["call_id"])
                     output_payload = self._extract_tool_output_payload(result)
+                    output_payload = _truncate_tool_result_payload(
+                        output_payload,
+                        limit=_tool_result_max_chars(),
+                    )
                     tool_outputs.append(output_payload)
                     if output_payload is not None:
                         last_context = output_payload
@@ -1763,6 +1807,10 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
                 },
                 "tool_outputs": tool_outputs or None,
                 "context": last_context,
+                "_run_failure": {
+                    "message": error_msg,
+                    "code": "MAX_TOOL_ITERATIONS_REACHED",
+                },
                 "error": error_msg,
             }
 

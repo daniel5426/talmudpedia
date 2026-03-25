@@ -23,6 +23,7 @@ from app.db.postgres.models.registry import (
 )
 from app.services.artifact_coding_shared_draft_service import ArtifactCodingSharedDraftService
 from app.services.artifact_runtime.registry_service import ArtifactRegistryService
+from app.services.artifact_runtime.tool_contracts import parse_tool_contract_json
 from app.services.tool_function_registry import register_tool_function
 
 ARTIFACT_CODING_AGENT_SURFACE = "artifact_coding_agent"
@@ -248,9 +249,10 @@ def _serialize_form_state(snapshot: dict[str, Any]) -> dict[str, Any]:
         ("rag_contract", DEFAULT_RAG_CONTRACT),
         ("tool_contract", DEFAULT_TOOL_CONTRACT),
     ):
-        normalized[field_name] = _format_json_object(
-            _parse_json_object(normalized.get(field_name), field=field_name, fallback=default_value)
-        )
+        parsed_value = _parse_json_object(normalized.get(field_name), field=field_name, fallback=default_value)
+        if field_name == "tool_contract" and kind == ArtifactKind.TOOL_IMPL.value:
+            parsed_value = parse_tool_contract_json(parsed_value, source=field_name)
+        normalized[field_name] = _format_json_object(parsed_value)
     return normalized
 
 
@@ -281,6 +283,8 @@ async def _resolve_session_context(
         raise ValueError("Artifact coding session not found")
     if session.tenant_id != run.tenant_id:
         raise PermissionError("Artifact coding session tenant mismatch")
+    shared_draft_service = ArtifactCodingSharedDraftService(db)
+    run_bound_shared_draft: ArtifactCodingSharedDraft | None = None
     shared_draft_id_raw = (
         payload.get("artifact_coding_shared_draft_id")
         or context.get("artifact_coding_shared_draft_id")
@@ -288,10 +292,20 @@ async def _resolve_session_context(
     )
     if shared_draft_id_raw:
         shared_draft_id = _parse_uuid(shared_draft_id_raw, "artifact_coding_shared_draft_id")
-        if shared_draft_id != session.shared_draft_id:
-            raise PermissionError("Artifact coding shared draft mismatch")
+        run_bound_shared_draft = await db.get(ArtifactCodingSharedDraft, shared_draft_id)
+        if run_bound_shared_draft is None:
+            run_snapshot = await shared_draft_service.get_run_snapshot(
+                tenant_id=run.tenant_id,
+                run_id=run.id,
+            )
+            if run_snapshot is not None:
+                run_bound_shared_draft = await db.get(ArtifactCodingSharedDraft, run_snapshot.shared_draft_id)
+        if run_bound_shared_draft is None:
+            raise ValueError("Artifact coding shared draft not found")
+        if run_bound_shared_draft.tenant_id != run.tenant_id:
+            raise PermissionError("Artifact coding shared draft tenant mismatch")
 
-    shared_draft = await ArtifactCodingSharedDraftService(db).resolve_for_session(session=session)
+    shared_draft = run_bound_shared_draft or await shared_draft_service.resolve_for_session(session=session)
 
     artifact = None
     resolved_artifact_id = (

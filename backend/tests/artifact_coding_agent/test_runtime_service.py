@@ -6,8 +6,10 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import select
 
+from app.agent.execution.trace_recorder import ExecutionTraceRecorder
+from app.api.routers.artifact_coding_agent import _build_session_detail_response
 from app.db.postgres.models.agents import AgentRun, RunStatus
-from app.db.postgres.models.artifact_runtime import ArtifactCodingSession, ArtifactCodingSharedDraft, ArtifactRun, ArtifactRunDomain, ArtifactRunEvent, ArtifactRunStatus
+from app.db.postgres.models.artifact_runtime import ArtifactCodingMessage, ArtifactCodingSession, ArtifactCodingSharedDraft, ArtifactRun, ArtifactRunDomain, ArtifactRunEvent, ArtifactRunStatus
 from app.db.postgres.models.registry import IntegrationCredential, IntegrationCredentialCategory
 from app.services.artifact_coding_shared_draft_service import ArtifactCodingSharedDraftService
 from app.db.postgres.models.identity import Tenant, User
@@ -18,6 +20,7 @@ from app.services.artifact_coding_agent_test_tools import (
     artifact_coding_run_test,
 )
 from app.services.artifact_coding_agent_tools import (
+    _resolve_session_context,
     artifact_coding_create_file,
     artifact_coding_list_credentials,
     artifact_coding_set_entry_module,
@@ -298,6 +301,144 @@ async def test_prepare_session_without_scope_keeps_direct_shared_draft_link(db_s
 
 
 @pytest.mark.asyncio
+async def test_artifact_tools_use_run_pinned_shared_draft_when_session_binding_changes(db_session):
+    tenant, user = await _seed_tenant_and_user(db_session)
+    runtime = ArtifactCodingRuntimeService(db_session)
+    agent = await ensure_artifact_coding_agent_profile(db_session, tenant.id, actor_user_id=user.id)
+    prepared = await runtime.prepare_session(
+        tenant_id=tenant.id,
+        user_id=user.id,
+        agent_id=agent.id,
+        title_prompt="Use the pinned draft",
+        artifact_id=None,
+        draft_key=f"draft-{uuid4().hex[:8]}",
+        chat_session_id=None,
+        draft_snapshot=runtime.build_initial_snapshot_from_seed(
+            {
+                "kind": "tool_impl",
+                "display_name": "Pinned Draft",
+            }
+        ),
+        replace_snapshot=True,
+    )
+    alternate_shared_draft = await ArtifactCodingSharedDraftService(db_session).get_or_create_for_scope(
+        tenant_id=tenant.id,
+        artifact_id=None,
+        draft_key=f"draft-{uuid4().hex[:8]}",
+        initial_snapshot=runtime.build_initial_snapshot_from_seed(
+            {
+                "kind": "tool_impl",
+                "display_name": "Rebound Draft",
+            }
+        ),
+    )
+    prepared.session.shared_draft_id = alternate_shared_draft.id
+    prepared.shared_draft.working_draft_snapshot["display_name"] = "Pinned Draft"
+    alternate_shared_draft.working_draft_snapshot["display_name"] = "Rebound Draft"
+    run = AgentRun(
+        tenant_id=tenant.id,
+        agent_id=agent.id,
+        user_id=user.id,
+        initiator_user_id=user.id,
+        thread_id=prepared.session.agent_thread_id,
+        surface="artifact_coding_agent",
+        status=RunStatus.completed,
+        input_params={
+            "context": {
+                "thread_id": str(prepared.session.agent_thread_id),
+                "artifact_coding_session_id": str(prepared.session.id),
+                "artifact_coding_shared_draft_id": str(prepared.shared_draft.id),
+            }
+        },
+        output_result={"final_output": "worker context"},
+    )
+    db_session.add(run)
+    await db_session.commit()
+
+    _session, shared_draft, resolved_run, _artifact = await _resolve_session_context(
+        db_session,
+        {"run_id": str(run.id)},
+    )
+
+    assert resolved_run.id == run.id
+    assert shared_draft.id == prepared.shared_draft.id
+    assert shared_draft.working_draft_snapshot["display_name"] == "Pinned Draft"
+
+
+@pytest.mark.asyncio
+async def test_reconcile_session_run_marks_completed_run_failed_after_tool_failure(db_session):
+    tenant, user = await _seed_tenant_and_user(db_session)
+    runtime = ArtifactCodingRuntimeService(db_session)
+    agent = await ensure_artifact_coding_agent_profile(db_session, tenant.id, actor_user_id=user.id)
+    prepared = await runtime.prepare_session(
+        tenant_id=tenant.id,
+        user_id=user.id,
+        agent_id=agent.id,
+        title_prompt="Trigger tool failure reconciliation",
+        artifact_id=None,
+        draft_key=None,
+        chat_session_id=None,
+        draft_snapshot=runtime.build_initial_snapshot_from_seed({"kind": "tool_impl"}),
+        replace_snapshot=True,
+    )
+    run = AgentRun(
+        tenant_id=tenant.id,
+        agent_id=agent.id,
+        user_id=user.id,
+        initiator_user_id=user.id,
+        thread_id=prepared.session.agent_thread_id,
+        surface="artifact_coding_agent",
+        status=RunStatus.completed,
+        input_params={
+            "context": {
+                "thread_id": str(prepared.session.agent_thread_id),
+                "artifact_coding_session_id": str(prepared.session.id),
+                "artifact_coding_shared_draft_id": str(prepared.shared_draft.id),
+            }
+        },
+        output_result={"final_output": "Everything succeeded"},
+    )
+    db_session.add(run)
+    await db_session.flush()
+    await runtime.history.mark_run_started(session=prepared.session, run_id=run.id)
+    await runtime.history.persist_user_message(
+        session_id=prepared.session.id,
+        run_id=run.id,
+        content="Run the tests",
+    )
+    await ExecutionTraceRecorder(serializer=lambda value: value).save_event(
+        run.id,
+        db_session,
+        {
+            "event": "tool.failed",
+            "sequence": 1,
+            "ts": "2026-03-25T17:07:00+00:00",
+            "data": {"error": "Artifact coding shared draft mismatch"},
+        },
+    )
+    await db_session.commit()
+
+    await ArtifactCodingChatHistoryService(db_session).reconcile_session_run(session=prepared.session, run=run)
+    await db_session.commit()
+    await db_session.refresh(run)
+
+    assistant_message = (
+        await db_session.execute(
+            select(ArtifactCodingMessage).where(
+                ArtifactCodingMessage.session_id == prepared.session.id,
+                ArtifactCodingMessage.run_id == run.id,
+                ArtifactCodingMessage.role == "assistant",
+            )
+        )
+    ).scalar_one_or_none()
+
+    assert run.status == RunStatus.failed
+    assert run.error_message == "Artifact coding shared draft mismatch"
+    assert assistant_message is not None
+    assert assistant_message.content == "Execution failed: Artifact coding shared draft mismatch"
+
+
+@pytest.mark.asyncio
 async def test_build_run_messages_maps_orchestrator_role_to_system(db_session):
     tenant, user = await _seed_tenant_and_user(db_session)
     agent = await ensure_artifact_coding_agent_profile(db_session, tenant.id, actor_user_id=user.id)
@@ -343,6 +484,89 @@ async def test_build_run_messages_maps_orchestrator_role_to_system(db_session):
         {"role": "system", "content": "Apply the requested changes without re-asking."},
         {"role": "system", "content": "Add README.md"},
     ]
+
+
+@pytest.mark.asyncio
+async def test_session_detail_includes_run_events_for_failed_run_without_assistant_message(db_session):
+    tenant, user = await _seed_tenant_and_user(db_session)
+    agent = await ensure_artifact_coding_agent_profile(db_session, tenant.id, actor_user_id=user.id)
+    runtime = ArtifactCodingRuntimeService(db_session)
+    prepared = await runtime.prepare_session(
+        tenant_id=tenant.id,
+        user_id=user.id,
+        agent_id=agent.id,
+        title_prompt="Show failed partial history",
+        artifact_id=None,
+        draft_key=None,
+        chat_session_id=None,
+        draft_snapshot=runtime.build_initial_snapshot_from_seed({"kind": "tool_impl"}),
+        replace_snapshot=True,
+    )
+    run = AgentRun(
+        tenant_id=tenant.id,
+        agent_id=agent.id,
+        user_id=user.id,
+        initiator_user_id=user.id,
+        thread_id=prepared.session.agent_thread_id,
+        surface="artifact_coding_agent",
+        status=RunStatus.running,
+        input_params={
+            "context": {
+                "thread_id": str(prepared.session.agent_thread_id),
+                "artifact_coding_session_id": str(prepared.session.id),
+                "artifact_coding_shared_draft_id": str(prepared.shared_draft.id),
+            }
+        },
+        output_result=None,
+    )
+    db_session.add(run)
+    await db_session.flush()
+    await runtime.history.mark_run_started(session=prepared.session, run_id=run.id)
+    await runtime.history.persist_user_message(
+        session_id=prepared.session.id,
+        run_id=run.id,
+        content="Please fix the artifact",
+    )
+    recorder = ExecutionTraceRecorder(serializer=lambda value: value)
+    await recorder.save_event(
+        run.id,
+        db_session,
+        {
+            "event": "token",
+            "sequence": 1,
+            "ts": "2026-03-25T18:00:00+00:00",
+            "content": "Inspecting files. ",
+            "data": {"content": "Inspecting files. "},
+        },
+    )
+    await recorder.save_event(
+        run.id,
+        db_session,
+        {
+            "event": "on_tool_start",
+            "name": "artifact-coding-read-file",
+            "span_id": "tool-1",
+            "sequence": 2,
+            "ts": "2026-03-25T18:00:01+00:00",
+            "data": {"summary": "Read main.py"},
+        },
+    )
+    await db_session.commit()
+    session = await db_session.get(ArtifactCodingSession, prepared.session.id)
+    assert session is not None
+    await db_session.refresh(session)
+
+    detail = await _build_session_detail_response(
+        db=db_session,
+        tenant_id=tenant.id,
+        session=session,
+        before_message_id=None,
+        limit=10,
+    )
+
+    assert [message.role for message in detail.messages] == ["user"]
+    assert [event.event for event in detail.run_events] == ["assistant.delta", "tool.started"]
+    assert detail.run_events[0].run_id == str(run.id)
 
 
 @pytest.mark.asyncio

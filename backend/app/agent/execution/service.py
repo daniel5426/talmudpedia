@@ -775,14 +775,37 @@ class AgentExecutorService:
             # 6. Post-Execution Check
             snapshot: RuntimeState = adapter.get_state(executable, config)
 
+            output_result = self._serialize_state(snapshot.values)
+            terminal_failure = output_result.get("_run_failure") if isinstance(output_result, dict) else None
+            terminal_failure_message = ""
+            if isinstance(terminal_failure, dict):
+                terminal_failure_message = str(
+                    terminal_failure.get("message")
+                    or output_result.get("error")
+                    or ""
+                ).strip()
+
             final_status = RunStatus.completed
             if snapshot.next:
                 final_status = RunStatus.paused
                 run.status = RunStatus.paused
-                run.checkpoint = self._serialize_state(snapshot.values)
+                run.checkpoint = output_result
+            elif terminal_failure_message:
+                final_status = RunStatus.failed
+                run.status = RunStatus.failed
+                run.output_result = output_result
+                run.error_message = terminal_failure_message
+                run.completed_at = datetime.utcnow()
+                run.usage_tokens = max(
+                    int(max_observed_usage_tokens or 0),
+                    self._estimate_usage_tokens_from_payload(
+                        run_input_params if isinstance(run_input_params, dict) else {},
+                        run.output_result if isinstance(run.output_result, dict) else None,
+                    ),
+                )
             else:
                 run.status = RunStatus.completed
-                run.output_result = self._serialize_state(snapshot.values)
+                run.output_result = output_result
                 run.completed_at = datetime.utcnow()
                 run.usage_tokens = max(
                     int(max_observed_usage_tokens or 0),
@@ -820,6 +843,11 @@ class AgentExecutorService:
                         if final_status == RunStatus.completed and isinstance(run.output_result, dict)
                         else None
                     ),
+                    "error": (
+                        run.error_message
+                        if final_status == RunStatus.failed
+                        else None
+                    ),
                 },
                 run_id=str(run_id),
                 visibility=EventVisibility.CLIENT_SAFE,
@@ -855,6 +883,8 @@ class AgentExecutorService:
                     status=(
                         AgentThreadTurnStatus.paused
                         if run.status == RunStatus.paused
+                        else AgentThreadTurnStatus.failed
+                        if run.status == RunStatus.failed
                         else AgentThreadTurnStatus.completed
                     ),
                     assistant_output_text=self._extract_assistant_output_text(

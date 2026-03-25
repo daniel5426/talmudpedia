@@ -2,6 +2,7 @@ import {
   buildArtifactPayload,
   formDataFromArtifact,
   getArtifactLanguageWarningPaths,
+  parseToolContract,
 } from "@/components/admin/artifacts/artifactPageUtils";
 import { createFormDataForKind } from "@/components/admin/artifacts/artifactEditorState";
 import { buildCredentialMentionToken, extractCredentialMentionIds, normalizeCredentialMentionLabels } from "@/lib/credential-mentions";
@@ -91,6 +92,17 @@ describe("artifactPageUtils and credential mentions", () => {
 
     const formData = formDataFromArtifact(artifact);
     expect(Object.prototype.hasOwnProperty.call(formData, "credential_bindings")).toBe(false);
+  });
+
+  it("rejects wrapped tool contracts", () => {
+    expect(() =>
+      parseToolContract(JSON.stringify({
+        tool_contract: {
+          input_schema: { type: "object" },
+          output_schema: { type: "object" },
+        },
+      })),
+    ).toThrow("Tool contract must be the inner contract object");
   });
 
   it("warns only for opposite-language code files and ignores neutral files", () => {

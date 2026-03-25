@@ -22,6 +22,7 @@ from app.db.postgres.models.registry import (
     set_tool_management_metadata,
 )
 from app.rag.pipeline.registry import ConfigFieldType, OperatorRegistry
+from app.services.artifact_runtime.tool_contracts import ToolContractValidationError, validate_tool_contract
 
 _GENERIC_PIPELINE_OUTPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -83,70 +84,15 @@ class ToolBindingService:
         revision = artifact.latest_draft_revision or artifact.latest_published_revision
         if revision is None:
             return None
-
-        tool = await self._get_artifact_tool(artifact.id)
-        slug = self._artifact_tool_slug(artifact)
-        await self._ensure_slug_available(slug, exclude_tool_id=tool.id if tool else None)
-
-        raw_schema = self._artifact_schema_from_revision(revision)
-        schema = {
-            "input": _normalized_tool_io_schema(raw_schema.get("input")),
-            "output": _normalized_tool_io_schema(raw_schema.get("output")),
-        }
-        version = _tool_semver(revision.revision_number)
-        if tool is None:
-            tool = ToolRegistry(
-                tenant_id=artifact.tenant_id,
-                name=artifact.display_name,
-                slug=slug,
-                description=artifact.description,
-                scope=ToolDefinitionScope.TENANT,
-                schema=schema,
-                config_schema=dict(revision.config_schema or {}),
-                implementation_type=ToolImplementationType.ARTIFACT,
-                status=ToolStatus.DRAFT,
-                version=version,
-                published_at=None,
-                artifact_id=str(artifact.id),
-                artifact_version=version,
-                artifact_revision_id=None,
-                is_active=True,
-                is_system=False,
-            )
-            set_tool_management_metadata(
-                tool,
-                ownership="artifact_bound",
-                source_object_type="artifact",
-                source_object_id=artifact.id,
-            )
-            self._db.add(tool)
-            await self._db.flush()
-            return tool
-
-        tool.name = artifact.display_name
-        tool.slug = slug
-        tool.description = artifact.description
-        tool.schema = schema
-        tool.config_schema = dict(revision.config_schema or {})
-        tool.implementation_type = ToolImplementationType.ARTIFACT
-        tool.artifact_id = str(artifact.id)
-        tool.artifact_version = version
-        tool.version = version
-        tool.visual_pipeline_id = None
-        tool.executable_pipeline_id = None
-        if tool.status != ToolStatus.DISABLED:
-            tool.status = ToolStatus.DRAFT
-            tool.is_active = True
-        tool.artifact_revision_id = None
-        tool.published_at = None
-        set_tool_management_metadata(
-            tool,
-            ownership="artifact_bound",
-            source_object_type="artifact",
-            source_object_id=artifact.id,
+        return await self._upsert_artifact_tool_binding(
+            artifact=artifact,
+            revision=revision,
+            status=ToolStatus.DRAFT,
+            published_revision_id=None,
+            published_at=None,
+            snapshot_version=False,
+            created_by=None,
         )
-        await self._db.flush()
-        return tool
 
     async def publish_artifact_tool_binding(
         self,
@@ -155,33 +101,15 @@ class ToolBindingService:
         revision: ArtifactRevision,
         created_by: UUID | None,
     ) -> ToolRegistry | None:
-        tool = await self.sync_artifact_tool_binding(artifact)
-        if tool is None:
-            return None
-
-        version = _tool_semver(revision.revision_number)
-        tool.status = ToolStatus.PUBLISHED
-        tool.is_active = True
-        tool.version = version
-        tool.artifact_version = version
-        tool.artifact_revision_id = revision.id
-        tool.published_at = datetime.utcnow()
-        set_tool_management_metadata(
-            tool,
-            ownership="artifact_bound",
-            source_object_type="artifact",
-            source_object_id=artifact.id,
+        return await self._upsert_artifact_tool_binding(
+            artifact=artifact,
+            revision=revision,
+            status=ToolStatus.PUBLISHED,
+            published_revision_id=revision.id,
+            published_at=datetime.utcnow(),
+            snapshot_version=True,
+            created_by=created_by,
         )
-        self._db.add(
-            ToolVersion(
-                tool_id=tool.id,
-                version=tool.version,
-                schema_snapshot=self._tool_snapshot(tool),
-                created_by=created_by,
-            )
-        )
-        await self._db.flush()
-        return tool
 
     async def delete_artifact_tool_binding(self, artifact_id: UUID) -> None:
         tool = await self._get_artifact_tool(artifact_id)
@@ -566,11 +494,97 @@ class ToolBindingService:
             raise ValueError(f"Tool slug '{slug}' is already in use")
 
     def _artifact_schema_from_revision(self, revision: ArtifactRevision) -> dict[str, Any]:
-        contract = dict(revision.tool_contract or {})
+        try:
+            contract = validate_tool_contract(revision.tool_contract, source="artifact revision tool_contract")
+        except ToolContractValidationError as exc:
+            raise ValueError(str(exc)) from exc
         return {
             "input": dict(contract.get("input_schema") or {}),
             "output": dict(contract.get("output_schema") or {}),
         }
+
+    async def _upsert_artifact_tool_binding(
+        self,
+        *,
+        artifact: Artifact,
+        revision: ArtifactRevision,
+        status: ToolStatus,
+        published_revision_id: UUID | None,
+        published_at: datetime | None,
+        snapshot_version: bool,
+        created_by: UUID | None,
+    ) -> ToolRegistry:
+        tool = await self._get_artifact_tool(artifact.id)
+        slug = self._artifact_tool_slug(artifact)
+        await self._ensure_slug_available(slug, exclude_tool_id=tool.id if tool else None)
+
+        raw_schema = self._artifact_schema_from_revision(revision)
+        schema = {
+            "input": _normalized_tool_io_schema(raw_schema.get("input")),
+            "output": _normalized_tool_io_schema(raw_schema.get("output")),
+        }
+        version = _tool_semver(revision.revision_number)
+        if tool is None:
+            tool = ToolRegistry(
+                tenant_id=artifact.tenant_id,
+                name=artifact.display_name,
+                slug=slug,
+                description=artifact.description,
+                scope=ToolDefinitionScope.TENANT,
+                schema=schema,
+                config_schema=dict(revision.config_schema or {}),
+                implementation_type=ToolImplementationType.ARTIFACT,
+                status=status,
+                version=version,
+                published_at=published_at,
+                artifact_id=str(artifact.id),
+                artifact_version=version,
+                artifact_revision_id=published_revision_id,
+                is_active=status != ToolStatus.DISABLED,
+                is_system=False,
+            )
+            set_tool_management_metadata(
+                tool,
+                ownership="artifact_bound",
+                source_object_type="artifact",
+                source_object_id=artifact.id,
+            )
+            self._db.add(tool)
+        else:
+            tool.name = artifact.display_name
+            tool.slug = slug
+            tool.description = artifact.description
+            tool.schema = schema
+            tool.config_schema = dict(revision.config_schema or {})
+            tool.implementation_type = ToolImplementationType.ARTIFACT
+            tool.artifact_id = str(artifact.id)
+            tool.artifact_version = version
+            tool.version = version
+            tool.visual_pipeline_id = None
+            tool.executable_pipeline_id = None
+            if tool.status != ToolStatus.DISABLED or status == ToolStatus.PUBLISHED:
+                tool.status = status
+                tool.is_active = status != ToolStatus.DISABLED
+            tool.artifact_revision_id = published_revision_id
+            tool.published_at = published_at
+            set_tool_management_metadata(
+                tool,
+                ownership="artifact_bound",
+                source_object_type="artifact",
+                source_object_id=artifact.id,
+            )
+        await self._db.flush()
+        if snapshot_version:
+            self._db.add(
+                ToolVersion(
+                    tool_id=tool.id,
+                    version=tool.version,
+                    schema_snapshot=self._tool_snapshot(tool),
+                    created_by=created_by,
+                )
+            )
+            await self._db.flush()
+        return tool
 
     def _pipeline_tool_slug(self, pipeline: VisualPipeline) -> str:
         base = _slugify(pipeline.name, fallback="pipeline-tool")

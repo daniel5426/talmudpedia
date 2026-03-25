@@ -25,6 +25,9 @@ Track backend coverage for the artifact-coding agent runtime across locked draft
 - `prepare_session_run_input(...)` builds kernel-ready child-run payloads from true stored session history, uses the session's native `agent_thread_id`, and preserves `orchestrator` authority in model-facing messages
 - architect-worker continuation now stays separate from true orchestrator/system instructions, so only explicit orchestrator control turns map to model-facing `system`
 - runtime state serialization now exposes `persistence_readiness` separately from `verification_state`
+- artifact coding tools now resolve against the run-pinned shared draft even if the mutable session binding changes later
+- completed artifact-coding runs that emitted `tool.failed` are reconciled to true failed runs and persist a failure assistant message instead of a false success summary
+- session-detail reload now returns run events for runs that only have a stored user turn, so failed/interrupted partial history is still reconstructible from trace events
 - artifact test tools now enforce one active test run at a time and add a server-side `artifact_coding_await_last_test_result` wait path for Cloudflare cold-start / queue delay
 - artifact test tools now return ordered run events and a failure summary so the agent can inspect why a test failed
 - delegated artifact-worker instructions now tell the model to start one test run, wait for terminal result, and avoid `queued` polling loops
@@ -87,6 +90,12 @@ Track backend coverage for the artifact-coding agent runtime across locked draft
 - Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/artifact_runtime/test_execution_service.py backend/tests/artifact_test_runs/test_artifact_test_run_api.py backend/tests/artifact_coding_agent/test_runtime_service.py`
 - Date: 2026-03-25 Asia/Hebron
 - Result: PASS (`34 passed, 7 warnings`)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/artifact_runtime/test_artifact_working_draft_api.py backend/tests/artifact_coding_agent/test_runtime_service.py`
+- Date: 2026-03-25 17:07 EET
+- Result: PASS (`19 passed, 7 warnings`)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/agent_tool_loop/test_tool_loop.py backend/tests/artifact_coding_agent/test_runtime_service.py`
+- Date: 2026-03-25 17:53 EET
+- Result: PASS (`25 passed, 6 warnings`)
 
 ## Known Gaps
 

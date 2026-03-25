@@ -125,6 +125,8 @@ export function ArtifactTestPanel({
   const pollTimerRef = useRef<number | null>(null)
   const resizeStateRef = useRef<{ startY: number; startHeight: number } | null>(null)
   const lastGeneratedInputRef = useRef(generatedInput)
+  const latestTestInputRef = useRef(generatedInput)
+  const latestTestConfigRef = useRef(INITIAL_CONFIG)
   const [openHeight, setOpenHeight] = useState(() => {
     if (typeof window === "undefined") return DEFAULT_OPEN_HEIGHT
     const storedHeight = window.localStorage.getItem(RUNTIME_PANEL_HEIGHT_STORAGE_KEY)
@@ -164,6 +166,7 @@ export function ArtifactTestPanel({
       testInput === lastGeneratedInputRef.current
     if (!shouldReplace) return
     lastGeneratedInputRef.current = generatedInput
+    latestTestInputRef.current = generatedInput
     setTestInput(generatedInput)
   }, [generatedInput, testInput])
 
@@ -234,9 +237,20 @@ export function ArtifactTestPanel({
 
   const resetInputToSchemaExample = () => {
     lastGeneratedInputRef.current = generatedInput
+    latestTestInputRef.current = generatedInput
     setTestInput(generatedInput)
     setTestTab("input")
     setLegacyResult(null)
+  }
+
+  const updateTestInput = (value: string) => {
+    latestTestInputRef.current = value
+    setTestInput(value)
+  }
+
+  const updateTestConfig = (value: string) => {
+    latestTestConfigRef.current = value
+    setTestConfig(value)
   }
 
   const handleTestRun = async () => {
@@ -250,7 +264,7 @@ export function ArtifactTestPanel({
       let inputData: unknown
       let config: Record<string, unknown>
       try {
-        inputData = JSON.parse(testInput)
+        inputData = JSON.parse(latestTestInputRef.current)
       } catch {
         setIsTesting(false)
         setTestTab("input")
@@ -270,7 +284,7 @@ export function ArtifactTestPanel({
         return
       }
       try {
-        config = JSON.parse(testConfig)
+        config = JSON.parse(latestTestConfigRef.current)
       } catch {
         setIsTesting(false)
         setTestTab("config")
@@ -455,14 +469,14 @@ export function ArtifactTestPanel({
                   )}
                   <CodeEditor
                     value={testInput}
-                    onChange={(value) => setTestInput(value)}
+                    onChange={updateTestInput}
                     language="json"
                     className="flex-1 rounded-md border-0"
                   />
                 </div>
               </TabsContent>
               <TabsContent value="config" className="absolute inset-0 m-0">
-                <CodeEditor value={testConfig} onChange={setTestConfig} language="json" className="h-full rounded-md border-0" />
+                <CodeEditor value={testConfig} onChange={updateTestConfig} language="json" className="h-full rounded-md border-0" />
               </TabsContent>
               <TabsContent value="output" className="absolute inset-0 m-0 p-5 rounded-md font-mono text-sm overflow-auto bg-background">
                 {legacyResult ? (

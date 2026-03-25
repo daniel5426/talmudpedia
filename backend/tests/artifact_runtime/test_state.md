@@ -28,6 +28,8 @@ Artifact runtime revision, deploy, and dispatch-time credential lifecycle.
 - fetch one historical artifact revision snapshot through the admin API
 - duplicate an artifact into a new tenant draft with Google Drive-style incremented names
 - read and update the persisted artifact working-draft snapshot through the admin API
+- keep saved-artifact working-draft persistence isolated from unrelated `draft_key`-scoped shared drafts
+- reject wrapped legacy `tool_contract` payloads in saved artifact working drafts
 - verify bundle builder hash stability
 - verify build-hash stability across source-tree revisions
 - verify Cloudflare package builder emits a runnable `main.py` worker entrypoint
@@ -115,6 +117,12 @@ Artifact runtime revision, deploy, and dispatch-time credential lifecycle.
 - Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/artifact_runtime/test_revision_service.py -k 'neutral_files or entry_module_that_does_not_match_language_lane'`
 - Date: 2026-03-25 Asia/Hebron
 - Result: Pass (2 passed, 7 deselected, 1 warning)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/artifact_runtime/test_artifact_working_draft_api.py backend/tests/artifact_coding_agent/test_runtime_service.py`
+- Date: 2026-03-25 17:07 EET
+- Result: Pass (19 passed, 7 warnings)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/artifact_runtime/test_artifact_working_draft_api.py`
+- Date: 2026-03-25 Asia/Hebron
+- Result: Pass (4 passed, 7 warnings)
 
 ## Known Gaps
 

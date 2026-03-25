@@ -4,7 +4,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, Literal, Optional
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
 class ArtifactType(str, Enum):
     DRAFT = "draft"
@@ -28,19 +28,25 @@ class ArtifactOwnerType(str, Enum):
 
 
 class ArtifactSourceFile(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     path: str
     content: str
 
 
 class ArtifactRuntimeConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     language: ArtifactLanguage = ArtifactLanguage.PYTHON
     source_files: list[ArtifactSourceFile]
     entry_module_path: str
-    dependencies: list[str] = Field(default_factory=list)
+    dependencies: list[str] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("dependencies", "python_dependencies"),
+    )
     runtime_target: str = "cloudflare_workers"
 
 
 class ArtifactCapabilityConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     network_access: bool = False
     allowed_hosts: list[str] = Field(default_factory=list)
     secret_refs: list[str] = Field(default_factory=list)
@@ -49,6 +55,7 @@ class ArtifactCapabilityConfig(BaseModel):
 
 
 class AgentArtifactContract(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     state_reads: list[str] = Field(default_factory=list)
     state_writes: list[str] = Field(default_factory=list)
     input_schema: Dict[str, Any] = Field(default_factory=dict)
@@ -57,6 +64,7 @@ class AgentArtifactContract(BaseModel):
 
 
 class RAGArtifactContract(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     operator_category: str
     pipeline_role: str
     input_schema: Dict[str, Any] = Field(default_factory=dict)
@@ -65,14 +73,16 @@ class RAGArtifactContract(BaseModel):
 
 
 class ToolArtifactContract(BaseModel):
-    input_schema: Dict[str, Any] = Field(default_factory=dict)
-    output_schema: Dict[str, Any] = Field(default_factory=dict)
+    model_config = ConfigDict(extra="forbid")
+    input_schema: Dict[str, Any]
+    output_schema: Dict[str, Any]
     side_effects: list[str] = Field(default_factory=list)
     execution_mode: str = "interactive"
     tool_ui: Dict[str, Any] = Field(default_factory=dict)
 
 
 class ArtifactContractEnvelope(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     kind: ArtifactKind
     agent_contract: Optional[AgentArtifactContract] = None
     rag_contract: Optional[RAGArtifactContract] = None
@@ -93,6 +103,7 @@ class ArtifactContractEnvelope(BaseModel):
 
 
 class ArtifactSchema(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     id: str
     display_name: str
     description: Optional[str] = None
@@ -114,6 +125,7 @@ class ArtifactSchema(BaseModel):
 
 
 class ArtifactVersionListItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     id: str
     artifact_id: str
     revision_number: int
@@ -139,6 +151,7 @@ class ArtifactVersionSchema(ArtifactVersionListItem):
 
 
 class ArtifactWorkingDraftResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     artifact_id: Optional[str] = None
     draft_key: Optional[str] = None
     draft_snapshot: Dict[str, Any] = Field(default_factory=dict)
@@ -146,12 +159,14 @@ class ArtifactWorkingDraftResponse(BaseModel):
 
 
 class ArtifactWorkingDraftUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     artifact_id: Optional[str] = None
     draft_key: Optional[str] = None
     draft_snapshot: Dict[str, Any] = Field(default_factory=dict)
 
 
 class ArtifactCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     display_name: str
     description: Optional[str] = None
     kind: ArtifactKind
@@ -174,6 +189,7 @@ class ArtifactCreate(BaseModel):
 
 
 class ArtifactUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     display_name: Optional[str] = None
     description: Optional[str] = None
     runtime: Optional[ArtifactRuntimeConfig] = None
@@ -185,6 +201,7 @@ class ArtifactUpdate(BaseModel):
 
 
 class ArtifactConvertKindRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     kind: ArtifactKind
     agent_contract: Optional[AgentArtifactContract] = None
     rag_contract: Optional[RAGArtifactContract] = None
@@ -202,6 +219,7 @@ class ArtifactConvertKindRequest(BaseModel):
 
 
 class ArtifactTestRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     artifact_id: Optional[str] = None
     source_files: list[ArtifactSourceFile] = Field(default_factory=list)
     entry_module_path: Optional[str] = None
@@ -219,12 +237,14 @@ class ArtifactTestRequest(BaseModel):
 
 
 class ArtifactSourceValidationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     language: ArtifactLanguage
     source_files: list[ArtifactSourceFile] = Field(default_factory=list)
     dependencies: list[str] = Field(default_factory=list)
 
 
 class ArtifactSourceValidationDiagnostic(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     path: str
     message: str
     line: int = 1
@@ -236,16 +256,19 @@ class ArtifactSourceValidationDiagnostic(BaseModel):
 
 
 class ArtifactSourceValidationResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     diagnostics: list[ArtifactSourceValidationDiagnostic] = Field(default_factory=list)
 
 
 class ArtifactDependencyAnalysisRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     language: ArtifactLanguage
     source_files: list[ArtifactSourceFile] = Field(default_factory=list)
     dependencies: list[str] = Field(default_factory=list)
 
 
 class ArtifactDependencyRow(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     name: str
     normalized_name: str
     declared_spec: Optional[str] = None

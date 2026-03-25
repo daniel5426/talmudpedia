@@ -46,7 +46,17 @@ export function parseRagContract(text: string): RAGArtifactContract {
 }
 
 export function parseToolContract(text: string): ToolArtifactContract {
-  return parseObjectJson(text, "Tool contract") as unknown as ToolArtifactContract;
+  const parsed = parseObjectJson(text, "Tool contract");
+  if (isRecord(parsed.tool_contract)) {
+    throw new Error("Tool contract must be the inner contract object, not wrapped in an outer 'tool_contract' field");
+  }
+  if (!isRecord(parsed.input_schema)) {
+    throw new Error("Tool contract.input_schema must be a JSON object");
+  }
+  if (!isRecord(parsed.output_schema)) {
+    throw new Error("Tool contract.output_schema must be a JSON object");
+  }
+  return parsed as unknown as ToolArtifactContract;
 }
 
 export function tryParseObject(text: string, fallback: Record<string, unknown>): Record<string, unknown> {
@@ -247,4 +257,8 @@ export function getArtifactLanguageWarningPaths(
       .map((file) => String(file.path || "").trim())
       .filter((path) => path && (language === "python" ? isJavascriptPath(path) : isPythonPath(path))),
   )).sort();
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }

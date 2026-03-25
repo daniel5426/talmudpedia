@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from typing import Any, Dict, List, Optional
 from uuid import UUID
@@ -42,6 +43,7 @@ from app.services.artifact_runtime.policy_service import ArtifactConcurrencyLimi
 from app.services.artifact_runtime.registry_service import ArtifactRegistryService
 from app.services.artifact_runtime.revision_service import ArtifactRevisionService
 from app.services.artifact_runtime.runtime_secret_service import validate_source_files_for_editor
+from app.services.artifact_runtime.tool_contracts import ToolContractValidationError, parse_tool_contract_json
 from app.services.tool_binding_service import ToolBindingService
 
 router = APIRouter(prefix="/admin/artifacts", tags=["artifacts"])
@@ -154,6 +156,20 @@ def _parse_artifact_uuid(raw: str | None) -> UUID | None:
         return UUID(str(raw))
     except Exception:
         return None
+
+
+def _normalize_working_draft_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
+    try:
+        normalized = _serialize_form_state(dict(snapshot or {}))
+        if normalized.get("kind") == ArtifactKind.TOOL_IMPL.value:
+            tool_contract = parse_tool_contract_json(
+                normalized.get("tool_contract"),
+                source="draft_snapshot.tool_contract",
+            )
+            normalized["tool_contract"] = json.dumps(tool_contract, indent=2, sort_keys=False)
+        return normalized
+    except (ToolContractValidationError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 def _duplicate_name_base(display_name: str) -> str:
@@ -455,24 +471,23 @@ async def update_artifact_working_draft(
     shared = await shared_service.get_or_create_for_scope(
         tenant_id=tenant.id,
         artifact_id=artifact.id,
-        draft_key=str(request.draft_key or "").strip() or None,
+        draft_key=None,
         initial_snapshot=_artifact_form_snapshot(artifact),
     )
-    normalized_snapshot = _serialize_form_state(dict(request.draft_snapshot or {}))
+    normalized_snapshot = _normalize_working_draft_snapshot(dict(request.draft_snapshot or {}))
     await shared_service.update_snapshot(
         shared_draft=shared,
         draft_snapshot=normalized_snapshot,
         artifact_id=artifact.id,
-        draft_key=str(request.draft_key or "").strip() or None,
+        draft_key=None,
     )
     await db.commit()
     return ArtifactWorkingDraftResponse(
         artifact_id=str(artifact.id),
-        draft_key=str(request.draft_key or "").strip() or None,
+        draft_key=None,
         draft_snapshot=dict(shared.working_draft_snapshot or normalized_snapshot),
         updated_at=shared.updated_at,
     )
-
 
 @router.post("", response_model=ArtifactSchema)
 async def create_artifact_draft(

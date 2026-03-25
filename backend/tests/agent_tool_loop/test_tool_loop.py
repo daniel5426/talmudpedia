@@ -256,6 +256,10 @@ async def test_max_iterations_enforced(monkeypatch):
     )
 
     assert result.get("error") == "Max tool iterations reached"
+    assert result.get("_run_failure") == {
+        "message": "Max tool iterations reached",
+        "code": "MAX_TOOL_ITERATIONS_REACHED",
+    }
 
 
 @pytest.mark.asyncio

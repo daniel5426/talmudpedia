@@ -4,7 +4,7 @@ import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } fro
 import { useRouter, useSearchParams } from "next/navigation"
 import { useTenant } from "@/contexts/TenantContext"
 import { useSidebar } from "@/components/ui/sidebar"
-import { AgentArtifactContract, Artifact, ArtifactCapabilityConfig, ArtifactKind, ArtifactLanguage, ArtifactRuntimeQueueStatus, ArtifactVersionListItem, RAGArtifactContract, ToolArtifactContract, artifactsService } from "@/services/artifacts"
+import { AgentArtifactContract, Artifact, ArtifactCapabilityConfig, ArtifactKind, ArtifactLanguage, ArtifactRuntimeQueueStatus, ArtifactVersionListItem, RAGArtifactContract, artifactsService } from "@/services/artifacts"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -20,12 +20,12 @@ import { ArtifactWorkspaceEditor } from "@/components/admin/artifacts/ArtifactWo
 import { ArtifactCodingChatPanel } from "@/features/artifact-coding/ArtifactCodingChatPanel"
 import { useArtifactCodingChat } from "@/features/artifact-coding/useArtifactCodingChat"
 import { ArtifactFormData, createFormDataForKind, initialFormData } from "@/components/admin/artifacts/artifactEditorState"
-import { buildArtifactPayload, buildArtifactUpdatePayload, buildConvertPayload, formDataFromArtifact, formDataFromDraftSnapshot, formDataFromArtifactVersion, getArtifactLanguageWarningPaths, kindLabel, serializeArtifactFormData, tryParseObject } from "@/components/admin/artifacts/artifactPageUtils"
+import { buildArtifactPayload, buildArtifactUpdatePayload, buildConvertPayload, formDataFromArtifact, formDataFromDraftSnapshot, formDataFromArtifactVersion, getArtifactLanguageWarningPaths, kindLabel, parseToolContract, serializeArtifactFormData, tryParseObject } from "@/components/admin/artifacts/artifactPageUtils"
 import { Loader2 } from "lucide-react"
 import { credentialsService, IntegrationCredential } from "@/services"
 
 type ViewMode = "list" | "create" | "edit"
-const ARTIFACT_CODING_DRAFT_KEY_STORAGE_KEY = "artifact-coding-agent:create-draft-key"
+const CREATE_DRAFT_KEY_QUERY_PARAM = "draftKey"
 const PAGE_ARTIFACT_KIND_OPTIONS: Array<{ value: ArtifactKind; label: string }> = [
     { value: "agent_node", label: "Agent Node" },
     { value: "rag_operator", label: "RAG Operator" },
@@ -34,6 +34,10 @@ const PAGE_ARTIFACT_KIND_OPTIONS: Array<{ value: ArtifactKind; label: string }> 
 
 function getDefaultActiveFilePath(formData: ArtifactFormData): string {
     return formData.entry_module_path || formData.source_files[0]?.path || "__CONFIG__"
+}
+
+function createArtifactChatDraftKey(): string {
+    return crypto.randomUUID()
 }
 
 export default function ArtifactsPage() {
@@ -45,6 +49,7 @@ export default function ArtifactsPage() {
     const idParam = searchParams.get("id")
     const kindParam = searchParams.get("kind") as ArtifactKind | null
     const languageParam = searchParams.get("language") as ArtifactLanguage | null
+    const createDraftKeyParam = searchParams.get(CREATE_DRAFT_KEY_QUERY_PARAM)
 
     const [viewMode, setViewMode] = useState<ViewMode>("list")
     const [loading, setLoading] = useState(true)
@@ -76,25 +81,6 @@ export default function ArtifactsPage() {
         }
         setAppSidebarOpen(false)
     })
-
-    useEffect(() => {
-        if (typeof window === "undefined") return
-        const existing = window.localStorage.getItem(ARTIFACT_CODING_DRAFT_KEY_STORAGE_KEY)
-        if (existing) {
-            setArtifactChatDraftKey(existing)
-            return
-        }
-        const nextKey = crypto.randomUUID()
-        window.localStorage.setItem(ARTIFACT_CODING_DRAFT_KEY_STORAGE_KEY, nextKey)
-        setArtifactChatDraftKey(nextKey)
-    }, [])
-
-    const persistNewDraftKey = useCallback(() => {
-        if (typeof window === "undefined") return
-        const nextKey = crypto.randomUUID()
-        window.localStorage.setItem(ARTIFACT_CODING_DRAFT_KEY_STORAGE_KEY, nextKey)
-        setArtifactChatDraftKey(nextKey)
-    }, [])
 
     const fetchArtifacts = useCallback(async (options?: { showLoading?: boolean }) => {
         if (options?.showLoading) {
@@ -188,40 +174,48 @@ export default function ArtifactsPage() {
         source_files: formData.source_files.map((file) => ({ ...file })),
     }), [formData])
 
-    const setViewModeWithUrl = useCallback((mode: ViewMode, id?: string, kind?: ArtifactKind, language?: ArtifactLanguage) => {
+    const setViewModeWithUrl = useCallback((mode: ViewMode, id?: string, kind?: ArtifactKind, language?: ArtifactLanguage, draftKey?: string) => {
         const params = new URLSearchParams()
         if (mode !== "list") params.set("mode", mode)
         if (id) params.set("id", id)
         if (kind) params.set("kind", kind)
         if (language) params.set("language", language)
+        if (mode === "create" && draftKey) params.set(CREATE_DRAFT_KEY_QUERY_PARAM, draftKey)
         const queryString = params.toString()
         router.push(`/admin/artifacts${queryString ? `?${queryString}` : ""}`)
         setViewMode(mode)
     }, [router])
 
-    const handleCreate = useCallback((kind: ArtifactKind, language: ArtifactLanguage) => {
+    const replaceCreateModeUrl = useCallback((kind: ArtifactKind, language: ArtifactLanguage, draftKey: string) => {
+        const params = new URLSearchParams()
+        params.set("mode", "create")
+        params.set("kind", kind)
+        params.set("language", language)
+        params.set(CREATE_DRAFT_KEY_QUERY_PARAM, draftKey)
+        router.replace(`/admin/artifacts?${params.toString()}`)
+    }, [router])
+
+    const applyCreateModeState = useCallback((kind: ArtifactKind, language: ArtifactLanguage, draftKey: string) => {
         const next = createFormDataForKind(kind, language)
         setFormData(next)
         setSelectedArtifact(null)
         setActiveFilePath(getDefaultActiveFilePath(next))
         setConvertTargetKind(kind === "agent_node" ? "rag_operator" : "agent_node")
-        setViewModeWithUrl("create", undefined, kind, language)
-        persistNewDraftKey()
-    }, [persistNewDraftKey, setViewModeWithUrl])
+        setArtifactChatDraftKey(draftKey)
+        setViewMode("create")
+    }, [])
+
+    const handleCreate = useCallback((kind: ArtifactKind, language: ArtifactLanguage) => {
+        const nextDraftKey = createArtifactChatDraftKey()
+        applyCreateModeState(kind, language, nextDraftKey)
+        setViewModeWithUrl("create", undefined, kind, language, nextDraftKey)
+    }, [applyCreateModeState, setViewModeWithUrl])
 
     const handleEdit = useCallback(async (artifact: Artifact) => {
+        setArtifactChatDraftKey("")
         await loadArtifactEditorState(artifact.id)
         setViewMode("edit")
     }, [loadArtifactEditorState])
-
-    const hydrateCreateMode = useCallback((kind: ArtifactKind, language: ArtifactLanguage) => {
-        const next = createFormDataForKind(kind, language)
-        setFormData(next)
-        setSelectedArtifact(null)
-        setActiveFilePath(getDefaultActiveFilePath(next))
-        setConvertTargetKind(kind === "agent_node" ? "rag_operator" : "agent_node")
-        setViewMode("create")
-    }, [])
 
     useEffect(() => {
         if (viewMode === "list") return
@@ -244,11 +238,16 @@ export default function ArtifactsPage() {
                 ? kindParam
                 : "agent_node"
             const requestedLanguage = languageParam === "javascript" ? "javascript" : "python"
-            hydrateCreateMode(requestedKind, requestedLanguage)
+            const nextDraftKey = createDraftKeyParam?.trim() || createArtifactChatDraftKey()
+            applyCreateModeState(requestedKind, requestedLanguage, nextDraftKey)
+            if (!createDraftKeyParam?.trim()) {
+                replaceCreateModeUrl(requestedKind, requestedLanguage, nextDraftKey)
+            }
             return
         }
         setViewMode("list")
-    }, [artifacts, handleEdit, hydrateCreateMode, idParam, kindParam, languageParam, loading, modeParam, setViewModeWithUrl])
+        setArtifactChatDraftKey("")
+    }, [applyCreateModeState, artifacts, createDraftKeyParam, handleEdit, idParam, kindParam, languageParam, loading, modeParam, replaceCreateModeUrl, setViewModeWithUrl])
 
     const loadArtifactVersions = useCallback(async () => {
         if (!selectedArtifact?.id) return
@@ -302,13 +301,12 @@ export default function ArtifactsPage() {
             artifactId,
             {
                 artifact_id: artifactId,
-                draft_key: artifactChatDraftKey || undefined,
                 draft_snapshot: snapshot,
             },
             currentTenant?.slug,
         )
         lastWorkingDraftSignatureRef.current = signature
-    }, [artifactChatDraftKey, currentFormSignature, currentTenant?.slug, workingDraftSnapshot])
+    }, [currentFormSignature, currentTenant?.slug, workingDraftSnapshot])
 
     useEffect(() => {
         if (workingDraftSaveTimeoutRef.current) {
@@ -564,7 +562,13 @@ export default function ArtifactsPage() {
     const testConfigSchema = useMemo(() => tryParseObject(formData.config_schema, { type: "object", properties: {} }), [formData.config_schema])
     const testAgentContract = useMemo(() => tryParseObject(formData.agent_contract, {}) as unknown as AgentArtifactContract, [formData.agent_contract])
     const testRagContract = useMemo(() => tryParseObject(formData.rag_contract, {}) as unknown as RAGArtifactContract, [formData.rag_contract])
-    const testToolContract = useMemo(() => tryParseObject(formData.tool_contract, {}) as unknown as ToolArtifactContract, [formData.tool_contract])
+    const testToolContract = useMemo(() => {
+        try {
+            return parseToolContract(formData.tool_contract)
+        } catch {
+            return null
+        }
+    }, [formData.tool_contract])
     const handleResolvedArtifactId = useCallback((resolvedArtifactId: string) => {
         if (!resolvedArtifactId || selectedArtifact?.id === resolvedArtifactId) {
             return

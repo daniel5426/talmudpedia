@@ -24,6 +24,10 @@ from app.agent.execution.tool_input_contracts import (
 )
 from app.agent.executors.base import BaseNodeExecutor, ValidationResult
 from app.agent.execution.tool_event_metadata import resolve_tool_event_metadata
+from app.agent.execution.tool_error_details import (
+    ArtifactToolExecutionError,
+    build_tool_exception_details,
+)
 from app.agent.executors.retrieval_runtime import PipelineToolRuntime, RetrievalPipelineRuntime
 from app.db.postgres.models.artifact_runtime import ArtifactKind, ArtifactRunDomain
 from app.db.postgres.models.registry import IntegrationCredentialCategory, ToolRegistry
@@ -1240,7 +1244,12 @@ class ToolNodeExecutor(BaseNodeExecutor):
             raise RuntimeError("Artifact-backed tool execution did not return a run")
         if str(getattr(run.status, "value", run.status)) != "completed":
             error_payload = run.error_payload if isinstance(run.error_payload, dict) else {}
-            raise RuntimeError(str(error_payload.get("message") or "Artifact-backed tool execution failed"))
+            raise ArtifactToolExecutionError(
+                run_id=str(getattr(run, "id", "")),
+                error_payload=error_payload,
+                stdout_excerpt=getattr(run, "stdout_excerpt", None),
+                stderr_excerpt=getattr(run, "stderr_excerpt", None),
+            )
         result = run.result_payload or {}
         if not isinstance(result, dict):
             return {"result": result}
@@ -1533,7 +1542,8 @@ class ToolNodeExecutor(BaseNodeExecutor):
             }
 
         except Exception as e:
-            logger.error(f"Tool execution failed: {e}")
+            error_details = build_tool_exception_details(e)
+            logger.exception("Tool execution failed", extra={"tool_error_details": error_details})
             if emitter:
                 emitter.emit_internal_event(
                     "tool.execution_completed",
@@ -1542,6 +1552,7 @@ class ToolNodeExecutor(BaseNodeExecutor):
                         "implementation_type": impl_type,
                         "status": "failed",
                         "error": str(e),
+                        "error_details": error_details,
                         "output_preview": {"error": str(e)},
                     },
                     node_id=node_id,

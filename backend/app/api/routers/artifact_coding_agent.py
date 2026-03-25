@@ -242,8 +242,6 @@ async def _build_session_detail_response(
     run_ids: list[UUID] = []
     seen: set[UUID] = set()
     for message in messages:
-        if str(message.role or "").strip().lower() != "assistant":
-            continue
         if message.run_id in seen:
             continue
         seen.add(message.run_id)
@@ -480,6 +478,7 @@ async def stream_artifact_coding_run(
                 stream_session = await stream_db.get(ArtifactCodingSession, session_id)
 
             seq = 1
+            blocking_tool_failure_error: str | None = None
             yield ": " + (" " * 2048) + "\n\n"
             yield (
                 "data: "
@@ -502,6 +501,19 @@ async def stream_artifact_coding_run(
             try:
                 async for event_dict in executor.run_and_stream(stream_run.id, stream_db, None, mode=ExecutionMode.DEBUG):
                     mapped_event, stage, payload, diagnostics = normalize_filtered_event_to_v2(raw_event=event_dict)
+                    if mapped_event == "tool.failed":
+                        payload_dict = payload if isinstance(payload, dict) else {}
+                        blocking_tool_failure_error = str(
+                            payload_dict.get("error")
+                            or payload_dict.get("message")
+                            or (diagnostics[0].get("message") if diagnostics else "")
+                            or "Artifact coding tool failed"
+                        ).strip() or "Artifact coding tool failed"
+                    elif mapped_event == "run.completed" and blocking_tool_failure_error:
+                        mapped_event = "run.failed"
+                        stage = "run"
+                        payload = {"error": blocking_tool_failure_error}
+                        diagnostics = [{"message": blocking_tool_failure_error}]
                     envelope = build_stream_v2_event(
                         seq=seq,
                         run_id=str(stream_run.id),

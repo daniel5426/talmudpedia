@@ -41,7 +41,7 @@ describe("artifactTestInput", () => {
     });
   });
 
-  it("supports wrapped contract payload shapes", () => {
+  it("ignores wrapped legacy contract payload shapes", () => {
     const schema = resolveArtifactInputSchema("tool_impl", {
       toolContract: {
         tool_contract: {
@@ -58,9 +58,7 @@ describe("artifactTestInput", () => {
       } as never,
     });
 
-    expect(JSON.parse(buildArtifactTestInputJson(schema))).toEqual({
-      client_id: "",
-    });
+    expect(schema).toEqual({});
   });
 
   it("returns validation errors for missing and mistyped fields", () => {

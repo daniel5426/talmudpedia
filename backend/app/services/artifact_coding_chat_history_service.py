@@ -9,6 +9,7 @@ from sqlalchemy import and_, delete, desc, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agent.execution.trace_recorder import ExecutionTraceRecorder
 from app.db.postgres.models.agents import AgentRun, RunStatus
 from app.db.postgres.models.agent_threads import AgentThread
 from app.db.postgres.models.artifact_runtime import ArtifactCodingMessage, ArtifactCodingSession
@@ -47,7 +48,11 @@ class ArtifactCodingChatHistoryService:
     def _extract_assistant_output_text(run: AgentRun | None) -> str | None:
         if run is None:
             return None
+        status = str(getattr(run.status, "value", run.status) or "").strip().lower()
         output_result = run.output_result if isinstance(run.output_result, dict) else {}
+        error_text = str(getattr(run, "error_message", "") or output_result.get("error") or "").strip()
+        if status == RunStatus.failed.value and error_text:
+            return f"Execution failed: {error_text}"
         final_output = output_result.get("final_output")
         if isinstance(final_output, str) and final_output.strip():
             return final_output.strip()
@@ -387,7 +392,36 @@ class ArtifactCodingChatHistoryService:
             return None
         return await self.db.get(ArtifactCodingMessage, inserted_id)
 
+    async def _reconcile_blocking_tool_failure(self, *, run: AgentRun) -> AgentRun:
+        status = str(getattr(run.status, "value", run.status) or "").strip().lower()
+        if status != RunStatus.completed.value:
+            return run
+        recorder = ExecutionTraceRecorder(serializer=lambda value: value)
+        events = await recorder.list_events(self.db, run.id)
+        tool_failures = [item for item in events if str(item.get("event") or "").strip() == "tool.failed"]
+        if not tool_failures:
+            return run
+        latest_failure = tool_failures[-1]
+        failure_payload = latest_failure.get("data") if isinstance(latest_failure.get("data"), dict) else {}
+        diagnostics = latest_failure.get("metadata") if isinstance(latest_failure.get("metadata"), dict) else {}
+        error_text = str(
+            failure_payload.get("error")
+            or failure_payload.get("message")
+            or diagnostics.get("message")
+            or "Artifact coding tool failed"
+        ).strip() or "Artifact coding tool failed"
+        run.status = RunStatus.failed
+        run.error_message = error_text
+        run.completed_at = run.completed_at or datetime.now(timezone.utc)
+        output_result = dict(run.output_result or {}) if isinstance(run.output_result, dict) else {}
+        output_result["error"] = error_text
+        if failure_payload:
+            output_result["tool_failure"] = failure_payload
+        run.output_result = output_result
+        return run
+
     async def reconcile_session_run(self, *, session: ArtifactCodingSession, run: AgentRun) -> ArtifactCodingSession:
+        run = await self._reconcile_blocking_tool_failure(run=run)
         status = str(getattr(run.status, "value", run.status) or "").strip().lower()
         if status in TERMINAL_RUN_STATUSES:
             if session.active_run_id == run.id:

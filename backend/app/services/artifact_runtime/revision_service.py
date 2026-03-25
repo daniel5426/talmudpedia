@@ -18,6 +18,7 @@ from app.services.prompt_reference_resolver import PromptReferenceError, PromptR
 
 from .runtime_secret_service import ArtifactRuntimeSecretError, validate_and_collect_runtime_credential_refs
 from .source_utils import normalize_artifact_source, source_tree_hash
+from .tool_contracts import ToolContractValidationError, validate_tool_contract
 
 
 class ArtifactRevisionService:
@@ -49,6 +50,7 @@ class ArtifactRevisionService:
         artifact_id = uuid4()
         kind_value = self._normalize_kind(kind)
         owner_type_value = self._normalize_owner_type(owner_type)
+        tool_contract = self._canonicalize_tool_contract(kind=kind_value, tool_contract=tool_contract)
         self._validate_contracts(
             kind=kind_value,
             agent_contract=agent_contract,
@@ -140,6 +142,7 @@ class ArtifactRevisionService:
         language_value = self._normalize_language(language)
         if artifact.language != language_value:
             raise ValueError("Artifact language is immutable")
+        tool_contract = self._canonicalize_tool_contract(kind=kind_value, tool_contract=tool_contract)
         self._validate_contracts(
             kind=kind_value,
             agent_contract=agent_contract,
@@ -215,6 +218,7 @@ class ArtifactRevisionService:
         if artifact.latest_published_revision_id is not None:
             raise ValueError("Published artifacts cannot change kind in place")
         target_kind = self._normalize_kind(kind)
+        tool_contract = self._canonicalize_tool_contract(kind=target_kind, tool_contract=tool_contract)
         self._validate_contracts(
             kind=target_kind,
             agent_contract=agent_contract,
@@ -282,6 +286,7 @@ class ArtifactRevisionService:
             entry_module_path=entry_module_path,
         )
         kind_value = self._normalize_kind(kind)
+        tool_contract = self._canonicalize_tool_contract(kind=kind_value, tool_contract=tool_contract)
         self._validate_contracts(
             kind=kind_value,
             agent_contract=agent_contract,
@@ -489,6 +494,19 @@ class ArtifactRevisionService:
             return
         if tool_contract is None or agent_contract is not None or rag_contract is not None:
             raise ValueError("tool_impl artifacts require only tool_contract")
+
+    @staticmethod
+    def _canonicalize_tool_contract(
+        *,
+        kind: ArtifactKind,
+        tool_contract: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        if kind != ArtifactKind.TOOL_IMPL or tool_contract is None:
+            return tool_contract
+        try:
+            return validate_tool_contract(tool_contract, source="tool_contract")
+        except ToolContractValidationError as exc:
+            raise ValueError(str(exc)) from exc
 
     async def _validate_prompt_refs(
         self,

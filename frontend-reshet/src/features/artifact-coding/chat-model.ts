@@ -154,6 +154,12 @@ export function buildArtifactCodingTimeline(
     eventsByRunId.set(event.run_id, list);
   }
 
+  const assistantRunIds = new Set(
+    (messages || [])
+      .filter((message) => message.role === "assistant")
+      .map((message) => message.run_id),
+  );
+  const renderedEventRuns = new Set<string>();
   const timeline: TimelineItem[] = [];
   for (const message of messages || []) {
     if (message.role === "user") {
@@ -165,6 +171,10 @@ export function buildArtifactCodingTimeline(
         userDeliveryStatus: "sent",
         runId: message.run_id,
       });
+      if (!assistantRunIds.has(message.run_id) && !renderedEventRuns.has(message.run_id)) {
+        timeline.push(...buildRunTimelineItems(message.run_id, eventsByRunId.get(message.run_id) || [], ""));
+        renderedEventRuns.add(message.run_id);
+      }
       continue;
     }
     if (message.role === "orchestrator") {
@@ -175,9 +185,14 @@ export function buildArtifactCodingTimeline(
         description: message.content,
         runId: message.run_id,
       });
+      if (!assistantRunIds.has(message.run_id) && !renderedEventRuns.has(message.run_id)) {
+        timeline.push(...buildRunTimelineItems(message.run_id, eventsByRunId.get(message.run_id) || [], ""));
+        renderedEventRuns.add(message.run_id);
+      }
       continue;
     }
     timeline.push(...buildRunTimelineItems(message.run_id, eventsByRunId.get(message.run_id) || [], message.content));
+    renderedEventRuns.add(message.run_id);
   }
   return timeline;
 }

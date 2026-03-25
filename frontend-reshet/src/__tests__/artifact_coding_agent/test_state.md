@@ -9,6 +9,7 @@ Track frontend coverage for the artifact page coding chat panel and artifact-spe
 ## Test Files Present
 
 - `chat_model.test.ts`
+- `useArtifactCodingChat.test.tsx`
 
 ## Key Scenarios Intended
 
@@ -16,10 +17,12 @@ Track frontend coverage for the artifact page coding chat panel and artifact-spe
 - prompt submission sends current unsaved form state
 - streamed draft snapshot updates mutate local artifact editor state
 - create-mode `draft_key` continuity before first save
+- saved-artifact prompts omit `draft_key` while create-mode prompts keep it
 - history/session loading for saved artifacts and create drafts
 - stop flow and pending-question flow
 - terminal run completion/failure settles lingering running tool rows
 - history rebuild preserves assistant text segments around tool calls
+- history rebuild can now recover partial assistant/tool history from run events even when no assistant message was durably persisted for that run
 - live assistant segments can be finalized independently between tool calls
 
 ## Last Run
@@ -30,6 +33,12 @@ Track frontend coverage for the artifact page coding chat panel and artifact-spe
 - Command: `pnpm --dir frontend-reshet test -- --runInBand src/__tests__/artifact_coding_agent/chat_model.test.ts`
 - Date: 2026-03-25 Asia/Hebron
 - Result: pass (`4 passed`)
+- Command: `pnpm --dir frontend-reshet test -- --runInBand src/__tests__/artifact_coding_agent/chat_model.test.ts src/__tests__/artifact_coding_agent/useArtifactCodingChat.test.tsx`
+- Date: 2026-03-25 17:07 EET
+- Result: pass (`6 passed`)
+- Command: `pnpm --dir frontend-reshet test -- --runInBand src/__tests__/artifact_coding_agent/chat_model.test.ts`
+- Date: 2026-03-25 17:53 EET
+- Result: pass (`5 passed`)
 
 ## Known Gaps
 

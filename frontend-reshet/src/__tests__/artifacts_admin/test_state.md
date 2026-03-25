@@ -11,6 +11,7 @@ Artifact admin editor payload, dependency authoring, and form-state handling.
 - `artifact_page_utils.test.ts`
 - `artifact_dependency_tab.test.tsx`
 - `artifact_list_view.test.tsx`
+- `artifact_test_panel.test.tsx`
 - `artifact_test_input.test.ts`
 
 ## Key Scenarios Covered
@@ -28,6 +29,9 @@ Artifact admin editor payload, dependency authoring, and form-state handling.
 - route duplicate, publish, and delete through the artifact list actions menu
 - generate schema-based default artifact test input payloads
 - validate artifact test input payloads against contract input schema before run
+- reject wrapped legacy tool-contract JSON in the admin editor save path
+- stop unwrapping wrapped legacy tool-contract shapes when generating artifact test input schemas
+- run artifact tests with the latest in-editor JSON even when edit and run happen in one interaction
 
 ## Last Run
 
@@ -49,9 +53,13 @@ Artifact admin editor payload, dependency authoring, and form-state handling.
 - Command: `pnpm --dir frontend-reshet test -- --runInBand src/__tests__/artifacts_admin/artifact_test_input.test.ts`
 - Date: 2026-03-25 Asia/Hebron
 - Result: Pass (1 suite, 4 tests)
+- Command: `pnpm --dir frontend-reshet test -- --runInBand src/__tests__/artifacts_admin/artifact_page_utils.test.ts src/__tests__/artifacts_admin/artifact_test_input.test.ts src/__tests__/artifacts_admin/artifact_test_panel.test.tsx`
+- Date: 2026-03-25 Asia/Hebron
+- Result: Pass (3 suites, 11 tests)
 
 ## Known Gaps
 
 - no Monaco interaction coverage yet for the `@` credential mention dropdown
 - no end-to-end frontend test yet for artifact save flows with source credential refs
 - no browser-level coverage yet for the full config tab switch flow
+- no browser-level coverage with the real Monaco editor; the artifact test panel regression uses a focused editor mock

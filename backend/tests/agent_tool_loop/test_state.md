@@ -1,6 +1,6 @@
 # Agent Tool Loop Tests
 
-Last Updated: 2026-03-20
+Last Updated: 2026-03-25
 
 ## Scope
 Tests for ReasoningNodeExecutor tool-call loop behavior with streaming tool-call deltas, safe parallel execution, timeouts, and fallback parsing.
@@ -15,6 +15,7 @@ Tests for ReasoningNodeExecutor tool-call loop behavior with streaming tool-call
 - Tool timeouts are enforced with per-tool metadata and agent defaults
 - JSON tool-call fallback path still works
 - Max tool iterations are enforced
+- Max tool iterations now emit an explicit terminal run-failure marker for higher-level runtime reconciliation
 
 ## Last Run
 - Command: `pytest -q backend/tests/agent_tool_loop/test_tool_loop.py -vv`
@@ -23,6 +24,9 @@ Tests for ReasoningNodeExecutor tool-call loop behavior with streaming tool-call
 - Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/agent_tool_loop`
 - Date/Time: 2026-03-20 Asia/Hebron
 - Result: pass (`7 passed`)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/agent_tool_loop/test_tool_loop.py backend/tests/artifact_coding_agent/test_runtime_service.py`
+- Date/Time: 2026-03-25 17:53 EET
+- Result: pass (`25 passed, 6 warnings`)
 
 ## Known Gaps / Follow-ups
 - Integration coverage with real LangChain providers (OpenAI/Gemini)

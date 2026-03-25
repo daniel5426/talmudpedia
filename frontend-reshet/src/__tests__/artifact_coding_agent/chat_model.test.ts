@@ -138,4 +138,35 @@ describe("buildArtifactCodingTimeline", () => {
     expect(timeline[2].kind).toBe("tool");
     expect(timeline[3].description).toBe("Now I can proceed.");
   });
+
+  it("rebuilds partial run history from events even when no assistant message was persisted", () => {
+    const timeline = buildArtifactCodingTimeline(
+      [
+        {
+          id: "user-1",
+          run_id: "run-1",
+          role: "user",
+          content: "Do the thing",
+        },
+      ],
+      [
+        {
+          run_id: "run-1",
+          event: "assistant.delta",
+          stage: "assistant",
+          payload: { content: "Inspecting first. " },
+        },
+        {
+          run_id: "run-1",
+          event: "tool.started",
+          stage: "tool",
+          payload: { span_id: "tool-1", tool: "artifact-coding-read-file", summary: "Read file" },
+        },
+      ],
+    );
+
+    expect(timeline.map((item) => item.kind)).toEqual(["user", "assistant", "tool"]);
+    expect(timeline[1].description).toBe("Inspecting first.");
+    expect(timeline[2].toolStatus).toBe("running");
+  });
 });

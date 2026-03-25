@@ -79,6 +79,7 @@ backend/app/agent/execution/emitter.py
 backend/app/agent/execution/trace_recorder.py
 backend/app/agent/execution/stream_contract_v2.py
 backend/app/agent/execution/tool_event_metadata.py
+backend/app/agent/execution/tool_error_details.py
 backend/app/agent/execution/tool_input_contracts.py
 backend/app/agent/execution/types.py
 
@@ -153,6 +154,7 @@ backend/app/services/artifact_registry.py
 backend/app/services/artifact_runtime/
 backend/app/services/artifact_runtime/registry_service.py
 backend/app/services/artifact_runtime/revision_service.py
+backend/app/services/artifact_runtime/tool_contracts.py
 backend/app/services/artifact_runtime/bundle_builder.py
 backend/app/services/artifact_runtime/bundle_storage.py
 backend/app/services/artifact_runtime/execution_service.py

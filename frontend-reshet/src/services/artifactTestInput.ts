@@ -10,9 +10,9 @@ export function resolveArtifactInputSchema(
     toolContract?: ToolArtifactContract | null;
   },
 ): JsonSchema {
-  if (kind === "agent_node") return unwrapContractInputSchema(contracts.agentContract, "agent_contract");
-  if (kind === "rag_operator") return unwrapContractInputSchema(contracts.ragContract, "rag_contract");
-  return unwrapContractInputSchema(contracts.toolContract, "tool_contract");
+  if (kind === "agent_node") return readContractInputSchema(contracts.agentContract);
+  if (kind === "rag_operator") return readContractInputSchema(contracts.ragContract);
+  return readContractInputSchema(contracts.toolContract);
 }
 
 export function buildArtifactTestInputJson(schema: JsonSchema): string {
@@ -28,11 +28,9 @@ function normalizeSchemaObject(value: unknown): JsonSchema {
   return value && typeof value === "object" ? ({ ...(value as JsonSchema) }) : {};
 }
 
-function unwrapContractInputSchema(value: unknown, wrapperKey: "agent_contract" | "rag_contract" | "tool_contract"): JsonSchema {
+function readContractInputSchema(value: unknown): JsonSchema {
   const direct = normalizeSchemaObject(value);
   if (isRecord(direct.input_schema)) return normalizeSchemaObject(direct.input_schema);
-  const wrapped = normalizeSchemaObject(direct[wrapperKey]);
-  if (isRecord(wrapped.input_schema)) return normalizeSchemaObject(wrapped.input_schema);
   return {};
 }
 
