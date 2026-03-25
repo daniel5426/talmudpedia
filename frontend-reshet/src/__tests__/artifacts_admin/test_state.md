@@ -1,4 +1,4 @@
-Last Updated: 2026-03-25
+Last Updated: 2026-03-26
 
 # Test State
 
@@ -32,6 +32,7 @@ Artifact admin editor payload, dependency authoring, and form-state handling.
 - reject wrapped legacy tool-contract JSON in the admin editor save path
 - stop unwrapping wrapped legacy tool-contract shapes when generating artifact test input schemas
 - run artifact tests with the latest in-editor JSON even when edit and run happen in one interaction
+- treat semantically equivalent JSON/dependency formatting as clean after save so the unsaved indicator clears
 
 ## Last Run
 
@@ -56,6 +57,9 @@ Artifact admin editor payload, dependency authoring, and form-state handling.
 - Command: `pnpm --dir frontend-reshet test -- --runInBand src/__tests__/artifacts_admin/artifact_page_utils.test.ts src/__tests__/artifacts_admin/artifact_test_input.test.ts src/__tests__/artifacts_admin/artifact_test_panel.test.tsx`
 - Date: 2026-03-25 Asia/Hebron
 - Result: Pass (3 suites, 11 tests)
+- Command: `pnpm --dir frontend-reshet test -- --runInBand src/__tests__/artifacts_admin/artifact_page_utils.test.ts`
+- Date: 2026-03-26 01:19:41 EET
+- Result: Pass (1 suite, 7 tests)
 
 ## Known Gaps
 

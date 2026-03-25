@@ -188,11 +188,9 @@ async def test_tool_impl_artifact_routes_own_bound_tool_lifecycle(client, db_ses
     )
 
     try:
-        artifact_slug = f"artifact-tool-{uuid.uuid4().hex[:8]}"
         create_response = await client.post(
             f"/admin/artifacts?tenant_slug={tenant.slug}",
             json={
-                "slug": artifact_slug,
                 "display_name": "Artifact Tool",
                 "description": "Artifact-owned tool",
                 "kind": "tool_impl",
@@ -272,6 +270,33 @@ async def test_tool_impl_artifact_routes_own_bound_tool_lifecycle(client, db_ses
         assert tool is not None
         assert tool.status == ToolStatus.PUBLISHED
         assert tool.artifact_revision_id is not None
+        published_revision_id = tool.artifact_revision_id
+        published_name = tool.name
+        published_input_schema = dict(tool.schema["input"])
+
+        draft_update_response = await client.put(
+            f"/admin/artifacts/{artifact['id']}?tenant_slug={tenant.slug}",
+            json={
+                "display_name": "Artifact Tool Draft v3",
+                "description": "Draft change after publish",
+                "config_schema": {"timeout_s": 99},
+                "tool_contract": {
+                    "input_schema": {"type": "object", "properties": {"draft_only": {"type": "string"}}},
+                    "output_schema": {"type": "object", "properties": {"draft_answer": {"type": "string"}}},
+                    "side_effects": [],
+                    "execution_mode": "interactive",
+                    "tool_ui": {},
+                },
+            },
+        )
+        assert draft_update_response.status_code == 200, draft_update_response.text
+
+        tool = await _get_tool_for_artifact(db_session, artifact["id"])
+        assert tool is not None
+        assert tool.status == ToolStatus.PUBLISHED
+        assert tool.artifact_revision_id == published_revision_id
+        assert tool.name == published_name
+        assert tool.schema["input"] == published_input_schema
 
         delete_response = await client.delete(f"/admin/artifacts/{artifact['id']}?tenant_slug={tenant.slug}")
         assert delete_response.status_code == 200, delete_response.text

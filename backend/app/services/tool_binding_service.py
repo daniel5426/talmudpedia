@@ -81,7 +81,27 @@ class ToolBindingService:
             await self.delete_artifact_tool_binding(artifact.id)
             return None
 
-        revision = artifact.latest_draft_revision or artifact.latest_published_revision
+        draft_revision = artifact.latest_draft_revision
+        published_revision = artifact.latest_published_revision
+        tool = await self._get_artifact_tool(artifact.id)
+
+        # Once an artifact has a published tool binding, draft artifact edits must not
+        # rewrite the live tool row. Agents should continue to see and execute the last
+        # published tool revision until the artifact is published again.
+        if published_revision is not None:
+            has_pending_draft = draft_revision is not None and draft_revision.id != published_revision.id
+            if has_pending_draft or tool is None or tool.status == ToolStatus.PUBLISHED:
+                return await self._upsert_artifact_tool_binding(
+                    artifact=artifact,
+                    revision=published_revision,
+                    status=ToolStatus.PUBLISHED,
+                    published_revision_id=published_revision.id,
+                    published_at=tool.published_at if tool and tool.status == ToolStatus.PUBLISHED else published_revision.created_at,
+                    snapshot_version=False,
+                    created_by=None,
+                )
+
+        revision = draft_revision or published_revision
         if revision is None:
             return None
         return await self._upsert_artifact_tool_binding(
@@ -527,9 +547,9 @@ class ToolBindingService:
         if tool is None:
             tool = ToolRegistry(
                 tenant_id=artifact.tenant_id,
-                name=artifact.display_name,
+                name=revision.display_name,
                 slug=slug,
-                description=artifact.description,
+                description=revision.description,
                 scope=ToolDefinitionScope.TENANT,
                 schema=schema,
                 config_schema=dict(revision.config_schema or {}),
@@ -551,9 +571,9 @@ class ToolBindingService:
             )
             self._db.add(tool)
         else:
-            tool.name = artifact.display_name
+            tool.name = revision.display_name
             tool.slug = slug
-            tool.description = artifact.description
+            tool.description = revision.description
             tool.schema = schema
             tool.config_schema = dict(revision.config_schema or {})
             tool.implementation_type = ToolImplementationType.ARTIFACT

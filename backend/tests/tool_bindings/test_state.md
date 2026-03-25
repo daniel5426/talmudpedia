@@ -1,4 +1,4 @@
-Last Updated: 2026-03-19
+Last Updated: 2026-03-26
 
 # Tool Bindings Test State
 
@@ -18,6 +18,7 @@ Domain-owned tool bindings for `tool_impl` artifacts, visual pipelines, and expo
 - artifact, pipeline, and agent export flows now persist ownership/source metadata directly on the bound `tool_registry` rows
 - updating a `tool_impl` artifact resynchronizes the bound tool schema/config
 - publishing a `tool_impl` artifact auto-publishes the bound tool and pins `artifact_revision_id`
+- draft edits to a published `tool_impl` artifact leave the bound tool pinned to the last published revision until the next artifact publish
 - deleting a `tool_impl` artifact deletes the bound tool row
 - enabling a pipeline tool binding creates a draft `rag_pipeline` tool row
 - pipeline bindings can now set a model-facing tool name while keeping the slug pipeline-derived
@@ -35,6 +36,9 @@ Domain-owned tool bindings for `tool_impl` artifacts, visual pipelines, and expo
 - Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/builtin_tools_registry/test_builtin_registry_api.py backend/tests/tools_guardrails/test_tools_api_guardrails.py backend/tests/tool_bindings/test_domain_owned_tool_bindings.py backend/tests/tool_bindings/test_agent_tool_bindings.py`
 - Date: 2026-03-19 14:36 EET
 - Result: pass (`22 passed`)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/tool_bindings/test_domain_owned_tool_bindings.py backend/tests/tool_bindings/test_agent_tool_bindings.py`
+- Date: 2026-03-26 Asia/Hebron
+- Result: pass (`6 passed`)
 
 ## Known Gaps / Follow-ups
 

@@ -233,8 +233,22 @@ export function contractEditorDescription(kind: ArtifactKind): string {
 }
 
 export function serializeArtifactFormData(formData: ArtifactFormData): string {
+  const normalizeJsonText = (text: string): unknown => {
+    try {
+      return sortJsonValue(JSON.parse(text));
+    } catch {
+      return text;
+    }
+  };
+
   return JSON.stringify({
     ...formData,
+    dependencies: splitDependencies(formData.dependencies).join(", "),
+    capabilities: normalizeJsonText(formData.capabilities),
+    config_schema: normalizeJsonText(formData.config_schema),
+    agent_contract: normalizeJsonText(formData.agent_contract),
+    rag_contract: normalizeJsonText(formData.rag_contract),
+    tool_contract: normalizeJsonText(formData.tool_contract),
     source_files: formData.source_files.map((file) => ({ path: file.path, content: file.content })),
   });
 }
@@ -261,4 +275,19 @@ export function getArtifactLanguageWarningPaths(
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function sortJsonValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => sortJsonValue(item));
+  }
+  if (isRecord(value)) {
+    return Object.keys(value)
+      .sort()
+      .reduce<Record<string, unknown>>((acc, key) => {
+        acc[key] = sortJsonValue(value[key]);
+        return acc;
+      }, {});
+  }
+  return value;
 }

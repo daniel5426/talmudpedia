@@ -3,6 +3,7 @@ import {
   formDataFromArtifact,
   getArtifactLanguageWarningPaths,
   parseToolContract,
+  serializeArtifactFormData,
 } from "@/components/admin/artifacts/artifactPageUtils";
 import { createFormDataForKind } from "@/components/admin/artifacts/artifactEditorState";
 import { buildCredentialMentionToken, extractCredentialMentionIds, normalizeCredentialMentionLabels } from "@/lib/credential-mentions";
@@ -123,5 +124,27 @@ describe("artifactPageUtils and credential mentions", () => {
         { path: "data.json" },
       ]),
     ).toEqual(["helper.ts"]);
+  });
+
+  it("normalizes dependency and json formatting in form signatures", () => {
+    const base = createFormDataForKind("tool_impl");
+    const compact = {
+      ...base,
+      dependencies: "requests,httpx",
+      tool_contract: '{"output_schema":{"type":"object"},"input_schema":{"type":"object"},"tool_ui":{},"side_effects":[],"execution_mode":"interactive"}',
+    };
+    const pretty = {
+      ...base,
+      dependencies: "requests, httpx",
+      tool_contract: JSON.stringify({
+        input_schema: { type: "object" },
+        output_schema: { type: "object" },
+        side_effects: [],
+        execution_mode: "interactive",
+        tool_ui: {},
+      }, null, 2),
+    };
+
+    expect(serializeArtifactFormData(compact)).toBe(serializeArtifactFormData(pretty));
   });
 });
