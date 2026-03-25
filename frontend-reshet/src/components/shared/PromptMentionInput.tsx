@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
+import { cva } from "class-variance-authority"
 import { cn } from "@/lib/utils"
 import { promptsService } from "@/services/prompts"
 import type { PromptMentionRecord } from "@/services/prompts"
@@ -8,7 +9,6 @@ import {
   extractPromptIds,
   parseToSegments,
   serializeSegments,
-  fillMention,
   type MentionSegment,
 } from "@/lib/prompt-mentions"
 import { BookOpen } from "lucide-react"
@@ -27,11 +27,34 @@ interface PromptMentionInputProps {
   className?: string
   multiline?: boolean
   onMentionClick?: (promptId: string, mentionIndex: number) => void
+  variant?: "default" | "legacy"
 }
 
 type MentionSuggestion =
   | { kind: "prompt"; key: string; prompt: PromptMentionRecord }
   | { kind: "variable"; key: string; variable: { name: string; type?: string } }
+
+const promptMentionInputVariants = cva(
+  "w-full text-foreground outline-none transition-[color,box-shadow] placeholder:text-muted-foreground/40 [&:empty]:before:content-[attr(data-placeholder)] [&:empty]:before:text-muted-foreground/40 [&:empty]:before:pointer-events-none",
+  {
+    variants: {
+      variant: {
+        default:
+          "rounded-lg border border-transparent bg-muted/40 shadow-none focus:ring-1 focus:ring-ring focus:ring-offset-0",
+        legacy:
+          "rounded-md border border-input bg-transparent focus-visible:border-ring",
+      },
+      multiline: {
+        true: "min-h-[60px] px-3 py-2 whitespace-pre-wrap break-words",
+        false: "h-9 min-h-[36px] overflow-hidden whitespace-nowrap px-3 py-2",
+      },
+    },
+    defaultVariants: {
+      variant: "default",
+      multiline: true,
+    },
+  }
+)
 
 // ---------------------------------------------------------------------------
 // Component
@@ -47,6 +70,7 @@ export function PromptMentionInput({
   className,
   multiline = true,
   onMentionClick,
+  variant = "default",
 }: PromptMentionInputProps) {
   const rootRef = useRef<HTMLDivElement>(null)
   const editorRef = useRef<HTMLDivElement>(null)
@@ -161,7 +185,6 @@ export function PromptMentionInput({
     // Save cursor position info before re-render
     const sel = window.getSelection()
     let savedOffset = -1
-    let savedNodeIndex = -1
     if (sel && sel.rangeCount > 0 && editor.contains(sel.anchorNode)) {
       const range = sel.getRangeAt(0)
       // Walk through child nodes to find position
@@ -169,7 +192,6 @@ export function PromptMentionInput({
       for (let i = 0; i < editor.childNodes.length; i++) {
         const child = editor.childNodes[i]
         if (child === range.startContainer || child.contains(range.startContainer)) {
-          savedNodeIndex = i
           savedOffset = charCount + range.startOffset
           break
         }
@@ -496,26 +518,9 @@ export function PromptMentionInput({
   // Fill a mention with prompt content
   // -----------------------------------------------------------------------
 
-  const handleFillMention = useCallback(
-    async (mentionIndex: number) => {
-      const seg = segments[mentionIndex]
-      if (!seg || seg.type !== "mention") return
-      try {
-        const prompt = await promptsService.getPrompt(seg.promptId)
-        const newSegments = fillMention(segments, mentionIndex, prompt.content)
-        onChange(serializeSegments(newSegments))
-      } catch {
-        // ignore
-      }
-    },
-    [segments, onChange]
-  )
-
   // -----------------------------------------------------------------------
   // Render
   // -----------------------------------------------------------------------
-
-  const isEmpty = !value
 
   return (
     <div ref={rootRef} className="relative">
@@ -529,11 +534,8 @@ export function PromptMentionInput({
         aria-placeholder={placeholder}
         data-placeholder={placeholder}
         className={cn(
-          "w-full rounded-lg border border-input bg-muted/40 px-3 py-2 text-[13px] text-foreground outline-none transition-colors",
-          "focus:ring-1 focus:ring-ring focus:ring-offset-0",
-          "placeholder:text-muted-foreground/40",
-          "[&:empty]:before:content-[attr(data-placeholder)] [&:empty]:before:text-muted-foreground/40 [&:empty]:before:pointer-events-none",
-          multiline ? "min-h-[60px] whitespace-pre-wrap break-words" : "min-h-[36px] h-9 overflow-hidden whitespace-nowrap",
+          promptMentionInputVariants({ variant, multiline }),
+          "text-[13px]",
           className
         )}
         onInput={handleInput}

@@ -16,7 +16,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { KesherLogo } from "@/components/kesher-logo"
 import { cn } from "@/lib/utils"
-import type { ArtifactKind, ArtifactVersionListItem } from "@/services/artifacts"
+import type { ArtifactKind, ArtifactLanguage, ArtifactVersionListItem } from "@/services/artifacts"
 import { ARTIFACT_KIND_OPTIONS } from "@/components/admin/artifacts/artifactEditorState"
 
 type ViewMode = "list" | "create" | "edit"
@@ -37,7 +37,7 @@ type ArtifactEditorHeaderProps = {
   applyingRevisionId: string | null
   hasUnsavedChanges: boolean
   onRefreshArtifacts: () => void
-  onCreateArtifact: (kind: ArtifactKind) => void
+  onCreateArtifact: (kind: ArtifactKind, language: ArtifactLanguage) => void
   onToggleSidebar: () => void
   onToggleAgentPanel: () => void
   onVersionsOpenChange: (open: boolean) => void
@@ -121,8 +121,8 @@ export function ArtifactEditorHeader({
                 return (
                   <DropdownMenuItem
                     key={option.value}
-                    className="flex cursor-pointer flex-col items-start gap-1 py-3"
-                    onClick={() => onCreateArtifact(option.value)}
+                    className="flex cursor-default flex-col items-start gap-2 py-3"
+                    onSelect={(event) => event.preventDefault()}
                   >
                     <div className="flex items-center gap-2 font-medium text-foreground">
                       <Icon className="h-4 w-4 text-muted-foreground" />
@@ -131,6 +131,14 @@ export function ArtifactEditorHeader({
                     <span className="text-[11px] leading-tight text-muted-foreground">
                       {option.description}
                     </span>
+                    <div className="flex items-center gap-2">
+                      <Button size="sm" variant="outline" onClick={() => onCreateArtifact(option.value, "javascript")}>
+                        js
+                      </Button>
+                      <Button size="sm" variant="outline" onClick={() => onCreateArtifact(option.value, "python")}>
+                        py
+                      </Button>
+                    </div>
                   </DropdownMenuItem>
                 )
               })}

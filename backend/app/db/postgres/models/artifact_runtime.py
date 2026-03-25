@@ -39,6 +39,11 @@ class ArtifactKind(str, enum.Enum):
     TOOL_IMPL = "tool_impl"
 
 
+class ArtifactLanguage(str, enum.Enum):
+    PYTHON = "python"
+    JAVASCRIPT = "javascript"
+
+
 class ArtifactOwnerType(str, enum.Enum):
     TENANT = "tenant"
     SYSTEM = "system"
@@ -78,6 +83,11 @@ class Artifact(Base):
         SQLEnum(ArtifactKind, values_callable=_enum_values),
         nullable=False,
         default=ArtifactKind.RAG_OPERATOR,
+    )
+    language = Column(
+        SQLEnum(ArtifactLanguage, values_callable=_enum_values),
+        nullable=False,
+        default=ArtifactLanguage.PYTHON,
     )
     owner_type = Column(
         SQLEnum(ArtifactOwnerType, values_callable=_enum_values),
@@ -134,6 +144,11 @@ class ArtifactRevision(Base):
         SQLEnum(ArtifactKind, values_callable=_enum_values),
         nullable=False,
         default=ArtifactKind.RAG_OPERATOR,
+    )
+    language = Column(
+        SQLEnum(ArtifactLanguage, values_callable=_enum_values),
+        nullable=False,
+        default=ArtifactLanguage.PYTHON,
     )
 
     source_files = Column(JSONB, nullable=False, default=list)

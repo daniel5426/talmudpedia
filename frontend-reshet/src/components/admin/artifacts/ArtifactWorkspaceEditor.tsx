@@ -6,7 +6,7 @@ import { ArtifactCredentialCodeEditor } from "@/components/admin/artifacts/Artif
 import { normalizeCredentialMentionLabels } from "@/lib/credential-mentions"
 import { cn } from "@/lib/utils"
 import { IntegrationCredential } from "@/services"
-import { ArtifactSourceFile } from "@/services/artifacts"
+import { ArtifactLanguage, ArtifactSourceFile } from "@/services/artifacts"
 import {
   ChevronDown,
   ChevronRight,
@@ -25,6 +25,7 @@ import {
 
 interface ArtifactWorkspaceEditorProps {
   sourceFiles: ArtifactSourceFile[]
+  language: ArtifactLanguage
   activeFilePath: string
   entryModulePath?: string
   onActiveFileChange: (path: string) => void
@@ -58,13 +59,14 @@ const DEFAULT_SIDEBAR_WIDTH = 240
 /*  Helpers                                                            */
 /* ------------------------------------------------------------------ */
 
-function nextAvailablePath(sourceFiles: ArtifactSourceFile[], directory: string): string {
+function nextAvailablePath(sourceFiles: ArtifactSourceFile[], directory: string, language: ArtifactLanguage): string {
   const paths = new Set(sourceFiles.map((f) => f.path))
+  const extension = language === "javascript" ? "js" : "py"
   let idx = 1
   while (true) {
     const candidate = directory
-      ? `${directory}/${DEFAULT_NEW_FILE_BASENAME}_${idx}.py`
-      : `${DEFAULT_NEW_FILE_BASENAME}_${idx}.py`
+      ? `${directory}/${DEFAULT_NEW_FILE_BASENAME}_${idx}.${extension}`
+      : `${DEFAULT_NEW_FILE_BASENAME}_${idx}.${extension}`
     if (!paths.has(candidate)) return candidate
     idx += 1
   }
@@ -143,6 +145,7 @@ function moveFilePath(oldPath: string, newParent: string, fileName: string): str
 
 export function ArtifactWorkspaceEditor({
   sourceFiles,
+  language,
   activeFilePath,
   entryModulePath,
   onActiveFileChange,
@@ -235,10 +238,15 @@ export function ArtifactWorkspaceEditor({
   }
 
   const handleAddFile = () => {
-    const path = nextAvailablePath(sourceFiles, "")
+    const path = nextAvailablePath(sourceFiles, "", language)
     onSourceFilesChange([
       ...sourceFiles,
-      { path, content: 'def helper():\n    return "new helper"\n' },
+      {
+        path,
+        content: language === "javascript"
+          ? 'export function helper() {\n  return "new helper";\n}\n'
+          : 'def helper():\n    return "new helper"\n',
+      },
     ])
     setOpenTabs((prev) => (prev.includes(path) ? prev : [...prev, path]))
     activatePath(path)
@@ -834,6 +842,7 @@ export function ArtifactWorkspaceEditor({
             </div>
           ) : (
             <ArtifactCredentialCodeEditor
+              language={language}
               value={normalizeCredentialMentionLabels(activeFile?.content ?? "", availableCredentials)}
               onChange={updateActiveContent}
               credentials={availableCredentials}

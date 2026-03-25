@@ -28,7 +28,8 @@ class ArtifactBundleBuilder:
             "display_name": revision.display_name,
             "description": revision.description,
             "kind": getattr(revision.kind, "value", revision.kind),
-            "python_dependencies": list(revision.python_dependencies or []),
+            "language": getattr(revision.language, "value", revision.language),
+            "dependencies": list(revision.python_dependencies or []),
             "runtime_target": revision.runtime_target,
             "capabilities": dict(revision.capabilities or {}),
             "config_schema": dict(revision.config_schema or {}),
@@ -44,7 +45,8 @@ class ArtifactBundleBuilder:
         bundle_hash = source_tree_hash(
             source_files=source_files,
             entry_module_path=revision.entry_module_path,
-            python_dependencies=list(revision.python_dependencies or []),
+            dependencies=list(revision.python_dependencies or []),
+            language=str(getattr(revision.language, "value", revision.language) or "python"),
         )
         payload = json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode("utf-8")
         dependency_hash = sha256(

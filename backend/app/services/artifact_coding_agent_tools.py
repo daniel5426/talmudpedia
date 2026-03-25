@@ -65,6 +65,16 @@ DEFAULT_SOURCE = """async def execute(inputs, config, context):
     }
 """
 
+DEFAULT_JS_SOURCE = """export async function execute(inputs, config, context) {
+  const items = inputs?.items ?? inputs;
+  return {
+    items,
+    config,
+    tenant_id: context?.tenant_id ?? null,
+  };
+}
+"""
+
 
 def _initial_snapshot_for_kind(kind: str) -> dict[str, Any]:
     normalized_kind = _normalize_kind(kind)
@@ -72,9 +82,10 @@ def _initial_snapshot_for_kind(kind: str) -> dict[str, Any]:
         "display_name": "",
         "description": "",
         "kind": normalized_kind,
+        "language": "python",
         "source_files": [{"path": "main.py", "content": DEFAULT_SOURCE}],
         "entry_module_path": "main.py",
-        "python_dependencies": "",
+        "dependencies": "",
         "runtime_target": "cloudflare_workers",
         "capabilities": json.dumps(DEFAULT_CAPABILITIES, indent=2),
         "config_schema": json.dumps(DEFAULT_CONFIG_SCHEMA, indent=2),
@@ -183,9 +194,11 @@ def _serialize_form_state(snapshot: dict[str, Any]) -> dict[str, Any]:
     normalized.setdefault("display_name", "")
     normalized.setdefault("description", "")
     normalized["kind"] = kind
+    normalized["language"] = str(normalized.get("language") or "python").strip() or "python"
     normalized["source_files"] = _normalize_file_list(normalized)
-    normalized["entry_module_path"] = str(normalized.get("entry_module_path") or "main.py").strip() or "main.py"
-    normalized["python_dependencies"] = str(normalized.get("python_dependencies") or "")
+    default_entry_module = "main.js" if normalized["language"] == "javascript" else "main.py"
+    normalized["entry_module_path"] = str(normalized.get("entry_module_path") or default_entry_module).strip() or default_entry_module
+    normalized["dependencies"] = str(normalized.get("dependencies") or normalized.get("python_dependencies") or "")
     normalized["runtime_target"] = str(normalized.get("runtime_target") or "cloudflare_workers")
     normalized["capabilities"] = _format_json_object(
         _parse_json_object(normalized.get("capabilities"), field="capabilities", fallback=DEFAULT_CAPABILITIES)
@@ -295,10 +308,11 @@ async def artifact_coding_get_context(payload: Any) -> dict[str, Any]:
                 "display_name": snapshot["display_name"],
                 "description": snapshot["description"],
                 "kind": snapshot["kind"],
+                "language": snapshot["language"],
             },
             "runtime": {
                 "entry_module_path": snapshot["entry_module_path"],
-                "python_dependencies": snapshot["python_dependencies"],
+                "dependencies": snapshot["dependencies"],
                 "runtime_target": snapshot["runtime_target"],
             },
             "file_count": len(files),
@@ -537,13 +551,13 @@ async def artifact_coding_set_dependencies(payload: Any) -> dict[str, Any]:
     async with get_session() as db:
         session, shared_draft, _run, _artifact = await _resolve_session_context(db, tool_payload)
         snapshot = _serialize_form_state(shared_draft.working_draft_snapshot)
-        snapshot["python_dependencies"] = ", ".join(dependencies)
+        snapshot["dependencies"] = ", ".join(dependencies)
         return await _persist_snapshot_result(
             db,
             shared_draft=shared_draft,
             snapshot=snapshot,
-            changed_fields=["python_dependencies"],
-            summary="Updated Python dependencies.",
+            changed_fields=["dependencies"],
+            summary="Updated artifact dependencies.",
             extra={"dependencies": dependencies},
         )
 

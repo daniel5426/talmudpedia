@@ -1,4 +1,4 @@
-import { ArtifactKind, ArtifactSourceFile } from "@/services/artifacts";
+import { ArtifactKind, ArtifactLanguage, ArtifactSourceFile } from "@/services/artifacts";
 
 export const ARTIFACT_KIND_OPTIONS: Array<{ value: ArtifactKind; label: string; description: string }> = [
   {
@@ -34,13 +34,24 @@ export const DEFAULT_PYTHON_CODE = `async def execute(inputs, config, context):
     }
 `;
 
+export const DEFAULT_JAVASCRIPT_CODE = `export async function execute(inputs, config, context) {
+  const items = inputs?.items ?? inputs;
+  return {
+    items,
+    config,
+    tenant_id: context?.tenant_id ?? null,
+  };
+}
+`;
+
 export interface ArtifactFormData {
   display_name: string;
   description: string;
   kind: ArtifactKind;
+  language: ArtifactLanguage;
   source_files: ArtifactSourceFile[];
   entry_module_path: string;
-  python_dependencies: string;
+  dependencies: string;
   runtime_target: string;
   capabilities: string;
   config_schema: string;
@@ -106,14 +117,16 @@ const defaultToolContract = {
   },
 };
 
-export function createFormDataForKind(kind: ArtifactKind): ArtifactFormData {
+export function createFormDataForKind(kind: ArtifactKind, language: ArtifactLanguage = "python"): ArtifactFormData {
+  const isPython = language === "python";
   return {
     display_name: "",
     description: "",
     kind,
-    source_files: [{ path: "main.py", content: DEFAULT_PYTHON_CODE }],
-    entry_module_path: "main.py",
-    python_dependencies: "",
+    language,
+    source_files: [{ path: isPython ? "main.py" : "main.js", content: isPython ? DEFAULT_PYTHON_CODE : DEFAULT_JAVASCRIPT_CODE }],
+    entry_module_path: isPython ? "main.py" : "main.js",
+    dependencies: "",
     runtime_target: "cloudflare_workers",
     capabilities: JSON.stringify(defaultCapabilities, null, 2),
     config_schema: JSON.stringify({ type: "object", properties: {}, additionalProperties: true }, null, 2),

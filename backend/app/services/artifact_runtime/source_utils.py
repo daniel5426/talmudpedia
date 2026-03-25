@@ -46,13 +46,19 @@ def source_tree_hash(
     *,
     source_files: list[dict[str, Any]],
     entry_module_path: str,
-    python_dependencies: list[str] | None,
+    dependencies: list[str] | None,
+    language: str = "python",
     runtime_wrapper_version: str = "cloudflare-workers-v1",
+    compatibility_date: str | None = None,
+    compatibility_flags: list[str] | None = None,
 ) -> str:
     canonical = {
+        "language": str(language or "python"),
         "entry_module_path": str(entry_module_path or DEFAULT_ENTRY_MODULE_PATH),
-        "python_dependencies": [str(item).strip() for item in python_dependencies or [] if str(item).strip()],
+        "dependencies": [str(item).strip() for item in dependencies or [] if str(item).strip()],
         "runtime_wrapper_version": runtime_wrapper_version,
+        "compatibility_date": str(compatibility_date or ""),
+        "compatibility_flags": [str(item).strip() for item in compatibility_flags or [] if str(item).strip()],
         "source_files": [
             {"path": str(item.get("path") or "").strip(), "content": str(item.get("content") or "")}
             for item in sorted(source_files, key=lambda value: str(value.get("path") or ""))

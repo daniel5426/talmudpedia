@@ -17,6 +17,11 @@ class ArtifactKind(str, Enum):
     TOOL_IMPL = "tool_impl"
 
 
+class ArtifactLanguage(str, Enum):
+    PYTHON = "python"
+    JAVASCRIPT = "javascript"
+
+
 class ArtifactOwnerType(str, Enum):
     TENANT = "tenant"
     SYSTEM = "system"
@@ -28,9 +33,10 @@ class ArtifactSourceFile(BaseModel):
 
 
 class ArtifactRuntimeConfig(BaseModel):
+    language: ArtifactLanguage = ArtifactLanguage.PYTHON
     source_files: list[ArtifactSourceFile]
     entry_module_path: str
-    python_dependencies: list[str] = Field(default_factory=list)
+    dependencies: list[str] = Field(default_factory=list)
     runtime_target: str = "cloudflare_workers"
 
 
@@ -202,6 +208,7 @@ class ArtifactTestRequest(BaseModel):
     input_data: Any
     config: Dict[str, Any] = Field(default_factory=dict)
     dependencies: list[str] = Field(default_factory=list)
+    language: Optional[ArtifactLanguage] = None
     kind: Optional[ArtifactKind] = None
     runtime_target: Optional[str] = None
     capabilities: Dict[str, Any] = Field(default_factory=dict)

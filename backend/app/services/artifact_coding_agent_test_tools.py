@@ -45,11 +45,12 @@ def _artifact_test_payload_from_snapshot(
         "artifact_id": artifact_id,
         "source_files": normalized["source_files"],
         "entry_module_path": normalized["entry_module_path"],
+        "language": normalized.get("language") or "python",
         "input_data": input_data,
         "config": dict(config or {}),
         "dependencies": [
             item.strip()
-            for item in str(normalized.get("python_dependencies") or "").split(",")
+            for item in str(normalized.get("dependencies") or "").split(",")
             if item.strip()
         ],
         "kind": kind,
@@ -135,6 +136,7 @@ async def artifact_coding_run_test(payload: Any) -> dict[str, Any]:
             input_data=test_payload["input_data"],
             config=test_payload["config"],
             dependencies=test_payload["dependencies"],
+            language=test_payload["language"],
             kind=test_payload["kind"],
             runtime_target=test_payload["runtime_target"],
             capabilities=test_payload["capabilities"],

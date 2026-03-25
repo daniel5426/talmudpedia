@@ -4,6 +4,7 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import IntegrityError
 
 from app.db.postgres.models.artifact_runtime import (
     ArtifactDeployment,
@@ -13,7 +14,6 @@ from app.db.postgres.models.artifact_runtime import (
 
 from .cloudflare_client import CloudflareArtifactClient
 from .cloudflare_package_builder import CloudflareArtifactPackageBuilder
-from .runtime_mode import RUNTIME_MODE_STANDARD_WORKER_TEST, artifact_cloudflare_runtime_mode
 
 
 class ArtifactDeploymentService:
@@ -33,17 +33,18 @@ class ArtifactDeploymentService:
         if effective_tenant_id is None:
             raise ValueError("Artifact deployments require tenant_id for deployment ownership")
         package = self._builder.build_revision_package(revision, namespace=namespace)
-        deployment = await self._db.scalar(
-            select(ArtifactDeployment).where(
-                ArtifactDeployment.tenant_id == effective_tenant_id,
-                ArtifactDeployment.namespace == namespace,
-                ArtifactDeployment.build_hash == package.build_hash,
-            )
+        deployment = await self._get_deployment_by_build_hash(
+            tenant_id=effective_tenant_id,
+            namespace=namespace,
+            build_hash=package.build_hash,
         )
-        if deployment is not None and deployment.status == ArtifactDeploymentStatus.READY:
+        if (
+            deployment is not None
+            and deployment.status == ArtifactDeploymentStatus.READY
+            and deployment.worker_name == package.worker_name
+            and deployment.script_name == package.script_name
+        ):
             return deployment
-
-        runtime_mode = artifact_cloudflare_runtime_mode()
 
         if deployment is None:
             deployment = ArtifactDeployment(
@@ -58,24 +59,25 @@ class ArtifactDeploymentService:
                 runtime_metadata=package.metadata,
             )
             self._db.add(deployment)
-            await self._db.flush()
-
-        if runtime_mode == RUNTIME_MODE_STANDARD_WORKER_TEST:
-            deployment.status = ArtifactDeploymentStatus.READY
-            deployment.worker_name = "artifact-free-plan-runtime"
-            deployment.script_name = "artifact-free-plan-runtime"
-            deployment.deployment_id = package.build_hash
-            deployment.version_id = package.build_hash[:16]
-            deployment.runtime_metadata = {
-                **package.metadata,
-                "runtime_mode": runtime_mode,
-            }
+            try:
+                await self._db.flush()
+            except IntegrityError:
+                await self._db.rollback()
+                deployment = await self._get_deployment_by_build_hash(
+                    tenant_id=effective_tenant_id,
+                    namespace=namespace,
+                    build_hash=package.build_hash,
+                )
+                if deployment is None:
+                    raise
+        else:
+            deployment.status = ArtifactDeploymentStatus.PENDING
+            deployment.worker_name = package.worker_name
+            deployment.script_name = package.script_name
+            deployment.runtime_metadata = package.metadata
             deployment.error_payload = None
-            revision.build_hash = package.build_hash
-            if not revision.bundle_hash:
-                revision.bundle_hash = package.build_hash
-            await self._db.flush()
-            return deployment
+            deployment.deployment_id = None
+            deployment.version_id = None
 
         try:
             result = await self._client.deploy_worker(
@@ -91,9 +93,9 @@ class ArtifactDeploymentService:
             raise
 
         deployment.status = ArtifactDeploymentStatus.READY
-        deployment.worker_name = str(result.get("id") or deployment.worker_name)
+        deployment.worker_name = package.worker_name
         deployment.script_name = package.script_name
-        deployment.deployment_id = str(result.get("deployment_id") or "") or deployment.deployment_id
+        deployment.deployment_id = str(result.get("id") or result.get("deployment_id") or "") or deployment.deployment_id
         deployment.version_id = str(result.get("etag") or result.get("version_id") or "") or deployment.version_id
         deployment.runtime_metadata = {**package.metadata, **dict(result or {})}
         deployment.error_payload = None
@@ -102,6 +104,21 @@ class ArtifactDeploymentService:
             revision.bundle_hash = package.build_hash
         await self._db.flush()
         return deployment
+
+    async def _get_deployment_by_build_hash(
+        self,
+        *,
+        tenant_id: UUID,
+        namespace: str,
+        build_hash: str,
+    ) -> ArtifactDeployment | None:
+        return await self._db.scalar(
+            select(ArtifactDeployment).where(
+                ArtifactDeployment.tenant_id == tenant_id,
+                ArtifactDeployment.namespace == namespace,
+                ArtifactDeployment.build_hash == build_hash,
+            )
+        )
 
     async def get_ready_deployment(self, *, revision_id: UUID, namespace: str) -> ArtifactDeployment | None:
         return await self._db.scalar(

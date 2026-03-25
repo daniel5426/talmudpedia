@@ -1,4 +1,4 @@
-Last Updated: 2026-03-11
+Last Updated: 2026-03-25
 
 # Artifacts Execution Infra Spec
 
@@ -15,7 +15,8 @@ Current artifact-runtime env surface is centered on:
 - `CLOUDFLARE_ACCOUNT_ID`
 - `ARTIFACT_CF_DISPATCH_BASE_URL`
 - `ARTIFACT_CF_DISPATCH_TOKEN`
-- `ARTIFACT_CF_RUNTIME_MODE`
+- `ARTIFACT_CF_DISPATCH_NAMESPACE_STAGING`
+- `ARTIFACT_CF_DISPATCH_NAMESPACE_PRODUCTION`
 - `ARTIFACT_CF_DISPATCH_TIMEOUT_SECONDS`
 
 Fallback bundle envs:
@@ -38,8 +39,9 @@ The current direction now is:
 - Cloudflare Workers-compatible runtime boundaries for tenant artifact execution
 - published revision pinning for production execution
 - thin agent/rag/tool integrations over the same execution substrate
-- stronger queueing, fairness, outbound policy, and secret-broker hardening on top of this stack
+- stronger queueing, fairness, and runtime validation on top of this stack
 
 Current implementation note:
-- `workers_for_platforms` is the intended production mode
-- `standard_worker_test` is the temporary free-plan validation mode currently used when dispatch namespaces are not available
+- the canonical runtime is now Cloudflare Workers for Platforms with dispatch namespaces, transient `@{credential-id}` string-literal rewriting, and `uv run pywrangler deploy` for Python dependency packaging
+- older references to outbound broker injection, `artifact_runtime_sdk.resolve_secret(...)`, or direct multipart Python deploy uploads are historical and should not be treated as current architecture
+- successful `pywrangler` packaging does not imply package-runtime compatibility; heavyweight Python SDK imports can still fail inside Cloudflare Python Workers

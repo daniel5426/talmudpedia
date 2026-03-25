@@ -239,7 +239,7 @@ export const AGENT_NODE_SPECS: AgentNodeSpec[] = [
     configFields: [
       { name: "name", label: "Name", fieldType: "string", required: false, description: "Agent display name" },
       { name: "model_id", label: "Model", fieldType: "model", required: true, description: "Select a chat model" },
-      { name: "instructions", label: "Instructions", fieldType: "text", required: false, description: "System prompt with {{ variable }} support" },
+      { name: "instructions", label: "Instructions", fieldType: "text", required: false, description: "System prompt with {{ variable }} support", prompt_capable: true, prompt_surface: "agent.instructions" },
       { name: "include_chat_history", label: "Include Chat History", fieldType: "boolean", required: false, default: true },
       { name: "reasoning_effort", label: "Reasoning Effort", fieldType: "select", required: false, default: "medium",
         options: [
@@ -290,7 +290,7 @@ export const AGENT_NODE_SPECS: AgentNodeSpec[] = [
     icon: "Brain",
     configFields: [
       { name: "model_id", label: "Model", fieldType: "model", required: true, description: "Select a chat model" },
-      { name: "system_prompt", label: "System Prompt", fieldType: "text", required: false, description: "Instructions for the LLM" },
+      { name: "system_prompt", label: "System Prompt", fieldType: "text", required: false, description: "Instructions for the LLM", prompt_capable: true, prompt_surface: "llm.system_prompt" },
       { name: "temperature", label: "Temperature", fieldType: "number", required: false, default: 0.7, description: "Creativity (0-1)" },
     ],
   },
@@ -355,8 +355,8 @@ export const AGENT_NODE_SPECS: AgentNodeSpec[] = [
       { name: "name", label: "Name", fieldType: "string", required: false },
       { name: "model_id", label: "Model", fieldType: "model", required: true, description: "Model used for classification" },
       { name: "input_source", label: "Input Source", fieldType: "value_ref", required: false, description: "Pick a value to classify" },
-      { name: "instructions", label: "Instructions", fieldType: "text", required: false, description: "Additional context for classification" },
-      { name: "categories", label: "Categories", fieldType: "category_list", required: true, description: "Define classification categories" },
+      { name: "instructions", label: "Instructions", fieldType: "text", required: false, description: "Additional context for classification", prompt_capable: true, prompt_surface: "classify.instructions" },
+      { name: "categories", label: "Categories", fieldType: "category_list", required: true, description: "Define classification categories", prompt_capable: true, prompt_surface: "classify.categories.description" },
     ],
   },
   

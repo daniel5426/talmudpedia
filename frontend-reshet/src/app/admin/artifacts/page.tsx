@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useTenant } from "@/contexts/TenantContext"
-import { AgentArtifactContract, Artifact, ArtifactCapabilityConfig, ArtifactKind, ArtifactVersionListItem, RAGArtifactContract, ToolArtifactContract, artifactsService } from "@/services/artifacts"
+import { AgentArtifactContract, Artifact, ArtifactCapabilityConfig, ArtifactKind, ArtifactLanguage, ArtifactVersionListItem, RAGArtifactContract, ToolArtifactContract, artifactsService } from "@/services/artifacts"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Card } from "@/components/ui/card"
 import { fillPromptMentionJsonToken } from "@/components/shared/PromptMentionJsonEditor"
@@ -40,6 +40,7 @@ export default function ArtifactsPage() {
     const modeParam = searchParams.get("mode") as ViewMode | null
     const idParam = searchParams.get("id")
     const kindParam = searchParams.get("kind") as ArtifactKind | null
+    const languageParam = searchParams.get("language") as ArtifactLanguage | null
 
     const [viewMode, setViewMode] = useState<ViewMode>("list")
     const [loading, setLoading] = useState(true)
@@ -150,22 +151,24 @@ export default function ArtifactsPage() {
         source_files: formData.source_files.map((file) => ({ ...file })),
     }), [formData])
 
-    const setViewModeWithUrl = useCallback((mode: ViewMode, id?: string) => {
+    const setViewModeWithUrl = useCallback((mode: ViewMode, id?: string, kind?: ArtifactKind, language?: ArtifactLanguage) => {
         const params = new URLSearchParams()
         if (mode !== "list") params.set("mode", mode)
         if (id) params.set("id", id)
+        if (kind) params.set("kind", kind)
+        if (language) params.set("language", language)
         const queryString = params.toString()
         router.push(`/admin/artifacts${queryString ? `?${queryString}` : ""}`)
         setViewMode(mode)
     }, [router])
 
-    const handleCreate = useCallback((kind: ArtifactKind) => {
-        const next = createFormDataForKind(kind)
+    const handleCreate = useCallback((kind: ArtifactKind, language: ArtifactLanguage) => {
+        const next = createFormDataForKind(kind, language)
         setFormData(next)
         setSelectedArtifact(null)
         setActiveFilePath(getDefaultActiveFilePath(next))
         setConvertTargetKind(kind === "agent_node" ? "rag_operator" : "agent_node")
-        setViewModeWithUrl("create")
+        setViewModeWithUrl("create", undefined, kind, language)
         persistNewDraftKey()
     }, [persistNewDraftKey, setViewModeWithUrl])
 
@@ -174,8 +177,8 @@ export default function ArtifactsPage() {
         setViewMode("edit")
     }, [loadArtifactEditorState])
 
-    const hydrateCreateMode = useCallback((kind: ArtifactKind) => {
-        const next = createFormDataForKind(kind)
+    const hydrateCreateMode = useCallback((kind: ArtifactKind, language: ArtifactLanguage) => {
+        const next = createFormDataForKind(kind, language)
         setFormData(next)
         setSelectedArtifact(null)
         setActiveFilePath(getDefaultActiveFilePath(next))
@@ -198,11 +201,12 @@ export default function ArtifactsPage() {
             const requestedKind = kindParam && PAGE_ARTIFACT_KIND_OPTIONS.some((option) => option.value === kindParam)
                 ? kindParam
                 : "agent_node"
-            hydrateCreateMode(requestedKind)
+            const requestedLanguage = languageParam === "javascript" ? "javascript" : "python"
+            hydrateCreateMode(requestedKind, requestedLanguage)
             return
         }
         setViewMode("list")
-    }, [artifacts, handleEdit, hydrateCreateMode, idParam, kindParam, loading, modeParam, setViewModeWithUrl])
+    }, [artifacts, handleEdit, hydrateCreateMode, idParam, kindParam, languageParam, loading, modeParam, setViewModeWithUrl])
 
     const loadArtifactVersions = useCallback(async () => {
         if (!selectedArtifact?.id) return
@@ -288,7 +292,7 @@ export default function ArtifactsPage() {
         }
     }, [currentFormSignature, persistWorkingDraft, selectedArtifact?.id, viewMode])
 
-    const updateFormData = useCallback((field: keyof ArtifactFormData, value: string | ArtifactKind | ArtifactFormData["source_files"]) => {
+    const updateFormData = useCallback((field: keyof ArtifactFormData, value: string | ArtifactKind | ArtifactLanguage | ArtifactFormData["source_files"]) => {
         setFormData((prev) => {
             return { ...prev, [field]: value }
         })
@@ -299,11 +303,14 @@ export default function ArtifactsPage() {
             display_name: typeof snapshot.display_name === "string" ? snapshot.display_name : prev.display_name,
             description: typeof snapshot.description === "string" ? snapshot.description : prev.description,
             kind: (typeof snapshot.kind === "string" ? snapshot.kind : prev.kind) as ArtifactKind,
+            language: (typeof snapshot.language === "string" ? snapshot.language : prev.language) as ArtifactLanguage,
             source_files: Array.isArray(snapshot.source_files)
                 ? snapshot.source_files as ArtifactFormData["source_files"]
                 : prev.source_files,
             entry_module_path: typeof snapshot.entry_module_path === "string" ? snapshot.entry_module_path : prev.entry_module_path,
-            python_dependencies: typeof snapshot.python_dependencies === "string" ? snapshot.python_dependencies : prev.python_dependencies,
+            dependencies: typeof snapshot.dependencies === "string"
+                ? snapshot.dependencies
+                : (typeof snapshot.python_dependencies === "string" ? snapshot.python_dependencies : prev.dependencies),
             runtime_target: typeof snapshot.runtime_target === "string" ? snapshot.runtime_target : prev.runtime_target,
             capabilities: typeof snapshot.capabilities === "string" ? snapshot.capabilities : prev.capabilities,
             config_schema: typeof snapshot.config_schema === "string" ? snapshot.config_schema : prev.config_schema,
@@ -450,7 +457,8 @@ export default function ArtifactsPage() {
     const renderEditor = () => (
         <div className="relative w-full min-w-0 flex-1 overflow-hidden">
             <ArtifactWorkspaceEditor
-                sourceFiles={formData.source_files}
+              language={formData.language}
+              sourceFiles={formData.source_files}
                 activeFilePath={activeFilePath}
                 entryModulePath={formData.entry_module_path}
                 onActiveFileChange={setActiveFilePath}
@@ -587,12 +595,13 @@ export default function ArtifactsPage() {
                             <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
                                 {renderEditor()}
                             </div>
-                            <ArtifactTestPanel
-                                tenantSlug={currentTenant?.slug}
-                                artifactId={selectedArtifact?.id}
-                                sourceFiles={formData.source_files}
-                                entryModulePath={formData.entry_module_path}
-                                kind={formData.kind}
+            <ArtifactTestPanel
+              tenantSlug={currentTenant?.slug}
+              artifactId={selectedArtifact?.id}
+              sourceFiles={formData.source_files}
+              entryModulePath={formData.entry_module_path}
+              language={formData.language}
+              kind={formData.kind}
                                 runtimeTarget={formData.runtime_target}
                                 capabilities={testCapabilities}
                                 configSchema={testConfigSchema}

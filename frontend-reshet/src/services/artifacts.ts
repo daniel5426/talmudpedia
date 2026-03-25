@@ -3,6 +3,7 @@ import { useAuthStore } from "@/lib/store/useAuthStore";
 
 export type ArtifactType = "draft" | "published";
 export type ArtifactKind = "agent_node" | "rag_operator" | "tool_impl";
+export type ArtifactLanguage = "python" | "javascript";
 export type ArtifactOwnerType = "tenant" | "system";
 export type ArtifactRunStatus = "queued" | "running" | "completed" | "failed" | "cancel_requested" | "cancelled";
 
@@ -12,9 +13,10 @@ export interface ArtifactSourceFile {
 }
 
 export interface ArtifactRuntimeConfig {
+  language: ArtifactLanguage;
   source_files: ArtifactSourceFile[];
   entry_module_path: string;
-  python_dependencies: string[];
+  dependencies: string[];
   runtime_target: string;
 }
 
@@ -113,6 +115,7 @@ export interface ArtifactTestRequest {
   source_files?: ArtifactSourceFile[];
   entry_module_path?: string;
   dependencies?: string[];
+  language?: ArtifactLanguage;
   input_data: unknown;
   config?: Record<string, unknown>;
   kind?: ArtifactKind;

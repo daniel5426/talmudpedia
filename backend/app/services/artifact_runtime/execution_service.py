@@ -18,11 +18,10 @@ from app.db.postgres.models.artifact_runtime import (
 from .cloudflare_dispatch_client import CloudflareDispatchClient
 from .cloudflare_dispatch_client import CloudflareDispatchHTTPError
 from .deployment_service import ArtifactDeploymentService
-from .outbound_auth_service import mint_outbound_grant, resolve_outbound_allowed_hosts
 from .policy_service import ArtifactConcurrencyLimitExceeded, ArtifactRuntimePolicyService
 from .registry_service import ArtifactRegistryService
 from .revision_service import ArtifactRevisionService
-from .runtime_mode import RUNTIME_MODE_STANDARD_WORKER_TEST, artifact_cloudflare_runtime_mode
+from .runtime_secret_service import resolve_runtime_credentials
 from .run_service import ArtifactRunService
 from .source_utils import normalize_artifact_source
 
@@ -56,6 +55,7 @@ class ArtifactExecutionService:
         input_data: Any,
         config: dict[str, Any] | None,
         dependencies: list[str] | None,
+        language: str | None,
         kind: str | None,
         runtime_target: str | None,
         capabilities: dict[str, Any] | None,
@@ -97,9 +97,10 @@ class ArtifactExecutionService:
                 display_name=artifact.display_name if artifact else "Unsaved Artifact",
                 description=artifact.description if artifact else None,
                 kind=(getattr(artifact.kind, "value", artifact.kind) if artifact else kind),
+                language=str(language or (getattr(revision.language, "value", revision.language) if revision else None) or "python"),
                 source_files=source.source_files if source is not None else None,
                 entry_module_path=source.entry_module_path if source is not None else None,
-                python_dependencies=requested_dependencies or list((revision.python_dependencies if revision else []) or []),
+                dependencies=requested_dependencies or list((revision.python_dependencies if revision else []) or []),
                 runtime_target=runtime_target or str((revision.runtime_target if revision else None) or "cloudflare_workers"),
                 capabilities=dict(capabilities or dict((revision.capabilities if revision else {}) or {})),
                 config_schema=dict(config_schema or dict((revision.config_schema if revision else {}) or {})),
@@ -309,15 +310,6 @@ class ArtifactExecutionService:
         )
         await self._db.commit()
 
-        outbound_allowed_hosts = {
-            str(item or "").strip().lower()
-            for item in list((run.context_payload or {}).get("allowed_hosts") or [])
-            if str(item or "").strip()
-        }
-        for host in list((run.revision.capabilities or {}).get("allowed_hosts") or []):
-            host_value = str(host or "").strip().lower()
-            if host_value:
-                outbound_allowed_hosts.add(host_value)
         request_payload = {
             "tenant_id": str(run.tenant_id),
             "run_id": str(run.id),
@@ -333,23 +325,18 @@ class ArtifactExecutionService:
             "inputs": run.input_payload,
             "config": dict(run.config_payload or {}),
             "context": dict(run.context_payload or {}),
-            "allowed_hosts": sorted(outbound_allowed_hosts),
         }
         client = CloudflareDispatchClient()
         try:
-            request_payload["allowed_hosts"] = await resolve_outbound_allowed_hosts(
+            resolved_credentials = await resolve_runtime_credentials(
                 db=self._db,
                 tenant_id=run.tenant_id,
                 revision=run.revision,
-                base_allowed_hosts=outbound_allowed_hosts,
             )
-            outbound_grant = mint_outbound_grant(run=run, revision=run.revision)
-            if outbound_grant:
-                request_payload["outbound_grant"] = outbound_grant
-            if artifact_cloudflare_runtime_mode() == RUNTIME_MODE_STANDARD_WORKER_TEST:
-                request_payload["source_files"] = list(run.revision.source_files or [])
-                request_payload["entry_module_path"] = run.revision.entry_module_path
-                request_payload["python_dependencies"] = list(run.revision.python_dependencies or [])
+            request_payload["context"] = {
+                **dict(request_payload.get("context") or {}),
+                "credentials": resolved_credentials,
+            }
             response = await client.execute(request_payload)
         except Exception as exc:
             run = await self._runs.get_run(run_id=run_id)
@@ -388,8 +375,7 @@ class ArtifactExecutionService:
                             "event": "dispatch_request_debug",
                             "name": "dispatch_request_debug",
                             "data": {
-                                "allowed_hosts": list(request_payload.get("allowed_hosts") or []),
-                                "has_outbound_grant": bool(request_payload.get("outbound_grant")),
+                                "resolved_credential_ids": sorted(list(resolved_credentials.keys())) if "resolved_credentials" in locals() else [],
                             },
                         },
                     }

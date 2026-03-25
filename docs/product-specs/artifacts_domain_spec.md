@@ -1,12 +1,12 @@
 # Artifacts Domain Spec
 
-Last Updated: 2026-03-24
+Last Updated: 2026-03-25
 
 This document is the canonical product/specification overview for the artifact domain.
 
 ## Purpose
 
-Artifacts are reusable Python execution units used across the platform by:
+Artifacts are reusable execution units used across the platform by:
 - agents
 - tools
 - RAG pipelines
@@ -52,6 +52,7 @@ Current authoring shape includes:
 - identity and metadata
 - human-facing `display_name` without a user-authored artifact slug
 - explicit `kind`
+- explicit immutable `language`
 - source files and entry module path
 - runtime target and dependency declarations
 - config schema
@@ -153,9 +154,10 @@ Shared runtime/base configuration now includes:
 - metadata and identity fields
 - `kind`
 - `owner_type`
+- `language`
 - `source_files`
 - `entry_module_path`
-- `python_dependencies`
+- `dependencies`
 - `runtime_target`
 - `capabilities`
 - `config_schema`
@@ -188,20 +190,29 @@ async def execute(inputs: dict, config: dict, context: dict) -> dict: ...
 
 ## Credential Reference Rules
 
-Artifacts can declare brokered outbound credentials directly in source by inserting credential reference tokens.
+Artifacts can declare runtime credential references directly in source by inserting credential reference tokens.
 
 Current V1 rules:
 - authoring uses an `@` mention flow in the source editor, but the persisted source stores an immutable credential-id reference token
-- credentialed outbound access is HTTP-only and resolved per revision source tree, not by per-artifact binding config
 - supported categories are `llm_provider`, HTTP-native `vector_store`, `tool_provider`, and `custom`
 - non-HTTP vector backends remain out of scope for artifact outbound credentials
 
 Current runtime behavior:
-- artifact code does not receive raw secret values
-- credentialed outbound traffic must use the bundled `artifact_runtime_sdk.outbound_fetch(..., credential=...)` helper
-- the backend issues a short-lived outbound grant per run scoped to the credential ids referenced by the revision source
-- the outbound worker calls the internal broker endpoint and receives only `inject_headers`
-- user-supplied outbound headers cannot override broker-injected auth headers
+- artifact code can resolve user-owned credential values at runtime
+- save/publish stores referenced credential ids on the revision manifest
+- only exact string-literal values equal to `@{credential-id}` are supported
+- deploy/build rewrites exact literals into:
+  - Python: `context["credentials"]["<credential-id>"]`
+  - JS/TS: `context.credentials["<credential-id>"]`
+- run-time dispatch resolves current credential values and injects them into `context.credentials`
+- runtime secret values are not persisted in artifact source, deployed source, run config, run context, run events, or saved revisions
+
+Current authoring behavior:
+- the source editor shows credential suggestions when the user types `@`
+- selecting a credential inserts an immutable credential reference token into the source
+- runtime resolution is by credential id, not mutable display name
+- artifact code should pass `@{credential-id}` directly where a normal SDK or HTTP client expects a plain secret string
+- embedded or mixed forms such as `"Bearer @{id}"`, f-strings, concatenations, dict keys, comments, or `artifact_runtime_sdk` imports are rejected
 
 ## Current Queue Policy
 
@@ -223,14 +234,21 @@ Current limit:
 Tenant artifacts now execute on Cloudflare Workers-compatible runtime paths.
 
 Current practical constraints:
-- tenant revisions must be compatible with the Workers Python runtime
+- artifact revisions must be compatible with the selected language lane runtime
 - unsupported filesystem/process/socket assumptions are out of contract for tenant artifacts
 - dependency declarations are validated against the current Workers-compatible policy before deployment
+- declared Python dependencies may still be rejected in practice by Workers Python startup/import costs even when `pywrangler` installs them successfully
+- the `openai` Python SDK is currently out of contract for tenant artifacts; prefer direct HTTP or lighter compatible libraries
 
-Current transitional reality:
-- the intended production substrate is Cloudflare Workers for Platforms
-- the repo also supports a temporary `standard_worker_test` mode for Cloudflare free-plan validation
-- that temporary mode validates the control plane and execution path, but it does not yet provide full per-artifact dependency installation fidelity
+Current runtime topology:
+- backend generates a temporary language-specific Cloudflare Worker project per build/deploy
+- `staging` and `production` executions route through separate dispatch namespaces
+- the Dispatch Worker is the backend-facing Cloudflare entrypoint
+- the User Worker runs deployed rewritten source and receives current credentials through `context.credentials`
+- Python dependencies are installed through Cloudflare's documented `uv run pywrangler deploy` pipeline
+- JS dependencies are bundled through Wrangler with pinned compatibility metadata
+
+The canonical artifact credential path is no longer brokered outbound auth injection.
 
 ## Canonical Implementation References
 

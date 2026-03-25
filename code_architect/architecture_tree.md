@@ -1,6 +1,6 @@
 # Architecture Tree (Curated)
 
-Last Updated: 2026-03-24
+Last Updated: 2026-03-25
 
 This file is a backend-only architecture map optimized for agent context efficiency.
 
@@ -34,7 +34,6 @@ backend/app/api/routers/prompts.py
 backend/app/api/routers/rag_graph_mutations.py
 backend/app/api/routers/rag_operator_contracts.py
 backend/app/api/routers/artifacts.py
-backend/app/api/routers/artifact_runtime_internal.py
 backend/app/api/routers/artifact_runs.py
 backend/app/api/routers/artifact_coding_agent.py
 backend/app/api/schemas/
@@ -155,14 +154,13 @@ backend/app/services/artifact_runtime/
 backend/app/services/artifact_runtime/registry_service.py
 backend/app/services/artifact_runtime/revision_service.py
 backend/app/services/artifact_runtime/bundle_builder.py
-backend/app/services/artifact_runtime/dependency_packager.py
 backend/app/services/artifact_runtime/bundle_storage.py
 backend/app/services/artifact_runtime/execution_service.py
 backend/app/services/artifact_runtime/run_service.py
 backend/app/services/artifact_runtime/source_utils.py
 backend/app/services/artifact_runtime/workers_validation.py
 backend/app/services/artifact_runtime/cloudflare_package_builder.py
-backend/app/services/artifact_runtime/outbound_auth_service.py
+backend/app/services/artifact_runtime/runtime_secret_service.py
 backend/app/services/artifact_runtime/cloudflare_client.py
 backend/app/services/artifact_runtime/cloudflare_dispatch_client.py
 backend/app/services/artifact_runtime/deployment_service.py
@@ -261,7 +259,6 @@ backend/artifacts/builtin/platform_sdk/actions/agents.py
 runtime/
 runtime/cloudflare-artifacts/
 runtime/cloudflare-artifacts/dispatch-worker/
-runtime/cloudflare-artifacts/outbound-worker/
 backend/artifacts/builtin/platform_sdk/actions/artifacts.py
 backend/artifacts/builtin/platform_sdk/actions/tools.py
 backend/artifacts/builtin/platform_sdk/actions/orchestration.py

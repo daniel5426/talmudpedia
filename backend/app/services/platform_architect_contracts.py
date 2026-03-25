@@ -760,9 +760,10 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
                         "description": "Tool implementation artifact.",
                         "kind": "tool_impl",
                         "runtime": {
+                            "language": "python",
                             "source_files": [{"path": "main.py", "content": "async def execute(inputs, config, context):\n    return {\"ok\": True}"}],
                             "entry_module_path": "main.py",
-                            "python_dependencies": [],
+                            "dependencies": [],
                             "runtime_target": "cloudflare_workers",
                         },
                         "capabilities": {"network_access": False, "allowed_hosts": [], "secret_refs": [], "storage_access": [], "side_effects": []},
@@ -797,9 +798,10 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
                         "patch": {
                             "description": "Updated description",
                             "runtime": {
+                                "language": "python",
                                 "source_files": [{"path": "main.py", "content": "async def execute(inputs, config, context):\n    return inputs"}],
                                 "entry_module_path": "main.py",
-                                "python_dependencies": [],
+                                "dependencies": [],
                                 "runtime_target": "cloudflare_workers",
                             },
                         },

@@ -7,6 +7,7 @@ from sqlalchemy import func, select
 
 from app.db.postgres.models.artifact_runtime import ArtifactRevision, ArtifactStatus
 from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Tenant, User
+from app.db.postgres.models.registry import IntegrationCredential, IntegrationCredentialCategory
 from app.services.artifact_runtime.bundle_builder import ArtifactBundleBuilder
 from app.services.artifact_runtime.cloudflare_package_builder import CloudflareArtifactPackageBuilder
 from app.services.artifact_runtime.registry_service import ArtifactRegistryService
@@ -47,12 +48,13 @@ async def test_revision_service_creates_updates_and_publishes_multifile_revision
         display_name="Reading Time",
         description="Estimate reading time",
         kind="agent_node",
+        language="python",
         source_files=[
             {"path": "main.py", "content": "from helpers import answer\n\ndef execute(inputs, config, context):\n    return answer(inputs)\n"},
             {"path": "helpers.py", "content": "def answer(data):\n    return {'echo': data}\n"},
         ],
         entry_module_path="main.py",
-        python_dependencies=["requests>=2.0"],
+        dependencies=["requests>=2.0"],
         runtime_target="cloudflare_workers",
         capabilities={"network_access": False},
         config_schema={"type": "object", "properties": {"enabled": {"type": "boolean", "default": True}}},
@@ -84,7 +86,8 @@ async def test_revision_service_creates_updates_and_publishes_multifile_revision
             {"path": "main.py", "content": "def execute(inputs, config, context):\n    return {'updated': True, 'echo': inputs}\n"},
         ],
         entry_module_path="main.py",
-        python_dependencies=["httpx>=0.27"],
+        language="python",
+        dependencies=["httpx>=0.27"],
         runtime_target="cloudflare_workers",
         capabilities={"network_access": True},
         config_schema={"type": "object", "properties": {"wpm": {"type": "integer", "default": 200}}},
@@ -126,11 +129,12 @@ async def test_revision_service_does_not_create_new_revision_for_noop_update(db_
         display_name="Noop Revision",
         description="unchanged",
         kind="agent_node",
+        language="python",
         source_files=[
             {"path": "main.py", "content": "def execute(inputs, config, context):\n    return {'ok': True}\n"},
         ],
         entry_module_path="main.py",
-        python_dependencies=["requests>=2.0"],
+        dependencies=["requests>=2.0"],
         runtime_target="cloudflare_workers",
         capabilities={"network_access": False},
         config_schema={"type": "object"},
@@ -155,7 +159,8 @@ async def test_revision_service_does_not_create_new_revision_for_noop_update(db_
         description="unchanged",
         source_files=[{"path": "main.py", "content": "def execute(inputs, config, context):\n    return {'ok': True}\n"}],
         entry_module_path="main.py",
-        python_dependencies=["requests>=2.0"],
+        language="python",
+        dependencies=["requests>=2.0"],
         runtime_target="cloudflare_workers",
         capabilities={"network_access": False},
         config_schema={"type": "object"},
@@ -187,6 +192,7 @@ def test_bundle_builder_hash_is_stable_for_same_revision_payload():
         display_name = "Stable"
         description = "Stable bundle"
         kind = "rag_operator"
+        language = "python"
         input_type = "raw_documents"
         output_type = "raw_documents"
         python_dependencies = ["requests>=2.0"]
@@ -220,14 +226,66 @@ def test_cloudflare_package_builder_emits_runtime_main_wrapper():
         artifact_id = uuid.uuid4()
         tenant_id = uuid.uuid4()
         kind = "tool_impl"
+        language = "python"
         entry_module_path = "main.py"
         python_dependencies = []
+        manifest_json = {}
         source_files = [{"path": "main.py", "content": "def execute(inputs, config, context):\n    return {'ok': True}\n"}]
         runtime_target = "cloudflare_workers"
 
     package = CloudflareArtifactPackageBuilder().build_revision_package(_Revision(), namespace="staging")
     module_names = {module["name"] for module in package.modules}
-    main_module = next(module for module in package.modules if module["name"] == "main.py")
-    assert "main.py" in module_names
-    assert "from main import execute as artifact_execute" in main_module["content"]
+    main_module = next(module for module in package.modules if module["name"] == "__artifact_bootstrap.py")
+    assert "__artifact_bootstrap.py" in module_names
+    assert 'importlib.import_module("main")' in main_module["content"]
     assert "traceback.format_exception" in main_module["content"]
+
+
+def test_cloudflare_package_builder_records_declared_python_dependencies():
+    class _Revision:
+        id = uuid.uuid4()
+        artifact_id = uuid.uuid4()
+        tenant_id = uuid.uuid4()
+        kind = "tool_impl"
+        language = "python"
+        entry_module_path = "main.py"
+        python_dependencies = ["openai"]
+        manifest_json = {}
+        source_files = [{"path": "main.py", "content": "def execute(inputs, config, context):\n    return {'ok': True}\n"}]
+        runtime_target = "cloudflare_workers"
+
+    package = CloudflareArtifactPackageBuilder().build_revision_package(_Revision(), namespace="staging")
+    assert package.metadata["dependency_manifest"]["declared"] == ["openai"]
+
+
+@pytest.mark.asyncio
+async def test_revision_service_rejects_unsupported_credential_usage_on_save(db_session):
+    tenant, user = await _seed_tenant_context(db_session)
+    credential = IntegrationCredential(
+        tenant_id=tenant.id,
+        category=IntegrationCredentialCategory.LLM_PROVIDER,
+        provider_key="openai",
+        display_name="OpenAI Runtime",
+        credentials={"api_key": "super-secret-key"},
+        is_enabled=True,
+        is_default=True,
+    )
+    db_session.add(credential)
+    await db_session.commit()
+
+    with pytest.raises(ValueError, match="Only exact string-literal values"):
+        await ArtifactRevisionService(db_session).create_artifact(
+            tenant_id=tenant.id,
+            created_by=user.id,
+            display_name="Bad Credential Artifact",
+            description=None,
+            kind="tool_impl",
+            language="python",
+            source_files=[{"path": "main.py", "content": f'def execute(inputs, config, context):\n    return {{"auth": "Bearer @{{{credential.id}}}"}}\n'}],
+            entry_module_path="main.py",
+            dependencies=[],
+            runtime_target="cloudflare_workers",
+            capabilities={"network_access": True},
+            config_schema={},
+            tool_contract={"input_schema": {"type": "object"}, "output_schema": {"type": "object"}, "side_effects": [], "execution_mode": "interactive", "tool_ui": {}},
+        )

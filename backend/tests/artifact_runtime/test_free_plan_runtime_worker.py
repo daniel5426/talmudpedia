@@ -92,7 +92,7 @@ def test_free_plan_runtime_executes_package_import_tree():
     assert payload["data"]["result"]["value"] == 42
 
 
-def test_free_plan_runtime_executes_artifact_runtime_sdk_before_entry_module():
+def test_free_plan_runtime_executes_transient_source_tree_without_sdk_helper():
     module = _load_worker_module()
     worker = module.Default()
     request = _FakeRequest(
@@ -103,9 +103,9 @@ def test_free_plan_runtime_executes_artifact_runtime_sdk_before_entry_module():
                 {
                     "path": "main.py",
                     "content": (
-                        "from artifact_runtime_sdk import outbound_fetch\n\n"
+                        "API_KEY = 'real-secret'\n\n"
                         "async def execute(inputs, config, context):\n"
-                        "    return {'callable': bool(outbound_fetch)}\n"
+                        "    return {'api_key': API_KEY}\n"
                     ),
                 },
             ],
@@ -120,7 +120,7 @@ def test_free_plan_runtime_executes_artifact_runtime_sdk_before_entry_module():
 
     assert response.status == 200
     assert payload["data"]["status"] == "completed"
-    assert payload["data"]["result"]["callable"] is True
+    assert payload["data"]["result"]["api_key"] == "real-secret"
 
 
 def test_free_plan_runtime_returns_json_detail_for_module_load_failure():

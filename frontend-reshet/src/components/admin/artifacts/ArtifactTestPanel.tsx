@@ -14,6 +14,7 @@ import {
   ArtifactRun,
   ArtifactRunEvent,
   ArtifactSourceFile,
+  ArtifactLanguage,
   RAGArtifactContract,
   artifactsService,
   ArtifactTestResponse,
@@ -34,6 +35,7 @@ interface ArtifactTestPanelProps {
   artifactId?: string
   sourceFiles?: ArtifactSourceFile[]
   entryModulePath?: string
+  language: ArtifactLanguage
   kind: ArtifactKind
   runtimeTarget: string
   capabilities: ArtifactCapabilityConfig
@@ -78,6 +80,7 @@ export function ArtifactTestPanel({
   artifactId,
   sourceFiles,
   entryModulePath,
+  language,
   kind,
   runtimeTarget,
   capabilities,
@@ -214,6 +217,7 @@ export function ArtifactTestPanel({
           artifact_id: artifactId,
           source_files: sourceFiles,
           entry_module_path: entryModulePath,
+          language,
           input_data: inputData,
           config,
           kind,

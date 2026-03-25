@@ -8,72 +8,6 @@ from types import ModuleType
 from workers import Response, WorkerEntrypoint
 
 
-RUNTIME_SDK_SOURCE = """
-import json as _json
-
-_OUTBOUND_BASE_URL = ""
-_OUTBOUND_GRANT = ""
-_ALLOWED_HOSTS = []
-
-def configure_artifact_runtime(*, outbound_base_url=None, outbound_grant=None, allowed_hosts=None):
-    global _OUTBOUND_BASE_URL, _OUTBOUND_GRANT, _ALLOWED_HOSTS
-    _OUTBOUND_BASE_URL = str(outbound_base_url or "").rstrip("/")
-    _OUTBOUND_GRANT = str(outbound_grant or "")
-    _ALLOWED_HOSTS = list(allowed_hosts or [])
-
-async def outbound_fetch(url, *, credential, method="GET", headers=None, body=None, json=None):
-    from js import Headers as _JsHeaders
-    from js import Object as _JsObject
-    from js import fetch as _js_fetch
-
-    if not credential:
-        raise ValueError("credential is required")
-    if body is not None and json is not None:
-        raise ValueError("Pass either body or json, not both")
-
-    request_headers = _JsHeaders.new()
-    for key, value in dict(headers or {}).items():
-        request_headers.set(str(key), str(value))
-    request_headers.set("x-artifact-credential-id", str(credential))
-
-    request_body = None
-    if json is not None:
-        if not request_headers.get("content-type"):
-            request_headers.set("content-type", "application/json")
-        request_body = _json.dumps(json)
-    elif body is not None:
-        request_body = body if isinstance(body, str) else _json.dumps(body)
-
-    options = _JsObject.new()
-    options.method = str(method or "GET")
-    options.headers = request_headers
-    if request_body is not None:
-        options.body = request_body
-    response = await _js_fetch(str(url), options)
-    raw_text = await response.text()
-    content_type = str(response.headers.get("content-type") or "")
-    parsed_body = _json.loads(raw_text) if raw_text and "application/json" in content_type else raw_text
-    if not response.ok:
-        if isinstance(parsed_body, dict):
-            detail = parsed_body.get("detail")
-            if isinstance(detail, dict):
-                raise RuntimeError(str(detail.get("message") or "Artifact outbound request failed"))
-        detail_text = ""
-        if isinstance(parsed_body, str):
-            detail_text = parsed_body[:500]
-        elif parsed_body is not None:
-            detail_text = _json.dumps(parsed_body)[:500]
-        if detail_text:
-            raise RuntimeError(f"Artifact outbound request failed with status {int(response.status)}: {detail_text}")
-        raise RuntimeError(f"Artifact outbound request failed with status {int(response.status)}")
-    return {
-        "status_code": int(response.status),
-        "headers": {},
-        "body": parsed_body,
-    }
-"""
-
-
 def _module_name(path: str) -> str:
     normalized = str(PurePosixPath(path)).strip()
     if normalized.endswith("/__init__.py"):
@@ -178,7 +112,6 @@ def _load_modules(source_files, entry_module_path):
         for item in source_files
         if str(item.get("path") or "").endswith(".py")
     }
-    module_map["artifact_runtime_sdk.py"] = "artifact_runtime_sdk"
     modules = {}
     for path, name in module_map.items():
         module = ModuleType(name)
@@ -192,9 +125,7 @@ def _load_modules(source_files, entry_module_path):
         modules[path] = module
 
     source_files_by_path = {str(item.get("path") or ""): item for item in source_files}
-    source_files_by_path["artifact_runtime_sdk.py"] = {"path": "artifact_runtime_sdk.py", "content": RUNTIME_SDK_SOURCE}
-    execution_order = ["artifact_runtime_sdk.py", *_module_execution_order(source_files, entry_module_path)]
-    for path in execution_order:
+    for path in _module_execution_order(source_files, entry_module_path):
         item = source_files_by_path.get(path) or {}
         if path not in modules:
             continue
@@ -274,15 +205,6 @@ class Default(WorkerEntrypoint):
         inputs = payload.get("inputs")
         config = payload.get("config") or {}
         context = payload.get("context") or {}
-        runtime_sdk = sys.modules.get("artifact_runtime_sdk")
-        if runtime_sdk is not None:
-            configure_runtime = getattr(runtime_sdk, "configure_artifact_runtime", None)
-            if callable(configure_runtime):
-                configure_runtime(
-                    outbound_base_url=payload.get("outbound_base_url"),
-                    outbound_grant=payload.get("outbound_grant"),
-                    allowed_hosts=payload.get("allowed_hosts") or [],
-                )
         try:
             result = execute(inputs, config, context)
             if inspect.isawaitable(result):

@@ -21,20 +21,24 @@ class ArtifactWorkersCompatibilityError(ValueError):
     pass
 
 
-def validate_workers_compatibility(*, source_files: list[dict[str, str]], python_dependencies: list[str]) -> None:
-    _validate_source_files(source_files)
-    _validate_dependencies(python_dependencies)
+def validate_workers_compatibility(*, language: str, source_files: list[dict[str, str]], dependencies: list[str]) -> None:
+    _validate_source_files(language=language, source_files=source_files)
+    _validate_dependencies(dependencies)
 
 
-def _validate_source_files(source_files: list[dict[str, str]]) -> None:
+def _validate_source_files(*, language: str, source_files: list[dict[str, str]]) -> None:
+    normalized_language = str(language or "python").strip().lower()
     for item in source_files:
         path = str(item.get("path") or "").strip()
         if not path:
             raise ArtifactWorkersCompatibilityError("Artifact source file path is required")
         if path.startswith("/") or ".." in path.split("/"):
             raise ArtifactWorkersCompatibilityError(f"Artifact source file path `{path}` is invalid")
-        if not path.endswith(".py"):
-            raise ArtifactWorkersCompatibilityError("Only Python source files are supported in Workers artifact runtime v1")
+        if normalized_language == "python":
+            if not path.endswith(".py"):
+                raise ArtifactWorkersCompatibilityError("Only Python source files are supported in the Python Workers artifact lane")
+        elif not path.endswith((".js", ".mjs", ".ts", ".mts")):
+            raise ArtifactWorkersCompatibilityError("Only JS/TS source files are supported in the JavaScript Workers artifact lane")
 
 
 def _validate_dependencies(dependencies: list[str]) -> None:

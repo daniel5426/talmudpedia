@@ -7,17 +7,9 @@ workers_dev = true
 binding = "DISPATCHER_PRODUCTION"
 namespace = "talmudpedia-artifacts-production"
 
-  [dispatch_namespaces.outbound]
-  service = "talmudpedia-artifact-outbound"
-  parameters = ["artifact_outbound_grant", "artifact_allowed_hosts"]
-
 [[dispatch_namespaces]]
 binding = "DISPATCHER_STAGING"
 namespace = "talmudpedia-artifacts-staging"
-
-  [dispatch_namespaces.outbound]
-  service = "talmudpedia-artifact-outbound"
-  parameters = ["artifact_outbound_grant", "artifact_allowed_hosts"]
 
 [vars]
 BACKEND_SHARED_SECRET = ""

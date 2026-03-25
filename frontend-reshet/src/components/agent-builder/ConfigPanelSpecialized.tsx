@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
+import { PromptMentionInput } from "../shared/PromptMentionInput"
 import type { AgentGraphAnalysis } from "@/services/agent"
 import { EndContractEditor, ValueRefPicker } from "./GraphContractEditors"
 import {
@@ -454,25 +455,41 @@ export function ClassifyNodeSettings({
           <FormRow label="Categories" align="start">
             <div className="space-y-1.5">
               {categories.map((category, index) => (
-                <div key={`category-${index}`} className="flex items-center gap-1.5">
-                  <Input
-                    value={String(category.name || "")}
-                    onChange={(event) => {
-                      const next = [...categories]
-                      next[index] = { ...next[index], name: event.target.value }
-                      onChange({ ...value, categories: next })
-                    }}
-                    placeholder={index === 0 ? "Primary category" : "Category"}
-                    className="h-9 bg-muted/40 border-none rounded-lg text-[13px] focus-visible:ring-1 focus-visible:ring-offset-0 placeholder:text-muted-foreground/40"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => onChange({ ...value, categories: categories.filter((_, rowIndex) => rowIndex !== index) })}
-                    className="rounded p-1 text-muted-foreground/50 transition hover:text-foreground"
-                    aria-label={`Delete category ${index + 1}`}
-                  >
-                    <Trash2 className="h-3 w-3" />
-                  </button>
+                <div key={`category-${index}`} className="rounded-lg bg-muted/20 p-2">
+                  <div className="flex items-start gap-1.5">
+                    <div className="min-w-0 flex-1 space-y-1.5">
+                      <Input
+                        value={String(category.name || "")}
+                        onChange={(event) => {
+                          const next = [...categories]
+                          next[index] = { ...next[index], name: event.target.value }
+                          onChange({ ...value, categories: next })
+                        }}
+                        placeholder={index === 0 ? "Primary category" : "Category"}
+                        className="h-9 text-[13px] placeholder:text-muted-foreground/40"
+                      />
+                      <PromptMentionInput
+                        value={String(category.description || "")}
+                        onChange={(description) => {
+                          const next = [...categories]
+                          next[index] = { ...next[index], description }
+                          onChange({ ...value, categories: next })
+                        }}
+                        placeholder="Category description"
+                        surface="classify.categories.description"
+                        multiline={false}
+                        className="h-9 text-[13px]"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => onChange({ ...value, categories: categories.filter((_, rowIndex) => rowIndex !== index) })}
+                      className="mt-1 rounded p-1 text-muted-foreground/50 transition hover:text-foreground"
+                      aria-label={`Delete category ${index + 1}`}
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </button>
+                  </div>
                 </div>
               ))}
               <Button
@@ -503,11 +520,12 @@ export function ClassifyNodeSettings({
           </FormRow>
 
           <FormRow label="Instructions" align="start">
-            <Textarea
+            <PromptMentionInput
               value={String(value.instructions || "")}
-              onChange={(event) => onChange({ ...value, instructions: event.target.value })}
+              onChange={(instructions) => onChange({ ...value, instructions })}
               placeholder="Add examples or routing guidance for the classifier."
-              className="resize-none min-h-[60px] bg-muted/40 border-none rounded-lg text-[13px] focus-visible:ring-1 focus-visible:ring-offset-0 placeholder:text-muted-foreground/40"
+              surface="classify.instructions"
+              className="min-h-[60px] resize-none"
             />
           </FormRow>
         </div>

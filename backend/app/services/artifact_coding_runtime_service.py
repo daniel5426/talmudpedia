@@ -109,9 +109,10 @@ class ArtifactCodingRuntimeService:
                 "display_name": artifact.display_name,
                 "description": artifact.description or "",
                 "kind": kind,
+                "language": getattr(revision.language, "value", revision.language) or "python",
                 "source_files": list(revision.source_files or []),
                 "entry_module_path": revision.entry_module_path,
-                "python_dependencies": ", ".join(list(revision.python_dependencies or [])),
+                "dependencies": ", ".join(list(revision.python_dependencies or [])),
                 "runtime_target": revision.runtime_target,
                 "capabilities": deepcopy(revision.capabilities or DEFAULT_CAPABILITIES),
                 "config_schema": deepcopy(revision.config_schema or DEFAULT_CONFIG_SCHEMA),
@@ -533,10 +534,11 @@ class ArtifactCodingRuntimeService:
         )
         dependencies = [
             item.strip()
-            for item in str(snapshot.get("python_dependencies") or "").split(",")
+            for item in str(snapshot.get("dependencies") or "").split(",")
             if item.strip()
         ]
         kind = str(snapshot.get("kind") or "agent_node")
+        language = str(snapshot.get("language") or "python")
         capabilities = _parse_json_object(snapshot.get("capabilities"), field="capabilities", fallback=DEFAULT_CAPABILITIES)
         config_schema = _parse_json_object(snapshot.get("config_schema"), field="config_schema", fallback=DEFAULT_CONFIG_SCHEMA)
         artifact_payload: dict[str, Any] = {
@@ -544,9 +546,10 @@ class ArtifactCodingRuntimeService:
             "description": snapshot.get("description") or "",
             "kind": kind,
             "runtime": {
+                "language": language,
                 "source_files": _normalize_file_list(snapshot),
-                "entry_module_path": snapshot.get("entry_module_path") or "main.py",
-                "python_dependencies": dependencies,
+                "entry_module_path": snapshot.get("entry_module_path") or ("main.js" if language == "javascript" else "main.py"),
+                "dependencies": dependencies,
                 "runtime_target": snapshot.get("runtime_target") or "cloudflare_workers",
             },
             "capabilities": capabilities,

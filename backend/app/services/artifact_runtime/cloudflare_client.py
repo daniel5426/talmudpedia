@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-import json
+import asyncio
 import os
+from pathlib import Path
+import shutil
+import tempfile
+from textwrap import dedent
 from typing import Any
-
-import httpx
 
 
 class CloudflareArtifactRuntimeError(RuntimeError):
@@ -12,11 +14,6 @@ class CloudflareArtifactRuntimeError(RuntimeError):
 
 
 class CloudflareArtifactClient:
-    def __init__(self) -> None:
-        self._api_base = (os.getenv("CLOUDFLARE_API_BASE_URL") or "https://api.cloudflare.com/client/v4").rstrip("/")
-        self._account_id = str(os.getenv("CLOUDFLARE_ACCOUNT_ID") or "").strip()
-        self._api_token = str(os.getenv("CLOUDFLARE_API_TOKEN") or "").strip()
-
     async def deploy_worker(
         self,
         *,
@@ -26,46 +23,172 @@ class CloudflareArtifactClient:
         namespace: str,
     ) -> dict[str, Any]:
         self._require_config()
-        url = f"{self._api_base}/accounts/{self._account_id}/workers/scripts/{script_name}"
-        form_parts = {
-            "metadata": (
-                None,
-                json.dumps(
-                    {
-                        "main_module": "main.py",
-                        "compatibility_date": os.getenv("CLOUDFLARE_WORKERS_COMPATIBILITY_DATE", "2026-03-11"),
-                        "bindings": [],
-                        "dispatch_namespace": namespace,
-                        "annotations": metadata,
-                    }
-                ),
-                "application/json",
+        cloudflare_namespace = self._resolve_dispatch_namespace_name(namespace)
+        with tempfile.TemporaryDirectory(prefix=f"artifact-worker-{script_name[:24]}-") as temp_dir:
+            project_dir = Path(temp_dir)
+            language = str(metadata.get("language") or "python").strip()
+            self._write_project_files(
+                project_dir=project_dir,
+                script_name=script_name,
+                modules=modules,
+                metadata=metadata,
             )
+            output = await self._run_worker_deploy(
+                project_dir=project_dir,
+                dispatch_namespace=cloudflare_namespace,
+                language=language,
+            )
+        return {
+            "deployment_method": "pywrangler" if language == "python" else "wrangler",
+            "namespace": cloudflare_namespace,
+            "script_name": script_name,
+            "deploy_output": output[-12000:],
         }
-        for index, module in enumerate(modules):
-            content = module.get("content")
-            if isinstance(content, dict):
-                content = json.dumps(content)
-            form_parts[f"module_{index}"] = (
-                str(module.get("name") or f"module_{index}"),
-                str(content or ""),
-                "application/python" if module.get("type") == "python" else "application/json",
-            )
-        async with httpx.AsyncClient(timeout=float(os.getenv("CLOUDFLARE_API_TIMEOUT_SECONDS") or "60")) as client:
-            response = await client.put(
-                url,
-                headers={"Authorization": f"Bearer {self._api_token}"},
-                files=form_parts,
-            )
-        response.raise_for_status()
-        payload = response.json()
-        result = payload.get("result") if isinstance(payload, dict) else None
-        if not isinstance(result, dict):
-            raise CloudflareArtifactRuntimeError("Cloudflare deploy response is invalid")
-        return result
 
     def _require_config(self) -> None:
-        if not self._account_id:
-            raise CloudflareArtifactRuntimeError("CLOUDFLARE_ACCOUNT_ID is required")
-        if not self._api_token:
+        if not str(os.getenv("CLOUDFLARE_API_TOKEN") or "").strip():
             raise CloudflareArtifactRuntimeError("CLOUDFLARE_API_TOKEN is required")
+
+    def _resolve_dispatch_namespace_name(self, namespace: str) -> str:
+        value = str(namespace or "").strip()
+        if value == "staging":
+            return str(os.getenv("ARTIFACT_CF_DISPATCH_NAMESPACE_STAGING") or "talmudpedia-artifacts-staging").strip()
+        if value == "production":
+            return str(os.getenv("ARTIFACT_CF_DISPATCH_NAMESPACE_PRODUCTION") or "talmudpedia-artifacts-production").strip()
+        return value
+
+    def _write_project_files(
+        self,
+        *,
+        project_dir: Path,
+        script_name: str,
+        modules: list[dict[str, Any]],
+        metadata: dict[str, Any],
+    ) -> None:
+        main_module_name = str(metadata.get("main_module") or "main.py")
+        entrypoint = project_dir / main_module_name
+        entrypoint.parent.mkdir(parents=True, exist_ok=True)
+        for module in modules:
+            target = project_dir / str(module.get("name") or "")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            content = module.get("content")
+            if isinstance(content, bytes):
+                target.write_bytes(content)
+            else:
+                target.write_text(str(content or ""), encoding="utf-8")
+
+        compatibility_date = str(
+            metadata.get("compatibility_date")
+            or os.getenv("CLOUDFLARE_WORKERS_COMPATIBILITY_DATE")
+            or "2026-03-24"
+        ).strip()
+        compatibility_flags = list(metadata.get("compatibility_flags") or ["python_workers"])
+        (project_dir / "wrangler.toml").write_text(
+            dedent(
+                f"""
+                name = "{script_name}"
+                main = "{main_module_name}"
+                compatibility_date = "{compatibility_date}"
+                compatibility_flags = {compatibility_flags!r}
+                workers_dev = false
+                """
+            ).strip()
+            + "\n",
+            encoding="utf-8",
+        )
+        (project_dir / ".wranglerignore").write_text(
+            dedent(
+                """
+                .venv
+                .venv/**
+                .venv-workers
+                .venv-workers/**
+                __pycache__
+                **/__pycache__/**
+                .pytest_cache
+                """
+            ).strip()
+            + "\n",
+            encoding="utf-8",
+        )
+
+        dependencies = list((metadata.get("dependency_manifest") or {}).get("declared") or [])
+        language = str(metadata.get("language") or "python").strip()
+        if language == "python":
+            pyproject_lines = [
+                "[project]",
+                f'name = "{script_name}"',
+                'version = "0.1.0"',
+                'requires-python = ">=3.12"',
+                f"dependencies = {dependencies!r}",
+                "",
+                "[dependency-groups]",
+                'dev = ["workers-py>=1.9.1", "workers-runtime-sdk>=1.1.1"]',
+                "",
+            ]
+            (project_dir / "pyproject.toml").write_text("\n".join(pyproject_lines), encoding="utf-8")
+            return
+        package_json = {
+            "name": script_name,
+            "version": "0.1.0",
+            "private": True,
+            "type": "module",
+            "dependencies": {item: "latest" for item in dependencies},
+        }
+        import json
+        (project_dir / "package.json").write_text(json.dumps(package_json, indent=2), encoding="utf-8")
+
+    async def _run_worker_deploy(self, *, project_dir: Path, dispatch_namespace: str, language: str) -> str:
+        if language == "python":
+            return await self._run_python_worker_deploy(project_dir=project_dir, dispatch_namespace=dispatch_namespace)
+        install_output = ""
+        if (project_dir / "package.json").exists():
+            install_output = await self._run_command(
+                project_dir=project_dir,
+                command=("pnpm", "install", "--prod", "--no-frozen-lockfile"),
+                error_prefix="pnpm install failed",
+            )
+        deploy_output = await self._run_command(
+            project_dir=project_dir,
+            command=("wrangler", "deploy", "--dispatch-namespace", dispatch_namespace),
+            error_prefix=f"wrangler deploy failed for namespace={dispatch_namespace}",
+        )
+        return f"{install_output}\n{deploy_output}"
+
+    async def _run_python_worker_deploy(self, *, project_dir: Path, dispatch_namespace: str) -> str:
+        sync_output = await self._run_command(
+            project_dir=project_dir,
+            command=("uv", "run", "pywrangler", "sync"),
+            error_prefix="pywrangler sync failed",
+        )
+        shutil.rmtree(project_dir / ".venv", ignore_errors=True)
+        shutil.rmtree(project_dir / ".venv-workers", ignore_errors=True)
+        deploy_output = await self._run_command(
+            project_dir=project_dir,
+            command=("wrangler", "deploy", "--dispatch-namespace", dispatch_namespace),
+            error_prefix=f"wrangler deploy failed for namespace={dispatch_namespace}",
+        )
+        return f"{sync_output}\n{deploy_output}"
+
+    async def _run_command(
+        self,
+        *,
+        project_dir: Path,
+        command: tuple[str, ...],
+        error_prefix: str,
+    ) -> str:
+        env = dict(os.environ)
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            cwd=str(project_dir),
+            env=env,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        stdout, _ = await process.communicate()
+        output = (stdout or b"").decode("utf-8", errors="replace")
+        if process.returncode != 0:
+            raise CloudflareArtifactRuntimeError(
+                f"{error_prefix}: {output[-4000:]}"
+            )
+        return output

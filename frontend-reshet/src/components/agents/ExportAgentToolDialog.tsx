@@ -430,7 +430,7 @@ export function ExportAgentToolDialog({
         addChildToNode(parent.id, type)
     }
     const renderSplitTree = () => (
-        <div className="grid h-full grid-cols-[200px_minmax(0,1fr)]">
+        <div className="grid min-h-[28rem] max-h-[68vh] grid-cols-[200px_minmax(0,1fr)]">
             {/* Tree panel */}
             <div className="flex flex-col min-h-0 border-r border-border/30 bg-muted/20">
                 <div className="flex h-7 shrink-0 items-center justify-between px-2.5 border-b border-border/20">
@@ -640,7 +640,7 @@ export function ExportAgentToolDialog({
     return (
         <>
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent showCloseButton={false} className="!max-w-[58rem] h-[80vh] flex flex-col p-0 gap-0 overflow-hidden">
+            <DialogContent showCloseButton={false} className="!max-w-[58rem] flex w-full max-h-[88vh] flex-col p-0 gap-0 overflow-hidden">
                 <DialogTitle className="sr-only">Export Agent as Tool</DialogTitle>
                 <DialogDescription className="sr-only">
                     Configure the exported tool metadata and input schema before creating it.
@@ -652,7 +652,7 @@ export function ExportAgentToolDialog({
                     <div className="flex items-center justify-between gap-2 px-4 py-2">
                         <div className="flex items-center gap-2 min-w-0 flex-1">
                             <Select value={selectedAgentId} onValueChange={setSelectedAgentId}>
-                                <SelectTrigger size="sm" className="h-7 w-[150px] text-xs border-none bg-muted/40 shadow-none focus:ring-0">
+                                <SelectTrigger size="sm" className="h-7 w-[240px] text-xs border-none bg-muted/40 shadow-none focus:ring-0">
                                     <SelectValue placeholder="Select agent" />
                                 </SelectTrigger>
                                 <SelectContent>
@@ -779,22 +779,22 @@ export function ExportAgentToolDialog({
                 )}
 
                 {/* ── Main content ── */}
-                <div className="flex-1 min-h-0 overflow-hidden">
+                <div className="overflow-hidden">
                     <span className="sr-only">Input Schema</span>
                     {editorMode === "builder" ? (
                         renderSplitTree()
                     ) : (
-                        <div className="h-full min-h-0 overflow-hidden p-4">
+                        <div className="overflow-hidden p-4">
                             <PromptMentionJsonEditor
                                 id="json-schema-editor"
                                 aria-label="JSON Schema"
-                                className="h-full min-h-0 font-mono text-xs"
+                                className="font-mono text-xs"
                                 value={jsonSchemaText}
                                 onChange={(value) => {
                                     setJsonSchemaText(value)
                                     setSchemaEditorError(null)
                                 }}
-                                height="100%"
+                                height="min(60vh, 32rem)"
                                 surface="agent_export.input_schema.description"
                                 onMentionClick={(promptId, tokenRange) =>
                                     promptMentionModal.openPromptMentionModal(promptId, { kind: "json_schema", tokenRange })

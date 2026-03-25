@@ -153,9 +153,10 @@ def _artifact_to_schema(artifact: ArtifactModel, *, include_code: bool = False) 
         artifact.status == ArtifactStatus.PUBLISHED and active_revision.is_published
     ) else ArtifactType.DRAFT
     runtime = {
+        "language": str(getattr(active_revision.language, "value", active_revision.language) or "python"),
         "source_files": list(active_revision.source_files or []) if include_code else [],
         "entry_module_path": active_revision.entry_module_path,
-        "python_dependencies": list(active_revision.python_dependencies or []),
+        "dependencies": list(active_revision.python_dependencies or []),
         "runtime_target": str(active_revision.runtime_target or "cloudflare_workers"),
     }
     return ArtifactSchema(
@@ -186,9 +187,10 @@ def _artifact_revision_to_version_schema(
     include_code: bool = False,
 ) -> ArtifactVersionSchema:
     runtime = {
+        "language": str(getattr(revision.language, "value", revision.language) or "python"),
         "source_files": list(revision.source_files or []) if include_code else [],
         "entry_module_path": revision.entry_module_path,
-        "python_dependencies": list(revision.python_dependencies or []),
+        "dependencies": list(revision.python_dependencies or []),
         "runtime_target": str(revision.runtime_target or "cloudflare_workers"),
     }
     return ArtifactVersionSchema(
@@ -255,7 +257,8 @@ def _artifact_form_snapshot(artifact: ArtifactModel) -> dict[str, Any]:
             "kind": getattr(artifact.kind, "value", artifact.kind),
             "source_files": list(active_revision.source_files or []),
             "entry_module_path": active_revision.entry_module_path,
-            "python_dependencies": ", ".join(list(active_revision.python_dependencies or [])),
+            "language": str(getattr(active_revision.language, "value", active_revision.language) or "python"),
+            "dependencies": ", ".join(list(active_revision.python_dependencies or [])),
             "runtime_target": active_revision.runtime_target,
             "capabilities": dict(active_revision.capabilities or {}),
             "config_schema": dict(active_revision.config_schema or {}),
@@ -408,7 +411,8 @@ async def create_artifact_draft(
         owner_type=ArtifactOwnerType.TENANT.value,
         source_files=[_model_dump(item) for item in request.runtime.source_files],
         entry_module_path=request.runtime.entry_module_path,
-        python_dependencies=list(request.runtime.python_dependencies or []),
+        language=getattr(request.runtime.language, "value", request.runtime.language),
+        dependencies=list(request.runtime.dependencies or []),
         runtime_target=request.runtime.runtime_target,
         capabilities=_model_dump(request.capabilities),
         config_schema=dict(request.config_schema or {}),
@@ -454,7 +458,8 @@ async def update_artifact(
         description=payload.get("description", artifact.description),
         source_files=runtime.get("source_files", current_revision.source_files),
         entry_module_path=runtime.get("entry_module_path", current_revision.entry_module_path),
-        python_dependencies=list(runtime.get("python_dependencies", current_revision.python_dependencies or [])),
+        language=str(runtime.get("language", getattr(current_revision.language, "value", current_revision.language) or "python")),
+        dependencies=list(runtime.get("dependencies", current_revision.python_dependencies or [])),
         runtime_target=runtime.get("runtime_target", current_revision.runtime_target),
         capabilities=dict(payload.get("capabilities", current_revision.capabilities or {})),
         config_schema=dict(payload.get("config_schema", current_revision.config_schema or {})),
@@ -613,6 +618,7 @@ async def create_unsaved_test_run(
         input_data=request.input_data,
         config=request.config or {},
         dependencies=list(request.dependencies or []),
+        language=getattr(request.language, "value", request.language) if getattr(request, "language", None) else None,
         kind=getattr(request.kind, "value", request.kind) if getattr(request, "kind", None) else None,
         runtime_target=getattr(request, "runtime_target", None),
         capabilities=dict(getattr(request, "capabilities", None) or {}),

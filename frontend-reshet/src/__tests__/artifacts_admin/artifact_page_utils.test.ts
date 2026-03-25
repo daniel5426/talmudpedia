@@ -42,7 +42,7 @@ describe("artifactPageUtils and credential mentions", () => {
       source_files: [
         {
           path: "main.py",
-          content: `from artifact_runtime_sdk import outbound_fetch\n\nasync def execute(inputs, config, context):\n    return await outbound_fetch("https://api.openai.com/v1/responses", credential="${buildCredentialMentionToken(credential)}")\n`,
+          content: `from openai import OpenAI\n\nasync def execute(inputs, config, context):\n    client = OpenAI(api_key="${buildCredentialMentionToken(credential)}")\n    return {"ok": bool(client)}\n`,
         },
       ],
     };
@@ -64,9 +64,10 @@ describe("artifactPageUtils and credential mentions", () => {
       version: "draft",
       config_schema: {},
       runtime: {
+        language: "python",
         source_files: [{ path: "main.py", content: "def execute(inputs, config, context):\n    return {'ok': True}\n" }],
         entry_module_path: "main.py",
-        python_dependencies: [],
+        dependencies: [],
         runtime_target: "cloudflare_workers",
       },
       capabilities: {

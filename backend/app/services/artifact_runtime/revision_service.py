@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.postgres.models.artifact_runtime import (
     Artifact,
+    ArtifactLanguage,
     ArtifactKind,
     ArtifactOwnerType,
     ArtifactRevision,
@@ -15,6 +16,7 @@ from app.db.postgres.models.artifact_runtime import (
 )
 from app.services.prompt_reference_resolver import PromptReferenceError, PromptReferenceResolver
 
+from .runtime_secret_service import ArtifactRuntimeSecretError, validate_and_collect_runtime_credential_refs
 from .source_utils import normalize_artifact_source, source_tree_hash
 
 
@@ -34,7 +36,9 @@ class ArtifactRevisionService:
         system_key: str | None = None,
         source_files: list[dict[str, Any]] | None = None,
         entry_module_path: str | None = None,
-        python_dependencies: list[str],
+        language: str = "python",
+        dependencies: list[str] | None = None,
+        python_dependencies: list[str] | None = None,
         runtime_target: str,
         capabilities: dict[str, Any],
         config_schema: dict[str, Any],
@@ -56,12 +60,19 @@ class ArtifactRevisionService:
             source_files=source_files,
             entry_module_path=entry_module_path,
         )
+        language_value = self._normalize_language(language)
+        credential_refs = await self._validate_credential_refs(
+            tenant_id=tenant_id,
+            language=language_value,
+            source_files=source.source_files,
+        )
         artifact = Artifact(
             id=artifact_id,
             tenant_id=tenant_id,
             display_name=display_name,
             description=description,
             kind=kind_value,
+            language=language_value,
             owner_type=owner_type_value,
             status=ArtifactStatus.DRAFT,
             created_by=created_by,
@@ -79,9 +90,10 @@ class ArtifactRevisionService:
             display_name=display_name,
             description=description,
             kind=kind_value,
+            language=language_value,
             source_files=source.source_files,
             entry_module_path=source.entry_module_path,
-            python_dependencies=python_dependencies,
+            dependencies=list(dependencies if dependencies is not None else (python_dependencies or [])),
             runtime_target=runtime_target,
             capabilities=capabilities,
             config_schema=config_schema,
@@ -89,6 +101,7 @@ class ArtifactRevisionService:
             rag_contract=rag_contract,
             tool_contract=tool_contract,
             created_by=created_by,
+            credential_refs=credential_refs,
         )
         self._db.add(revision)
         await self._db.flush()
@@ -106,7 +119,9 @@ class ArtifactRevisionService:
         description: str | None,
         source_files: list[dict[str, Any]] | None = None,
         entry_module_path: str | None = None,
-        python_dependencies: list[str],
+        language: str,
+        dependencies: list[str] | None,
+        python_dependencies: list[str] | None = None,
         runtime_target: str,
         capabilities: dict[str, Any],
         config_schema: dict[str, Any],
@@ -122,6 +137,9 @@ class ArtifactRevisionService:
         current_revision = artifact.latest_draft_revision or artifact.latest_published_revision
         if current_revision is None:
             raise ValueError("Artifact is missing a current revision")
+        language_value = self._normalize_language(language)
+        if artifact.language != language_value:
+            raise ValueError("Artifact language is immutable")
         self._validate_contracts(
             kind=kind_value,
             agent_contract=agent_contract,
@@ -129,14 +147,20 @@ class ArtifactRevisionService:
             tool_contract=tool_contract,
         )
         await self._validate_prompt_refs(tenant_id=artifact.tenant_id, tool_contract=tool_contract)
+        credential_refs = await self._validate_credential_refs(
+            tenant_id=artifact.tenant_id,
+            language=language_value,
+            source_files=source.source_files,
+        )
         if self._revision_matches_payload(
             revision=current_revision,
             display_name=display_name,
             description=description,
             kind=kind_value,
+            language=language_value,
             source_files=source.source_files,
             entry_module_path=source.entry_module_path,
-            python_dependencies=python_dependencies,
+            dependencies=list(dependencies if dependencies is not None else (python_dependencies or [])),
             runtime_target=runtime_target,
             capabilities=capabilities,
             config_schema=config_schema,
@@ -147,6 +171,7 @@ class ArtifactRevisionService:
             return current_revision
         artifact.display_name = display_name
         artifact.description = description
+        artifact.language = language_value
         revision = self._build_revision(
             artifact_id=artifact.id,
             tenant_id=artifact.tenant_id,
@@ -157,9 +182,10 @@ class ArtifactRevisionService:
             display_name=display_name,
             description=description,
             kind=kind_value,
+            language=language_value,
             source_files=source.source_files,
             entry_module_path=source.entry_module_path,
-            python_dependencies=python_dependencies,
+            dependencies=list(dependencies if dependencies is not None else (python_dependencies or [])),
             runtime_target=runtime_target,
             capabilities=capabilities,
             config_schema=config_schema,
@@ -167,6 +193,7 @@ class ArtifactRevisionService:
             rag_contract=rag_contract,
             tool_contract=tool_contract,
             created_by=updated_by,
+            credential_refs=credential_refs,
         )
         self._db.add(revision)
         await self._db.flush()
@@ -209,9 +236,10 @@ class ArtifactRevisionService:
             display_name=artifact.display_name,
             description=artifact.description,
             kind=target_kind,
+            language=artifact.language,
             source_files=list(current_revision.source_files or []),
             entry_module_path=current_revision.entry_module_path,
-            python_dependencies=list(current_revision.python_dependencies or []),
+            dependencies=list(current_revision.python_dependencies or []),
             runtime_target=str(current_revision.runtime_target or "cloudflare_workers"),
             capabilities=dict(current_revision.capabilities or {}),
             config_schema=dict(current_revision.config_schema or {}),
@@ -219,6 +247,7 @@ class ArtifactRevisionService:
             rag_contract=rag_contract,
             tool_contract=tool_contract,
             created_by=updated_by,
+            credential_refs=list(((current_revision.manifest_json or {}).get("credential_refs") or [])),
         )
         self._db.add(revision)
         await self._db.flush()
@@ -238,7 +267,9 @@ class ArtifactRevisionService:
         kind: str,
         source_files: list[dict[str, Any]] | None = None,
         entry_module_path: str | None = None,
-        python_dependencies: list[str],
+        language: str,
+        dependencies: list[str] | None,
+        python_dependencies: list[str] | None = None,
         runtime_target: str,
         capabilities: dict[str, Any],
         config_schema: dict[str, Any],
@@ -258,6 +289,12 @@ class ArtifactRevisionService:
             tool_contract=tool_contract,
         )
         await self._validate_prompt_refs(tenant_id=tenant_id, tool_contract=tool_contract)
+        language_value = self._normalize_language(language)
+        credential_refs = await self._validate_credential_refs(
+            tenant_id=tenant_id,
+            language=language_value,
+            source_files=source.source_files,
+        )
         revision = self._build_revision(
             artifact_id=artifact.id if artifact else None,
             tenant_id=tenant_id,
@@ -268,9 +305,10 @@ class ArtifactRevisionService:
             display_name=display_name,
             description=description,
             kind=kind_value,
+            language=language_value,
             source_files=source.source_files,
             entry_module_path=source.entry_module_path,
-            python_dependencies=python_dependencies,
+            dependencies=list(dependencies if dependencies is not None else (python_dependencies or [])),
             runtime_target=runtime_target,
             capabilities=capabilities,
             config_schema=config_schema,
@@ -278,6 +316,7 @@ class ArtifactRevisionService:
             rag_contract=rag_contract,
             tool_contract=tool_contract,
             created_by=created_by,
+            credential_refs=credential_refs,
         )
         self._db.add(revision)
         await self._db.flush()
@@ -289,6 +328,12 @@ class ArtifactRevisionService:
             raise ValueError("Artifact has no draft revision to publish")
         if revision.is_ephemeral:
             raise ValueError("Ephemeral revisions cannot be published")
+        credential_refs = await self._validate_credential_refs(
+            tenant_id=artifact.tenant_id,
+            language=revision.language,
+            source_files=list(revision.source_files or []),
+        )
+        revision.manifest_json = {**dict(revision.manifest_json or {}), "credential_refs": credential_refs}
         revision.is_published = True
         revision.version_label = f"v{int(revision.revision_number or 1)}"
         artifact.latest_published_revision_id = revision.id
@@ -317,9 +362,10 @@ class ArtifactRevisionService:
         display_name: str,
         description: str | None,
         kind: ArtifactKind,
+        language: ArtifactLanguage,
         source_files: list[dict[str, str]],
         entry_module_path: str,
-        python_dependencies: list[str],
+        dependencies: list[str],
         runtime_target: str,
         capabilities: dict[str, Any],
         config_schema: dict[str, Any],
@@ -327,11 +373,13 @@ class ArtifactRevisionService:
         rag_contract: dict[str, Any] | None,
         tool_contract: dict[str, Any] | None,
         created_by: UUID | None,
+        credential_refs: list[str],
     ) -> ArtifactRevision:
         build_hash = source_tree_hash(
             source_files=source_files,
             entry_module_path=entry_module_path,
-            python_dependencies=python_dependencies,
+            dependencies=dependencies,
+            language=language.value,
         )
         return ArtifactRevision(
             id=uuid4(),
@@ -344,16 +392,19 @@ class ArtifactRevisionService:
             display_name=display_name,
             description=description,
             kind=kind,
+            language=language,
             source_files=list(source_files or []),
             entry_module_path=entry_module_path,
             manifest_json=self._build_manifest(
                 artifact_id=artifact_id,
                 kind=kind,
-                python_dependencies=python_dependencies,
+                language=language,
+                dependencies=dependencies,
                 entry_module_path=entry_module_path,
                 runtime_target=runtime_target,
+                credential_refs=credential_refs,
             ),
-            python_dependencies=list(python_dependencies or []),
+            python_dependencies=list(dependencies or []),
             runtime_target=runtime_target or "cloudflare_workers",
             capabilities=dict(capabilities or {}),
             config_schema=dict(config_schema or {}),
@@ -375,9 +426,10 @@ class ArtifactRevisionService:
         display_name: str,
         description: str | None,
         kind: ArtifactKind,
+        language: ArtifactLanguage,
         source_files: list[dict[str, str]],
         entry_module_path: str,
-        python_dependencies: list[str],
+        dependencies: list[str],
         runtime_target: str,
         capabilities: dict[str, Any],
         config_schema: dict[str, Any],
@@ -389,9 +441,10 @@ class ArtifactRevisionService:
             revision.display_name == display_name
             and revision.description == description
             and revision.kind == kind
+            and revision.language == language
             and list(revision.source_files or []) == list(source_files or [])
             and str(revision.entry_module_path or "") == str(entry_module_path or "")
-            and list(revision.python_dependencies or []) == list(python_dependencies or [])
+            and list(revision.python_dependencies or []) == list(dependencies or [])
             and str(revision.runtime_target or "cloudflare_workers") == str(runtime_target or "cloudflare_workers")
             and dict(revision.capabilities or {}) == dict(capabilities or {})
             and dict(revision.config_schema or {}) == dict(config_schema or {})
@@ -409,6 +462,14 @@ class ArtifactRevisionService:
     def _normalize_owner_type(owner_type: str | ArtifactOwnerType) -> ArtifactOwnerType:
         raw = getattr(owner_type, "value", owner_type)
         return ArtifactOwnerType(str(raw or ArtifactOwnerType.TENANT.value).strip().lower())
+
+    @staticmethod
+    def _normalize_language(language: str | ArtifactLanguage | None) -> ArtifactLanguage:
+        raw = getattr(language, "value", language)
+        normalized = str(raw or ArtifactLanguage.PYTHON.value).strip()
+        if "." in normalized:
+            normalized = normalized.split(".")[-1]
+        return ArtifactLanguage(normalized.lower())
 
     @staticmethod
     def _validate_contracts(
@@ -450,19 +511,40 @@ class ArtifactRevisionService:
         except PromptReferenceError as exc:
             raise ValueError(str(exc)) from exc
 
+    async def _validate_credential_refs(
+        self,
+        *,
+        tenant_id: UUID | None,
+        language: str | ArtifactLanguage,
+        source_files: list[dict[str, Any]] | None,
+    ) -> list[str]:
+        try:
+            return await validate_and_collect_runtime_credential_refs(
+                db=self._db,
+                tenant_id=tenant_id,
+                language=getattr(language, "value", language),
+                source_files=source_files,
+            )
+        except ArtifactRuntimeSecretError as exc:
+            raise ValueError(str(exc)) from exc
+
     @staticmethod
     def _build_manifest(
         *,
         artifact_id: UUID | None,
         kind: ArtifactKind,
-        python_dependencies: list[str],
+        language: ArtifactLanguage,
+        dependencies: list[str],
         entry_module_path: str,
         runtime_target: str,
+        credential_refs: list[str],
     ) -> dict[str, Any]:
         return {
             "artifact_id": str(artifact_id) if artifact_id else None,
             "kind": kind.value,
-            "python_dependencies": list(python_dependencies or []),
+            "language": language.value,
+            "dependencies": list(dependencies or []),
             "entry_module_path": entry_module_path,
             "runtime_target": runtime_target,
+            "credential_refs": list(credential_refs or []),
         }

@@ -1068,7 +1068,6 @@ from app.api.routers import tools as tools_router
 from app.api.routers import artifacts as artifacts_router
 from app.api.routers import artifact_runs as artifact_runs_router
 from app.api.routers import artifact_coding_agent as artifact_coding_agent_router
-from app.api.routers import artifact_runtime_internal as artifact_runtime_internal_router
 from app.api.routers import agent_tool_exports as agent_tool_exports_router
 from app.api.routers import stats as stats_router
 from app.api.routers import settings as settings_router
@@ -1097,7 +1096,6 @@ app.include_router(rag_custom_operators_router.router, prefix="/admin/rag/custom
 app.include_router(artifacts_router.router, tags=["artifacts"])
 app.include_router(artifact_runs_router.router, tags=["artifacts"])
 app.include_router(artifact_coding_agent_router.router, tags=["artifacts"])
-app.include_router(artifact_runtime_internal_router.router)
 app.include_router(stats_router.router, prefix="/admin", tags=["stats"])
 app.include_router(settings_router.router, prefix="/admin/settings", tags=["settings"])
 app.include_router(workload_security_router.router)

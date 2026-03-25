@@ -1,6 +1,7 @@
 "use client"
 
-import { Artifact, ArtifactKind } from "@/services"
+import { Artifact } from "@/services"
+import { ArtifactKind, ArtifactLanguage } from "@/services/artifacts"
 import { ArtifactFormData, RUNTIME_TARGET_OPTIONS } from "@/components/admin/artifacts/artifactEditorState"
 import { contractEditorTitle } from "@/components/admin/artifacts/artifactPageUtils"
 import { Button } from "@/components/ui/button"
@@ -18,7 +19,7 @@ interface ArtifactConfigPanelProps {
   convertTargetKind: ArtifactKind;
   converting: boolean;
   currentContractValue: string;
-  onUpdateFormData: (field: keyof ArtifactFormData, value: string | ArtifactKind | ArtifactFormData["source_files"]) => void;
+  onUpdateFormData: (field: keyof ArtifactFormData, value: string | ArtifactKind | ArtifactLanguage | ArtifactFormData["source_files"]) => void;
   onUpdateCurrentContract: (value: string) => void;
   onConvertTargetKindChange: (value: ArtifactKind) => void;
   onConvertKind: () => void;
@@ -65,7 +66,7 @@ export function ArtifactConfigPanel({
             <div className="group relative">
               <Label className="mb-2 block text-xs font-medium text-muted-foreground/60 transition-colors group-hover:text-foreground">Artifact Type</Label>
               <div className="flex h-[38px] w-full items-center rounded-md border border-border/40 bg-transparent px-3">
-                <span className="text-sm">{formData.kind === "agent_node" ? "Agent Node" : formData.kind === "rag_operator" ? "RAG Operator" : "Tool Implementation"}</span>
+                <span className="text-sm">{formData.kind === "agent_node" ? "Agent Node" : formData.kind === "rag_operator" ? "RAG Operator" : "Tool Implementation"} · {formData.language === "javascript" ? "JS/TS" : "Python"}</span>
               </div>
             </div>
 
@@ -112,8 +113,8 @@ export function ArtifactConfigPanel({
             <div className="group relative">
               <Label className="mb-2 block text-xs font-medium text-muted-foreground/60 transition-colors group-hover:text-foreground">Dependencies (CSV)</Label>
               <input
-                value={formData.python_dependencies}
-                onChange={(e) => onUpdateFormData("python_dependencies", e.target.value)}
+                value={formData.dependencies}
+                onChange={(e) => onUpdateFormData("dependencies", e.target.value)}
                 className="w-full rounded-md border border-border/40 bg-transparent px-3 py-2 font-mono text-sm text-foreground outline-none shadow-none transition-colors hover:border-border focus:border-primary focus:ring-0"
                 placeholder="requests, pydantic>=2.0"
               />

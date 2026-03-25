@@ -45,9 +45,10 @@ async def _create_artifact(db_session, tenant_id, created_by, *, publish: bool, 
         display_name="Runtime Artifact",
         description=None,
         kind=kind,
+        language="python",
         source_files=[{"path": "main.py", "content": "def execute(inputs, config, context):\n    return {'ok': True, 'input': inputs}\n"}],
         entry_module_path="main.py",
-        python_dependencies=[],
+        dependencies=[],
         runtime_target="cloudflare_workers",
         capabilities={"network_access": False},
         config_schema={},
@@ -118,14 +119,14 @@ async def test_execute_live_run_records_domain_queue_and_raw_inputs(db_session, 
 
 
 @pytest.mark.asyncio
-async def test_execute_live_run_standard_worker_test_mode_includes_source_tree(db_session, monkeypatch):
+async def test_execute_live_run_injects_context_credentials_and_uses_deployed_code(db_session, monkeypatch):
     tenant, user = await _seed_tenant_context(db_session)
     artifact = await _create_artifact(db_session, tenant.id, user.id, publish=True, kind="tool_impl")
     captured = {}
 
     async def fake_ensure_deployment(self, *, revision, namespace, tenant_id=None):
         return SimpleNamespace(
-            worker_name="artifact-free-plan-runtime",
+            worker_name="artifact-revision-inline",
             deployment_id="dep-inline",
             version_id="ver-inline",
             build_hash=revision.build_hash,
@@ -140,13 +141,12 @@ async def test_execute_live_run_standard_worker_test_mode_includes_source_tree(d
             stdout_excerpt="",
             stderr_excerpt="",
             duration_ms=4,
-            worker_id="artifact-free-plan-runtime",
+            worker_id="artifact-revision-inline",
             sandbox_session_id="dispatch-inline",
             events=[],
-            runtime_metadata={"provider": "cloudflare_workers", "runtime_mode": "standard_worker_test"},
+            runtime_metadata={"provider": "cloudflare_workers"},
         )
 
-    monkeypatch.setenv("ARTIFACT_CF_RUNTIME_MODE", "standard_worker_test")
     monkeypatch.setattr("app.services.artifact_runtime.deployment_service.ArtifactDeploymentService.ensure_deployment", fake_ensure_deployment)
     monkeypatch.setattr("app.services.artifact_runtime.cloudflare_dispatch_client.CloudflareDispatchClient.execute", fake_execute)
 
@@ -163,8 +163,9 @@ async def test_execute_live_run_standard_worker_test_mode_includes_source_tree(d
     )
 
     assert run is not None
-    assert captured["request"]["entry_module_path"] == "main.py"
-    assert captured["request"]["source_files"][0]["path"] == "main.py"
+    assert "entry_module_path" not in captured["request"]
+    assert "source_files" not in captured["request"]
+    assert captured["request"]["context"]["credentials"] == {}
 
 
 @pytest.mark.asyncio
@@ -179,9 +180,10 @@ async def test_execute_live_run_passes_execution_tenant_for_system_revision(db_s
         kind="tool_impl",
         owner_type="system",
         system_key=f"system-runtime-{uuid.uuid4().hex[:6]}",
+        language="python",
         source_files=[{"path": "main.py", "content": "def execute(inputs, config, context):\n    return {'ok': True}\n"}],
         entry_module_path="main.py",
-        python_dependencies=[],
+        dependencies=[],
         runtime_target="cloudflare_workers",
         capabilities={},
         config_schema={},
@@ -374,7 +376,7 @@ async def test_handler_runner_requires_modern_three_argument_contract():
 
 
 @pytest.mark.asyncio
-async def test_execute_live_run_issues_outbound_grant_without_persisting_secrets(db_session, monkeypatch):
+async def test_execute_live_run_rewrites_runtime_credentials_without_persisting_secrets(db_session, monkeypatch):
     tenant, user = await _seed_tenant_context(db_session)
     credential = IntegrationCredential(
         tenant_id=tenant.id,
@@ -394,9 +396,9 @@ async def test_execute_live_run_issues_outbound_grant_without_persisting_secrets
         display_name="Bound Runtime Artifact",
         description=None,
         kind="tool_impl",
-        source_files=[{"path": "main.py", "content": f'def execute(inputs, config, context):\n    return {{"credential": "@{{{credential.display_name}|{credential.id}}}"}}\n'}],
+        source_files=[{"path": "main.py", "content": f'def execute(inputs, config, context):\n    client = OpenAI(api_key=\"@{{{credential.id}}}\")\n    return {{"ok": True}}\n'}],
         entry_module_path="main.py",
-        python_dependencies=[],
+        dependencies=[],
         runtime_target="cloudflare_workers",
         capabilities={"network_access": True, "allowed_hosts": []},
         config_schema={},
@@ -430,7 +432,6 @@ async def test_execute_live_run_issues_outbound_grant_without_persisting_secrets
             runtime_metadata={"provider": "cloudflare_workers"},
         )
 
-    monkeypatch.setenv("ARTIFACT_CF_OUTBOUND_BASE_URL", "https://outbound.example")
     monkeypatch.setattr("app.services.artifact_runtime.deployment_service.ArtifactDeploymentService.ensure_deployment", fake_ensure_deployment)
     monkeypatch.setattr("app.services.artifact_runtime.cloudflare_dispatch_client.CloudflareDispatchClient.execute", fake_execute)
 
@@ -446,9 +447,72 @@ async def test_execute_live_run_issues_outbound_grant_without_persisting_secrets
     )
 
     assert run is not None
-    assert captured["request"]["allowed_hosts"] == ["api.openai.com"]
-    assert captured["request"]["outbound_base_url"] == "https://outbound.example"
-    assert captured["request"]["outbound_grant"]
+    assert captured["request"]["context"]["credentials"] == {str(credential.id): "super-secret-key"}
+    assert "source_files" not in captured["request"]
+    assert "allowed_hosts" not in captured["request"]
+    assert "outbound_grant" not in captured["request"]
     assert "api_key" not in captured["request"]["config"]
     assert "api_key" not in captured["request"]["context"]
-    assert "super-secret-key" not in str(captured["request"])
+    result = await db_session.execute(
+        select(ArtifactRun).where(ArtifactRun.id == run.id)
+    )
+    persisted_run = result.scalar_one()
+    assert "super-secret-key" not in str(persisted_run.config_payload)
+    assert "super-secret-key" not in str(persisted_run.context_payload)
+    assert "super-secret-key" not in str(artifact.latest_published_revision.source_files)
+
+
+@pytest.mark.asyncio
+async def test_execute_live_run_rejects_disabled_credential_at_runtime(db_session, monkeypatch):
+    tenant, user = await _seed_tenant_context(db_session)
+    credential = IntegrationCredential(
+        tenant_id=tenant.id,
+        category=IntegrationCredentialCategory.LLM_PROVIDER,
+        provider_key="openai",
+        display_name="OpenAI Runtime",
+        credentials={"api_key": "super-secret-key"},
+        is_enabled=True,
+        is_default=True,
+    )
+    db_session.add(credential)
+    await db_session.flush()
+
+    artifact = await ArtifactRevisionService(db_session).create_artifact(
+        tenant_id=tenant.id,
+        created_by=user.id,
+        display_name="Disabled Runtime Artifact",
+        description=None,
+        kind="tool_impl",
+        source_files=[{"path": "main.py", "content": f'def execute(inputs, config, context):\n    return {{"api_key": "@{{{credential.id}}}"}}\n'}],
+        entry_module_path="main.py",
+        dependencies=[],
+        runtime_target="cloudflare_workers",
+        capabilities={"network_access": True, "allowed_hosts": []},
+        config_schema={},
+        tool_contract={"input_schema": {"type": "object"}, "output_schema": {"type": "object"}, "side_effects": [], "execution_mode": "interactive", "tool_ui": {}},
+    )
+    await ArtifactRevisionService(db_session).publish_latest_draft(artifact)
+    credential.is_enabled = False
+    await db_session.commit()
+
+    async def fake_ensure_deployment(self, *, revision, namespace, tenant_id=None):
+        return SimpleNamespace(
+            worker_name="cf-worker",
+            deployment_id="dep-disabled",
+            version_id="ver-disabled",
+            build_hash=revision.build_hash,
+        )
+
+    monkeypatch.setattr("app.services.artifact_runtime.deployment_service.ArtifactDeploymentService.ensure_deployment", fake_ensure_deployment)
+
+    with pytest.raises(RuntimeError, match="Credential disabled"):
+        await ArtifactExecutionService(db_session).execute_live_run(
+            tenant_id=tenant.id,
+            created_by=user.id,
+            revision_id=artifact.latest_published_revision_id,
+            domain="tool",
+            queue_class="artifact_prod_interactive",
+            input_payload={"value": 1},
+            config_payload={},
+            context_payload={},
+        )

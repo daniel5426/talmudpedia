@@ -4,12 +4,14 @@ import { useCallback, useEffect, useRef } from "react"
 import Editor, { type Monaco, OnMount } from "@monaco-editor/react"
 import { useTheme } from "next-themes"
 import { IntegrationCredential } from "@/services"
+import type { ArtifactLanguage } from "@/services/artifacts"
 import { buildCredentialMentionToken } from "@/lib/credential-mentions"
 import { cn } from "@/lib/utils"
 
 interface ArtifactCredentialCodeEditorProps {
   value: string
   onChange: (value: string) => void
+  language: ArtifactLanguage
   credentials: IntegrationCredential[]
   height?: string | number
   className?: string
@@ -30,6 +32,7 @@ function getMentionQuery(line: string, column: number): { query: string; fromCol
 export function ArtifactCredentialCodeEditor({
   value,
   onChange,
+  language,
   credentials,
   height = "100%",
   className,
@@ -37,7 +40,7 @@ export function ArtifactCredentialCodeEditor({
 }: ArtifactCredentialCodeEditorProps) {
   const { resolvedTheme } = useTheme()
   const credentialsRef = useRef(credentials)
-  const completionDisposableRef = useRef<{ dispose: () => void } | null>(null)
+  const completionDisposablesRef = useRef<Array<{ dispose: () => void }>>([])
 
   useEffect(() => {
     credentialsRef.current = credentials
@@ -45,10 +48,45 @@ export function ArtifactCredentialCodeEditor({
 
   useEffect(() => {
     return () => {
-      completionDisposableRef.current?.dispose()
-      completionDisposableRef.current = null
+      completionDisposablesRef.current.forEach((item) => item.dispose())
+      completionDisposablesRef.current = []
     }
   }, [])
+
+  const editorLanguage = language === "javascript" ? "typescript" : "python"
+
+  const buildCompletionProvider = useCallback((monaco: Monaco) => ({
+    triggerCharacters: ["@"],
+    provideCompletionItems(
+      model: Parameters<Monaco["languages"]["registerCompletionItemProvider"]>[1]["provideCompletionItems"] extends (model: infer TModel, position: infer TPosition, ...args: never[]) => unknown ? TModel : never,
+      position: Parameters<Monaco["languages"]["registerCompletionItemProvider"]>[1]["provideCompletionItems"] extends (model: never, position: infer TPosition, ...args: never[]) => unknown ? TPosition : never,
+    ) {
+      const query = getMentionQuery(model.getLineContent(position.lineNumber), position.column)
+      if (!query) {
+        return { suggestions: [] }
+      }
+      const normalizedQuery = query.query
+      const matches = credentialsRef.current
+        .filter((credential) => credential.is_enabled)
+        .filter((credential) => {
+          if (!normalizedQuery) return true
+          const haystack = `${credential.display_name} ${credential.provider_key} ${credential.category}`.toLowerCase()
+          return haystack.includes(normalizedQuery)
+        })
+        .slice(0, 12)
+
+      return {
+        suggestions: matches.map((credential) => ({
+          label: `@${credential.display_name}`,
+          kind: monaco.languages.CompletionItemKind.Reference,
+          insertText: buildCredentialMentionToken(credential),
+          range: new monaco.Range(position.lineNumber, query.fromColumn, position.lineNumber, query.toColumn),
+          detail: `${credential.category} • ${credential.provider_key}`,
+          documentation: "Use only as an exact string literal value. The runtime rewrites it to a context.credentials lookup.",
+        })),
+      }
+    },
+  }), [])
 
   const handleMount: OnMount = useCallback((editor, monaco) => {
     editor.focus()
@@ -56,43 +94,19 @@ export function ArtifactCredentialCodeEditor({
       editor.onDidScrollChange((event) => onScroll(event.scrollTop > 0))
     }
 
-    completionDisposableRef.current?.dispose()
-    completionDisposableRef.current = monaco.languages.registerCompletionItemProvider("python", {
-      triggerCharacters: ["@"],
-      provideCompletionItems(model: Parameters<Monaco["languages"]["registerCompletionItemProvider"]>[1]["provideCompletionItems"] extends (model: infer TModel, position: infer TPosition, ...args: never[]) => unknown ? TModel : never, position: Parameters<Monaco["languages"]["registerCompletionItemProvider"]>[1]["provideCompletionItems"] extends (model: never, position: infer TPosition, ...args: never[]) => unknown ? TPosition : never) {
-        const query = getMentionQuery(model.getLineContent(position.lineNumber), position.column)
-        if (!query) {
-          return { suggestions: [] }
-        }
-        const normalizedQuery = query.query
-        const matches = credentialsRef.current
-          .filter((credential) => credential.is_enabled)
-          .filter((credential) => {
-            if (!normalizedQuery) return true
-            const haystack = `${credential.display_name} ${credential.provider_key} ${credential.category}`.toLowerCase()
-            return haystack.includes(normalizedQuery)
-          })
-          .slice(0, 12)
-
-        return {
-          suggestions: matches.map((credential) => ({
-            label: `@${credential.display_name}`,
-            kind: monaco.languages.CompletionItemKind.Reference,
-            insertText: buildCredentialMentionToken(credential),
-            range: new monaco.Range(position.lineNumber, query.fromColumn, position.lineNumber, query.toColumn),
-            detail: `${credential.category} • ${credential.provider_key}`,
-            documentation: "Stores the immutable credential id behind this visible label.",
-          })),
-        }
-      },
-    })
-  }, [onScroll])
+    completionDisposablesRef.current.forEach((item) => item.dispose())
+    completionDisposablesRef.current = [
+      monaco.languages.registerCompletionItemProvider("python", buildCompletionProvider(monaco)),
+      monaco.languages.registerCompletionItemProvider("javascript", buildCompletionProvider(monaco)),
+      monaco.languages.registerCompletionItemProvider("typescript", buildCompletionProvider(monaco)),
+    ]
+  }, [buildCompletionProvider, onScroll])
 
   return (
     <div className={cn("relative overflow-hidden rounded-md", className)}>
       <Editor
         height={height}
-        language="python"
+        language={editorLanguage}
         value={value}
         onChange={(nextValue) => onChange(nextValue || "")}
         onMount={handleMount}
