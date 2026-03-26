@@ -27,7 +27,7 @@ The current production topology is:
   - source root: `/backend`
 - `backend-worker`
   - platform: Railway app service
-  - source root: `/backend`
+  - source intent: `/deploy/backend-worker`
   - command: `./scripts/start_celery_worker.sh`
 - `Postgres`
   - platform: Railway managed PostgreSQL
@@ -76,8 +76,8 @@ Tracked service commands:
   - from [`backend/railway.toml`](/Users/danielbenassaya/Code/personal/talmudpedia/backend/railway.toml)
   - `uvicorn main:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips='*'`
 - backend-worker
-  - from [`backend/scripts/start_celery_worker.sh`](/Users/danielbenassaya/Code/personal/talmudpedia/backend/scripts/start_celery_worker.sh)
-  - root directory: `backend/`
+  - from [`deploy/backend-worker/railway.toml`](/Users/danielbenassaya/Code/personal/talmudpedia/deploy/backend-worker/railway.toml)
+  - Dockerfile: [`deploy/backend-worker/Dockerfile`](/Users/danielbenassaya/Code/personal/talmudpedia/deploy/backend-worker/Dockerfile)
   - `./scripts/start_celery_worker.sh`
 - crawl4ai
   - intended from [`deploy/crawl4ai/railway.toml`](/Users/danielbenassaya/Code/personal/talmudpedia/deploy/crawl4ai/railway.toml)

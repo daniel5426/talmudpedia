@@ -16,8 +16,8 @@ Create one Railway project with these services:
   - Config in `backend/railway.toml`
   - Pre-deploy command: `./scripts/railway_predeploy.sh`
 - `backend-worker`
-  - Root directory: `backend/`
-  - Start command: `./scripts/start_celery_worker.sh`
+  - Root directory: `deploy/backend-worker/`
+  - Config in `deploy/backend-worker/railway.toml`
 - `crawl4ai`
   - Root directory: `deploy/crawl4ai/`
   - Config in `deploy/crawl4ai/railway.toml`
@@ -91,8 +91,7 @@ Required values:
 ### Worker
 
 - Use `./scripts/start_celery_worker.sh`.
-- Root directory: `backend/`.
-- Keep `backend-worker` as a normal Git-backed Railway app service, not a dedicated worker Docker service.
+- Deploy it from `deploy/backend-worker/` as its own Docker-backed Railway service so it does not inherit [`backend/railway.toml`](/Users/danielbenassaya/Code/personal/talmudpedia/backend/railway.toml).
 - Default queues:
   - `default`
   - `ingestion`
