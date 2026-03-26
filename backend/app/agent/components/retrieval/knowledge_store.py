@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.core.interfaces import Document, Retriever
 from app.services.retrieval_service import RetrievalService, RetrievalResult
+from app.services.resource_policy_service import ResourcePolicySnapshot
 
 
 class KnowledgeStoreRetriever(Retriever):
@@ -16,11 +17,13 @@ class KnowledgeStoreRetriever(Retriever):
         self, 
         db: AsyncSession,
         store_ids: List[UUID],
-        limit: int = 5
+        limit: int = 5,
+        policy_snapshot: ResourcePolicySnapshot | None = None,
     ):
         self.db = db
         self.store_ids = store_ids
         self.limit = limit
+        self.policy_snapshot = policy_snapshot
         self.service = RetrievalService(db)
 
     async def retrieve(self, query: str, limit: int = 5, **kwargs: Any) -> List[Document]:
@@ -33,7 +36,8 @@ class KnowledgeStoreRetriever(Retriever):
         results: List[RetrievalResult] = await self.service.query_multiple_stores(
             store_ids=self.store_ids,
             query=query,
-            top_k=limit
+            top_k=limit,
+            policy_snapshot=self.policy_snapshot,
         )
         
         documents = []

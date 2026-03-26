@@ -20,6 +20,7 @@ import {
   IntegrationCredential,
   LLM_PROVIDER_OPTIONS,
   getModelProviderOptions,
+  isTenantManagedPricingProvider,
 } from "@/services"
 
 export const PROVIDER_LABELS: Record<ModelProviderType, string> = Object.fromEntries(
@@ -165,6 +166,14 @@ function PricingFields({
   )
 }
 
+function PlatformManagedPricingNotice() {
+  return (
+    <div className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">
+      Platform-managed pricing. Tenant pricing is only editable for custom and local providers.
+    </div>
+  )
+}
+
 export function AddProviderDialog({
   model,
   credentials,
@@ -185,6 +194,7 @@ export function AddProviderDialog({
     pricing_config: normalizePricingConfig(),
   })
   const providerOptions = getModelProviderOptions(model.capability_type)
+  const canEditPricing = isTenantManagedPricingProvider(form.provider)
   const providerCredentials = credentials.filter(
     (cred) => cred.category === "llm_provider" && cred.provider_key === form.provider
   )
@@ -205,7 +215,9 @@ export function AddProviderDialog({
       const payload = {
         ...form,
         credentials_ref: form.credentials_ref || undefined,
-        pricing_config: buildPricingPayload(form.pricing_config || {}),
+        ...(canEditPricing
+          ? { pricing_config: buildPricingPayload(form.pricing_config || {}) }
+          : {}),
       }
       await modelsService.addProvider(model.id, payload)
       setOpen(false)
@@ -289,10 +301,14 @@ export function AddProviderDialog({
               onChange={(e) => setForm({ ...form, priority: parseInt(e.target.value, 10) || 0 })}
             />
           </div>
-          <PricingFields
-            pricingConfig={normalizePricingConfig(form.pricing_config)}
-            onChange={(pricing_config) => setForm({ ...form, pricing_config })}
-          />
+          {canEditPricing ? (
+            <PricingFields
+              pricingConfig={normalizePricingConfig(form.pricing_config)}
+              onChange={(pricing_config) => setForm({ ...form, pricing_config })}
+            />
+          ) : (
+            <PlatformManagedPricingNotice />
+          )}
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => setOpen(false)}>
@@ -329,6 +345,7 @@ export function EditProviderDialog({
     credentials_ref: provider.credentials_ref ?? undefined,
     pricing_config: normalizePricingConfig(provider.pricing_config),
   })
+  const canEditPricing = isTenantManagedPricingProvider(provider.provider)
   const providerCredentials = credentials.filter(
     (cred) => cred.category === "llm_provider" && cred.provider_key === provider.provider
   )
@@ -349,7 +366,9 @@ export function EditProviderDialog({
     try {
       await modelsService.updateProvider(model.id, provider.id, {
         ...form,
-        pricing_config: buildPricingPayload(form.pricing_config || {}),
+        ...(canEditPricing
+          ? { pricing_config: buildPricingPayload(form.pricing_config || {}) }
+          : {}),
       })
       setOpen(false)
       onUpdated()
@@ -414,10 +433,14 @@ export function EditProviderDialog({
             <Checkbox checked={!!form.is_enabled} onCheckedChange={(v) => setForm({ ...form, is_enabled: v === true })} />
             <Label>Enabled</Label>
           </div>
-          <PricingFields
-            pricingConfig={normalizePricingConfig(form.pricing_config)}
-            onChange={(pricing_config) => setForm({ ...form, pricing_config })}
-          />
+          {canEditPricing ? (
+            <PricingFields
+              pricingConfig={normalizePricingConfig(form.pricing_config)}
+              onChange={(pricing_config) => setForm({ ...form, pricing_config })}
+            />
+          ) : (
+            <PlatformManagedPricingNotice />
+          )}
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => setOpen(false)}>

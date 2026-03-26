@@ -33,6 +33,7 @@ from app.services.model_resolver import ModelResolver
 from app.agent.core.llm_adapter import LLMProviderAdapter
 from app.agent.cel_engine import evaluate_template
 from app.services.prompt_reference_resolver import PromptReferenceResolver
+from app.services.resource_policy_service import ResourcePolicySnapshot
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +46,19 @@ STRICT_PLATFORM_TOOL_SLUGS = frozenset(
     }
 )
 STRICT_PLATFORM_RAW_INPUT_KEY = "__strict_platform_raw_input__"
+
+
+def _policy_snapshot_from_state(state: Dict[str, Any]) -> ResourcePolicySnapshot | None:
+    if not isinstance(state, dict):
+        return None
+    context = state.get("context")
+    if not isinstance(context, dict):
+        nested_state = state.get("state")
+        if isinstance(nested_state, dict):
+            context = nested_state.get("context")
+    if not isinstance(context, dict):
+        return None
+    return ResourcePolicySnapshot.from_payload(context.get("resource_policy_snapshot"))
 
 
 def _tool_model_name(tool_name: str, suffix: str) -> str:
@@ -441,8 +455,9 @@ class LLMNodeExecutor(BaseNodeExecutor):
         
         # 1. Resolve Model
         resolver = ModelResolver(self.db, self.tenant_id)
+        policy_snapshot = _policy_snapshot_from_state(state)
         try:
-            provider = await resolver.resolve(model_id)
+            provider = await resolver.resolve(model_id, policy_snapshot=policy_snapshot)
         except Exception as e:
             logger.error(f"Failed to resolve model {model_id}: {e}")
             if emitter:
@@ -1467,8 +1482,9 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
         
         # Resolve model
         resolver = ModelResolver(self.db, self.tenant_id)
+        policy_snapshot = _policy_snapshot_from_state(state)
         try:
-            provider = await resolver.resolve(model_id)
+            provider = await resolver.resolve(model_id, policy_snapshot=policy_snapshot)
         except Exception as e:
             logger.error(f"Failed to resolve model {model_id}: {e}")
             if emitter:

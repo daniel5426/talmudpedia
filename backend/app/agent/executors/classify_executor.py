@@ -6,7 +6,21 @@ from app.agent.cel_engine import evaluate_template
 from app.agent.graph.contracts import normalize_value_ref, resolve_runtime_value_ref
 from app.agent.core.llm_adapter import LLMProviderAdapter
 from app.services.model_resolver import ModelResolver
+from app.services.resource_policy_service import ResourcePolicySnapshot
 logger = logging.getLogger(__name__)
+
+
+def _policy_snapshot_from_state(state: Dict[str, Any]) -> ResourcePolicySnapshot | None:
+    if not isinstance(state, dict):
+        return None
+    context = state.get("context")
+    if not isinstance(context, dict):
+        nested_state = state.get("state")
+        if isinstance(nested_state, dict):
+            context = nested_state.get("context")
+    if not isinstance(context, dict):
+        return None
+    return ResourcePolicySnapshot.from_payload(context.get("resource_policy_snapshot"))
 
 
 
@@ -88,7 +102,7 @@ Respond ONLY with the category name. Do not include any other text."""
         
         # 3. Call LLM (using resolver + adapter)
         resolver = ModelResolver(self.db, self.tenant_id)
-        provider = await resolver.resolve(model_id)
+        provider = await resolver.resolve(model_id, policy_snapshot=_policy_snapshot_from_state(state))
         adapter = LLMProviderAdapter(provider)
         
         # Emit reasoning/start

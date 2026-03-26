@@ -40,6 +40,7 @@ from app.services.published_app_coding_agent_tools import (
     normalize_coding_agent_tool_exception,
     validate_coding_agent_required_fields,
 )
+from app.services.resource_policy_service import ResourcePolicySnapshot
 from app.services.tool_function_registry import ensure_tool_functions_registered, get_tool_function, run_tool_function
 from app.services.web_search import create_web_search_provider
 
@@ -65,6 +66,13 @@ INTERNAL_TOOL_RUNTIME_INPUT_KEYS = {
     "orchestration_surface",
     "quota_max_output_tokens",
     "token",
+    "published_app_id",
+    "published_app_account_id",
+    "external_user_id",
+    "external_session_id",
+    "tenant_api_key_id",
+    "resource_policy_snapshot",
+    "resource_policy_principal",
 }
 STRICT_PLATFORM_TOOL_SLUGS = frozenset(
     {
@@ -353,6 +361,13 @@ class ToolNodeExecutor(BaseNodeExecutor):
             "parent_run_id",
             "parent_node_id",
             "depth",
+            "published_app_id",
+            "published_app_account_id",
+            "external_user_id",
+            "external_session_id",
+            "tenant_api_key_id",
+            "resource_policy_snapshot",
+            "resource_policy_principal",
         )
         for key in inherited_keys:
             value = (node_context or {}).get(key)
@@ -1281,6 +1296,9 @@ class ToolNodeExecutor(BaseNodeExecutor):
     def _assert_runtime_policy(self, tool: Any, context: dict[str, Any] | None) -> None:
         if not getattr(tool, "is_active", False):
             raise PermissionError(f"Tool {getattr(tool, 'id', '')} is inactive")
+        snapshot = ResourcePolicySnapshot.from_payload((context or {}).get("resource_policy_snapshot"))
+        if snapshot is not None and not snapshot.can_use("tool", getattr(tool, "id", "")):
+            raise PermissionError(f"Tool access denied: {getattr(tool, 'id', '')}")
         if self._is_production_mode(context):
             if self._status_text(tool) != "published":
                 raise PermissionError("Tool must be published for production execution")

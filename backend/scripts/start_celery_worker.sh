@@ -3,7 +3,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-queues="${CELERY_QUEUES:-default,ingestion,embedding,apps_build,artifact_prod_interactive,artifact_prod_background}"
+queues="${CELERY_QUEUES:-default,ingestion,embedding,apps_build,artifact_prod_interactive,artifact_prod_background,artifact_test}"
 loglevel="${CELERY_LOG_LEVEL:-info}"
 hostname="${CELERY_HOSTNAME:-worker@%h}"
 

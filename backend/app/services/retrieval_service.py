@@ -17,6 +17,7 @@ from app.rag.adapters import create_adapter, SearchResult, VectorBackendAdapter
 from app.services.model_resolver import ModelResolver
 from app.services.credentials_service import CredentialsService
 from app.db.postgres.models.registry import IntegrationCredentialCategory
+from app.services.resource_policy_service import ResourcePolicyAccessDenied, ResourcePolicySnapshot
 
 
 class RetrievalResult(BaseModel):
@@ -74,11 +75,18 @@ class RetrievalService:
         config = store.backend_config or {}
         return config.get("namespace")
     
-    async def _embed_query(self, query: str, embedding_model_id: str, tenant_id: UUID) -> List[float]:
+    async def _embed_query(
+        self,
+        query: str,
+        embedding_model_id: str,
+        tenant_id: UUID,
+        policy_snapshot: ResourcePolicySnapshot | None = None,
+    ) -> List[float]:
         """Embed a query string using the store's configured embedding model."""
         resolver = ModelResolver(self._db, tenant_id)
         embedder = await resolver.resolve_embedding(
-            model_id=embedding_model_id
+            model_id=embedding_model_id,
+            policy_snapshot=policy_snapshot,
         )
         result = await embedder.embed(query)
         return result.values
@@ -90,7 +98,8 @@ class RetrievalService:
         top_k: int = 10,
         filters: Optional[Dict[str, Any]] = None,
         policy_override: Optional[RetrievalPolicy] = None,
-        namespace: Optional[str] = None
+        namespace: Optional[str] = None,
+        policy_snapshot: ResourcePolicySnapshot | None = None,
     ) -> List[RetrievalResult]:
         """
         Query a Knowledge Store for relevant documents.
@@ -110,12 +119,19 @@ class RetrievalService:
         store = await self.get_store(store_id)
         if not store:
             raise ValueError(f"Knowledge store not found: {store_id}")
+        if policy_snapshot is not None and not policy_snapshot.can_use("knowledge_store", store.id):
+            raise ResourcePolicyAccessDenied(resource_type="knowledge_store", resource_id=str(store.id))
         
         # 2. Get the vector backend adapter
         adapter = await self._get_adapter(store)
         
         # 3. Embed the query
-        query_vector = await self._embed_query(query, store.embedding_model_id, store.tenant_id)
+        query_vector = await self._embed_query(
+            query,
+            store.embedding_model_id,
+            store.tenant_id,
+            policy_snapshot=policy_snapshot,
+        )
         
         # 4. Determine retrieval policy
         policy = policy_override or store.retrieval_policy
@@ -275,7 +291,8 @@ class RetrievalService:
         store_ids: List[UUID],
         query: str,
         top_k: int = 10,
-        filters: Optional[Dict[str, Any]] = None
+        filters: Optional[Dict[str, Any]] = None,
+        policy_snapshot: ResourcePolicySnapshot | None = None,
     ) -> List[RetrievalResult]:
         """
         Query multiple Knowledge Stores and merge results.
@@ -286,7 +303,13 @@ class RetrievalService:
         
         for store_id in store_ids:
             try:
-                results = await self.query(store_id, query, top_k, filters)
+                results = await self.query(
+                    store_id,
+                    query,
+                    top_k,
+                    filters,
+                    policy_snapshot=policy_snapshot,
+                )
                 all_results.extend(results)
             except Exception as e:
                 # Log error but continue with other stores

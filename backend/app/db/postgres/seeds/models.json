@@ -13,7 +13,16 @@
             {
                 "provider": "OPENAI",
                 "provider_model_id": "gpt-5.4",
-                "priority": 0
+                "priority": 0,
+                "pricing_config": {
+                    "currency": "USD",
+                    "billing_mode": "per_1k_tokens",
+                    "rates": {
+                        "input": 0.00125,
+                        "cached_input": 0.000125,
+                        "output": 0.01
+                    }
+                }
             }
         ]
     },
@@ -31,7 +40,16 @@
             {
                 "provider": "OPENAI",
                 "provider_model_id": "gpt-5-mini",
-                "priority": 0
+                "priority": 0,
+                "pricing_config": {
+                    "currency": "USD",
+                    "billing_mode": "per_1k_tokens",
+                    "rates": {
+                        "input": 0.00025,
+                        "cached_input": 0.000025,
+                        "output": 0.002
+                    }
+                }
             }
         ]
     },
@@ -49,7 +67,16 @@
             {
                 "provider": "OPENAI",
                 "provider_model_id": "gpt-5-nano",
-                "priority": 0
+                "priority": 0,
+                "pricing_config": {
+                    "currency": "USD",
+                    "billing_mode": "per_1k_tokens",
+                    "rates": {
+                        "input": 0.00005,
+                        "cached_input": 0.000005,
+                        "output": 0.0004
+                    }
+                }
             }
         ]
     },
@@ -67,7 +94,16 @@
             {
                 "provider": "GOOGLE",
                 "provider_model_id": "gemini-3.1-pro-preview",
-                "priority": 0
+                "priority": 0,
+                "pricing_config": {
+                    "currency": "USD",
+                    "billing_mode": "per_1k_tokens",
+                    "rates": {
+                        "input": 0.002,
+                        "cached_input": 0.0002,
+                        "output": 0.012
+                    }
+                }
             }
         ]
     },
@@ -85,7 +121,16 @@
             {
                 "provider": "GOOGLE",
                 "provider_model_id": "gemini-3-flash-preview",
-                "priority": 0
+                "priority": 0,
+                "pricing_config": {
+                    "currency": "USD",
+                    "billing_mode": "per_1k_tokens",
+                    "rates": {
+                        "input": 0.0005,
+                        "cached_input": 0.00005,
+                        "output": 0.003
+                    }
+                }
             }
         ]
     },
@@ -103,7 +148,16 @@
             {
                 "provider": "ANTHROPIC",
                 "provider_model_id": "claude-sonnet-4-6",
-                "priority": 0
+                "priority": 0,
+                "pricing_config": {
+                    "currency": "USD",
+                    "billing_mode": "per_1k_tokens",
+                    "rates": {
+                        "input": 0.003,
+                        "cached_input": 0.0003,
+                        "output": 0.015
+                    }
+                }
             }
         ]
     },
@@ -121,7 +175,16 @@
             {
                 "provider": "ANTHROPIC",
                 "provider_model_id": "claude-opus-4-1-20250805",
-                "priority": 0
+                "priority": 0,
+                "pricing_config": {
+                    "currency": "USD",
+                    "billing_mode": "per_1k_tokens",
+                    "rates": {
+                        "input": 0.015,
+                        "cached_input": 0.0015,
+                        "output": 0.075
+                    }
+                }
             }
         ]
     },
@@ -139,7 +202,16 @@
             {
                 "provider": "XAI",
                 "provider_model_id": "grok-4",
-                "priority": 0
+                "priority": 0,
+                "pricing_config": {
+                    "currency": "USD",
+                    "billing_mode": "per_1k_tokens",
+                    "rates": {
+                        "input": 0.003,
+                        "cached_input": 0.00075,
+                        "output": 0.015
+                    }
+                }
             }
         ]
     },
@@ -156,7 +228,17 @@
             {
                 "provider": "XAI",
                 "provider_model_id": "grok-4-1-fast-reasoning",
-                "priority": 0
+                "priority": 0,
+                "pricing_config": {
+                    "currency": "USD",
+                    "billing_mode": "per_1k_tokens",
+                    "rates": {
+                        "input": 0.0002,
+                        "cached_input": 0.00005,
+                        "output": 0.0005,
+                        "reasoning": 0.0005
+                    }
+                }
             }
         ]
     },
@@ -172,7 +254,14 @@
             {
                 "provider": "OPENAI",
                 "provider_model_id": "text-embedding-3-large",
-                "priority": 0
+                "priority": 0,
+                "pricing_config": {
+                    "currency": "USD",
+                    "billing_mode": "per_1k_tokens",
+                    "rates": {
+                        "input": 0.00013
+                    }
+                }
             }
         ]
     },
@@ -188,7 +277,14 @@
             {
                 "provider": "OPENAI",
                 "provider_model_id": "text-embedding-3-small",
-                "priority": 0
+                "priority": 0,
+                "pricing_config": {
+                    "currency": "USD",
+                    "billing_mode": "per_1k_tokens",
+                    "rates": {
+                        "input": 0.00002
+                    }
+                }
             }
         ]
     }

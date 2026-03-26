@@ -22,6 +22,12 @@ from app.services.prompt_reference_resolver import PromptReferenceResolver
 from app.services.runtime_attachment_service import RuntimeAttachmentOwner, RuntimeAttachmentService
 from app.services.thread_service import ThreadAccessError, ThreadService
 from app.services.usage_quota_service import UsageQuotaService
+from app.services.resource_policy_quota_service import ResourcePolicyQuotaExceeded, ResourcePolicyQuotaService
+from app.services.resource_policy_service import (
+    ResourcePolicyAccessDenied,
+    ResourcePolicySnapshot,
+    ResourcePolicyService,
+)
 from app.services.model_accounting import (
     COST_SOURCE_UNKNOWN,
     USAGE_SOURCE_ESTIMATED,
@@ -115,6 +121,19 @@ class AgentExecutorService:
         return 0
 
     @staticmethod
+    def _safe_policy_snapshot_from_context(runtime_context: dict[str, Any] | None) -> ResourcePolicySnapshot | None:
+        try:
+            snapshot = ResourcePolicySnapshot.from_payload((runtime_context or {}).get("resource_policy_snapshot"))
+        except Exception:
+            logger.warning("Ignoring malformed resource_policy_snapshot payload", exc_info=True)
+            return None
+        if snapshot is None:
+            return None
+        if snapshot.direct_policy_set_id is None and not snapshot.source_policy_set_ids:
+            return None
+        return snapshot
+
+    @staticmethod
     def _collect_graph_model_ids(graph_definition: dict[str, Any]) -> list[str]:
         nodes = graph_definition.get("nodes")
         if not isinstance(nodes, list):
@@ -133,6 +152,59 @@ class AgentExecutorService:
             if model_id:
                 model_ids.append(model_id)
         return model_ids
+
+    @staticmethod
+    def _resolve_requested_model_id(
+        runtime_context: dict[str, Any],
+        graph_definition: dict[str, Any],
+    ) -> UUID | None:
+        raw_requested_model_id = runtime_context.get("requested_model_id")
+        try:
+            return UUID(str(raw_requested_model_id)) if raw_requested_model_id else None
+        except Exception:
+            pass
+
+        model_ids = AgentExecutorService._collect_graph_model_ids(graph_definition or {})
+        unique_model_ids = {model_id for model_id in model_ids if model_id}
+        if len(unique_model_ids) != 1:
+            return None
+        try:
+            return UUID(next(iter(unique_model_ids)))
+        except Exception:
+            return None
+
+    @staticmethod
+    def _merge_quota_caps(*caps: Any) -> int | None:
+        parsed_caps: list[int] = []
+        for cap in caps:
+            try:
+                if cap is not None:
+                    parsed = int(cap)
+                    if parsed > 0:
+                        parsed_caps.append(parsed)
+            except Exception:
+                continue
+        return min(parsed_caps) if parsed_caps else None
+
+    @staticmethod
+    def _requires_workload_delegation(
+        *,
+        agent: Agent,
+        runtime_surface: str | None,
+        requested_scopes: list[str] | None = None,
+        runtime_context: dict[str, Any] | None = None,
+    ) -> bool:
+        profile = str(getattr(agent, "workload_scope_profile", "") or "").strip().lower()
+        if profile and profile != "default_agent_run":
+            return True
+        if str(getattr(agent, "slug", "") or "").strip() == "platform-architect":
+            return True
+        if str(runtime_surface or "").strip().lower() in {"published_app_coding_agent", "artifact_coding_agent"}:
+            return True
+        if requested_scopes:
+            return True
+        context = runtime_context if isinstance(runtime_context, dict) else {}
+        return bool(context.get("grant_id") or context.get("principal_id"))
 
     @staticmethod
     def _extract_usage_tokens_from_event(event: ExecutionEvent) -> int:
@@ -264,7 +336,11 @@ class AgentExecutorService:
             return None
 
         try:
-            execution = await ModelResolver(db, agent.tenant_id).resolve_for_execution(str(raw_requested_model_id))
+            policy_snapshot = self._safe_policy_snapshot_from_context(runtime_context)
+            execution = await ModelResolver(db, agent.tenant_id).resolve_for_execution(
+                str(raw_requested_model_id),
+                policy_snapshot=policy_snapshot,
+            )
         except ModelResolverError:
             logger.warning("Failed to resolve accounting receipt for run %s", run.id, exc_info=True)
             return None
@@ -455,6 +531,10 @@ class AgentExecutorService:
         resolved_principal_id = parsed_principal_id
         resolved_grant_id = parsed_grant_id
         maybe_context = input_params.get("context") if isinstance(input_params, dict) else {}
+        explicit_requested_scopes = (
+            requested_scopes
+            or ((maybe_context or {}).get("requested_scopes") if isinstance(maybe_context, dict) else None)
+        )
 
         # Resolve/create thread before creating the run record.
         input_params = dict(input_params or {})
@@ -549,6 +629,27 @@ class AgentExecutorService:
             attachment_service.serialize_attachment(attachment) for attachment in prepared_message.attachments
         ]
 
+        policy_service = ResourcePolicyService(self.db)
+        policy_snapshot = self._safe_policy_snapshot_from_context(runtime_context)
+        if policy_snapshot is None:
+            policy_snapshot = await policy_service.resolve_execution_snapshot(
+                tenant_id=agent.tenant_id,
+                agent_id=agent.id,
+                user_id=effective_initiator_id,
+                published_app_id=published_app_id,
+                published_app_account_id=published_app_account_id,
+                external_user_id=external_user_id,
+            )
+        await policy_service.assert_agent_access(snapshot=policy_snapshot, agent_id=agent.id)
+        requested_model_id = self._resolve_requested_model_id(runtime_context, agent.graph_definition or {})
+
+        require_workload_delegation = self._requires_workload_delegation(
+            agent=agent,
+            runtime_surface=runtime_surface,
+            requested_scopes=explicit_requested_scopes if isinstance(explicit_requested_scopes, list) else None,
+            runtime_context=runtime_context,
+        )
+
         # Reserve quota (if enabled) before creating the run record.
         quota_metadata = {"max_output_cap": None}
         if runtime_surface not in {"published_app_coding_agent", "artifact_coding_agent"}:
@@ -560,23 +661,34 @@ class AgentExecutorService:
                     user_id=effective_initiator_id,
                     input_params=input_params,
                 )
+                resource_policy_quota = await ResourcePolicyQuotaService(self.db).reserve_for_run(
+                    run_id=run_id,
+                    tenant_id=agent.tenant_id,
+                    snapshot=policy_snapshot,
+                    model_id=requested_model_id,
+                    input_params=input_params,
+                )
+                quota_metadata["max_output_cap"] = self._merge_quota_caps(
+                    quota_metadata.get("max_output_cap"),
+                    resource_policy_quota.max_output_cap,
+                )
+            except (ResourcePolicyAccessDenied, ResourcePolicyQuotaExceeded):
+                await self.db.rollback()
+                raise
             except Exception:
                 await self.db.rollback()
                 raise
         context_payload = input_params.get("context") if isinstance(input_params.get("context"), dict) else {}
         context_payload = dict(context_payload)
         context_payload["thread_id"] = str(thread_result.thread.id)
+        if policy_snapshot is not None:
+            context_payload["resource_policy_snapshot"] = policy_snapshot.to_payload()
+            if policy_snapshot.principal is not None:
+                context_payload["resource_policy_principal"] = policy_snapshot.principal.to_payload()
         if quota_metadata.get("max_output_cap"):
             context_payload["quota_max_output_tokens"] = int(quota_metadata["max_output_cap"])
         input_params["context"] = context_payload
         input_params["thread_id"] = str(thread_result.thread.id)
-
-        requested_model_id: Optional[UUID] = None
-        raw_requested_model_id = context_payload.get("requested_model_id")
-        try:
-            requested_model_id = UUID(str(raw_requested_model_id)) if raw_requested_model_id else None
-        except Exception:
-            requested_model_id = None
 
         run = AgentRun(
             id=run_id,
@@ -589,6 +701,7 @@ class AgentExecutorService:
             delegation_grant_id=resolved_grant_id,
             published_app_id=published_app_id,
             published_app_account_id=published_app_account_id,
+            external_user_id=external_user_id,
             surface=runtime_surface or None,
             input_params=input_params,
             requested_model_id=requested_model_id,
@@ -605,7 +718,7 @@ class AgentExecutorService:
         self.db.add(run)
         await self.db.flush()
 
-        if effective_initiator_id is not None and resolved_grant_id is None:
+        if require_workload_delegation and effective_initiator_id is not None and resolved_grant_id is None:
             from app.services.delegation_service import DelegationService, DelegationPolicyError
 
             delegation = DelegationService(self.db)
@@ -614,7 +727,7 @@ class AgentExecutorService:
                     agent=agent,
                     initiator_user_id=effective_initiator_id,
                     run_id=run_id,
-                    requested_scopes=requested_scopes or ((maybe_context or {}).get("requested_scopes") if isinstance(maybe_context, dict) else None),
+                    requested_scopes=explicit_requested_scopes,
                 )
             except DelegationPolicyError as exc:
                 raise ValueError(f"{exc.code}: {exc.message}") from exc
@@ -701,7 +814,11 @@ class AgentExecutorService:
         if not agent:
             raise ValueError(f"Agent {run.agent_id} not found")
 
-        if (run.user_id is not None or run.initiator_user_id is not None) and run.delegation_grant_id is None:
+        if self._requires_workload_delegation(
+            agent=agent,
+            runtime_surface=run.surface,
+            runtime_context=run.input_params.get("context") if isinstance(run.input_params, dict) else None,
+        ) and (run.user_id is not None or run.initiator_user_id is not None) and run.delegation_grant_id is None:
             raise ValueError("WORKLOAD_PRINCIPAL_MISSING: Run is missing delegation grant context")
 
         # Capture input params before commit to avoid async lazy-loads
@@ -1093,6 +1210,7 @@ class AgentExecutorService:
                 run_id=run_id,
                 actual_usage_tokens=billable_total_tokens(run),
             )
+            await ResourcePolicyQuotaService(db).settle_for_run(run=run)
             if run.thread_id:
                 thread_service = ThreadService(db)
                 await thread_service.complete_turn(
@@ -1184,6 +1302,7 @@ class AgentExecutorService:
                     run_id=run_id,
                     actual_usage_tokens=billable_total_tokens(err_run),
                 )
+                await ResourcePolicyQuotaService(err_db).settle_for_run(run=err_run)
 
                 if err_run.thread_id:
                     thread_service = ThreadService(err_db)

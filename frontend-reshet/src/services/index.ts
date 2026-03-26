@@ -90,6 +90,7 @@ export {
   VECTOR_STORE_PROVIDER_OPTIONS,
   TOOL_PROVIDER_OPTIONS,
   getModelProviderOptions,
+  isTenantManagedPricingProvider,
 } from "./provider-catalog";
 
 export type {
@@ -211,3 +212,22 @@ export type {
   UpdateKnowledgeStoreRequest,
   KnowledgeStoreStats,
 } from "./knowledge-stores";
+
+// Resource Policies
+export { resourcePoliciesService } from "./resource-policies";
+export type {
+  ResourcePolicyPrincipalType,
+  ResourcePolicyResourceType,
+  ResourcePolicyRuleType,
+  ResourcePolicyQuotaUnit,
+  ResourcePolicyQuotaWindow,
+  ResourcePolicyRule,
+  ResourcePolicySet,
+  ResourcePolicyAssignment,
+  CreatePolicySetRequest,
+  UpdatePolicySetRequest,
+  CreatePolicyRuleRequest,
+  UpdatePolicyRuleRequest,
+  UpsertAssignmentRequest,
+  DeleteAssignmentParams,
+} from "./resource-policies";

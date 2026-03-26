@@ -7,8 +7,21 @@ from app.agent.executors.base import BaseNodeExecutor, ValidationResult
 from app.agent.executors.retrieval_runtime import RetrievalPipelineRuntime
 from app.services.retrieval_service import RetrievalService
 from app.agent.cel_engine import evaluate_template
+from app.services.resource_policy_service import ResourcePolicySnapshot
 
 logger = logging.getLogger(__name__)
+
+
+def _policy_snapshot_from_state(state: Dict[str, Any], context: Dict[str, Any] | None = None) -> ResourcePolicySnapshot | None:
+    state_context = state.get("context") if isinstance(state, dict) else None
+    if not isinstance(state_context, dict):
+        nested_state = state.get("state") if isinstance(state, dict) else None
+        state_context = nested_state.get("context") if isinstance(nested_state, dict) else None
+    if not isinstance(state_context, dict):
+        state_context = context if isinstance(context, dict) else None
+    if not isinstance(state_context, dict):
+        return None
+    return ResourcePolicySnapshot.from_payload(state_context.get("resource_policy_snapshot"))
 
 class RetrievalNodeExecutor(BaseNodeExecutor):
     """
@@ -139,12 +152,13 @@ class VectorSearchNodeExecutor(BaseNodeExecutor):
 
         try:
             store_id = UUID(store_id_str)
-            
+            policy_snapshot = _policy_snapshot_from_state(state, context)
             retrieval_service = RetrievalService(self.db)
             search_results = await retrieval_service.query(
                 store_id=store_id,
                 query=query,
-                top_k=top_k
+                top_k=top_k,
+                policy_snapshot=policy_snapshot,
             )
             
             results = [

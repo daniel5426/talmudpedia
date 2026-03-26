@@ -1,6 +1,6 @@
 # Railway Launch Runbook
 
-Last Updated: 2026-03-24
+Last Updated: 2026-03-27
 
 This is the canonical runbook for launching the core Talmudpedia platform on Railway.
 
@@ -91,11 +91,14 @@ Required values:
 ### Worker
 
 - Use `./scripts/start_celery_worker.sh`.
+- Root directory: `backend/`.
+- Keep `backend-worker` as a normal Git-backed Railway app service, not a dedicated worker Docker service.
 - Default queues:
   - `default`
   - `ingestion`
   - `embedding`
   - `apps_build`
+  - `artifact_test`
   - `artifact_prod_interactive`
   - `artifact_prod_background`
 - Optional:

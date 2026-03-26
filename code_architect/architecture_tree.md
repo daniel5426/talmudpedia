@@ -1,6 +1,6 @@
 # Architecture Tree (Curated)
 
-Last Updated: 2026-03-25
+Last Updated: 2026-03-26
 
 This file is a backend-only architecture map optimized for agent context efficiency.
 
@@ -30,6 +30,7 @@ backend/app/api/routers/embedded_agents_public.py
 backend/app/api/routers/tenant_api_keys.py
 backend/app/api/routers/agent_graph_mutations.py
 backend/app/api/routers/agent_tool_exports.py
+backend/app/api/routers/resource_policies.py
 backend/app/api/routers/prompts.py
 backend/app/api/routers/rag_graph_mutations.py
 backend/app/api/routers/rag_operator_contracts.py
@@ -119,6 +120,7 @@ backend/app/db/postgres/models/agent_threads.py
 backend/app/db/postgres/models/published_app_analytics.py
 backend/app/db/postgres/models/prompts.py
 backend/app/db/postgres/models/runtime_attachments.py
+backend/app/db/postgres/models/resource_policies.py
 backend/app/db/postgres/models/usage_quota.py
 backend/app/db/postgres/seeds/
 
@@ -129,6 +131,8 @@ backend/app/services/retrieval_service.py
 backend/app/services/rag_admin_service.py
 backend/app/services/model_accounting.py
 backend/app/services/model_resolver.py
+backend/app/services/resource_policy_service.py
+backend/app/services/resource_policy_quota_service.py
 backend/app/services/model_temperature_policy.py
 backend/app/services/prompt_library_service.py
 backend/app/services/prompt_reference_resolver.py

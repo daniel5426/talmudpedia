@@ -78,7 +78,7 @@ export interface LogicalModel {
   status: ModelStatus;
   is_active?: boolean;
   is_default?: boolean;
-  tenant_id: string;
+  tenant_id: string | null;
   created_at: string;
   updated_at: string;
   providers: ModelProviderSummary[];

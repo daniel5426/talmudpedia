@@ -107,6 +107,8 @@ Current accounting rules:
 - exact token totals include provider-reported and SDK-reported usage
 - estimated token totals include explicitly estimated rows only
 - spend is aggregated from persisted `cost_usd`
+- built-in provider spend comes from persisted platform-managed binding pricing, not tenant-edited registry pricing
+- `custom` and `local` provider spend may come from tenant-managed binding pricing
 - unknown usage/cost rows remain visible as coverage counts instead of being silently priced
 
 ## Current Agent Drilldown

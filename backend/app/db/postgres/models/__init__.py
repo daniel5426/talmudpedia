@@ -43,6 +43,19 @@ from .security import (
     ApprovalStatus,
     TenantAPIKeyStatus,
 )
+from .resource_policies import (
+    ResourcePolicyAssignment,
+    ResourcePolicyPrincipalType,
+    ResourcePolicyQuotaCounter,
+    ResourcePolicyQuotaReservation,
+    ResourcePolicyQuotaUnit,
+    ResourcePolicyQuotaWindow,
+    ResourcePolicyResourceType,
+    ResourcePolicyRule,
+    ResourcePolicyRuleType,
+    ResourcePolicySet,
+    ResourcePolicySetInclude,
+)
 from .orchestration import (
     OrchestratorPolicy,
     OrchestratorTargetAllowlist,

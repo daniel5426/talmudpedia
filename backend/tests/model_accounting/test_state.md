@@ -11,12 +11,14 @@ Run-accounting normalization and pricing snapshot calculation.
 **Scenarios Covered**
 - Canonical binding `pricing_config` snapshots are used as the sole runtime pricing source
 - Structured pricing computes exact run cost from canonical `pricing_config`
+- Built-in bindings without seeded pricing remain `unknown`
+- Seeded built-in pricing and tenant-managed local/custom pricing both compute exact run cost from canonical `pricing_config`
 - Manual pricing produces explicit manual-override cost provenance
 
 **Last Run**
-- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/model_accounting/test_model_accounting_service.py`
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/model_registry/test_models_api_contract.py backend/tests/model_registry/test_provider_binding_update.py backend/tests/model_accounting/test_model_accounting_service.py`
 - Date/Time: 2026-03-26 Asia/Hebron
-- Result: PASS (`2 passed`)
+- Result: PASS (`15 passed`)
 
 **Known Gaps / Follow-ups**
 - Does not yet cover provider-reported cost precedence

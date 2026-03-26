@@ -10,7 +10,7 @@ from app.agent.execution.trace_recorder import ExecutionTraceRecorder
 from app.api.routers.artifact_coding_agent import _build_session_detail_response
 from app.db.postgres.models.agents import AgentRun, RunStatus
 from app.db.postgres.models.artifact_runtime import ArtifactCodingMessage, ArtifactCodingSession, ArtifactCodingSharedDraft, ArtifactRun, ArtifactRunDomain, ArtifactRunEvent, ArtifactRunStatus
-from app.db.postgres.models.registry import IntegrationCredential, IntegrationCredentialCategory
+from app.db.postgres.models.registry import IntegrationCredential, IntegrationCredentialCategory, ToolRegistry
 from app.services.artifact_coding_shared_draft_service import ArtifactCodingSharedDraftService
 from app.db.postgres.models.identity import Tenant, User
 from app.services.artifact_coding_chat_history_service import ArtifactCodingChatHistoryService
@@ -23,7 +23,9 @@ from app.services.artifact_coding_agent_tools import (
     _resolve_session_context,
     artifact_coding_create_file,
     artifact_coding_list_credentials,
+    artifact_coding_set_tool_contract,
     artifact_coding_set_entry_module,
+    ensure_artifact_coding_tools,
 )
 from app.services.artifact_coding_runtime_service import ArtifactCodingRuntimeService
 from app.services.artifact_runtime.revision_service import ArtifactRevisionService
@@ -796,10 +798,86 @@ async def test_artifact_coding_agent_profile_includes_delegated_worker_mode_inst
     assert "Do not tell the caller to open another session, create another artifact, or continue elsewhere" in instructions
     assert "Do not emit scaffolds, suggested source files, or workflow steps by default when refusing for scope conflict." in instructions
     assert "display_name, kind, language, source_files, entry_module_path, runtime_target, capabilities, config_schema" in instructions
-    assert "exactly one kind-matching contract payload" in instructions
+    assert "exactly one kind-matching contract object via the matching contract tool" in instructions
     assert "entry_module_path points to a real file in source_files" in instructions
     assert "kind=tool_impl" in instructions
     assert "Tool identity, binding, and publish pinning are separate follow-up lifecycle steps" in instructions
+    assert "Use artifact_coding_set_metadata for display_name and description only." in instructions
+    assert "artifact_coding_set_tool_contract" in instructions
+    assert "Do not wrap it inside agent_contract, rag_contract, or tool_contract keys." in instructions
+    assert "Do not place metadata fields like display_name or description inside contract objects." in instructions
+
+
+@pytest.mark.asyncio
+async def test_artifact_coding_tools_publish_kind_specific_contract_tool_schemas(db_session):
+    await ensure_artifact_coding_tools(db_session)
+
+    tool = await db_session.scalar(
+        select(ToolRegistry).where(ToolRegistry.slug == "artifact-coding-set-tool-contract")
+    )
+
+    assert tool is not None
+    assert tool.schema["input"]["required"] == ["tool_contract"]
+    assert "contract_payload" not in tool.schema["input"]["properties"]
+    assert "tool_contract" in tool.schema["input"]["properties"]
+    tool_contract_schema = tool.schema["input"]["properties"]["tool_contract"]
+    assert "input_schema" in tool_contract_schema["properties"]
+    assert "output_schema" in tool_contract_schema["properties"]
+    assert "description" not in tool_contract_schema["properties"]
+
+
+@pytest.mark.asyncio
+async def test_artifact_coding_set_tool_contract_accepts_inner_contract_object(db_session):
+    tenant, user = await _seed_tenant_and_user(db_session)
+    agent = await ensure_artifact_coding_agent_profile(db_session, tenant.id, actor_user_id=user.id)
+    runtime = ArtifactCodingRuntimeService(db_session)
+    prepared = await runtime.prepare_session(
+        tenant_id=tenant.id,
+        user_id=user.id,
+        agent_id=agent.id,
+        title_prompt="Set tool contract",
+        artifact_id=None,
+        draft_key=None,
+        chat_session_id=None,
+        draft_snapshot=runtime.build_initial_snapshot_from_seed({"kind": "tool_impl"}),
+        replace_snapshot=True,
+    )
+    worker_run = await _create_artifact_coding_worker_run(
+        db_session,
+        tenant=tenant,
+        user=user,
+        agent=agent,
+        session=prepared.session,
+        shared_draft=prepared.shared_draft,
+    )
+
+    @asynccontextmanager
+    async def _session_override():
+        yield db_session
+
+    from app.services import artifact_coding_agent_tools as artifact_tools_module
+
+    original_session = artifact_tools_module.get_session
+    artifact_tools_module.get_session = _session_override
+    try:
+        result = await artifact_coding_set_tool_contract(
+            {
+                "run_id": str(worker_run.id),
+                "tool_contract": {
+                    "input_schema": {"type": "object", "properties": {"deal_id": {"type": "integer"}}},
+                    "output_schema": {"type": "object", "properties": {"ok": {"type": "boolean"}}},
+                    "side_effects": [],
+                    "execution_mode": "interactive",
+                    "tool_ui": {},
+                },
+            }
+        )
+    finally:
+        artifact_tools_module.get_session = original_session
+
+    assert result["ok"] is True
+    assert result["changed_fields"] == ["tool_contract"]
+    assert '"deal_id"' in result["draft_snapshot"]["tool_contract"]
 
 
 @pytest.mark.asyncio

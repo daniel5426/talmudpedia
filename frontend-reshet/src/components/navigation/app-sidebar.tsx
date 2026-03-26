@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Image from "next/image";
-import { Settings2, Bot, Library, Trash2, ChevronRightIcon, MoreHorizontal, Share2, FileText, LayoutDashboard, Users, MessageSquare, LogIn, Database, ShieldCheck, History, Landmark, Workflow, Settings, Play, Code2, BarChart3, Globe } from "lucide-react";
+import { Settings2, Bot, Library, Trash2, ChevronRightIcon, MoreHorizontal, Share2, FileText, LayoutDashboard, Users, MessageSquare, LogIn, Database, ShieldCheck, History, Landmark, Workflow, Settings, Play, Code2, BarChart3, Globe, ScrollText } from "lucide-react";
 
 import { NavMain } from "./nav-main";
 import { NavUser } from "./nav-user";
@@ -96,6 +96,11 @@ const data = {
           title: "Audit Logs",
           url: "/admin/audit",
           icon: History,
+        },
+        {
+          title: "Resource Policies",
+          url: "/admin/resource-policies",
+          icon: ScrollText,
         },
       ],
     },

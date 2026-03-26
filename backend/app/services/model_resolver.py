@@ -29,6 +29,7 @@ from app.rag.providers.embedding.openai import OpenAIEmbeddingProvider
 from app.rag.providers.embedding.gemini import GeminiEmbeddingProvider
 from app.rag.providers.embedding.huggingface import HuggingFaceEmbeddingProvider
 from app.services.model_accounting import binding_pricing_snapshot
+from app.services.resource_policy_service import ResourcePolicySnapshot
 
 
 logger = logging.getLogger(__name__)
@@ -83,24 +84,32 @@ class ModelResolver:
     async def resolve(
         self,
         model_id: str,
-        policy_override: Optional[ModelResolutionPolicy] = None
+        policy_override: Optional[ModelResolutionPolicy] = None,
+        policy_snapshot: ResourcePolicySnapshot | None = None,
     ) -> LLMProvider:
         """
         Resolve a logical model ID to a provider instance.
         """
-        execution = await self.resolve_for_execution(model_id, policy_override)
+        execution = await self.resolve_for_execution(
+            model_id,
+            policy_override,
+            policy_snapshot=policy_snapshot,
+        )
         return execution.provider_instance
 
     async def resolve_for_execution(
         self,
         model_id: str,
         policy_override: Optional[ModelResolutionPolicy] = None,
+        policy_snapshot: ResourcePolicySnapshot | None = None,
     ) -> ResolvedModelExecution:
         """
         Resolve a logical model to a concrete execution receipt.
         """
         # 1. Fetch model
         logger.debug(f"Resolving model {model_id} for tenant {self.tenant_id}")
+        if policy_snapshot is not None and not policy_snapshot.can_use("model", model_id):
+            raise ModelResolverError(f"Model access denied: {model_id}")
         model = await self._get_model(model_id)
         if not model:
             raise ModelResolverError(f"Model not found: {model_id}")
@@ -128,7 +137,11 @@ class ModelResolver:
                 fallback = await self._get_fallback_model(model)
                 if fallback:
                     logger.info(f"Falling back to model: {fallback.name}")
-                    return await self.resolve_for_execution(str(fallback.id), policy_override)
+                    return await self.resolve_for_execution(
+                        str(fallback.id),
+                        policy_override,
+                        policy_snapshot=policy_snapshot,
+                    )
 
             raise ModelResolverError(f"No suitable binding/provider found for model: {model.name}")
 
@@ -288,7 +301,8 @@ class ModelResolver:
     async def resolve_with_fallback(
         self,
         model_id: str,
-        fallback_model_ids: list[str]
+        fallback_model_ids: list[str],
+        policy_snapshot: ResourcePolicySnapshot | None = None,
     ) -> LLMProvider:
         """
         Resolve model with explicit fallback chain.
@@ -296,7 +310,7 @@ class ModelResolver:
         all_models = [model_id] + fallback_model_ids
         for mid in all_models:
             try:
-                return await self.resolve(mid)
+                return await self.resolve(mid, policy_snapshot=policy_snapshot)
             except ModelResolverError:
                 continue
         raise ModelResolverError(f"All models failed: {all_models}")
@@ -339,7 +353,8 @@ class ModelResolver:
     async def resolve_embedding(
         self,
         model_id: str,
-        required_capability: ModelCapabilityType = ModelCapabilityType.EMBEDDING
+        required_capability: ModelCapabilityType = ModelCapabilityType.EMBEDDING,
+        policy_snapshot: ResourcePolicySnapshot | None = None,
     ) -> EmbeddingProvider:
         """
         Resolve a logical model ID to an EmbeddingProvider instance.
@@ -355,6 +370,8 @@ class ModelResolver:
             ModelResolverError: If model not found, wrong capability, or no provider
         """
         logger.debug(f"Resolving embedding model {model_id} for tenant {self.tenant_id}")
+        if policy_snapshot is not None and not policy_snapshot.can_use("model", model_id):
+            raise ModelResolverError(f"Model access denied: {model_id}")
         model = await self._get_model(model_id)
         
         if not model:

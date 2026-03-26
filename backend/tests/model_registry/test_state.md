@@ -22,17 +22,19 @@ Model Registry credentials resolution, provider binding updates, and vector stor
 - `/models` create responses no longer expose slug-based identity.
 - Setting a default model clears the previous default in the same tenant/capability scope.
 - Unsupported provider/capability pairs are rejected before persistence.
-- Provider binding create/update validates and persists canonical `pricing_config`.
-- Provider binding PATCH updates priority, enabled status, credentials ref, and pricing config.
+- Built-in providers reject tenant pricing overrides on provider create/update.
+- `custom` and `local` providers accept tenant-managed `pricing_config`.
+- Global model reads expose seeded built-in binding pricing.
+- Provider binding PATCH updates priority, enabled status, credentials ref, and pricing config for tenant-managed providers.
 - Public registry APIs reject `billing_mode=manual`; that mode is internal-only.
 - Vector store backend config merges credentials and rejects disabled secrets.
 
 ## Last Run
-- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/model_registry/test_models_api_contract.py backend/tests/model_registry/test_provider_binding_update.py`
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/model_registry/test_models_api_contract.py backend/tests/model_registry/test_provider_binding_update.py backend/tests/model_accounting/test_model_accounting_service.py`
 - Date/Time: 2026-03-26 Asia/Hebron
-- Result: PASS (`6 passed`)
+- Result: PASS (`15 passed`)
 
 ## Known Gaps / Follow-ups
 - Add migration-focused tests for the slug-to-`system_key` hard cut and default-index rollout.
 - Add broader integration coverage for downstream agent graph persistence and RAG embedding consumers.
-- Add explicit API coverage for flat-per-request and unknown billing-mode provider bindings.
+- Add explicit API coverage for flat-per-request and unknown billing-mode provider bindings on tenant-managed providers.

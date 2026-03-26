@@ -1063,6 +1063,7 @@ from app.api.routers import rag_graph_mutations as rag_graph_mutations_router
 from app.api.routers import rag_operator_contracts as rag_operator_contracts_router
 from app.api.routers import rag_custom_operators as rag_custom_operators_router
 from app.api.routers import models as models_router
+from app.api.routers import resource_policies as resource_policies_router
 from app.api.routers import prompts as prompts_router
 from app.api.routers import tools as tools_router
 from app.api.routers import artifacts as artifacts_router
@@ -1099,6 +1100,7 @@ app.include_router(artifact_coding_agent_router.router, tags=["artifacts"])
 app.include_router(stats_router.router, prefix="/admin", tags=["stats"])
 app.include_router(settings_router.router, prefix="/admin/settings", tags=["settings"])
 app.include_router(workload_security_router.router)
+app.include_router(resource_policies_router.router)
 app.include_router(tenant_api_keys_router.router)
 app.include_router(internal_auth_router.router)
 app.include_router(internal_auth_router.jwks_router)

@@ -68,6 +68,12 @@ class Agent(Base):
     is_active = Column(Boolean, default=True, nullable=False)
     is_public = Column(Boolean, default=False, nullable=False)
     show_in_playground = Column(Boolean, default=True, nullable=False, server_default=text("true"))
+    default_embed_policy_set_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("resource_policy_sets.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
@@ -77,6 +83,7 @@ class Agent(Base):
     # Relationships
     tenant = relationship("Tenant")
     creator = relationship("User")
+    default_embed_policy_set = relationship("ResourcePolicySet", foreign_keys=[default_embed_policy_set_id])
     runs = relationship("AgentRun", back_populates="agent", cascade="all, delete-orphan")
 
     __table_args__ = (
@@ -134,6 +141,7 @@ class AgentRun(Base):
     surface = Column(String, nullable=True, index=True)
     published_app_id = Column(UUID(as_uuid=True), ForeignKey("published_apps.id", ondelete="SET NULL"), nullable=True, index=True)
     published_app_account_id = Column(UUID(as_uuid=True), ForeignKey("published_app_accounts.id", ondelete="SET NULL"), nullable=True, index=True)
+    external_user_id = Column(String(255), nullable=True, index=True)
     thread_id = Column(UUID(as_uuid=True), ForeignKey("agent_threads.id", ondelete="SET NULL"), nullable=True, index=True)
     base_revision_id = Column(UUID(as_uuid=True), ForeignKey("published_app_revisions.id", ondelete="SET NULL"), nullable=True, index=True)
     result_revision_id = Column(UUID(as_uuid=True), ForeignKey("published_app_revisions.id", ondelete="SET NULL"), nullable=True, index=True)

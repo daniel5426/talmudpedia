@@ -49,6 +49,18 @@ MODEL_PROVIDER_CATALOG: dict[ModelProviderType, ModelProviderCatalogEntry] = {
         label="xAI",
         supported_capabilities=_LLM_STYLE_CAPABILITIES,
     ),
+    ModelProviderType.LOCAL: ModelProviderCatalogEntry(
+        provider=ModelProviderType.LOCAL,
+        label="Local",
+        supported_capabilities=frozenset(ModelCapabilityType),
+        required_credential_keys=(),
+    ),
+    ModelProviderType.CUSTOM: ModelProviderCatalogEntry(
+        provider=ModelProviderType.CUSTOM,
+        label="Custom",
+        supported_capabilities=frozenset(ModelCapabilityType),
+        required_credential_keys=(),
+    ),
 }
 
 
@@ -87,6 +99,13 @@ def is_model_provider_supported(
     if entry is None:
         return False
     return capability in entry.supported_capabilities
+
+
+def is_tenant_managed_pricing_provider(
+    provider: ModelProviderType | str,
+) -> bool:
+    normalized = provider if isinstance(provider, ModelProviderType) else ModelProviderType(str(provider).strip().lower())
+    return normalized in {ModelProviderType.LOCAL, ModelProviderType.CUSTOM}
 
 
 def supported_model_providers_for_capability(

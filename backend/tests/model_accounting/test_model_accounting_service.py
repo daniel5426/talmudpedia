@@ -3,6 +3,7 @@ from decimal import Decimal
 from app.services.model_accounting import (
     COST_SOURCE_BINDING_PRICING,
     COST_SOURCE_MANUAL_OVERRIDE,
+    COST_SOURCE_UNKNOWN,
     NormalizedUsage,
     binding_pricing_snapshot,
     compute_cost_from_snapshot,
@@ -54,3 +55,41 @@ def test_compute_cost_from_snapshot_supports_exact_and_manual_pricing():
     )
     assert manual_cost.source == COST_SOURCE_MANUAL_OVERRIDE
     assert manual_cost.total_cost == Decimal("1.250000")
+
+
+def test_compute_cost_from_snapshot_returns_unknown_without_seeded_pricing():
+    usage = NormalizedUsage(input_tokens=1000, output_tokens=500).finalize()
+
+    cost = compute_cost_from_snapshot(
+        usage=usage,
+        pricing_snapshot={},
+    )
+
+    assert cost.source == COST_SOURCE_UNKNOWN
+    assert cost.total_cost is None
+
+
+def test_compute_cost_from_snapshot_supports_seeded_and_tenant_managed_token_pricing():
+    usage = NormalizedUsage(input_tokens=1000, output_tokens=500, reasoning_tokens=200).finalize()
+
+    seeded_cost = compute_cost_from_snapshot(
+        usage=usage,
+        pricing_snapshot={
+            "currency": "USD",
+            "billing_mode": "per_1k_tokens",
+            "rates": {"input": 0.00125, "output": 0.01},
+        },
+    )
+    assert seeded_cost.source == COST_SOURCE_BINDING_PRICING
+    assert seeded_cost.total_cost == Decimal("0.006250")
+
+    local_cost = compute_cost_from_snapshot(
+        usage=usage,
+        pricing_snapshot={
+            "currency": "USD",
+            "billing_mode": "per_1k_tokens",
+            "rates": {"input": 0.001, "output": 0.004, "reasoning": 0.002},
+        },
+    )
+    assert local_cost.source == COST_SOURCE_BINDING_PRICING
+    assert local_cost.total_cost == Decimal("0.003400")

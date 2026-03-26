@@ -1,6 +1,6 @@
 # Deployment Spec
 
-Last Updated: 2026-03-24
+Last Updated: 2026-03-27
 
 This document is the canonical source of truth for the current Talmudpedia hosting and deployment state.
 
@@ -27,6 +27,7 @@ The current production topology is:
   - source root: `/backend`
 - `backend-worker`
   - platform: Railway app service
+  - source root: `/backend`
   - command: `./scripts/start_celery_worker.sh`
 - `Postgres`
   - platform: Railway managed PostgreSQL
@@ -76,6 +77,7 @@ Tracked service commands:
   - `uvicorn main:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips='*'`
 - backend-worker
   - from [`backend/scripts/start_celery_worker.sh`](/Users/danielbenassaya/Code/personal/talmudpedia/backend/scripts/start_celery_worker.sh)
+  - root directory: `backend/`
   - `./scripts/start_celery_worker.sh`
 - crawl4ai
   - intended from [`deploy/crawl4ai/railway.toml`](/Users/danielbenassaya/Code/personal/talmudpedia/deploy/crawl4ai/railway.toml)

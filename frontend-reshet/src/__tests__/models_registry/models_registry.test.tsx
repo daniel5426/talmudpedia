@@ -31,15 +31,22 @@ jest.mock("@/services", () => ({
   ],
   getModelProviderOptions: jest.fn((capability: string) => {
     if (capability === "embedding") {
-      return [{ key: "openai", label: "OpenAI" }]
+      return [
+        { key: "openai", label: "OpenAI" },
+        { key: "local", label: "Local" },
+        { key: "custom", label: "Custom" },
+      ]
     }
     return [
       { key: "openai", label: "OpenAI" },
       { key: "anthropic", label: "Anthropic" },
       { key: "google", label: "Google AI" },
       { key: "xai", label: "xAI" },
+      { key: "local", label: "Local" },
+      { key: "custom", label: "Custom" },
     ]
   }),
+  isTenantManagedPricingProvider: jest.fn((provider: string) => provider === "local" || provider === "custom"),
 }))
 
 jest.mock("@/contexts/TenantContext", () => ({
@@ -53,8 +60,8 @@ jest.mock("@/components/direction-provider", () => ({
 const mockModels = [
   {
     id: "model-1",
-    name: "Test Model",
-    description: "Test",
+    name: "Built-in Model",
+    description: "Built-in priced",
     capability_type: "chat",
     metadata: {},
     default_resolution_policy: {},
@@ -82,9 +89,9 @@ const mockModels = [
   },
   {
     id: "model-2",
-    name: "Embedding Model",
-    description: "Vectors",
-    capability_type: "embedding",
+    name: "Custom Model",
+    description: "Tenant priced",
+    capability_type: "chat",
     metadata: {},
     default_resolution_policy: {},
     version: 1,
@@ -95,6 +102,35 @@ const mockModels = [
     providers: [
       {
         id: "provider-2",
+        provider: "custom",
+        provider_model_id: "my-gateway-chat",
+        priority: 1,
+        is_enabled: true,
+        config: {},
+        credentials_ref: null,
+        pricing_config: {
+          currency: "USD",
+          billing_mode: "per_1k_tokens",
+          rates: { input: 0.002, output: 0.006 },
+        },
+      },
+    ],
+  },
+  {
+    id: "model-3",
+    name: "Embedding Model",
+    description: "Vectors",
+    capability_type: "embedding",
+    metadata: {},
+    default_resolution_policy: {},
+    version: 1,
+    status: "active",
+    tenant_id: null,
+    created_at: "",
+    updated_at: "",
+    providers: [
+      {
+        id: "provider-3",
         provider: "openai",
         provider_model_id: "text-embedding-3-large",
         priority: 0,
@@ -114,7 +150,7 @@ describe("Models Registry", () => {
   beforeEach(() => {
     ;(modelsService.listModels as jest.Mock).mockResolvedValue({
       models: mockModels,
-      total: 1,
+      total: mockModels.length,
     })
     ;(credentialsService.listCredentials as jest.Mock).mockResolvedValue([
       {
@@ -175,12 +211,24 @@ describe("Models Registry", () => {
     )
   })
 
-  it("opens edit provider dialog and saves changes", async () => {
+  it("shows platform-managed pricing note for built-in providers", async () => {
     render(<ModelsPage />)
 
     await waitFor(() => expect(modelsService.listModels).toHaveBeenCalled())
 
     const editProviderButton = await screen.findByTestId("edit-provider-provider-1")
+    fireEvent.click(editProviderButton)
+
+    expect(await screen.findByText(/Platform-managed pricing/i)).toBeInTheDocument()
+    expect(screen.queryByLabelText("Input Rate")).not.toBeInTheDocument()
+  })
+
+  it("opens custom provider dialog and saves pricing changes", async () => {
+    render(<ModelsPage />)
+
+    await waitFor(() => expect(modelsService.listModels).toHaveBeenCalled())
+
+    const editProviderButton = await screen.findByTestId("edit-provider-provider-2")
     fireEvent.click(editProviderButton)
 
     const priorityInput = await screen.findByLabelText("Priority (lower = higher priority)")
@@ -194,8 +242,8 @@ describe("Models Registry", () => {
 
     await waitFor(() =>
       expect(modelsService.updateProvider).toHaveBeenCalledWith(
-        "model-1",
-        "provider-1",
+        "model-2",
+        "provider-2",
         expect.objectContaining({
           priority: 2,
           pricing_config: expect.objectContaining({
@@ -224,6 +272,17 @@ describe("Models Registry", () => {
     })
 
     expect(screen.getByText("Embedding Model")).toBeInTheDocument()
-    expect(screen.queryByText("Test Model")).not.toBeInTheDocument()
+    expect(screen.queryByText("Built-in Model")).not.toBeInTheDocument()
+  })
+
+  it("renders global models as read-only", async () => {
+    render(<ModelsPage />)
+
+    await waitFor(() => expect(modelsService.listModels).toHaveBeenCalled())
+
+    expect(screen.getByText("Global")).toBeInTheDocument()
+    expect(screen.getByText("Global models are read-only.")).toBeInTheDocument()
+    expect(screen.queryByTestId("edit-model-model-3")).not.toBeInTheDocument()
+    expect(screen.queryByTestId("edit-provider-provider-3")).not.toBeInTheDocument()
   })
 })

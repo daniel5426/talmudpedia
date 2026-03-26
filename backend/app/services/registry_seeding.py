@@ -112,6 +112,7 @@ async def seed_global_models(db):
             config = {}
             if "variant" in p_def:
                 config["provider_variant"] = p_def["variant"]
+            pricing_config = dict(p_def.get("pricing_config") or {})
 
             if not binding:
                 binding = ModelProviderBinding(
@@ -121,12 +122,14 @@ async def seed_global_models(db):
                     provider_model_id=p_def["provider_model_id"],
                     priority=p_def.get("priority", 0),
                     config=config,
+                    pricing_config=pricing_config,
                     is_enabled=True
                 )
                 db.add(binding)
             else:
                 binding.priority = p_def.get("priority", 0)
                 binding.config = config
+                binding.pricing_config = pricing_config
 
     await db.commit()
     print("Model Registry Sync Complete.")

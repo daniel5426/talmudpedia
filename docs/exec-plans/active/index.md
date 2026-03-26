@@ -23,4 +23,5 @@ This section holds work that is planned or currently in progress.
 - `agent_builder_rag_production_readiness_refactor_plan.md`
 - `autonomous_node_test_env_plan.md`
 - `model_registry_production_readiness_refactor_plan.md`
+- `resource_policy_sets_full_test_plan.md`
 - `tools_update_v1_plan.md`

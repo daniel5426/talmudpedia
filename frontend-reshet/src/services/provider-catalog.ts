@@ -13,25 +13,50 @@ const MODEL_PROVIDER_OPTIONS_BY_CAPABILITY: Record<ModelCapabilityType, LLMProvi
     { key: "anthropic", label: "Anthropic" },
     { key: "google", label: "Google AI" },
     { key: "xai", label: "xAI" },
+    { key: "local", label: "Local" },
+    { key: "custom", label: "Custom" },
   ],
   completion: [
     { key: "openai", label: "OpenAI" },
     { key: "anthropic", label: "Anthropic" },
     { key: "google", label: "Google AI" },
     { key: "xai", label: "xAI" },
+    { key: "local", label: "Local" },
+    { key: "custom", label: "Custom" },
   ],
-  embedding: [{ key: "openai", label: "OpenAI" }],
+  embedding: [
+    { key: "openai", label: "OpenAI" },
+    { key: "local", label: "Local" },
+    { key: "custom", label: "Custom" },
+  ],
   vision: [
     { key: "openai", label: "OpenAI" },
     { key: "anthropic", label: "Anthropic" },
     { key: "google", label: "Google AI" },
     { key: "xai", label: "xAI" },
+    { key: "local", label: "Local" },
+    { key: "custom", label: "Custom" },
   ],
-  image: [],
-  audio: [],
-  rerank: [],
-  speech_to_text: [],
-  text_to_speech: [],
+  image: [
+    { key: "local", label: "Local" },
+    { key: "custom", label: "Custom" },
+  ],
+  audio: [
+    { key: "local", label: "Local" },
+    { key: "custom", label: "Custom" },
+  ],
+  rerank: [
+    { key: "local", label: "Local" },
+    { key: "custom", label: "Custom" },
+  ],
+  speech_to_text: [
+    { key: "local", label: "Local" },
+    { key: "custom", label: "Custom" },
+  ],
+  text_to_speech: [
+    { key: "local", label: "Local" },
+    { key: "custom", label: "Custom" },
+  ],
 };
 
 export const LLM_PROVIDER_OPTIONS: LLMProviderOption[] = Array.from(
@@ -46,6 +71,10 @@ export function getModelProviderOptions(
   capability: ModelCapabilityType
 ): LLMProviderOption[] {
   return MODEL_PROVIDER_OPTIONS_BY_CAPABILITY[capability] || [];
+}
+
+export function isTenantManagedPricingProvider(provider: ModelProviderType): boolean {
+  return provider === "local" || provider === "custom";
 }
 
 export const VECTOR_STORE_PROVIDER_OPTIONS: ProviderOption[] = [

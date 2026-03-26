@@ -7,6 +7,7 @@ from app.api.dependencies import get_current_principal, get_tenant_context
 from app.db.postgres.models.identity import Tenant, User
 from app.db.postgres.models.registry import (
     ModelCapabilityType,
+    ModelProviderBinding,
     ModelProviderType,
     ModelRegistry,
     ModelStatus,
@@ -231,3 +232,132 @@ async def test_add_provider_rejects_manual_pricing_config_in_public_registry_api
 
     assert response.status_code == 422
     assert "reserved for internal overrides" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_add_provider_rejects_tenant_pricing_for_platform_managed_provider(client, db_session):
+    tenant = Tenant(name="Tenant F", slug=f"tenant-f-{uuid4().hex[:8]}")
+    user = User(email=f"owner-{uuid4().hex[:8]}@example.com", hashed_password="x", role="admin")
+    db_session.add_all([tenant, user])
+    await db_session.flush()
+
+    model = ModelRegistry(
+        tenant_id=tenant.id,
+        name="Platform Priced Model",
+        capability_type=ModelCapabilityType.CHAT,
+        status=ModelStatus.ACTIVE,
+        is_active=True,
+        metadata_={},
+    )
+    db_session.add(model)
+    await db_session.commit()
+
+    from main import app
+
+    await _override_model_registry_auth(app, tenant=tenant, user=user)
+    response = await client.post(
+        f"/models/{model.id}/providers",
+        json={
+            "provider": ModelProviderType.OPENAI.value,
+            "provider_model_id": "gpt-5.4",
+            "pricing_config": {
+                "currency": "USD",
+                "billing_mode": "per_1k_tokens",
+                "rates": {"input": 0.001, "output": 0.002},
+            },
+        },
+    )
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 422
+    assert "platform-managed" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider_type", [ModelProviderType.CUSTOM, ModelProviderType.LOCAL])
+async def test_add_provider_allows_tenant_pricing_for_custom_and_local(client, db_session, provider_type):
+    tenant = Tenant(name="Tenant G", slug=f"tenant-g-{uuid4().hex[:8]}")
+    user = User(email=f"owner-{uuid4().hex[:8]}@example.com", hashed_password="x", role="admin")
+    db_session.add_all([tenant, user])
+    await db_session.flush()
+
+    model = ModelRegistry(
+        tenant_id=tenant.id,
+        name=f"{provider_type.value.title()} Model",
+        capability_type=ModelCapabilityType.CHAT,
+        status=ModelStatus.ACTIVE,
+        is_active=True,
+        metadata_={},
+    )
+    db_session.add(model)
+    await db_session.commit()
+
+    from main import app
+
+    await _override_model_registry_auth(app, tenant=tenant, user=user)
+    response = await client.post(
+        f"/models/{model.id}/providers",
+        json={
+            "provider": provider_type.value,
+            "provider_model_id": f"{provider_type.value}-model",
+            "pricing_config": {
+                "currency": "USD",
+                "billing_mode": "per_1k_tokens",
+                "rates": {"input": 0.001, "output": 0.002},
+            },
+        },
+    )
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["provider"] == provider_type.value
+    assert payload["pricing_config"]["billing_mode"] == "per_1k_tokens"
+
+
+@pytest.mark.asyncio
+async def test_models_get_returns_seeded_global_binding_pricing_config(client, db_session):
+    tenant = Tenant(name="Tenant H", slug=f"tenant-h-{uuid4().hex[:8]}")
+    user = User(email=f"owner-{uuid4().hex[:8]}@example.com", hashed_password="x", role="admin")
+    db_session.add_all([tenant, user])
+    await db_session.flush()
+
+    model = ModelRegistry(
+        tenant_id=None,
+        system_key="gpt-5-4",
+        name="GPT-5.4",
+        capability_type=ModelCapabilityType.CHAT,
+        status=ModelStatus.ACTIVE,
+        is_active=True,
+        metadata_={},
+    )
+    db_session.add(model)
+    await db_session.flush()
+    db_session.add(
+        ModelProviderBinding(
+            model_id=model.id,
+            tenant_id=None,
+            provider=ModelProviderType.OPENAI,
+            provider_model_id="gpt-5.4",
+            priority=0,
+            config={},
+            is_enabled=True,
+            pricing_config={
+                "currency": "USD",
+                "billing_mode": "per_1k_tokens",
+                "rates": {"input": 0.00125, "output": 0.01},
+            },
+        )
+    )
+    await db_session.commit()
+
+    from main import app
+
+    await _override_model_registry_auth(app, tenant=tenant, user=user)
+    response = await client.get(f"/models/{model.id}")
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["tenant_id"] is None
+    assert payload["providers"][0]["pricing_config"]["billing_mode"] == "per_1k_tokens"

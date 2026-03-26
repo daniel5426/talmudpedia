@@ -10,6 +10,11 @@ from fastapi import HTTPException
 from sqlalchemy import and_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.schemas.artifacts import (
+    AgentArtifactContract as AgentArtifactContractSchema,
+    RAGArtifactContract as RAGArtifactContractSchema,
+    ToolArtifactContract as ToolArtifactContractSchema,
+)
 from app.db.postgres.engine import sessionmaker as get_session
 from app.db.postgres.models.agents import AgentRun
 from app.db.postgres.models.artifact_runtime import Artifact, ArtifactCodingSession, ArtifactCodingSharedDraft, ArtifactKind
@@ -220,6 +225,12 @@ def _default_contract_for_kind(kind: str) -> dict[str, Any]:
     if kind == ArtifactKind.RAG_OPERATOR.value:
         return deepcopy(DEFAULT_RAG_CONTRACT)
     return deepcopy(DEFAULT_TOOL_CONTRACT)
+
+
+def _model_json_schema(model: type[Any]) -> dict[str, Any]:
+    schema = deepcopy(model.model_json_schema())
+    schema.pop("title", None)
+    return schema
 
 
 def _serialize_form_state(snapshot: dict[str, Any]) -> dict[str, Any]:
@@ -746,30 +757,22 @@ async def artifact_coding_set_capabilities(payload: Any) -> dict[str, Any]:
         )
 
 
-@register_tool_function("artifact_coding_set_contract_payload")
-async def artifact_coding_set_contract_payload(payload: Any) -> dict[str, Any]:
+@register_tool_function("artifact_coding_set_agent_contract")
+async def artifact_coding_set_agent_contract(payload: Any) -> dict[str, Any]:
     tool_payload = payload if isinstance(payload, dict) else {}
-    contract_field = str(tool_payload.get("contract_field") or "").strip()
-    async with get_session() as db:
-        session, shared_draft, _run, _artifact = await _resolve_session_context(db, tool_payload)
-        snapshot = _serialize_form_state(shared_draft.working_draft_snapshot)
-        if not contract_field:
-            contract_field = _current_contract_field(snapshot["kind"])
-        if contract_field not in {"agent_contract", "rag_contract", "tool_contract"}:
-            raise ValueError("Unsupported contract field")
-        contract_value = _parse_json_object(
-            tool_payload.get("contract_payload") or tool_payload.get("value"),
-            field=contract_field,
-            fallback=_default_contract_for_kind(snapshot["kind"]),
-        )
-        snapshot[contract_field] = _format_json_object(contract_value)
-        return await _persist_snapshot_result(
-            db,
-            shared_draft=shared_draft,
-            snapshot=snapshot,
-            changed_fields=[contract_field],
-            summary=f"Updated {contract_field}.",
-        )
+    return await _set_contract_payload(payload=tool_payload, contract_field="agent_contract")
+
+
+@register_tool_function("artifact_coding_set_rag_contract")
+async def artifact_coding_set_rag_contract(payload: Any) -> dict[str, Any]:
+    tool_payload = payload if isinstance(payload, dict) else {}
+    return await _set_contract_payload(payload=tool_payload, contract_field="rag_contract")
+
+
+@register_tool_function("artifact_coding_set_tool_contract")
+async def artifact_coding_set_tool_contract(payload: Any) -> dict[str, Any]:
+    tool_payload = payload if isinstance(payload, dict) else {}
+    return await _set_contract_payload(payload=tool_payload, contract_field="tool_contract")
 
 
 def _tool_schema(
@@ -788,6 +791,54 @@ def _tool_schema(
     }
 
 
+def _contract_setter_tool_schema(*, field_name: str, contract_schema: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "input": {
+            "type": "object",
+            "properties": {
+                field_name: {
+                    **deepcopy(contract_schema),
+                    "description": (
+                        "Pass the raw inner contract object only. "
+                        "Do not wrap it in an outer contract field and do not include metadata like display_name or description."
+                    ),
+                }
+            },
+            "required": [field_name],
+            "additionalProperties": True,
+        },
+        "output": {"type": "object", "additionalProperties": True},
+    }
+
+
+_AGENT_CONTRACT_SCHEMA = _model_json_schema(AgentArtifactContractSchema)
+_RAG_CONTRACT_SCHEMA = _model_json_schema(RAGArtifactContractSchema)
+_TOOL_CONTRACT_SCHEMA = _model_json_schema(ToolArtifactContractSchema)
+
+
+async def _set_contract_payload(
+    *,
+    payload: dict[str, Any],
+    contract_field: str,
+) -> dict[str, Any]:
+    async with get_session() as db:
+        _session, shared_draft, _run, _artifact = await _resolve_session_context(db, payload)
+        snapshot = _serialize_form_state(shared_draft.working_draft_snapshot)
+        contract_value = _parse_json_object(
+            payload.get(contract_field) or payload.get("contract_payload") or payload.get("value"),
+            field=contract_field,
+            fallback=_default_contract_for_kind(snapshot["kind"]),
+        )
+        snapshot[contract_field] = _format_json_object(contract_value)
+        return await _persist_snapshot_result(
+            db,
+            shared_draft=shared_draft,
+            snapshot=snapshot,
+            changed_fields=[contract_field],
+            summary=f"Updated {contract_field}.",
+        )
+
+
 ARTIFACT_CODING_TOOL_SPECS: list[dict[str, Any]] = [
     {"slug": "artifact-coding-get-context", "name": "Artifact Coding Get Context", "description": "Get a compact summary of the current artifact coding session and draft.", "function_name": "artifact_coding_get_context", "timeout_s": 30, "is_pure": True, "schema": _tool_schema(properties={})},
     {"slug": "artifact-coding-get-form-state", "name": "Artifact Coding Get Form State", "description": "Read the full artifact draft form state.", "function_name": "artifact_coding_get_form_state", "timeout_s": 30, "is_pure": True, "schema": _tool_schema(properties={})},
@@ -803,10 +854,12 @@ ARTIFACT_CODING_TOOL_SPECS: list[dict[str, Any]] = [
     {"slug": "artifact-coding-list-credentials", "name": "Artifact Coding List Credentials", "description": "List available credential references for the current tenant scope using safe metadata only.", "function_name": "artifact_coding_list_credentials", "timeout_s": 30, "is_pure": True, "schema": _tool_schema(properties={})},
     {"slug": "artifact-coding-set-dependencies", "name": "Artifact Coding Set Dependencies", "description": "Set artifact dependencies for the draft.", "function_name": "artifact_coding_set_dependencies", "timeout_s": 30, "is_pure": False, "schema": _tool_schema(properties={"dependencies": {"anyOf": [{"type": "array", "items": {"type": "string"}}, {"type": "string"}]}})},
     {"slug": "artifact-coding-set-metadata", "name": "Artifact Coding Set Metadata", "description": "Update artifact metadata fields.", "function_name": "artifact_coding_set_metadata", "timeout_s": 30, "is_pure": False, "schema": _tool_schema(properties={"display_name": {"type": "string"}, "description": {"type": "string"}})},
-    {"slug": "artifact-coding-set-kind", "name": "Artifact Coding Set Kind", "description": "Change the artifact kind and contract shape.", "function_name": "artifact_coding_set_kind", "timeout_s": 30, "is_pure": False, "schema": _tool_schema(properties={"kind": {"type": "string", "enum": [item.value for item in ArtifactKind]}, "contract_payload": {"type": "object"}}, required=["kind"])},
+    {"slug": "artifact-coding-set-kind", "name": "Artifact Coding Set Kind", "description": "Change the artifact kind and reset the draft to the matching default contract shape.", "function_name": "artifact_coding_set_kind", "timeout_s": 30, "is_pure": False, "schema": _tool_schema(properties={"kind": {"type": "string", "enum": [item.value for item in ArtifactKind]}}, required=["kind"])},
     {"slug": "artifact-coding-set-config-schema", "name": "Artifact Coding Set Config Schema", "description": "Update the artifact config schema JSON.", "function_name": "artifact_coding_set_config_schema", "timeout_s": 30, "is_pure": False, "schema": _tool_schema(properties={"config_schema": {"type": "object"}}, required=["config_schema"])},
     {"slug": "artifact-coding-set-capabilities", "name": "Artifact Coding Set Capabilities", "description": "Update the artifact capabilities JSON.", "function_name": "artifact_coding_set_capabilities", "timeout_s": 30, "is_pure": False, "schema": _tool_schema(properties={"capabilities": {"type": "object"}}, required=["capabilities"])},
-    {"slug": "artifact-coding-set-contract-payload", "name": "Artifact Coding Set Contract Payload", "description": "Update the active artifact contract JSON.", "function_name": "artifact_coding_set_contract_payload", "timeout_s": 30, "is_pure": False, "schema": _tool_schema(properties={"contract_field": {"type": "string", "enum": ["agent_contract", "rag_contract", "tool_contract"]}, "contract_payload": {"type": "object"}}, required=["contract_payload"])},
+    {"slug": "artifact-coding-set-agent-contract", "name": "Artifact Coding Set Agent Contract", "description": "Update the agent_contract JSON using the raw inner contract object only.", "function_name": "artifact_coding_set_agent_contract", "timeout_s": 30, "is_pure": False, "schema": _contract_setter_tool_schema(field_name="agent_contract", contract_schema=_AGENT_CONTRACT_SCHEMA)},
+    {"slug": "artifact-coding-set-rag-contract", "name": "Artifact Coding Set RAG Contract", "description": "Update the rag_contract JSON using the raw inner contract object only.", "function_name": "artifact_coding_set_rag_contract", "timeout_s": 30, "is_pure": False, "schema": _contract_setter_tool_schema(field_name="rag_contract", contract_schema=_RAG_CONTRACT_SCHEMA)},
+    {"slug": "artifact-coding-set-tool-contract", "name": "Artifact Coding Set Tool Contract", "description": "Update the tool_contract JSON using the raw inner contract object only.", "function_name": "artifact_coding_set_tool_contract", "timeout_s": 30, "is_pure": False, "schema": _contract_setter_tool_schema(field_name="tool_contract", contract_schema=_TOOL_CONTRACT_SCHEMA)},
     {"slug": "artifact-coding-run-test", "name": "Artifact Coding Run Test", "description": "Run the artifact through the canonical artifact test runtime.", "function_name": "artifact_coding_run_test", "timeout_s": 60, "is_pure": False, "schema": _tool_schema(properties={"input_data": {}, "config": {"type": "object"}}, required=[])},
     {"slug": "artifact-coding-await-last-test-result", "name": "Artifact Coding Await Last Test Result", "description": "Wait server-side for the latest artifact test run to reach a terminal state.", "function_name": "artifact_coding_await_last_test_result", "timeout_s": 150, "is_pure": True, "schema": _tool_schema(properties={"timeout_seconds": {"type": "number"}}, required=[])},
     {"slug": "artifact-coding-get-last-test-result", "name": "Artifact Coding Get Last Test Result", "description": "Get the latest artifact test result for this session.", "function_name": "artifact_coding_get_last_test_result", "timeout_s": 30, "is_pure": True, "schema": _tool_schema(properties={})},

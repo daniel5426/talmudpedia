@@ -20,7 +20,10 @@ from app.db.postgres.models.registry import (
     ModelStatus,
 )
 from app.db.postgres.session import get_db
-from app.services.integration_provider_catalog import is_model_provider_supported
+from app.services.integration_provider_catalog import (
+    is_model_provider_supported,
+    is_tenant_managed_pricing_provider,
+)
 
 router = APIRouter(prefix="/models", tags=["models"])
 
@@ -308,6 +311,20 @@ def _validate_pricing_config(pricing_config: dict | None) -> dict:
     return normalized
 
 
+def _validate_registry_pricing_policy(
+    *,
+    provider: ModelProviderType,
+    pricing_config: dict | None,
+) -> dict:
+    normalized = _validate_pricing_config(pricing_config)
+    if normalized and not is_tenant_managed_pricing_provider(provider):
+        raise HTTPException(
+            status_code=422,
+            detail=f"Pricing is platform-managed for provider '{provider.value}'",
+        )
+    return normalized
+
+
 @router.get("", response_model=ModelListResponse)
 async def list_models(
     capability_type: ModelCapabilityType | None = Query(None),
@@ -535,7 +552,10 @@ async def add_provider_binding(
         priority=request.priority,
         config=request.config or {},
         credentials_ref=request.credentials_ref,
-        pricing_config=_validate_pricing_config(request.pricing_config),
+        pricing_config=_validate_registry_pricing_policy(
+            provider=request.provider,
+            pricing_config=request.pricing_config,
+        ),
     )
     db.add(binding)
 
@@ -595,7 +615,10 @@ async def update_provider_binding(
     if "credentials_ref" in request.model_fields_set:
         binding.credentials_ref = request.credentials_ref
     if "pricing_config" in request.model_fields_set:
-        binding.pricing_config = _validate_pricing_config(request.pricing_config)
+        binding.pricing_config = _validate_registry_pricing_policy(
+            provider=binding.provider,
+            pricing_config=request.pricing_config,
+        )
 
     try:
         await db.commit()

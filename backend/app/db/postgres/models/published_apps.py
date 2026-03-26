@@ -134,6 +134,12 @@ class PublishedApp(Base):
     external_auth_oidc = Column(JSONB, nullable=True)
     published_url = Column(String, nullable=True)
     template_key = Column(String, nullable=False, default="classic-chat")
+    default_policy_set_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("resource_policy_sets.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     current_draft_revision_id = Column(UUID(as_uuid=True), nullable=True, index=True)
     current_published_revision_id = Column(UUID(as_uuid=True), nullable=True, index=True)
 
@@ -145,6 +151,7 @@ class PublishedApp(Base):
     tenant = relationship("Tenant")
     agent = relationship("Agent")
     creator = relationship("User")
+    default_policy_set = relationship("ResourcePolicySet", foreign_keys=[default_policy_set_id])
     app_accounts = relationship("PublishedAppAccount", back_populates="published_app", cascade="all, delete-orphan")
     memberships = relationship("PublishedAppUserMembership", back_populates="published_app", cascade="all, delete-orphan")
     sessions = relationship("PublishedAppSession", back_populates="published_app", cascade="all, delete-orphan")

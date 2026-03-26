@@ -136,13 +136,21 @@ Rollup rules:
 `model_provider_bindings.pricing_config` is now the canonical pricing source for new and updated bindings.
 
 Current write-path rules:
-- registry create/update APIs accept `pricing_config`
+- registry create/update APIs accept `pricing_config` only for `custom` and `local`
+- built-in provider bindings use platform-managed pricing from the global registry seed/catalog layer
+- global seeded bindings are the canonical pricing source for built-in provider spend accounting
 - registry create/update APIs do not accept `billing_mode=manual`
+- registry create/update APIs reject tenant pricing for platform-managed providers
 - runtime pricing reads only `pricing_config`
 - empty `pricing_config` means the run remains unpriced unless another explicit pricing source exists
 
 Internal-only note:
 - `manual_total_cost` remains available only for internal override snapshots, not tenant-managed registry editing
+
+Registry ownership rules:
+- built-in providers such as `openai`, `anthropic`, `google`, and `xai` are platform-priced
+- `custom` and `local` providers are tenant-priced
+- global seeded models remain visible in the registry but are read-only for tenants
 
 Legacy fields still on the table but no longer used by runtime pricing:
 - `cost_per_1k_input_tokens`
