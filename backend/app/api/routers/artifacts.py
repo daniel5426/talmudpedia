@@ -273,6 +273,24 @@ def _artifact_revision_to_version_schema(
     )
 
 
+def _artifact_revision_to_version_list_item(
+    artifact: ArtifactModel,
+    revision: ArtifactRevisionModel,
+) -> ArtifactVersionListItem:
+    return ArtifactVersionListItem(
+        id=str(revision.id),
+        artifact_id=str(artifact.id),
+        revision_number=int(revision.revision_number or 0),
+        version_label=str(revision.version_label or f"v{int(revision.revision_number or 0)}"),
+        is_published=bool(revision.is_published),
+        is_current_draft=artifact.latest_draft_revision_id == revision.id,
+        is_current_published=artifact.latest_published_revision_id == revision.id,
+        source_file_count=len(list(revision.source_files or [])),
+        created_at=revision.created_at,
+        created_by=None,
+    )
+
+
 @router.get("", response_model=List[ArtifactSchema])
 async def list_artifacts(
     tenant_slug: Optional[str] = None,
@@ -391,8 +409,7 @@ async def list_artifact_versions(
     )
     versions = []
     for revision in result.scalars().all():
-        version = _artifact_revision_to_version_schema(artifact, revision, include_code=False)
-        versions.append(ArtifactVersionListItem(**version.model_dump()))
+        versions.append(_artifact_revision_to_version_list_item(artifact, revision))
     return versions
 
 

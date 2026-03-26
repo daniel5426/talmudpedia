@@ -19,6 +19,7 @@ from app.db.postgres.models.published_app_analytics import (
     PublishedAppAnalyticsEventType,
     PublishedAppAnalyticsSurface,
 )
+from app.services.model_accounting import billable_total_tokens
 from app.db.postgres.models.published_apps import PublishedApp, PublishedAppAccount, PublishedAppSession
 
 
@@ -348,7 +349,7 @@ class PublishedAppAnalyticsService:
                 agent_runs += 1
                 if str(getattr(run.status, "value", run.status)) == "failed":
                     failed_runs += 1
-                run_tokens = int(run.usage_tokens or 0)
+                run_tokens = billable_total_tokens(run)
                 tokens += run_tokens
                 date_key = _date_label(run.created_at)
                 run_dates[date_key] += 1

@@ -1,4 +1,4 @@
-Last Updated: 2026-03-25
+Last Updated: 2026-03-26
 
 ## Scope
 Admin thread detail page rendering in its read-only playground-style shell, including the header toggles for saved trace inspection and thread metadata.
@@ -8,7 +8,8 @@ Admin thread detail page rendering in its read-only playground-style shell, incl
 
 ## Key Scenarios Covered
 - The admin thread page reuses the chat workspace in read-only mode with the composer hidden.
-- The header shows inline thread metadata for agent, actor, and status.
+- The header shows inline thread metadata values without field labels.
+- Agent and actor metadata values link to their respective detail pages.
 - Clicking `Trace` on a saved assistant response loads the persisted run trace into the floating sidebar.
 - The floating sidebar exposes `Copy full trace` when a saved run trace is loaded.
 
@@ -18,6 +19,9 @@ Admin thread detail page rendering in its read-only playground-style shell, incl
 - Result: Pass
 - Command: `cd frontend-reshet && npm test -- --runInBand src/__tests__/admin_threads/admin_thread_page.test.tsx`
 - Date: 2026-03-25 Asia/Hebron
+- Result: Pass
+- Command: `cd frontend-reshet && npm test -- --runInBand src/__tests__/admin_threads/admin_thread_page.test.tsx`
+- Date: 2026-03-26 Asia/Hebron
 - Result: Pass
 
 ## Known Gaps / Follow-ups

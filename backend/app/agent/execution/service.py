@@ -22,6 +22,19 @@ from app.services.prompt_reference_resolver import PromptReferenceResolver
 from app.services.runtime_attachment_service import RuntimeAttachmentOwner, RuntimeAttachmentService
 from app.services.thread_service import ThreadAccessError, ThreadService
 from app.services.usage_quota_service import UsageQuotaService
+from app.services.model_accounting import (
+    COST_SOURCE_UNKNOWN,
+    USAGE_SOURCE_ESTIMATED,
+    USAGE_SOURCE_PROVIDER_REPORTED,
+    USAGE_SOURCE_SDK_REPORTED,
+    USAGE_SOURCE_UNKNOWN,
+    NormalizedUsage,
+    billable_total_tokens,
+    binding_pricing_snapshot,
+    build_legacy_usage_from_total,
+    compute_cost_from_snapshot,
+)
+from app.services.model_resolver import ModelResolver, ModelResolverError, ResolvedModelExecution
 
 logger = logging.getLogger(__name__)
 
@@ -139,6 +152,183 @@ class AgentExecutorService:
             except Exception:
                 continue
         return 0
+
+    @staticmethod
+    def _extract_usage_candidate(event: ExecutionEvent) -> tuple[NormalizedUsage | None, str | None]:
+        payload = event.data if isinstance(event.data, dict) else {}
+        usage = payload.get("usage")
+        if not isinstance(usage, dict):
+            usage = payload if any(key in payload for key in ("input_tokens", "output_tokens", "total_tokens", "usage_tokens")) else None
+        if not isinstance(usage, dict):
+            return None, None
+
+        normalized = NormalizedUsage(
+            input_tokens=AgentExecutorService._maybe_int(usage.get("input_tokens") or usage.get("prompt_tokens")),
+            output_tokens=AgentExecutorService._maybe_int(usage.get("output_tokens") or usage.get("completion_tokens")),
+            total_tokens=AgentExecutorService._maybe_int(
+                usage.get("total_tokens") or usage.get("usage_tokens") or usage.get("tokens")
+            ),
+            cached_input_tokens=AgentExecutorService._maybe_int(usage.get("cached_input_tokens") or usage.get("cache_read_input_tokens")),
+            cached_output_tokens=AgentExecutorService._maybe_int(usage.get("cached_output_tokens")),
+            reasoning_tokens=AgentExecutorService._maybe_int(usage.get("reasoning_tokens")),
+            audio_input_tokens=AgentExecutorService._maybe_int(usage.get("audio_input_tokens")),
+            audio_output_tokens=AgentExecutorService._maybe_int(usage.get("audio_output_tokens")),
+            image_input_units=AgentExecutorService._maybe_int(usage.get("image_input_units")),
+            image_output_units=AgentExecutorService._maybe_int(usage.get("image_output_units")),
+            extra={
+                key: value
+                for key, value in usage.items()
+                if key
+                not in {
+                    "input_tokens",
+                    "prompt_tokens",
+                    "output_tokens",
+                    "completion_tokens",
+                    "total_tokens",
+                    "usage_tokens",
+                    "tokens",
+                    "cached_input_tokens",
+                    "cache_read_input_tokens",
+                    "cached_output_tokens",
+                    "reasoning_tokens",
+                    "audio_input_tokens",
+                    "audio_output_tokens",
+                    "image_input_units",
+                    "image_output_units",
+                }
+            },
+        ).finalize()
+        if not normalized.to_json():
+            return None, None
+        source = payload.get("usage_source")
+        if source in {USAGE_SOURCE_PROVIDER_REPORTED, USAGE_SOURCE_SDK_REPORTED}:
+            return normalized, str(source)
+        if normalized.input_tokens is not None or normalized.output_tokens is not None:
+            return normalized, USAGE_SOURCE_PROVIDER_REPORTED
+        if normalized.total_tokens is not None:
+            return normalized, USAGE_SOURCE_SDK_REPORTED
+        return normalized, None
+
+    @staticmethod
+    def _maybe_int(value: Any) -> int | None:
+        if value is None or value == "":
+            return None
+        try:
+            return int(value)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _select_better_usage(
+        current_usage: NormalizedUsage | None,
+        current_source: str | None,
+        candidate_usage: NormalizedUsage | None,
+        candidate_source: str | None,
+    ) -> tuple[NormalizedUsage | None, str | None]:
+        if candidate_usage is None:
+            return current_usage, current_source
+        if current_usage is None:
+            return candidate_usage, candidate_source
+        priority = {
+            USAGE_SOURCE_PROVIDER_REPORTED: 4,
+            USAGE_SOURCE_SDK_REPORTED: 3,
+            USAGE_SOURCE_ESTIMATED: 2,
+            USAGE_SOURCE_UNKNOWN: 1,
+            None: 0,
+        }
+        current_score = priority.get(current_source, 0)
+        candidate_score = priority.get(candidate_source, 0)
+        if candidate_score > current_score:
+            return candidate_usage, candidate_source
+        if candidate_score == current_score and len(candidate_usage.to_json()) > len(current_usage.to_json()):
+            return candidate_usage, candidate_source
+        return current_usage, current_source
+
+    async def _resolve_run_model_receipt(
+        self,
+        *,
+        db: AsyncSession,
+        run: AgentRun,
+        agent: Agent,
+        runtime_context: dict[str, Any],
+    ) -> ResolvedModelExecution | None:
+        raw_requested_model_id = (
+            runtime_context.get("requested_model_id")
+            or (str(run.requested_model_id) if run.requested_model_id else None)
+        )
+        if not raw_requested_model_id:
+            model_ids = self._collect_graph_model_ids(agent.graph_definition or {})
+            if len(set(model_ids)) == 1:
+                raw_requested_model_id = model_ids[0]
+        if not raw_requested_model_id:
+            return None
+
+        try:
+            execution = await ModelResolver(db, agent.tenant_id).resolve_for_execution(str(raw_requested_model_id))
+        except ModelResolverError:
+            logger.warning("Failed to resolve accounting receipt for run %s", run.id, exc_info=True)
+            return None
+
+        run.requested_model_id = execution.logical_model.id
+        run.resolved_model_id = execution.logical_model.id
+        run.resolved_binding_id = execution.binding.id
+        run.resolved_provider = execution.resolved_provider
+        run.resolved_provider_model_id = execution.binding.provider_model_id
+        return execution
+
+    def _finalize_run_accounting(
+        self,
+        *,
+        run: AgentRun,
+        resolved_execution: ResolvedModelExecution | None,
+        observed_usage: NormalizedUsage | None,
+        observed_usage_source: str | None,
+        input_params: dict[str, Any],
+        output_result: dict[str, Any] | None,
+    ) -> None:
+        usage = observed_usage.finalize() if observed_usage is not None else None
+        usage_source = observed_usage_source
+        if usage is None or not usage.to_json():
+            estimated_total = self._estimate_usage_tokens_from_payload(input_params, output_result)
+            if estimated_total > 0:
+                usage = build_legacy_usage_from_total(estimated_total)
+                usage_source = USAGE_SOURCE_ESTIMATED
+            else:
+                usage = NormalizedUsage().finalize()
+                usage_source = USAGE_SOURCE_UNKNOWN
+
+        usage_payload = usage.to_json()
+        run.usage_source = usage_source or USAGE_SOURCE_UNKNOWN
+        run.input_tokens = usage.input_tokens
+        run.output_tokens = usage.output_tokens
+        run.total_tokens = usage.total_tokens
+        run.cached_input_tokens = usage.cached_input_tokens
+        run.cached_output_tokens = usage.cached_output_tokens
+        run.reasoning_tokens = usage.reasoning_tokens
+        run.usage_breakdown_json = usage_payload or None
+        if usage.total_tokens is not None:
+            run.usage_tokens = int(usage.total_tokens)
+        elif run.usage_tokens is None:
+            run.usage_tokens = 0
+
+        pricing_snapshot = resolved_execution.pricing_snapshot if resolved_execution is not None else (
+            dict(run.pricing_snapshot_json or {}) if isinstance(run.pricing_snapshot_json, dict) else {}
+        )
+        if resolved_execution is not None:
+            run.pricing_snapshot_json = pricing_snapshot or binding_pricing_snapshot(resolved_execution.binding)
+            run.resolved_binding_id = resolved_execution.binding.id
+            run.resolved_provider = resolved_execution.resolved_provider
+            run.resolved_provider_model_id = resolved_execution.binding.provider_model_id
+
+        normalized_cost = compute_cost_from_snapshot(
+            usage=usage,
+            pricing_snapshot=pricing_snapshot if pricing_snapshot else None,
+        )
+        run.cost_source = normalized_cost.source if normalized_cost.total_cost is not None else COST_SOURCE_UNKNOWN
+        run.cost_usd = float(normalized_cost.total_cost) if normalized_cost.total_cost is not None else None
+        run.cost_breakdown_json = normalized_cost.to_json() or None
+        if normalized_cost.total_cost is not None:
+            run.cost = f"{float(normalized_cost.total_cost):.6f}"
 
     @staticmethod
     def _extract_assistant_output_text(output_result: Dict[str, Any] | None) -> str | None:
@@ -381,6 +571,13 @@ class AgentExecutorService:
         input_params["context"] = context_payload
         input_params["thread_id"] = str(thread_result.thread.id)
 
+        requested_model_id: Optional[UUID] = None
+        raw_requested_model_id = context_payload.get("requested_model_id")
+        try:
+            requested_model_id = UUID(str(raw_requested_model_id)) if raw_requested_model_id else None
+        except Exception:
+            requested_model_id = None
+
         run = AgentRun(
             id=run_id,
             agent_id=agent_id,
@@ -394,6 +591,7 @@ class AgentExecutorService:
             published_app_account_id=published_app_account_id,
             surface=runtime_surface or None,
             input_params=input_params,
+            requested_model_id=requested_model_id,
             status=RunStatus.queued,
             root_run_id=root_run_id,
             parent_run_id=parent_run_id,
@@ -567,6 +765,18 @@ class AgentExecutorService:
                 "state": {"context": dict(runtime_context)},
             }
 
+        resolved_execution = await self._resolve_run_model_receipt(
+            db=db,
+            run=run,
+            agent=agent,
+            runtime_context=runtime_context,
+        )
+        if resolved_execution is not None:
+            runtime_context["resolved_model_id"] = str(resolved_execution.logical_model.id)
+            runtime_context["resolved_binding_id"] = str(resolved_execution.binding.id)
+            runtime_context["resolved_provider"] = resolved_execution.resolved_provider
+            runtime_context["resolved_provider_model_id"] = resolved_execution.binding.provider_model_id
+
         # Update status
         run.status = RunStatus.running
         if not run.started_at:
@@ -731,6 +941,8 @@ class AgentExecutorService:
 
         try:
             max_observed_usage_tokens = 0
+            best_usage: NormalizedUsage | None = None
+            best_usage_source: str | None = None
             if run.thread_id:
                 thread_service = ThreadService(db)
                 turn = await thread_service.start_turn(
@@ -769,6 +981,13 @@ class AgentExecutorService:
                     max_observed_usage_tokens,
                     self._extract_usage_tokens_from_event(event),
                 )
+                candidate_usage, candidate_usage_source = self._extract_usage_candidate(event)
+                best_usage, best_usage_source = self._select_better_usage(
+                    best_usage,
+                    best_usage_source,
+                    candidate_usage,
+                    candidate_usage_source,
+                )
                 persist_event(event)
                 yield event
 
@@ -796,24 +1015,22 @@ class AgentExecutorService:
                 run.output_result = output_result
                 run.error_message = terminal_failure_message
                 run.completed_at = datetime.utcnow()
-                run.usage_tokens = max(
-                    int(max_observed_usage_tokens or 0),
-                    self._estimate_usage_tokens_from_payload(
-                        run_input_params if isinstance(run_input_params, dict) else {},
-                        run.output_result if isinstance(run.output_result, dict) else None,
-                    ),
-                )
             else:
                 run.status = RunStatus.completed
                 run.output_result = output_result
                 run.completed_at = datetime.utcnow()
-                run.usage_tokens = max(
-                    int(max_observed_usage_tokens or 0),
-                    self._estimate_usage_tokens_from_payload(
-                        run_input_params if isinstance(run_input_params, dict) else {},
-                        run.output_result if isinstance(run.output_result, dict) else None,
-                    ),
-                )
+
+            if best_usage is None and max_observed_usage_tokens > 0:
+                best_usage = build_legacy_usage_from_total(max_observed_usage_tokens)
+                best_usage_source = USAGE_SOURCE_SDK_REPORTED
+            self._finalize_run_accounting(
+                run=run,
+                resolved_execution=resolved_execution,
+                observed_usage=best_usage,
+                observed_usage_source=best_usage_source,
+                input_params=run_input_params if isinstance(run_input_params, dict) else {},
+                output_result=run.output_result if isinstance(run.output_result, dict) else output_result if isinstance(output_result, dict) else None,
+            )
 
             # Emit final status event
             next_nodes = []
@@ -874,7 +1091,7 @@ class AgentExecutorService:
             quota_service = UsageQuotaService(db)
             await quota_service.settle_for_run(
                 run_id=run_id,
-                actual_usage_tokens=int(run.usage_tokens or 0),
+                actual_usage_tokens=billable_total_tokens(run),
             )
             if run.thread_id:
                 thread_service = ThreadService(db)
@@ -890,7 +1107,7 @@ class AgentExecutorService:
                     assistant_output_text=self._extract_assistant_output_text(
                         run.output_result if isinstance(run.output_result, dict) else None
                     ),
-                    usage_tokens=int(run.usage_tokens or 0),
+                    usage_tokens=billable_total_tokens(run),
                     metadata=self._extract_turn_metadata(
                         run.output_result if isinstance(run.output_result, dict) else None
                     ),
@@ -937,8 +1154,6 @@ class AgentExecutorService:
                 err_run.status = RunStatus.failed
                 err_run.error_message = error_text
                 err_run.completed_at = datetime.utcnow()
-                if err_run.usage_tokens is None:
-                    err_run.usage_tokens = 0
 
                 output_result: Dict[str, Any] = {}
                 if isinstance(err_run.output_result, dict):
@@ -950,11 +1165,24 @@ class AgentExecutorService:
                 output_result["messages"] = messages
                 output_result["error"] = error_text
                 err_run.output_result = output_result
+                if err_run.usage_source is None:
+                    self._finalize_run_accounting(
+                        run=err_run,
+                        resolved_execution=None,
+                        observed_usage=build_legacy_usage_from_total(getattr(err_run, "total_tokens", None) or err_run.usage_tokens),
+                        observed_usage_source=(
+                            USAGE_SOURCE_ESTIMATED
+                            if (getattr(err_run, "total_tokens", None) or err_run.usage_tokens)
+                            else USAGE_SOURCE_UNKNOWN
+                        ),
+                        input_params=err_run.input_params if isinstance(err_run.input_params, dict) else {},
+                        output_result=err_run.output_result if isinstance(err_run.output_result, dict) else None,
+                    )
 
                 quota_service = UsageQuotaService(err_db)
                 await quota_service.settle_for_run(
                     run_id=run_id,
-                    actual_usage_tokens=int(err_run.usage_tokens or 0),
+                    actual_usage_tokens=billable_total_tokens(err_run),
                 )
 
                 if err_run.thread_id:
@@ -977,7 +1205,7 @@ class AgentExecutorService:
                         run_id=run_id,
                         status=AgentThreadTurnStatus.failed,
                         assistant_output_text=self._extract_assistant_output_text(err_run.output_result),
-                        usage_tokens=int(err_run.usage_tokens or 0),
+                        usage_tokens=billable_total_tokens(err_run),
                         metadata={"error": error_text},
                     )
                 await err_db.commit()

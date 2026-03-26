@@ -102,6 +102,7 @@ describe("admin thread page", () => {
       id: "thread-1",
       title: "Saved playground thread",
       status: "active",
+      agent_id: "agent-1",
       agent_name: "PRICO Demo Agent",
       actor_id: "actor-1",
       turns: [],
@@ -139,8 +140,11 @@ describe("admin thread page", () => {
 
     await screen.findByText("Saved answer")
     expect(screen.getByTestId("workspace-flags")).toHaveTextContent("true:true")
-    expect(screen.getByText("PRICO Demo Agent")).toBeInTheDocument()
-    expect(screen.getByText("actor-1")).toBeInTheDocument()
+    expect(screen.queryByText("Agent")).not.toBeInTheDocument()
+    expect(screen.queryByText("Actor")).not.toBeInTheDocument()
+    expect(screen.queryByText("Status")).not.toBeInTheDocument()
+    expect(screen.getByRole("link", { name: "PRICO Demo Agent" })).toHaveAttribute("href", "/admin/agents/agent-1/builder")
+    expect(screen.getByRole("link", { name: "actor-1" })).toHaveAttribute("href", "/admin/users/actor-1")
     expect(screen.getByText("active")).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole("button", { name: "Trace" }))

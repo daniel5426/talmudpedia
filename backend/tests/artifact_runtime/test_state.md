@@ -1,4 +1,4 @@
-Last Updated: 2026-03-25
+Last Updated: 2026-03-26
 
 # Test State
 
@@ -25,6 +25,7 @@ Artifact runtime revision, deploy, and dispatch-time credential lifecycle.
 - skip draft revision creation for no-op artifact saves
 - publish the latest draft revision
 - list saved artifact revisions through the admin API
+- keep artifact version-list responses limited to list-item fields even when revisions carry detail-only metadata
 - fetch one historical artifact revision snapshot through the admin API
 - duplicate an artifact into a new tenant draft with Google Drive-style incremented names
 - read and update the persisted artifact working-draft snapshot through the admin API
@@ -123,6 +124,9 @@ Artifact runtime revision, deploy, and dispatch-time credential lifecycle.
 - Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/artifact_runtime/test_artifact_working_draft_api.py`
 - Date: 2026-03-25 Asia/Hebron
 - Result: Pass (4 passed, 7 warnings)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/artifact_runtime/test_artifact_versions_api.py -k excludes_detail_only_fields`
+- Date: 2026-03-26 17:09 EET
+- Result: Pass (1 passed, 2 deselected, 7 warnings)
 
 ## Known Gaps
 

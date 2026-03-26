@@ -15,6 +15,7 @@ from app.db.postgres.models.agents import AgentRun
 from app.db.postgres.models.agents import Agent as AgentModel
 from app.db.postgres.models.identity import OrgMembership, User
 from app.db.postgres.models.published_apps import PublishedApp, PublishedAppAccount
+from app.services.model_accounting import usage_total_expr
 
 
 ACTOR_TYPE_PLATFORM_USER = "platform_user"
@@ -569,7 +570,7 @@ class AdminMonitoringService:
         end: datetime,
     ) -> dict[str, int]:
         query = (
-            select(AgentRun.thread_id, func.coalesce(func.sum(AgentRun.usage_tokens), 0))
+            select(AgentRun.thread_id, func.coalesce(func.sum(usage_total_expr(AgentRun)), 0))
             .where(
                 and_(
                     AgentRun.thread_id.is_not(None),

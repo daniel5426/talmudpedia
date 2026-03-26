@@ -1,6 +1,6 @@
 # Test State: Usage Quota
 
-Last Updated: 2026-03-02
+Last Updated: 2026-03-26
 
 **Scope**
 Usage quota reserve/settle/release/reconcile behavior for tenant and user scopes.
@@ -14,12 +14,12 @@ Usage quota reserve/settle/release/reconcile behavior for tenant and user scopes
 - Tenant-scope rejection when over limit
 - Settle idempotency and reserved-to-used accounting
 - Release and stale-expire reservation flows
-- Reconciliation from `AgentRun.usage_tokens` ledger
+- Reconciliation from persisted run accounting totals with `usage_tokens` as a legacy mirror
 
 **Last Run**
-- Command: `pytest -q backend/tests/usage_quota`
-- Date: 2026-03-02
-- Result: PASS (6 passed)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/usage_quota/test_usage_quota_service.py`
+- Date/Time: 2026-03-26 Asia/Hebron
+- Result: PASS (`6 passed`)
 
 **Known Gaps / Follow-ups**
 - Concurrency race tests with real PostgreSQL row-level locks are not included in this suite

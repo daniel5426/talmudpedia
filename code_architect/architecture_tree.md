@@ -127,6 +127,7 @@ backend/app/services/agent_service.py
 backend/app/services/security_bootstrap_service.py
 backend/app/services/retrieval_service.py
 backend/app/services/rag_admin_service.py
+backend/app/services/model_accounting.py
 backend/app/services/model_resolver.py
 backend/app/services/model_temperature_policy.py
 backend/app/services/prompt_library_service.py

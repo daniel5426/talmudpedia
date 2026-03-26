@@ -15,6 +15,7 @@ from app.db.postgres.models.agents import AgentRun
 from app.core.scope_registry import is_platform_admin_role
 from app.services.admin_monitoring_service import AdminMonitoringService
 from app.services.runtime_attachment_service import RuntimeAttachmentService
+from app.services.model_accounting import usage_total_expr
 from app.services.thread_service import ThreadService
 from pydantic import BaseModel
 
@@ -129,7 +130,7 @@ async def get_admin_stats(
     avg_messages_per_chat = round(total_messages / total_chats, 1) if total_chats > 0 else 0
 
     # 5. Token Usage from run ledger.
-    q_tokens = select(func.coalesce(func.sum(AgentRun.usage_tokens), 0))
+    q_tokens = select(func.coalesce(func.sum(usage_total_expr(AgentRun)), 0))
     if tenant_id:
         q_tokens = q_tokens.where(AgentRun.tenant_id == tenant_id)
     estimated_tokens = int((await db.execute(q_tokens)).scalar() or 0)

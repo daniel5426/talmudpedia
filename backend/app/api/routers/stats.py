@@ -24,6 +24,16 @@ from app.db.postgres.models.registry import (
 )
 from app.db.postgres.models.operators import CustomOperator
 from app.services.admin_monitoring_service import AdminMonitoringService
+from app.services.model_accounting import (
+    cost_estimated_expr,
+    cost_exact_expr,
+    cost_total_expr,
+    cost_unknown_count_expr,
+    usage_estimated_expr,
+    usage_exact_expr,
+    usage_total_expr,
+    usage_unknown_count_expr,
+)
 
 from app.api.schemas.stats import (
     StatsResponse, OverviewStats, RAGStats, AgentStats, ResourceStats,
@@ -79,6 +89,14 @@ def parse_iso_datetime(value: str, end_of_day: bool = False) -> datetime:
     if not end_of_day and len(value) <= 10:
         dt = dt.replace(hour=0, minute=0, second=0, microsecond=0)
     return dt
+
+
+def ensure_utc(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 def get_period_range(
@@ -145,6 +163,48 @@ def supports_percentile_cont(db: AsyncSession) -> bool:
     return bool(bind and bind.dialect.name != "sqlite")
 
 
+async def _load_accounting_aggregates(
+    *,
+    db: AsyncSession,
+    tenant_id: UUID,
+    start: datetime,
+    end: datetime,
+    agent_id: UUID | None = None,
+) -> dict[str, float | int]:
+    query = (
+        select(
+            func.coalesce(func.sum(usage_total_expr(AgentRun)), 0).label("total_tokens"),
+            func.coalesce(func.sum(usage_exact_expr(AgentRun)), 0).label("total_tokens_exact"),
+            func.coalesce(func.sum(usage_estimated_expr(AgentRun)), 0).label("total_tokens_estimated"),
+            func.coalesce(func.sum(usage_unknown_count_expr(AgentRun)), 0).label("runs_with_unknown_usage"),
+            func.coalesce(func.sum(cost_total_expr(AgentRun)), 0.0).label("total_spend_all_usd"),
+            func.coalesce(func.sum(cost_exact_expr(AgentRun)), 0.0).label("total_spend_exact_usd"),
+            func.coalesce(func.sum(cost_estimated_expr(AgentRun)), 0.0).label("total_spend_estimated_usd"),
+            func.coalesce(func.sum(cost_unknown_count_expr(AgentRun)), 0).label("runs_with_unknown_cost"),
+        )
+        .where(
+            and_(
+                AgentRun.tenant_id == tenant_id,
+                AgentRun.created_at >= start,
+                AgentRun.created_at <= end,
+            )
+        )
+    )
+    if agent_id:
+        query = query.where(AgentRun.agent_id == agent_id)
+    row = (await db.execute(query)).one()
+    return {
+        "total_tokens": int(row.total_tokens or 0),
+        "total_tokens_exact": int(row.total_tokens_exact or 0),
+        "total_tokens_estimated": int(row.total_tokens_estimated or 0),
+        "runs_with_unknown_usage": int(row.runs_with_unknown_usage or 0),
+        "total_spend_all_usd": float(row.total_spend_all_usd or 0.0),
+        "total_spend_exact_usd": float(row.total_spend_exact_usd or 0.0),
+        "total_spend_estimated_usd": float(row.total_spend_estimated_usd or 0.0),
+        "runs_with_unknown_cost": int(row.runs_with_unknown_cost or 0),
+    }
+
+
 async def get_daily_data(
     db: AsyncSession,
     table,
@@ -204,14 +264,13 @@ async def get_overview_stats(
     )
     total_messages = int((await db.execute(q_messages)).scalar() or 0)
 
-    q_tokens = select(func.coalesce(func.sum(AgentRun.usage_tokens), 0)).where(
-        and_(
-            AgentRun.tenant_id == tenant_id,
-            AgentRun.created_at >= start,
-            AgentRun.created_at <= end,
-        )
+    accounting = await _load_accounting_aggregates(
+        db=db,
+        tenant_id=tenant_id,
+        start=start,
+        end=end,
     )
-    total_tokens = int((await db.execute(q_tokens)).scalar() or 0)
+    total_tokens = int(accounting["total_tokens"])
 
     q_runs = select(func.count(AgentRun.id)).where(
         and_(
@@ -254,16 +313,17 @@ async def get_overview_stats(
     new_users = sum(
         1
         for actor in actor_aggregates.values()
-        if actor.created_at is not None and actor.created_at >= start and actor.created_at <= end
+        if ensure_utc(actor.created_at) is not None and start <= ensure_utc(actor.created_at) <= end
     )
 
     avg_messages_per_chat = round(total_messages / total_chats, 2) if total_chats > 0 else 0.0
-    estimated_spend = (total_tokens / 1000) * 0.002
+    estimated_spend = float(accounting["total_spend_all_usd"])
 
     q_daily_tokens = (
         select(
             func.date(AgentRun.created_at).label("date"),
-            func.coalesce(func.sum(AgentRun.usage_tokens), 0).label("value"),
+            func.coalesce(func.sum(usage_total_expr(AgentRun)), 0).label("value"),
+            func.coalesce(func.sum(cost_total_expr(AgentRun)), 0.0).label("spend_value"),
         )
         .where(
             and_(
@@ -276,12 +336,11 @@ async def get_overview_stats(
         .order_by(func.date(AgentRun.created_at))
     )
     tokens_result = await db.execute(q_daily_tokens)
-    tokens_map = {normalize_grouped_date(r.date): float(r.value) for r in tokens_result.all()}
+    token_rows = tokens_result.all()
+    tokens_map = {normalize_grouped_date(r.date): float(r.value) for r in token_rows}
+    spend_map = {normalize_grouped_date(r.date): float(r.spend_value or 0.0) for r in token_rows}
     tokens_by_day = fill_daily_data(tokens_map, start, end)
-    spend_by_day = [
-        DailyDataPoint(date=d.date, value=round((d.value / 1000) * 0.002, 4))
-        for d in tokens_by_day
-    ]
+    spend_by_day = fill_daily_data(spend_map, start, end)
 
     daily_active_rows = await monitoring.daily_active_actor_counts(start=start, end=end)
     dau_map = {str(item["date"]): float(item["count"]) for item in daily_active_rows}
@@ -334,7 +393,7 @@ async def get_overview_stats(
         select(
             model_name_expr.label("model_name"),
             func.count(AgentRun.id).label("message_count"),
-            func.coalesce(func.sum(AgentRun.usage_tokens), 0).label("token_count"),
+            func.coalesce(func.sum(usage_total_expr(AgentRun)), 0).label("token_count"),
         )
         .outerjoin(ModelRegistry, AgentRun.resolved_model_id == ModelRegistry.id)
         .where(
@@ -381,6 +440,12 @@ async def get_overview_stats(
         total_messages=total_messages,
         total_tokens=total_tokens,
         estimated_spend_usd=round(estimated_spend, 2),
+        total_tokens_exact=int(accounting["total_tokens_exact"]),
+        total_tokens_estimated=int(accounting["total_tokens_estimated"]),
+        runs_with_unknown_usage=int(accounting["runs_with_unknown_usage"]),
+        total_spend_exact_usd=round(float(accounting["total_spend_exact_usd"]), 6),
+        total_spend_estimated_usd=round(float(accounting["total_spend_estimated_usd"]), 6),
+        runs_with_unknown_cost=int(accounting["runs_with_unknown_cost"]),
         new_users=new_users,
         avg_messages_per_chat=avg_messages_per_chat,
         agent_runs=agent_runs,
@@ -739,6 +804,13 @@ async def get_agent_stats(
     total_runs = sum(a.run_count for a in agents)
     total_failed = sum(a.failed_count for a in agents)
     failure_rate = (total_failed / total_runs * 100) if total_runs > 0 else 0
+    accounting = await _load_accounting_aggregates(
+        db=db,
+        tenant_id=tenant_id,
+        start=start,
+        end=end,
+        agent_id=agent_id,
+    )
     
     # Runs by day
     q_daily_runs = (
@@ -842,22 +914,12 @@ async def get_agent_stats(
         avg_queue_time_ms = float(avg_queue_time_ms)
 
     # Tokens usage
-    q_tokens_total = (
-        select(func.coalesce(func.sum(AgentRun.usage_tokens), 0))
-        .where(and_(
-            AgentRun.tenant_id == tenant_id,
-            AgentRun.created_at >= start,
-            AgentRun.created_at <= end
-        ))
-    )
-    if agent_id:
-        q_tokens_total = q_tokens_total.where(AgentRun.agent_id == agent_id)
-    tokens_used_total = (await db.execute(q_tokens_total)).scalar() or 0
+    tokens_used_total = int(accounting["total_tokens"])
 
     q_tokens_by_day = (
         select(
             func.date(AgentRun.created_at).label('date'),
-            func.coalesce(func.sum(AgentRun.usage_tokens), 0).label('value')
+            func.coalesce(func.sum(usage_total_expr(AgentRun)), 0).label('value')
         )
         .where(and_(
             AgentRun.tenant_id == tenant_id,
@@ -880,7 +942,7 @@ async def get_agent_stats(
             Agent.name,
             Agent.slug,
             func.count(AgentRun.id).label("run_count"),
-            func.coalesce(func.sum(AgentRun.usage_tokens), 0).label("tokens_used")
+            func.coalesce(func.sum(usage_total_expr(AgentRun)), 0).label("tokens_used")
         )
         .join(AgentRun, AgentRun.agent_id == Agent.id)
         .where(and_(
@@ -979,6 +1041,12 @@ async def get_agent_stats(
         p95_run_duration_ms=p95_run_duration_ms,
         avg_queue_time_ms=avg_queue_time_ms,
         tokens_used_total=tokens_used_total,
+        total_tokens_exact=int(accounting["total_tokens_exact"]),
+        total_tokens_estimated=int(accounting["total_tokens_estimated"]),
+        runs_with_unknown_usage=int(accounting["runs_with_unknown_usage"]),
+        total_spend_exact_usd=round(float(accounting["total_spend_exact_usd"]), 6),
+        total_spend_estimated_usd=round(float(accounting["total_spend_estimated_usd"]), 6),
+        runs_with_unknown_cost=int(accounting["runs_with_unknown_cost"]),
         agents=agents,
         top_agents=top_agents,
         top_agents_by_tokens=top_agents_by_tokens,

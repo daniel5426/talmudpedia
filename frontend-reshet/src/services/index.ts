@@ -106,6 +106,7 @@ export type {
   ModelCapabilityType,
   ModelProviderType,
   ModelStatus,
+  PricingConfig,
   ModelProviderSummary,
   CreateModelRequest,
   UpdateModelRequest,

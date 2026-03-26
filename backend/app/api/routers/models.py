@@ -31,6 +31,7 @@ class CreateProviderRequest(BaseModel):
     priority: int = 0
     config: dict | None = None
     credentials_ref: uuid.UUID | None = None
+    pricing_config: dict | None = None
 
 
 class UpdateProviderRequest(BaseModel):
@@ -39,6 +40,7 @@ class UpdateProviderRequest(BaseModel):
     is_enabled: bool | None = None
     config: dict | None = None
     credentials_ref: uuid.UUID | None = None
+    pricing_config: dict | None = None
 
 
 class ModelProviderSummary(BaseModel):
@@ -49,6 +51,7 @@ class ModelProviderSummary(BaseModel):
     is_enabled: bool
     config: dict
     credentials_ref: uuid.UUID | None = None
+    pricing_config: dict
 
 
 class CreateModelRequest(BaseModel):
@@ -103,6 +106,7 @@ def _serialize_provider(binding: ModelProviderBinding) -> ModelProviderSummary:
         is_enabled=binding.is_enabled,
         config=binding.config or {},
         credentials_ref=binding.credentials_ref,
+        pricing_config=binding.pricing_config or {},
     )
 
 
@@ -229,6 +233,79 @@ def _validate_provider_support(
                 f"capability '{capability_type.value}'"
             ),
         )
+
+
+_SUPPORTED_BILLING_MODES = {
+    "per_token",
+    "per_1k_tokens",
+    "flat_per_request",
+    "manual",
+    "unknown",
+}
+
+
+def _coerce_optional_float(value: Any, *, field_name: str) -> float:
+    try:
+        parsed = float(value)
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=f"Invalid numeric value for pricing_config.{field_name}") from exc
+    if parsed < 0:
+        raise HTTPException(status_code=422, detail=f"pricing_config.{field_name} must be >= 0")
+    return parsed
+
+
+def _validate_pricing_config(pricing_config: dict | None) -> dict:
+    if pricing_config is None:
+        return {}
+    if not isinstance(pricing_config, dict):
+        raise HTTPException(status_code=422, detail="pricing_config must be an object")
+
+    normalized = dict(pricing_config)
+    currency = str(normalized.get("currency") or "USD").strip().upper()
+    billing_mode = str(normalized.get("billing_mode") or "unknown").strip().lower()
+    if billing_mode not in _SUPPORTED_BILLING_MODES:
+        raise HTTPException(status_code=422, detail="pricing_config.billing_mode is invalid")
+    if billing_mode == "manual":
+        raise HTTPException(status_code=422, detail="pricing_config.billing_mode 'manual' is reserved for internal overrides")
+
+    normalized["currency"] = currency
+    normalized["billing_mode"] = billing_mode
+
+    rates = normalized.get("rates")
+    if rates is not None and not isinstance(rates, dict):
+        raise HTTPException(status_code=422, detail="pricing_config.rates must be an object")
+    normalized_rates: dict[str, float] = {}
+    for key, value in dict(rates or {}).items():
+        normalized_rates[str(key)] = _coerce_optional_float(value, field_name=f"rates.{key}")
+    if normalized_rates:
+        normalized["rates"] = normalized_rates
+    else:
+        normalized.pop("rates", None)
+
+    if "minimum_charge" in normalized and normalized.get("minimum_charge") is not None:
+        normalized["minimum_charge"] = _coerce_optional_float(
+            normalized.get("minimum_charge"),
+            field_name="minimum_charge",
+        )
+
+    if "flat_amount" in normalized and normalized.get("flat_amount") is not None:
+        normalized["flat_amount"] = _coerce_optional_float(
+            normalized.get("flat_amount"),
+            field_name="flat_amount",
+        )
+
+    if billing_mode in {"per_token", "per_1k_tokens"} and not normalized.get("rates"):
+        raise HTTPException(status_code=422, detail="pricing_config.rates is required for token pricing")
+    if billing_mode == "flat_per_request" and normalized.get("flat_amount") is None:
+        raise HTTPException(status_code=422, detail="pricing_config.flat_amount is required for flat pricing")
+
+    if billing_mode != "flat_per_request":
+        normalized.pop("flat_amount", None)
+    if billing_mode not in {"per_token", "per_1k_tokens"}:
+        normalized.pop("rates", None)
+    normalized.pop("manual_total_cost", None)
+
+    return normalized
 
 
 @router.get("", response_model=ModelListResponse)
@@ -458,6 +535,7 @@ async def add_provider_binding(
         priority=request.priority,
         config=request.config or {},
         credentials_ref=request.credentials_ref,
+        pricing_config=_validate_pricing_config(request.pricing_config),
     )
     db.add(binding)
 
@@ -516,6 +594,8 @@ async def update_provider_binding(
         binding.config = request.config
     if "credentials_ref" in request.model_fields_set:
         binding.credentials_ref = request.credentials_ref
+    if "pricing_config" in request.model_fields_set:
+        binding.pricing_config = _validate_pricing_config(request.pricing_config)
 
     try:
         await db.commit()

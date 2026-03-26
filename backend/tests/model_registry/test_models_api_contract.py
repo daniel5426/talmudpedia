@@ -193,3 +193,41 @@ async def test_create_model_endpoint_does_not_accept_or_return_slug(client, db_s
     ).scalars().all()
     assert len(rows) == 1
     assert rows[0].system_key is None
+
+
+@pytest.mark.asyncio
+async def test_add_provider_rejects_manual_pricing_config_in_public_registry_api(client, db_session):
+    tenant = Tenant(name="Tenant E", slug=f"tenant-e-{uuid4().hex[:8]}")
+    user = User(email=f"owner-{uuid4().hex[:8]}@example.com", hashed_password="x", role="admin")
+    db_session.add_all([tenant, user])
+    await db_session.flush()
+
+    model = ModelRegistry(
+        tenant_id=tenant.id,
+        name="Manual Pricing Model",
+        capability_type=ModelCapabilityType.CHAT,
+        status=ModelStatus.ACTIVE,
+        is_active=True,
+        metadata_={},
+    )
+    db_session.add(model)
+    await db_session.commit()
+
+    from main import app
+
+    await _override_model_registry_auth(app, tenant=tenant, user=user)
+    response = await client.post(
+        f"/models/{model.id}/providers",
+        json={
+            "provider": ModelProviderType.OPENAI.value,
+            "provider_model_id": "gpt-4o",
+            "pricing_config": {
+                "currency": "USD",
+                "billing_mode": "manual",
+            },
+        },
+    )
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 422
+    assert "reserved for internal overrides" in response.json()["detail"]

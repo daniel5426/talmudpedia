@@ -106,7 +106,7 @@ export function ToolPicker({ tools, value, onChange, open, onOpenChange }: ToolP
 
     return (
         <Sheet open={openState} onOpenChange={handleOpenChange}>
-            <SheetContent side="right" className="w-full sm:max-w-md flex flex-col p-0 gap-0">
+            <SheetContent side="right" className="w-full sm:max-w-md flex flex-col p-0 gap-0 overflow-hidden">
                 {/* ── Header ── */}
                 {view === "detail" && selectedTool ? (
                     <div className="flex items-start gap-3 px-5 pt-5 pb-4 border-b">
@@ -224,7 +224,7 @@ export function ToolPicker({ tools, value, onChange, open, onOpenChange }: ToolP
                             </div>
 
                             {/* Bucket tabs */}
-                            <div className="flex gap-1 overflow-x-auto">
+                            <div className="flex gap-1 overflow-x-auto no-scrollbar">
                                 <Button
                                     variant={bucketFilter === "all" ? "default" : "ghost"}
                                     size="sm"
@@ -257,8 +257,8 @@ export function ToolPicker({ tools, value, onChange, open, onOpenChange }: ToolP
                         <Separator />
 
                         {/* Tool list */}
-                        <ScrollArea className="flex-1 min-h-0">
-                            <div className="px-3 py-2">
+                        <ScrollArea className="flex-1 min-h-0 w-full">
+                            <div className="px-3 py-2 w-full overflow-hidden">
                                 {filteredTools.length === 0 ? (
                                     <div className="flex flex-col items-center justify-center py-12 text-center">
                                         <Search className="h-8 w-8 text-muted-foreground/40 mb-3" />
@@ -271,7 +271,7 @@ export function ToolPicker({ tools, value, onChange, open, onOpenChange }: ToolP
                                     activeBuckets
                                         .filter((bucket) => displayGroupedTools[bucket.id].length > 0)
                                         .map((bucket) => (
-                                        <div key={bucket.id} className="mb-2">
+                                        <div key={bucket.id} className="mb-2 w-full">
                                             {/* Only show group header when showing all buckets */}
                                             {bucketFilter === "all" && activeBuckets.length > 1 && (
                                                 <div className="flex items-center gap-2 px-2 pt-3 pb-1.5">
@@ -283,45 +283,47 @@ export function ToolPicker({ tools, value, onChange, open, onOpenChange }: ToolP
                                                     </span>
                                                 </div>
                                             )}
-                                            <div className="space-y-1.5">
+                                            <div className="space-y-1.5 w-full">
                                             {displayGroupedTools[bucket.id].map((tool) => {
                                                 const isSelected = value.includes(tool.id)
                                                 return (
-                                                    <div
-                                                        key={tool.id}
-                                                        className={cn(
-                                                            "group flex items-center gap-3 rounded-lg px-3 py-2.5 transition-colors cursor-pointer",
-                                                            isSelected
-                                                                ? "bg-primary/5 border border-primary/20"
-                                                                : "hover:bg-muted/50 border border-transparent"
-                                                        )}
-                                                        onClick={() => toggleTool(tool.id, !isSelected)}
-                                                    >
+                                                <div
+                                                    key={tool.id}
+                                                    className={cn(
+                                                        "group flex w-full min-w-0 items-center gap-3 rounded-lg px-3 py-2.5 transition-colors cursor-pointer",
+                                                        isSelected
+                                                            ? "bg-primary/5 border border-primary/20"
+                                                            : "hover:bg-muted/50 border border-transparent"
+                                                    )}
+                                                    onClick={() => toggleTool(tool.id, !isSelected)}
+                                                >
+                                                    <div className="flex items-center shrink-0">
                                                         <Checkbox
                                                             checked={isSelected}
                                                             onCheckedChange={(checked) => toggleTool(tool.id, Boolean(checked))}
                                                             onClick={(e) => e.stopPropagation()}
-                                                            className="shrink-0"
                                                         />
-                                                        <div className="flex-1 min-w-0">
-                                                            <div className="flex items-center gap-2">
-                                                                <span className="text-sm font-medium truncate">
-                                                                    {tool.name}
-                                                                </span>
-                                                                <Badge variant="outline" className="text-[10px] shrink-0 h-4 px-1.5">
-                                                                    {getSubtypeLabel(tool.implementation_type)}
-                                                                </Badge>
-                                                            </div>
-                                                            {tool.description && (
-                                                                <p className="text-xs text-muted-foreground line-clamp-1 mt-0.5">
-                                                                    {tool.description}
-                                                                </p>
-                                                            )}
+                                                    </div>
+                                                    <div className="flex-1 min-w-0">
+                                                        <div className="flex items-center gap-2 min-w-0">
+                                                            <span className="text-sm font-medium truncate shrink">
+                                                                {tool.name}
+                                                            </span>
+                                                            <Badge variant="outline" className="text-[10px] shrink-0 h-4 px-1.5 whitespace-nowrap">
+                                                                {getSubtypeLabel(tool.implementation_type)}
+                                                            </Badge>
                                                         </div>
+                                                        {tool.description && (
+                                                            <p className="text-xs text-muted-foreground line-clamp-1 mt-0.5 break-all">
+                                                                {tool.description}
+                                                            </p>
+                                                        )}
+                                                    </div>
+                                                    <div className="flex items-center shrink-0">
                                                         <Button
                                                             variant="ghost"
                                                             size="icon"
-                                                            className="h-7 w-7 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                                                            className="h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity"
                                                             onClick={(e) => {
                                                                 e.stopPropagation()
                                                                 setSelectedTool(tool)
@@ -331,6 +333,7 @@ export function ToolPicker({ tools, value, onChange, open, onOpenChange }: ToolP
                                                             <ChevronRight className="h-4 w-4" />
                                                         </Button>
                                                     </div>
+                                                </div>
                                                 )
                                             })}
                                             </div>

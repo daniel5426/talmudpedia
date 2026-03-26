@@ -4,6 +4,7 @@ Model Resolver - Late-bound resolution of logical models to providers.
 Implements policy-driven model resolution with fallback, compliance,
 and cost tier support. Now uses PostgreSQL.
 """
+from dataclasses import dataclass
 import logging
 from typing import Optional
 from uuid import UUID
@@ -27,6 +28,7 @@ from app.rag.interfaces.embedding import EmbeddingProvider
 from app.rag.providers.embedding.openai import OpenAIEmbeddingProvider
 from app.rag.providers.embedding.gemini import GeminiEmbeddingProvider
 from app.rag.providers.embedding.huggingface import HuggingFaceEmbeddingProvider
+from app.services.model_accounting import binding_pricing_snapshot
 
 
 logger = logging.getLogger(__name__)
@@ -50,6 +52,20 @@ class ModelResolutionPolicy:
         self.cost_tier = cost_tier
 
 
+@dataclass
+class ResolvedModelExecution:
+    logical_model: ModelRegistry
+    binding: ModelProviderBinding
+    provider_instance: LLMProvider
+    binding_scope: str
+    pricing_snapshot: dict
+    capability_flags: dict[str, bool]
+
+    @property
+    def resolved_provider(self) -> str:
+        return getattr(self.binding.provider, "value", str(self.binding.provider))
+
+
 class ModelResolver:
     """
     Resolves logical model IDs to concrete LLMProvider instances.
@@ -71,6 +87,17 @@ class ModelResolver:
     ) -> LLMProvider:
         """
         Resolve a logical model ID to a provider instance.
+        """
+        execution = await self.resolve_for_execution(model_id, policy_override)
+        return execution.provider_instance
+
+    async def resolve_for_execution(
+        self,
+        model_id: str,
+        policy_override: Optional[ModelResolutionPolicy] = None,
+    ) -> ResolvedModelExecution:
+        """
+        Resolve a logical model to a concrete execution receipt.
         """
         # 1. Fetch model
         logger.debug(f"Resolving model {model_id} for tenant {self.tenant_id}")
@@ -101,16 +128,24 @@ class ModelResolver:
                 fallback = await self._get_fallback_model(model)
                 if fallback:
                     logger.info(f"Falling back to model: {fallback.name}")
-                    return await self.resolve(str(fallback.id), policy_override)
+                    return await self.resolve_for_execution(str(fallback.id), policy_override)
 
             raise ModelResolverError(f"No suitable binding/provider found for model: {model.name}")
 
         # 3. Provider Instantiation
         try:
-            return await self._create_provider_instance(binding)
+            provider_instance = await self._create_provider_instance(binding)
         except Exception as e:
             logger.error(f"Failed to instantiate provider for {model.name}: {e}")
             raise ModelResolverError(f"Provider instantiation failed: {e}")
+        return ResolvedModelExecution(
+            logical_model=model,
+            binding=binding,
+            provider_instance=provider_instance,
+            binding_scope="tenant" if binding.tenant_id is not None else "global",
+            pricing_snapshot=binding_pricing_snapshot(binding),
+            capability_flags=self._capability_flags(binding),
+        )
 
     async def _resolve_binding(
         self,
@@ -205,6 +240,21 @@ class ModelResolver:
         else:
              # Fallback generic or error
              raise ModelResolverError(f"Provider {binding.provider} not factory-supported yet.")
+
+    @staticmethod
+    def _capability_flags(binding: ModelProviderBinding) -> dict[str, bool]:
+        binding_config = dict(binding.config or {})
+        provider_value = getattr(binding.provider, "value", str(binding.provider))
+        supports_usage_reporting = provider_value in {"openai", "anthropic", "google", "gemini", "xai"}
+        return {
+            "supports_usage_reporting": supports_usage_reporting,
+            "supports_stream_usage": bool(binding_config.get("supports_stream_usage", False)),
+            "supports_final_usage_reporting": bool(binding_config.get("supports_final_usage_reporting", supports_usage_reporting)),
+            "supports_provider_cost_reporting": bool(binding_config.get("supports_provider_cost_reporting", False)),
+            "supports_separate_input_output_tokens": bool(
+                binding_config.get("supports_separate_input_output_tokens", supports_usage_reporting)
+            ),
+        }
 
     async def _resolve_provider_credentials(
         self,

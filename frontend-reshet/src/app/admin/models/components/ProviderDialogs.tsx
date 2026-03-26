@@ -16,6 +16,7 @@ import {
   CreateProviderRequest,
   UpdateProviderRequest,
   ModelProviderSummary,
+  PricingConfig,
   IntegrationCredential,
   LLM_PROVIDER_OPTIONS,
   getModelProviderOptions,
@@ -24,6 +25,145 @@ import {
 export const PROVIDER_LABELS: Record<ModelProviderType, string> = Object.fromEntries(
   LLM_PROVIDER_OPTIONS.map((option) => [option.key, option.label])
 ) as Record<ModelProviderType, string>
+
+const BILLING_MODE_OPTIONS = [
+  { value: "unknown", label: "Unknown" },
+  { value: "per_1k_tokens", label: "Per 1K Tokens" },
+  { value: "per_token", label: "Per Token" },
+  { value: "flat_per_request", label: "Flat Per Request" },
+] as const
+
+function normalizePricingConfig(pricingConfig?: PricingConfig): PricingConfig {
+  const config = pricingConfig || {}
+  return {
+    currency: String(config.currency || "USD"),
+    billing_mode: config.billing_mode || "unknown",
+    rates: {
+      input: Number(config.rates?.input || 0),
+      output: Number(config.rates?.output || 0),
+    },
+    minimum_charge: config.minimum_charge ?? undefined,
+    flat_amount: config.flat_amount ?? undefined,
+  }
+}
+
+function buildPricingPayload(pricingConfig: PricingConfig): PricingConfig {
+  const billingMode = pricingConfig.billing_mode || "unknown"
+  const payload: PricingConfig = {
+    currency: String(pricingConfig.currency || "USD").trim().toUpperCase() || "USD",
+    billing_mode: billingMode,
+  }
+  if (
+    pricingConfig.minimum_charge !== undefined &&
+    pricingConfig.minimum_charge !== null &&
+    !Number.isNaN(Number(pricingConfig.minimum_charge))
+  ) {
+    payload.minimum_charge = Number(pricingConfig.minimum_charge)
+  }
+  if (billingMode === "per_1k_tokens" || billingMode === "per_token") {
+    payload.rates = {}
+    if (pricingConfig.rates?.input !== undefined) payload.rates.input = Number(pricingConfig.rates.input)
+    if (pricingConfig.rates?.output !== undefined) payload.rates.output = Number(pricingConfig.rates.output)
+  }
+  if (billingMode === "flat_per_request" && pricingConfig.flat_amount !== undefined) {
+    payload.flat_amount = Number(pricingConfig.flat_amount)
+  }
+  return payload
+}
+
+function PricingFields({
+  pricingConfig,
+  onChange,
+}: {
+  pricingConfig: PricingConfig
+  onChange: (next: PricingConfig) => void
+}) {
+  const billingMode = pricingConfig.billing_mode || "unknown"
+  return (
+    <div className="space-y-4 rounded-md border p-3">
+      <div className="space-y-2">
+        <Label htmlFor="provider-billing-mode">Billing Mode</Label>
+        <Select value={billingMode} onValueChange={(value) => onChange({ ...pricingConfig, billing_mode: value as PricingConfig["billing_mode"] })}>
+          <SelectTrigger id="provider-billing-mode" className="w-full">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {BILLING_MODE_OPTIONS.map((option) => (
+              <SelectItem key={option.value} value={option.value}>
+                {option.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+      <div className="space-y-2">
+        <Label htmlFor="provider-pricing-currency">Currency</Label>
+        <Input
+          id="provider-pricing-currency"
+          value={pricingConfig.currency || "USD"}
+          onChange={(e) => onChange({ ...pricingConfig, currency: e.target.value })}
+          placeholder="USD"
+        />
+      </div>
+      {(billingMode === "per_1k_tokens" || billingMode === "per_token") && (
+        <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-2">
+            <Label htmlFor="provider-pricing-input-rate">Input Rate</Label>
+            <Input
+              id="provider-pricing-input-rate"
+              type="number"
+              step="0.000001"
+              value={pricingConfig.rates?.input ?? ""}
+              onChange={(e) =>
+                onChange({
+                  ...pricingConfig,
+                  rates: { ...(pricingConfig.rates || {}), input: e.target.value === "" ? 0 : Number(e.target.value) },
+                })
+              }
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="provider-pricing-output-rate">Output Rate</Label>
+            <Input
+              id="provider-pricing-output-rate"
+              type="number"
+              step="0.000001"
+              value={pricingConfig.rates?.output ?? ""}
+              onChange={(e) =>
+                onChange({
+                  ...pricingConfig,
+                  rates: { ...(pricingConfig.rates || {}), output: e.target.value === "" ? 0 : Number(e.target.value) },
+                })
+              }
+            />
+          </div>
+        </div>
+      )}
+      {billingMode === "flat_per_request" && (
+        <div className="space-y-2">
+          <Label htmlFor="provider-pricing-flat-amount">Flat Amount</Label>
+          <Input
+            id="provider-pricing-flat-amount"
+            type="number"
+            step="0.000001"
+            value={pricingConfig.flat_amount ?? ""}
+            onChange={(e) => onChange({ ...pricingConfig, flat_amount: e.target.value === "" ? undefined : Number(e.target.value) })}
+          />
+        </div>
+      )}
+      <div className="space-y-2">
+        <Label htmlFor="provider-pricing-minimum-charge">Minimum Charge</Label>
+        <Input
+          id="provider-pricing-minimum-charge"
+          type="number"
+          step="0.000001"
+          value={pricingConfig.minimum_charge ?? ""}
+          onChange={(e) => onChange({ ...pricingConfig, minimum_charge: e.target.value === "" ? undefined : Number(e.target.value) })}
+        />
+      </div>
+    </div>
+  )
+}
 
 export function AddProviderDialog({
   model,
@@ -42,6 +182,7 @@ export function AddProviderDialog({
     provider_model_id: "",
     priority: 0,
     credentials_ref: undefined,
+    pricing_config: normalizePricingConfig(),
   })
   const providerOptions = getModelProviderOptions(model.capability_type)
   const providerCredentials = credentials.filter(
@@ -64,6 +205,7 @@ export function AddProviderDialog({
       const payload = {
         ...form,
         credentials_ref: form.credentials_ref || undefined,
+        pricing_config: buildPricingPayload(form.pricing_config || {}),
       }
       await modelsService.addProvider(model.id, payload)
       setOpen(false)
@@ -71,6 +213,7 @@ export function AddProviderDialog({
         provider: providerOptions[0]?.key || "openai",
         provider_model_id: "",
         priority: 0,
+        pricing_config: normalizePricingConfig(),
       })
       onAdded()
     } catch (error) {
@@ -146,6 +289,10 @@ export function AddProviderDialog({
               onChange={(e) => setForm({ ...form, priority: parseInt(e.target.value, 10) || 0 })}
             />
           </div>
+          <PricingFields
+            pricingConfig={normalizePricingConfig(form.pricing_config)}
+            onChange={(pricing_config) => setForm({ ...form, pricing_config })}
+          />
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => setOpen(false)}>
@@ -180,6 +327,7 @@ export function EditProviderDialog({
     priority: provider.priority,
     is_enabled: provider.is_enabled,
     credentials_ref: provider.credentials_ref ?? undefined,
+    pricing_config: normalizePricingConfig(provider.pricing_config),
   })
   const providerCredentials = credentials.filter(
     (cred) => cred.category === "llm_provider" && cred.provider_key === provider.provider
@@ -192,13 +340,17 @@ export function EditProviderDialog({
       priority: provider.priority,
       is_enabled: provider.is_enabled,
       credentials_ref: provider.credentials_ref ?? undefined,
+      pricing_config: normalizePricingConfig(provider.pricing_config),
     })
   }, [open, provider])
 
   const handleSave = async () => {
     setLoading(true)
     try {
-      await modelsService.updateProvider(model.id, provider.id, form)
+      await modelsService.updateProvider(model.id, provider.id, {
+        ...form,
+        pricing_config: buildPricingPayload(form.pricing_config || {}),
+      })
       setOpen(false)
       onUpdated()
     } catch (error) {
@@ -262,6 +414,10 @@ export function EditProviderDialog({
             <Checkbox checked={!!form.is_enabled} onCheckedChange={(v) => setForm({ ...form, is_enabled: v === true })} />
             <Label>Enabled</Label>
           </div>
+          <PricingFields
+            pricingConfig={normalizePricingConfig(form.pricing_config)}
+            onChange={(pricing_config) => setForm({ ...form, pricing_config })}
+          />
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => setOpen(false)}>

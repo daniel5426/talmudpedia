@@ -1,6 +1,6 @@
 # Canonical Docs Guide
 
-Last Updated: 2026-03-25
+Last Updated: 2026-03-26
 
 This guide lists the current canonical documentation entry points after the first documentation-system refactor.
 
@@ -68,6 +68,8 @@ This guide lists the current canonical documentation entry points after the firs
   - Current tools-domain behavior and guardrails.
 - `docs/product-specs/admin_stats_spec.md`
   - Current admin stats contract.
+- `docs/product-specs/model_usage_spec.md`
+  - Current persisted model-usage and cost-accounting contract.
 
 ## Current Canonical References
 

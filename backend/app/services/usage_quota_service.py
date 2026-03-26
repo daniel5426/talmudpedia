@@ -19,6 +19,7 @@ from app.db.postgres.models.usage_quota import (
     UsageQuotaReservationStatus,
     UsageQuotaScopeType,
 )
+from app.services.model_accounting import usage_total_expr
 
 
 class QuotaExceededError(Exception):
@@ -450,7 +451,7 @@ class UsageQuotaService:
 
         usage_total = (
             await self.db.execute(
-                select(func.coalesce(func.sum(AgentRun.usage_tokens), 0)).where(and_(*run_filter))
+                select(func.coalesce(func.sum(usage_total_expr(AgentRun)), 0)).where(and_(*run_filter))
             )
         ).scalar() or 0
 

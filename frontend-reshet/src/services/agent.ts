@@ -92,6 +92,18 @@ export interface ModelProviderSummary {
   is_enabled: boolean;
   config?: Record<string, unknown>;
   credentials_ref?: string | null;
+  pricing_config?: PricingConfig;
+}
+
+export type PricingBillingMode = "per_token" | "per_1k_tokens" | "flat_per_request" | "manual" | "unknown";
+
+export interface PricingConfig {
+  currency?: string;
+  billing_mode?: PricingBillingMode;
+  rates?: Record<string, number>;
+  minimum_charge?: number;
+  flat_amount?: number;
+  manual_total_cost?: number;
 }
 
 export interface CreateModelRequest {
@@ -121,6 +133,7 @@ export interface CreateProviderRequest {
   config?: Record<string, unknown>;
   credentials_ref?: string;
   priority?: number;
+  pricing_config?: PricingConfig;
 }
 
 export interface UpdateProviderRequest {
@@ -129,6 +142,7 @@ export interface UpdateProviderRequest {
   is_enabled?: boolean;
   config?: Record<string, unknown>;
   credentials_ref?: string | null;
+  pricing_config?: PricingConfig;
 }
 
 export interface ModelsListResponse {

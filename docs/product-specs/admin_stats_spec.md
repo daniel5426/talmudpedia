@@ -1,6 +1,6 @@
 # Admin Stats Spec
 
-Last Updated: 2026-03-19
+Last Updated: 2026-03-26
 
 This document is the canonical product/specification overview for the admin stats surface.
 
@@ -46,7 +46,10 @@ This means the stats surface is tenant-scoped, but it does not yet use the newer
 Current overview metrics include:
 - users
 - chats/messages
-- token usage
+- persisted run-accounting totals
+- exact vs estimated token coverage
+- exact vs estimated spend coverage
+- unknown usage/cost coverage
 - top users
 - top models
 
@@ -61,7 +64,10 @@ Current RAG metrics include:
 
 Current agent metrics include:
 - run counts and status trends
-- token usage
+- persisted run-accounting totals
+- exact vs estimated token coverage
+- exact vs estimated spend coverage
+- unknown usage/cost coverage
 - duration and queue metrics
 - top agents and failure summaries
 
@@ -82,6 +88,27 @@ The frontend uses centralized service/types under `frontend-reshet/src/services/
 
 The admin dashboard overview should also read from the summary-based overview contract rather than the legacy `/admin/stats` payload.
 
+## Current Accounting Contract
+
+The stats surface now aggregates persisted run-accounting fields on `agent_runs` rather than recomputing spend from a dashboard-only heuristic.
+
+Current accounting response fields exposed on overview and agents include:
+- `total_tokens`
+- `total_tokens_exact`
+- `total_tokens_estimated`
+- `runs_with_unknown_usage`
+- `estimated_spend_usd`
+- `total_spend_exact_usd`
+- `total_spend_estimated_usd`
+- `runs_with_unknown_cost`
+
+Current accounting rules:
+- `total_tokens` rolls up persisted run totals with legacy `usage_tokens` as compatibility fallback
+- exact token totals include provider-reported and SDK-reported usage
+- estimated token totals include explicitly estimated rows only
+- spend is aggregated from persisted `cost_usd`
+- unknown usage/cost rows remain visible as coverage counts instead of being silently priced
+
 ## Current Agent Drilldown
 
 The `agents` section now supports optional per-agent drilldown:
@@ -97,3 +124,4 @@ When `agent_id` is present:
 
 - `backend/app/api/routers/stats.py`
 - `backend/app/api/schemas/stats.py`
+- `backend/app/services/model_accounting.py`

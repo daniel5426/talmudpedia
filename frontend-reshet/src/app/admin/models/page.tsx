@@ -487,6 +487,7 @@ export default function ModelsPage() {
                                                         <TableHead>Provider</TableHead>
                                                         <TableHead>Model ID</TableHead>
                                                         <TableHead>Priority</TableHead>
+                                                        <TableHead>Pricing</TableHead>
                                                         <TableHead>Credentials</TableHead>
                                                         <TableHead>Status</TableHead>
                                                         <TableHead className="w-[50px]"></TableHead>
@@ -502,6 +503,9 @@ export default function ModelsPage() {
                                                             </TableCell>
                                                             <TableCell className="font-mono text-sm">{provider.provider_model_id}</TableCell>
                                                             <TableCell>{provider.priority}</TableCell>
+                                                            <TableCell className="text-xs">
+                                                                {String(provider.pricing_config?.billing_mode || "unknown")}
+                                                            </TableCell>
                                                             <TableCell className="text-xs">
                                                                 {provider.credentials_ref
                                                                     ? credentials.find((cred) => cred.id === provider.credentials_ref)?.display_name || "Linked"

@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import Link from "next/link"
 import { useParams } from "next/navigation"
 import { Loader2, Terminal } from "lucide-react"
 
@@ -194,20 +195,33 @@ export default function AdminThreadPage() {
 
         <div className="flex min-w-0 items-center gap-3">
           <div className="hidden min-w-0 items-center gap-3 text-sm lg:flex">
-            <div className="min-w-0 text-right">
-              <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground/80">Agent</div>
-              <div className="truncate font-medium text-foreground/90">{formatValue(thread.agent_name || thread.agent_id)}</div>
-            </div>
+            {thread.agent_id ? (
+              <Link
+                href={`/admin/agents/${thread.agent_id}/builder`}
+                className="min-w-0 truncate font-medium text-foreground/90 hover:underline"
+                title={formatValue(thread.agent_name || thread.agent_id)}
+              >
+                {formatValue(thread.agent_name || thread.agent_id)}
+              </Link>
+            ) : (
+              <div className="min-w-0 truncate font-medium text-foreground/90">{formatValue(thread.agent_name || thread.agent_id)}</div>
+            )}
             <div className="text-muted-foreground/40">/</div>
-            <div className="min-w-0 text-right">
-              <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground/80">Actor</div>
-              <div className="truncate font-medium text-foreground/90">{formatValue(thread.actor_email || thread.actor_display || thread.actor_id)}</div>
-            </div>
+            {thread.actor_id ? (
+              <Link
+                href={`/admin/users/${thread.actor_id}`}
+                className="min-w-0 truncate font-medium text-foreground/90 hover:underline"
+                title={formatValue(thread.actor_email || thread.actor_display || thread.actor_id)}
+              >
+                {formatValue(thread.actor_email || thread.actor_display || thread.actor_id)}
+              </Link>
+            ) : (
+              <div className="min-w-0 truncate font-medium text-foreground/90">
+                {formatValue(thread.actor_email || thread.actor_display || thread.actor_id)}
+              </div>
+            )}
             <div className="text-muted-foreground/40">/</div>
-            <div className="min-w-0 text-right">
-              <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground/80">Status</div>
-              <div className="truncate font-medium text-foreground/90">{formatValue(thread.status)}</div>
-            </div>
+            <div className="min-w-0 truncate font-medium text-foreground/90">{formatValue(thread.status)}</div>
           </div>
           <button
             type="button"

@@ -118,6 +118,9 @@ async def test_artifact_version_endpoints_list_and_get_saved_revisions(client, d
         assert versions[0]["is_current_draft"] is True
         assert versions[0]["is_current_published"] is True
         assert versions[0]["source_file_count"] == 2
+        assert "display_name" not in versions[0]
+        assert "runtime" not in versions[0]
+        assert "tool_contract" not in versions[0]
         assert versions[1]["is_current_draft"] is False
         assert versions[1]["is_current_published"] is False
 
@@ -203,5 +206,86 @@ async def test_duplicate_artifact_creates_tenant_copy_with_incremented_name(clie
         assert names.count("Email Validator") == 1
         assert "Email Validator (1)" in names
         assert "Email Validator (2)" in names
+    finally:
+        app.dependency_overrides.pop(get_current_principal, None)
+
+
+@pytest.mark.asyncio
+async def test_artifact_versions_list_excludes_detail_only_fields(client, db_session):
+    tenant, user = await _seed_tenant_context(db_session)
+    app.dependency_overrides[get_current_principal] = _override_principal(tenant.id, user)
+
+    try:
+        create_response = await client.post(
+            f"/admin/artifacts?tenant_slug={tenant.slug}",
+            json={
+                "display_name": "Multiplier Tool",
+                "description": "list payload shape coverage",
+                "kind": "tool_impl",
+                "runtime": {
+                    "language": "javascript",
+                    "source_files": [
+                        {
+                            "path": "main.js",
+                            "content": "export async function execute(inputs) { return { product: inputs.a * inputs.b }; }\n",
+                        }
+                    ],
+                    "entry_module_path": "main.js",
+                    "dependencies": [],
+                    "runtime_target": "cloudflare_workers",
+                },
+                "config_schema": {"type": "object"},
+                "capabilities": {"network_access": False},
+                "tool_contract": {
+                    "input_schema": {"type": "object"},
+                    "output_schema": {"type": "object"},
+                    "side_effects": [],
+                    "execution_mode": "interactive",
+                    "tool_ui": {"description": "Multiply two numbers together."},
+                },
+            },
+        )
+        assert create_response.status_code == 200, create_response.text
+        artifact = create_response.json()
+
+        update_response = await client.put(
+            f"/admin/artifacts/{artifact['id']}?tenant_slug={tenant.slug}",
+            json={
+                "description": "updated list payload shape coverage",
+                "runtime": {
+                    "language": "javascript",
+                    "source_files": [
+                        {
+                            "path": "main.js",
+                            "content": "export async function execute(inputs) { return { product: inputs.a * inputs.b * 2 }; }\n",
+                        }
+                    ],
+                    "entry_module_path": "main.js",
+                    "dependencies": [],
+                    "runtime_target": "cloudflare_workers",
+                },
+                "tool_contract": {
+                    "input_schema": {"type": "object"},
+                    "output_schema": {"type": "object"},
+                    "side_effects": [],
+                    "execution_mode": "interactive",
+                    "tool_ui": {"description": "Multiply two numbers together."},
+                },
+            },
+        )
+        assert update_response.status_code == 200, update_response.text
+
+        versions_response = await client.get(f"/admin/artifacts/{artifact['id']}/versions?tenant_slug={tenant.slug}")
+        assert versions_response.status_code == 200, versions_response.text
+        versions = versions_response.json()
+
+        assert [item["revision_number"] for item in versions] == [2, 1]
+        assert versions[0]["source_file_count"] == 1
+        assert "display_name" not in versions[0]
+        assert "description" not in versions[0]
+        assert "kind" not in versions[0]
+        assert "runtime" not in versions[0]
+        assert "capabilities" not in versions[0]
+        assert "tool_contract" not in versions[0]
     finally:
         app.dependency_overrides.pop(get_current_principal, None)

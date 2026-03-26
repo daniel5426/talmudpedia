@@ -23,6 +23,12 @@ class TrendInfo(BaseModel):
     change_pct: float
 
 
+class AccountingCoverage(BaseModel):
+    exact: float
+    estimated: float
+    unknown_runs: int
+
+
 class TopUserSummary(BaseModel):
     """Summary for top users by activity."""
     user_id: str
@@ -115,6 +121,12 @@ class OverviewStats(BaseModel):
     # Token metrics
     total_tokens: int
     estimated_spend_usd: float
+    total_tokens_exact: int = 0
+    total_tokens_estimated: int = 0
+    runs_with_unknown_usage: int = 0
+    total_spend_exact_usd: float = 0.0
+    total_spend_estimated_usd: float = 0.0
+    runs_with_unknown_cost: int = 0
 
     # Period metrics
     new_users: int
@@ -223,6 +235,12 @@ class AgentStats(BaseModel):
     p95_run_duration_ms: Optional[float]
     avg_queue_time_ms: Optional[float]
     tokens_used_total: int
+    total_tokens_exact: int = 0
+    total_tokens_estimated: int = 0
+    runs_with_unknown_usage: int = 0
+    total_spend_exact_usd: float = 0.0
+    total_spend_estimated_usd: float = 0.0
+    runs_with_unknown_cost: int = 0
     
     # Lists
     agents: list[AgentSummary]

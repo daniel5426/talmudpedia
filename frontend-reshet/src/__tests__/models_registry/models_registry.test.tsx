@@ -72,6 +72,11 @@ const mockModels = [
         is_enabled: true,
         config: {},
         credentials_ref: null,
+        pricing_config: {
+          currency: "USD",
+          billing_mode: "per_1k_tokens",
+          rates: { input: 0.001, output: 0.002 },
+        },
       },
     ],
   },
@@ -96,6 +101,10 @@ const mockModels = [
         is_enabled: true,
         config: {},
         credentials_ref: null,
+        pricing_config: {
+          currency: "USD",
+          billing_mode: "unknown",
+        },
       },
     ],
   },
@@ -177,10 +186,25 @@ describe("Models Registry", () => {
     const priorityInput = await screen.findByLabelText("Priority (lower = higher priority)")
     fireEvent.change(priorityInput, { target: { value: "2" } })
 
+    const inputRate = await screen.findByLabelText("Input Rate")
+    fireEvent.change(inputRate, { target: { value: "0.003" } })
+
     const saveButton = await screen.findByText("Save")
     fireEvent.click(saveButton)
 
-    await waitFor(() => expect(modelsService.updateProvider).toHaveBeenCalled())
+    await waitFor(() =>
+      expect(modelsService.updateProvider).toHaveBeenCalledWith(
+        "model-1",
+        "provider-1",
+        expect.objectContaining({
+          priority: 2,
+          pricing_config: expect.objectContaining({
+            billing_mode: "per_1k_tokens",
+            rates: expect.objectContaining({ input: 0.003 }),
+          }),
+        })
+      )
+    )
   })
 
   it("shows platform default label when provider has no explicit credential", async () => {

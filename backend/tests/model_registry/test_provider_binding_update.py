@@ -77,6 +77,11 @@ async def test_update_provider_binding_endpoint(client, db_session):
             "priority": 2,
             "is_enabled": False,
             "credentials_ref": str(credential.id),
+            "pricing_config": {
+                "currency": "USD",
+                "billing_mode": "per_1k_tokens",
+                "rates": {"input": 0.001, "output": 0.002},
+            },
         },
     )
 
@@ -87,3 +92,5 @@ async def test_update_provider_binding_endpoint(client, db_session):
     assert payload["priority"] == 2
     assert payload["is_enabled"] is False
     assert payload["credentials_ref"] == str(credential.id)
+    assert payload["pricing_config"]["billing_mode"] == "per_1k_tokens"
+    assert payload["pricing_config"]["rates"]["input"] == 0.001

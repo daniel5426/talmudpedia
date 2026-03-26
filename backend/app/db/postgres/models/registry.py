@@ -270,6 +270,7 @@ class ModelProviderBinding(Base):
     # Cost configuration for spend calculation (per 1K tokens in USD)
     cost_per_1k_input_tokens = Column(Float, nullable=True)
     cost_per_1k_output_tokens = Column(Float, nullable=True)
+    pricing_config = Column(JSONB, default={}, nullable=False)
     
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
