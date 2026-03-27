@@ -38,6 +38,7 @@ from app.db.postgres.models.identity import OrgMembership, Tenant
 from app.db.postgres.session import get_db
 from app.services.artifact_runtime.deployment_service import ArtifactDeploymentService
 from app.services.artifact_runtime.dependency_registry import analyze_artifact_dependencies, verify_python_package_exists
+from app.services.artifact_runtime.entrypoint_contract import ArtifactEntrypointContractError
 from app.services.artifact_runtime.execution_service import ArtifactExecutionService
 from app.services.artifact_runtime.policy_service import ArtifactConcurrencyLimitExceeded
 from app.services.artifact_runtime.registry_service import ArtifactRegistryService
@@ -615,7 +616,10 @@ async def publish_artifact(
         action_scope="artifacts.publish",
         db=db,
     )
-    revision = await ArtifactRevisionService(db).publish_latest_draft(artifact)
+    try:
+        revision = await ArtifactRevisionService(db).publish_latest_draft(artifact)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     await ArtifactDeploymentService(db).ensure_deployment(
         revision=revision,
         namespace="production",
@@ -799,6 +803,10 @@ async def create_unsaved_test_run(
         )
     except ArtifactConcurrencyLimitExceeded as exc:
         raise HTTPException(status_code=429, detail=str(exc))
+    except ArtifactEntrypointContractError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return ArtifactRunCreateResponse(run_id=str(run.id), status=str(getattr(run.status, "value", run.status)))
 
 

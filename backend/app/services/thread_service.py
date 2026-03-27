@@ -7,7 +7,7 @@ from uuid import UUID
 
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import joinedload, selectinload
 
 from app.db.postgres.models.agent_threads import (
     AgentThread,
@@ -165,7 +165,6 @@ class ThreadService:
         run_id: UUID,
         status: AgentThreadTurnStatus,
         assistant_output_text: Optional[str],
-        usage_tokens: int,
         metadata: Optional[dict[str, Any]] = None,
     ) -> Optional[AgentThreadTurn]:
         result = await self.db.execute(
@@ -176,7 +175,6 @@ class ThreadService:
             return None
         turn.status = status
         turn.assistant_output_text = assistant_output_text
-        turn.usage_tokens = max(0, int(usage_tokens or 0))
         turn.completed_at = datetime.now(timezone.utc)
         if metadata:
             current = dict(turn.metadata_ or {})
@@ -265,9 +263,10 @@ class ThreadService:
     ) -> Optional[AgentThread]:
         query = select(AgentThread).where(AgentThread.id == thread_id).options(selectinload(AgentThread.turns)).limit(1)
         query = query.options(
+            selectinload(AgentThread.turns).joinedload(AgentThreadTurn.run),
             selectinload(AgentThread.turns)
             .selectinload(AgentThreadTurn.attachment_links)
-            .selectinload(AgentThreadTurnAttachment.attachment)
+            .selectinload(AgentThreadTurnAttachment.attachment),
         )
         if tenant_id is not None:
             query = query.where(AgentThread.tenant_id == tenant_id)

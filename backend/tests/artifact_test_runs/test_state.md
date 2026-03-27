@@ -1,4 +1,4 @@
-Last Updated: 2026-03-25
+Last Updated: 2026-03-27
 
 # Test State
 
@@ -24,6 +24,7 @@ Artifact test-run APIs and queued execution lifecycle on the modern run-based ar
 - resolve or reuse a `staging` deployment and dispatch through the Cloudflare runtime path
 - assert artifact-page test runs stay on `domain="test"` and `queue_class="artifact_test"`
 - pass artifact-page test input through as the raw worker `inputs` payload
+- return a clean HTTP 400 validation error when the entry module is missing/unexporting `execute(inputs, config, context)`
 
 ## Last Run
 
@@ -51,6 +52,9 @@ Artifact test-run APIs and queued execution lifecycle on the modern run-based ar
 - Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/artifact_runtime/test_execution_service.py backend/tests/artifact_test_runs/test_artifact_test_run_api.py`
 - Date: 2026-03-25 Asia/Hebron
 - Result: Pass (21 passed, 7 warnings)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/artifact_test_runs/test_artifact_test_run_api.py -k execute_contract_error`
+- Date: 2026-03-27 Asia/Hebron
+- Result: Pass
 
 ## Known Gaps
 

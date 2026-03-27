@@ -27,6 +27,7 @@ from app.db.postgres.models.registry import (
     set_tool_management_metadata,
 )
 from app.services.artifact_coding_shared_draft_service import ArtifactCodingSharedDraftService
+from app.services.artifact_runtime.entrypoint_contract import get_artifact_entrypoint_contract_errors
 from app.services.artifact_runtime.registry_service import ArtifactRegistryService
 from app.services.artifact_runtime.tool_contracts import parse_tool_contract_json
 from app.services.tool_function_registry import register_tool_function
@@ -834,6 +835,25 @@ async def artifact_coding_set_tool_contract(payload: Any) -> dict[str, Any]:
     return await _set_contract_payload(payload=tool_payload, contract_field="tool_contract")
 
 
+@register_tool_function("artifact_coding_validate_runtime_contract")
+async def artifact_coding_validate_runtime_contract(payload: Any) -> dict[str, Any]:
+    tool_payload = payload if isinstance(payload, dict) else {}
+    async with get_session() as db:
+        _session, shared_draft, _run, _artifact = await _resolve_session_context(db, tool_payload)
+        snapshot = _serialize_form_state(shared_draft.working_draft_snapshot)
+        errors = get_artifact_entrypoint_contract_errors(
+            language=str(snapshot.get("language") or "python"),
+            source_files=_normalize_file_list(snapshot),
+            entry_module_path=str(snapshot.get("entry_module_path") or ""),
+        )
+        return {
+            "ok": len(errors) == 0,
+            "entry_module_path": snapshot.get("entry_module_path"),
+            "language": snapshot.get("language"),
+            "errors": errors,
+        }
+
+
 def _tool_schema(
     *,
     properties: dict[str, Any],
@@ -919,6 +939,7 @@ ARTIFACT_CODING_TOOL_SPECS: list[dict[str, Any]] = [
     {"slug": "artifact-coding-set-agent-contract", "name": "Artifact Coding Set Agent Contract", "description": "Update the agent_contract JSON using the raw inner contract object only.", "function_name": "artifact_coding_set_agent_contract", "timeout_s": 30, "is_pure": False, "schema": _contract_setter_tool_schema(field_name="agent_contract", contract_schema=_AGENT_CONTRACT_SCHEMA)},
     {"slug": "artifact-coding-set-rag-contract", "name": "Artifact Coding Set RAG Contract", "description": "Update the rag_contract JSON using the raw inner contract object only.", "function_name": "artifact_coding_set_rag_contract", "timeout_s": 30, "is_pure": False, "schema": _contract_setter_tool_schema(field_name="rag_contract", contract_schema=_RAG_CONTRACT_SCHEMA)},
     {"slug": "artifact-coding-set-tool-contract", "name": "Artifact Coding Set Tool Contract", "description": "Update the tool_contract JSON using the raw inner contract object only.", "function_name": "artifact_coding_set_tool_contract", "timeout_s": 30, "is_pure": False, "schema": _contract_setter_tool_schema(field_name="tool_contract", contract_schema=_TOOL_CONTRACT_SCHEMA)},
+    {"slug": "artifact-coding-validate-runtime-contract", "name": "Artifact Coding Validate Runtime Contract", "description": "Validate that the current entry module exposes the required execute(inputs, config, context) handler.", "function_name": "artifact_coding_validate_runtime_contract", "timeout_s": 30, "is_pure": True, "schema": _tool_schema(properties={})},
     {"slug": "artifact-coding-run-test", "name": "Artifact Coding Run Test", "description": "Run the artifact through the canonical artifact test runtime.", "function_name": "artifact_coding_run_test", "timeout_s": 60, "is_pure": False, "schema": _tool_schema(properties={"input_data": {}, "config": {"type": "object"}}, required=[])},
     {"slug": "artifact-coding-await-last-test-result", "name": "Artifact Coding Await Last Test Result", "description": "Wait server-side for the latest artifact test run to reach a terminal state.", "function_name": "artifact_coding_await_last_test_result", "timeout_s": 150, "is_pure": True, "schema": _tool_schema(properties={"timeout_seconds": {"type": "number"}}, required=[])},
     {"slug": "artifact-coding-get-last-test-result", "name": "Artifact Coding Get Last Test Result", "description": "Get the latest artifact test result for this session.", "function_name": "artifact_coding_get_last_test_result", "timeout_s": 30, "is_pure": True, "schema": _tool_schema(properties={})},

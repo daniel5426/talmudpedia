@@ -60,6 +60,21 @@ INTERNAL_PREFIX = "/_talmudpedia"
 SESSION_COOKIE_NAME = os.getenv("PUBLISHED_APP_SESSION_COOKIE_NAME", "published_app_session").strip() or "published_app_session"
 
 
+def _serialize_run_usage(run: Any) -> dict[str, Any] | None:
+    if run is None:
+        return None
+    return {
+        "input_tokens": int(run.input_tokens) if getattr(run, "input_tokens", None) is not None else None,
+        "output_tokens": int(run.output_tokens) if getattr(run, "output_tokens", None) is not None else None,
+        "total_tokens": int(
+            getattr(run, "total_tokens", None)
+            if getattr(run, "total_tokens", None) is not None
+            else getattr(run, "usage_tokens", 0) or 0
+        ),
+        "usage_source": getattr(run, "usage_source", None),
+    }
+
+
 def _serialize_thread_summary(thread: Any) -> dict[str, Any]:
     return {
         "id": str(thread.id),
@@ -91,7 +106,7 @@ async def _serialize_thread_detail(*, db: AsyncSession, thread: Any) -> dict[str
                 "user_input_text": turn.user_input_text,
                 "assistant_output_text": turn.assistant_output_text,
                 "final_output": _turn_final_output(turn),
-                "usage_tokens": int(turn.usage_tokens or 0),
+                "run_usage": _serialize_run_usage(getattr(turn, "run", None)),
                 "created_at": turn.created_at,
                 "completed_at": turn.completed_at,
                 "metadata": turn.metadata_,

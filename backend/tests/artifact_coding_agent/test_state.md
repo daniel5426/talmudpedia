@@ -35,6 +35,7 @@ Track backend coverage for the artifact-coding agent runtime across locked draft
 - delegated artifact-worker instructions now cover both `python` and `javascript`, create-only language selection, safe credential-reference authoring, and `tool_impl` lifecycle boundaries
 - contract mutation now uses kind-specific tools with exact contract schemas, so the model no longer needs a generic `contract_payload` wrapper path
 - source editing now uses exact `old_text` replacement plus numbered read/search context instead of fragile line-range patch guessing
+- the coding-agent tool surface now includes explicit runtime-contract validation for the required `execute(inputs, config, context)` entrypoint
 - artifact coding runtime can build javascript create-mode starter drafts from seed input
 - artifact coding tool surface now includes safe credential metadata listing for `@{credential-id}` authoring without exposing secret values
 - scope-conflict prompt behavior now refuses briefly without asking for new sessions, new artifacts, or scaffold follow-up
@@ -101,6 +102,9 @@ Track backend coverage for the artifact-coding agent runtime across locked draft
 - Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/artifact_coding_agent/test_runtime_service.py`
 - Date: 2026-03-27 Asia/Hebron
 - Result: PASS (`23 passed, 5 warnings`)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/artifact_coding_agent/test_runtime_service.py`
+- Date: 2026-03-27 Asia/Hebron
+- Result: PASS (`25 passed, 5 warnings`)
 
 ## Known Gaps
 

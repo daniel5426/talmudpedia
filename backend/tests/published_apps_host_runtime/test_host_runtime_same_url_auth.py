@@ -351,7 +351,6 @@ async def test_host_thread_detail_includes_public_run_events(client, db_session,
         run_id=run.id,
         status=AgentThreadTurnStatus.completed,
         assistant_output_text="History response",
-        usage_tokens=0,
         metadata={"final_output": "History response"},
     )
     await db_session.commit()

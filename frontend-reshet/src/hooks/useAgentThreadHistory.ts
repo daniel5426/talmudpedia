@@ -31,6 +31,12 @@ type ThreadTurn = {
   turn_index?: number;
   user_input_text?: string | null;
   assistant_output_text?: string | null;
+  run_usage?: {
+    input_tokens?: number | null;
+    output_tokens?: number | null;
+    total_tokens?: number | null;
+    usage_source?: string | null;
+  } | null;
   attachments?: RuntimeAttachmentDto[];
   created_at?: string;
   completed_at?: string;
@@ -162,6 +168,14 @@ export const mapTurnsToMessages = async (threadId: string, turns: ThreadTurn[]):
         createdAt: new Date(assistantTimestamp),
         runId: String(turn.run_id || "").trim() || undefined,
         responseBlocks,
+        tokenUsage: turn.run_usage
+          ? {
+              inputTokens: turn.run_usage.input_tokens ?? null,
+              outputTokens: turn.run_usage.output_tokens ?? null,
+              totalTokens: turn.run_usage.total_tokens ?? null,
+              usageSource: turn.run_usage.usage_source ?? null,
+            }
+          : undefined,
       });
       priorAssistantParts.push(assistantText);
     }

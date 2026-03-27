@@ -105,6 +105,9 @@ describe("admin thread page", () => {
       agent_id: "agent-1",
       agent_name: "PRICO Demo Agent",
       actor_id: "actor-1",
+      token_usage: {
+        total_tokens: 12430,
+      },
       turns: [],
     } as any)
     mockedMapTurnsToMessages.mockResolvedValue([
@@ -145,7 +148,7 @@ describe("admin thread page", () => {
     expect(screen.queryByText("Status")).not.toBeInTheDocument()
     expect(screen.getByRole("link", { name: "PRICO Demo Agent" })).toHaveAttribute("href", "/admin/agents/agent-1/builder")
     expect(screen.getByRole("link", { name: "actor-1" })).toHaveAttribute("href", "/admin/users/actor-1")
-    expect(screen.getByText("active")).toBeInTheDocument()
+    expect(screen.getByText("12,430 tokens")).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole("button", { name: "Trace" }))
 

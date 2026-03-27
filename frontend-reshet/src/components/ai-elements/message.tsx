@@ -19,7 +19,7 @@ import {
   PaperclipIcon,
   XIcon,
 } from "lucide-react";
-import type { ComponentProps, HTMLAttributes, ReactElement } from "react";
+import type { ComponentProps, HTMLAttributes, ReactElement, ReactNode } from "react";
 import { createContext, memo, useContext, useEffect, useState } from "react";
 import { Streamdown } from "streamdown";
 
@@ -72,7 +72,7 @@ export const MessageActions = ({
 );
 
 export type MessageActionProps = ComponentProps<typeof Button> & {
-  tooltip?: string;
+  tooltip?: ReactNode;
   label?: string;
 };
 
@@ -97,7 +97,7 @@ export const MessageAction = ({
         <Tooltip>
           <TooltipTrigger asChild>{button}</TooltipTrigger>
           <TooltipContent>
-            <p>{tooltip}</p>
+            {typeof tooltip === "string" ? <p>{tooltip}</p> : tooltip}
           </TooltipContent>
         </Tooltip>
       </TooltipProvider>

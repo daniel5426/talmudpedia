@@ -164,8 +164,6 @@ async def test_execute_live_run_injects_context_credentials_and_uses_deployed_co
     )
 
     assert run is not None
-    assert "entry_module_path" not in captured["request"]
-    assert "source_files" not in captured["request"]
     assert captured["request"]["context"]["credentials"] == {}
 
 
@@ -236,6 +234,74 @@ async def test_execute_live_run_passes_execution_tenant_for_system_revision(db_s
     assert run is not None
     assert captured["revision_tenant_id"] is None
     assert captured["tenant_id"] == tenant.id
+
+
+@pytest.mark.asyncio
+async def test_start_test_run_rejects_python_entrypoint_without_execute(db_session):
+    tenant, user = await _seed_tenant_context(db_session)
+    service = ArtifactExecutionService(db_session)
+
+    with pytest.raises(ValueError, match=r"Artifact entry module main\.py must define execute\(inputs, config, context\)"):
+        await service.start_test_run(
+            tenant_id=tenant.id,
+            created_by=user.id,
+            artifact_id=None,
+            source_files=[{"path": "main.py", "content": "def helper(inputs):\n    return inputs\n"}],
+            entry_module_path="main.py",
+            input_data={},
+            config={},
+            dependencies=[],
+            language="python",
+            kind="tool_impl",
+            runtime_target="cloudflare_workers",
+            capabilities={},
+            config_schema={},
+            agent_contract=None,
+            rag_contract=None,
+            tool_contract={"input_schema": {"type": "object"}, "output_schema": {"type": "object"}, "side_effects": [], "execution_mode": "interactive", "tool_ui": {}},
+        )
+
+
+@pytest.mark.asyncio
+async def test_start_test_run_rejects_saved_javascript_entrypoint_without_exported_execute(db_session):
+    tenant, user = await _seed_tenant_context(db_session)
+    revisions = ArtifactRevisionService(db_session)
+    artifact = await revisions.create_artifact(
+        tenant_id=tenant.id,
+        created_by=user.id,
+        display_name="Broken JS Artifact",
+        description=None,
+        kind="tool_impl",
+        language="javascript",
+        source_files=[{"path": "main.js", "content": "async function execute(inputs, config, context) { return { ok: true }; }\n"}],
+        entry_module_path="main.js",
+        dependencies=[],
+        runtime_target="cloudflare_workers",
+        capabilities={},
+        config_schema={},
+        tool_contract={"input_schema": {"type": "object"}, "output_schema": {"type": "object"}, "side_effects": [], "execution_mode": "interactive", "tool_ui": {}},
+    )
+    await db_session.commit()
+
+    with pytest.raises(ValueError, match=r"Artifact entry module main\.js must export execute\(inputs, config, context\)"):
+        await ArtifactExecutionService(db_session).start_test_run(
+            tenant_id=tenant.id,
+            created_by=user.id,
+            artifact_id=artifact.id,
+            input_data={},
+            config={},
+            source_files=None,
+            entry_module_path=None,
+            dependencies=None,
+            language=None,
+            kind=None,
+            runtime_target=None,
+            capabilities=None,
+            config_schema=None,
+            agent_contract=None,
+            rag_contract=None,
+            tool_contract=None,
+        )
 
 
 @pytest.mark.asyncio
@@ -529,7 +595,6 @@ async def test_execute_live_run_rewrites_runtime_credentials_without_persisting_
 
     assert run is not None
     assert captured["request"]["context"]["credentials"] == {str(credential.id): "super-secret-key"}
-    assert "source_files" not in captured["request"]
     assert "allowed_hosts" not in captured["request"]
     assert "outbound_grant" not in captured["request"]
     assert "api_key" not in captured["request"]["config"]

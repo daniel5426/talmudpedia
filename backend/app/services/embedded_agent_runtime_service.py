@@ -40,6 +40,17 @@ def _turns_to_messages(turns: list[AgentThreadTurn]) -> list[dict[str, Any]]:
     return messages
 
 
+def _serialize_run_usage(run: AgentRun | None) -> dict[str, Any] | None:
+    if run is None:
+        return None
+    return {
+        "input_tokens": int(run.input_tokens) if run.input_tokens is not None else None,
+        "output_tokens": int(run.output_tokens) if run.output_tokens is not None else None,
+        "total_tokens": int(run.total_tokens if run.total_tokens is not None else run.usage_tokens or 0),
+        "usage_source": run.usage_source,
+    }
+
+
 def _turn_final_output(turn: AgentThreadTurn) -> Any:
     metadata = turn.metadata_ if isinstance(turn.metadata_, dict) else {}
     return metadata.get("final_output")
@@ -70,7 +81,7 @@ def _serialize_turn_base(turn: AgentThreadTurn) -> dict[str, Any]:
         "assistant_output_text": turn.assistant_output_text,
         "final_output": _turn_final_output(turn),
         "status": turn.status.value if hasattr(turn.status, "value") else str(turn.status),
-        "usage_tokens": int(turn.usage_tokens or 0),
+        "run_usage": _serialize_run_usage(getattr(turn, "run", None)),
         "metadata": dict(turn.metadata_ or {}),
         "attachments": [
             RuntimeAttachmentService.serialize_attachment(link.attachment)

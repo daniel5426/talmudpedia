@@ -17,6 +17,7 @@ from app.db.postgres.models.artifact_runtime import (
 from app.services.prompt_reference_resolver import PromptReferenceError, PromptReferenceResolver
 
 from .runtime_secret_service import ArtifactRuntimeSecretError, validate_and_collect_runtime_credential_refs
+from .entrypoint_contract import validate_artifact_entrypoint_contract
 from .source_utils import normalize_artifact_source, source_tree_hash
 from .tool_contracts import ToolContractValidationError, validate_tool_contract
 
@@ -333,6 +334,11 @@ class ArtifactRevisionService:
             raise ValueError("Artifact has no draft revision to publish")
         if revision.is_ephemeral:
             raise ValueError("Ephemeral revisions cannot be published")
+        validate_artifact_entrypoint_contract(
+            language=getattr(revision.language, "value", revision.language),
+            source_files=list(revision.source_files or []),
+            entry_module_path=revision.entry_module_path,
+        )
         credential_refs = await self._validate_credential_refs(
             tenant_id=artifact.tenant_id,
             language=revision.language,

@@ -28,6 +28,7 @@ from app.services.artifact_coding_agent_tools import (
     artifact_coding_search_in_files,
     artifact_coding_set_tool_contract,
     artifact_coding_set_entry_module,
+    artifact_coding_validate_runtime_contract,
     ensure_artifact_coding_tools,
 )
 from app.services.artifact_coding_runtime_service import ArtifactCodingRuntimeService
@@ -1188,6 +1189,93 @@ async def test_artifact_coding_run_test_rejects_duplicate_active_test_run(db_ses
 
     with pytest.raises(ValueError, match="TEST_RUN_ALREADY_ACTIVE"):
         await artifact_coding_run_test({"run_id": str(worker_run.id)})
+
+
+@pytest.mark.asyncio
+async def test_artifact_coding_validate_runtime_contract_reports_missing_execute(db_session):
+    tenant, user = await _seed_tenant_and_user(db_session)
+    agent = await ensure_artifact_coding_agent_profile(db_session, tenant.id, actor_user_id=user.id)
+    runtime = ArtifactCodingRuntimeService(db_session)
+    prepared = await runtime.prepare_session(
+        tenant_id=tenant.id,
+        user_id=user.id,
+        agent_id=agent.id,
+        title_prompt="Validate runtime contract",
+        artifact_id=None,
+        draft_key=None,
+        chat_session_id=None,
+        draft_snapshot=runtime.build_initial_snapshot_from_seed({"kind": "tool_impl"}),
+        replace_snapshot=True,
+    )
+    prepared.shared_draft.working_draft_snapshot["source_files"] = [{"path": "main.py", "content": "def helper():\n    return {'ok': True}\n"}]
+    worker_run = await _create_artifact_coding_worker_run(
+        db_session,
+        tenant=tenant,
+        user=user,
+        agent=agent,
+        session=prepared.session,
+        shared_draft=prepared.shared_draft,
+    )
+    await db_session.commit()
+
+    @asynccontextmanager
+    async def _session_override():
+        yield db_session
+
+    from app.services import artifact_coding_agent_tools as artifact_tools_module
+
+    original_session = artifact_tools_module.get_session
+    artifact_tools_module.get_session = _session_override
+    try:
+        result = await artifact_coding_validate_runtime_contract({"run_id": str(worker_run.id)})
+    finally:
+        artifact_tools_module.get_session = original_session
+
+    assert result["ok"] is False
+    assert result["entry_module_path"] == "main.py"
+    assert result["errors"] == ["Artifact entry module main.py must define execute(inputs, config, context)"]
+
+
+@pytest.mark.asyncio
+async def test_artifact_coding_run_test_surfaces_clean_execute_contract_error(db_session):
+    tenant, user = await _seed_tenant_and_user(db_session)
+    agent = await ensure_artifact_coding_agent_profile(db_session, tenant.id, actor_user_id=user.id)
+    runtime = ArtifactCodingRuntimeService(db_session)
+    prepared = await runtime.prepare_session(
+        tenant_id=tenant.id,
+        user_id=user.id,
+        agent_id=agent.id,
+        title_prompt="Run test with broken entrypoint",
+        artifact_id=None,
+        draft_key=None,
+        chat_session_id=None,
+        draft_snapshot=runtime.build_initial_snapshot_from_seed({"kind": "tool_impl"}),
+        replace_snapshot=True,
+    )
+    prepared.shared_draft.working_draft_snapshot["source_files"] = [{"path": "main.py", "content": "def helper():\n    return {'ok': True}\n"}]
+    worker_run = await _create_artifact_coding_worker_run(
+        db_session,
+        tenant=tenant,
+        user=user,
+        agent=agent,
+        session=prepared.session,
+        shared_draft=prepared.shared_draft,
+    )
+    await db_session.commit()
+
+    @asynccontextmanager
+    async def _session_override():
+        yield db_session
+
+    from app.services import artifact_coding_agent_test_tools as artifact_test_tools_module
+
+    original_session = artifact_test_tools_module.get_session
+    artifact_test_tools_module.get_session = _session_override
+    try:
+        with pytest.raises(ValueError, match=r"Artifact entry module main\.py must define execute\(inputs, config, context\)"):
+            await artifact_coding_run_test({"run_id": str(worker_run.id)})
+    finally:
+        artifact_test_tools_module.get_session = original_session
 
 
 @pytest.mark.asyncio

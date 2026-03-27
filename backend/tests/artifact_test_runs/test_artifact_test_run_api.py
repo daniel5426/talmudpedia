@@ -225,6 +225,39 @@ async def test_unsaved_artifact_test_run_uses_principal_tenant_context_without_t
 
 
 @pytest.mark.asyncio
+async def test_unsaved_artifact_test_run_returns_clean_execute_contract_error(client, db_session):
+    tenant, user = await _seed_tenant_context(db_session)
+    app.dependency_overrides[get_current_principal] = _override_principal(tenant.id, user)
+
+    try:
+        run_response = await client.post(
+            "/admin/artifacts/test-runs",
+            json={
+                "source_files": [{"path": "main.js", "content": "async function execute(inputs, config, context) { return { ok: true }; }\n"}],
+                "entry_module_path": "main.js",
+                "input_data": {"hello": "world"},
+                "config": {},
+                "dependencies": [],
+                "language": "javascript",
+                "kind": "tool_impl",
+                "runtime_target": "cloudflare_workers",
+                "config_schema": {},
+                "tool_contract": {
+                    "input_schema": {"type": "object"},
+                    "output_schema": {"type": "object"},
+                    "side_effects": [],
+                    "execution_mode": "interactive",
+                    "tool_ui": {},
+                },
+            },
+        )
+        assert run_response.status_code == 400, run_response.text
+        assert run_response.json()["detail"] == "Artifact entry module main.js must export execute(inputs, config, context)"
+    finally:
+        app.dependency_overrides.pop(get_current_principal, None)
+
+
+@pytest.mark.asyncio
 async def test_artifact_test_run_can_be_cancelled_while_queued(client, db_session, monkeypatch):
     monkeypatch.setenv("ARTIFACT_RUN_TASK_EAGER", "0")
     tenant, user = await _seed_tenant_context(db_session)

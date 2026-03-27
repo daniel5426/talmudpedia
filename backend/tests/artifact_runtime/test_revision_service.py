@@ -237,6 +237,66 @@ async def test_revision_service_rejects_language_mutation_for_persisted_artifact
         )
 
 
+@pytest.mark.asyncio
+async def test_publish_latest_draft_rejects_missing_python_execute_handler(db_session):
+    tenant, user = await _seed_tenant_context(db_session)
+    service = ArtifactRevisionService(db_session)
+    artifact = await service.create_artifact(
+        tenant_id=tenant.id,
+        created_by=user.id,
+        display_name="Broken Python Publish",
+        description="missing execute",
+        kind="tool_impl",
+        language="python",
+        source_files=[{"path": "main.py", "content": "def helper():\n    return {'ok': True}\n"}],
+        entry_module_path="main.py",
+        dependencies=[],
+        runtime_target="cloudflare_workers",
+        capabilities={"network_access": False},
+        config_schema={"type": "object"},
+        tool_contract={
+            "input_schema": {"type": "object"},
+            "output_schema": {"type": "object"},
+            "side_effects": [],
+            "execution_mode": "interactive",
+            "tool_ui": {},
+        },
+    )
+
+    with pytest.raises(ValueError, match=r"Artifact entry module main\.py must define execute\(inputs, config, context\)"):
+        await service.publish_latest_draft(artifact)
+
+
+@pytest.mark.asyncio
+async def test_publish_latest_draft_rejects_unexported_javascript_execute_handler(db_session):
+    tenant, user = await _seed_tenant_context(db_session)
+    service = ArtifactRevisionService(db_session)
+    artifact = await service.create_artifact(
+        tenant_id=tenant.id,
+        created_by=user.id,
+        display_name="Broken JS Publish",
+        description="missing export",
+        kind="tool_impl",
+        language="javascript",
+        source_files=[{"path": "main.js", "content": "async function execute(inputs, config, context) { return { ok: true }; }\n"}],
+        entry_module_path="main.js",
+        dependencies=[],
+        runtime_target="cloudflare_workers",
+        capabilities={"network_access": False},
+        config_schema={"type": "object"},
+        tool_contract={
+            "input_schema": {"type": "object"},
+            "output_schema": {"type": "object"},
+            "side_effects": [],
+            "execution_mode": "interactive",
+            "tool_ui": {},
+        },
+    )
+
+    with pytest.raises(ValueError, match=r"Artifact entry module main\.js must export execute\(inputs, config, context\)"):
+        await service.publish_latest_draft(artifact)
+
+
 def test_bundle_builder_hash_is_stable_for_same_revision_payload():
     class _Revision:
         id = uuid.uuid4()

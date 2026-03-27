@@ -55,6 +55,12 @@ export interface ChatMessage {
   disliked?: boolean;
   messageIndex?: number;
   isVoice?: boolean;
+  tokenUsage?: {
+    inputTokens?: number | null;
+    outputTokens?: number | null;
+    totalTokens?: number | null;
+    usageSource?: string | null;
+  };
 }
 
 const normalizeReasoningStatus = (

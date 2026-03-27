@@ -31,6 +31,17 @@ def _current_month_bounds_utc() -> tuple[datetime, datetime]:
         period_end = period_start.replace(month=period_start.month + 1)
     return period_start, period_end
 
+
+def _serialize_run_usage(run: AgentRun | None) -> dict[str, Any] | None:
+    if run is None:
+        return None
+    return {
+        "input_tokens": int(run.input_tokens) if run.input_tokens is not None else None,
+        "output_tokens": int(run.output_tokens) if run.output_tokens is not None else None,
+        "total_tokens": int(run.total_tokens if run.total_tokens is not None else run.usage_tokens or 0),
+        "usage_source": run.usage_source,
+    }
+
 # --- Dependencies & Helpers ---
 
 async def get_admin_context(
@@ -423,6 +434,11 @@ async def get_thread_details(
 
     thread_row = await monitoring.get_thread_row(tid, month_start=period_start, month_end=period_end)
     turns = list(thread.turns or [])
+    total_tokens = 0
+    for turn in turns:
+        run_usage = _serialize_run_usage(getattr(turn, "run", None))
+        if run_usage is not None:
+            total_tokens += int(run_usage["total_tokens"] or 0)
     return {
         "id": str(thread.id),
         "title": thread.title,
@@ -439,6 +455,9 @@ async def get_thread_details(
         "created_at": thread.created_at,
         "updated_at": thread.updated_at,
         "last_activity_at": thread.last_activity_at,
+        "token_usage": {
+            "total_tokens": total_tokens,
+        },
         "turns": [
             {
                 "id": str(turn.id),
@@ -447,7 +466,7 @@ async def get_thread_details(
                 "status": turn.status.value if hasattr(turn.status, "value") else str(turn.status),
                 "user_input_text": turn.user_input_text,
                 "assistant_output_text": turn.assistant_output_text,
-                "usage_tokens": int(turn.usage_tokens or 0),
+                "run_usage": _serialize_run_usage(getattr(turn, "run", None)),
                 "created_at": turn.created_at,
                 "completed_at": turn.completed_at,
                 "attachments": [

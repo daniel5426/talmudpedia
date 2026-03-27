@@ -159,6 +159,7 @@ backend/app/services/artifact_registry.py
 backend/app/services/artifact_runtime/
 backend/app/services/artifact_runtime/registry_service.py
 backend/app/services/artifact_runtime/revision_service.py
+backend/app/services/artifact_runtime/entrypoint_contract.py
 backend/app/services/artifact_runtime/tool_contracts.py
 backend/app/services/artifact_runtime/bundle_builder.py
 backend/app/services/artifact_runtime/bundle_storage.py

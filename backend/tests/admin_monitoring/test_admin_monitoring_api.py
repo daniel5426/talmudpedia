@@ -5,7 +5,7 @@ import pytest
 from sqlalchemy import select
 
 from app.core.security import create_access_token, get_password_hash
-from app.db.postgres.models.agent_threads import AgentThread, AgentThreadSurface, AgentThreadStatus
+from app.db.postgres.models.agent_threads import AgentThread, AgentThreadSurface, AgentThreadStatus, AgentThreadTurn
 from app.db.postgres.models.agents import Agent, AgentRun, AgentStatus, RunStatus
 from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Tenant, User
 from app.db.postgres.models.registry import ModelCapabilityType, ModelRegistry, ModelStatus
@@ -240,6 +240,41 @@ async def test_admin_threads_filter_by_agent_and_include_actor_metadata(client, 
     assert all(item["agent_id"] == str(fixture["agent_primary"].id) for item in payload["items"])
     assert any(item["actor_type"] == "platform_user" for item in payload["items"])
     assert any(item["actor_type"] == "published_app_account" for item in payload["items"])
+
+
+@pytest.mark.asyncio
+async def test_admin_thread_detail_joins_run_usage(client, db_session):
+    fixture = await _seed_monitoring_fixture(db_session)
+    headers = _auth_headers(str(fixture["owner"].id), str(fixture["tenant"].id), str(fixture["org_unit"].id))
+    thread = fixture["threads"][0]
+    run = await db_session.scalar(select(AgentRun).where(AgentRun.thread_id == thread.id).limit(1))
+    assert run is not None
+    run.input_tokens = 70
+    run.output_tokens = 30
+    run.total_tokens = 100
+    run.usage_source = "provider_reported"
+    db_session.add(
+        AgentThreadTurn(
+            thread_id=thread.id,
+            run_id=run.id,
+            turn_index=0,
+            user_input_text="hello",
+            assistant_output_text="world",
+        )
+    )
+    await db_session.commit()
+
+    response = await client.get(f"/admin/threads/{thread.id}", headers=headers)
+    assert response.status_code == 200
+    payload = response.json()
+
+    assert payload["token_usage"]["total_tokens"] == 100
+    assert payload["turns"][0]["run_usage"] == {
+        "input_tokens": 70,
+        "output_tokens": 30,
+        "total_tokens": 100,
+        "usage_source": "provider_reported",
+    }
 
 
 @pytest.mark.asyncio

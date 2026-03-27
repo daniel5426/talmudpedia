@@ -1225,7 +1225,6 @@ class AgentExecutorService:
                     assistant_output_text=self._extract_assistant_output_text(
                         run.output_result if isinstance(run.output_result, dict) else None
                     ),
-                    usage_tokens=billable_total_tokens(run),
                     metadata=self._extract_turn_metadata(
                         run.output_result if isinstance(run.output_result, dict) else None
                     ),
@@ -1324,7 +1323,6 @@ class AgentExecutorService:
                         run_id=run_id,
                         status=AgentThreadTurnStatus.failed,
                         assistant_output_text=self._extract_assistant_output_text(err_run.output_result),
-                        usage_tokens=billable_total_tokens(err_run),
                         metadata={"error": error_text},
                     )
                 await err_db.commit()

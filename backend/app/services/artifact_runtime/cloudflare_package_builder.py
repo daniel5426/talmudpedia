@@ -117,7 +117,33 @@ class Default(WorkerEntrypoint):
             config = payload.get("config") or {{}}
             context = payload.get("context") or {{}}
             module = importlib.import_module("{module_name}")
-            artifact_execute = getattr(module, "execute")
+            artifact_execute = getattr(module, "execute", None)
+            expected_message = "Artifact entry module {entry_module_path} must define execute(inputs, config, context)"
+            if not callable(artifact_execute):
+                return Response(
+                    json.dumps({{
+                        "detail": {{
+                            "message": expected_message,
+                            "code": "WORKER_EXECUTION_FAILED",
+                            "error_class": "AttributeError",
+                        }},
+                    }}),
+                    status=500,
+                    headers={{"content-type": "application/json"}},
+                )
+            params = list(inspect.signature(artifact_execute).parameters.values())
+            if [param.name for param in params] != ["inputs", "config", "context"]:
+                return Response(
+                    json.dumps({{
+                        "detail": {{
+                            "message": expected_message,
+                            "code": "WORKER_EXECUTION_FAILED",
+                            "error_class": "TypeError",
+                        }},
+                    }}),
+                    status=500,
+                    headers={{"content-type": "application/json"}},
+                )
             result = artifact_execute(inputs, config, context)
             if inspect.isawaitable(result):
                 result = await result
@@ -185,7 +211,7 @@ export default {{
         return Response.json({{
           detail: {{
             code: "WORKER_EXECUTION_FAILED",
-            message: "Artifact entry module must export execute(inputs, config, context)",
+            message: "Artifact entry module {entry_module_path} must export execute(inputs, config, context)",
           }},
         }}, {{ status: 500 }});
       }}

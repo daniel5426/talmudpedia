@@ -49,6 +49,12 @@ describe("useAgentThreadHistory", () => {
             "What is your favorite programming language? Please reply via the worker interactive channel — after you reply I'll update the draft to include it and return a short demo output. I will not persist the artifact yet.",
           created_at: "2026-03-16T12:44:01Z",
           completed_at: "2026-03-16T12:44:50Z",
+          run_usage: {
+            input_tokens: 30,
+            output_tokens: 12,
+            total_tokens: 42,
+            usage_source: "provider_reported",
+          },
         },
         {
           id: "turn-older",
@@ -59,6 +65,12 @@ describe("useAgentThreadHistory", () => {
           assistant_output_text: "What is your favorite programming language?",
           created_at: "2026-03-16T12:42:06Z",
           completed_at: "2026-03-16T12:43:44Z",
+          run_usage: {
+            input_tokens: 18,
+            output_tokens: 6,
+            total_tokens: 24,
+            usage_source: "sdk_reported",
+          },
         },
       ],
     } as any);
@@ -170,6 +182,18 @@ describe("useAgentThreadHistory", () => {
     expect(assistantMessages).toHaveLength(2);
     expect(assistantMessages[0].runId).toBe("run-older");
     expect(assistantMessages[1].runId).toBe("run-newer");
+    expect(assistantMessages[0].tokenUsage).toEqual({
+      inputTokens: 18,
+      outputTokens: 6,
+      totalTokens: 24,
+      usageSource: "sdk_reported",
+    });
+    expect(assistantMessages[1].tokenUsage).toEqual({
+      inputTokens: 30,
+      outputTokens: 12,
+      totalTokens: 42,
+      usageSource: "provider_reported",
+    });
     expect(assistantMessages[0].responseBlocks?.some((block) => block.kind === "tool_call")).toBe(true);
     expect(assistantMessages[1].responseBlocks?.some((block) => block.kind === "tool_call")).toBe(true);
     expect(

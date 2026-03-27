@@ -1,6 +1,6 @@
 # Agent Threads Tests State
 
-Last Updated: 2026-03-16
+Last Updated: 2026-03-27
 
 ## Scope of the feature
 Thread turn sequencing, repair, and retrieval behavior for persisted agent conversations.
@@ -14,9 +14,9 @@ Thread turn sequencing, repair, and retrieval behavior for persisted agent conve
 - Thread reads return repaired turns in deterministic order for replay consumers.
 
 ## Last run command + date/time + result
-- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/agent_threads/test_thread_service.py`
-- Date/Time: 2026-03-16 15:18 EET
-- Result: PASS (`2 passed`)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/agent_threads/test_thread_service.py backend/tests/admin_monitoring/test_admin_monitoring_api.py backend/tests/published_apps_host_runtime/test_host_runtime_same_url_auth.py`
+- Date/Time: 2026-03-27 Asia/Hebron
+- Result: PASS (`17 passed`)
 
 ## Known gaps or follow-ups
-- Add route-level coverage for admin and published-app thread detail endpoints after a broader thread-history API pass.
+- Does not yet cover embedded-runtime thread detail serialization.

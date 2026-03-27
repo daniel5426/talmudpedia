@@ -79,6 +79,15 @@ def _optional_uuid(value: Any) -> Optional[UUID]:
         return None
 
 
+def _serialize_run_usage(run: AgentRun) -> dict[str, Any]:
+    return {
+        "input_tokens": int(run.input_tokens) if run.input_tokens is not None else None,
+        "output_tokens": int(run.output_tokens) if run.output_tokens is not None else None,
+        "total_tokens": int(run.total_tokens if run.total_tokens is not None else run.usage_tokens or 0),
+        "usage_source": run.usage_source,
+    }
+
+
 # =============================================================================
 # Helpers
 # =============================================================================
@@ -1137,7 +1146,6 @@ async def cancel_run_v2(
             run_id=run.id,
             status=AgentThreadTurnStatus.cancelled,
             assistant_output_text=partial_text or None,
-            usage_tokens=int(run.usage_tokens or 0),
             metadata={"cancelled": True},
         )
 
@@ -1177,6 +1185,7 @@ async def get_run_status(
         "result": run.output_result,
         "error": run.error_message,
         "checkpoint": run.checkpoint,  # Debugging
+        "usage": _serialize_run_usage(run),
         "lineage": {
             "root_run_id": str(run.root_run_id) if run.root_run_id else None,
             "parent_run_id": str(run.parent_run_id) if run.parent_run_id else None,

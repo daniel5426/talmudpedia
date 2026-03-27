@@ -248,6 +248,12 @@ export interface AgentRunStatus {
   result?: any
   error?: string
   checkpoint?: any
+  usage?: {
+    input_tokens?: number | null
+    output_tokens?: number | null
+    total_tokens?: number | null
+    usage_source?: string | null
+  }
   run_tree?: AgentRunTreeResponse
   lineage?: {
     root_run_id?: string | null

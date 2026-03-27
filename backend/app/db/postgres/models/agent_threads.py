@@ -86,7 +86,6 @@ class AgentThreadTurn(Base):
     user_input_text = Column(Text, nullable=True)
     assistant_output_text = Column(Text, nullable=True)
     status = Column(SQLEnum(AgentThreadTurnStatus), nullable=False, default=AgentThreadTurnStatus.running, index=True)
-    usage_tokens = Column(Integer, nullable=False, default=0)
     metadata_ = Column(JSONB, nullable=False, default=dict, name="metadata")
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     completed_at = Column(DateTime(timezone=True), nullable=True)

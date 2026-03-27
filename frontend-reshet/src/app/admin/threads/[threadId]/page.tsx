@@ -32,7 +32,12 @@ type ThreadTurn = {
   turn_index?: number
   user_input_text?: string | null
   assistant_output_text?: string | null
-  usage_tokens?: number
+  run_usage?: {
+    input_tokens?: number | null
+    output_tokens?: number | null
+    total_tokens?: number | null
+    usage_source?: string | null
+  } | null
   attachments?: RuntimeAttachmentDto[]
   created_at?: string
   completed_at?: string
@@ -48,12 +53,20 @@ type ThreadDetails = {
   actor_id?: string | null
   actor_display?: string | null
   actor_email?: string | null
+  token_usage?: {
+    total_tokens?: number
+  } | null
   turns: ThreadTurn[]
 }
 
 const formatValue = (value?: string | null) => {
   const trimmed = String(value || "").trim()
   return trimmed || "—"
+}
+
+const formatTokenCount = (value?: number | null) => {
+  if (value === null || value === undefined) return "—"
+  return `${new Intl.NumberFormat("en-US").format(value)} tokens`
 }
 
 export default function AdminThreadPage() {
@@ -221,7 +234,9 @@ export default function AdminThreadPage() {
               </div>
             )}
             <div className="text-muted-foreground/40">/</div>
-            <div className="min-w-0 truncate font-medium text-foreground/90">{formatValue(thread.status)}</div>
+            <div className="min-w-0 truncate font-medium text-foreground/90">
+              {formatTokenCount(thread.token_usage?.total_tokens ?? null)}
+            </div>
           </div>
           <button
             type="button"

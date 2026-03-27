@@ -18,6 +18,7 @@ from app.db.postgres.models.artifact_runtime import (
 from .cloudflare_dispatch_client import CloudflareDispatchClient
 from .cloudflare_dispatch_client import CloudflareDispatchHTTPError
 from .deployment_service import ArtifactDeploymentService
+from .entrypoint_contract import validate_artifact_entrypoint_contract
 from .policy_service import ArtifactConcurrencyLimitExceeded, ArtifactRuntimePolicyService
 from .registry_service import ArtifactRegistryService
 from .revision_service import ArtifactRevisionService
@@ -117,6 +118,12 @@ class ArtifactExecutionService:
             )
         elif revision is None:
             raise ValueError("A saved artifact or source_files is required for test execution")
+
+        validate_artifact_entrypoint_contract(
+            language=getattr(revision.language, "value", revision.language),
+            source_files=list(revision.source_files or []),
+            entry_module_path=revision.entry_module_path,
+        )
 
         run = await self._runs.create_test_run(
             tenant_id=tenant_id,

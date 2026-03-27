@@ -51,6 +51,7 @@ Artifact runtime revision, deploy, and dispatch-time credential lifecycle.
 - distinguish platform-verified runtime-provided imports from broader Pyodide catalog imports
 - verify Python package-name existence checks and invalid-name rejection before dependency add
 - reject artifact handlers that do not implement the canonical three-argument contract
+- reject test runs and publish attempts when the entry module does not define/export `execute(inputs, config, context)`
 - send worker-for-platforms dispatch payloads without raw source uploads and without persisted secrets
 - package Python dependencies through the official `pywrangler` deploy pipeline instead of custom vendoring
 - package JS artifacts as Wrangler bundles with pinned compatibility metadata
@@ -127,6 +128,9 @@ Artifact runtime revision, deploy, and dispatch-time credential lifecycle.
 - Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/artifact_runtime/test_artifact_versions_api.py -k excludes_detail_only_fields`
 - Date: 2026-03-26 17:09 EET
 - Result: Pass (1 passed, 2 deselected, 7 warnings)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/artifact_runtime/test_revision_service.py backend/tests/artifact_runtime/test_execution_service.py`
+- Date: 2026-03-27 Asia/Hebron
+- Result: Pass (`30 passed, 5 warnings`)
 
 ## Known Gaps
 

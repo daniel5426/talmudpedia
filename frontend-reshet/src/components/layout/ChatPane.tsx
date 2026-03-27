@@ -41,7 +41,7 @@ import {
 } from "@/components/ai-elements/chain-of-thought";
 import { Shimmer } from "@/components/ai-elements/shimmer";
 
-import { Code, CopyIcon, RefreshCcwIcon, ThumbsUpIcon, ThumbsDownIcon, Volume2, Square, SearchIcon, Mic, AlertCircle } from "lucide-react";
+import { AlertCircle, Code, CopyIcon, InfoIcon, Mic, RefreshCcwIcon, SearchIcon, Square, ThumbsDownIcon, ThumbsUpIcon, Volume2 } from "lucide-react";
 import { DirectionMode, useDirection } from "@/components/direction-provider";
 import { BotInputArea } from "@/components/BotInputArea";
 import { useChatController, type ChatController, type ChatMessage, type Citation } from "./useChatController";
@@ -88,6 +88,9 @@ const formatThinkingDuration = (durationMs?: number | null) => {
   }
   return `${minutes} ${minuteUnit} ${remainingSeconds} seconds`;
 };
+
+const formatTokenUsageValue = (value?: number | null) =>
+  new Intl.NumberFormat("en-US").format(Math.max(0, Number(value || 0)));
 
 const buildThinkingLabel = (durationMs?: number | null) => {
   const formatted = formatThinkingDuration(durationMs);
@@ -901,6 +904,20 @@ export function ChatWorkspace({
                                 )}
                               />
                             </MessageAction>
+                            {msg.tokenUsage && (
+                              <MessageAction
+                                label="Usage"
+                                tooltip={
+                                  <div className="space-y-1">
+                                    <div>Input: {formatTokenUsageValue(msg.tokenUsage.inputTokens)}</div>
+                                    <div>Output: {formatTokenUsageValue(msg.tokenUsage.outputTokens)}</div>
+                                    <div>Total: {formatTokenUsageValue(msg.tokenUsage.totalTokens)}</div>
+                                  </div>
+                                }
+                              >
+                                <InfoIcon className="size-4" />
+                              </MessageAction>
+                            )}
                             {msg.runId && (
                               <MessageAction
                                 label="Trace"

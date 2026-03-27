@@ -12,7 +12,9 @@ type ThreadTurn = {
   turn_index: number;
   user_input_text?: string | null;
   assistant_output_text?: string | null;
-  usage_tokens?: number;
+  run_usage?: {
+    total_tokens?: number | null;
+  } | null;
 };
 
 type ThreadDetails = {
@@ -72,7 +74,7 @@ export default function AdminUserThreadPage() {
             .map((turn) => (
               <div key={turn.id} className="rounded-md border p-4 space-y-2">
                 <div className="text-xs text-muted-foreground">
-                  Turn #{turn.turn_index + 1} • {turn.status} • tokens: {turn.usage_tokens || 0}
+                  Turn #{turn.turn_index + 1} • {turn.status} • tokens: {turn.run_usage?.total_tokens || 0}
                 </div>
                 {turn.user_input_text ? (
                   <div>
