@@ -1661,7 +1661,7 @@ function DefaultsSection({
   useEffect(() => {
     const ad: Record<string, string> = {}
     publishedApps.forEach((app) => {
-      const val = (app as any).default_policy_set_id as string | null | undefined
+      const val = app.default_policy_set_id
       if (val) ad[app.id] = val
     })
     setAppDefaults(ad)
@@ -1670,7 +1670,7 @@ function DefaultsSection({
   useEffect(() => {
     const ad: Record<string, string> = {}
     agents.forEach((agent) => {
-      const val = (agent as any).default_embed_policy_set_id as string | null | undefined
+      const val = agent.default_embed_policy_set_id
       if (val) ad[agent.id] = val
     })
     setAgentDefaults(ad)

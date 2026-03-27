@@ -171,6 +171,7 @@ class PublishedAppResponse(BaseModel):
     allowed_origins: List[str] = Field(default_factory=list)
     external_auth_oidc: Optional[Dict[str, Any]] = None
     template_key: str
+    default_policy_set_id: Optional[str] = None
     current_draft_revision_id: Optional[str] = None
     current_published_revision_id: Optional[str] = None
     published_url: Optional[str] = None
@@ -612,6 +613,7 @@ def _app_to_response(app: PublishedApp) -> PublishedAppResponse:
         allowed_origins=list(app.allowed_origins or []),
         external_auth_oidc=dict(app.external_auth_oidc or {}) if app.external_auth_oidc else None,
         template_key=app.template_key or "classic-chat",
+        default_policy_set_id=str(app.default_policy_set_id) if app.default_policy_set_id else None,
         current_draft_revision_id=str(app.current_draft_revision_id) if app.current_draft_revision_id else None,
         current_published_revision_id=str(app.current_published_revision_id) if app.current_published_revision_id else None,
         published_url=_build_published_url(app.slug) if app.status == PublishedAppStatus.published else None,

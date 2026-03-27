@@ -14,6 +14,7 @@ export interface Agent {
   status: 'draft' | 'published' | 'deprecated' | 'archived';
   version: number;
   show_in_playground: boolean;
+  default_embed_policy_set_id?: string | null;
   graph_definition?: AgentGraphDefinition;
   created_at: string;
   updated_at: string;

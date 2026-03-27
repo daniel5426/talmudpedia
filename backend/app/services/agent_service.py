@@ -372,6 +372,7 @@ class AgentService:
                     Agent.is_active,
                     Agent.is_public,
                     Agent.show_in_playground,
+                    Agent.default_embed_policy_set_id,
                     Agent.workload_scope_profile,
                     Agent.workload_scope_overrides,
                 )

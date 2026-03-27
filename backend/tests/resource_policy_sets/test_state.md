@@ -1,6 +1,6 @@
 # Resource Policy Sets Test State
 
-Last Updated: 2026-03-26
+Last Updated: 2026-03-27
 
 ## Scope
 Validate the resource policy set domain across service resolution, admin API, runtime enforcement, quota accounting, and real-DB migration coverage.
@@ -15,6 +15,7 @@ Validate the resource policy set domain across service resolution, admin API, ru
 ## Key Scenarios Covered
 - Direct assignment, published-app default, embedded default, nested includes, inactive sets, and snapshot round-trips resolve as expected
 - Admin CRUD, include/rule/assignment/default routes enforce scopes, conflict behavior, and cross-tenant reference validation
+- Admin-facing app and agent list responses expose persisted default policy IDs for Defaults-tab reloads
 - Runtime agent start, tool/model/knowledge-store boundaries, malformed top-level snapshots, and nested child-run snapshot propagation are covered
 - Model quota reservation and settlement follow canonical persisted accounting semantics and explicit monthly counter behavior
 - Real Postgres migration coverage locks schema objects, indexes, enum lifecycle, downgrade cleanup, and rerun safety

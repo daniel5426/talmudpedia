@@ -381,3 +381,37 @@ async def test_default_policy_routes_and_non_user_principals_are_rejected(
         assert rejected.status_code == 403
     finally:
         app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_default_policy_ids_are_exposed_by_apps_and_agents_list_endpoints(
+    client,
+    db_session,
+    tenant_context,
+    resource_factory,
+    principal_override_factory,
+):
+    tenant = tenant_context["tenant"]
+    user = tenant_context["user"]
+    agent = await resource_factory.agent(tenant_id=tenant.id, created_by=user.id, name="Default Agent")
+    published_app = await resource_factory.published_app(tenant_id=tenant.id, agent_id=agent.id, name="Default App")
+    default_set = await resource_factory.policy_set(tenant_id=tenant.id, created_by=user.id, name="default")
+    agent.default_embed_policy_set_id = default_set.id
+    published_app.default_policy_set_id = default_set.id
+    await db_session.commit()
+
+    app.dependency_overrides[get_current_principal] = principal_override_factory(
+        tenant.id,
+        user,
+        ["roles.read", "apps.read", "agents.read"],
+    )
+    try:
+        list_apps_resp = await client.get("/admin/apps")
+        assert list_apps_resp.status_code == 200, list_apps_resp.text
+        assert list_apps_resp.json()[0]["default_policy_set_id"] == str(default_set.id)
+
+        list_agents_resp = await client.get("/agents?compact=true")
+        assert list_agents_resp.status_code == 200, list_agents_resp.text
+        assert list_agents_resp.json()["agents"][0]["default_embed_policy_set_id"] == str(default_set.id)
+    finally:
+        app.dependency_overrides.clear()

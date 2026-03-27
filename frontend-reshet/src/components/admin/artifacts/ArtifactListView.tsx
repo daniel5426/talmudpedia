@@ -4,6 +4,7 @@ import { Bot, Copy, Database, Edit, Loader2, MoreHorizontal, Package, Trash2, Up
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Skeleton } from "@/components/ui/skeleton"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -17,6 +18,7 @@ import { kindLabel } from "@/components/admin/artifacts/artifactPageUtils"
 
 type ArtifactListViewProps = {
   artifacts: Artifact[]
+  loading?: boolean
   publishingId: string | null
   onEditArtifact: (artifact: Artifact) => void
   onDeleteArtifact: (artifact: Artifact) => void
@@ -32,6 +34,7 @@ function kindIcon(kind: ArtifactKind) {
 
 export function ArtifactListView({
   artifacts,
+  loading = false,
   publishingId,
   onEditArtifact,
   onDeleteArtifact,
@@ -56,7 +59,35 @@ export function ArtifactListView({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {artifacts.length === 0 ? (
+            {loading ? (
+              Array.from({ length: 4 }).map((_, index) => (
+                <TableRow key={`skeleton-${index}`}>
+                  <TableCell className="font-medium">
+                    <div className="flex items-center gap-3">
+                      <Skeleton className="h-8 w-8 rounded-lg" />
+                      <div className="flex flex-col gap-2">
+                        <Skeleton className="h-4 w-36" />
+                        <Skeleton className="h-3 w-20" />
+                      </div>
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <Skeleton className="h-6 w-20 rounded-full" />
+                  </TableCell>
+                  <TableCell>
+                    <Skeleton className="h-6 w-20 rounded-full" />
+                  </TableCell>
+                  <TableCell>
+                    <Skeleton className="h-4 w-10" />
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <div className="flex justify-end">
+                      <Skeleton className="h-8 w-8 rounded-md" />
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))
+            ) : artifacts.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={5} className="py-12 text-center text-muted-foreground">
                   <div className="flex flex-col items-center gap-2">

@@ -169,6 +169,7 @@ def agent_to_response(agent, compact: bool = False) -> AgentResponse:
         is_active=agent.is_active,
         is_public=agent.is_public,
         show_in_playground=bool(getattr(agent, "show_in_playground", True)),
+        default_embed_policy_set_id=getattr(agent, "default_embed_policy_set_id", None),
         workload_scope_profile=workload_scope_profile,
         workload_scope_overrides=workload_scope_overrides,
         created_at=agent.created_at,

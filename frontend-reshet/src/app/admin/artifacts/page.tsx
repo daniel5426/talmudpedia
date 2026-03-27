@@ -5,7 +5,6 @@ import { useRouter, useSearchParams } from "next/navigation"
 
 import { useTenant } from "@/contexts/TenantContext"
 import { useSidebar } from "@/components/ui/sidebar"
-import { Skeleton } from "@/components/ui/skeleton"
 import { ArtifactEditorHeader } from "@/components/admin/artifacts/ArtifactEditorHeader"
 import { ArtifactListView } from "@/components/admin/artifacts/ArtifactListView"
 import {
@@ -14,45 +13,6 @@ import {
   buildArtifactNewHref,
 } from "@/components/admin/artifacts/artifactRoutes"
 import { artifactsService, type Artifact, type ArtifactKind, type ArtifactLanguage } from "@/services/artifacts"
-
-function ArtifactListSkeleton() {
-  return (
-    <div className="h-full overflow-auto" data-admin-page-scroll>
-      <div className="space-y-6 p-6">
-        <div className="rounded-xl border bg-card p-5">
-          <div className="flex items-center justify-between gap-4 border-b pb-4">
-            <div className="space-y-2">
-              <Skeleton className="h-6 w-44" />
-              <Skeleton className="h-4 w-72" />
-            </div>
-            <Skeleton className="h-9 w-44 rounded-md" />
-          </div>
-          <div className="space-y-2 pt-4">
-            <div className="grid grid-cols-[minmax(0,2.2fr)_140px_140px_90px_60px] gap-4 px-4 py-2">
-              <Skeleton className="h-4 w-20" />
-              <Skeleton className="h-4 w-12" />
-              <Skeleton className="h-4 w-12" />
-              <Skeleton className="h-4 w-10" />
-              <Skeleton className="h-4 w-8" />
-            </div>
-            {Array.from({ length: 7 }).map((_, index) => (
-              <div key={index} className="grid grid-cols-[minmax(0,2.2fr)_140px_140px_90px_60px] items-center gap-4 rounded-lg border px-4 py-4">
-                <div className="space-y-2">
-                  <Skeleton className="h-4 w-40" />
-                  <Skeleton className="h-3 w-24" />
-                </div>
-                <Skeleton className="h-6 w-20 rounded-full" />
-                <Skeleton className="h-6 w-20 rounded-full" />
-                <Skeleton className="h-4 w-12" />
-                <Skeleton className="ml-auto h-8 w-8 rounded-md" />
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-    </div>
-  )
-}
 
 export default function ArtifactsPage() {
   const { currentTenant } = useTenant()
@@ -184,7 +144,17 @@ export default function ArtifactsPage() {
           onSave={() => {}}
         />
         <div className="flex min-h-0 w-full flex-1 flex-col overflow-hidden">
-          <ArtifactListSkeleton />
+          <div className="h-full overflow-auto" data-admin-page-scroll>
+            <ArtifactListView
+              loading
+              artifacts={[]}
+              publishingId={null}
+              onEditArtifact={() => {}}
+              onDuplicateArtifact={() => {}}
+              onDeleteArtifact={() => {}}
+              onPublishArtifact={() => {}}
+            />
+          </div>
         </div>
       </div>
     )
@@ -222,29 +192,26 @@ export default function ArtifactsPage() {
         onSave={() => {}}
       />
       <div className="flex min-h-0 w-full flex-1 flex-col overflow-hidden">
-        {loading ? (
-          <ArtifactListSkeleton />
-        ) : (
-          <div className="h-full overflow-auto" data-admin-page-scroll>
-            <ArtifactListView
-              artifacts={artifacts}
-              publishingId={publishingId}
-              onEditArtifact={(artifact) => {
-                markNextEditorEntryShouldAutoCollapseSidebar()
-                router.push(buildArtifactDetailHref(artifact.id))
-              }}
-              onDuplicateArtifact={(artifact) => {
-                void handleDuplicate(artifact)
-              }}
-              onDeleteArtifact={(artifact) => {
-                void handleDelete(artifact)
-              }}
-              onPublishArtifact={(artifact) => {
-                void handlePublish(artifact)
-              }}
-            />
-          </div>
-        )}
+        <div className="h-full overflow-auto" data-admin-page-scroll>
+          <ArtifactListView
+            loading={loading}
+            artifacts={artifacts}
+            publishingId={publishingId}
+            onEditArtifact={(artifact) => {
+              markNextEditorEntryShouldAutoCollapseSidebar()
+              router.push(buildArtifactDetailHref(artifact.id))
+            }}
+            onDuplicateArtifact={(artifact) => {
+              void handleDuplicate(artifact)
+            }}
+            onDeleteArtifact={(artifact) => {
+              void handleDelete(artifact)
+            }}
+            onPublishArtifact={(artifact) => {
+              void handlePublish(artifact)
+            }}
+          />
+        </div>
       </div>
     </div>
   )

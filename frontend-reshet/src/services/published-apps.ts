@@ -20,6 +20,7 @@ export interface PublishedApp {
   auth_providers: PublishedAppAuthProvider[];
   auth_template_key: string;
   template_key: string;
+  default_policy_set_id?: string | null;
   current_draft_revision_id?: string | null;
   current_published_revision_id?: string | null;
   published_url?: string | null;
