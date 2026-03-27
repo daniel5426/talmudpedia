@@ -3,6 +3,7 @@
 import type { ChangeEvent } from "react"
 import { useCallback, useMemo, useRef, useState } from "react"
 import { ArtifactCredentialCodeEditor } from "@/components/admin/artifacts/ArtifactCredentialCodeEditor"
+import { Skeleton } from "@/components/ui/skeleton"
 import { normalizeCredentialMentionLabels } from "@/lib/credential-mentions"
 import { cn } from "@/lib/utils"
 import { IntegrationCredential } from "@/services"
@@ -29,6 +30,7 @@ interface ArtifactWorkspaceEditorProps {
   language: ArtifactLanguage
   tenantSlug?: string
   dependencies?: string
+  loading?: boolean
   activeFilePath: string
   entryModulePath?: string
   onActiveFileChange: (path: string) => void
@@ -163,6 +165,7 @@ export function ArtifactWorkspaceEditor({
   language,
   tenantSlug,
   dependencies,
+  loading = false,
   activeFilePath,
   entryModulePath,
   onActiveFileChange,
@@ -248,6 +251,7 @@ export function ArtifactWorkspaceEditor({
   /* ================================================================ */
 
   const updateActiveContent = (nextContent: string) => {
+    if (loading) return
     onSourceFilesChange(
       sourceFiles.map((f) =>
         f.path === (activeFile?.path ?? activeFilePath) ? { ...f, content: nextContent } : f
@@ -256,6 +260,7 @@ export function ArtifactWorkspaceEditor({
   }
 
   const handleAddFile = () => {
+    if (loading) return
     const path = nextAvailablePath(sourceFiles, "", language)
     onSourceFilesChange([
       ...sourceFiles,
@@ -272,6 +277,7 @@ export function ArtifactWorkspaceEditor({
   }
 
   const handleAddDir = useCallback(() => {
+    if (loading) return
     const dirName = nextAvailableDirPath(sourceFiles, "")
     const filePath = `${dirName}/.gitkeep`
     onSourceFilesChange([
@@ -280,9 +286,10 @@ export function ArtifactWorkspaceEditor({
     ])
     setExpandedDirs((prev) => (prev.includes(dirName) ? prev : [...prev, dirName]))
     if (!isTreeOpen) setIsTreeOpen(true)
-  }, [sourceFiles, onSourceFilesChange, isTreeOpen, setIsTreeOpen])
+  }, [isTreeOpen, loading, onSourceFilesChange, setIsTreeOpen, sourceFiles])
 
   const handleImportFiles = useCallback(async (event: ChangeEvent<HTMLInputElement>) => {
+    if (loading) return
     const selectedFiles = Array.from(event.target.files || [])
     if (selectedFiles.length === 0) return
 
@@ -317,9 +324,10 @@ export function ArtifactWorkspaceEditor({
     }
     if (!isTreeOpen) setIsTreeOpen(true)
     event.target.value = ""
-  }, [activeFilePath, isTreeOpen, onSourceFilesChange, setIsTreeOpen, sourceFiles])
+  }, [activeFilePath, isTreeOpen, loading, onSourceFilesChange, setIsTreeOpen, sourceFiles])
 
   const handleDeleteFile = (path: string) => {
+    if (loading) return
     if (path === entryModulePath || sourceFiles.length <= 1) return
     const next = sourceFiles.filter((f) => f.path !== path)
     onSourceFilesChange(next)
@@ -329,6 +337,7 @@ export function ArtifactWorkspaceEditor({
   }
 
   const handleCloseTab = (path: string) => {
+    if (loading) return
     if (path === entryModulePath) return
     const next = openTabs.filter((p) => p !== path)
     if (next.length === 0) return
@@ -341,6 +350,7 @@ export function ArtifactWorkspaceEditor({
   }
 
   const toggleDir = (path: string) => {
+    if (loading) return
     setExpandedDirs((cur) =>
       cur.includes(path) ? cur.filter((v) => v !== path) : [...cur, path]
     )
@@ -348,6 +358,7 @@ export function ArtifactWorkspaceEditor({
 
   /* ---- sidebar resize via border ---- */
   const handleSidebarBorderPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (loading) return
     e.preventDefault()
     e.stopPropagation()
     isResizingSidebar.current = true
@@ -360,7 +371,7 @@ export function ArtifactWorkspaceEditor({
   }
 
   const handleSidebarBorderPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (!resizeSidebarStart.current) return
+    if (loading || !resizeSidebarStart.current) return
     const delta = e.clientX - resizeSidebarStart.current.x
     if (Math.abs(delta) > 3) didDragSidebar.current = true
     const raw = resizeSidebarStart.current.w + delta
@@ -375,7 +386,7 @@ export function ArtifactWorkspaceEditor({
   }
 
   const handleSidebarBorderPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (!resizeSidebarStart.current) return
+    if (loading || !resizeSidebarStart.current) return
     const wasClick = !didDragSidebar.current
     resizeSidebarStart.current = null
     isResizingSidebar.current = false
@@ -399,18 +410,21 @@ export function ArtifactWorkspaceEditor({
 
   /* ---- tab drag-and-drop ---- */
   const handleTabDragStart = (e: React.DragEvent, path: string) => {
+    if (loading) return
     setDraggingTab(path)
     e.dataTransfer.effectAllowed = "move"
     e.dataTransfer.setData("text/plain", path)
   }
 
   const handleTabDragOver = (e: React.DragEvent, index: number) => {
+    if (loading) return
     e.preventDefault()
     e.dataTransfer.dropEffect = "move"
     setTabDropIndex(index)
   }
 
   const handleTabDrop = (e: React.DragEvent, dropIdx: number) => {
+    if (loading) return
     e.preventDefault()
     if (draggingTab === null) return
     setOpenTabs((prev) => {
@@ -422,6 +436,7 @@ export function ArtifactWorkspaceEditor({
       next.splice(adjustedIdx, 0, draggingTab)
       return next
     })
+    if (loading) return
     setDraggingTab(null)
     setTabDropIndex(null)
   }
@@ -433,7 +448,7 @@ export function ArtifactWorkspaceEditor({
 
   /* ---- file-tree drag-and-drop ---- */
   const handleNodeDragStart = (e: React.DragEvent, path: string) => {
-    if (path === entryModulePath) {
+    if (loading || path === entryModulePath) {
       e.preventDefault()
       return
     }
@@ -443,6 +458,7 @@ export function ArtifactWorkspaceEditor({
   }
 
   const handleDirDragOver = (e: React.DragEvent, dirPath: string) => {
+    if (loading) return
     e.preventDefault()
     e.stopPropagation()
     e.dataTransfer.dropEffect = "move"
@@ -450,6 +466,7 @@ export function ArtifactWorkspaceEditor({
   }
 
   const handleRootDragOver = (e: React.DragEvent) => {
+    if (loading) return
     e.preventDefault()
     e.dataTransfer.dropEffect = "move"
     setDropTargetDir("__root__")
@@ -458,7 +475,7 @@ export function ArtifactWorkspaceEditor({
   const handleDirDrop = (e: React.DragEvent, targetDir: string) => {
     e.preventDefault()
     e.stopPropagation()
-    if (!draggingNode) return
+    if (loading || !draggingNode) return
     const actualTarget = targetDir === "__root__" ? "" : targetDir
 
     // Determine if we're dragging a file or directory
@@ -493,6 +510,7 @@ export function ArtifactWorkspaceEditor({
       }
     }
 
+    if (loading) return
     setDraggingNode(null)
     setDropTargetDir(null)
   }
@@ -675,6 +693,7 @@ export function ArtifactWorkspaceEditor({
                     palette.buttonHover
                   )}
                   onClick={handleAddFile}
+                  disabled={loading}
                   title="New file"
                 >
                   <FilePlus2 className="h-[14px] w-[14px]" />
@@ -687,6 +706,7 @@ export function ArtifactWorkspaceEditor({
                     palette.buttonHover
                   )}
                   onClick={() => importInputRef.current?.click()}
+                  disabled={loading}
                   title="Import files"
                 >
                   <Upload className="h-[14px] w-[14px]" />
@@ -699,6 +719,7 @@ export function ArtifactWorkspaceEditor({
                     palette.buttonHover
                   )}
                   onClick={handleAddDir}
+                  disabled={loading}
                   title="New folder"
                 >
                   <FolderPlus className="h-[14px] w-[14px]" />
@@ -708,32 +729,45 @@ export function ArtifactWorkspaceEditor({
 
             {/* File tree */}
             <div className="flex-1 overflow-y-auto overflow-x-hidden py-0.5">
-              <div
-                className={cn(
-                  "group flex h-[22px] items-center transition-colors duration-75",
-                  activeFilePath === "__CONFIG__" && palette.activeRow
-                )}
-              >
-                <button
-                  type="button"
-                  className={cn(
-                    "flex min-w-0 flex-1 items-center gap-1 text-left text-[13px]",
-                    activeFilePath !== "__CONFIG__" && palette.rowHover,
-                    palette.text
-                  )}
-                  style={{ paddingLeft: `10px` }}
-                  onClick={() => {
-                    activatePath("__CONFIG__")
-                    setOpenTabs((prev) =>
-                      prev.includes("__CONFIG__") ? prev : [...prev, "__CONFIG__"]
-                    )
-                  }}
-                >
-                  <Settings2 className="h-[14px] w-[14px] shrink-0 text-muted-foreground" />
-                  <span className="truncate pl-0.5">Configuration</span>
-                </button>
-              </div>
-              {tree.map((node) => renderNode(node, 0))}
+              {loading ? (
+                <div className="space-y-1 px-2 py-2">
+                  {Array.from({ length: 4 }).map((_, index) => (
+                    <div key={index} className="flex h-[22px] items-center gap-2 rounded-sm px-2">
+                      <Skeleton className="h-3.5 w-3.5 rounded-sm" />
+                      <Skeleton className="h-3 w-28 rounded-sm" />
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <>
+                  <div
+                    className={cn(
+                      "group flex h-[22px] items-center transition-colors duration-75",
+                      activeFilePath === "__CONFIG__" && palette.activeRow
+                    )}
+                  >
+                    <button
+                      type="button"
+                      className={cn(
+                        "flex min-w-0 flex-1 items-center gap-1 text-left text-[13px]",
+                        activeFilePath !== "__CONFIG__" && palette.rowHover,
+                        palette.text
+                      )}
+                      style={{ paddingLeft: `10px` }}
+                      onClick={() => {
+                        activatePath("__CONFIG__")
+                        setOpenTabs((prev) =>
+                          prev.includes("__CONFIG__") ? prev : [...prev, "__CONFIG__"]
+                        )
+                      }}
+                    >
+                      <Settings2 className="h-[14px] w-[14px] shrink-0 text-muted-foreground" />
+                      <span className="truncate pl-0.5">Configuration</span>
+                    </button>
+                  </div>
+                  {tree.map((node) => renderNode(node, 0))}
+                </>
+              )}
             </div>
           </div>
         )}
@@ -798,7 +832,10 @@ export function ArtifactWorkspaceEditor({
                           }
                         : {}),
                     }}
-                    onClick={() => activatePath("__CONFIG__")}
+                    onClick={() => {
+                      if (loading) return
+                      activatePath("__CONFIG__")
+                    }}
                   >
                     <Settings2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                     <span className="truncate">Configuration</span>
@@ -855,7 +892,10 @@ export function ArtifactWorkspaceEditor({
                         }
                       : {}),
                   }}
-                  onClick={() => activatePath(file.path)}
+                  onClick={() => {
+                    if (loading) return
+                    activatePath(file.path)
+                  }}
                 >
                   <FileCode2 className="h-3.5 w-3.5 shrink-0 text-[#519aba]" />
                   <span className="truncate">{file.path.split("/").pop()}</span>
@@ -907,7 +947,9 @@ export function ArtifactWorkspaceEditor({
 
         {/* Editor */}
         <div className="min-h-0 flex-1 flex flex-col pt-1">
-          {activeFilePath === "__CONFIG__" ? (
+          {loading ? (
+            <div className="flex-1 bg-background" />
+          ) : activeFilePath === "__CONFIG__" ? (
             <div 
                className="flex-1 overflow-auto bg-background"
                onScroll={(e) => setIsScrolled(e.currentTarget.scrollTop > 0)}

@@ -44,6 +44,7 @@ import type { ArtifactCodingPendingQuestion } from "./stream-parsers";
 type ArtifactCodingChatPanelProps = {
   isOpen: boolean;
   layoutMode?: "sidebar" | "playground";
+  controlsDisabled?: boolean;
   isSending: boolean;
   isStopping: boolean;
   timeline: TimelineItem[];
@@ -74,6 +75,7 @@ type ArtifactCodingChatPanelProps = {
 export function ArtifactCodingChatPanel({
   isOpen,
   layoutMode = "sidebar",
+  controlsDisabled = false,
   isSending,
   isStopping,
   timeline,
@@ -198,13 +200,14 @@ export function ArtifactCodingChatPanel({
           {activeSessionIsRunning ? <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-blue-500" /> : null}
         </div>
         <div className="flex mr-1 mb-2 border rounded-md items-center gap-1">
-        <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-foreground" onClick={onStartNewChat} aria-label="Create new chat">
+        <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-foreground" onClick={onStartNewChat} aria-label="Create new chat" disabled={controlsDisabled}>
           <Plus className="h-3.5 w-3.5" />
         </Button>
         <Button
           variant="ghost"
           size="icon"
           className="h-6 w-6 text-muted-foreground hover:text-foreground"
+          disabled={controlsDisabled}
           onClick={() => {
             onOpenHistory();
             setIsHistoryOpen(true);
@@ -256,13 +259,13 @@ export function ArtifactCodingChatPanel({
               <PromptInputTextarea
                 placeholder="Ask the artifact agent to edit this artifact"
                 className="min-h-15 max-h-40 bg-transparent px-3 pt-2.5 text-sm"
-                disabled={isAnsweringQuestion}
+                disabled={controlsDisabled || isAnsweringQuestion}
               />
             </PromptInputBody>
             <PromptInputFooter className="justify-between px-2 pb-1.5 pt-0">
               <ModelSelector open={isModelSelectorOpen} onOpenChange={onModelSelectorOpenChange}>
                 <ModelSelectorTrigger asChild>
-                  <Button type="button" variant="ghost" size="sm" className="h-6 px-2 text-[11px] text-muted-foreground hover:text-foreground">
+                  <Button type="button" variant="ghost" size="sm" className="h-6 px-2 text-[11px] text-muted-foreground hover:text-foreground" disabled={controlsDisabled}>
                     {selectedRunModelLabel}
                   </Button>
                 </ModelSelectorTrigger>
@@ -288,11 +291,11 @@ export function ArtifactCodingChatPanel({
                 </ModelSelectorContent>
               </ModelSelector>
               {isSending ? (
-                <Button type="button" size="icon" variant="ghost" className="h-6 w-6 text-muted-foreground hover:text-foreground" onClick={onStopRun} aria-label={isStopping ? "Stopping" : "Stop"}>
+                <Button type="button" size="icon" variant="ghost" className="h-6 w-6 text-muted-foreground hover:text-foreground" onClick={onStopRun} aria-label={isStopping ? "Stopping" : "Stop"} disabled={controlsDisabled}>
                   <Square className="h-3 w-3 fill-current" />
                 </Button>
               ) : (
-                <PromptInputSubmit size="icon-sm" variant="ghost" className="h-6 w-6 text-muted-foreground hover:text-foreground" aria-label="Send" disabled={isAnsweringQuestion} />
+                <PromptInputSubmit size="icon-sm" variant="ghost" className="h-6 w-6 text-muted-foreground hover:text-foreground" aria-label="Send" disabled={controlsDisabled || isAnsweringQuestion} />
               )}
             </PromptInputFooter>
           </PromptInput>

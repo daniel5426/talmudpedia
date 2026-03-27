@@ -37,6 +37,7 @@ interface ArtifactTestPanelProps {
   artifactId?: string
   sourceFiles?: ArtifactSourceFile[]
   entryModulePath?: string
+  controlsDisabled?: boolean
   language: ArtifactLanguage
   kind: ArtifactKind
   runtimeTarget: string
@@ -93,6 +94,7 @@ export function ArtifactTestPanel({
   artifactId,
   sourceFiles,
   entryModulePath,
+  controlsDisabled = false,
   language,
   kind,
   runtimeTarget,
@@ -417,7 +419,7 @@ export function ArtifactTestPanel({
               e.stopPropagation()
               handleTestRun()
             }}
-            disabled={isTesting}
+            disabled={controlsDisabled || isTesting}
             className="h-7 w-7 shrink-0 border-none"
             aria-label="Execute artifact test run"
             title="Execute"

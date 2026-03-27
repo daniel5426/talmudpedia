@@ -8,7 +8,6 @@ import { useTenant } from "@/contexts/TenantContext"
 import { useSidebar } from "@/components/ui/sidebar"
 import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Skeleton } from "@/components/ui/skeleton"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { fillPromptMentionJsonToken } from "@/components/shared/PromptMentionJsonEditor"
 import { PromptModal } from "@/components/shared/PromptModal"
@@ -64,75 +63,6 @@ function getDefaultActiveFilePath(formData: ArtifactFormData): string {
 
 function createArtifactChatDraftKey(): string {
   return crypto.randomUUID()
-}
-
-function ArtifactEditorSkeleton({ showAgentPanel }: { showAgentPanel: boolean }) {
-  return (
-    <div className="relative flex min-h-0 w-full flex-1 overflow-hidden">
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-        <div className="flex min-h-0 flex-1 overflow-hidden bg-background">
-          <aside className="hidden w-[248px] shrink-0 border-r bg-sidebar lg:flex lg:flex-col">
-            <div className="flex h-11 items-center justify-between border-b px-4">
-              <Skeleton className="h-4 w-24" />
-              <Skeleton className="h-6 w-16 rounded-md" />
-            </div>
-            <div className="space-y-3 p-4">
-              <Skeleton className="h-3 w-28" />
-              {Array.from({ length: 7 }).map((_, index) => (
-                <div key={index} className="flex items-center gap-3 rounded-md px-2 py-2">
-                  <Skeleton className="h-4 w-4 rounded-sm" />
-                  <Skeleton className="h-4 flex-1" />
-                </div>
-              ))}
-            </div>
-          </aside>
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-            <div className="flex h-11 items-center gap-2 border-b bg-muted/25 px-3">
-              <Skeleton className="h-7 w-28 rounded-md" />
-              <Skeleton className="h-7 w-24 rounded-md" />
-              <Skeleton className="h-7 w-24 rounded-md" />
-            </div>
-            <div className="flex-1 bg-background p-4">
-              <div className="h-full rounded-lg border bg-muted/15 p-5">
-                <div className="space-y-4">
-                  {Array.from({ length: 14 }).map((_, index) => (
-                    <Skeleton
-                      key={index}
-                      className="h-4 rounded-sm"
-                      style={{ width: `${index % 4 === 0 ? 68 : index % 4 === 1 ? 54 : index % 4 === 2 ? 82 : 46}%` }}
-                    />
-                  ))}
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-      {showAgentPanel ? (
-        <>
-          <div
-            className="w-[1.5px] shrink-0 bg-gradient-to-b from-transparent via-primary to-transparent"
-            style={{ opacity: 0.16, height: "calc(100% - 50px)" }}
-          />
-          <aside className="hidden w-[360px] shrink-0 border-l bg-background xl:flex xl:flex-col">
-            <div className="flex h-12 items-center justify-between border-b px-4">
-              <Skeleton className="h-4 w-28" />
-              <Skeleton className="h-8 w-8 rounded-md" />
-            </div>
-            <div className="space-y-4 p-4">
-              {Array.from({ length: 4 }).map((_, index) => (
-                <div key={index} className="space-y-2 rounded-xl border p-3">
-                  <Skeleton className="h-4 w-24" />
-                  <Skeleton className="h-3 w-full" />
-                  <Skeleton className="h-3 w-[85%]" />
-                </div>
-              ))}
-            </div>
-          </aside>
-        </>
-      ) : null}
-    </div>
-  )
 }
 
 export function ArtifactEditorScreen({
@@ -550,6 +480,7 @@ export function ArtifactEditorScreen({
         language={formData.language}
         tenantSlug={currentTenant?.slug}
         dependencies={formData.dependencies}
+        loading={loading}
         sourceFiles={formData.source_files}
         activeFilePath={activeFilePath}
         entryModulePath={formData.entry_module_path}
@@ -577,45 +508,6 @@ export function ArtifactEditorScreen({
       />
     </div>
   )
-
-  if (loading) {
-    return (
-      <div className="flex h-full w-full min-w-0 flex-col overflow-hidden">
-        <ArtifactEditorHeader
-          viewMode={viewMode}
-          displayName={mode === "edit" ? "Edit Artifact" : "New Artifact"}
-          controlsDisabled
-          sidebarOpen={sidebarOpen}
-          isAgentPanelOpen={artifactCodingChat.isAgentPanelOpen}
-          isPublishing={false}
-          isPublished={false}
-          isSaving={false}
-          disableSave
-          showPublish={false}
-          showVersions={false}
-          versionsOpen={false}
-          artifactVersions={[]}
-          versionsLoading={false}
-          applyingRevisionId={null}
-          hasUnsavedChanges={false}
-          onRefreshArtifacts={() => {}}
-          onCreateArtifact={(kind, language) => {
-            router.push(buildArtifactNewHref({ kind, language }))
-          }}
-          onToggleSidebar={() => {}}
-          onToggleAgentPanel={() => {}}
-          onVersionsOpenChange={() => {}}
-          onSelectVersion={() => {}}
-          onPublish={() => {}}
-          onRunTest={() => {}}
-          onSave={() => {}}
-        />
-        <div className="flex min-h-0 w-full flex-1 flex-col overflow-hidden">
-          <ArtifactEditorSkeleton showAgentPanel={artifactCodingChat.isAgentPanelOpen} />
-        </div>
-      </div>
-    )
-  }
 
   return (
     <div className="flex h-full w-full min-w-0 flex-col overflow-hidden">
@@ -646,8 +538,8 @@ export function ArtifactEditorScreen({
       </Dialog>
       <ArtifactEditorHeader
         viewMode={viewMode}
-        displayName={formData.display_name}
-        controlsDisabled={false}
+        displayName={loading ? (mode === "edit" ? "Edit Artifact" : "New Artifact") : formData.display_name}
+        controlsDisabled={loading}
         sidebarOpen={sidebarOpen}
         isAgentPanelOpen={artifactCodingChat.isAgentPanelOpen}
         isPublishing={publishingId === selectedArtifact?.id}
@@ -688,6 +580,7 @@ export function ArtifactEditorScreen({
             <ArtifactTestPanel
               tenantSlug={currentTenant?.slug}
               artifactId={selectedArtifact?.id}
+              controlsDisabled={loading}
               sourceFiles={formData.source_files}
               entryModulePath={formData.entry_module_path}
               language={formData.language}
@@ -709,6 +602,7 @@ export function ArtifactEditorScreen({
           ) : null}
           <ArtifactCodingChatPanel
             isOpen={artifactCodingChat.isAgentPanelOpen}
+            controlsDisabled={loading}
             isSending={artifactCodingChat.isSending}
             isStopping={artifactCodingChat.isStopping}
             timeline={artifactCodingChat.timeline}
