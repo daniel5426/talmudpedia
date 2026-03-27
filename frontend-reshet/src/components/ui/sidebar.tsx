@@ -32,6 +32,13 @@ const SIDEBAR_WIDTH_MOBILE = "18rem"
 const SIDEBAR_WIDTH_ICON = "3rem"
 const SIDEBAR_KEYBOARD_SHORTCUT = "b"
 
+function readSidebarCookie(defaultOpen: boolean): boolean {
+  if (typeof document === "undefined") return defaultOpen
+  const match = document.cookie.match(new RegExp(`(?:^|; )${SIDEBAR_COOKIE_NAME}=([^;]+)`))
+  if (!match) return defaultOpen
+  return match[1] === "true"
+}
+
 type SidebarContextProps = {
   state: "expanded" | "collapsed"
   open: boolean
@@ -71,7 +78,7 @@ function SidebarProvider({
 
   // This is the internal state of the sidebar.
   // We use openProp and setOpenProp for control from outside the component.
-  const [_open, _setOpen] = React.useState(defaultOpen)
+  const [_open, _setOpen] = React.useState(() => readSidebarCookie(defaultOpen))
   const open = openProp ?? _open
   const setOpen = React.useCallback(
     (value: boolean | ((value: boolean) => boolean)) => {
@@ -94,6 +101,11 @@ function SidebarProvider({
   }, [isMobile, setOpen, setOpenMobile])
 
   // Adds a keyboard shortcut to toggle the sidebar.
+  React.useEffect(() => {
+    if (setOpenProp) return
+    _setOpen(readSidebarCookie(defaultOpen))
+  }, [defaultOpen, setOpenProp])
+
   React.useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (

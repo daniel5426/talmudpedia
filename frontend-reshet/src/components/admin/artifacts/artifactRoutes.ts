@@ -1,6 +1,7 @@
 import type { ArtifactKind, ArtifactLanguage } from "@/services/artifacts"
 
 export const CREATE_DRAFT_KEY_QUERY_PARAM = "draftKey"
+export const ARTIFACT_EDITOR_AUTO_COLLAPSE_APP_SIDEBAR_KEY = "artifact-editor:auto-collapse-app-sidebar"
 
 type ArtifactNewRouteOptions = {
   kind?: ArtifactKind

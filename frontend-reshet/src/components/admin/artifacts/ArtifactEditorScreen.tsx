@@ -44,7 +44,11 @@ import {
   serializeArtifactFormData,
   tryParseObject,
 } from "@/components/admin/artifacts/artifactPageUtils"
-import { buildArtifactDetailHref, buildArtifactNewHref } from "@/components/admin/artifacts/artifactRoutes"
+import {
+  ARTIFACT_EDITOR_AUTO_COLLAPSE_APP_SIDEBAR_KEY,
+  buildArtifactDetailHref,
+  buildArtifactNewHref,
+} from "@/components/admin/artifacts/artifactRoutes"
 
 type ArtifactEditorScreenProps = {
   mode: "create" | "edit"
@@ -66,7 +70,7 @@ function ArtifactEditorSkeleton({ showAgentPanel }: { showAgentPanel: boolean })
   return (
     <div className="relative flex min-h-0 w-full flex-1 overflow-hidden">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-        <div className="flex min-h-0 flex-1 overflow-hidden border-b bg-background">
+        <div className="flex min-h-0 flex-1 overflow-hidden bg-background">
           <aside className="hidden w-[248px] shrink-0 border-r bg-sidebar lg:flex lg:flex-col">
             <div className="flex h-11 items-center justify-between border-b px-4">
               <Skeleton className="h-4 w-24" />
@@ -99,31 +103,6 @@ function ArtifactEditorSkeleton({ showAgentPanel }: { showAgentPanel: boolean })
                     />
                   ))}
                 </div>
-              </div>
-            </div>
-          </div>
-        </div>
-        <div className="shrink-0 border-t bg-background">
-          <div className="flex h-10 items-center gap-2 border-b px-3">
-            <Skeleton className="h-7 w-28 rounded-md" />
-            <Skeleton className="h-7 w-24 rounded-md" />
-            <Skeleton className="h-7 w-28 rounded-md" />
-            <Skeleton className="h-7 w-36 rounded-md" />
-          </div>
-          <div className="grid h-56 grid-cols-[minmax(0,1fr)_320px] gap-0">
-            <div className="border-r p-4">
-              <div className="space-y-3">
-                <Skeleton className="h-4 w-40" />
-                <Skeleton className="h-4 w-full" />
-                <Skeleton className="h-4 w-[88%]" />
-                <Skeleton className="h-4 w-[72%]" />
-              </div>
-            </div>
-            <div className="p-4">
-              <div className="space-y-3">
-                <Skeleton className="h-4 w-32" />
-                <Skeleton className="h-10 w-full rounded-md" />
-                <Skeleton className="h-10 w-full rounded-md" />
               </div>
             </div>
           </div>
@@ -191,6 +170,10 @@ export function ArtifactEditorScreen({
   const viewMode = mode
 
   const collapseAppSidebarOnEnter = useEffectEvent(() => {
+    if (typeof window === "undefined") return
+    const shouldAutoCollapse = window.sessionStorage.getItem(ARTIFACT_EDITOR_AUTO_COLLAPSE_APP_SIDEBAR_KEY) === "1"
+    window.sessionStorage.removeItem(ARTIFACT_EDITOR_AUTO_COLLAPSE_APP_SIDEBAR_KEY)
+    if (!shouldAutoCollapse) return
     if (isMobile) {
       setAppSidebarOpenMobile(false)
       return

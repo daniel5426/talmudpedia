@@ -4,10 +4,15 @@ import { useCallback, useEffect, useMemo, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 
 import { useTenant } from "@/contexts/TenantContext"
+import { useSidebar } from "@/components/ui/sidebar"
 import { Skeleton } from "@/components/ui/skeleton"
 import { ArtifactEditorHeader } from "@/components/admin/artifacts/ArtifactEditorHeader"
 import { ArtifactListView } from "@/components/admin/artifacts/ArtifactListView"
-import { buildArtifactDetailHref, buildArtifactNewHref } from "@/components/admin/artifacts/artifactRoutes"
+import {
+  ARTIFACT_EDITOR_AUTO_COLLAPSE_APP_SIDEBAR_KEY,
+  buildArtifactDetailHref,
+  buildArtifactNewHref,
+} from "@/components/admin/artifacts/artifactRoutes"
 import { artifactsService, type Artifact, type ArtifactKind, type ArtifactLanguage } from "@/services/artifacts"
 
 function ArtifactListSkeleton() {
@@ -51,6 +56,7 @@ function ArtifactListSkeleton() {
 
 export default function ArtifactsPage() {
   const { currentTenant } = useTenant()
+  const { open: appSidebarOpen, openMobile: appSidebarOpenMobile, isMobile } = useSidebar()
   const router = useRouter()
   const searchParams = useSearchParams()
 
@@ -67,6 +73,13 @@ export default function ArtifactsPage() {
     () => legacyMode === "edit" || legacyMode === "create",
     [legacyMode],
   )
+
+  const markNextEditorEntryShouldAutoCollapseSidebar = useCallback(() => {
+    if (typeof window === "undefined") return
+    const shouldAutoCollapse = isMobile ? appSidebarOpenMobile : appSidebarOpen
+    if (!shouldAutoCollapse) return
+    window.sessionStorage.setItem(ARTIFACT_EDITOR_AUTO_COLLAPSE_APP_SIDEBAR_KEY, "1")
+  }, [appSidebarOpen, appSidebarOpenMobile, isMobile])
 
   const fetchArtifacts = useCallback(async () => {
     setLoading(true)
@@ -99,19 +112,21 @@ export default function ArtifactsPage() {
   }, [legacyArtifactId, legacyDraftKey, legacyKind, legacyLanguage, legacyMode, router])
 
   const handleCreateArtifact = useCallback((kind: ArtifactKind, language: ArtifactLanguage) => {
+    markNextEditorEntryShouldAutoCollapseSidebar()
     router.push(buildArtifactNewHref({ kind, language }))
-  }, [router])
+  }, [markNextEditorEntryShouldAutoCollapseSidebar, router])
 
   const handleDuplicate = useCallback(async (artifact: Artifact) => {
     try {
       const duplicated = await artifactsService.duplicate(artifact.id, currentTenant?.slug)
       await fetchArtifacts()
+      markNextEditorEntryShouldAutoCollapseSidebar()
       router.push(buildArtifactDetailHref(duplicated.id))
     } catch (error) {
       console.error("Failed to duplicate artifact", error)
       alert(error instanceof Error ? error.message : "Failed to duplicate artifact")
     }
-  }, [currentTenant?.slug, fetchArtifacts, router])
+  }, [currentTenant?.slug, fetchArtifacts, markNextEditorEntryShouldAutoCollapseSidebar, router])
 
   const handleDelete = useCallback(async (artifact: Artifact) => {
     if (!confirm(`Delete "${artifact.display_name}"?`)) return
@@ -214,7 +229,10 @@ export default function ArtifactsPage() {
             <ArtifactListView
               artifacts={artifacts}
               publishingId={publishingId}
-              onEditArtifact={(artifact) => router.push(buildArtifactDetailHref(artifact.id))}
+              onEditArtifact={(artifact) => {
+                markNextEditorEntryShouldAutoCollapseSidebar()
+                router.push(buildArtifactDetailHref(artifact.id))
+              }}
               onDuplicateArtifact={(artifact) => {
                 void handleDuplicate(artifact)
               }}
