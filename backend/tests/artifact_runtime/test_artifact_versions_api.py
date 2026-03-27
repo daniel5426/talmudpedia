@@ -289,3 +289,57 @@ async def test_artifact_versions_list_excludes_detail_only_fields(client, db_ses
         assert "tool_contract" not in versions[0]
     finally:
         app.dependency_overrides.pop(get_current_principal, None)
+
+
+@pytest.mark.asyncio
+async def test_update_artifact_returns_clean_python_syntax_error(client, db_session):
+    tenant, user = await _seed_tenant_context(db_session)
+    app.dependency_overrides[get_current_principal] = _override_principal(tenant.id, user)
+
+    try:
+        create_response = await client.post(
+            f"/admin/artifacts?tenant_slug={tenant.slug}",
+            json={
+                "display_name": "Syntax Error Save",
+                "description": "save validation boundary",
+                "kind": "tool_impl",
+                "runtime": {
+                    "source_files": [{"path": "main.py", "content": "def execute(inputs, config, context):\n    return {'ok': True}\n"}],
+                    "entry_module_path": "main.py",
+                    "python_dependencies": [],
+                    "runtime_target": "cloudflare_workers",
+                },
+                "config_schema": {"type": "object"},
+                "capabilities": {"network_access": False},
+                "tool_contract": {
+                    "input_schema": {"type": "object"},
+                    "output_schema": {"type": "object"},
+                    "side_effects": [],
+                    "execution_mode": "interactive",
+                    "tool_ui": {},
+                },
+            },
+        )
+        assert create_response.status_code == 200, create_response.text
+        artifact = create_response.json()
+
+        update_response = await client.put(
+            f"/admin/artifacts/{artifact['id']}?tenant_slug={tenant.slug}",
+            json={
+                "runtime": {
+                    "source_files": [
+                        {
+                            "path": "main.py",
+                            "content": "export async function execute(inputs, config, context) { return { ok: true }; }\n",
+                        }
+                    ],
+                    "entry_module_path": "main.py",
+                    "python_dependencies": [],
+                    "runtime_target": "cloudflare_workers",
+                },
+            },
+        )
+        assert update_response.status_code == 400, update_response.text
+        assert update_response.json()["detail"] == "Invalid Python source in `main.py`: invalid syntax"
+    finally:
+        app.dependency_overrides.pop(get_current_principal, None)

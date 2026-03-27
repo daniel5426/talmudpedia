@@ -517,24 +517,27 @@ async def create_artifact_draft(
     tenant, user, db = artifact_ctx
     if tenant is None:
         raise HTTPException(status_code=400, detail="Tenant context required")
-    artifact = await ArtifactRevisionService(db).create_artifact(
-        tenant_id=tenant.id,
-        created_by=user.id if user else None,
-        display_name=request.display_name,
-        description=request.description,
-        kind=request.kind.value,
-        owner_type=ArtifactOwnerType.TENANT.value,
-        source_files=[_model_dump(item) for item in request.runtime.source_files],
-        entry_module_path=request.runtime.entry_module_path,
-        language=getattr(request.runtime.language, "value", request.runtime.language),
-        dependencies=list(request.runtime.dependencies or []),
-        runtime_target=request.runtime.runtime_target,
-        capabilities=_model_dump(request.capabilities),
-        config_schema=dict(request.config_schema or {}),
-        agent_contract=_model_dump(request.agent_contract) if request.agent_contract is not None else None,
-        rag_contract=_model_dump(request.rag_contract) if request.rag_contract is not None else None,
-        tool_contract=_model_dump(request.tool_contract) if request.tool_contract is not None else None,
-    )
+    try:
+        artifact = await ArtifactRevisionService(db).create_artifact(
+            tenant_id=tenant.id,
+            created_by=user.id if user else None,
+            display_name=request.display_name,
+            description=request.description,
+            kind=request.kind.value,
+            owner_type=ArtifactOwnerType.TENANT.value,
+            source_files=[_model_dump(item) for item in request.runtime.source_files],
+            entry_module_path=request.runtime.entry_module_path,
+            language=getattr(request.runtime.language, "value", request.runtime.language),
+            dependencies=list(request.runtime.dependencies or []),
+            runtime_target=request.runtime.runtime_target,
+            capabilities=_model_dump(request.capabilities),
+            config_schema=dict(request.config_schema or {}),
+            agent_contract=_model_dump(request.agent_contract) if request.agent_contract is not None else None,
+            rag_contract=_model_dump(request.rag_contract) if request.rag_contract is not None else None,
+            tool_contract=_model_dump(request.tool_contract) if request.tool_contract is not None else None,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     try:
         await ToolBindingService(db).sync_artifact_tool_binding(artifact)
     except ValueError as exc:
@@ -566,22 +569,25 @@ async def update_artifact(
         raise HTTPException(status_code=409, detail="Artifact is missing a current revision")
     payload = _model_dump(update_data, exclude_unset=True)
     runtime = payload.get("runtime") or {}
-    await ArtifactRevisionService(db).update_artifact(
-        artifact,
-        updated_by=user.id if user else None,
-        display_name=payload.get("display_name", artifact.display_name),
-        description=payload.get("description", artifact.description),
-        source_files=runtime.get("source_files", current_revision.source_files),
-        entry_module_path=runtime.get("entry_module_path", current_revision.entry_module_path),
-        language=str(runtime.get("language", getattr(current_revision.language, "value", current_revision.language) or "python")),
-        dependencies=list(runtime.get("dependencies", current_revision.python_dependencies or [])),
-        runtime_target=runtime.get("runtime_target", current_revision.runtime_target),
-        capabilities=dict(payload.get("capabilities", current_revision.capabilities or {})),
-        config_schema=dict(payload.get("config_schema", current_revision.config_schema or {})),
-        agent_contract=payload.get("agent_contract", dict(current_revision.agent_contract or {}) if current_revision.agent_contract is not None else None),
-        rag_contract=payload.get("rag_contract", dict(current_revision.rag_contract or {}) if current_revision.rag_contract is not None else None),
-        tool_contract=payload.get("tool_contract", dict(current_revision.tool_contract or {}) if current_revision.tool_contract is not None else None),
-    )
+    try:
+        await ArtifactRevisionService(db).update_artifact(
+            artifact,
+            updated_by=user.id if user else None,
+            display_name=payload.get("display_name", artifact.display_name),
+            description=payload.get("description", artifact.description),
+            source_files=runtime.get("source_files", current_revision.source_files),
+            entry_module_path=runtime.get("entry_module_path", current_revision.entry_module_path),
+            language=str(runtime.get("language", getattr(current_revision.language, "value", current_revision.language) or "python")),
+            dependencies=list(runtime.get("dependencies", current_revision.python_dependencies or [])),
+            runtime_target=runtime.get("runtime_target", current_revision.runtime_target),
+            capabilities=dict(payload.get("capabilities", current_revision.capabilities or {})),
+            config_schema=dict(payload.get("config_schema", current_revision.config_schema or {})),
+            agent_contract=payload.get("agent_contract", dict(current_revision.agent_contract or {}) if current_revision.agent_contract is not None else None),
+            rag_contract=payload.get("rag_contract", dict(current_revision.rag_contract or {}) if current_revision.rag_contract is not None else None),
+            tool_contract=payload.get("tool_contract", dict(current_revision.tool_contract or {}) if current_revision.tool_contract is not None else None),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     try:
         await ToolBindingService(db).sync_artifact_tool_binding(artifact)
     except ValueError as exc:
