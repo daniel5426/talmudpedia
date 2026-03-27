@@ -17,6 +17,7 @@ from app.services.artifact_coding_agent_tools import (
     get_session,
 )
 from app.services.artifact_runtime.execution_service import ArtifactExecutionService
+from app.services.artifact_runtime.policy_service import ArtifactRuntimePolicyService
 from app.services.artifact_runtime.run_service import ArtifactRunService
 from app.services.tool_function_registry import register_tool_function
 
@@ -142,6 +143,8 @@ async def artifact_coding_run_test(payload: Any) -> dict[str, Any]:
     config = tool_payload.get("config") if isinstance(tool_payload.get("config"), dict) else {}
     async with get_session() as db:
         session, shared_draft, run, artifact = await _resolve_session_context(db, tool_payload)
+        await ArtifactRuntimePolicyService(db).reconcile_stale_test_runs(tenant_id=session.tenant_id)
+        await db.flush()
         if shared_draft.last_test_run_id is not None:
             active_test_run = await db.get(ArtifactRun, shared_draft.last_test_run_id)
             if active_test_run is not None and active_test_run.status in NONTERMINAL_TEST_RUN_STATUSES:
@@ -175,6 +178,12 @@ async def artifact_coding_run_test(payload: Any) -> dict[str, Any]:
             agent_contract=test_payload["agent_contract"],
             rag_contract=test_payload["rag_contract"],
             tool_contract=test_payload["tool_contract"],
+            extra_context_payload={
+                "originating_agent_run_id": str(run.id),
+                "originating_surface": "artifact_coding_agent",
+                "artifact_coding_session_id": str(session.id),
+                "artifact_coding_shared_draft_id": str(shared_draft.id),
+            },
         )
         shared_draft.last_test_run_id = test_run.id
         await db.commit()

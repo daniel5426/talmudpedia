@@ -71,6 +71,7 @@ class ArtifactExecutionService:
         agent_contract: dict[str, Any] | None,
         rag_contract: dict[str, Any] | None,
         tool_contract: dict[str, Any] | None,
+        extra_context_payload: dict[str, Any] | None = None,
     ):
         artifact: Artifact | None = None
         revision = None
@@ -136,6 +137,7 @@ class ArtifactExecutionService:
                 "artifact_id": str(artifact.id) if artifact else None,
                 "revision_id": str(revision.id),
                 "domain": "test",
+                **dict(extra_context_payload or {}),
             },
         )
         await self._runs.add_events(

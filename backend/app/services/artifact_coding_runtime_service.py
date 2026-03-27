@@ -32,6 +32,7 @@ from app.services.artifact_coding_agent_tools import (
 )
 from app.services.artifact_coding_chat_history_service import ArtifactCodingChatHistoryService
 from app.services.artifact_coding_shared_draft_service import ArtifactCodingSharedDraftService
+from app.services.artifact_runtime.execution_service import ArtifactExecutionService
 from app.services.artifact_runtime.registry_service import ArtifactRegistryService
 from app.services.thread_service import ThreadService
 
@@ -440,6 +441,26 @@ class ArtifactCodingRuntimeService:
         session: ArtifactCodingSession,
         run: AgentRun,
     ) -> None:
+        run_status = str(getattr(run.status, "value", run.status) or "").strip().lower()
+        if run_status in {
+            RunStatus.completed.value,
+            RunStatus.failed.value,
+            RunStatus.cancelled.value,
+        }:
+            shared_draft = await self.shared_drafts.resolve_for_session(session=session)
+            if shared_draft.last_test_run_id is not None:
+                last_test_run = await self.db.get(ArtifactRun, shared_draft.last_test_run_id)
+                if last_test_run is not None:
+                    test_status = str(getattr(last_test_run.status, "value", last_test_run.status) or "").strip().lower()
+                    originating_agent_run_id = str((last_test_run.context_payload or {}).get("originating_agent_run_id") or "").strip()
+                    if (
+                        test_status in {"queued", "running", "cancel_requested"}
+                        and originating_agent_run_id == str(run.id)
+                    ):
+                        await ArtifactExecutionService(self.db).cancel_run(
+                            run_id=last_test_run.id,
+                            tenant_id=session.tenant_id,
+                        )
         await self.history.reconcile_session_run(session=session, run=run)
         await self.db.commit()
 

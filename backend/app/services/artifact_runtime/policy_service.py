@@ -57,6 +57,9 @@ class ArtifactRuntimePolicyService:
             subrequests=self._subrequests(policy, queue_class),
         )
 
+    async def reconcile_stale_test_runs(self, *, tenant_id: UUID) -> None:
+        await self._reconcile_stale_active_runs(tenant_id=tenant_id, queue_class="artifact_test")
+
     async def get_queue_status(self, *, tenant_id: UUID, queue_class: str) -> ArtifactRuntimeQueueStatus:
         snapshot = await self.get_snapshot(tenant_id=tenant_id, queue_class=queue_class)
         active = await self._active_runs(tenant_id=tenant_id, queue_class=queue_class)
@@ -119,7 +122,7 @@ class ArtifactRuntimePolicyService:
             select(ArtifactRun).where(
                 ArtifactRun.tenant_id == tenant_id,
                 ArtifactRun.queue_class == queue_class,
-                ArtifactRun.status.in_([ArtifactRunStatus.RUNNING, ArtifactRunStatus.CANCEL_REQUESTED]),
+                ArtifactRun.status.in_([ArtifactRunStatus.QUEUED, ArtifactRunStatus.RUNNING, ArtifactRunStatus.CANCEL_REQUESTED]),
                 or_(
                     ArtifactRun.started_at <= cutoff,
                     (ArtifactRun.started_at.is_(None) & (ArtifactRun.created_at <= cutoff)),
