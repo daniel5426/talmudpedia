@@ -21,7 +21,7 @@ from .deployment_service import ArtifactDeploymentService
 from .policy_service import ArtifactConcurrencyLimitExceeded, ArtifactRuntimePolicyService
 from .registry_service import ArtifactRegistryService
 from .revision_service import ArtifactRevisionService
-from .runtime_secret_service import resolve_runtime_credentials
+from .runtime_secret_service import prepare_deployable_source_files, resolve_runtime_credentials
 from .run_service import ArtifactRunService
 from .source_utils import normalize_artifact_source
 
@@ -350,6 +350,10 @@ class ArtifactExecutionService:
         )
         await self._db.commit()
 
+        prepared_source = prepare_deployable_source_files(
+            language=str(getattr(run.revision.language, "value", run.revision.language) or "python"),
+            revision=run.revision,
+        )
         request_payload = {
             "tenant_id": str(run.tenant_id),
             "run_id": str(run.id),
@@ -364,6 +368,8 @@ class ArtifactExecutionService:
             "limits": {"cpu_ms": policy.cpu_ms, "subrequests": policy.subrequests},
             "inputs": run.input_payload,
             "config": dict(run.config_payload or {}),
+            "entry_module_path": str(run.revision.entry_module_path or "main.py"),
+            "source_files": list(prepared_source.source_files or []),
             "context": dict(run.context_payload or {}),
         }
         client = CloudflareDispatchClient()

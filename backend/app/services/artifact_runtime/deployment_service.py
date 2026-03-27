@@ -32,6 +32,7 @@ class ArtifactDeploymentService:
         effective_tenant_id = revision.tenant_id or tenant_id
         if effective_tenant_id is None:
             raise ValueError("Artifact deployments require tenant_id for deployment ownership")
+        had_bundle_hash = bool(getattr(revision, "bundle_hash", None))
         package = self._builder.build_revision_package(revision, namespace=namespace)
         deployment = await self._get_deployment_by_build_hash(
             tenant_id=effective_tenant_id,
@@ -100,7 +101,7 @@ class ArtifactDeploymentService:
         deployment.runtime_metadata = {**package.metadata, **dict(result or {})}
         deployment.error_payload = None
         revision.build_hash = package.build_hash
-        if not revision.bundle_hash:
+        if not had_bundle_hash:
             revision.bundle_hash = package.build_hash
         await self._db.flush()
         return deployment
