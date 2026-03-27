@@ -23,6 +23,9 @@ from app.services.artifact_coding_agent_tools import (
     _resolve_session_context,
     artifact_coding_create_file,
     artifact_coding_list_credentials,
+    artifact_coding_read_file,
+    artifact_coding_replace_text_in_file,
+    artifact_coding_search_in_files,
     artifact_coding_set_tool_contract,
     artifact_coding_set_entry_module,
     ensure_artifact_coding_tools,
@@ -806,6 +809,9 @@ async def test_artifact_coding_agent_profile_includes_delegated_worker_mode_inst
     assert "artifact_coding_set_tool_contract" in instructions
     assert "Do not wrap it inside agent_contract, rag_contract, or tool_contract keys." in instructions
     assert "Do not place metadata fields like display_name or description inside contract objects." in instructions
+    assert "artifact_coding_read_file with include_line_numbers=true" in instructions
+    assert "artifact_coding_replace_text_in_file" in instructions
+    assert "artifact_coding_replace_file only when the change is broad" in instructions
 
 
 @pytest.mark.asyncio
@@ -824,6 +830,33 @@ async def test_artifact_coding_tools_publish_kind_specific_contract_tool_schemas
     assert "input_schema" in tool_contract_schema["properties"]
     assert "output_schema" in tool_contract_schema["properties"]
     assert "description" not in tool_contract_schema["properties"]
+
+
+@pytest.mark.asyncio
+async def test_artifact_coding_tools_publish_exact_text_edit_surface(db_session):
+    await ensure_artifact_coding_tools(db_session)
+
+    replace_tool = await db_session.scalar(
+        select(ToolRegistry).where(ToolRegistry.slug == "artifact-coding-replace-text-in-file")
+    )
+    read_tool = await db_session.scalar(
+        select(ToolRegistry).where(ToolRegistry.slug == "artifact-coding-read-file")
+    )
+    search_tool = await db_session.scalar(
+        select(ToolRegistry).where(ToolRegistry.slug == "artifact-coding-search-in-files")
+    )
+    legacy_range_tool = await db_session.scalar(
+        select(ToolRegistry).where(ToolRegistry.slug == "artifact-coding-update-file-range")
+    )
+
+    assert replace_tool is not None
+    assert read_tool is not None
+    assert search_tool is not None
+    assert legacy_range_tool is None
+    assert replace_tool.schema["input"]["required"] == ["path", "old_text", "new_text"]
+    assert "include_line_numbers" in read_tool.schema["input"]["properties"]
+    assert "context_before" in search_tool.schema["input"]["properties"]
+    assert "context_after" in search_tool.schema["input"]["properties"]
 
 
 @pytest.mark.asyncio
@@ -878,6 +911,123 @@ async def test_artifact_coding_set_tool_contract_accepts_inner_contract_object(d
     assert result["ok"] is True
     assert result["changed_fields"] == ["tool_contract"]
     assert '"deal_id"' in result["draft_snapshot"]["tool_contract"]
+
+
+@pytest.mark.asyncio
+async def test_artifact_coding_read_file_can_return_numbered_range_and_exact_replace(db_session):
+    tenant, user = await _seed_tenant_and_user(db_session)
+    agent = await ensure_artifact_coding_agent_profile(db_session, tenant.id, actor_user_id=user.id)
+    runtime = ArtifactCodingRuntimeService(db_session)
+    prepared = await runtime.prepare_session(
+        tenant_id=tenant.id,
+        user_id=user.id,
+        agent_id=agent.id,
+        title_prompt="Replace bounded text",
+        artifact_id=None,
+        draft_key=None,
+        chat_session_id=None,
+        draft_snapshot={
+            **runtime.build_initial_snapshot_from_seed({"kind": "tool_impl"}),
+            "source_files": [{"path": "main.py", "content": "alpha\nbeta\ngamma\n"}],
+            "entry_module_path": "main.py",
+        },
+        replace_snapshot=True,
+    )
+    worker_run = await _create_artifact_coding_worker_run(
+        db_session,
+        tenant=tenant,
+        user=user,
+        agent=agent,
+        session=prepared.session,
+        shared_draft=prepared.shared_draft,
+    )
+
+    @asynccontextmanager
+    async def _session_override():
+        yield db_session
+
+    from app.services import artifact_coding_agent_tools as artifact_tools_module
+
+    original_session = artifact_tools_module.get_session
+    artifact_tools_module.get_session = _session_override
+    try:
+        read_result = await artifact_coding_read_file(
+            {
+                "run_id": str(worker_run.id),
+                "path": "main.py",
+                "start_line": 2,
+                "end_line": 3,
+                "include_line_numbers": True,
+            }
+        )
+        replace_result = await artifact_coding_replace_text_in_file(
+            {
+                "run_id": str(worker_run.id),
+                "path": "main.py",
+                "old_text": "beta",
+                "new_text": "beta_updated",
+                "start_line": 2,
+                "end_line": 2,
+            }
+        )
+    finally:
+        artifact_tools_module.get_session = original_session
+
+    assert read_result["content"] == "beta\ngamma"
+    assert read_result["numbered_content"] == "2: beta\n3: gamma"
+    assert replace_result["ok"] is True
+    assert "beta_updated" in replace_result["draft_snapshot"]["source_files"][0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_artifact_coding_replace_text_in_file_rejects_ambiguous_global_match(db_session):
+    tenant, user = await _seed_tenant_and_user(db_session)
+    agent = await ensure_artifact_coding_agent_profile(db_session, tenant.id, actor_user_id=user.id)
+    runtime = ArtifactCodingRuntimeService(db_session)
+    prepared = await runtime.prepare_session(
+        tenant_id=tenant.id,
+        user_id=user.id,
+        agent_id=agent.id,
+        title_prompt="Reject ambiguous exact replace",
+        artifact_id=None,
+        draft_key=None,
+        chat_session_id=None,
+        draft_snapshot={
+            **runtime.build_initial_snapshot_from_seed({"kind": "tool_impl"}),
+            "source_files": [{"path": "main.py", "content": "dup\nx\ndup\n"}],
+            "entry_module_path": "main.py",
+        },
+        replace_snapshot=True,
+    )
+    worker_run = await _create_artifact_coding_worker_run(
+        db_session,
+        tenant=tenant,
+        user=user,
+        agent=agent,
+        session=prepared.session,
+        shared_draft=prepared.shared_draft,
+    )
+
+    @asynccontextmanager
+    async def _session_override():
+        yield db_session
+
+    from app.services import artifact_coding_agent_tools as artifact_tools_module
+
+    original_session = artifact_tools_module.get_session
+    artifact_tools_module.get_session = _session_override
+    try:
+        with pytest.raises(ValueError, match="matched multiple times in the file"):
+            await artifact_coding_replace_text_in_file(
+                {
+                    "run_id": str(worker_run.id),
+                    "path": "main.py",
+                    "old_text": "dup",
+                    "new_text": "unique",
+                }
+            )
+    finally:
+        artifact_tools_module.get_session = original_session
 
 
 @pytest.mark.asyncio

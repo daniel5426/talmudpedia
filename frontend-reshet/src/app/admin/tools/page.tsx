@@ -67,6 +67,7 @@ import { PromptMentionInput } from "@/components/shared/PromptMentionInput"
 import { PromptMentionJsonEditor, fillPromptMentionJsonToken } from "@/components/shared/PromptMentionJsonEditor"
 import { PromptModal } from "@/components/shared/PromptModal"
 import { usePromptMentionModal } from "@/components/shared/usePromptMentionModal"
+import { buildArtifactDetailHref, buildArtifactNewHref } from "@/components/admin/artifacts/artifactRoutes"
 import { cn } from "@/lib/utils"
 import { TOOL_BUCKETS, TOOL_SUBTYPES, filterTools, getToolBucket, getSubtypeLabel } from "@/lib/tool-types"
 import { fillMentionInValue } from "@/lib/prompt-mentions"
@@ -826,7 +827,7 @@ export default function ToolsPage() {
 
     const openToolEditor = useCallback((tool: ToolDefinition) => {
         if (tool.managed_by === "artifacts" && tool.source_object_id) {
-            router.push(`/admin/artifacts?mode=edit&id=${tool.source_object_id}`)
+            router.push(buildArtifactDetailHref(tool.source_object_id))
             return
         }
         if (tool.managed_by === "pipelines" && tool.source_object_id) {
@@ -846,7 +847,7 @@ export default function ToolsPage() {
         }
         if (intent === "artifact") {
             setCreateEntryOpen(false)
-            router.push("/admin/artifacts?mode=create&kind=tool_impl")
+            router.push(buildArtifactNewHref({ kind: "tool_impl" }))
             return
         }
         if (intent === "pipeline") {

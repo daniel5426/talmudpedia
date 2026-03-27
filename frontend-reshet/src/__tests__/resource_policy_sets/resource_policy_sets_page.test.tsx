@@ -16,6 +16,8 @@ const listToolsMock = jest.fn()
 const listKnowledgeStoresMock = jest.fn()
 const listPublishedAppsMock = jest.fn()
 const getUsersMock = jest.fn()
+const routerReplaceMock = jest.fn()
+let mockSearchParams = new URLSearchParams()
 
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void
@@ -81,6 +83,12 @@ jest.mock("@/services/admin", () => ({
   adminService: {
     getUsers: (...args: unknown[]) => getUsersMock(...args),
   },
+}))
+
+jest.mock("next/navigation", () => ({
+  usePathname: () => "/admin/resource-policies",
+  useRouter: () => ({ replace: routerReplaceMock }),
+  useSearchParams: () => mockSearchParams,
 }))
 
 jest.mock("@/components/admin/AdminPageHeader", () => ({
@@ -163,6 +171,7 @@ jest.mock("@/components/ui/select", () => {
 describe("resource policy sets page", () => {
   beforeEach(() => {
     jest.clearAllMocks()
+    mockSearchParams = new URLSearchParams()
     listPolicySetsMock.mockResolvedValue([])
     getPolicySetMock.mockResolvedValue({ id: "set-1" })
     createPolicySetMock.mockResolvedValue({ id: "set-1", name: "Base Policy" })
@@ -244,6 +253,18 @@ describe("resource policy sets page", () => {
         user_id: "user-1",
       })
     })
+  })
+
+  it("restores the selected section from the query string", async () => {
+    mockSearchParams = new URLSearchParams("section=assignments")
+    listPolicySetsMock.mockResolvedValue([
+      { id: "set-1", name: "Base Policy", description: null, is_active: true, included_policy_set_ids: [], rules: [] },
+    ])
+
+    render(<ResourcePoliciesPage />)
+
+    expect(await screen.findByRole("button", { name: /new assignment/i })).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: /new policy set/i })).not.toBeInTheDocument()
   })
 
   it("sets published app and embedded agent defaults from the defaults section", async () => {

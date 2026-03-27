@@ -1,4 +1,4 @@
-Last Updated: 2026-03-26
+Last Updated: 2026-03-27
 
 # Test State
 
@@ -9,6 +9,7 @@ Artifact admin editor payload, dependency authoring, and form-state handling.
 ## Test Files Present
 
 - `artifact_page_utils.test.ts`
+- `artifact_routes.test.ts`
 - `artifact_dependency_tab.test.tsx`
 - `artifact_list_view.test.tsx`
 - `artifact_test_panel.test.tsx`
@@ -20,6 +21,7 @@ Artifact admin editor payload, dependency authoring, and form-state handling.
 - refresh visible credential labels from current Settings records
 - include credential mention refs in artifact create/update payloads without artifact-side bindings
 - hydrate editor form state from artifact responses without legacy binding fields
+- build dedicated artifact detail/create routes without falling back to query-mode editor routing
 - warn on opposite-language code files at publish time while ignoring neutral files like `json` and `txt`
 - render dependency analysis rows in the config dependency tab
 - surface runtime-registry rows separately from broader Pyodide-catalog rows in the dependency tab
@@ -60,6 +62,9 @@ Artifact admin editor payload, dependency authoring, and form-state handling.
 - Command: `pnpm --dir frontend-reshet test -- --runInBand src/__tests__/artifacts_admin/artifact_page_utils.test.ts`
 - Date: 2026-03-26 01:19:41 EET
 - Result: Pass (1 suite, 7 tests)
+- Command: `pnpm --dir frontend-reshet test -- --runInBand src/__tests__/artifacts_admin/artifact_routes.test.ts src/__tests__/admin_url_state/url_query_state.test.ts src/__tests__/resource_policy_sets/resource_policy_sets_page.test.tsx`
+- Date: 2026-03-27 Asia/Hebron
+- Result: Pass (3 suites, 9 tests)
 
 ## Known Gaps
 

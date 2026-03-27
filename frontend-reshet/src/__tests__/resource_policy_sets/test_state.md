@@ -1,6 +1,6 @@
-# Resource Policy Sets Frontend Test State
+Last Updated: 2026-03-27
 
-Last Updated: 2026-03-26
+# Resource Policy Sets Frontend Test State
 
 ## Scope
 Validate the resource policy sets frontend service contract and the admin page's core create, assignment, defaulting, loading, and error flows.
@@ -15,10 +15,11 @@ Validate the resource policy sets frontend service contract and the admin page's
 - Admin page loading and empty states render correctly
 - Create policy set flow works and surfaces backend conflict errors
 - Assignment creation and default-policy mutations call the correct backend services
+- The page restores the selected section from the URL query string on reload
 
 ## Last Run
-- Command: `pnpm exec jest --runInBand src/__tests__/resource_policy_sets/resource_policy_sets_service.test.ts src/__tests__/resource_policy_sets/resource_policy_sets_page.test.tsx`
-- Date/Time: 2026-03-26 23:01:01 EET
+- Command: `pnpm --dir frontend-reshet test -- --runInBand src/__tests__/artifacts_admin/artifact_routes.test.ts src/__tests__/admin_url_state/url_query_state.test.ts src/__tests__/resource_policy_sets/resource_policy_sets_page.test.tsx`
+- Date/Time: 2026-03-27 Asia/Hebron
 - Result: pass
 
 ## Known Gaps

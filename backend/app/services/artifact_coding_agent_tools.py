@@ -451,12 +451,39 @@ async def artifact_coding_list_files(payload: Any) -> dict[str, Any]:
 async def artifact_coding_read_file(payload: Any) -> dict[str, Any]:
     tool_payload = payload if isinstance(payload, dict) else {}
     path = _normalize_path(tool_payload.get("path"))
+    start_line_raw = tool_payload.get("start_line") or tool_payload.get("startLine")
+    end_line_raw = tool_payload.get("end_line") or tool_payload.get("endLine")
+    include_line_numbers = bool(tool_payload.get("include_line_numbers") or tool_payload.get("includeLineNumbers"))
     async with get_session() as db:
         session, shared_draft, _run, _artifact = await _resolve_session_context(db, tool_payload)
         files_by_path = _snapshot_source_index(_serialize_form_state(shared_draft.working_draft_snapshot))
         if path not in files_by_path:
             raise ValueError("File not found")
-        return {"path": path, "content": files_by_path[path]}
+        lines = files_by_path[path].splitlines()
+        total_lines = len(lines)
+        if (start_line_raw is None) != (end_line_raw is None):
+            raise ValueError("start_line and end_line must be provided together")
+        start_line = int(start_line_raw) if start_line_raw is not None else 1
+        end_line = int(end_line_raw) if end_line_raw is not None else total_lines
+        if total_lines == 0:
+            start_line = 1
+            end_line = 0
+        elif start_line < 1 or end_line < start_line or end_line > total_lines:
+            raise ValueError("start_line and end_line must define a valid inclusive range")
+        selected_lines = [] if total_lines == 0 else lines[start_line - 1 : end_line]
+        response: dict[str, Any] = {
+            "path": path,
+            "content": "\n".join(selected_lines),
+            "total_lines": total_lines,
+            "start_line": start_line,
+            "end_line": end_line,
+        }
+        if include_line_numbers:
+            response["numbered_content"] = "\n".join(
+                f"{line_no}: {line}"
+                for line_no, line in enumerate(selected_lines, start=start_line)
+            )
+        return response
 
 
 @register_tool_function("artifact_coding_search_in_files")
@@ -464,15 +491,29 @@ async def artifact_coding_search_in_files(payload: Any) -> dict[str, Any]:
     tool_payload = payload if isinstance(payload, dict) else {}
     query = _require_text(tool_payload.get("query") or tool_payload.get("text"), "query")
     max_results = max(1, min(int(tool_payload.get("max_results") or 20), 100))
+    context_before = max(0, min(int(tool_payload.get("context_before") or tool_payload.get("contextBefore") or 0), 20))
+    context_after = max(0, min(int(tool_payload.get("context_after") or tool_payload.get("contextAfter") or 0), 20))
     async with get_session() as db:
         session, shared_draft, _run, _artifact = await _resolve_session_context(db, tool_payload)
         snapshot = _serialize_form_state(shared_draft.working_draft_snapshot)
         matches: list[dict[str, Any]] = []
         for file in _normalize_file_list(snapshot):
-            for index, line in enumerate(str(file["content"]).splitlines(), start=1):
+            file_lines = str(file["content"]).splitlines()
+            total_lines = len(file_lines)
+            for index, line in enumerate(file_lines, start=1):
                 if query.lower() not in line.lower():
                     continue
-                matches.append({"path": file["path"], "line": index, "content": line})
+                snippet_start = max(1, index - context_before)
+                snippet_end = min(total_lines, index + context_after)
+                snippet_lines = file_lines[snippet_start - 1 : snippet_end]
+                matches.append({
+                    "path": file["path"],
+                    "line": index,
+                    "content": line,
+                    "start_line": snippet_start,
+                    "end_line": snippet_end,
+                    "snippet": "\n".join(snippet_lines),
+                })
                 if len(matches) >= max_results:
                     return {"query": query, "matches": matches}
         return {"query": query, "matches": matches}
@@ -501,30 +542,48 @@ async def artifact_coding_replace_file(payload: Any) -> dict[str, Any]:
         )
 
 
-@register_tool_function("artifact_coding_update_file_range")
-async def artifact_coding_update_file_range(payload: Any) -> dict[str, Any]:
+@register_tool_function("artifact_coding_replace_text_in_file")
+async def artifact_coding_replace_text_in_file(payload: Any) -> dict[str, Any]:
     tool_payload = payload if isinstance(payload, dict) else {}
     path = _normalize_path(tool_payload.get("path"))
-    start_line = int(tool_payload.get("start_line") or tool_payload.get("startLine") or 0)
-    end_line = int(tool_payload.get("end_line") or tool_payload.get("endLine") or 0)
-    if start_line < 1 or end_line < start_line:
-        raise ValueError("start_line and end_line must define a valid inclusive range")
+    old_text = str(tool_payload.get("old_text") or tool_payload.get("oldText") or "")
+    if not old_text:
+        raise ValueError("old_text is required")
     new_text = str(tool_payload.get("new_text") or tool_payload.get("newText") or "")
-    expected_old_text = tool_payload.get("expected_old_text") or tool_payload.get("expectedOldText")
+    start_line_raw = tool_payload.get("start_line") or tool_payload.get("startLine")
+    end_line_raw = tool_payload.get("end_line") or tool_payload.get("endLine")
+    if (start_line_raw is None) != (end_line_raw is None):
+        raise ValueError("start_line and end_line must be provided together")
     async with get_session() as db:
         session, shared_draft, _run, _artifact = await _resolve_session_context(db, tool_payload)
         snapshot = _serialize_form_state(shared_draft.working_draft_snapshot)
         files_by_path = _snapshot_source_index(snapshot)
         if path not in files_by_path:
             raise ValueError("File not found")
-        lines = files_by_path[path].splitlines()
-        current_slice = "\n".join(lines[start_line - 1 : end_line])
-        if expected_old_text is not None and str(expected_old_text) != current_slice:
-            raise ValueError("expected_old_text does not match the current file content in the selected range")
-        replacement_lines = new_text.splitlines()
-        next_lines = lines[: start_line - 1] + replacement_lines + lines[end_line:]
-        files_by_path[path] = "\n".join(next_lines)
-        if files_by_path[path] and not files_by_path[path].endswith("\n"):
+        file_content = files_by_path[path]
+        if start_line_raw is not None:
+            lines = file_content.splitlines(keepends=True)
+            total_lines = len(lines)
+            start_line = int(start_line_raw)
+            end_line = int(end_line_raw)
+            if total_lines == 0 or start_line < 1 or end_line < start_line or end_line > total_lines:
+                raise ValueError("start_line and end_line must define a valid inclusive range")
+            slice_text = "".join(lines[start_line - 1 : end_line])
+            occurrences = slice_text.count(old_text)
+            if occurrences == 0:
+                raise ValueError("old_text was not found in the selected range")
+            if occurrences > 1:
+                raise ValueError("old_text matched multiple times in the selected range; provide a narrower range or a more specific old_text")
+            replaced_slice = slice_text.replace(old_text, new_text, 1)
+            files_by_path[path] = "".join(lines[: start_line - 1]) + replaced_slice + "".join(lines[end_line:])
+        else:
+            occurrences = file_content.count(old_text)
+            if occurrences == 0:
+                raise ValueError("old_text was not found in the file")
+            if occurrences > 1:
+                raise ValueError("old_text matched multiple times in the file; provide start_line/end_line or a more specific old_text")
+            files_by_path[path] = file_content.replace(old_text, new_text, 1)
+        if file_content.endswith("\n") and files_by_path[path] and not files_by_path[path].endswith("\n"):
             files_by_path[path] += "\n"
         _replace_snapshot_files(snapshot, files_by_path)
         return await _persist_snapshot_result(
@@ -532,8 +591,8 @@ async def artifact_coding_update_file_range(payload: Any) -> dict[str, Any]:
             shared_draft=shared_draft,
             snapshot=snapshot,
             changed_fields=["source_files"],
-            summary=f"Updated lines {start_line}-{end_line} in {path}.",
-            extra={"path": path, "start_line": start_line, "end_line": end_line},
+            summary=f"Replaced exact text in {path}.",
+            extra={"path": path, "start_line": start_line_raw, "end_line": end_line_raw},
         )
 
 
@@ -843,10 +902,10 @@ ARTIFACT_CODING_TOOL_SPECS: list[dict[str, Any]] = [
     {"slug": "artifact-coding-get-context", "name": "Artifact Coding Get Context", "description": "Get a compact summary of the current artifact coding session and draft.", "function_name": "artifact_coding_get_context", "timeout_s": 30, "is_pure": True, "schema": _tool_schema(properties={})},
     {"slug": "artifact-coding-get-form-state", "name": "Artifact Coding Get Form State", "description": "Read the full artifact draft form state.", "function_name": "artifact_coding_get_form_state", "timeout_s": 30, "is_pure": True, "schema": _tool_schema(properties={})},
     {"slug": "artifact-coding-list-files", "name": "Artifact Coding List Files", "description": "List files in the current artifact draft.", "function_name": "artifact_coding_list_files", "timeout_s": 30, "is_pure": True, "schema": _tool_schema(properties={})},
-    {"slug": "artifact-coding-read-file", "name": "Artifact Coding Read File", "description": "Read one artifact draft file.", "function_name": "artifact_coding_read_file", "timeout_s": 30, "is_pure": True, "schema": _tool_schema(properties={"path": {"type": "string"}}, required=["path"])},
-    {"slug": "artifact-coding-search-in-files", "name": "Artifact Coding Search In Files", "description": "Search text across artifact draft files.", "function_name": "artifact_coding_search_in_files", "timeout_s": 30, "is_pure": True, "schema": _tool_schema(properties={"query": {"type": "string"}, "max_results": {"type": "integer"}}, required=["query"])},
+    {"slug": "artifact-coding-read-file", "name": "Artifact Coding Read File", "description": "Read one artifact draft file, optionally as a numbered line range.", "function_name": "artifact_coding_read_file", "timeout_s": 30, "is_pure": True, "schema": _tool_schema(properties={"path": {"type": "string"}, "start_line": {"type": "integer"}, "end_line": {"type": "integer"}, "include_line_numbers": {"type": "boolean"}}, required=["path"])},
+    {"slug": "artifact-coding-search-in-files", "name": "Artifact Coding Search In Files", "description": "Search text across artifact draft files and return optional surrounding context.", "function_name": "artifact_coding_search_in_files", "timeout_s": 30, "is_pure": True, "schema": _tool_schema(properties={"query": {"type": "string"}, "max_results": {"type": "integer"}, "context_before": {"type": "integer"}, "context_after": {"type": "integer"}}, required=["query"])},
     {"slug": "artifact-coding-replace-file", "name": "Artifact Coding Replace File", "description": "Replace the full content of a draft file.", "function_name": "artifact_coding_replace_file", "timeout_s": 60, "is_pure": False, "schema": _tool_schema(properties={"path": {"type": "string"}, "content": {"type": "string"}}, required=["path", "content"])},
-    {"slug": "artifact-coding-update-file-range", "name": "Artifact Coding Update File Range", "description": "Replace a line range in a draft file.", "function_name": "artifact_coding_update_file_range", "timeout_s": 60, "is_pure": False, "schema": _tool_schema(properties={"path": {"type": "string"}, "start_line": {"type": "integer"}, "end_line": {"type": "integer"}, "expected_old_text": {"type": "string"}, "new_text": {"type": "string"}}, required=["path", "start_line", "end_line", "new_text"])},
+    {"slug": "artifact-coding-replace-text-in-file", "name": "Artifact Coding Replace Text In File", "description": "Replace exact old_text with new_text in a draft file, optionally within a bounded line range.", "function_name": "artifact_coding_replace_text_in_file", "timeout_s": 60, "is_pure": False, "schema": _tool_schema(properties={"path": {"type": "string"}, "old_text": {"type": "string"}, "new_text": {"type": "string"}, "start_line": {"type": "integer"}, "end_line": {"type": "integer"}}, required=["path", "old_text", "new_text"])},
     {"slug": "artifact-coding-create-file", "name": "Artifact Coding Create File", "description": "Create a new draft file.", "function_name": "artifact_coding_create_file", "timeout_s": 60, "is_pure": False, "schema": _tool_schema(properties={"path": {"type": "string"}, "content": {"type": "string"}}, required=["path", "content"])},
     {"slug": "artifact-coding-delete-file", "name": "Artifact Coding Delete File", "description": "Delete a draft file.", "function_name": "artifact_coding_delete_file", "timeout_s": 60, "is_pure": False, "schema": _tool_schema(properties={"path": {"type": "string"}}, required=["path"])},
     {"slug": "artifact-coding-rename-file", "name": "Artifact Coding Rename File", "description": "Rename a draft file.", "function_name": "artifact_coding_rename_file", "timeout_s": 60, "is_pure": False, "schema": _tool_schema(properties={"from_path": {"type": "string"}, "to_path": {"type": "string"}}, required=["from_path", "to_path"])},

@@ -4,6 +4,7 @@ import React, { useState, useEffect, useCallback, useMemo } from "react"
 import { useTenant } from "@/contexts/TenantContext"
 import { useDirection } from "@/components/direction-provider"
 import { cn } from "@/lib/utils"
+import { useUrlEnumState } from "@/hooks/useUrlEnumState"
 import { AdminPageHeader } from "@/components/admin/AdminPageHeader"
 import { rbacService, Role, RoleAssignment, ScopeCatalog } from "@/services/rbac"
 import { orgUnitsService, OrgUnit } from "@/services/org-units"
@@ -73,6 +74,8 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 
+const SECURITY_TABS = ["assignments", "roles", "workloads", "apikeys"] as const
+
 export default function SecurityPage() {
   const { currentTenant } = useTenant()
   const { direction } = useDirection()
@@ -86,7 +89,11 @@ export default function SecurityPage() {
   const [searchRoles, setSearchRoles] = useState("")
   const [searchAssignments, setSearchAssignments] = useState("")
   const [searchWorkloads, setSearchWorkloads] = useState("")
-  const [activeTab, setActiveTab] = useState<"assignments" | "roles" | "workloads" | "apikeys">("assignments")
+  const [activeTab, setActiveTab] = useUrlEnumState({
+    key: "tab",
+    allowedValues: SECURITY_TABS,
+    fallback: "assignments",
+  })
   const [pendingPolicies, setPendingPolicies] = useState<PendingScopePolicy[]>([])
   const [actionApprovals, setActionApprovals] = useState<ActionApprovalDecision[]>([])
   const [decisionForm, setDecisionForm] = useState({
@@ -517,7 +524,7 @@ export default function SecurityPage() {
         value={activeTab}
         dir={direction}
         className="flex-1 min-h-0 flex flex-col"
-        onValueChange={(value) => setActiveTab(value as "assignments" | "roles" | "workloads" | "apikeys")}
+        onValueChange={(value) => setActiveTab(value as typeof SECURITY_TABS[number])}
       >
         <div className="border-b border-border/40 px-4 py-3 bg-background shrink-0 flex items-center justify-between">
           <TabsList>

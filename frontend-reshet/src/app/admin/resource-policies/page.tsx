@@ -53,6 +53,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { cn } from "@/lib/utils"
+import { useUrlEnumState } from "@/hooks/useUrlEnumState"
 import {
   Plus,
   Search,
@@ -80,6 +81,7 @@ import {
 /* ───────────────────────────── Constants ───────────────────────────── */
 
 type PageSection = "sets" | "assignments" | "defaults"
+const RESOURCE_POLICY_SECTIONS = ["sets", "assignments", "defaults"] as const
 
 const NAV_ITEMS: Array<{ key: PageSection; label: string; icon: React.ElementType }> = [
   { key: "sets", label: "Policy Sets", icon: Layers },
@@ -115,7 +117,11 @@ const RESOURCE_TYPE_COLORS: Record<ResourcePolicyResourceType, string> = {
 /* ───────────────────────────── Page ───────────────────────────── */
 
 export default function ResourcePoliciesPage() {
-  const [section, setSection] = useState<PageSection>("sets")
+  const [section, setSection] = useUrlEnumState({
+    key: "section",
+    allowedValues: RESOURCE_POLICY_SECTIONS,
+    fallback: "sets",
+  })
   const [searchQuery, setSearchQuery] = useState("")
 
   // Data

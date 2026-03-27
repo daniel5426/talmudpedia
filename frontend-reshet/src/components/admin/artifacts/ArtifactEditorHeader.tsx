@@ -24,6 +24,7 @@ type ViewMode = "list" | "create" | "edit"
 type ArtifactEditorHeaderProps = {
   viewMode: ViewMode
   displayName: string
+  controlsDisabled?: boolean
   sidebarOpen: boolean
   isAgentPanelOpen: boolean
   isPublishing: boolean
@@ -57,6 +58,7 @@ function kindIcon(kind: ArtifactKind) {
 export function ArtifactEditorHeader({
   viewMode,
   displayName,
+  controlsDisabled = false,
   sidebarOpen,
   isAgentPanelOpen,
   isPublishing,
@@ -103,13 +105,13 @@ export function ArtifactEditorHeader({
       </div>
       {viewMode === "list" ? (
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={onRefreshArtifacts}>
+          <Button variant="outline" size="sm" onClick={onRefreshArtifacts} disabled={controlsDisabled}>
             <RefreshCw className="mr-2 h-4 w-4" />
             Refresh
           </Button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button size="sm">
+              <Button size="sm" disabled={controlsDisabled}>
                 <Plus className="mr-2 h-4 w-4" />
                 New Artifact
                 <ChevronDown className="ml-1 h-4 w-4 opacity-50" />
@@ -153,6 +155,7 @@ export function ArtifactEditorHeader({
             size="sm"
             variant="ghost"
             onClick={onToggleSidebar}
+            disabled={controlsDisabled}
             className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground"
             title={sidebarOpen ? "Hide file explorer" : "Show file explorer"}
           >
@@ -173,6 +176,7 @@ export function ArtifactEditorHeader({
             size="sm"
             variant="ghost"
             onClick={onToggleAgentPanel}
+            disabled={controlsDisabled}
             className="mr-1 h-8 w-8 text-muted-foreground hover:text-foreground"
             title={isAgentPanelOpen ? "Close coding agent panel" : "Open coding agent panel"}
           >
@@ -184,11 +188,11 @@ export function ArtifactEditorHeader({
               )}
             />
           </Button>
-          <Button size="sm" variant="outline" onClick={onRunTest}>
+          <Button size="sm" variant="outline" onClick={onRunTest} disabled={controlsDisabled}>
             <Play className="mr-2 h-4 w-4 fill-current" />
             Test
           </Button>
-          <Button size="sm" onClick={onSave} disabled={isSaving || disableSave}>
+          <Button size="sm" onClick={onSave} disabled={controlsDisabled || isSaving || disableSave}>
             {isSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
             Save
           </Button>
@@ -197,7 +201,7 @@ export function ArtifactEditorHeader({
               size="sm"
               variant="outline"
               onClick={isPublished ? undefined : onPublish}
-              disabled={isPublished || isPublishing || isSaving}
+              disabled={controlsDisabled || isPublished || isPublishing || isSaving}
             >
               {isPublishing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}
               {isPublished ? "Published" : "Publish"}
