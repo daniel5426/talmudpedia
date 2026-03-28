@@ -11,10 +11,20 @@ export { useStickToBottomContext };
 
 export type ConversationProps = ComponentProps<typeof StickToBottom>;
 
-export const Conversation = ({ className, ...props }: ConversationProps) => (
+type ConversationInitialMode = "instant" | "auto";
+
+type ConversationWrapperProps = Omit<ConversationProps, "initial"> & {
+  initialScrollBehavior?: ConversationInitialMode;
+};
+
+export const Conversation = ({
+  className,
+  initialScrollBehavior = "instant",
+  ...props
+}: ConversationWrapperProps) => (
   <StickToBottom
     className={cn("relative border-none flex-1 overflow-y-auto", className)}
-    initial="auto"
+    initial={initialScrollBehavior}
     resize="auto"
     role="log"
     {...props}
