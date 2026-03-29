@@ -360,7 +360,7 @@ function PipelineBuilderInner({
         isExecutionMode={isExecutionMode}
       />
 
-      <div className="relative flex-1 rounded-2xl bg-muted/40" ref={reactFlowWrapper}>
+      <div className="relative flex-1 rounded-2xl bg-muted/70" ref={reactFlowWrapper}>
         <ReactFlow
           nodes={nodes}
           edges={edges}

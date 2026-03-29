@@ -652,7 +652,7 @@ export default function PipelineEditorPage() {
                     </div>
             </AdminPageHeader>
 
-            <div className="flex-1 overflow-hidden relative bg-muted/20">
+            <div className="flex-1 overflow-hidden ml-1 mr-2 mb-2 relative ">
                 <PipelineBuilder
                     catalog={catalog as any}
                     operatorSpecs={operatorSpecs as any}

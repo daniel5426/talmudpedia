@@ -51,7 +51,7 @@ export function HeaderConfigEditor({
   const [isCopied, setIsCopied] = useState(false)
   const copyResetTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const fieldIdBase = triggerLabel.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "") || "config"
-  const collapsedWidth = 122
+  const collapsedWidth = 40
   const expandedWidth = "min(420px, calc(100vw - 2rem))"
 
   useEffect(() => {
@@ -87,6 +87,7 @@ export function HeaderConfigEditor({
         animate={{
           width: open ? expandedWidth : collapsedWidth,
           height: open ? "auto" : 32,
+          boxShadow: open ? "0 1px 7px rgba(0, 0, 0, 0.15)" : "none",
           borderRadius: open ? 8 : 8,
         }}
         transition={{
@@ -97,7 +98,7 @@ export function HeaderConfigEditor({
         }}
         style={{ transformOrigin: "top right" }}
         className={cn(
-          "absolute right-0 top-0 z-[90] overflow-hidden border border-border/60 bg-background/95 backdrop-blur-sm",
+          "absolute right-0 top-0 z-[90] overflow-hidden bg-background/95 backdrop-blur-sm",
           "shadow-none",
           contentClassName
         )}
@@ -116,7 +117,6 @@ export function HeaderConfigEditor({
           tabIndex={open ? -1 : 0}
         >
           <PencilLine className="h-3.5 w-3.5" />
-          <span>{triggerLabel}</span>
         </button>
         <motion.div
           initial={false}
