@@ -1,6 +1,6 @@
 {
   "name": "@agents24/embed-sdk",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "private": false,
   "description": "Server-only TypeScript SDK for Talmudpedia embedded-agent runtime.",
   "keywords": [
