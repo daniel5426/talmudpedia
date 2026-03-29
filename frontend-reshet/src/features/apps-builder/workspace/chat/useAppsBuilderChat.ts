@@ -2,9 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   publishedAppsService,
   listOpenCodeCodingModels,
+  mergeContextStatus,
 } from "@/services";
 import type {
   CodingAgentChatSession,
+  ContextStatus,
   OpenCodeCodingModelOption,
 } from "@/services";
 import { timelineId, type TimelineItem } from "./chat-model";
@@ -51,6 +53,7 @@ export type UseAppsBuilderChatResult = {
   isStopping: boolean;
   timeline: TimelineItem[];
   activeThinkingSummary: string;
+  activeContextStatus: ContextStatus | null;
   chatSessions: CodingAgentChatSession[];
   activeChatSessionId: string | null;
   activateDraftChat: () => void;
@@ -207,6 +210,12 @@ export function useAppsBuilderChat({
   const setSessionThinking = useCallback((sessionKey: string, next: string) => {
     mutateSession(sessionKey, (session) => {
       session.activeThinkingSummary = next;
+    });
+  }, [mutateSession]);
+
+  const setSessionContextStatus = useCallback((sessionKey: string, next: ContextStatus | null) => {
+    mutateSession(sessionKey, (session) => {
+      session.contextStatus = mergeContextStatus(session.contextStatus, next);
     });
   }, [mutateSession]);
 
@@ -449,6 +458,7 @@ export function useAppsBuilderChat({
     target.isSending = source.isSending;
     target.isStopping = source.isStopping;
     target.activeThinkingSummary = source.activeThinkingSummary;
+    target.contextStatus = source.contextStatus;
     target.history = source.history;
     target.activeRunIdRef.current = source.activeRunIdRef.current;
     target.lastKnownRunIdRef.current = source.lastKnownRunIdRef.current;
@@ -559,6 +569,7 @@ export function useAppsBuilderChat({
       setSessionSending,
       setSessionStopping,
       setSessionThinking,
+      setSessionContextStatus,
       pushSessionTimeline,
       upsertSessionAssistantTimeline,
       upsertSessionToolTimeline,
@@ -568,7 +579,7 @@ export function useAppsBuilderChat({
       clearSessionRunActivity,
       probeSessionRunActivity,
     });
-  }, [activeTab, appId, attachCheckpointToSessionLastUser, clearSessionRunActivity, ensureDraftDevSession, ensureSessionKeyByServerSessionId, finalizeSessionRunningTools, getSession, loadChatSessions, markSessionRunActive, onError, onPostRunHydrationStateChange, onSetCurrentRevisionId, probeSessionRunActivity, pushSessionTimeline, refreshStateSilently, requestCancelForRun, setSessionPendingQuestion, setSessionSending, setSessionStopping, setSessionThinking, upsertSessionAssistantTimeline, upsertSessionToolTimeline]);
+  }, [activeTab, appId, attachCheckpointToSessionLastUser, clearSessionRunActivity, ensureDraftDevSession, ensureSessionKeyByServerSessionId, finalizeSessionRunningTools, getSession, loadChatSessions, markSessionRunActive, onError, onPostRunHydrationStateChange, onSetCurrentRevisionId, probeSessionRunActivity, pushSessionTimeline, refreshStateSilently, requestCancelForRun, setSessionContextStatus, setSessionPendingQuestion, setSessionSending, setSessionStopping, setSessionThinking, upsertSessionAssistantTimeline, upsertSessionToolTimeline]);
 
   const hydrateSessionHistory = useCallback(async (
     sessionId: string,
@@ -603,6 +614,7 @@ export function useAppsBuilderChat({
         target.queuedPrompts = [];
         target.pendingQuestion = null;
         target.activeThinkingSummary = "";
+        target.contextStatus = mergeContextStatus(target.contextStatus, detail.context_status);
         target.history.initialized = true;
         target.history.hasMore = paging.hasMore;
         target.history.nextBeforeMessageId = paging.nextBeforeMessageId;
@@ -877,6 +889,7 @@ export function useAppsBuilderChat({
   const pendingQuestion = activeSession.pendingQuestion;
   const isAnsweringQuestion = activeSession.isAnsweringQuestion;
   const activeThinkingSummary = activeSession.activeThinkingSummary;
+  const activeContextStatus = activeSession.contextStatus;
   const hasOlderHistory = activeSession.history.hasMore;
   const isLoadingOlderHistory = activeSession.history.isLoadingOlder;
   const sendingSessionIds = Object.values(sessionStoreRef.current)
@@ -890,6 +903,7 @@ export function useAppsBuilderChat({
     isStopping,
     timeline,
     activeThinkingSummary,
+    activeContextStatus,
     chatSessions,
     activeChatSessionId,
     activateDraftChat,

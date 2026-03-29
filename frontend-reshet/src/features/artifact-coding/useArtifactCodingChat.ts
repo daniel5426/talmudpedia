@@ -6,6 +6,7 @@ import {
   type ArtifactCodingChatSessionDetail,
   type ArtifactCodingModelOption,
 } from "@/services/artifacts";
+import { mergeContextStatus, type ContextStatus } from "@/services/context-status";
 
 import {
   buildArtifactCodingTimeline,
@@ -86,6 +87,7 @@ export function useArtifactCodingChat({
   const [pendingQuestionsBySession, setPendingQuestionsBySession] = useState<Record<string, ArtifactCodingPendingQuestion | null>>({});
   const [isAnsweringQuestion, setIsAnsweringQuestion] = useState(false);
   const [activeRunIdsBySession, setActiveRunIdsBySession] = useState<Record<string, string | null>>({});
+  const [contextStatusBySession, setContextStatusBySession] = useState<Record<string, ContextStatus | null>>({});
   const abortReaderMapRef = useRef<Map<string, ReadableStreamDefaultReader<Uint8Array>>>(new Map());
   const activeSessionRef = useRef<string | null>(null);
   const previousScopeRef = useRef<{ artifactId: string | null | undefined; draftKey: string }>({ artifactId, draftKey });
@@ -95,6 +97,7 @@ export function useArtifactCodingChat({
   const activeSessionKey = activeChatSessionId || DRAFT_SESSION_KEY;
   const timeline = timelinesBySession[activeSessionKey] || [];
   const activeThinkingSummary = activeThinkingBySession[activeSessionKey] || "";
+  const activeContextStatus = contextStatusBySession[activeSessionKey] || null;
   const pendingQuestion = pendingQuestionsBySession[activeSessionKey] || null;
   const activeRunId = activeRunIdsBySession[activeSessionKey] || null;
   const isSending = Boolean(activeRunId);
@@ -148,6 +151,10 @@ export function useArtifactCodingChat({
     setActiveRunIdsBySession((current) => ({
       ...current,
       [detail.session.id]: detail.session.active_run_id || current[detail.session.id] || null,
+    }));
+    setContextStatusBySession((current) => ({
+      ...current,
+      [detail.session.id]: mergeContextStatus(current[detail.session.id], detail.context_status),
     }));
   }, [onApplyDraftSnapshot, onResolvedArtifactId, setTimelineForSession, updateTimelineForSession]);
 
@@ -205,6 +212,16 @@ export function useArtifactCodingChat({
         boundary = buffer.indexOf("\n\n");
         const event = parseSse(frame);
         if (!event) continue;
+        if (
+          event.payload?.context_status
+          && typeof event.payload.context_status === "object"
+          && !Array.isArray(event.payload.context_status)
+        ) {
+          setContextStatusBySession((current) => ({
+            ...current,
+            [sessionKey]: mergeContextStatus(current[sessionKey], event.payload?.context_status as ContextStatus),
+          }));
+        }
         if (event.event === "assistant.delta") {
           if (!currentAssistantStreamId) {
             currentAssistantStreamId = `assistant-${runId}-seg${assistantSegmentIndex}`;
@@ -327,6 +344,10 @@ export function useArtifactCodingChat({
     );
     setActiveChatSessionId(response.chat_session_id);
     activeSessionRef.current = response.chat_session_id;
+    setContextStatusBySession((current) => ({
+      ...current,
+      [response.chat_session_id]: mergeContextStatus(current[response.chat_session_id], response.run.context_status),
+    }));
     setTimelinesBySession((current) => {
       const sourceTimeline = current[targetSessionKey] || [];
       const nextTimeline: TimelineItem[] = sourceTimeline.map((item) =>
@@ -413,6 +434,7 @@ export function useArtifactCodingChat({
     setIsStopping(false);
     setActiveRunIdsBySession({});
     setActiveThinkingBySession({});
+    setContextStatusBySession({});
     setHistoryPagesBySession({});
   }, [artifactId, draftKey]);
 
@@ -449,6 +471,7 @@ export function useArtifactCodingChat({
     isStopping,
     timeline,
     activeThinkingSummary,
+    activeContextStatus,
     chatSessions,
     activeChatSessionId,
     activateDraftChat,

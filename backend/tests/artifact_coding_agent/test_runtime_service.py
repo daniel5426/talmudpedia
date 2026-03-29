@@ -1,13 +1,20 @@
 from __future__ import annotations
 
+import json
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from uuid import uuid4
 
 import pytest
 from sqlalchemy import select
+from fastapi import HTTPException
 
 from app.agent.execution.trace_recorder import ExecutionTraceRecorder
-from app.api.routers.artifact_coding_agent import _build_session_detail_response
+from app.api.routers.artifact_coding_agent import (
+    _build_session_detail_response,
+    _require_run_owner,
+    _run_response_from_snapshot,
+)
 from app.db.postgres.models.agent_threads import AgentThreadTurn, AgentThreadTurnStatus
 from app.db.postgres.models.agents import AgentRun, RunStatus
 from app.db.postgres.models.artifact_runtime import ArtifactCodingMessage, ArtifactCodingSession, ArtifactCodingSharedDraft, ArtifactRun, ArtifactRunDomain, ArtifactRunEvent, ArtifactRunStatus
@@ -123,6 +130,43 @@ async def _create_artifact_coding_worker_run(
     db_session.add(run)
     await db_session.flush()
     return run
+
+
+@pytest.mark.asyncio
+async def test_run_response_snapshot_includes_context_status(db_session):
+    _ = db_session
+    run = AgentRun(
+        id=uuid4(),
+        status=RunStatus.queued,
+        surface="artifact_coding_agent",
+        created_at=datetime.now(timezone.utc),
+        input_params={
+            "context": {
+                "context_status": {
+                    "model_id": "openai/gpt-5",
+                    "max_tokens": 1_050_000,
+                    "max_tokens_source": "provider_fallback",
+                    "reserved_output_tokens": 8192,
+                    "estimated_input_tokens": 3200,
+                    "estimated_total_tokens": 11392,
+                    "estimated_remaining_tokens": 1_038_608,
+                    "estimated_usage_ratio": 0.0108,
+                    "near_limit": False,
+                    "compaction_recommended": False,
+                    "source": "estimated_pre_run",
+                }
+            }
+        },
+    )
+
+    payload = _run_response_from_snapshot(
+        run,
+        session_scope={"chat_session_id": "session-1", "artifact_id": "artifact-1", "draft_key": "draft-1"},
+    )
+
+    assert payload.context_status is not None
+    assert payload.context_status.max_tokens == 1_050_000
+    assert payload.context_status.model_id == "openai/gpt-5"
 
 
 @pytest.mark.asyncio
@@ -370,6 +414,163 @@ async def test_artifact_tools_use_run_pinned_shared_draft_when_session_binding_c
     assert resolved_run.id == run.id
     assert shared_draft.id == prepared.shared_draft.id
     assert shared_draft.working_draft_snapshot["display_name"] == "Pinned Draft"
+
+
+@pytest.mark.asyncio
+async def test_artifact_tools_ignore_payload_scope_overrides_and_use_run_bound_context(db_session):
+    tenant, user = await _seed_tenant_and_user(db_session)
+    runtime = ArtifactCodingRuntimeService(db_session)
+    agent = await ensure_artifact_coding_agent_profile(db_session, tenant.id, actor_user_id=user.id)
+    prepared = await runtime.prepare_session(
+        tenant_id=tenant.id,
+        user_id=user.id,
+        agent_id=agent.id,
+        title_prompt="Use the real run scope",
+        artifact_id=None,
+        draft_key=f"draft-{uuid4().hex[:8]}",
+        chat_session_id=None,
+        draft_snapshot=runtime.build_initial_snapshot_from_seed({"kind": "tool_impl", "display_name": "Bound Draft"}),
+        replace_snapshot=True,
+    )
+    other = await runtime.prepare_session(
+        tenant_id=tenant.id,
+        user_id=user.id,
+        agent_id=agent.id,
+        title_prompt="Other scope",
+        artifact_id=None,
+        draft_key=f"draft-{uuid4().hex[:8]}",
+        chat_session_id=None,
+        draft_snapshot=runtime.build_initial_snapshot_from_seed({"kind": "tool_impl", "display_name": "Other Draft"}),
+        replace_snapshot=True,
+    )
+    run = await _create_artifact_coding_worker_run(
+        db_session,
+        tenant=tenant,
+        user=user,
+        agent=agent,
+        session=prepared.session,
+        shared_draft=prepared.shared_draft,
+    )
+    await db_session.commit()
+
+    session, shared_draft, resolved_run, _artifact = await _resolve_session_context(
+        db_session,
+        {
+            "run_id": str(run.id),
+            "artifact_coding_session_id": str(other.session.id),
+            "artifact_coding_shared_draft_id": str(other.shared_draft.id),
+            "context": {
+                "artifact_coding_session_id": str(other.session.id),
+                "artifact_coding_shared_draft_id": str(other.shared_draft.id),
+            },
+        },
+    )
+
+    assert resolved_run.id == run.id
+    assert session.id == prepared.session.id
+    assert shared_draft.id == prepared.shared_draft.id
+
+
+@pytest.mark.asyncio
+async def test_prepare_session_rejects_mismatched_draft_key_for_existing_chat(db_session):
+    tenant, user = await _seed_tenant_and_user(db_session)
+    runtime = ArtifactCodingRuntimeService(db_session)
+    agent = await ensure_artifact_coding_agent_profile(db_session, tenant.id, actor_user_id=user.id)
+    prepared = await runtime.prepare_session(
+        tenant_id=tenant.id,
+        user_id=user.id,
+        agent_id=agent.id,
+        title_prompt="Locked draft scope",
+        artifact_id=None,
+        draft_key="draft-a",
+        chat_session_id=None,
+        draft_snapshot=runtime.build_initial_snapshot_from_seed({"kind": "tool_impl"}),
+        replace_snapshot=True,
+    )
+    await db_session.commit()
+
+    with pytest.raises(ValueError, match="already bound to a different draft"):
+        await runtime.prepare_session(
+            tenant_id=tenant.id,
+            user_id=user.id,
+            agent_id=agent.id,
+            title_prompt="Try to rebind scope",
+            artifact_id=None,
+            draft_key="draft-b",
+            chat_session_id=prepared.session.id,
+            draft_snapshot=runtime.build_initial_snapshot_from_seed({"kind": "tool_impl"}),
+            replace_snapshot=True,
+        )
+
+
+@pytest.mark.asyncio
+async def test_require_run_owner_uses_bound_session_and_enforces_user_ownership(db_session):
+    tenant, owner = await _seed_tenant_and_user(db_session)
+    other_user = User(email=f"artifact-other-{uuid4().hex[:8]}@example.com", role="admin")
+    db_session.add(other_user)
+    await db_session.commit()
+    await db_session.refresh(other_user)
+
+    runtime = ArtifactCodingRuntimeService(db_session)
+    agent = await ensure_artifact_coding_agent_profile(db_session, tenant.id, actor_user_id=owner.id)
+    prepared = await runtime.prepare_session(
+        tenant_id=tenant.id,
+        user_id=owner.id,
+        agent_id=agent.id,
+        title_prompt="Owner-bound chat",
+        artifact_id=None,
+        draft_key=f"draft-{uuid4().hex[:8]}",
+        chat_session_id=None,
+        draft_snapshot=runtime.build_initial_snapshot_from_seed({"kind": "tool_impl"}),
+        replace_snapshot=True,
+    )
+    run = await _create_artifact_coding_worker_run(
+        db_session,
+        tenant=tenant,
+        user=owner,
+        agent=agent,
+        session=prepared.session,
+        shared_draft=prepared.shared_draft,
+    )
+    newer_run = AgentRun(
+        tenant_id=tenant.id,
+        agent_id=agent.id,
+        user_id=owner.id,
+        initiator_user_id=owner.id,
+        thread_id=prepared.session.agent_thread_id,
+        surface="artifact_coding_agent",
+        status=RunStatus.completed,
+        input_params={
+            "context": {
+                "thread_id": str(prepared.session.agent_thread_id),
+                "artifact_coding_session_id": str(prepared.session.id),
+                "artifact_coding_shared_draft_id": str(prepared.shared_draft.id),
+            }
+        },
+        output_result={"final_output": "newer run"},
+    )
+    db_session.add(newer_run)
+    await db_session.flush()
+    prepared.session.last_run_id = newer_run.id
+    await db_session.commit()
+
+    resolved_run, resolved_session = await _require_run_owner(
+        db=db_session,
+        tenant_id=tenant.id,
+        user_id=owner.id,
+        run_id=run.id,
+    )
+
+    assert resolved_run.id == run.id
+    assert resolved_session.id == prepared.session.id
+
+    with pytest.raises(HTTPException, match="Artifact coding chat session not found"):
+        await _require_run_owner(
+            db=db_session,
+            tenant_id=tenant.id,
+            user_id=other_user.id,
+            run_id=run.id,
+        )
 
 
 @pytest.mark.asyncio
@@ -1039,6 +1240,62 @@ async def test_artifact_coding_set_tool_contract_accepts_inner_contract_object(d
     assert result["ok"] is True
     assert result["changed_fields"] == ["tool_contract"]
     assert '"deal_id"' in result["draft_snapshot"]["tool_contract"]
+
+
+@pytest.mark.asyncio
+async def test_artifact_coding_set_tool_contract_normalizes_stringified_nested_objects(db_session):
+    tenant, user = await _seed_tenant_and_user(db_session)
+    agent = await ensure_artifact_coding_agent_profile(db_session, tenant.id, actor_user_id=user.id)
+    runtime = ArtifactCodingRuntimeService(db_session)
+    prepared = await runtime.prepare_session(
+        tenant_id=tenant.id,
+        user_id=user.id,
+        agent_id=agent.id,
+        title_prompt="Set tool contract with nested JSON strings",
+        artifact_id=None,
+        draft_key=None,
+        chat_session_id=None,
+        draft_snapshot=runtime.build_initial_snapshot_from_seed({"kind": "tool_impl"}),
+        replace_snapshot=True,
+    )
+    worker_run = await _create_artifact_coding_worker_run(
+        db_session,
+        tenant=tenant,
+        user=user,
+        agent=agent,
+        session=prepared.session,
+        shared_draft=prepared.shared_draft,
+    )
+
+    @asynccontextmanager
+    async def _session_override():
+        yield db_session
+
+    from app.services import artifact_coding_agent_tools as artifact_tools_module
+
+    original_session = artifact_tools_module.get_session
+    artifact_tools_module.get_session = _session_override
+    try:
+        result = await artifact_coding_set_tool_contract(
+            {
+                "run_id": str(worker_run.id),
+                "tool_contract": {
+                    "input_schema": "{\"type\": \"object\", \"properties\": {\"deal_id\": {\"type\": \"integer\"}}}",
+                    "output_schema": "{\"type\": \"object\", \"properties\": {\"ok\": {\"type\": \"boolean\"}}}",
+                    "side_effects": [],
+                    "execution_mode": "interactive",
+                    "tool_ui": "{\"template\": \"activity-summary-ui\"}",
+                },
+            }
+        )
+    finally:
+        artifact_tools_module.get_session = original_session
+
+    assert result["ok"] is True
+    tool_contract = json.loads(result["draft_snapshot"]["tool_contract"])
+    assert tool_contract["input_schema"]["properties"]["deal_id"]["type"] == "integer"
+    assert tool_contract["output_schema"]["properties"]["ok"]["type"] == "boolean"
+    assert tool_contract["tool_ui"]["template"] == "activity-summary-ui"
 
 
 @pytest.mark.asyncio

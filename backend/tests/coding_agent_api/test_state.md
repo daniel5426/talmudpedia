@@ -1,6 +1,6 @@
 # Coding Agent API Tests
 
-Last Updated: 2026-03-15
+Last Updated: 2026-03-29
 
 ## Scope of the feature
 - v2 coding-agent admin API under `/admin/apps/{app_id}/coding-agent/v2/*`.
@@ -16,6 +16,8 @@ Last Updated: 2026-03-15
 - Prompt submission starts a run when no active run exists for the chat session.
 - Prompt submission rejects with `CODING_AGENT_RUN_ACTIVE` when a run is active for the chat session.
 - Stream layer emits one `assistant.delta` per upstream chunk (no backend coalescing).
+- Coding-agent run payloads and accepted stream events carry `context_status` telemetry for the current run budget snapshot.
+- Published-app coding-agent streams emit live `context.status` updates after tool events so the UI can update the context meter mid-run.
 - Tool-event history persistence appends safely under stale-session conditions (external updates are preserved; no JSON overwrite/lost update).
 - Stream endpoint is live-only (no replay cursor contract) with reconcile-first missing-terminal handling.
 - Terminal transitions are persisted and old non-v2 route is removed (`/coding-agent/runs` => 404).
@@ -28,6 +30,9 @@ Last Updated: 2026-03-15
 - Batch finalizer marks created revisions as `build_status=failed` when build enqueue fails, without breaking run finalization.
 
 ## Last run command + date/time + result
+- Command: `cd backend && PYTHONPATH=. pytest -q tests/coding_agent_api/test_v2_api.py`
+- Date: 2026-03-29 Asia/Hebron
+- Result: PASS (`8 passed, 7 warnings`)
 - Command: `cd backend && PYTHONPATH=. pytest -x -q tests/coding_agent_api/test_v2_api.py`
 - Date: 2026-03-15
 - Result: PASS (7 passed, 6 warnings)

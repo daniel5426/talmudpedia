@@ -15,6 +15,7 @@ from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_current_principal, require_scopes
+from app.api.schemas.context_status import ContextStatusResponse
 from app.db.postgres.models.agents import AgentRun, RunStatus
 from app.db.postgres.models.published_apps import PublishedAppRevision
 from app.db.postgres.session import get_db
@@ -24,6 +25,7 @@ from app.services.published_app_coding_chat_history_service import PublishedAppC
 from app.services.published_app_coding_pipeline_trace import pipeline_trace
 from app.services.published_app_coding_run_monitor import PublishedAppCodingRunMonitor
 from app.services.published_app_draft_dev_runtime import PublishedAppDraftDevRuntimeDisabled
+from app.services.context_status_service import ContextStatusService
 
 from .published_apps_admin_access import (
     _assert_can_manage_apps,
@@ -60,6 +62,7 @@ class CodingAgentRunResponse(BaseModel):
     sandbox_id: Optional[str] = None
     sandbox_status: Optional[str] = None
     sandbox_started_at: Optional[datetime] = None
+    context_status: Optional[ContextStatusResponse] = None
 
 
 class CodingAgentPromptSubmissionStartedResponse(BaseModel):
@@ -106,6 +109,7 @@ class CodingAgentChatSessionDetailResponse(BaseModel):
     messages: List[CodingAgentChatMessageResponse] = Field(default_factory=list)
     run_events: List["CodingAgentRunEventResponse"] = Field(default_factory=list)
     paging: "CodingAgentChatSessionPagingResponse"
+    context_status: Optional[ContextStatusResponse] = None
 
 
 class CodingAgentChatSessionPagingResponse(BaseModel):
@@ -125,6 +129,7 @@ class CodingAgentRunEventResponse(BaseModel):
 class CodingAgentActiveRunResponse(BaseModel):
     run_id: str
     status: str
+    context_status: Optional[ContextStatusResponse] = None
 
 
 class CodingAgentAnswerQuestionRequest(BaseModel):
@@ -555,6 +560,8 @@ async def get_coding_agent_chat_session(
     run_events: List[CodingAgentRunEventResponse] = []
     run_ids_in_order: List[UUID] = []
     seen_run_ids: set[UUID] = set()
+    run_rows: list[AgentRun] = []
+    runs_by_id: dict[str, AgentRun] = {}
     for item in messages:
         run_id = item.run_id
         if run_id in seen_run_ids:
@@ -581,6 +588,7 @@ async def get_coding_agent_chat_session(
             if run is None:
                 continue
             run_events.extend(_normalize_run_tool_events(run=run))
+    context_run = runs_by_id.get(str(run_ids_in_order[-1])) if run_ids_in_order else None
     return CodingAgentChatSessionDetailResponse(
         session=CodingAgentChatSessionResponse(**history_service.serialize_session(session)),
         messages=[CodingAgentChatMessageResponse(**history_service.serialize_message(item)) for item in messages],
@@ -589,6 +597,7 @@ async def get_coding_agent_chat_session(
             has_more=has_more,
             next_before_message_id=str(next_before_message_id) if next_before_message_id else None,
         ),
+        context_status=ContextStatusService.read_from_run(context_run),
     )
 
 
@@ -633,6 +642,7 @@ async def get_coding_agent_chat_session_active_run(
     return CodingAgentActiveRunResponse(
         run_id=str(run.id),
         status=status,
+        context_status=ContextStatusService.read_from_run(run),
     )
 
 

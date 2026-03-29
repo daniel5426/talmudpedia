@@ -21,6 +21,7 @@ from app.agent.execution.types import ExecutionMode
 from app.db.postgres.models.agents import Agent, AgentRun, AgentStatus
 from app.db.postgres.models.agent_threads import AgentThread, AgentThreadTurn
 from app.services.runtime_attachment_service import RuntimeAttachmentService
+from app.services.context_status_service import ContextStatusService
 from app.services.thread_service import ThreadService, ThreadTurnPage
 from app.services.usage_quota_service import QuotaExceededError
 
@@ -310,7 +311,11 @@ async def stream_embedded_agent(
                 run_id=str(run_id),
                 event="run.accepted",
                 stage="run",
-                payload={"status": "running", "thread_id": thread_id_value},
+                payload={
+                    "status": "running",
+                    "thread_id": thread_id_value,
+                    "context_status": ContextStatusService.read_from_run(run_row),
+                },
             )
             seq += 1
             yield f"data: {json.dumps(accepted, default=str)}\n\n"

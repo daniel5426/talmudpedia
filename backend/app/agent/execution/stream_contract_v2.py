@@ -123,8 +123,19 @@ def normalize_filtered_event_to_v2(
                 "next": data.get("next"),
                 "next_nodes": data.get("next_nodes"),
                 "final_output": data.get("final_output"),
+                "context_status": data.get("context_status"),
             },
             diagnostics,
+        )
+
+    if event_name == "context.status":
+        return (
+            "context.status",
+            "context",
+            {
+                "context_status": data.get("context_status"),
+            },
+            [],
         )
 
     if event_name == "error" or event_type == "error":

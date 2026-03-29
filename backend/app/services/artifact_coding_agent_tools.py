@@ -286,7 +286,7 @@ async def _resolve_session_context(
     input_context = run.input_params.get("context") if isinstance(run.input_params, dict) else {}
     if not isinstance(input_context, dict):
         input_context = {}
-    session_id_raw = payload.get("artifact_coding_session_id") or context.get("artifact_coding_session_id") or input_context.get("artifact_coding_session_id")
+    session_id_raw = input_context.get("artifact_coding_session_id")
     if not session_id_raw:
         raise ValueError("artifact_coding_session_id is required")
     session_id = _parse_uuid(session_id_raw, "artifact_coding_session_id")
@@ -297,11 +297,7 @@ async def _resolve_session_context(
         raise PermissionError("Artifact coding session tenant mismatch")
     shared_draft_service = ArtifactCodingSharedDraftService(db)
     run_bound_shared_draft: ArtifactCodingSharedDraft | None = None
-    shared_draft_id_raw = (
-        payload.get("artifact_coding_shared_draft_id")
-        or context.get("artifact_coding_shared_draft_id")
-        or input_context.get("artifact_coding_shared_draft_id")
-    )
+    shared_draft_id_raw = input_context.get("artifact_coding_shared_draft_id")
     if shared_draft_id_raw:
         shared_draft_id = _parse_uuid(shared_draft_id_raw, "artifact_coding_shared_draft_id")
         run_bound_shared_draft = await db.get(ArtifactCodingSharedDraft, shared_draft_id)
@@ -908,6 +904,8 @@ async def _set_contract_payload(
             field=contract_field,
             fallback=_default_contract_for_kind(snapshot["kind"]),
         )
+        if contract_field == "tool_contract":
+            contract_value = parse_tool_contract_json(contract_value, source=contract_field)
         snapshot[contract_field] = _format_json_object(contract_value)
         return await _persist_snapshot_result(
             db,

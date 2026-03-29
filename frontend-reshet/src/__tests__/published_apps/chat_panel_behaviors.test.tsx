@@ -73,6 +73,10 @@ jest.mock("@/components/ai-elements/prompt-input", () => ({
   PromptInputTextarea: (props: React.TextareaHTMLAttributes<HTMLTextAreaElement>) => <textarea {...props} />,
 }));
 
+jest.mock("@/components/ai-elements/chat-context-status", () => ({
+  ChatContextStatus: () => <div data-testid="chat-context-status" />,
+}));
+
 jest.mock("@/components/ai-elements/message", () => ({
   Message: ({ children, className }: { children: React.ReactNode; className?: string }) => <div className={className}>{children}</div>,
   MessageContent: ({ children, className }: { children: React.ReactNode; className?: string }) => <div className={className}>{children}</div>,
@@ -174,6 +178,19 @@ describe("apps builder chat panel behaviors", () => {
           }),
         ]}
         activeThinkingSummary=""
+        activeContextStatus={{
+          model_id: "opencode/gpt-5",
+          max_tokens: 256000,
+          max_tokens_source: "opencode_default",
+          reserved_output_tokens: 4096,
+          estimated_input_tokens: 2048,
+          estimated_total_tokens: 6144,
+          estimated_remaining_tokens: 249856,
+          estimated_usage_ratio: 0.024,
+          near_limit: false,
+          compaction_recommended: false,
+          source: "estimated_pre_run",
+        }}
         chatSessions={[]}
         activeChatSessionId={null}
         onActivateDraftChat={() => undefined}
@@ -217,6 +234,7 @@ describe("apps builder chat panel behaviors", () => {
 
     const fade = container.querySelector('[aria-hidden="true"]');
     const scrollContainer = screen.getByTestId("mock-scroll-container");
+    expect(screen.getByTestId("chat-context-status")).toBeInTheDocument();
 
     expect(fade).toHaveClass("opacity-0");
 
@@ -241,6 +259,7 @@ describe("apps builder chat panel behaviors", () => {
         isStopping={false}
         timeline={[]}
         activeThinkingSummary=""
+        activeContextStatus={null}
         chatSessions={[]}
         activeChatSessionId={null}
         onActivateDraftChat={() => undefined}

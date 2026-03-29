@@ -66,6 +66,15 @@ class ResolvedModelExecution:
     def resolved_provider(self) -> str:
         return getattr(self.binding.provider, "value", str(self.binding.provider))
 
+    @property
+    def context_window(self) -> int | None:
+        metadata = dict(getattr(self.logical_model, "metadata_", {}) or {})
+        try:
+            value = int(metadata.get("context_window"))
+        except Exception:
+            return None
+        return value if value > 0 else None
+
 
 class ModelResolver:
     """

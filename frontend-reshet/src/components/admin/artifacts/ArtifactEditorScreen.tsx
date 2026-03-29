@@ -613,6 +613,7 @@ export function ArtifactEditorScreen({
             isStopping={artifactCodingChat.isStopping}
             timeline={artifactCodingChat.timeline}
             activeThinkingSummary={artifactCodingChat.activeThinkingSummary}
+            activeContextStatus={artifactCodingChat.activeContextStatus}
             chatSessions={artifactCodingChat.chatSessions}
             isHistoryOpen={isChatHistoryOpen}
             onHistoryOpenChange={setIsChatHistoryOpen}

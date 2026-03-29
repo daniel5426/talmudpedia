@@ -1,5 +1,6 @@
 import { httpClient } from "./http";
 import { useAuthStore } from "@/lib/store/useAuthStore";
+import type { ContextStatus } from "./context-status";
 
 export type ArtifactType = "draft" | "published";
 export type ArtifactKind = "agent_node" | "rag_operator" | "tool_impl";
@@ -285,6 +286,7 @@ export interface ArtifactCodingRun {
   created_at: string;
   started_at?: string | null;
   completed_at?: string | null;
+  context_status?: ContextStatus | null;
 }
 
 export interface ArtifactCodingChatSession {
@@ -321,6 +323,7 @@ export interface ArtifactCodingChatSessionDetail {
   messages: ArtifactCodingChatMessage[];
   run_events: ArtifactCodingRunEvent[];
   draft_snapshot: Record<string, unknown>;
+  context_status?: ContextStatus | null;
   paging: {
     has_more: boolean;
     next_before_message_id?: string | null;
@@ -330,6 +333,7 @@ export interface ArtifactCodingChatSessionDetail {
 export interface ArtifactCodingActiveRunState {
   run_id: string;
   status: string;
+  context_status?: ContextStatus | null;
 }
 
 export interface ArtifactCodingAnswerQuestionRequest {

@@ -1,3 +1,4 @@
+import type { ContextStatus } from "@/services/context-status";
 import type { CodingAgentPendingQuestion } from "./stream-parsers";
 import {
   timelineId,
@@ -60,6 +61,7 @@ export type SessionContainer = {
   isSending: boolean;
   isStopping: boolean;
   activeThinkingSummary: string;
+  contextStatus: ContextStatus | null;
   history: SessionHistoryState;
   activeRunIdRef: { current: string | null };
   lastKnownRunIdRef: { current: string | null };
@@ -86,6 +88,7 @@ export function createSessionContainer(key: string): SessionContainer {
     isSending: false,
     isStopping: false,
     activeThinkingSummary: "",
+    contextStatus: null,
     history: {
       initialized: false,
       hasMore: false,

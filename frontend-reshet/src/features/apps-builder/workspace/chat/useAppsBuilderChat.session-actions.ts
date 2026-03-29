@@ -1,6 +1,6 @@
 import { useCallback } from "react";
 
-import { OPENCODE_CODING_MODEL_AUTO_ID, publishedAppsService } from "@/services";
+import { mergeContextStatus, OPENCODE_CODING_MODEL_AUTO_ID, publishedAppsService } from "@/services";
 
 import {
   DRAFT_SESSION_KEY,
@@ -219,6 +219,7 @@ export function useAppsBuilderChatSessionActions({
       }
       mutateSession(targetSessionKey, (target) => {
         target.timeline = target.timeline.map((item) => item.id === userTimelineId ? { ...item, userDeliveryStatus: "sent" } : item);
+        target.contextStatus = mergeContextStatus(target.contextStatus, run.context_status);
       });
 
       if (isLocalSessionKey(resolvedSessionKey)) {

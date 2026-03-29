@@ -173,6 +173,43 @@ class ArtifactCodingRuntimeService:
             }
         )
 
+    @staticmethod
+    def _scope_artifact_id(
+        *,
+        session: ArtifactCodingSession,
+        shared_draft: ArtifactCodingSharedDraft,
+    ) -> UUID | None:
+        return (
+            shared_draft.artifact_id
+            or shared_draft.linked_artifact_id
+            or session.artifact_id
+            or session.linked_artifact_id
+        )
+
+    @staticmethod
+    def _scope_draft_key(
+        *,
+        session: ArtifactCodingSession,
+        shared_draft: ArtifactCodingSharedDraft,
+    ) -> str | None:
+        return str(shared_draft.draft_key or session.draft_key or "").strip() or None
+
+    @classmethod
+    def _assert_compatible_existing_session_scope(
+        cls,
+        *,
+        session: ArtifactCodingSession,
+        shared_draft: ArtifactCodingSharedDraft,
+        artifact_id: UUID | None,
+        draft_key: str | None,
+    ) -> None:
+        existing_artifact_id = cls._scope_artifact_id(session=session, shared_draft=shared_draft)
+        existing_draft_key = cls._scope_draft_key(session=session, shared_draft=shared_draft)
+        if artifact_id is not None and existing_artifact_id is not None and artifact_id != existing_artifact_id:
+            raise ValueError("Artifact coding chat session is already bound to a different artifact")
+        if draft_key and existing_draft_key and draft_key != existing_draft_key:
+            raise ValueError("Artifact coding chat session is already bound to a different draft")
+
     async def _resolve_initial_snapshot(
         self,
         *,
@@ -216,12 +253,15 @@ class ArtifactCodingRuntimeService:
                 session_id=chat_session_id,
             )
             shared_draft = await self.shared_drafts.resolve_for_session(session=session)
-            await self.history.update_session_scope(
+            self._assert_compatible_existing_session_scope(
                 session=session,
+                shared_draft=shared_draft,
                 artifact_id=artifact_id,
                 draft_key=draft_key,
-                shared_draft_id=shared_draft.id,
             )
+            if session.shared_draft_id != shared_draft.id:
+                session.shared_draft_id = shared_draft.id
+                await self.db.flush()
         else:
             thread = (
                 await ThreadService(self.db).resolve_or_create_thread(
@@ -255,28 +295,39 @@ class ArtifactCodingRuntimeService:
             await self.shared_drafts.update_snapshot(
                 shared_draft=shared_draft,
                 draft_snapshot=initial_snapshot,
-                artifact_id=artifact_id,
-                draft_key=draft_key,
+                artifact_id=artifact_id if artifact_id is not None else self._scope_artifact_id(session=session, shared_draft=shared_draft),
+                draft_key=draft_key or self._scope_draft_key(session=session, shared_draft=shared_draft),
             )
         elif artifact_id is not None or draft_key:
             await self.shared_drafts.update_snapshot(
                 shared_draft=shared_draft,
                 draft_snapshot=shared_draft.working_draft_snapshot or initial_snapshot,
-                artifact_id=artifact_id,
-                draft_key=draft_key,
+                artifact_id=artifact_id if artifact_id is not None else self._scope_artifact_id(session=session, shared_draft=shared_draft),
+                draft_key=draft_key or self._scope_draft_key(session=session, shared_draft=shared_draft),
             )
 
-        if artifact_id is not None and draft_key:
-            await self.history.link_sessions_to_artifact(
-                tenant_id=tenant_id,
-                draft_key=draft_key,
-                artifact_id=artifact_id,
-            )
+        current_artifact_id = self._scope_artifact_id(session=session, shared_draft=shared_draft)
+        current_draft_key = self._scope_draft_key(session=session, shared_draft=shared_draft)
+        effective_draft_key = draft_key or current_draft_key
+        should_link_existing_draft_session = (
+            artifact_id is not None
+            and effective_draft_key is not None
+            and current_artifact_id is None
+            and current_draft_key == effective_draft_key
+        )
+
+        if artifact_id is not None and effective_draft_key:
             await self.shared_drafts.link_scope_to_artifact(
                 tenant_id=tenant_id,
-                draft_key=draft_key,
+                draft_key=effective_draft_key,
                 artifact_id=artifact_id,
             )
+            if should_link_existing_draft_session:
+                await self.history.link_sessions_to_artifact(
+                    tenant_id=tenant_id,
+                    draft_key=effective_draft_key,
+                    artifact_id=artifact_id,
+                )
 
         return PreparedArtifactCodingSession(
             session=session,

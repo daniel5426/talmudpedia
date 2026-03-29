@@ -1,6 +1,6 @@
 # Published Apps Frontend Tests
 
-Last Updated: 2026-03-22
+Last Updated: 2026-03-29
 
 ## Scope
 Frontend coverage for published-apps admin and public runtime surfaces outside the new versions module.
@@ -21,11 +21,15 @@ Frontend coverage for published-apps admin and public runtime surfaces outside t
 - Builder file-filter and blocked path rules.
 - Chat timeline/thread rendering behaviors.
 - Chat panel shimmer cutoff and scroll-fade activation.
+- Chat footer chrome can render the context-usage indicator without pulling runtime-only `tokenlens` into tests.
 - Coding-agent stream speed/coalescing expectations.
 - Preview auth token channel updates and iframe src stability across token refreshes.
 - Preview keeps the iframe mounted during same-session transient pending/recovering states instead of immediately blanking it.
 
 ## Last Run
+- Command: `pnpm --dir frontend-reshet test -- --runInBand src/__tests__/published_apps/chat_panel_behaviors.test.tsx`
+- Date: 2026-03-29 Asia/Hebron
+- Result: PASS (`4 passed`)
 - Command: `cd frontend-reshet && npm test -- --runInBand src/__tests__/published_apps/preview_canvas_auth_channel.test.tsx`
 - Date: 2026-03-16
 - Result: Pass

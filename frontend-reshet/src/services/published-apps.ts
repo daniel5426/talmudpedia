@@ -1,5 +1,6 @@
 import { httpClient } from "./http";
 import { useAuthStore } from "@/lib/store/useAuthStore";
+import type { ContextStatus } from "./context-status";
 
 export type PublishedAppStatus = "draft" | "published" | "paused" | "archived";
 export type PublishedAppVisibility = "public" | "private";
@@ -321,6 +322,7 @@ export interface CodingAgentRun {
   sandbox_id?: string | null;
   sandbox_status?: string | null;
   sandbox_started_at?: string | null;
+  context_status?: ContextStatus | null;
 }
 
 export interface CodingAgentChatSession {
@@ -352,6 +354,7 @@ export interface CodingAgentChatSessionDetail {
   session: CodingAgentChatSession;
   messages: CodingAgentChatMessage[];
   run_events?: CodingAgentRunEvent[];
+  context_status?: ContextStatus | null;
   paging: {
     has_more: boolean;
     next_before_message_id?: string | null;
@@ -368,6 +371,7 @@ export interface AppVersionListItem extends PublishedAppRevision {
 export interface CodingAgentActiveRunState {
   run_id: string;
   status: string;
+  context_status?: ContextStatus | null;
 }
 
 export interface CodingAgentPromptQueueItem {

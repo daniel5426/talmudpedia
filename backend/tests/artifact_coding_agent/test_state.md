@@ -36,14 +36,22 @@ Track backend coverage for the artifact-coding agent runtime across locked draft
 - delegated artifact-worker instructions now include an explicit draft-readiness checklist for new artifacts, covering display_name, kind, source files, entry module, runtime target, capabilities, config schema, dependencies, and the matching contract payload
 - delegated artifact-worker instructions now cover both `python` and `javascript`, create-only language selection, safe credential-reference authoring, and `tool_impl` lifecycle boundaries
 - contract mutation now uses kind-specific tools with exact contract schemas, so the model no longer needs a generic `contract_payload` wrapper path
+- tool-contract mutation now normalizes stringified nested `input_schema`, `output_schema`, and `tool_ui` objects before persisting the draft
 - source editing now uses exact `old_text` replacement plus numbered read/search context instead of fragile line-range patch guessing
 - the coding-agent tool surface now includes explicit runtime-contract validation for the required `execute(inputs, config, context)` entrypoint
 - artifact coding runtime can build javascript create-mode starter drafts from seed input
 - artifact coding tool surface now includes safe credential metadata listing for `@{credential-id}` authoring without exposing secret values
 - scope-conflict prompt behavior now refuses briefly without asking for new sessions, new artifacts, or scaffold follow-up
+- tool execution scope is now derived strictly from the run-bound session/shared-draft context, not caller-supplied payload overrides
+- existing artifact-coding chats now reject mismatched `artifact_id` / `draft_key` rebinding attempts instead of silently rewriting scope
+- run lookup/control paths now enforce bound-session ownership for the current user even when the requested run is not the session's latest run
+- artifact run serializers now expose `context_status` snapshots for chat-session/runtime consumers
 
 ## Last Run
 
+- Command: `cd backend && PYTHONPATH=. pytest -q tests/artifact_coding_agent/test_runtime_service.py`
+- Date: 2026-03-29 Asia/Hebron
+- Result: PASS (`31 passed, 5 warnings`)
 - Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/artifact_coding_agent/test_runtime_service.py`
 - Date: 2026-03-14 20:39 EET
 - Result: passed (`3 passed`)
@@ -110,6 +118,12 @@ Track backend coverage for the artifact-coding agent runtime across locked draft
 - Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/artifact_coding_agent/test_runtime_service.py`
 - Date: 2026-03-29 Asia/Hebron
 - Result: PASS (`27 passed, 5 warnings`)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/artifact_coding_agent/test_runtime_service.py`
+- Date: 2026-03-29 Asia/Hebron
+- Result: PASS (`30 passed, 5 warnings`)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/artifact_coding_agent/test_runtime_service.py`
+- Date: 2026-03-29 21:59 EEST
+- Result: PASS (`32 passed, 5 warnings`)
 
 ## Known Gaps
 

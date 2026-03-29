@@ -26,6 +26,7 @@ def validate_tool_contract(
         raise ToolContractValidationError(
             f"{source} must be the inner tool contract object, not wrapped in an outer 'tool_contract' field"
         )
+    candidate = _normalize_tool_contract_nested_objects(candidate, source=source)
     try:
         return ToolArtifactContract.model_validate(candidate).model_dump()
     except ValidationError as exc:
@@ -62,6 +63,17 @@ def _parse_json_object(value: Any, *, source: str) -> dict[str, Any]:
     if not isinstance(parsed, dict):
         raise ValueError(f"{source} must be a JSON object")
     return deepcopy(parsed)
+
+
+def _normalize_tool_contract_nested_objects(value: Any, *, source: str) -> Any:
+    if not isinstance(value, dict):
+        return value
+    normalized = deepcopy(value)
+    for field_name in ("input_schema", "output_schema", "tool_ui"):
+        field_value = normalized.get(field_name)
+        if isinstance(field_value, str):
+            normalized[field_name] = _parse_json_object(field_value, source=f"{source}.{field_name}")
+    return normalized
 
 
 def _validation_error_message(exc: ValidationError) -> str:

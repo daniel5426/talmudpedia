@@ -12,6 +12,7 @@ import {
   ConversationContent,
   ConversationScrollButton,
 } from "@/components/ai-elements/conversation";
+import { ChatContextStatus } from "@/components/ai-elements/chat-context-status";
 import {
   ModelSelector,
   ModelSelectorContent,
@@ -34,7 +35,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import type { AppVersionListItem, CodingAgentChatSession, OpenCodeCodingModelOption, PublishedAppRevision } from "@/services";
+import type { AppVersionListItem, CodingAgentChatSession, ContextStatus, OpenCodeCodingModelOption, PublishedAppRevision } from "@/services";
 
 import {
   TimelineItem,
@@ -57,6 +58,7 @@ type AppsBuilderChatPanelProps = {
   isStopping: boolean;
   timeline: TimelineItem[];
   activeThinkingSummary: string;
+  activeContextStatus: ContextStatus | null;
   chatSessions: CodingAgentChatSession[];
   activeChatSessionId: string | null;
   onActivateDraftChat: () => void;
@@ -103,6 +105,7 @@ export function AppsBuilderChatPanel({
   isStopping,
   timeline,
   activeThinkingSummary,
+  activeContextStatus,
   chatSessions,
   activeChatSessionId,
   onActivateDraftChat,
@@ -481,48 +484,51 @@ export function AppsBuilderChatPanel({
               />
             </PromptInputBody>
             <PromptInputFooter className="justify-between px-2 pb-1.5 pt-0">
-              <ModelSelector open={isModelSelectorOpen} onOpenChange={onModelSelectorOpenChange}>
-                <ModelSelectorTrigger asChild>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="h-6 px-2 text-[11px] text-muted-foreground hover:text-foreground"
-                    aria-label="Select run model"
-                  >
-                    {selectedRunModelLabel}
-                  </Button>
-                </ModelSelectorTrigger>
-                <ModelSelectorContent className="max-w-xs">
-                  <ModelSelectorInput placeholder="Search models..." />
-                  <ModelSelectorList>
-                    <ModelSelectorEmpty>No OpenCode models</ModelSelectorEmpty>
-                    <ModelSelectorGroup heading="Run model">
-                      <ModelSelectorItem
-                        value="auto"
-                        onSelect={() => {
-                          onSelectModelId(null);
-                          onModelSelectorOpenChange(false);
-                        }}
-                      >
-                        <ModelSelectorName>Auto</ModelSelectorName>
-                      </ModelSelectorItem>
-                      {chatModels.map((model) => (
+              <div className="flex items-center gap-1">
+                <ModelSelector open={isModelSelectorOpen} onOpenChange={onModelSelectorOpenChange}>
+                  <ModelSelectorTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 px-2 text-[11px] text-muted-foreground hover:text-foreground"
+                      aria-label="Select run model"
+                    >
+                      {selectedRunModelLabel}
+                    </Button>
+                  </ModelSelectorTrigger>
+                  <ModelSelectorContent className="max-w-xs">
+                    <ModelSelectorInput placeholder="Search models..." />
+                    <ModelSelectorList>
+                      <ModelSelectorEmpty>No OpenCode models</ModelSelectorEmpty>
+                      <ModelSelectorGroup heading="Run model">
                         <ModelSelectorItem
-                          key={model.id}
-                          value={`${model.name} ${model.id}`}
+                          value="auto"
                           onSelect={() => {
-                            onSelectModelId(model.id);
+                            onSelectModelId(null);
                             onModelSelectorOpenChange(false);
                           }}
                         >
-                          <ModelSelectorName>{model.name}</ModelSelectorName>
+                          <ModelSelectorName>Auto</ModelSelectorName>
                         </ModelSelectorItem>
-                      ))}
-                    </ModelSelectorGroup>
-                  </ModelSelectorList>
-                </ModelSelectorContent>
-              </ModelSelector>
+                        {chatModels.map((model) => (
+                          <ModelSelectorItem
+                            key={model.id}
+                            value={`${model.name} ${model.id}`}
+                            onSelect={() => {
+                              onSelectModelId(model.id);
+                              onModelSelectorOpenChange(false);
+                            }}
+                          >
+                            <ModelSelectorName>{model.name}</ModelSelectorName>
+                          </ModelSelectorItem>
+                        ))}
+                      </ModelSelectorGroup>
+                    </ModelSelectorList>
+                  </ModelSelectorContent>
+                </ModelSelector>
+                <ChatContextStatus contextStatus={activeContextStatus} />
+              </div>
               {isSending ? (
                 <Button
                   type="button"

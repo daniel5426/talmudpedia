@@ -38,6 +38,7 @@ from app.db.postgres.models.published_apps import (
 )
 from app.db.postgres.session import get_db
 from app.services.thread_service import ThreadService
+from app.services.context_status_service import ContextStatusService
 from app.services.runtime_attachment_service import RuntimeAttachmentOwner, RuntimeAttachmentService
 from app.services.published_app_bundle_storage import (
     PublishedAppBundleAssetNotFound,
@@ -547,7 +548,11 @@ async def _stream_chat_for_app(
                 run_id=str(run_id),
                 event="run.accepted",
                 stage="run",
-                payload={"status": "running", "thread_id": thread_id_value},
+                payload={
+                    "status": "running",
+                    "thread_id": thread_id_value,
+                    "context_status": ContextStatusService.read_from_run(run_row),
+                },
             )
             seq += 1
             yield f"data: {json.dumps(accepted, default=str)}\n\n"

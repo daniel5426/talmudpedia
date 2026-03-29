@@ -41,6 +41,7 @@ from app.services.model_accounting import (
     build_legacy_usage_from_total,
     compute_cost_from_snapshot,
 )
+from app.services.context_status_service import ContextStatusService
 from app.services.model_resolver import ModelResolver, ModelResolverError, ResolvedModelExecution
 
 logger = logging.getLogger(__name__)
@@ -173,6 +174,21 @@ class AgentExecutorService:
             return UUID(next(iter(unique_model_ids)))
         except Exception:
             return None
+
+    @staticmethod
+    def _resolve_requested_model_ref(
+        runtime_context: dict[str, Any],
+        graph_definition: dict[str, Any],
+    ) -> str | None:
+        raw_requested_model_id = str(runtime_context.get("requested_model_id") or "").strip()
+        if raw_requested_model_id:
+            return raw_requested_model_id
+
+        model_ids = AgentExecutorService._collect_graph_model_ids(graph_definition or {})
+        unique_model_ids = [model_id for model_id in {model_id for model_id in model_ids if model_id}]
+        if len(unique_model_ids) != 1:
+            return None
+        return unique_model_ids[0]
 
     @staticmethod
     def _merge_quota_caps(*caps: Any) -> int | None:
@@ -406,6 +422,24 @@ class AgentExecutorService:
         run.cost_breakdown_json = normalized_cost.to_json() or None
         if normalized_cost.total_cost is not None:
             run.cost = f"{float(normalized_cost.total_cost):.6f}"
+
+        context_status = ContextStatusService.finalize_for_run(
+            existing_status=ContextStatusService.read_from_run(run),
+            run=run,
+            resolved_model_id=(
+                str(run.resolved_model_id)
+                if run.resolved_model_id
+                else str(run.requested_model_id)
+                if run.requested_model_id
+                else None
+            ),
+            resolved_context_window=resolved_execution.context_window if resolved_execution is not None else None,
+        )
+        if context_status is not None:
+            run.input_params = ContextStatusService.attach_to_input_params(
+                run.input_params if isinstance(run.input_params, dict) else input_params,
+                context_status,
+            )
 
     @staticmethod
     def _extract_assistant_output_text(output_result: Dict[str, Any] | None) -> str | None:
@@ -655,6 +689,7 @@ class AgentExecutorService:
             )
         await policy_service.assert_agent_access(snapshot=policy_snapshot, agent_id=agent.id)
         requested_model_id = self._resolve_requested_model_id(runtime_context, agent.graph_definition or {})
+        requested_model_ref = self._resolve_requested_model_ref(runtime_context, agent.graph_definition or {})
 
         require_workload_delegation = self._requires_workload_delegation(
             agent=agent,
@@ -694,12 +729,21 @@ class AgentExecutorService:
         context_payload = input_params.get("context") if isinstance(input_params.get("context"), dict) else {}
         context_payload = dict(context_payload)
         context_payload["thread_id"] = str(thread_result.thread.id)
+        if requested_model_ref:
+            context_payload["requested_model_id"] = requested_model_ref
         if policy_snapshot is not None:
             context_payload["resource_policy_snapshot"] = policy_snapshot.to_payload()
             if policy_snapshot.principal is not None:
                 context_payload["resource_policy_principal"] = policy_snapshot.principal.to_payload()
         if quota_metadata.get("max_output_cap"):
             context_payload["quota_max_output_tokens"] = int(quota_metadata["max_output_cap"])
+        context_status = await ContextStatusService(self.db).build_pre_run_status(
+            tenant_id=agent.tenant_id,
+            model_id=requested_model_ref or (str(requested_model_id) if requested_model_id else None),
+            input_params=input_params,
+            runtime_context=context_payload,
+        )
+        context_payload["context_status"] = context_status
         input_params["context"] = context_payload
         input_params["thread_id"] = str(thread_result.thread.id)
 
@@ -1073,6 +1117,7 @@ class AgentExecutorService:
             max_observed_usage_tokens = 0
             best_usage: NormalizedUsage | None = None
             best_usage_source: str | None = None
+            turn = None
             if run.thread_id:
                 thread_service = ThreadService(db)
                 turn = await thread_service.start_turn(
@@ -1092,7 +1137,10 @@ class AgentExecutorService:
                         for item in ((run_input_params.get("attachment_ids") or []) if isinstance(run_input_params, dict) else [])
                         if str(item).strip()
                     ],
-                    metadata={"mode": mode.value},
+                    metadata=ContextStatusService.attach_turn_context_status(
+                        {"mode": mode.value},
+                        context_status=ContextStatusService.read_from_run(run),
+                    ),
                 )
             # 5. Stream Execution Events (Platform-normalized)
             persist_event(
@@ -1121,6 +1169,50 @@ class AgentExecutorService:
                 )
                 persist_event(event)
                 yield event
+                live_context_status, live_runtime_metadata = ContextStatusService.advance_for_event(
+                    existing_status=ContextStatusService.read_from_run(run),
+                    existing_runtime_metadata=(
+                        turn.metadata_.get("context_runtime")
+                        if turn is not None and isinstance(turn.metadata_, dict)
+                        else None
+                    ),
+                    event_name=(
+                        event.event
+                        if isinstance(event, ExecutionEvent)
+                        else event.get("event")
+                    ),
+                    data=(
+                        event.data
+                        if isinstance(event, ExecutionEvent) and isinstance(event.data, dict)
+                        else event.get("data")
+                        if isinstance(event, dict) and isinstance(event.get("data"), dict)
+                        else None
+                    ),
+                )
+                if live_context_status is not None:
+                    run.input_params = ContextStatusService.attach_runtime_metadata_to_context(
+                        ContextStatusService.attach_to_input_params(
+                            run.input_params if isinstance(run.input_params, dict) else run_input_params,
+                            live_context_status,
+                        ),
+                        live_runtime_metadata,
+                    )
+                    if turn is not None:
+                        turn.metadata_ = ContextStatusService.attach_turn_context_status(
+                            turn.metadata_ if isinstance(turn.metadata_, dict) else {},
+                            context_status=live_context_status,
+                            runtime_metadata=live_runtime_metadata,
+                        )
+                    await db.flush()
+                    context_event = ExecutionEvent(
+                        event="context.status",
+                        data={"context_status": live_context_status},
+                        run_id=str(run_id),
+                        visibility=EventVisibility.CLIENT_SAFE,
+                        metadata={"category": "context", "mode": mode.value},
+                    )
+                    persist_event(context_event)
+                    yield context_event
                 await self._refresh_run_record(db, run)
                 if run.status == RunStatus.cancelled:
                     persist_event(
@@ -1220,13 +1312,13 @@ class AgentExecutorService:
                         if final_status == RunStatus.failed
                         else None
                     ),
+                    "context_status": ContextStatusService.read_from_run(run),
                 },
                 run_id=str(run_id),
                 visibility=EventVisibility.CLIENT_SAFE,
                 metadata={"mode": mode.value}
             )
             persist_event(run_status_event)
-            yield run_status_event
             persist_event(
                 ExecutionEvent(
                     event="run.lifecycle",
@@ -1260,6 +1352,7 @@ class AgentExecutorService:
                     ),
                 )
             await db.commit()
+            yield run_status_event
 
         except Exception as e:
             await db.rollback()

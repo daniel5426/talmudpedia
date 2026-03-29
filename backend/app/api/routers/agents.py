@@ -55,6 +55,7 @@ from datetime import datetime
 from app.db.postgres.models.agent_threads import AgentThreadSurface, AgentThreadTurnStatus
 from app.db.postgres.models.agents import RunStatus
 from app.services.runtime_attachment_service import RuntimeAttachmentOwner, RuntimeAttachmentService
+from app.services.context_status_service import ContextStatusService
 from app.services.thread_service import ThreadService
 
 
@@ -860,7 +861,11 @@ async def stream_agent(
                 run_id=str(run_id),
                 event="run.accepted",
                 stage="run",
-                payload={"status": "running", "thread_id": thread_id_value},
+                payload={
+                    "status": "running",
+                    "thread_id": thread_id_value,
+                    "context_status": ContextStatusService.read_from_run(run_row),
+                },
             )
             seq += 1
             yield f"data: {json.dumps(accepted, default=str)}\n\n"

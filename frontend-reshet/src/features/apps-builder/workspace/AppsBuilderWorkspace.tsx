@@ -758,6 +758,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     isStopping,
     timeline,
     activeThinkingSummary,
+    activeContextStatus,
     chatSessions,
     activeChatSessionId,
     activateDraftChat,
@@ -1648,6 +1649,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
             isStopping={isStopping}
             timeline={timeline}
             activeThinkingSummary={activeThinkingSummary}
+            activeContextStatus={activeContextStatus}
             chatSessions={chatSessions}
             activeChatSessionId={activeChatSessionId}
             onActivateDraftChat={activateDraftChat}

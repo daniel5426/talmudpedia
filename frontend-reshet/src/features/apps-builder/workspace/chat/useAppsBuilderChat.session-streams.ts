@@ -1,4 +1,5 @@
 import { consumeRunStream as consumeRunStreamImpl } from "./useAppsBuilderChat.stream";
+import type { ContextStatus } from "@/services";
 import type { CodingAgentPendingQuestion } from "./stream-parsers";
 import type { SessionContainer } from "./useAppsBuilderChat.session-state";
 
@@ -20,6 +21,7 @@ type ConsumeSessionRunStreamOptions = {
   setSessionSending: (sessionKey: string, next: boolean) => void;
   setSessionStopping: (sessionKey: string, next: boolean) => void;
   setSessionThinking: (sessionKey: string, next: string) => void;
+  setSessionContextStatus: (sessionKey: string, next: ContextStatus | null) => void;
   pushSessionTimeline: (sessionKey: string, item: { kind?: "assistant" | "user" | "tool"; title: string; description?: string; tone?: "default" | "success" | "error" }) => void;
   upsertSessionAssistantTimeline: (sessionKey: string, assistantStreamId: string, description: string) => void;
   upsertSessionToolTimeline: (
@@ -56,6 +58,7 @@ export async function consumeSessionRunStream({
   setSessionSending,
   setSessionStopping,
   setSessionThinking,
+  setSessionContextStatus,
   pushSessionTimeline,
   upsertSessionAssistantTimeline,
   upsertSessionToolTimeline,
@@ -86,6 +89,7 @@ export async function consumeSessionRunStream({
     setIsSending: (next) => setSessionSending(session.key, next),
     setIsStopping: (next) => setSessionStopping(session.key, next),
     setActiveThinkingSummary: (next) => setSessionThinking(session.key, next),
+    setContextStatus: (next) => setSessionContextStatus(session.key, next),
     isSendingRef: session.isSendingRef,
     pendingCancelRef: session.pendingCancelRef,
     intentionalAbortRef: session.intentionalAbortRef,

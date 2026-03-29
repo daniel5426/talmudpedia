@@ -1,4 +1,4 @@
-Last Updated: 2026-03-16
+Last Updated: 2026-03-29
 
 ## Scope
 Shared assistant-response normalization and timeline rendering used by the agent builder execute panel and the agent playground.
@@ -7,6 +7,7 @@ Shared assistant-response normalization and timeline rendering used by the agent
 - `frontend-reshet/src/__tests__/assistant_response_ui/normalizer.test.ts`
 - `frontend-reshet/src/__tests__/assistant_response_ui/renderer.test.tsx`
 - `frontend-reshet/src/__tests__/assistant_response_ui/trace_loader.test.ts`
+- `frontend-reshet/src/__tests__/assistant_response_ui/chat_context_status.test.tsx`
 
 ## Key Scenarios Covered
 - Tool lifecycle events stay inline in chronological order with assistant text.
@@ -20,8 +21,12 @@ Shared assistant-response normalization and timeline rendering used by the agent
 - Tool rows can expand to reveal the stored summary text when the summary differs from the short title.
 - Persisted run events can be replayed back into assistant response blocks for lazy trace loading and latest-turn thread hydration.
 - Finalization collapses duplicate assistant text blocks when persisted replay and saved final text resolve to the same assistant message.
+- Shared chat context status keeps the progress meter anchored to estimated context size even after actual token accounting arrives.
 
 ## Last Run
+- Command: `pnpm --dir frontend-reshet test -- --runInBand src/__tests__/assistant_response_ui/chat_context_status.test.tsx`
+- Date: 2026-03-29 Asia/Hebron
+- Result: PASS (`1 passed`)
 - Command: `cd frontend-reshet && npm test -- --runInBand src/__tests__/assistant_response_ui/normalizer.test.ts src/__tests__/assistant_response_ui/renderer.test.tsx`
 - Date: 2026-03-10 19:02:00 EET
 - Result: Pass

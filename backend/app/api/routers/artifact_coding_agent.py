@@ -14,6 +14,7 @@ from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import require_scopes
+from app.api.schemas.context_status import ContextStatusResponse
 from app.api.routers.artifacts import get_artifact_context
 from app.agent.execution.service import AgentExecutorService
 from app.agent.execution.stream_contract_v2 import build_stream_v2_event, normalize_filtered_event_to_v2
@@ -29,6 +30,7 @@ from app.services.artifact_coding_agent_tools import ARTIFACT_CODING_AGENT_SURFA
 from app.services.artifact_coding_chat_history_service import ArtifactCodingChatHistoryService
 from app.services.artifact_coding_runtime_service import ArtifactCodingRuntimeService
 from app.services.artifact_coding_shared_draft_service import ArtifactCodingSharedDraftService
+from app.services.context_status_service import ContextStatusService
 
 router = APIRouter(prefix="/admin/artifacts/coding-agent/v1", tags=["artifacts"])
 
@@ -58,6 +60,7 @@ class ArtifactCodingRunResponse(BaseModel):
     created_at: datetime
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
+    context_status: Optional[ContextStatusResponse] = None
 
 
 class ArtifactCodingPromptSubmissionResponse(BaseModel):
@@ -106,11 +109,13 @@ class ArtifactCodingChatSessionDetailResponse(BaseModel):
     run_events: List[ArtifactCodingRunEventResponse] = Field(default_factory=list)
     draft_snapshot: Dict[str, Any] = Field(default_factory=dict)
     paging: ArtifactCodingChatSessionPagingResponse
+    context_status: Optional[ContextStatusResponse] = None
 
 
 class ArtifactCodingActiveRunResponse(BaseModel):
     run_id: str
     status: str
+    context_status: Optional[ContextStatusResponse] = None
 
 
 class ArtifactCodingAnswerQuestionRequest(BaseModel):
@@ -159,6 +164,7 @@ def _run_response_from_snapshot(
         created_at=run.created_at,
         started_at=run.started_at,
         completed_at=run.completed_at,
+        context_status=ContextStatusService.read_from_run(run),
     )
 
 
@@ -187,6 +193,28 @@ async def _get_session_for_user_or_404(
     if session is None:
         raise HTTPException(status_code=404, detail="Artifact coding chat session not found")
     return session
+
+
+async def _require_run_owner(
+    *,
+    db: AsyncSession,
+    tenant_id: UUID,
+    user_id: UUID,
+    run_id: UUID,
+) -> tuple[AgentRun, ArtifactCodingSession]:
+    run = await db.get(AgentRun, run_id)
+    if run is None or run.tenant_id != tenant_id or str(run.surface or "") != ARTIFACT_CODING_AGENT_SURFACE:
+        raise HTTPException(status_code=404, detail="Artifact coding run not found")
+    session_id = _session_id_for_run(run)
+    if session_id is None:
+        raise HTTPException(status_code=404, detail="Artifact coding run is missing a bound chat session")
+    session = await _get_session_for_user_or_404(
+        db=db,
+        tenant_id=tenant_id,
+        user_id=user_id,
+        session_id=session_id,
+    )
+    return run, session
 
 
 def _normalize_trace_events(
@@ -258,6 +286,11 @@ async def _build_session_detail_response(
                 continue
             raw_events = await recorder.list_events(db, run_id)
             run_events.extend(_normalize_trace_events(run_id=run_id, raw_events=raw_events))
+    context_run: AgentRun | None = None
+    if session.active_run_id is not None:
+        context_run = await db.get(AgentRun, session.active_run_id)
+    if context_run is None and session.last_run_id is not None:
+        context_run = await db.get(AgentRun, session.last_run_id)
     return ArtifactCodingChatSessionDetailResponse(
         session=ArtifactCodingChatSessionResponse(**history.serialize_session(session)),
         messages=[ArtifactCodingChatMessageResponse(**history.serialize_message(item)) for item in messages],
@@ -267,6 +300,7 @@ async def _build_session_detail_response(
             has_more=has_more,
             next_before_message_id=str(next_before_message_id) if next_before_message_id else None,
         ),
+        context_status=ContextStatusService.read_from_run(context_run),
     )
 
 
@@ -346,7 +380,11 @@ async def get_artifact_coding_session_active_run(
     if status in {RunStatus.completed.value, RunStatus.failed.value, RunStatus.cancelled.value}:
         await _reconcile_session_run(db=db, session=session, run=run)
         raise HTTPException(status_code=404, detail="No active artifact coding run for this chat session")
-    return ArtifactCodingActiveRunResponse(run_id=str(run.id), status=status)
+    return ArtifactCodingActiveRunResponse(
+        run_id=str(run.id),
+        status=status,
+        context_status=ContextStatusService.read_from_run(run),
+    )
 
 
 @router.post("/prompts", response_model=ArtifactCodingPromptSubmissionResponse)
@@ -405,29 +443,15 @@ async def get_artifact_coding_run(
     artifact_ctx=Depends(get_artifact_context),
 ):
     tenant, user, db = await _require_user_context(artifact_ctx)
-    run = await db.get(AgentRun, run_id)
-    if run is None or run.tenant_id != tenant.id or str(run.surface or "") != ARTIFACT_CODING_AGENT_SURFACE:
-        raise HTTPException(status_code=404, detail="Artifact coding run not found")
-    session = (
-        await db.execute(
-            select(ArtifactCodingSession).where(
-                and_(
-                    ArtifactCodingSession.tenant_id == tenant.id,
-                    ArtifactCodingSession.last_run_id == run.id,
-                )
-            )
-        )
-    ).scalar_one_or_none()
-    if session is not None:
-        session = await _get_session_for_user_or_404(
-            db=db,
-            tenant_id=tenant.id,
-            user_id=user.id,
-            session_id=session.id,
-        )
-        await _reconcile_session_run(db=db, session=session, run=run)
-        await db.refresh(session)
-        await db.refresh(run)
+    run, session = await _require_run_owner(
+        db=db,
+        tenant_id=tenant.id,
+        user_id=user.id,
+        run_id=run_id,
+    )
+    await _reconcile_session_run(db=db, session=session, run=run)
+    await db.refresh(session)
+    await db.refresh(run)
     return _run_response_from_snapshot(run, session_scope=_session_scope_snapshot(session))
 
 
@@ -438,22 +462,12 @@ async def stream_artifact_coding_run(
     artifact_ctx=Depends(get_artifact_context),
 ):
     tenant, user, db = await _require_user_context(artifact_ctx)
-    run = await db.get(AgentRun, run_id)
-    if run is None or run.tenant_id != tenant.id or str(run.surface or "") != ARTIFACT_CODING_AGENT_SURFACE:
-        raise HTTPException(status_code=404, detail="Artifact coding run not found")
-    session = (
-        await db.execute(
-            select(ArtifactCodingSession).where(
-                and_(
-                    ArtifactCodingSession.tenant_id == tenant.id,
-                    ArtifactCodingSession.id == _session_id_for_run(run),
-                )
-            )
-        )
-    ).scalar_one_or_none()
-    if session is not None:
-        await _get_session_for_user_or_404(db=db, tenant_id=tenant.id, user_id=user.id, session_id=session.id)
-
+    run, session = await _require_run_owner(
+        db=db,
+        tenant_id=tenant.id,
+        user_id=user.id,
+        run_id=run_id,
+    )
     session_id = session.id if session is not None else None
 
     async def event_generator():
@@ -495,6 +509,7 @@ async def stream_artifact_coding_run(
                         payload={
                             "status": str(getattr(stream_run.status, "value", stream_run.status)),
                             "thread_id": str(stream_run.thread_id) if stream_run.thread_id else None,
+                            "context_status": ContextStatusService.read_from_run(stream_run),
                         },
                     ),
                     default=str,
@@ -579,10 +594,13 @@ async def cancel_artifact_coding_run(
     _: Dict[str, Any] = Depends(require_scopes("artifacts.write")),
     artifact_ctx=Depends(get_artifact_context),
 ):
-    tenant, _user, db = await _require_user_context(artifact_ctx)
-    run = await db.get(AgentRun, run_id)
-    if run is None or run.tenant_id != tenant.id or str(run.surface or "") != ARTIFACT_CODING_AGENT_SURFACE:
-        raise HTTPException(status_code=404, detail="Artifact coding run not found")
+    tenant, user, db = await _require_user_context(artifact_ctx)
+    run, _session = await _require_run_owner(
+        db=db,
+        tenant_id=tenant.id,
+        user_id=user.id,
+        run_id=run_id,
+    )
     runtime = ArtifactCodingRuntimeService(db)
     run, session = await runtime.cancel_run(
         run=run,
@@ -598,10 +616,13 @@ async def answer_artifact_coding_run_question(
     _: Dict[str, Any] = Depends(require_scopes("artifacts.write")),
     artifact_ctx=Depends(get_artifact_context),
 ):
-    tenant, _user, db = await _require_user_context(artifact_ctx)
-    run = await db.get(AgentRun, run_id)
-    if run is None or run.tenant_id != tenant.id or str(run.surface or "") != ARTIFACT_CODING_AGENT_SURFACE:
-        raise HTTPException(status_code=404, detail="Artifact coding run not found")
+    tenant, user, db = await _require_user_context(artifact_ctx)
+    run, session = await _require_run_owner(
+        db=db,
+        tenant_id=tenant.id,
+        user_id=user.id,
+        run_id=run_id,
+    )
     if str(getattr(run.status, "value", run.status)) != RunStatus.paused.value:
         raise HTTPException(status_code=400, detail="Run is not paused")
     executor = AgentExecutorService(db=db)
@@ -611,10 +632,6 @@ async def answer_artifact_coding_run_question(
         background=False,
     )
     refreshed = await db.get(AgentRun, run.id)
-    session = None
-    session_id = _session_id_for_run(run)
-    if session_id is not None:
-        session = await db.get(ArtifactCodingSession, session_id)
     return _run_response_from_snapshot(refreshed or run, session_scope=_session_scope_snapshot(session))
 
 
