@@ -10,7 +10,7 @@ from .runtime_secret_service import prepare_deployable_source_files
 from .source_utils import source_tree_hash
 from .workers_validation import is_javascript_code_path, is_python_code_path, validate_workers_compatibility
 
-PYTHON_RUNTIME_WRAPPER_VERSION = "cloudflare-workers-w4p-python-v7"
+PYTHON_RUNTIME_WRAPPER_VERSION = "cloudflare-workers-w4p-python-v8"
 JS_RUNTIME_WRAPPER_VERSION = "cloudflare-workers-w4p-js-v2"
 JS_COMPATIBILITY_DATE = "2026-03-24"
 JS_COMPATIBILITY_FLAGS = ["nodejs_compat"]
