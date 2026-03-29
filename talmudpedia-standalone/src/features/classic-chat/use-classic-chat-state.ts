@@ -340,6 +340,41 @@ export function useClassicChatState() {
         updateThreads();
       };
 
+      const finalizeAssistantMessageAfterStream = () => {
+        setThreads((prevThreads) => {
+          const currentThread = prevThreads.find((t) => t.id === threadId);
+          if (!currentThread) return prevThreads;
+
+          const msgIndex = currentThread.messages.findIndex((m) => m.id === assistantMessageId);
+          if (msgIndex === -1) return prevThreads;
+
+          const updatedMessages = [...currentThread.messages];
+          const message = { ...updatedMessages[msgIndex] };
+          if (message.runStatus === "completed" || message.runStatus === "error") {
+            return prevThreads;
+          }
+
+          message.runStatus = "completed";
+          message.text = message.blocks
+            ?.filter((block) => block.kind === "text")
+            .map((block) => block.content)
+            .join("\n");
+          updatedMessages[msgIndex] = message;
+
+          return prevThreads.map((thread) =>
+            thread.id === threadId
+              ? {
+                  ...thread,
+                  messages: updatedMessages,
+                  preview: previewFromMessage(message),
+                  updatedAt: "Just now",
+                  isLoaded: true,
+                }
+              : thread,
+          );
+        });
+      };
+
       const { threadId: platformThreadId } = await streamAgent(
         {
           clientId: selectedClientId,
@@ -349,6 +384,8 @@ export function useClassicChatState() {
         },
         applyStreamEvent,
       );
+
+      finalizeAssistantMessageAfterStream();
 
       if (platformThreadId && platformThreadId !== threadId) {
         hydratedThreadIdsRef.current.add(platformThreadId);

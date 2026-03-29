@@ -29,7 +29,7 @@ export function FloatingPanel({
     autoHeight = false,
     offset = 0,
     shadow = "shadow-xs",
-    border = "border-[0.5px]",
+    border = "border-none",
     className
 }: FloatingPanelProps) {
     const sizerRef = useRef<HTMLDivElement>(null)

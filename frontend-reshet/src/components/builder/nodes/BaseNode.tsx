@@ -81,7 +81,7 @@ function BaseNodeComponent({
         <div
             className={cn(
                 "relative flex flex-col p-0 rounded-2xl bg-background/90 backdrop-blur-md transition-all duration-300 border",
-                selected ? "border-primary ring-2 ring-primary/20 shadow-lg shadow-primary/5" : "border-border/50 shadow-sm",
+                selected ? "ring-primary/50 shadow-lg shadow-primary/5" : "border-none shadow-sm",
                 data.executionStatus && statusBorder[data.executionStatus as keyof typeof statusBorder],
                 className
             )}
@@ -108,7 +108,7 @@ function BaseNodeComponent({
                     {/* Status Overlay Icon */}
                     {data.executionStatus && data.executionStatus !== 'pending' && (
                         <div className={cn(
-                            "absolute -top-1 -right-1 w-4 h-4 rounded-full bg-background flex items-center justify-center shadow-sm border border-border/50",
+                            "absolute -top-1 -right-1 w-4 h-4 rounded-full bg-background flex items-center justify-center shadow-sm",
                             statusColors[data.executionStatus]
                         )}>
                             {statusIcons[data.executionStatus]}

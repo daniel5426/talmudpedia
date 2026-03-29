@@ -161,7 +161,7 @@ export default function PromptLibraryPage() {
       </AdminPageHeader>
 
       {/* Toolbar: Search + Tabs */}
-      <div className="flex items-center justify-between gap-4 px-3 py-3 shrink-0">
+      <div className="flex items-center justify-between gap-4 px-2 py-3 shrink-0">
         <div className="relative w-64">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/60" />
           <Input
@@ -190,9 +190,9 @@ export default function PromptLibraryPage() {
       </div>
 
       {/* Content */}
-      <div className="flex-1 min-h-0 overflow-auto bg-muted/40 mx-3 mb-4 rounded-2xl">
+      <div className="flex-1 min-h-0 overflow-auto bg-muted/60 mx-1 mb-2 mr-3 rounded-2xl">
         {/* Prompt grid */}
-        <div className="px-6 pb-6 pt-6">
+        <div className="px-4 pb-4 pt-4">
           {loading && prompts.length === 0 ? (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
               {Array.from({ length: 8 }).map((_, i) => (

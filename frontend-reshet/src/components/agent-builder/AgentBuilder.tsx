@@ -765,7 +765,7 @@ function AgentBuilderInner({
             />
 
             {/* Canvas */}
-            <div className="relative flex-1 bg-muted/40 rounded-2xl" ref={reactFlowWrapper}>
+            <div className="relative flex-1 bg-muted/70 rounded-2xl" ref={reactFlowWrapper}>
                 {mode === "build" && orchestrationPreflight.length > 0 && (
                     <div className="absolute top-3 left-1/2 -translate-x-1/2 z-[55] w-[560px] max-w-[90%] rounded-xl border border-amber-300 bg-amber-50/95 backdrop-blur p-2">
                         <div className="flex items-center gap-1.5 text-[12px] font-semibold text-amber-800 mb-1">

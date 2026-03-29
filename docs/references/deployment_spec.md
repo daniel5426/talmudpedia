@@ -1,6 +1,6 @@
 # Deployment Spec
 
-Last Updated: 2026-03-28
+Last Updated: 2026-03-29
 
 This document is the canonical source of truth for the current Talmudpedia hosting and deployment state.
 
@@ -74,6 +74,7 @@ Tracked service commands:
   - `node_modules/.bin/next start --hostname 0.0.0.0 --port $PORT`
 - backend
   - from [`backend/railway.toml`](/Users/danielbenassaya/Code/personal/talmudpedia/backend/railway.toml)
+  - Dockerfile: [`backend/Dockerfile`](/Users/danielbenassaya/Code/personal/talmudpedia/backend/Dockerfile)
   - `uvicorn main:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips='*'`
 - backend-worker
   - from [`deploy/backend-worker/railway.toml`](/Users/danielbenassaya/Code/personal/talmudpedia/deploy/backend-worker/railway.toml)
@@ -202,6 +203,7 @@ Current tracked deployment files in repo:
 - [`frontend-reshet/railway.toml`](/Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet/railway.toml)
 - [`frontend-reshet/railway.env.example`](/Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet/railway.env.example)
 - [`backend/railway.toml`](/Users/danielbenassaya/Code/personal/talmudpedia/backend/railway.toml)
+- [`backend/Dockerfile`](/Users/danielbenassaya/Code/personal/talmudpedia/backend/Dockerfile)
 - [`backend/railway.env.example`](/Users/danielbenassaya/Code/personal/talmudpedia/backend/railway.env.example)
 - [`backend/scripts/railway_predeploy.sh`](/Users/danielbenassaya/Code/personal/talmudpedia/backend/scripts/railway_predeploy.sh)
 - [`backend/scripts/start_celery_worker.sh`](/Users/danielbenassaya/Code/personal/talmudpedia/backend/scripts/start_celery_worker.sh)

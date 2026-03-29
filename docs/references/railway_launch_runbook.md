@@ -1,6 +1,6 @@
 # Railway Launch Runbook
 
-Last Updated: 2026-03-28
+Last Updated: 2026-03-29
 
 This is the canonical runbook for launching the core Talmudpedia platform on Railway.
 
@@ -14,6 +14,7 @@ Create one Railway project with these services:
 - `backend`
   - Root directory: `backend/`
   - Config in `backend/railway.toml`
+  - Dockerfile in `backend/Dockerfile`
   - Pre-deploy command: `./scripts/railway_predeploy.sh`
 - `backend-worker`
   - Root directory: `deploy/backend-worker/`
@@ -86,7 +87,7 @@ Required values:
 - Railway healthcheck path is `/health`.
 - Run migrations before each deploy with `./scripts/railway_predeploy.sh`.
 - The backend start command is defined in `backend/railway.toml`.
-- Default Railway backend installs only `backend/requirements.txt`.
+- The backend is Docker-backed and includes `uv`, `wrangler`, and `pnpm` because artifact publish requests deploy Cloudflare workers directly from the API service.
 - Local HuggingFace embedding support is intentionally split into `backend/requirements-local-embeddings.txt` so Railway does not download the full torch stack unless that feature is explicitly needed.
 
 ### Worker
