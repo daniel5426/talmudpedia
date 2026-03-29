@@ -222,7 +222,7 @@ export default function AgentBuilderPage() {
             </header>
 
             {/* Main Content */}
-            <main className="flex-1 overflow-hidden relative">
+            <main className="flex-1 mr-2 mb-2 ml-1 overflow-hidden relative">
                 {isLoading ? (
                     <div className="absolute inset-0 flex items-center justify-center bg-background/50 z-50">
                         <div className="flex flex-col items-center gap-2">

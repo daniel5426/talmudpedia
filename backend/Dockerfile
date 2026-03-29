@@ -16,4 +16,4 @@ RUN npm install -g wrangler pnpm
 
 COPY . /app
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080", "--proxy-headers", "--forwarded-allow-ips=*"]
+CMD ["sh", "-lc", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8080} --proxy-headers --forwarded-allow-ips='*'"]
