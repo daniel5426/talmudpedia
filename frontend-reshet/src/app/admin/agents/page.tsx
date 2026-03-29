@@ -3,12 +3,12 @@
 import { useState, useEffect, useMemo } from "react"
 import dynamic from "next/dynamic"
 import { useRouter, useSearchParams } from "next/navigation"
-import { Bot, Plus, Search, Wrench } from "lucide-react"
+import { Bot, Plus, Wrench } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { AdminPageHeader } from "@/components/admin/AdminPageHeader"
-import { Input } from "@/components/ui/input"
 import { CustomBreadcrumb } from "@/components/ui/custom-breadcrumb"
+import { SearchInput } from "@/components/ui/search-input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { agentService, adminService, Agent } from "@/services"
 import { AgentCard } from "@/components/agent-card"
@@ -128,16 +128,13 @@ export default function AgentsPage() {
                     { label: "Agents", href: "/admin/agents", active: true },
                 ]} />
                 <div className="flex items-center gap-2">
-                    <div className="relative w-64">
-                        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/60" />
-                        <Input
-                            placeholder="Search agents..."
-                            className="h-8 pl-8 bg-muted/30 border-border/50 text-sm placeholder:text-muted-foreground/50"
-                            value={searchQuery}
-                            onChange={(e) => setSearchQuery(e.target.value)}
-                            disabled={isLoading}
-                        />
-                    </div>
+                    <SearchInput
+                        placeholder="Search agents..."
+                        wrapperClassName="w-64"
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        disabled={isLoading}
+                    />
                     <Button
                         size="sm"
                         className="h-8 gap-1.5"

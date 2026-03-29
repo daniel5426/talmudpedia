@@ -19,6 +19,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
+import { SearchInput } from "@/components/ui/search-input"
 import { Textarea } from "@/components/ui/textarea"
 import { Label } from "@/components/ui/label"
 import {
@@ -398,15 +399,14 @@ export default function ModelsPage() {
                     </div>
                 </div>
                 <div className="flex items-center gap-2">
-                    <div className="relative w-[260px]">
-                        <SearchIcon className={cn("absolute top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground", isRTL ? "right-3" : "left-3")} />
-                        <Input
-                            value={search}
-                            onChange={(e) => setSearch(e.target.value)}
-                            placeholder="Search models..."
-                            className={cn("h-9", isRTL ? "pr-9" : "pl-9")}
-                        />
-                    </div>
+                    <SearchInput
+                        value={search}
+                        onChange={(e) => setSearch(e.target.value)}
+                        placeholder="Search models..."
+                        size="md"
+                        iconPosition={isRTL ? "right" : "left"}
+                        wrapperClassName="w-[260px]"
+                    />
                     <Select value={filter} onValueChange={(v) => setFilter(v as ModelCapabilityType | "all")}>
                         <SelectTrigger className="h-9 w-[180px]">
                             <SelectValue placeholder="Filter by type" />

@@ -26,6 +26,7 @@ import { AdminPageHeader } from "@/components/admin/AdminPageHeader"
 import { CustomBreadcrumb } from "@/components/ui/custom-breadcrumb"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { SearchInput } from "@/components/ui/search-input"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -56,7 +57,6 @@ import { cn } from "@/lib/utils"
 import { useUrlEnumState } from "@/hooks/useUrlEnumState"
 import {
   Plus,
-  Search,
   MoreHorizontal,
   Trash2,
   Edit2,
@@ -296,15 +296,12 @@ export default function ResourcePoliciesPage() {
 
       {/* Toolbar */}
       <div className="flex items-center justify-between gap-4 px-2 py-3 shrink-0">
-        <div className="relative w-64">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/60" />
-          <Input
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder={section === "sets" ? "Search policy sets..." : section === "assignments" ? "Search assignments..." : "Search..."}
-            className="pl-8 h-8 text-sm border-border/50 placeholder:text-muted-foreground/50"
-          />
-        </div>
+        <SearchInput
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          placeholder={section === "sets" ? "Search policy sets..." : section === "assignments" ? "Search assignments..." : "Search..."}
+          wrapperClassName="w-64"
+        />
         <div className="flex items-center gap-1 rounded-lg bg-muted/50 p-1">
           {NAV_ITEMS.map((item) => {
             const Icon = item.icon

@@ -18,6 +18,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
+import { SearchInput } from "@/components/ui/search-input"
 import { Textarea } from "@/components/ui/textarea"
 import { Label } from "@/components/ui/label"
 import {
@@ -28,7 +29,6 @@ import {
     Trash2,
     Settings,
     Box,
-    Search,
     MoreHorizontal,
     Archive,
     AlertTriangle,
@@ -653,18 +653,15 @@ export default function KnowledgeStoresPage() {
                         </div>
 
                         {/* Search */}
-                        <div className="relative max-w-md">
-                            <Search className={cn(
-                                "absolute top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground",
-                                isRTL ? "right-3" : "left-3"
-                            )} />
-                            <Input
-                                placeholder="Search knowledge stores..."
-                                value={searchQuery}
-                                onChange={(e) => setSearchQuery(e.target.value)}
-                                className={cn("pl-9", isRTL && "pr-9 pl-3 text-right")}
-                            />
-                        </div>
+                        <SearchInput
+                            placeholder="Search knowledge stores..."
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
+                            size="md"
+                            iconPosition={isRTL ? "right" : "left"}
+                            className={cn(isRTL && "text-right")}
+                            wrapperClassName="max-w-md"
+                        />
 
                         {/* Store Grid */}
                         {activeStores.length === 0 && archivedStores.length === 0 ? (

@@ -16,6 +16,7 @@ import { AdminPageHeader } from "@/components/admin/AdminPageHeader"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { SearchInput } from "@/components/ui/search-input"
 import { Textarea } from "@/components/ui/textarea"
 import { Label } from "@/components/ui/label"
 import {
@@ -31,7 +32,6 @@ import {
     Clock,
     AlertCircle,
     Package,
-    Search,
     Server,
     Bot,
     MoreHorizontal,
@@ -250,8 +250,8 @@ function CreateToolDialog({
     const handleImplementationChange = (type: ToolImplementationType) => {
         setForm((prev) => {
             let nextConfig: Record<string, unknown> = { type }
-            let nextInputSchema = prev.input_schema
-            let nextOutputSchema = prev.output_schema
+            const nextInputSchema = prev.input_schema
+            const nextOutputSchema = prev.output_schema
 
             if (type === "http") {
                 nextConfig = { type, method: "POST", url: "", headers: {} }
@@ -757,7 +757,6 @@ function ToolRowSkeleton() {
 
 export default function ToolsPage() {
     const { direction } = useDirection()
-    const isRTL = direction === "rtl"
     const router = useRouter()
 
     const [tools, setTools] = useState<ToolDefinition[]>([])
@@ -873,15 +872,13 @@ export default function ToolsPage() {
             <AdminPageHeader contentClassName="min-h-12 h-auto flex-wrap py-3">
                 <CustomBreadcrumb items={[{ label: "Tools Registry", href: "/admin/tools", active: true }]} />
                 <div className="flex w-full flex-wrap items-center justify-end gap-2 md:w-auto md:flex-nowrap">
-                    <div className="relative min-w-[220px] flex-1 md:w-[280px] md:flex-none">
-                        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/60" />
-                        <Input
-                            value={query}
-                            onChange={(e) => setQuery(e.target.value)}
-                            className="h-9 border-border/50 bg-muted/30 pl-8 text-sm shadow-none placeholder:text-muted-foreground/50"
-                            placeholder="Search tools..."
-                        />
-                    </div>
+                    <SearchInput
+                        value={query}
+                        onChange={(e) => setQuery(e.target.value)}
+                        size="md"
+                        wrapperClassName="min-w-[220px] flex-1 md:w-[280px] md:flex-none"
+                        placeholder="Search tools..."
+                    />
                     <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v as ToolStatus | "all")}>
                         <SelectTrigger className="h-9 w-[130px] text-xs shadow-none">
                             <SelectValue placeholder="Status" />

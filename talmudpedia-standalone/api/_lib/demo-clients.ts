@@ -1,4 +1,4 @@
-import clientsJson from "../../server/prico-demo/frozen_snapshot/prico/lekohot.json" with { type: "json" };
+import clientsJson from "../../server/prico-demo/frozen_snapshot/json/prico.lekohot.json" with { type: "json" };
 
 type FrozenClientRow = {
   mispar_lakoah?: number | string;

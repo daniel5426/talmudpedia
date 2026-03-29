@@ -36,6 +36,8 @@ talmudpedia-standalone/server-dist/
 talmudpedia-standalone/node_modules/
 talmudpedia-standalone/docs/
 packages/embed-sdk/*.tgz
+talmudpedia-standalone/server/prico-demo/frozen_snapshot/json/*
+!talmudpedia-standalone/server/prico-demo/frozen_snapshot/json/prico.lekohot.json
 
 # misc
 */.DS_Store

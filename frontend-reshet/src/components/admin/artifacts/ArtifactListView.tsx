@@ -1,11 +1,12 @@
 "use client"
 
 import { useMemo, useState } from "react"
-import { Bot, Copy, Database, Edit, Loader2, MoreHorizontal, Package, PencilLine, Search, Trash2, Upload, Wrench } from "lucide-react"
+import { Bot, Copy, Database, Edit, Loader2, MoreHorizontal, Package, PencilLine, Trash2, Upload, Wrench } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
+import { SearchInput } from "@/components/ui/search-input"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
   DropdownMenu,
@@ -14,7 +15,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import type { Artifact, ArtifactKind } from "@/services/artifacts"
 import { kindLabel } from "@/components/admin/artifacts/artifactPageUtils"
@@ -117,15 +117,12 @@ export function ArtifactListView({
   return (
     <div className="m-4 space-y-3">
       <div className="flex items-center justify-between gap-3">
-        <div className="relative max-w-md flex-1">
-          <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground/60" />
-          <Input
-            value={searchQuery}
-            onChange={(event) => setSearchQuery(event.target.value)}
-            placeholder="Search artifacts..."
-            className="h-8 border-border/50 pl-8 text-sm placeholder:text-muted-foreground/50"
-          />
-        </div>
+        <SearchInput
+          value={searchQuery}
+          onChange={(event) => setSearchQuery(event.target.value)}
+          placeholder="Search artifacts..."
+          wrapperClassName="max-w-md flex-1"
+        />
         <div className="flex flex-wrap items-center justify-end gap-2">
           <Button
             type="button"

@@ -7,6 +7,7 @@ from prico_showcase_seed_data import BANKS, BENCHMARKS, CLIENTS, CURRENCIES, DEA
 
 
 ROOT = Path(__file__).resolve().parent.parent / "server" / "prico-demo" / "frozen_snapshot"
+JSON_ROOT = ROOT / "json"
 
 
 def _date_char(value: str) -> str:
@@ -116,7 +117,7 @@ def _benchmark_rows() -> list[dict]:
 
 def main() -> None:
     _write_json(
-        ROOT / "snapshot_manifest.json",
+        JSON_ROOT / "snapshot_manifest.json",
         {
             "snapshot_name": "prico_showcase_v1",
             "generated_from": "talmudpedia-standalone/scripts/prico_showcase_seed_data.py",
@@ -138,14 +139,14 @@ def main() -> None:
             },
         },
     )
-    _write_json(ROOT / "prico" / "lekohot.json", _lekohot_rows())
-    _write_json(ROOT / "prico" / "iskaot.json", _iskaot_rows())
-    _write_json(ROOT / "prico" / "bankim.json", BANKS)
-    _write_json(ROOT / "prico" / "matbeot.json", CURRENCIES)
-    _write_json(ROOT / "prico" / "nigrarot_bankaiyot.json", _nigrarot_rows())
-    _write_json(ROOT / "prico" / "paku.json", _paku_rows())
-    _write_json(ROOT / "prico" / "ssars.json", SSARS)
-    _write_json(ROOT / "dbo" / "CurrencyPairsHistory.json", _benchmark_rows())
+    _write_json(JSON_ROOT / "prico.lekohot.json", _lekohot_rows())
+    _write_json(JSON_ROOT / "prico.iskaot.json", _iskaot_rows())
+    _write_json(JSON_ROOT / "prico.bankim.json", BANKS)
+    _write_json(JSON_ROOT / "prico.matbeot.json", CURRENCIES)
+    _write_json(JSON_ROOT / "prico.nigrarot_bankaiyot.json", _nigrarot_rows())
+    _write_json(JSON_ROOT / "prico.paku.json", _paku_rows())
+    _write_json(JSON_ROOT / "prico.ssars.json", SSARS)
+    _write_json(JSON_ROOT / "dbo.CurrencyPairsHistory.json", _benchmark_rows())
     print(f"Wrote frozen snapshot to {ROOT}")
 
 

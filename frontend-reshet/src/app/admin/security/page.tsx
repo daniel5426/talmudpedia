@@ -29,7 +29,6 @@ import {
   Key,
   CheckCircle2,
   XCircle,
-  Search,
   ShieldAlert,
   Users,
   FileCheck,
@@ -46,6 +45,7 @@ import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { SearchInput } from "@/components/ui/search-input"
 import {
   Dialog,
   DialogContent,
@@ -546,18 +546,14 @@ export default function SecurityPage() {
             </TabsTrigger>
           </TabsList>
 
-          <div className="relative w-full max-w-[240px]">
-            <Search className={cn(
-              "absolute top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/50",
-              isRTL ? "right-3" : "left-3"
-            )} />
-            <Input
-              placeholder={searchPlaceholder}
-              value={currentSearch}
-              onChange={(e) => handleSearchChange(e.target.value)}
-              className={cn("h-8 bg-muted/30 border-border/50 text-[13px]", isRTL ? "pr-9" : "pl-9")}
-            />
-          </div>
+          <SearchInput
+            placeholder={searchPlaceholder}
+            value={currentSearch}
+            onChange={(e) => handleSearchChange(e.target.value)}
+            iconPosition={isRTL ? "right" : "left"}
+            className="text-[13px]"
+            wrapperClassName="w-full max-w-[240px]"
+          />
         </div>
 
         {/* =================== ASSIGNMENTS TAB =================== */}

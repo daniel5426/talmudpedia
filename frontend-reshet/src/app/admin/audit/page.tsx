@@ -6,7 +6,6 @@ import { useDirection } from "@/components/direction-provider"
 import { cn } from "@/lib/utils"
 import { auditService, AuditLog, AuditLogDetail, AuditFilters } from "@/services/audit"
 import {
-  Search,
   User,
   Activity,
   Eye,
@@ -19,6 +18,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { SearchInput } from "@/components/ui/search-input"
 import {
   Dialog,
   DialogContent,
@@ -186,22 +186,16 @@ export default function AuditPage() {
       <div className="shrink-0 border-b border-border/40 px-4 py-3">
         <div className={cn("flex flex-wrap items-center gap-2", isRTL ? "flex-row-reverse" : "flex-row")}>
           {/* Actor search */}
-          <div className="relative w-full max-w-[220px]">
-            <Search className={cn(
-              "absolute top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/60",
-              isRTL ? "right-2.5" : "left-2.5"
-            )} />
-            <Input
-              placeholder="Search actor..."
-              className={cn(
-                "h-9 bg-muted/30 border-border/50 text-sm placeholder:text-muted-foreground/50",
-                isRTL ? "pr-8 text-right" : "pl-8 text-left"
-              )}
-              onChange={(e) =>
-                setFilters((prev) => ({ ...prev, actor_id: e.target.value || undefined, skip: 0 }))
-              }
-            />
-          </div>
+          <SearchInput
+            placeholder="Search actor..."
+            size="md"
+            iconPosition={isRTL ? "right" : "left"}
+            className={cn(isRTL ? "text-right" : "text-left")}
+            wrapperClassName="w-full max-w-[220px]"
+            onChange={(e) =>
+              setFilters((prev) => ({ ...prev, actor_id: e.target.value || undefined, skip: 0 }))
+            }
+          />
 
           {/* Action */}
           <Select

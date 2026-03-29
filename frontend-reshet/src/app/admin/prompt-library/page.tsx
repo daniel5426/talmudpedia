@@ -7,13 +7,12 @@ import { CustomBreadcrumb } from "@/components/ui/custom-breadcrumb"
 import { AdminPageHeader } from "@/components/admin/AdminPageHeader"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
+import { SearchInput } from "@/components/ui/search-input"
 import {
   BookOpen,
   Plus,
   Trash2,
   Loader2,
-  Search,
   MoreHorizontal,
   Archive,
   RotateCcw,
@@ -162,15 +161,12 @@ export default function PromptLibraryPage() {
 
       {/* Toolbar: Search + Tabs */}
       <div className="flex items-center justify-between gap-4 px-2 py-3 shrink-0">
-        <div className="relative w-64">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/60" />
-          <Input
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search prompts..."
-            className="pl-8 h-8 text-sm border-border/50 placeholder:text-muted-foreground/50"
-          />
-        </div>
+        <SearchInput
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          placeholder="Search prompts..."
+          wrapperClassName="w-64"
+        />
         <div className="flex items-center gap-1 rounded-lg bg-muted/50 p-1">
           {NAV_ITEMS.map((item) => (
             <button

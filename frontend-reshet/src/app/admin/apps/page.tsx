@@ -10,7 +10,6 @@ import {
   Loader2,
   MoreHorizontal,
   Plus,
-  Search,
   Trash2,
 } from "lucide-react";
 
@@ -41,6 +40,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { SearchInput } from "@/components/ui/search-input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { agentService, publishedAppsService } from "@/services";
@@ -297,16 +297,13 @@ export default function AppsPage() {
               </button>
             ))}
           </div>
-          <div className="relative w-64">
-            <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground/60" />
-            <Input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="h-8 border-border/50 bg-muted/30 pl-8 text-sm placeholder:text-muted-foreground/50"
-              placeholder="Search apps..."
-              disabled={isAppsLoading}
-            />
-          </div>
+          <SearchInput
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            wrapperClassName="w-64"
+            placeholder="Search apps..."
+            disabled={isAppsLoading}
+          />
           <Button
             size="sm"
             className="h-8 gap-1.5"

@@ -16,7 +16,7 @@ Important rule:
 - `api/`: Vercel function handlers for the thin BFF
 - `server/`: shared server-only helpers and provisioning scripts
 - `/api/session`: local cookie-backed user identity
-- selected demo-client list sourced from `server/prico-demo/frozen_snapshot/prico/lekohot.json`
+- selected demo-client list sourced from `server/prico-demo/frozen_snapshot/json/prico.lekohot.json`
 - `/api/agent/*`: thread history and streaming chat routes
 - `legacy-sql-read/`: parked PRICO SQL-backed routes/helpers kept for reuse outside the active serverless path
 
