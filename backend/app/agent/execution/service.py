@@ -440,6 +440,11 @@ class AgentExecutorService:
         return AgentThreadTurnStatus.completed
 
     @staticmethod
+    async def _refresh_run_record(db: AsyncSession, run: AgentRun) -> AgentRun:
+        await db.refresh(run)
+        return run
+
+    @staticmethod
     def _extract_turn_metadata(output_result: Dict[str, Any] | None) -> Dict[str, Any] | None:
         if not isinstance(output_result, dict):
             return None
@@ -1101,6 +1106,7 @@ class AgentExecutorService:
                     metadata={"category": "lifecycle"},
                 )
             )
+            await self._refresh_run_record(db, run)
             async for event in adapter.stream(executable, run_input_params, config):
                 max_observed_usage_tokens = max(
                     max_observed_usage_tokens,
@@ -1115,35 +1121,59 @@ class AgentExecutorService:
                 )
                 persist_event(event)
                 yield event
+                await self._refresh_run_record(db, run)
+                if run.status == RunStatus.cancelled:
+                    persist_event(
+                        ExecutionEvent(
+                            event="run.lifecycle",
+                            data={"phase": "cancelled_during_stream"},
+                            run_id=str(run_id),
+                            span_id=str(run_id),
+                            name="AgentRun",
+                            visibility=EventVisibility.INTERNAL,
+                            metadata={"category": "lifecycle", "mode": mode.value},
+                        )
+                    )
+                    break
 
             # 6. Post-Execution Check
-            snapshot: RuntimeState = adapter.get_state(executable, config)
-
-            output_result = self._serialize_state(snapshot.values)
-            terminal_failure = output_result.get("_run_failure") if isinstance(output_result, dict) else None
-            terminal_failure_message = ""
-            if isinstance(terminal_failure, dict):
-                terminal_failure_message = str(
-                    terminal_failure.get("message")
-                    or output_result.get("error")
-                    or ""
-                ).strip()
-
+            await self._refresh_run_record(db, run)
+            output_result: Dict[str, Any] | Any = run.output_result if isinstance(run.output_result, dict) else {}
+            snapshot_next = None
             final_status = RunStatus.completed
-            if snapshot.next:
-                final_status = RunStatus.paused
-                run.status = RunStatus.paused
-                run.checkpoint = output_result
-            elif terminal_failure_message:
-                final_status = RunStatus.failed
-                run.status = RunStatus.failed
-                run.output_result = output_result
-                run.error_message = terminal_failure_message
-                run.completed_at = datetime.utcnow()
+            if run.status == RunStatus.cancelled:
+                final_status = RunStatus.cancelled
+                if not isinstance(run.output_result, dict):
+                    run.output_result = {}
+                    output_result = run.output_result
+                run.completed_at = run.completed_at or datetime.utcnow()
             else:
-                run.status = RunStatus.completed
-                run.output_result = output_result
-                run.completed_at = datetime.utcnow()
+                snapshot: RuntimeState = adapter.get_state(executable, config)
+                snapshot_next = snapshot.next
+                output_result = self._serialize_state(snapshot.values)
+                terminal_failure = output_result.get("_run_failure") if isinstance(output_result, dict) else None
+                terminal_failure_message = ""
+                if isinstance(terminal_failure, dict):
+                    terminal_failure_message = str(
+                        terminal_failure.get("message")
+                        or output_result.get("error")
+                        or ""
+                    ).strip()
+
+                if snapshot_next:
+                    final_status = RunStatus.paused
+                    run.status = RunStatus.paused
+                    run.checkpoint = output_result
+                elif terminal_failure_message:
+                    final_status = RunStatus.failed
+                    run.status = RunStatus.failed
+                    run.output_result = output_result
+                    run.error_message = terminal_failure_message
+                    run.completed_at = datetime.utcnow()
+                else:
+                    run.status = RunStatus.completed
+                    run.output_result = output_result
+                    run.completed_at = datetime.utcnow()
 
             if best_usage is None and max_observed_usage_tokens > 0:
                 best_usage = build_legacy_usage_from_total(max_observed_usage_tokens)
@@ -1159,8 +1189,8 @@ class AgentExecutorService:
 
             # Emit final status event
             next_nodes = []
-            if snapshot.next:
-                next_ids = snapshot.next if isinstance(snapshot.next, list) else [snapshot.next]
+            if snapshot_next:
+                next_ids = snapshot_next if isinstance(snapshot_next, list) else [snapshot_next]
                 node_index = {n.id: n for n in graph_def.nodes}
                 for next_id in next_ids:
                     node = node_index.get(next_id)
@@ -1178,7 +1208,7 @@ class AgentExecutorService:
                 event="run_status",
                 data={
                     "status": final_status.value,
-                    "next": snapshot.next,
+                    "next": snapshot_next,
                     "next_nodes": next_nodes or None,
                     "final_output": (
                         run.output_result.get("final_output")
@@ -1203,7 +1233,7 @@ class AgentExecutorService:
                     data={
                         "phase": "finished",
                         "status": final_status.value,
-                        "next": snapshot.next,
+                        "next": snapshot_next,
                     },
                     run_id=str(run_id),
                     span_id=str(run_id),

@@ -7,7 +7,6 @@ import { ragAdminService, VisualPipeline, CompileResult } from "@/services"
 import { CustomBreadcrumb } from "@/components/ui/custom-breadcrumb"
 import { AdminPageHeader } from "@/components/admin/AdminPageHeader"
 import { Skeleton } from "@/components/ui/skeleton"
-import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { PipelinesTable } from "@/components/rag/PipelinesTable"
 import { PipelineHistoryDialog } from "@/components/rag/PipelineHistoryDialog"
@@ -250,15 +249,60 @@ export default function PipelinesPage() {
   return (
     <div className="flex flex-col h-full w-full">
       <AdminPageHeader>
-        <div className="flex items-center gap-3">
-          <CustomBreadcrumb
-            items={[
-              { label: "Pipelines", active: true },
-            ]}
-          />
+        <CustomBreadcrumb
+          items={[
+            { label: "Pipelines", active: true },
+          ]}
+        />
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={fetchData}>
+            <RefreshCw className="mr-2 h-4 w-4" />
+            Refresh
+          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button size="sm" disabled={isCreating}>
+                {isCreating ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <Plus className="mr-2 h-4 w-4" />
+                )}
+                New Pipeline
+                <ChevronDown className="ml-1 h-4 w-4 opacity-50" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-56">
+              <DropdownMenuLabel>Choose Pipeline Type</DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                className="flex cursor-pointer flex-col items-start gap-1 py-3"
+                onClick={() => handleQuickCreate("ingestion")}
+              >
+                <div className="flex items-center gap-2 font-semibold text-blue-600">
+                  <Database className="h-4 w-4" />
+                  <span>Ingestion Pipeline</span>
+                </div>
+                <span className="text-[10px] leading-tight text-muted-foreground">
+                  Load, chunk, and index data into vector storage.
+                </span>
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                className="flex cursor-pointer flex-col items-start gap-1 py-3"
+                onClick={() => handleQuickCreate("retrieval")}
+              >
+                <div className="flex items-center gap-2 font-semibold text-purple-600">
+                  <Search className="h-4 w-4" />
+                  <span>Retrieval Pipeline</span>
+                </div>
+                <span className="text-[10px] leading-tight text-muted-foreground">
+                  Query, search, and rerank documents.
+                </span>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </AdminPageHeader>
-      <div className="flex-1 overflow-auto p-4" data-admin-page-scroll>
+      <div className="flex-1 overflow-auto px-4 pb-4 pt-3" data-admin-page-scroll>
         {loading ? (
           <div className="space-y-4">
             <Skeleton className="h-10 w-full" />
@@ -266,66 +310,16 @@ export default function PipelinesPage() {
           </div>
         ) : (
           <div className="space-y-6">
-            <div className="flex justify-between items-center">
-              <div>
-                <h2 className="text-lg font-semibold">Visual Pipelines</h2>
-                <p className="text-sm text-muted-foreground">
-                  Drag-and-drop RAG pipeline configurations
-                </p>
-              </div>
-              <div className="flex gap-2">
-                <Button variant="outline" size="sm" onClick={fetchData}>
-                  <RefreshCw className="h-4 w-4 mr-2" />
-                  Refresh
-                </Button>
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button size="sm" disabled={isCreating}>
-                      {isCreating ? (
-                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                      ) : (
-                        <Plus className="h-4 w-4 mr-2" />
-                      )}
-                      New Pipeline
-                      <ChevronDown className="h-4 w-4 ml-1 opacity-50" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="w-56">
-                    <DropdownMenuLabel>Choose Pipeline Type</DropdownMenuLabel>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem
-                      className="flex flex-col items-start gap-1 py-3 cursor-pointer"
-                      onClick={() => handleQuickCreate("ingestion")}
-                    >
-                      <div className="flex items-center gap-2 font-semibold text-blue-600">
-                        <Database className="h-4 w-4" />
-                        <span>Ingestion Pipeline</span>
-                      </div>
-                      <span className="text-[10px] text-muted-foreground leading-tight">
-                        Load, chunk, and index data into vector storage.
-                      </span>
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      className="flex flex-col items-start gap-1 py-3 cursor-pointer"
-                      onClick={() => handleQuickCreate("retrieval")}
-                    >
-                      <div className="flex items-center gap-2 font-semibold text-purple-600">
-                        <Search className="h-4 w-4" />
-                        <span>Retrieval Pipeline</span>
-                      </div>
-                      <span className="text-[10px] text-muted-foreground leading-tight">
-                        Query, search, and rerank documents.
-                      </span>
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </div>
-            </div>
-
-            <Card className="p-0">
               <PipelinesTable
                 pipelines={pipelines}
                 onDelete={handleDelete}
+                onBulkDelete={async (ids) => {
+                  if (!confirm(`Delete ${ids.length} selected pipeline${ids.length === 1 ? "" : "s"}?`)) return
+                  for (const id of ids) {
+                    await ragAdminService.deleteVisualPipeline(id, currentTenant?.slug)
+                  }
+                  await fetchData()
+                }}
                 onViewHistory={handleViewHistory}
                 canDelete={canDelete("pipeline")}
                 onRun={handleRunPipeline}
@@ -334,7 +328,6 @@ export default function PipelinesPage() {
                 runningCompileId={runningCompileId}
                 duplicatingPipelineId={duplicatingPipelineId}
               />
-            </Card>
           </div>
         )}
       </div>

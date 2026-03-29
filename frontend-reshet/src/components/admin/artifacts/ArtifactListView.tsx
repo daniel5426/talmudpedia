@@ -115,7 +115,7 @@ export function ArtifactListView({
   }
 
   return (
-    <div className="m-4 space-y-3">
+    <div className="space-y-3">
       <div className="flex items-center justify-between gap-3">
         <SearchInput
           value={searchQuery}
@@ -124,22 +124,6 @@ export function ArtifactListView({
           wrapperClassName="max-w-md flex-1"
         />
         <div className="flex flex-wrap items-center justify-end gap-2">
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className={cn("h-8 w-8 shrink-0 border-0 shadow-none", selectionMode && "bg-primary/5 text-primary")}
-            onClick={() => {
-              const nextSelectionMode = !selectionMode
-              setSelectionMode(nextSelectionMode)
-              if (!nextSelectionMode) {
-                setRawSelectedIds([])
-              }
-            }}
-            aria-label={selectionMode ? "Hide selection controls" : "Show selection controls"}
-          >
-            <PencilLine className="h-4 w-4" />
-          </Button>
           {selectionMode && selectedVisibleArtifacts.length > 0 ? (
             <>
               <Button
@@ -183,6 +167,22 @@ export function ArtifactListView({
               </Button>
             </>
           ) : null}
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className={cn("h-8 w-8 shrink-0 border-0 shadow-none", selectionMode && "bg-primary/5 text-primary")}
+            onClick={() => {
+              const nextSelectionMode = !selectionMode
+              setSelectionMode(nextSelectionMode)
+              if (!nextSelectionMode) {
+                setRawSelectedIds([])
+              }
+            }}
+            aria-label={selectionMode ? "Hide selection controls" : "Show selection controls"}
+          >
+            <PencilLine className="h-4 w-4" />
+          </Button>
         </div>
       </div>
       <div className="rounded-xl border">
@@ -190,7 +190,7 @@ export function ArtifactListView({
           <TableHeader>
             <TableRow>
               {selectionMode ? (
-                <TableHead className="w-12">
+                <TableHead className="w-8">
                   <Checkbox
                     checked={allVisibleSelected || (someVisibleSelected && "indeterminate")}
                     onCheckedChange={(checked) => toggleSelectAllVisible(Boolean(checked))}

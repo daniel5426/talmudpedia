@@ -194,22 +194,20 @@ export default function ArtifactsPage() {
           onRunTest={() => {}}
           onSave={() => {}}
         />
-        <div className="flex min-h-0 w-full flex-1 flex-col overflow-hidden">
-          <div className="h-full overflow-auto" data-admin-page-scroll>
-            <ArtifactListView
-              loading
-              artifacts={[]}
-              publishingId={null}
-              bulkAction={null}
-              onEditArtifact={() => {}}
-              onDuplicateArtifact={() => {}}
-              onDeleteArtifact={() => {}}
-              onPublishArtifact={() => {}}
-              onBulkDuplicateArtifacts={() => Promise.resolve()}
-              onBulkDeleteArtifacts={() => Promise.resolve()}
-              onBulkPublishArtifacts={() => Promise.resolve()}
-            />
-          </div>
+        <div className="flex-1 overflow-auto px-4 pb-4 pt-3" data-admin-page-scroll>
+          <ArtifactListView
+            loading
+            artifacts={[]}
+            publishingId={null}
+            bulkAction={null}
+            onEditArtifact={() => {}}
+            onDuplicateArtifact={() => {}}
+            onDeleteArtifact={() => {}}
+            onPublishArtifact={() => {}}
+            onBulkDuplicateArtifacts={() => Promise.resolve()}
+            onBulkDeleteArtifacts={() => Promise.resolve()}
+            onBulkPublishArtifacts={() => Promise.resolve()}
+          />
         </div>
       </div>
     )
@@ -246,31 +244,29 @@ export default function ArtifactsPage() {
         onRunTest={() => {}}
         onSave={() => {}}
       />
-      <div className="flex min-h-0 w-full flex-1 flex-col overflow-hidden">
-        <div className="h-full overflow-auto" data-admin-page-scroll>
-          <ArtifactListView
-            loading={loading}
-            artifacts={artifacts}
-            publishingId={publishingId}
-            bulkAction={bulkAction}
-            onEditArtifact={(artifact) => {
-              markNextEditorEntryShouldAutoCollapseSidebar()
-              router.push(buildArtifactDetailHref(artifact.id))
-            }}
-            onDuplicateArtifact={(artifact) => {
-              void handleDuplicate(artifact)
-            }}
-            onDeleteArtifact={(artifact) => {
-              void handleDelete(artifact)
-            }}
-            onPublishArtifact={(artifact) => {
-              void handlePublish(artifact)
-            }}
-            onBulkDuplicateArtifacts={(selectedArtifacts) => handleBulkDuplicate(selectedArtifacts)}
-            onBulkDeleteArtifacts={(selectedArtifacts) => handleBulkDelete(selectedArtifacts)}
-            onBulkPublishArtifacts={(selectedArtifacts) => handleBulkPublish(selectedArtifacts)}
-          />
-        </div>
+      <div className="flex-1 overflow-auto px-4 pb-4 pt-3" data-admin-page-scroll>
+        <ArtifactListView
+          loading={loading}
+          artifacts={artifacts}
+          publishingId={publishingId}
+          bulkAction={bulkAction}
+          onEditArtifact={(artifact) => {
+            markNextEditorEntryShouldAutoCollapseSidebar()
+            router.push(buildArtifactDetailHref(artifact.id))
+          }}
+          onDuplicateArtifact={(artifact) => {
+            void handleDuplicate(artifact)
+          }}
+          onDeleteArtifact={(artifact) => {
+            void handleDelete(artifact)
+          }}
+          onPublishArtifact={(artifact) => {
+            void handlePublish(artifact)
+          }}
+          onBulkDuplicateArtifacts={(selectedArtifacts) => handleBulkDuplicate(selectedArtifacts)}
+          onBulkDeleteArtifacts={(selectedArtifacts) => handleBulkDelete(selectedArtifacts)}
+          onBulkPublishArtifacts={(selectedArtifacts) => handleBulkPublish(selectedArtifacts)}
+        />
       </div>
     </div>
   )

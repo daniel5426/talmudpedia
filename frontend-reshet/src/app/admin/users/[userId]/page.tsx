@@ -12,7 +12,6 @@ export default function AdminUserPage() {
   const actorId = params.userId as string
   const [user, setUser] = useState<User | null>(null)
   const [stats, setStats] = useState<any>(null)
-  const [sources, setSources] = useState<Array<Record<string, unknown>>>([])
   const [threads, setThreads] = useState<Thread[]>([])
   const [pageCount, setPageCount] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -28,7 +27,6 @@ export default function AdminUserPage() {
         const data = await adminService.getUserDetails(actorId)
         setUser(data.user)
         setStats(data.stats)
-        setSources(data.sources || [])
       } catch (error) {
         console.error("Failed to fetch user", error)
       }
@@ -103,34 +101,12 @@ export default function AdminUserPage() {
             <dd className="mt-1 text-sm font-medium">{stats?.threads_count || 0}</dd>
           </div>
           <div>
-            <dt className="text-sm text-muted-foreground">Source Apps</dt>
-            <dd className="mt-1 text-sm font-medium">{user.source_app_count || 0}</dd>
-          </div>
-          <div>
             <dt className="text-sm text-muted-foreground">Last Activity</dt>
             <dd className="mt-1 text-sm font-medium">
               {user.last_activity_at ? new Date(user.last_activity_at).toLocaleString() : "—"}
             </dd>
           </div>
         </dl>
-
-        {sources.length > 0 ? (
-          <div className="space-y-2">
-            <h2 className="text-sm font-medium">Sources</h2>
-            <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
-              {sources.map((source, index) => (
-                <div key={`${String(source.id || index)}`} className="rounded-md border p-3 text-sm">
-                  <div className="font-medium">{String(source.display_name || source.email || source.type || "Source")}</div>
-                  <div className="text-muted-foreground text-xs">
-                    {String(source.type || "unknown")}
-                    {source.published_app_name ? ` • ${String(source.published_app_name)}` : ""}
-                    {source.agent_name ? ` • ${String(source.agent_name)}` : ""}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        ) : null}
 
         <div>
           <ThreadsTable

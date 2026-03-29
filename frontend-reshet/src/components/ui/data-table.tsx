@@ -15,19 +15,17 @@ import {
   getSortedRowModel,
   useReactTable,
 } from "@tanstack/react-table"
-import { ChevronDown, MoreHorizontal, Trash2, Edit, Filter } from "lucide-react"
+import { ChevronDown, Trash2 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { Input } from "@/components/ui/input"
+import { SearchInput } from "@/components/ui/search-input"
+import { Skeleton } from "@/components/ui/skeleton"
 import {
   Table,
   TableBody,
@@ -36,7 +34,6 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { Checkbox } from "@/components/ui/checkbox"
 
 interface DataTableProps<TData, TValue> {
   columns: ColumnDef<TData, TValue>[]
@@ -52,6 +49,11 @@ interface DataTableProps<TData, TValue> {
   pagination?: PaginationState
   onPaginationChange?: (pagination: PaginationState) => void
   toolbarContent?: React.ReactNode
+  toolbarActions?: React.ReactNode
+  selectionEnabled?: boolean
+  emptyStateTitle?: string
+  emptyStateDescription?: string
+  emptyStateIcon?: React.ReactNode
 }
 
 export function DataTable<TData, TValue>({
@@ -68,6 +70,11 @@ export function DataTable<TData, TValue>({
   pagination,
   onPaginationChange,
   toolbarContent,
+  toolbarActions,
+  selectionEnabled = true,
+  emptyStateTitle = "No results found.",
+  emptyStateDescription,
+  emptyStateIcon,
 }: DataTableProps<TData, TValue>) {
   const [sorting, setSorting] = React.useState<SortingState>([])
   const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>([])
@@ -112,21 +119,28 @@ export function DataTable<TData, TValue>({
   const selectedIds = React.useMemo(() => {
     return filteredSelectedRows.map((row) => (row.original as any).id)
   }, [filteredSelectedRows])
+  const resolvedSelectedIds = selectionEnabled ? selectedIds : []
+
+  React.useEffect(() => {
+    if (!selectionEnabled) {
+      setRowSelection({})
+    }
+  }, [selectionEnabled])
 
   const handleBulkDelete = async () => {
-    if (onBulkDelete && selectedIds.length > 0) {
-      if (confirm(`Are you sure you want to delete ${selectedIds.length} items?`)) {
-        await onBulkDelete(selectedIds)
+    if (onBulkDelete && resolvedSelectedIds.length > 0) {
+      if (confirm(`Are you sure you want to delete ${resolvedSelectedIds.length} items?`)) {
+        await onBulkDelete(resolvedSelectedIds)
         setRowSelection({})
       }
     }
   }
 
   return (
-    <div className="w-full">
-      <div className="flex flex-wrap items-center justify-between gap-3 py-4">
-        <div className="flex flex-1 flex-wrap items-center gap-2">
-          <Input
+    <div className="w-full space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+          <SearchInput
             placeholder={filterPlaceholder}
             value={filterValue ?? ((table.getColumn(filterColumn)?.getFilterValue() as string) ?? "")}
             onChange={(event) => {
@@ -136,45 +150,46 @@ export function DataTable<TData, TValue>({
               }
               table.getColumn(filterColumn)?.setFilterValue(event.target.value)
             }}
-            className="max-w-sm"
+            wrapperClassName="max-w-md flex-1 min-w-[220px]"
           />
 
           {toolbarContent}
-
-          {selectedIds.length > 0 && (
+        </div>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          {resolvedSelectedIds.length > 0 && (
             <Button variant="destructive" size="sm" onClick={handleBulkDelete}>
               <Trash2 className="mr-2 h-4 w-4" />
-              Delete ({selectedIds.length})
+              Delete ({resolvedSelectedIds.length})
             </Button>
           )}
-        </div>
-
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="outline">
-              Columns <ChevronDown className="ml-2 h-4 w-4" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            {table
-              .getAllColumns()
-              .filter((column) => column.getCanHide())
-              .map((column) => {
-                return (
-                  <DropdownMenuCheckboxItem
-                    key={column.id}
-                    className="capitalize"
-                    checked={column.getIsVisible()}
-                    onCheckedChange={(value) => column.toggleVisibility(!!value)}
-                  >
-                    {column.id}
-                  </DropdownMenuCheckboxItem>
-                )
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm">
+                Columns <ChevronDown className="ml-2 h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              {table
+                .getAllColumns()
+                .filter((column) => column.getCanHide())
+                .map((column) => {
+                  return (
+                    <DropdownMenuCheckboxItem
+                      key={column.id}
+                      className="capitalize"
+                      checked={column.getIsVisible()}
+                      onCheckedChange={(value) => column.toggleVisibility(!!value)}
+                    >
+                      {column.id}
+                    </DropdownMenuCheckboxItem>
+                  )
               })}
-          </DropdownMenuContent>
-        </DropdownMenu>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          {toolbarActions}
+        </div>
       </div>
-      <div className="rounded-md border">
+      <div className="overflow-hidden rounded-xl border bg-background">
         <Table>
           <TableHeader>
             {table.getHeaderGroups().map((headerGroup) => (
@@ -196,11 +211,15 @@ export function DataTable<TData, TValue>({
           </TableHeader>
           <TableBody>
             {isLoading ? (
-               <TableRow>
-                <TableCell colSpan={columns.length} className="h-24 text-center">
-                  Loading...
-                </TableCell>
-              </TableRow>
+              Array.from({ length: 4 }).map((_, index) => (
+                <TableRow key={`loading-${index}`}>
+                  {Array.from({ length: columns.length }).map((__, cellIndex) => (
+                    <TableCell key={`loading-${index}-${cellIndex}`}>
+                      <Skeleton className="h-4 w-full max-w-[140px]" />
+                    </TableCell>
+                  ))}
+                </TableRow>
+              ))
             ) : table.getRowModel().rows?.length ? (
               table.getRowModel().rows.map((row) => (
                 <TableRow
@@ -221,21 +240,32 @@ export function DataTable<TData, TValue>({
               <TableRow>
                 <TableCell
                   colSpan={columns.length}
-                  className="h-24 text-center"
+                  className="py-12 text-center"
                 >
-                  No results.
+                  <div className="flex flex-col items-center gap-2 text-muted-foreground">
+                    {emptyStateIcon ? (
+                      <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted">
+                        {emptyStateIcon}
+                      </div>
+                    ) : null}
+                    <span>{emptyStateTitle}</span>
+                    {emptyStateDescription ? (
+                      <span className="max-w-sm text-sm text-muted-foreground/80">{emptyStateDescription}</span>
+                    ) : null}
+                  </div>
                 </TableCell>
               </TableRow>
             )}
           </TableBody>
         </Table>
       </div>
-      <div className="flex items-center justify-end space-x-2 py-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex-1 text-sm text-muted-foreground">
-          {table.getFilteredSelectedRowModel().rows.length} of{" "}
-          {table.getFilteredRowModel().rows.length} row(s) selected.
+          {selectionEnabled
+            ? `${table.getFilteredSelectedRowModel().rows.length} of ${table.getFilteredRowModel().rows.length} row(s) selected.`
+            : `${table.getFilteredRowModel().rows.length} row(s)`}
         </div>
-        <div className="space-x-2">
+        <div className="flex items-center gap-2">
           <Button
             variant="outline"
             size="sm"

@@ -8,17 +8,13 @@ export default function AdminUsersPage() {
   return (
     <div className="flex flex-col h-full w-full">
       <AdminPageHeader>
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2">
-            <CustomBreadcrumb
-              items={[
-                { label: "Users", href: "/admin/users", active: true },
-              ]}
-            />
-          </div>
-        </div>
+        <CustomBreadcrumb
+          items={[
+            { label: "Users", href: "/admin/users", active: true },
+          ]}
+        />
       </AdminPageHeader>
-      <div className="flex-1 overflow-auto p-4" data-admin-page-scroll>
+      <div className="flex-1 overflow-auto px-4 pb-4 pt-3" data-admin-page-scroll>
         <UsersTable />
       </div>
     </div>

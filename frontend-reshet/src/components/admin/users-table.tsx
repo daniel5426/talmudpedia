@@ -1,13 +1,14 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { adminService, User } from "@/services"
 import { useTenant } from "@/contexts/TenantContext"
 import { rbacService, Role, RoleAssignment } from "@/services/rbac"
 import { DataTable } from "@/components/ui/data-table"
 import { ColumnDef, type PaginationState } from "@tanstack/react-table"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Button } from "@/components/ui/button"
-import { MoreHorizontal, Edit, Shield, Trash2 } from "lucide-react"
+import { MoreHorizontal, Edit, Shield, Trash2, Users, PencilLine } from "lucide-react"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -34,6 +35,7 @@ import {
 } from "@/components/ui/select"
 import { format } from "date-fns"
 import Link from "next/link"
+import { Badge } from "@/components/ui/badge"
 
 interface UsersTableProps {
   data?: User[]
@@ -79,6 +81,7 @@ export function UsersTable({
   const [isEditOpen, setIsEditOpen] = useState(false)
   const [isRolesOpen, setIsRolesOpen] = useState(false)
   const [actorType, setActorType] = useState("")
+  const [selectionMode, setSelectionMode] = useState(false)
   const [internalSearch, setInternalSearch] = useState("")
   const [internalPagination, setInternalPagination] = useState<PaginationState>({
     pageIndex: 0,
@@ -93,7 +96,7 @@ export function UsersTable({
   const setPagination = onPaginationChange ?? setInternalPagination
   const setSearch = onSearchChange ?? setInternalSearch
 
-  const fetchUsers = async () => {
+  const fetchUsers = useCallback(async () => {
     if (externalData) {
       setLoading(false)
       return
@@ -113,13 +116,13 @@ export function UsersTable({
     } finally {
       setLoading(false)
     }
-  }
+  }, [actorType, externalData, pagination.pageIndex, pagination.pageSize, search])
 
   useEffect(() => {
-    fetchUsers()
-  }, [externalData, pagination.pageIndex, pagination.pageSize, search, actorType])
+    void fetchUsers()
+  }, [fetchUsers])
 
-  const fetchSecurityData = async () => {
+  const fetchSecurityData = useCallback(async () => {
     if (!currentTenant) return
     try {
       const [rolesData, assignmentsData] = await Promise.all([
@@ -131,11 +134,11 @@ export function UsersTable({
     } catch (error) {
       console.error("Failed to fetch RBAC data", error)
     }
-  }
+  }, [currentTenant])
 
   useEffect(() => {
-    fetchSecurityData()
-  }, [currentTenant])
+    void fetchSecurityData()
+  }, [fetchSecurityData])
 
   const handleEditClick = (user: User) => {
     setEditingUser(user)
@@ -162,10 +165,10 @@ export function UsersTable({
     }
   }
 
-  const userAssignments = (user: User) => {
+  const userAssignments = useCallback((user: User) => {
     const targetId = user.platform_user_id || user.id
     return assignments.filter((assignment) => assignment.user_id === targetId)
-  }
+  }, [assignments])
 
   const handleAssignRole = async () => {
     if (!currentTenant || !managingUser || !selectedRoleId) return
@@ -196,8 +199,23 @@ export function UsersTable({
     }
   }
 
-  const columns: ColumnDef<User>[] = useMemo(() => [
-    {
+  const handleBulkDelete = async (ids: string[]) => {
+    try {
+      const resolvedIds = ids.map((id) => {
+        const user = users.find((entry) => entry.id === id)
+        return user?.platform_user_id || user?.id || id
+      })
+      await adminService.bulkDeleteUsers(resolvedIds)
+      await fetchUsers()
+    } catch (error) {
+      console.error("Failed to delete users", error)
+      alert("Failed to delete users")
+    }
+  }
+
+  const columns: ColumnDef<User>[] = useMemo(() => {
+    const dataColumns: ColumnDef<User>[] = [
+      {
       accessorKey: "display_name",
       header: "User",
       cell: ({ row }) => {
@@ -215,7 +233,7 @@ export function UsersTable({
     {
       accessorKey: "actor_type",
       header: "Type",
-      cell: ({ row }) => actorTypeLabel(row.original),
+      cell: ({ row }) => <Badge variant="outline">{actorTypeLabel(row.original)}</Badge>,
     },
     {
       accessorKey: "source_app_count",
@@ -234,7 +252,7 @@ export function UsersTable({
         const user = row.original
         if (!user.is_manageable) return <span className="text-muted-foreground">Read only</span>
         const names = userAssignments(user).map((assignment) => assignment.role_name)
-        return names.length > 0 ? names.join(", ") : user.role || "user"
+        return <span className="text-sm text-muted-foreground">{names.length > 0 ? names.join(", ") : user.role || "user"}</span>
       },
     },
     {
@@ -294,13 +312,40 @@ export function UsersTable({
         )
       },
     },
-  ], [assignments, roles])
+    ]
+
+    if (!selectionMode) return dataColumns
+
+    return [
+      {
+        id: "select",
+        header: ({ table }) => (
+          <Checkbox
+            checked={table.getIsAllPageRowsSelected() || (table.getIsSomePageRowsSelected() && "indeterminate")}
+            onCheckedChange={(value) => table.toggleAllPageRowsSelected(!!value)}
+            aria-label="Select all"
+          />
+        ),
+        cell: ({ row }) => (
+          <Checkbox
+            checked={row.getIsSelected()}
+            onCheckedChange={(value) => row.toggleSelected(!!value)}
+            aria-label="Select row"
+          />
+        ),
+        enableSorting: false,
+        enableHiding: false,
+      },
+      ...dataColumns,
+    ]
+  }, [fetchUsers, selectionMode, userAssignments])
 
   return (
     <div className="space-y-4">
       <DataTable
         columns={columns}
         data={users}
+        onBulkDelete={handleBulkDelete}
         filterColumn="display_name"
         filterPlaceholder="Search users..."
         isLoading={loading}
@@ -313,6 +358,20 @@ export function UsersTable({
           setSearch(value)
           setPagination({ pageIndex: 0, pageSize: pagination.pageSize })
         }}
+        selectionEnabled={selectionMode}
+        toolbarActions={(
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 shrink-0 border-0 shadow-none data-[active=true]:bg-primary/5 data-[active=true]:text-primary"
+            data-active={selectionMode}
+            onClick={() => setSelectionMode((current) => !current)}
+            aria-label={selectionMode ? "Hide selection controls" : "Show selection controls"}
+          >
+            <PencilLine className="h-4 w-4" />
+          </Button>
+        )}
         toolbarContent={(
           <Select
             value={actorType || ALL_TYPES_VALUE}
@@ -321,7 +380,7 @@ export function UsersTable({
               setPagination({ pageIndex: 0, pageSize: pagination.pageSize })
             }}
           >
-            <SelectTrigger className="w-[220px]">
+            <SelectTrigger size="sm" className="h-8 w-[220px] border-border/50 bg-muted/30 shadow-none">
               <SelectValue placeholder="All actor types" />
             </SelectTrigger>
             <SelectContent>
@@ -332,6 +391,9 @@ export function UsersTable({
             </SelectContent>
           </Select>
         )}
+        emptyStateTitle={search ? "No users match your search." : "No users found."}
+        emptyStateDescription={search ? "Try a different name, email, or actor type." : "Users will appear here once accounts are created or synced."}
+        emptyStateIcon={<Users className="h-6 w-6" />}
       />
 
       <Dialog open={isEditOpen} onOpenChange={setIsEditOpen}>

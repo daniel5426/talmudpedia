@@ -6,7 +6,7 @@ import { DataTable } from "@/components/ui/data-table"
 import { ColumnDef, type PaginationState } from "@tanstack/react-table"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Button } from "@/components/ui/button"
-import { MoreHorizontal, Trash2, ExternalLink } from "lucide-react"
+import { MoreHorizontal, Trash2, ExternalLink, MessageSquareText, Bot, UserRound, PencilLine } from "lucide-react"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -18,6 +18,7 @@ import {
 import { format } from "date-fns"
 import Link from "next/link"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Badge } from "@/components/ui/badge"
 
 interface ThreadsTableProps {
   data?: Thread[]
@@ -49,6 +50,7 @@ export function ThreadsTable({
   const [agents, setAgents] = useState<Agent[]>([])
   const [internalSearch, setInternalSearch] = useState("")
   const [internalAgentId, setInternalAgentId] = useState("")
+  const [selectionMode, setSelectionMode] = useState(false)
   const [internalPagination, setInternalPagination] = useState<PaginationState>({
     pageIndex: 0,
     pageSize: 20,
@@ -116,40 +118,25 @@ export function ThreadsTable({
     }
   }
 
-  const columns: ColumnDef<Thread>[] = useMemo(() => [
-    {
-      id: "select",
-      header: ({ table }) => (
-        <Checkbox
-          checked={table.getIsAllPageRowsSelected() || (table.getIsSomePageRowsSelected() && "indeterminate")}
-          onCheckedChange={(value) => table.toggleAllPageRowsSelected(!!value)}
-          aria-label="Select all"
-        />
-      ),
-      cell: ({ row }) => (
-        <Checkbox
-          checked={row.getIsSelected()}
-          onCheckedChange={(value) => row.toggleSelected(!!value)}
-          aria-label="Select row"
-        />
-      ),
-      enableSorting: false,
-      enableHiding: false,
-    },
-    {
+  const columns: ColumnDef<Thread>[] = useMemo(() => {
+    const dataColumns: ColumnDef<Thread>[] = [
+      {
       accessorKey: "title",
-      header: "Title",
+      header: "Thread",
       cell: ({ row }) => {
         const thread = row.original
         const title = thread.title || "Untitled Thread"
         return (
-          <Link
-            href={`${basePath}/${thread.id}`}
-            className="block max-w-[360px] truncate font-medium hover:underline"
-            title={title}
-          >
-            {title}
-          </Link>
+          <div className="min-w-0 max-w-[240px]">
+            <Link
+              href={`${basePath}/${thread.id}`}
+              className="block truncate font-medium transition hover:text-primary"
+              title={title}
+            >
+              {title}
+            </Link>
+            <div className="truncate text-xs text-muted-foreground">{thread.id}</div>
+          </div>
         )
       },
     },
@@ -161,20 +148,29 @@ export function ThreadsTable({
         if (!thread.agent_id) return <span className="text-muted-foreground">—</span>
         const agentLabel = thread.agent_name || thread.agent_slug || thread.agent_id
         return (
-          <Link
-            href={`/admin/agents/${thread.agent_id}/builder`}
-            className="block max-w-[220px] truncate hover:underline"
-            title={agentLabel}
-          >
-            {agentLabel}
-          </Link>
+          <div className="flex min-w-0 items-center gap-2">
+            <div className="rounded-lg bg-muted p-2">
+              <Bot className="h-4 w-4" />
+            </div>
+            <Link
+              href={`/admin/agents/${thread.agent_id}/builder`}
+              className="block max-w-[220px] truncate transition hover:text-primary"
+              title={agentLabel}
+            >
+              {agentLabel}
+            </Link>
+          </div>
         )
       },
     },
     {
       accessorKey: "surface",
       header: "Surface",
-      cell: ({ row }) => row.original.surface || "—",
+      cell: ({ row }) => (
+        row.original.surface
+          ? <Badge variant="outline">{row.original.surface}</Badge>
+          : <span className="text-muted-foreground">—</span>
+      ),
     },
     {
       accessorKey: "actor_display",
@@ -184,13 +180,21 @@ export function ThreadsTable({
         if (!thread.actor_id) return <span className="text-muted-foreground">—</span>
         const actorLabel = thread.actor_display || thread.actor_email || thread.actor_id
         return (
-          <Link
-            href={`/admin/users/${thread.actor_id}`}
-            className="block max-w-[220px] truncate hover:underline"
-            title={actorLabel}
-          >
-            {actorLabel}
-          </Link>
+          <div className="flex min-w-0 items-center gap-2">
+            <div className="rounded-lg bg-muted p-2">
+              <UserRound className="h-4 w-4" />
+            </div>
+            <div className="min-w-0">
+              <Link
+                href={`/admin/users/${thread.actor_id}`}
+                className="block max-w-[220px] truncate transition hover:text-primary"
+                title={actorLabel}
+              >
+                {actorLabel}
+              </Link>
+              {thread.actor_email ? <div className="truncate text-xs text-muted-foreground">{thread.actor_email}</div> : null}
+            </div>
+          </div>
         )
       },
     },
@@ -204,6 +208,7 @@ export function ThreadsTable({
     },
     {
       id: "actions",
+      header: () => <div className="text-right">Actions</div>,
       cell: ({ row }) => {
         const thread = row.original
         return (
@@ -242,7 +247,33 @@ export function ThreadsTable({
         )
       },
     },
-  ], [basePath, externalData, fetchThreads])
+    ]
+
+    if (!selectionMode) return dataColumns
+
+    return [
+      {
+        id: "select",
+        header: ({ table }) => (
+          <Checkbox
+            checked={table.getIsAllPageRowsSelected() || (table.getIsSomePageRowsSelected() && "indeterminate")}
+            onCheckedChange={(value) => table.toggleAllPageRowsSelected(!!value)}
+            aria-label="Select all"
+          />
+        ),
+        cell: ({ row }) => (
+          <Checkbox
+            checked={row.getIsSelected()}
+            onCheckedChange={(value) => row.toggleSelected(!!value)}
+            aria-label="Select row"
+          />
+        ),
+        enableSorting: false,
+        enableHiding: false,
+      },
+      ...dataColumns,
+    ]
+  }, [basePath, externalData, fetchThreads, selectionMode])
 
   return (
     <div className="space-y-4">
@@ -262,6 +293,20 @@ export function ThreadsTable({
           setSearch(value)
           setPagination({ pageIndex: 0, pageSize: pagination.pageSize })
         }}
+        selectionEnabled={selectionMode}
+        toolbarActions={(
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 shrink-0 border-0 shadow-none data-[active=true]:bg-primary/5 data-[active=true]:text-primary"
+            data-active={selectionMode}
+            onClick={() => setSelectionMode((current) => !current)}
+            aria-label={selectionMode ? "Hide selection controls" : "Show selection controls"}
+          >
+            <PencilLine className="h-4 w-4" />
+          </Button>
+        )}
         toolbarContent={(
           <Select
             value={selectedAgentId || ALL_AGENTS_VALUE}
@@ -270,7 +315,7 @@ export function ThreadsTable({
               setPagination({ pageIndex: 0, pageSize: pagination.pageSize })
             }}
           >
-            <SelectTrigger className="w-[220px]">
+            <SelectTrigger size="sm" className="h-8 w-[220px] border-border/50 bg-muted/30 shadow-none">
               <SelectValue placeholder="All agents" />
             </SelectTrigger>
             <SelectContent className="max-h-72 max-w-[320px]">
@@ -283,6 +328,9 @@ export function ThreadsTable({
             </SelectContent>
           </Select>
         )}
+        emptyStateTitle={search ? "No threads match your search." : "No threads found."}
+        emptyStateDescription={search ? "Try a different title or agent filter." : "Threads will appear here once users start conversations."}
+        emptyStateIcon={<MessageSquareText className="h-6 w-6" />}
       />
     </div>
   )
