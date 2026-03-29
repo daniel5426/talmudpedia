@@ -16,8 +16,8 @@ Last Updated: 2026-03-29
 - Prompt submission starts a run when no active run exists for the chat session.
 - Prompt submission rejects with `CODING_AGENT_RUN_ACTIVE` when a run is active for the chat session.
 - Stream layer emits one `assistant.delta` per upstream chunk (no backend coalescing).
-- Coding-agent run payloads and accepted stream events carry `context_status` telemetry for the current run budget snapshot.
-- Published-app coding-agent streams emit live `context.status` updates after tool events so the UI can update the context meter mid-run.
+- Coding-agent run payloads and accepted stream events carry canonical `context_window` and `run_usage` contracts.
+- Published-app coding-agent streams preserve live `context_window.updated` events when the engine emits canonical context-window updates.
 - Tool-event history persistence appends safely under stale-session conditions (external updates are preserved; no JSON overwrite/lost update).
 - Stream endpoint is live-only (no replay cursor contract) with reconcile-first missing-terminal handling.
 - Terminal transitions are persisted and old non-v2 route is removed (`/coding-agent/runs` => 404).

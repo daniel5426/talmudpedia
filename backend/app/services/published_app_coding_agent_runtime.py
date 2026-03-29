@@ -38,7 +38,8 @@ from app.services.published_app_coding_pipeline_trace import pipeline_trace
 from app.api.routers.published_apps_admin_files import _filter_builder_snapshot_files, _validate_builder_project_or_raise
 from app.services.published_app_coding_agent_runtime_sandbox import PublishedAppCodingAgentRuntimeSandboxMixin
 from app.services.published_app_coding_agent_runtime_streaming import PublishedAppCodingAgentRuntimeStreamingMixin
-from app.services.context_status_service import ContextStatusService
+from app.services.context_window_service import ContextWindowService
+from app.services.model_accounting import usage_payload_from_run
 
 logger = logging.getLogger(__name__)
 
@@ -124,7 +125,8 @@ class PublishedAppCodingAgentRuntimeService(
             "sandbox_status": str(context.get("preview_sandbox_status") or "") or None,
             "sandbox_started_at": context.get("preview_sandbox_started_at"),
             "chat_session_id": str(context.get("chat_session_id") or "") or None,
-            "context_status": ContextStatusService.read_from_run(run),
+            "context_window": ContextWindowService.read_from_run(run),
+            "run_usage": usage_payload_from_run(run),
         }
 
     @staticmethod

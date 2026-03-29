@@ -15,7 +15,8 @@ from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_current_principal, require_scopes
-from app.api.schemas.context_status import ContextStatusResponse
+from app.api.schemas.context_window import ContextWindowResponse
+from app.api.schemas.run_usage import RunUsageResponse
 from app.db.postgres.models.agents import AgentRun, RunStatus
 from app.db.postgres.models.published_apps import PublishedAppRevision
 from app.db.postgres.session import get_db
@@ -25,7 +26,8 @@ from app.services.published_app_coding_chat_history_service import PublishedAppC
 from app.services.published_app_coding_pipeline_trace import pipeline_trace
 from app.services.published_app_coding_run_monitor import PublishedAppCodingRunMonitor
 from app.services.published_app_draft_dev_runtime import PublishedAppDraftDevRuntimeDisabled
-from app.services.context_status_service import ContextStatusService
+from app.services.context_window_service import ContextWindowService
+from app.services.model_accounting import usage_payload_from_run
 
 from .published_apps_admin_access import (
     _assert_can_manage_apps,
@@ -62,7 +64,8 @@ class CodingAgentRunResponse(BaseModel):
     sandbox_id: Optional[str] = None
     sandbox_status: Optional[str] = None
     sandbox_started_at: Optional[datetime] = None
-    context_status: Optional[ContextStatusResponse] = None
+    context_window: Optional[ContextWindowResponse] = None
+    run_usage: Optional[RunUsageResponse] = None
 
 
 class CodingAgentPromptSubmissionStartedResponse(BaseModel):
@@ -109,7 +112,7 @@ class CodingAgentChatSessionDetailResponse(BaseModel):
     messages: List[CodingAgentChatMessageResponse] = Field(default_factory=list)
     run_events: List["CodingAgentRunEventResponse"] = Field(default_factory=list)
     paging: "CodingAgentChatSessionPagingResponse"
-    context_status: Optional[ContextStatusResponse] = None
+    context_window: Optional[ContextWindowResponse] = None
 
 
 class CodingAgentChatSessionPagingResponse(BaseModel):
@@ -129,7 +132,8 @@ class CodingAgentRunEventResponse(BaseModel):
 class CodingAgentActiveRunResponse(BaseModel):
     run_id: str
     status: str
-    context_status: Optional[ContextStatusResponse] = None
+    context_window: Optional[ContextWindowResponse] = None
+    run_usage: Optional[RunUsageResponse] = None
 
 
 class CodingAgentAnswerQuestionRequest(BaseModel):
@@ -597,7 +601,8 @@ async def get_coding_agent_chat_session(
             has_more=has_more,
             next_before_message_id=str(next_before_message_id) if next_before_message_id else None,
         ),
-        context_status=ContextStatusService.read_from_run(context_run),
+        context_window=ContextWindowService.read_from_run(context_run),
+        run_usage=usage_payload_from_run(context_run),
     )
 
 
@@ -642,7 +647,8 @@ async def get_coding_agent_chat_session_active_run(
     return CodingAgentActiveRunResponse(
         run_id=str(run.id),
         status=status,
-        context_status=ContextStatusService.read_from_run(run),
+        context_window=ContextWindowService.read_from_run(run),
+        run_usage=usage_payload_from_run(run),
     )
 
 

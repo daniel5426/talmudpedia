@@ -263,6 +263,7 @@ class ArtifactCodingChatHistoryService:
         session_id: UUID,
         current_prompt: str,
         current_role: str = "user",
+        include_current_prompt: bool = True,
         limit: int = 120,
     ) -> list[dict[str, str]]:
         result = await self.db.execute(
@@ -282,14 +283,15 @@ class ArtifactCodingChatHistoryService:
                 continue
             payload.append({"role": runtime_role, "content": content})
 
-        prompt = str(current_prompt or "").strip()
-        prompt_role = self._runtime_role_for_message(current_role)
-        if prompt and prompt_role and (
-            not payload
-            or payload[-1].get("role") != prompt_role
-            or payload[-1].get("content") != prompt
-        ):
-            payload.append({"role": prompt_role, "content": prompt})
+        if include_current_prompt:
+            prompt = str(current_prompt or "").strip()
+            prompt_role = self._runtime_role_for_message(current_role)
+            if prompt and prompt_role and (
+                not payload
+                or payload[-1].get("role") != prompt_role
+                or payload[-1].get("content") != prompt
+            ):
+                payload.append({"role": prompt_role, "content": prompt})
         return payload
 
     async def persist_user_message(

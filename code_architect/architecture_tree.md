@@ -38,6 +38,8 @@ backend/app/api/routers/artifacts.py
 backend/app/api/routers/artifact_runs.py
 backend/app/api/routers/artifact_coding_agent.py
 backend/app/api/schemas/
+backend/app/api/schemas/context_window.py
+backend/app/api/schemas/run_usage.py
 
 backend/app/core/
 backend/app/core/security.py
@@ -115,6 +117,7 @@ backend/app/db/postgres/
 backend/app/db/postgres/engine.py
 backend/app/db/postgres/session.py
 backend/app/db/postgres/models/
+backend/app/db/postgres/models/agents.py
 backend/app/db/postgres/models/artifact_runtime.py
 backend/app/db/postgres/models/agent_threads.py
 backend/app/db/postgres/models/published_app_analytics.py
@@ -130,7 +133,9 @@ backend/app/services/security_bootstrap_service.py
 backend/app/services/retrieval_service.py
 backend/app/services/rag_admin_service.py
 backend/app/services/model_accounting.py
+backend/app/services/context_window_service.py
 backend/app/services/model_resolver.py
+backend/app/services/run_invocation_service.py
 backend/app/services/resource_policy_service.py
 backend/app/services/resource_policy_quota_service.py
 backend/app/services/model_temperature_policy.py

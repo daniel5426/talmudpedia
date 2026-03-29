@@ -25,32 +25,24 @@ jest.mock("@/components/ai-elements/context", () => ({
 }));
 
 describe("ChatContextStatus", () => {
-  it("keeps the context meter on estimated context size after actual usage arrives", () => {
+  it("renders the input-side context window state", () => {
     render(
       <ChatContextStatus
         contextStatus={{
+          source: "estimated",
           model_id: "openai/gpt-5",
           max_tokens: 1_050_000,
           max_tokens_source: "provider_fallback",
-          reserved_output_tokens: 8_192,
-          estimated_input_tokens: 4_000,
-          estimated_total_tokens: 12_192,
-          estimated_remaining_tokens: 1_037_808,
-          estimated_usage_ratio: 0.0116,
-          near_limit: false,
-          compaction_recommended: false,
-          source: "estimated_plus_actual",
-          actual_usage: {
-            input_tokens: 4_100,
-            output_tokens: 700,
-            total_tokens: 4_800,
-          },
+          input_tokens: 4_000,
+          remaining_tokens: 1_046_000,
+          usage_ratio: 4_000 / 1_050_000,
         }}
       />,
     );
 
     const contextRoot = screen.getByTestId("context-root");
-    expect(contextRoot).toHaveAttribute("data-usedtokens", "12192");
-    expect(screen.getByText("Context estimate")).toBeInTheDocument();
+    expect(contextRoot).toHaveAttribute("data-usedtokens", "4000");
+    expect(screen.getByText("Context window")).toBeInTheDocument();
+    expect(screen.getByText("Estimated input")).toBeInTheDocument();
   });
 });

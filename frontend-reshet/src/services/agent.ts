@@ -262,11 +262,23 @@ export interface AgentRunStatus {
   result?: any
   error?: string
   checkpoint?: any
-  usage?: {
+  run_usage?: {
+    source?: string | null
     input_tokens?: number | null
     output_tokens?: number | null
     total_tokens?: number | null
-    usage_source?: string | null
+    cached_input_tokens?: number | null
+    cached_output_tokens?: number | null
+    reasoning_tokens?: number | null
+  }
+  context_window?: {
+    source?: string | null
+    model_id?: string | null
+    max_tokens?: number | null
+    max_tokens_source?: string | null
+    input_tokens?: number | null
+    remaining_tokens?: number | null
+    usage_ratio?: number | null
   }
   run_tree?: AgentRunTreeResponse
   lineage?: {

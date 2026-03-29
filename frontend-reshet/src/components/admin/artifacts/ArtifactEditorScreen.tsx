@@ -321,13 +321,20 @@ export function ArtifactEditorScreen({
     setSaving(true)
     try {
       if (mode === "create") {
-        const created = await artifactsService.create(buildArtifactPayload(formData), currentTenant?.slug)
+        const created = await artifactsService.create(
+          buildArtifactPayload(formData, artifactChatDraftKey),
+          currentTenant?.slug,
+        )
         await loadArtifactEditorState(created.id)
         router.replace(buildArtifactDetailHref(created.id), { scroll: false })
         return created
       }
       if (selectedArtifact) {
-        const updatedArtifact = await artifactsService.update(selectedArtifact.id, buildArtifactUpdatePayload(formData), currentTenant?.slug)
+        const updatedArtifact = await artifactsService.update(
+          selectedArtifact.id,
+          buildArtifactUpdatePayload(formData, artifactChatDraftKey),
+          currentTenant?.slug,
+        )
         syncSelectedArtifact(updatedArtifact)
         await persistWorkingDraft(updatedArtifact.id)
         if (versionsOpen) {

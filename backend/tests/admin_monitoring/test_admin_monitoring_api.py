@@ -252,7 +252,7 @@ async def test_admin_thread_detail_joins_run_usage(client, db_session):
     run.input_tokens = 70
     run.output_tokens = 30
     run.total_tokens = 100
-    run.usage_source = "provider_reported"
+    run.usage_source = "exact"
     db_session.add(
         AgentThreadTurn(
             thread_id=thread.id,
@@ -269,11 +269,55 @@ async def test_admin_thread_detail_joins_run_usage(client, db_session):
     payload = response.json()
 
     assert payload["token_usage"]["total_tokens"] == 100
+    assert payload["token_usage"]["exact_total_tokens"] == 100
+    assert payload["token_usage"]["estimated_total_tokens"] is None
     assert payload["turns"][0]["run_usage"] == {
+        "source": "exact",
         "input_tokens": 70,
         "output_tokens": 30,
         "total_tokens": 100,
-        "usage_source": "provider_reported",
+        "cached_input_tokens": None,
+        "cached_output_tokens": None,
+        "reasoning_tokens": None,
+    }
+
+
+@pytest.mark.asyncio
+async def test_admin_thread_detail_surfaces_estimated_usage_separately(client, db_session):
+    fixture = await _seed_monitoring_fixture(db_session)
+    headers = _auth_headers(str(fixture["owner"].id), str(fixture["tenant"].id), str(fixture["org_unit"].id))
+    thread = fixture["threads"][0]
+    run = await db_session.scalar(select(AgentRun).where(AgentRun.thread_id == thread.id).limit(1))
+    assert run is not None
+    run.total_tokens = 44
+    run.input_tokens = None
+    run.output_tokens = None
+    run.usage_source = "estimated"
+    db_session.add(
+        AgentThreadTurn(
+            thread_id=thread.id,
+            run_id=run.id,
+            turn_index=0,
+            user_input_text="hello",
+            assistant_output_text="world",
+        )
+    )
+    await db_session.commit()
+
+    response = await client.get(f"/admin/threads/{thread.id}", headers=headers)
+    assert response.status_code == 200
+    payload = response.json()
+
+    assert payload["token_usage"]["exact_total_tokens"] is None
+    assert payload["token_usage"]["estimated_total_tokens"] == 44
+    assert payload["turns"][0]["run_usage"] == {
+        "source": "estimated",
+        "input_tokens": None,
+        "output_tokens": None,
+        "total_tokens": 44,
+        "cached_input_tokens": None,
+        "cached_output_tokens": None,
+        "reasoning_tokens": None,
     }
 
 

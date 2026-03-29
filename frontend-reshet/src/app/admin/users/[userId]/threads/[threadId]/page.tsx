@@ -13,6 +13,7 @@ type ThreadTurn = {
   user_input_text?: string | null;
   assistant_output_text?: string | null;
   run_usage?: {
+    source?: string | null;
     total_tokens?: number | null;
   } | null;
 };
@@ -86,6 +87,13 @@ export default function AdminUserThreadPage() {
   if (loading) return <div className="p-6">Loading thread...</div>
   if (!thread) return <div className="p-6">Thread not found</div>
 
+  const formatTurnUsage = (turn: ThreadTurn) => {
+    const total = turn.run_usage?.total_tokens;
+    const source = String(turn.run_usage?.source || "").trim() || "unknown";
+    if (total || total === 0) return `${source} ${total}`;
+    return "—";
+  };
+
   return (
     <div className="flex flex-col h-full w-full">
       <AdminPageHeader>
@@ -121,7 +129,7 @@ export default function AdminUserThreadPage() {
             .map((turn) => (
               <div key={turn.id} className="rounded-md border p-4 space-y-2">
                 <div className="text-xs text-muted-foreground">
-                  Turn #{turn.turn_index + 1} • {turn.status} • tokens: {turn.run_usage?.total_tokens || 0}
+                  Turn #{turn.turn_index + 1} • {turn.status} • tokens: {formatTurnUsage(turn)}
                 </div>
                 {turn.user_input_text ? (
                   <div>

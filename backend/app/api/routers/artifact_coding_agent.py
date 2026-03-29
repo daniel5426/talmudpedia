@@ -14,7 +14,8 @@ from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import require_scopes
-from app.api.schemas.context_status import ContextStatusResponse
+from app.api.schemas.context_window import ContextWindowResponse
+from app.api.schemas.run_usage import RunUsageResponse
 from app.api.routers.artifacts import get_artifact_context
 from app.agent.execution.service import AgentExecutorService
 from app.agent.execution.stream_contract_v2 import build_stream_v2_event, normalize_filtered_event_to_v2
@@ -30,7 +31,8 @@ from app.services.artifact_coding_agent_tools import ARTIFACT_CODING_AGENT_SURFA
 from app.services.artifact_coding_chat_history_service import ArtifactCodingChatHistoryService
 from app.services.artifact_coding_runtime_service import ArtifactCodingRuntimeService
 from app.services.artifact_coding_shared_draft_service import ArtifactCodingSharedDraftService
-from app.services.context_status_service import ContextStatusService
+from app.services.context_window_service import ContextWindowService
+from app.services.model_accounting import usage_payload_from_run
 
 router = APIRouter(prefix="/admin/artifacts/coding-agent/v1", tags=["artifacts"])
 
@@ -60,7 +62,8 @@ class ArtifactCodingRunResponse(BaseModel):
     created_at: datetime
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
-    context_status: Optional[ContextStatusResponse] = None
+    context_window: Optional[ContextWindowResponse] = None
+    run_usage: Optional[RunUsageResponse] = None
 
 
 class ArtifactCodingPromptSubmissionResponse(BaseModel):
@@ -109,13 +112,20 @@ class ArtifactCodingChatSessionDetailResponse(BaseModel):
     run_events: List[ArtifactCodingRunEventResponse] = Field(default_factory=list)
     draft_snapshot: Dict[str, Any] = Field(default_factory=dict)
     paging: ArtifactCodingChatSessionPagingResponse
-    context_status: Optional[ContextStatusResponse] = None
+    context_window: Optional[ContextWindowResponse] = None
+
+
+class ArtifactCodingDraftSnapshotResponse(BaseModel):
+    session_id: str
+    draft_snapshot: Dict[str, Any] = Field(default_factory=dict)
+    updated_at: Optional[datetime] = None
 
 
 class ArtifactCodingActiveRunResponse(BaseModel):
     run_id: str
     status: str
-    context_status: Optional[ContextStatusResponse] = None
+    context_window: Optional[ContextWindowResponse] = None
+    run_usage: Optional[RunUsageResponse] = None
 
 
 class ArtifactCodingAnswerQuestionRequest(BaseModel):
@@ -164,7 +174,8 @@ def _run_response_from_snapshot(
         created_at=run.created_at,
         started_at=run.started_at,
         completed_at=run.completed_at,
-        context_status=ContextStatusService.read_from_run(run),
+        context_window=ContextWindowService.read_from_run(run),
+        run_usage=usage_payload_from_run(run),
     )
 
 
@@ -300,7 +311,7 @@ async def _build_session_detail_response(
             has_more=has_more,
             next_before_message_id=str(next_before_message_id) if next_before_message_id else None,
         ),
-        context_status=ContextStatusService.read_from_run(context_run),
+        context_window=ContextWindowService.read_from_run(context_run),
     )
 
 
@@ -356,6 +367,27 @@ async def get_artifact_coding_session(
     )
 
 
+@router.get("/sessions/{session_id}/draft-snapshot", response_model=ArtifactCodingDraftSnapshotResponse)
+async def get_artifact_coding_session_draft_snapshot(
+    session_id: UUID,
+    _: Dict[str, Any] = Depends(require_scopes("artifacts.read")),
+    artifact_ctx=Depends(get_artifact_context),
+):
+    tenant, user, db = await _require_user_context(artifact_ctx)
+    session = await _get_session_for_user_or_404(
+        db=db,
+        tenant_id=tenant.id,
+        user_id=user.id,
+        session_id=session_id,
+    )
+    shared_draft = await ArtifactCodingSharedDraftService(db).resolve_for_session(session=session)
+    return ArtifactCodingDraftSnapshotResponse(
+        session_id=str(session.id),
+        draft_snapshot=dict(shared_draft.working_draft_snapshot or {}),
+        updated_at=shared_draft.updated_at,
+    )
+
+
 @router.get("/sessions/{session_id}/active-run", response_model=ArtifactCodingActiveRunResponse)
 async def get_artifact_coding_session_active_run(
     session_id: UUID,
@@ -383,7 +415,8 @@ async def get_artifact_coding_session_active_run(
     return ArtifactCodingActiveRunResponse(
         run_id=str(run.id),
         status=status,
-        context_status=ContextStatusService.read_from_run(run),
+        context_window=ContextWindowService.read_from_run(run),
+        run_usage=usage_payload_from_run(run),
     )
 
 
@@ -509,7 +542,8 @@ async def stream_artifact_coding_run(
                         payload={
                             "status": str(getattr(stream_run.status, "value", stream_run.status)),
                             "thread_id": str(stream_run.thread_id) if stream_run.thread_id else None,
-                            "context_status": ContextStatusService.read_from_run(stream_run),
+                            "context_window": ContextWindowService.read_from_run(stream_run),
+                            "run_usage": usage_payload_from_run(stream_run),
                         },
                     ),
                     default=str,

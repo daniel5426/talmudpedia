@@ -1,10 +1,12 @@
 import pytest
 
 from app.agent.execution.adapter import StreamAdapter
-from app.agent.execution.types import ExecutionMode
+from app.agent.execution.service import AgentExecutorService
 from app.agent.execution.stream_contract_v2 import normalize_filtered_event_to_v2
+from app.agent.execution.types import ExecutionMode
 from app.agent.execution.tool_event_metadata import resolve_tool_event_metadata
-from app.services.context_status_service import ContextStatusService
+from app.services.context_window_service import ContextWindowService
+from app.services.run_invocation_service import RunInvocationService
 
 
 def test_resolve_tool_event_metadata_uses_platform_action_summary():
@@ -129,53 +131,117 @@ def test_normalize_filtered_event_to_v2_maps_tool_failed_to_terminal_tool_event(
     assert diagnostics == [{"message": "task.objective is required"}]
 
 
-def test_context_status_service_advances_inflight_status_from_tool_output():
-    next_status, runtime_metadata = ContextStatusService.advance_for_event(
-        existing_status={
-            "model_id": "openai/gpt-5",
-            "max_tokens": 1000,
-            "max_tokens_source": "registry",
-            "reserved_output_tokens": 100,
-            "estimated_input_tokens": 200,
-            "estimated_total_tokens": 300,
-            "estimated_remaining_tokens": 700,
-            "estimated_usage_ratio": 0.3,
-            "near_limit": False,
-            "compaction_recommended": False,
-            "source": "estimated_pre_run",
+def test_context_window_service_estimates_prompt_input_from_model_visible_material_only():
+    tokens = ContextWindowService.estimate_input_tokens_from_input_params(
+        input_params={
+            "input": "Update the artifact",
+            "messages": [{"role": "user", "content": "Update the artifact"}],
+            "attachments": [{"name": "contract.json", "content": "hello"}],
+            "metadata": {"ignored": "still model-visible"},
         },
-        existing_runtime_metadata=None,
-        event_name="on_tool_end",
-        data={"output": {"content": "x" * 80}},
+        runtime_context={
+            "artifact_payload": {"display_name": "Draft artifact"},
+            "draft_snapshot": {"source_files": [{"path": "main.py", "content": "x" * 4000}]},
+            "context_window": {"input_tokens": 999999},
+            "resource_policy_snapshot": {"large": "x" * 5000},
+        },
     )
 
-    assert next_status is not None
-    assert runtime_metadata is not None
-    assert next_status["source"] == "estimated_in_flight"
-    assert next_status["estimated_input_tokens"] == 220
-    assert next_status["estimated_total_tokens"] == 320
-    assert runtime_metadata["inflight_added_input_tokens"] == 20
-    assert runtime_metadata["last_context_event"] == "on_tool_end"
+    assert tokens > 1000
+    assert tokens < 1100
 
 
-def test_normalize_filtered_event_to_v2_preserves_context_status_events():
+def test_normalize_filtered_event_to_v2_preserves_context_window_events():
     event_name, stage, payload, diagnostics = normalize_filtered_event_to_v2(
         raw_event={
-            "event": "context.status",
+            "event": "context_window.updated",
             "data": {
-                "context_status": {
+                "context_window": {
                     "model_id": "openai/gpt-5",
-                    "source": "estimated_in_flight",
-                    "estimated_total_tokens": 320,
+                    "source": "estimated",
+                    "input_tokens": 320,
                 }
             },
         }
     )
 
-    assert event_name == "context.status"
+    assert event_name == "context_window.updated"
     assert stage == "context"
     assert diagnostics == []
-    assert payload["context_status"]["source"] == "estimated_in_flight"
+    assert payload["context_window"]["source"] == "estimated"
+
+
+def test_normalize_filtered_event_to_v2_preserves_artifact_draft_updated_events():
+    event_name, stage, payload, diagnostics = normalize_filtered_event_to_v2(
+        raw_event={
+            "event": "artifact.draft.updated",
+            "data": {
+                "session_id": "session-1",
+                "shared_draft_id": "draft-1",
+                "tool_slug": "artifact-coding-replace-file",
+                "summary": "Updated file.",
+                "changed_fields": ["source_files"],
+            },
+        }
+    )
+
+    assert event_name == "artifact.draft.updated"
+    assert stage == "artifact"
+    assert diagnostics == []
+    assert payload["session_id"] == "session-1"
+    assert payload["tool_slug"] == "artifact-coding-replace-file"
+
+
+def test_extract_usage_candidate_reads_nested_node_end_usage_payload():
+    usage, usage_source = AgentExecutorService._extract_usage_candidate(
+        event=type(
+            "Event",
+            (),
+            {
+                "data": {
+                    "output": {
+                        "usage": {
+                            "input_tokens": 120,
+                            "output_tokens": 45,
+                            "total_tokens": 165,
+                        },
+                        "usage_source": "provider_reported",
+                    }
+                }
+            },
+        )()
+    )
+
+    assert usage is not None
+    assert usage.input_tokens == 120
+    assert usage.output_tokens == 45
+    assert usage.total_tokens == 165
+    assert usage_source == "exact"
+
+
+def test_invocation_payload_prefers_prompt_estimate_for_context_window_over_exact_usage():
+    payload = RunInvocationService.build_invocation_payload(
+        model_id="openai/gpt-5",
+        resolved_provider="google",
+        resolved_provider_model_id="gemini-2.5-pro",
+        node_id="node-1",
+        node_name="Artifact Coding Agent",
+        node_type="agent",
+        max_context_tokens=1_000_000,
+        max_context_tokens_source="resolved_execution",
+        estimated_input_tokens=11_973,
+        exact_usage_payload={
+            "input_tokens": 870,
+            "output_tokens": 27,
+            "total_tokens": 897,
+        },
+        estimated_output_tokens=27,
+    )
+
+    assert payload["usage"]["source"] == "exact"
+    assert payload["usage"]["input_tokens"] == 870
+    assert payload["context_window"]["source"] == "estimated"
+    assert payload["context_window"]["input_tokens"] == 11_973
 
 
 @pytest.mark.asyncio

@@ -7,21 +7,18 @@ from typing import Any
 from sqlalchemy import Float, case, cast, func, or_
 
 
-USAGE_SOURCE_PROVIDER_REPORTED = "provider_reported"
-USAGE_SOURCE_SDK_REPORTED = "sdk_reported"
+USAGE_SOURCE_EXACT = "exact"
 USAGE_SOURCE_ESTIMATED = "estimated"
 USAGE_SOURCE_UNKNOWN = "unknown"
-USAGE_SOURCE_LEGACY_ESTIMATED = "legacy_estimated"
-USAGE_SOURCE_LEGACY_UNKNOWN = "legacy_unknown"
 
 COST_SOURCE_BINDING_PRICING = "binding_pricing"
 COST_SOURCE_PROVIDER_REPORTED = "provider_reported"
 COST_SOURCE_MANUAL_OVERRIDE = "manual_override"
 COST_SOURCE_UNKNOWN = "unknown"
 
-EXACT_USAGE_SOURCES = {USAGE_SOURCE_PROVIDER_REPORTED, USAGE_SOURCE_SDK_REPORTED}
-ESTIMATED_USAGE_SOURCES = {USAGE_SOURCE_ESTIMATED, USAGE_SOURCE_LEGACY_ESTIMATED}
-UNKNOWN_USAGE_SOURCES = {USAGE_SOURCE_UNKNOWN, USAGE_SOURCE_LEGACY_UNKNOWN}
+EXACT_USAGE_SOURCES = {USAGE_SOURCE_EXACT}
+ESTIMATED_USAGE_SOURCES = {USAGE_SOURCE_ESTIMATED}
+UNKNOWN_USAGE_SOURCES = {USAGE_SOURCE_UNKNOWN}
 
 EXACT_COST_SOURCES = {COST_SOURCE_BINDING_PRICING, COST_SOURCE_PROVIDER_REPORTED}
 ESTIMATED_COST_SOURCES = {COST_SOURCE_MANUAL_OVERRIDE}
@@ -182,19 +179,46 @@ def billable_total_tokens(run: Any) -> int:
     return max(0, int(getattr(run, "total_tokens", None) or getattr(run, "usage_tokens", 0) or 0))
 
 
-def usage_source_for_legacy_row(run: Any) -> str:
-    total_tokens = getattr(run, "total_tokens", None)
-    usage_tokens = getattr(run, "usage_tokens", None)
-    if total_tokens is not None:
-        return USAGE_SOURCE_LEGACY_ESTIMATED
-    if usage_tokens:
-        return USAGE_SOURCE_LEGACY_ESTIMATED
-    return USAGE_SOURCE_LEGACY_UNKNOWN
-
-
-def build_legacy_usage_from_total(total_tokens: int | None) -> NormalizedUsage:
+def build_usage_from_total(total_tokens: int | None) -> NormalizedUsage:
     usage = NormalizedUsage(total_tokens=_to_int(total_tokens))
     return usage.finalize()
+
+
+def resolved_usage_source(run: Any) -> str:
+    raw_source = str(getattr(run, "usage_source", "") or "").strip()
+    if raw_source in EXACT_USAGE_SOURCES | ESTIMATED_USAGE_SOURCES | UNKNOWN_USAGE_SOURCES:
+        return raw_source
+    total_tokens = getattr(run, "total_tokens", None)
+    usage_tokens = getattr(run, "usage_tokens", None)
+    if total_tokens is not None or usage_tokens:
+        return USAGE_SOURCE_ESTIMATED
+    return USAGE_SOURCE_UNKNOWN
+
+
+def usage_payload_from_run(run: Any) -> dict[str, Any] | None:
+    if run is None:
+        return None
+
+    source = resolved_usage_source(run)
+    total_tokens = getattr(run, "total_tokens", None)
+    usage_tokens = getattr(run, "usage_tokens", None)
+    normalized = NormalizedUsage(
+        input_tokens=_to_int(getattr(run, "input_tokens", None)),
+        output_tokens=_to_int(getattr(run, "output_tokens", None)),
+        total_tokens=_to_int(total_tokens if total_tokens is not None else usage_tokens),
+        cached_input_tokens=_to_int(getattr(run, "cached_input_tokens", None)),
+        cached_output_tokens=_to_int(getattr(run, "cached_output_tokens", None)),
+        reasoning_tokens=_to_int(getattr(run, "reasoning_tokens", None)),
+    ).finalize()
+    return {
+        "source": source,
+        "input_tokens": normalized.input_tokens,
+        "output_tokens": normalized.output_tokens,
+        "total_tokens": normalized.total_tokens if normalized.total_tokens is not None else 0,
+        "cached_input_tokens": normalized.cached_input_tokens,
+        "cached_output_tokens": normalized.cached_output_tokens,
+        "reasoning_tokens": normalized.reasoning_tokens,
+    }
 
 
 def binding_pricing_snapshot(binding: Any) -> dict[str, Any]:

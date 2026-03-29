@@ -24,6 +24,7 @@ from app.agent.execution.tool_input_contracts import (
 )
 from app.agent.executors.base import BaseNodeExecutor, ValidationResult
 from app.agent.execution.tool_event_metadata import resolve_tool_event_metadata
+from app.agent.execution.types import EventVisibility
 from app.agent.execution.tool_error_details import (
     ArtifactToolExecutionError,
     build_tool_exception_details,
@@ -33,6 +34,7 @@ from app.db.postgres.models.artifact_runtime import ArtifactKind, ArtifactRunDom
 from app.db.postgres.models.registry import IntegrationCredentialCategory, ToolRegistry
 from app.services.artifact_runtime.execution_service import ArtifactExecutionService
 from app.services.artifact_runtime.registry_service import ArtifactRegistryService
+from app.services.artifact_coding_agent_tools import is_artifact_coding_mutation_tool_slug
 from app.services.credentials_service import CredentialsService
 from app.services.mcp_client import call_mcp_tool
 from app.services.published_app_coding_agent_tools import (
@@ -1436,6 +1438,30 @@ class ToolNodeExecutor(BaseNodeExecutor):
         if emitter:
             emitter.emit_tool_start(tool.name, input_data, node_id, tool_event_metadata)
 
+        def emit_artifact_draft_update(result: Any) -> None:
+            if not emitter:
+                return
+            tool_slug = getattr(tool, "slug", None)
+            if not is_artifact_coding_mutation_tool_slug(tool_slug):
+                return
+            session_id = str((context or {}).get("artifact_coding_session_id") or "").strip()
+            if not session_id:
+                return
+            payload = result if isinstance(result, dict) else {}
+            emitter.emit_internal_event(
+                "artifact.draft.updated",
+                {
+                    "session_id": session_id,
+                    "shared_draft_id": str((context or {}).get("artifact_coding_shared_draft_id") or "").strip() or None,
+                    "tool_slug": tool_slug,
+                    "summary": payload.get("summary"),
+                    "changed_fields": payload.get("changed_fields") if isinstance(payload.get("changed_fields"), list) else [],
+                },
+                node_id=node_id,
+                category="artifact_draft",
+                visibility=EventVisibility.CLIENT_SAFE,
+            )
+
         config_schema = tool.config_schema or {}
         if isinstance(config_schema, str):
             try:
@@ -1485,6 +1511,7 @@ class ToolNodeExecutor(BaseNodeExecutor):
                 )
                 if emitter:
                     emitter.emit_tool_end(tool.name, result, node_id, tool_event_metadata)
+                    emit_artifact_draft_update(result)
                 return result
 
             if artifact_id:
@@ -1507,6 +1534,7 @@ class ToolNodeExecutor(BaseNodeExecutor):
                     )
                     if emitter:
                         emitter.emit_tool_end(tool.name, result, node_id, tool_event_metadata)
+                        emit_artifact_draft_update(result)
                     return result
 
                 raise ValueError("Artifact-backed tools require a UUID artifact id")
@@ -1564,6 +1592,7 @@ class ToolNodeExecutor(BaseNodeExecutor):
                     category="tool_execution",
                 )
                 emitter.emit_tool_end(tool.name, output_data, node_id, tool_event_metadata)
+                emit_artifact_draft_update(output_data)
 
             return {
                 "tool_outputs": [output_data],

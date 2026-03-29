@@ -6,7 +6,7 @@ import {
   type ArtifactCodingChatSessionDetail,
   type ArtifactCodingModelOption,
 } from "@/services/artifacts";
-import { mergeContextStatus, type ContextStatus } from "@/services/context-status";
+import { mergeContextWindow, type ContextWindow } from "@/services/context-window";
 
 import {
   buildArtifactCodingTimeline,
@@ -87,8 +87,9 @@ export function useArtifactCodingChat({
   const [pendingQuestionsBySession, setPendingQuestionsBySession] = useState<Record<string, ArtifactCodingPendingQuestion | null>>({});
   const [isAnsweringQuestion, setIsAnsweringQuestion] = useState(false);
   const [activeRunIdsBySession, setActiveRunIdsBySession] = useState<Record<string, string | null>>({});
-  const [contextStatusBySession, setContextStatusBySession] = useState<Record<string, ContextStatus | null>>({});
+  const [contextStatusBySession, setContextStatusBySession] = useState<Record<string, ContextWindow | null>>({});
   const abortReaderMapRef = useRef<Map<string, ReadableStreamDefaultReader<Uint8Array>>>(new Map());
+  const draftSnapshotRefreshMapRef = useRef<Map<string, Promise<void>>>(new Map());
   const activeSessionRef = useRef<string | null>(null);
   const previousScopeRef = useRef<{ artifactId: string | null | undefined; draftKey: string }>({ artifactId, draftKey });
   const emitError = useEffectEvent((message: string | null) => {
@@ -154,7 +155,7 @@ export function useArtifactCodingChat({
     }));
     setContextStatusBySession((current) => ({
       ...current,
-      [detail.session.id]: mergeContextStatus(current[detail.session.id], detail.context_status),
+      [detail.session.id]: mergeContextWindow(current[detail.session.id], detail.context_window),
     }));
   }, [onApplyDraftSnapshot, onResolvedArtifactId, setTimelineForSession, updateTimelineForSession]);
 
@@ -166,6 +167,28 @@ export function useArtifactCodingChat({
     });
     applySessionDetail(detail, beforeMessageId);
   }, [applySessionDetail, tenantSlug]);
+
+  const refreshDraftSnapshot = useCallback(async (sessionId: string) => {
+    const normalizedSessionId = String(sessionId || "").trim();
+    if (!normalizedSessionId) return;
+    const existing = draftSnapshotRefreshMapRef.current.get(normalizedSessionId);
+    if (existing) {
+      await existing;
+      return;
+    }
+    const request = artifactsService
+      .getCodingAgentChatSessionDraftSnapshot(normalizedSessionId, tenantSlug)
+      .then((response) => {
+        if (activeSessionRef.current === normalizedSessionId) {
+          onApplyDraftSnapshot(response.draft_snapshot || {});
+        }
+      })
+      .finally(() => {
+        draftSnapshotRefreshMapRef.current.delete(normalizedSessionId);
+      });
+    draftSnapshotRefreshMapRef.current.set(normalizedSessionId, request);
+    await request;
+  }, [onApplyDraftSnapshot, tenantSlug]);
 
   const stopCurrentRun = useCallback(async () => {
     if (!activeRunId) return;
@@ -213,13 +236,13 @@ export function useArtifactCodingChat({
         const event = parseSse(frame);
         if (!event) continue;
         if (
-          event.payload?.context_status
-          && typeof event.payload.context_status === "object"
-          && !Array.isArray(event.payload.context_status)
+          event.payload?.context_window
+          && typeof event.payload.context_window === "object"
+          && !Array.isArray(event.payload.context_window)
         ) {
           setContextStatusBySession((current) => ({
             ...current,
-            [sessionKey]: mergeContextStatus(current[sessionKey], event.payload?.context_status as ContextStatus),
+            [sessionKey]: mergeContextWindow(current[sessionKey], event.payload?.context_window as ContextWindow),
           }));
         }
         if (event.event === "assistant.delta") {
@@ -270,13 +293,12 @@ export function useArtifactCodingChat({
             }
             return [...current, nextItem];
           });
-          if (
-            event.event === "tool.completed"
-            && output.draft_snapshot
-            && typeof output.draft_snapshot === "object"
-            && activeSessionRef.current === sessionId
-          ) {
-            onApplyDraftSnapshot(output.draft_snapshot as Record<string, unknown>);
+          continue;
+        }
+        if (event.event === "artifact.draft.updated") {
+          const updatedSessionId = String(event.payload?.session_id || sessionId || "").trim();
+          if (updatedSessionId && activeSessionRef.current === updatedSessionId) {
+            void refreshDraftSnapshot(updatedSessionId);
           }
           continue;
         }
@@ -319,7 +341,7 @@ export function useArtifactCodingChat({
     if (activeSessionRef.current === sessionId) {
       await loadSessionDetail(sessionId);
     }
-  }, [loadSessionDetail, onApplyDraftSnapshot, refreshSessions, tenantId, updateTimelineForSession]);
+  }, [loadSessionDetail, refreshDraftSnapshot, refreshSessions, tenantId, updateTimelineForSession]);
 
   const sendMessage = useCallback(async (text: string) => {
     const prompt = String(text || "").trim();
@@ -346,7 +368,7 @@ export function useArtifactCodingChat({
     activeSessionRef.current = response.chat_session_id;
     setContextStatusBySession((current) => ({
       ...current,
-      [response.chat_session_id]: mergeContextStatus(current[response.chat_session_id], response.run.context_status),
+      [response.chat_session_id]: mergeContextWindow(current[response.chat_session_id], response.run.context_window),
     }));
     setTimelinesBySession((current) => {
       const sourceTimeline = current[targetSessionKey] || [];

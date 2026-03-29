@@ -123,17 +123,42 @@ def normalize_filtered_event_to_v2(
                 "next": data.get("next"),
                 "next_nodes": data.get("next_nodes"),
                 "final_output": data.get("final_output"),
-                "context_status": data.get("context_status"),
+                "context_window": data.get("context_window"),
+                "run_usage": data.get("run_usage"),
             },
             diagnostics,
         )
 
-    if event_name == "context.status":
+    if event_name == "context_window.updated":
         return (
-            "context.status",
+            "context_window.updated",
             "context",
             {
-                "context_status": data.get("context_status"),
+                "context_window": data.get("context_window"),
+            },
+            [],
+        )
+
+    if event_name == "run_usage.updated":
+        return (
+            "run_usage.updated",
+            "usage",
+            {
+                "run_usage": data.get("run_usage"),
+            },
+            [],
+        )
+
+    if event_name == "artifact.draft.updated":
+        return (
+            "artifact.draft.updated",
+            "artifact",
+            {
+                "session_id": data.get("session_id"),
+                "shared_draft_id": data.get("shared_draft_id"),
+                "tool_slug": data.get("tool_slug"),
+                "summary": data.get("summary"),
+                "changed_fields": data.get("changed_fields"),
             },
             [],
         )

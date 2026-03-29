@@ -1,6 +1,6 @@
 import { httpClient } from "./http";
 import { useAuthStore } from "@/lib/store/useAuthStore";
-import type { ContextStatus } from "./context-status";
+import type { ContextWindow } from "./context-window";
 
 export type ArtifactType = "draft" | "published";
 export type ArtifactKind = "agent_node" | "rag_operator" | "tool_impl";
@@ -77,6 +77,7 @@ export interface Artifact {
 export interface ArtifactCreateRequest {
   display_name: string;
   description?: string;
+  draft_key?: string;
   kind: ArtifactKind;
   runtime: ArtifactRuntimeConfig;
   capabilities: ArtifactCapabilityConfig;
@@ -89,6 +90,7 @@ export interface ArtifactCreateRequest {
 export interface ArtifactUpdateRequest {
   display_name?: string;
   description?: string;
+  draft_key?: string;
   runtime?: ArtifactRuntimeConfig;
   capabilities?: ArtifactCapabilityConfig;
   config_schema?: Record<string, unknown>;
@@ -286,7 +288,16 @@ export interface ArtifactCodingRun {
   created_at: string;
   started_at?: string | null;
   completed_at?: string | null;
-  context_status?: ContextStatus | null;
+  context_window?: ContextWindow | null;
+  run_usage?: {
+    source?: string | null;
+    input_tokens?: number | null;
+    output_tokens?: number | null;
+    total_tokens?: number | null;
+    cached_input_tokens?: number | null;
+    cached_output_tokens?: number | null;
+    reasoning_tokens?: number | null;
+  } | null;
 }
 
 export interface ArtifactCodingChatSession {
@@ -323,17 +334,32 @@ export interface ArtifactCodingChatSessionDetail {
   messages: ArtifactCodingChatMessage[];
   run_events: ArtifactCodingRunEvent[];
   draft_snapshot: Record<string, unknown>;
-  context_status?: ContextStatus | null;
+  context_window?: ContextWindow | null;
   paging: {
     has_more: boolean;
     next_before_message_id?: string | null;
   };
 }
 
+export interface ArtifactCodingDraftSnapshot {
+  session_id: string;
+  draft_snapshot: Record<string, unknown>;
+  updated_at?: string | null;
+}
+
 export interface ArtifactCodingActiveRunState {
   run_id: string;
   status: string;
-  context_status?: ContextStatus | null;
+  context_window?: ContextWindow | null;
+  run_usage?: {
+    source?: string | null;
+    input_tokens?: number | null;
+    output_tokens?: number | null;
+    total_tokens?: number | null;
+    cached_input_tokens?: number | null;
+    cached_output_tokens?: number | null;
+    reasoning_tokens?: number | null;
+  } | null;
 }
 
 export interface ArtifactCodingAnswerQuestionRequest {
@@ -535,6 +561,16 @@ export const artifactsService = {
     return httpClient.get<ArtifactCodingChatSessionDetail>(
       `/admin/artifacts/coding-agent/v1/sessions/${sessionId}?${params.toString()}`,
     );
+  },
+
+  getCodingAgentChatSessionDraftSnapshot: async (
+    sessionId: string,
+    tenantSlug?: string,
+  ): Promise<ArtifactCodingDraftSnapshot> => {
+    const url = tenantSlug
+      ? `/admin/artifacts/coding-agent/v1/sessions/${sessionId}/draft-snapshot?tenant_slug=${tenantSlug}`
+      : `/admin/artifacts/coding-agent/v1/sessions/${sessionId}/draft-snapshot`;
+    return httpClient.get<ArtifactCodingDraftSnapshot>(url);
   },
 
   getCodingAgentChatSessionActiveRun: async (

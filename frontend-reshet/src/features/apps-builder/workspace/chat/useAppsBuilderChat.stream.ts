@@ -1,7 +1,7 @@
 import type { MutableRefObject } from "react";
 
 import { publishedAppsService } from "@/services";
-import type { ContextStatus } from "@/services";
+import type { ContextWindow } from "@/services/context-window";
 
 import {
   extractToolDetailForEvent,
@@ -32,7 +32,7 @@ type ConsumeRunStreamOptions = {
   setIsSending: (next: boolean) => void;
   setIsStopping: (next: boolean) => void;
   setActiveThinkingSummary: (next: string) => void;
-  setContextStatus: (next: ContextStatus | null) => void;
+  setContextStatus: (next: ContextWindow | null) => void;
   isSendingRef: MutableRefObject<boolean>;
   pendingCancelRef: MutableRefObject<boolean>;
   intentionalAbortRef: MutableRefObject<boolean>;
@@ -493,11 +493,11 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
         lastEventAt = Date.now();
         const payload = (parsed.payload || {}) as Record<string, unknown>;
         if (
-          payload.context_status
-          && typeof payload.context_status === "object"
-          && !Array.isArray(payload.context_status)
+          payload.context_window
+          && typeof payload.context_window === "object"
+          && !Array.isArray(payload.context_window)
         ) {
-          setContextStatus(payload.context_status as ContextStatus);
+          setContextStatus(payload.context_window as ContextWindow);
         }
         if (!isCurrentAttachment()) {
           sawTerminalEvent = true;

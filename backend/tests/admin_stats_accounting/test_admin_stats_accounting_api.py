@@ -86,7 +86,7 @@ async def _seed_accounting_fixture(db_session):
             status=RunStatus.completed,
             usage_tokens=120,
             total_tokens=120,
-            usage_source="provider_reported",
+            usage_source="exact",
             cost_usd=0.6,
             cost_source="binding_pricing",
             created_at=now - timedelta(minutes=1),

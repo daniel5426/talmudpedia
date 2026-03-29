@@ -471,6 +471,7 @@ class ArtifactCodingRuntimeService:
             session_id=session.id,
             current_prompt=prompt,
             current_role=prompt_role,
+            include_current_prompt=False,
         )
         artifact_id = (
             shared_draft.artifact_id

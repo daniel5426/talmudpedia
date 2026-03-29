@@ -176,20 +176,16 @@ async def test_v2_stream_emits_assistant_delta_per_chunk_and_old_route_is_404(cl
                 "preview_sandbox_id": "sandbox-test",
                 "preview_sandbox_status": "running",
                 "preview_workspace_stage_path": "/workspace",
-                "context_status": {
-                    "model_id": "opencode/gpt-5",
-                    "max_tokens": 256000,
-                    "max_tokens_source": "opencode_default",
-                    "reserved_output_tokens": 4096,
-                    "estimated_input_tokens": 2048,
-                    "estimated_total_tokens": 6144,
-                    "estimated_remaining_tokens": 249856,
-                    "estimated_usage_ratio": 0.024,
-                    "near_limit": False,
-                    "compaction_recommended": False,
-                    "source": "estimated_pre_run",
-                },
             },
+        },
+        context_window_json={
+            "source": "estimated",
+            "model_id": "opencode/gpt-5",
+            "max_tokens": 256000,
+            "max_tokens_source": "opencode_default",
+            "input_tokens": 2048,
+            "remaining_tokens": 253952,
+            "usage_ratio": 0.008,
         },
         surface=CODING_AGENT_SURFACE,
         published_app_id=UUID(app_id),
@@ -203,7 +199,7 @@ async def test_v2_stream_emits_assistant_delta_per_chunk_and_old_route_is_404(cl
     service = PublishedAppCodingAgentRuntimeService(db_session)
     events = [event async for event in service.stream_run_events(app=SimpleNamespace(id=UUID(app_id)), run=run)]
     accepted = next(event for event in events if event.get("event") == "run.accepted")
-    assert accepted["payload"]["context_status"]["max_tokens"] == 256000
+    assert accepted["payload"]["context_window"]["max_tokens"] == 256000
     assistant_chunks = [event for event in events if event.get("event") == "assistant.delta"]
     assert len(assistant_chunks) == 2
     assert assistant_chunks[0]["payload"]["content"] == "A"
@@ -234,9 +230,19 @@ async def test_v2_stream_emits_live_context_status_after_tool_events(db_session,
         async def stream(self, ctx):
             _ = ctx
             yield SimpleNamespace(
-                event="tool.completed",
-                stage="tool",
-                payload={"tool": "read_file", "output": {"content": "x" * 120}},
+                event="context_window.updated",
+                stage="context",
+                payload={
+                    "context_window": {
+                        "source": "estimated",
+                        "model_id": "opencode/gpt-5",
+                        "max_tokens": 256000,
+                        "max_tokens_source": "opencode_default",
+                        "input_tokens": 2080,
+                        "remaining_tokens": 253920,
+                        "usage_ratio": 2080 / 256000,
+                    }
+                },
                 diagnostics=[],
             )
             yield SimpleNamespace(event="run.completed", stage="run", payload={"status": "completed"}, diagnostics=[])
@@ -266,20 +272,16 @@ async def test_v2_stream_emits_live_context_status_after_tool_events(db_session,
                 "preview_sandbox_id": "sandbox-test",
                 "preview_sandbox_status": "running",
                 "preview_workspace_stage_path": "/workspace",
-                "context_status": {
-                    "model_id": "opencode/gpt-5",
-                    "max_tokens": 256000,
-                    "max_tokens_source": "opencode_default",
-                    "reserved_output_tokens": 4096,
-                    "estimated_input_tokens": 2048,
-                    "estimated_total_tokens": 6144,
-                    "estimated_remaining_tokens": 249856,
-                    "estimated_usage_ratio": 0.024,
-                    "near_limit": False,
-                    "compaction_recommended": False,
-                    "source": "estimated_pre_run",
-                },
             },
+        },
+        context_window_json={
+            "source": "estimated",
+            "model_id": "opencode/gpt-5",
+            "max_tokens": 256000,
+            "max_tokens_source": "opencode_default",
+            "input_tokens": 2048,
+            "remaining_tokens": 253952,
+            "usage_ratio": 0.008,
         },
         surface=CODING_AGENT_SURFACE,
         published_app_id=app.id,
@@ -291,10 +293,10 @@ async def test_v2_stream_emits_live_context_status_after_tool_events(db_session,
 
     service = PublishedAppCodingAgentRuntimeService(db_session)
     events = [event async for event in service.stream_run_events(app=app, run=run)]
-    context_event = next(event for event in events if event.get("event") == "context.status")
-    context_status = context_event["payload"]["context_status"]
-    assert context_status["source"] == "estimated_in_flight"
-    assert context_status["estimated_input_tokens"] > 2048
+    context_event = next(event for event in events if event.get("event") == "context_window.updated")
+    context_window = context_event["payload"]["context_window"]
+    assert context_window["source"] == "estimated"
+    assert context_window["input_tokens"] > 2048
 
 
 @pytest.mark.asyncio

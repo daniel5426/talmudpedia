@@ -46,6 +46,7 @@ from app.services.published_app_auth_shell_renderer import render_published_app_
 from app.services.thread_service import ThreadService
 from app.services.runtime_attachment_service import RuntimeAttachmentOwner, RuntimeAttachmentService
 from app.services.embedded_agent_runtime_service import list_public_run_events
+from app.services.model_accounting import usage_payload_from_run
 from app.services.thread_service import ThreadTurnPage
 from app.services.published_app_bundle_storage import (
     PublishedAppBundleAssetNotFound,
@@ -62,18 +63,7 @@ SESSION_COOKIE_NAME = os.getenv("PUBLISHED_APP_SESSION_COOKIE_NAME", "published_
 
 
 def _serialize_run_usage(run: Any) -> dict[str, Any] | None:
-    if run is None:
-        return None
-    return {
-        "input_tokens": int(run.input_tokens) if getattr(run, "input_tokens", None) is not None else None,
-        "output_tokens": int(run.output_tokens) if getattr(run, "output_tokens", None) is not None else None,
-        "total_tokens": int(
-            getattr(run, "total_tokens", None)
-            if getattr(run, "total_tokens", None) is not None
-            else getattr(run, "usage_tokens", 0) or 0
-        ),
-        "usage_source": getattr(run, "usage_source", None),
-    }
+    return usage_payload_from_run(run)
 
 
 def _serialize_thread_summary(thread: Any) -> dict[str, Any]:

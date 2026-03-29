@@ -64,6 +64,8 @@ DEFAULT_TOOL_CONTRACT = {
     "execution_mode": "interactive",
     "tool_ui": {"title": "Tool"},
 }
+READ_FILE_DEFAULT_LINE_WINDOW = 200
+READ_FILE_FULL_CONTENT_LINE_THRESHOLD = 300
 DEFAULT_SOURCE = """async def execute(inputs, config, context):
     items = inputs.get("items") if isinstance(inputs, dict) else inputs
     return {
@@ -82,6 +84,28 @@ DEFAULT_JS_SOURCE = """export async function execute(inputs, config, context) {
   };
 }
 """
+ARTIFACT_CODING_MUTATION_TOOL_SLUGS = frozenset(
+    {
+        "artifact-coding-replace-file",
+        "artifact-coding-replace-text-in-file",
+        "artifact-coding-create-file",
+        "artifact-coding-delete-file",
+        "artifact-coding-rename-file",
+        "artifact-coding-set-entry-module",
+        "artifact-coding-set-dependencies",
+        "artifact-coding-set-metadata",
+        "artifact-coding-set-kind",
+        "artifact-coding-set-config-schema",
+        "artifact-coding-set-capabilities",
+        "artifact-coding-set-agent-contract",
+        "artifact-coding-set-rag-contract",
+        "artifact-coding-set-tool-contract",
+    }
+)
+
+
+def is_artifact_coding_mutation_tool_slug(slug: Any) -> bool:
+    return str(slug or "").strip() in ARTIFACT_CODING_MUTATION_TOOL_SLUGS
 
 
 def _normalize_language(language: str | None) -> str:
@@ -346,7 +370,7 @@ async def _persist_snapshot_result(
         "ok": True,
         "summary": summary,
         "changed_fields": changed_fields,
-        "draft_snapshot": deepcopy(shared_draft.working_draft_snapshot),
+        "updated_at": shared_draft.updated_at.isoformat() if shared_draft.updated_at else None,
         **dict(extra or {}),
     }
 
@@ -458,22 +482,35 @@ async def artifact_coding_read_file(payload: Any) -> dict[str, Any]:
             raise ValueError("File not found")
         lines = files_by_path[path].splitlines()
         total_lines = len(lines)
-        if (start_line_raw is None) != (end_line_raw is None):
-            raise ValueError("start_line and end_line must be provided together")
-        start_line = int(start_line_raw) if start_line_raw is not None else 1
-        end_line = int(end_line_raw) if end_line_raw is not None else total_lines
         if total_lines == 0:
             start_line = 1
             end_line = 0
-        elif start_line < 1 or end_line < start_line or end_line > total_lines:
+        elif start_line_raw is not None and end_line_raw is not None:
+            start_line = int(start_line_raw)
+            end_line = int(end_line_raw)
+        elif start_line_raw is not None:
+            start_line = int(start_line_raw)
+            end_line = min(total_lines, start_line + READ_FILE_DEFAULT_LINE_WINDOW - 1)
+        elif end_line_raw is not None:
+            end_line = int(end_line_raw)
+            start_line = max(1, end_line - READ_FILE_DEFAULT_LINE_WINDOW + 1)
+        elif total_lines <= READ_FILE_FULL_CONTENT_LINE_THRESHOLD:
+            start_line = 1
+            end_line = total_lines
+        else:
+            start_line = 1
+            end_line = min(total_lines, READ_FILE_DEFAULT_LINE_WINDOW)
+        if total_lines > 0 and (start_line < 1 or end_line < start_line or end_line > total_lines):
             raise ValueError("start_line and end_line must define a valid inclusive range")
         selected_lines = [] if total_lines == 0 else lines[start_line - 1 : end_line]
+        truncated = total_lines > 0 and (start_line > 1 or end_line < total_lines)
         response: dict[str, Any] = {
             "path": path,
             "content": "\n".join(selected_lines),
             "total_lines": total_lines,
             "start_line": start_line,
             "end_line": end_line,
+            "truncated": truncated,
         }
         if include_line_numbers:
             response["numbered_content"] = "\n".join(
@@ -920,7 +957,7 @@ ARTIFACT_CODING_TOOL_SPECS: list[dict[str, Any]] = [
     {"slug": "artifact-coding-get-context", "name": "Artifact Coding Get Context", "description": "Get a compact summary of the current artifact coding session and draft.", "function_name": "artifact_coding_get_context", "timeout_s": 30, "is_pure": True, "schema": _tool_schema(properties={})},
     {"slug": "artifact-coding-get-form-state", "name": "Artifact Coding Get Form State", "description": "Read the full artifact draft form state.", "function_name": "artifact_coding_get_form_state", "timeout_s": 30, "is_pure": True, "schema": _tool_schema(properties={})},
     {"slug": "artifact-coding-list-files", "name": "Artifact Coding List Files", "description": "List files in the current artifact draft.", "function_name": "artifact_coding_list_files", "timeout_s": 30, "is_pure": True, "schema": _tool_schema(properties={})},
-    {"slug": "artifact-coding-read-file", "name": "Artifact Coding Read File", "description": "Read one artifact draft file, optionally as a numbered line range.", "function_name": "artifact_coding_read_file", "timeout_s": 30, "is_pure": True, "schema": _tool_schema(properties={"path": {"type": "string"}, "start_line": {"type": "integer"}, "end_line": {"type": "integer"}, "include_line_numbers": {"type": "boolean"}}, required=["path"])},
+    {"slug": "artifact-coding-read-file", "name": "Artifact Coding Read File", "description": "Read one artifact draft file. You may pass both line bounds for an exact inclusive range, only start_line for a forward window, only end_line for a backward window, or neither for a full/safely capped read.", "function_name": "artifact_coding_read_file", "timeout_s": 30, "is_pure": True, "schema": _tool_schema(properties={"path": {"type": "string"}, "start_line": {"type": "integer"}, "end_line": {"type": "integer"}, "include_line_numbers": {"type": "boolean"}}, required=["path"])},
     {"slug": "artifact-coding-search-in-files", "name": "Artifact Coding Search In Files", "description": "Search text across artifact draft files and return optional surrounding context.", "function_name": "artifact_coding_search_in_files", "timeout_s": 30, "is_pure": True, "schema": _tool_schema(properties={"query": {"type": "string"}, "max_results": {"type": "integer"}, "context_before": {"type": "integer"}, "context_after": {"type": "integer"}}, required=["query"])},
     {"slug": "artifact-coding-replace-file", "name": "Artifact Coding Replace File", "description": "Replace the full content of a draft file.", "function_name": "artifact_coding_replace_file", "timeout_s": 60, "is_pure": False, "schema": _tool_schema(properties={"path": {"type": "string"}, "content": {"type": "string"}}, required=["path", "content"])},
     {"slug": "artifact-coding-replace-text-in-file", "name": "Artifact Coding Replace Text In File", "description": "Replace exact old_text with new_text in a draft file, optionally within a bounded line range.", "function_name": "artifact_coding_replace_text_in_file", "timeout_s": 60, "is_pure": False, "schema": _tool_schema(properties={"path": {"type": "string"}, "old_text": {"type": "string"}, "new_text": {"type": "string"}, "start_line": {"type": "integer"}, "end_line": {"type": "integer"}}, required=["path", "old_text", "new_text"])},

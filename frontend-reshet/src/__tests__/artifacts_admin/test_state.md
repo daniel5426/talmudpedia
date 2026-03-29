@@ -20,6 +20,7 @@ Artifact admin editor payload, dependency authoring, and form-state handling.
 - build source-level credential mention tokens that carry immutable ids
 - refresh visible credential labels from current Settings records
 - include credential mention refs in artifact create/update payloads without artifact-side bindings
+- propagate the artifact coding `draft_key` through artifact save payloads so saved artifacts can relink coding history
 - hydrate editor form state from artifact responses without legacy binding fields
 - build dedicated artifact detail/create routes without falling back to query-mode editor routing
 - warn on opposite-language code files at publish time while ignoring neutral files like `json` and `txt`
@@ -62,6 +63,9 @@ Artifact admin editor payload, dependency authoring, and form-state handling.
 - Command: `pnpm --dir frontend-reshet test -- --runInBand src/__tests__/artifacts_admin/artifact_page_utils.test.ts`
 - Date: 2026-03-26 01:19:41 EET
 - Result: Pass (1 suite, 7 tests)
+- Command: `pnpm --dir frontend-reshet test -- --runInBand src/__tests__/artifacts_admin/artifact_page_utils.test.ts`
+- Date: 2026-03-29 Asia/Hebron
+- Result: PASS (`1 suite, 8 tests`)
 - Command: `pnpm --dir frontend-reshet test -- --runInBand src/__tests__/artifacts_admin/artifact_routes.test.ts src/__tests__/admin_url_state/url_query_state.test.ts src/__tests__/resource_policy_sets/resource_policy_sets_page.test.tsx`
 - Date: 2026-03-27 Asia/Hebron
 - Result: Pass (3 suites, 9 tests)

@@ -56,6 +56,17 @@ describe("artifactPageUtils and credential mentions", () => {
     expect("credential_bindings" in payload).toBe(false);
   });
 
+  it("propagates artifact draft_key into save payloads", () => {
+    const formData = {
+      ...createFormDataForKind("tool_impl"),
+      display_name: "Draft Linked Tool",
+    };
+
+    const payload = buildArtifactPayload(formData, "draft-link-1");
+
+    expect(payload.draft_key).toBe("draft-link-1");
+  });
+
   it("hydrates form data from artifact responses without credential bindings", () => {
     const artifact: Artifact = {
       id: "artifact-1",

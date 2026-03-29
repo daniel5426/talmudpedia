@@ -35,10 +35,10 @@ type ThreadTurn = {
   user_input_text?: string | null;
   assistant_output_text?: string | null;
   run_usage?: {
+    source?: string | null;
     input_tokens?: number | null;
     output_tokens?: number | null;
     total_tokens?: number | null;
-    usage_source?: string | null;
   } | null;
   attachments?: RuntimeAttachmentDto[];
   created_at?: string;
@@ -183,7 +183,7 @@ export const mapTurnsToMessages = async (threadId: string, turns: ThreadTurn[]):
               inputTokens: turn.run_usage.input_tokens ?? null,
               outputTokens: turn.run_usage.output_tokens ?? null,
               totalTokens: turn.run_usage.total_tokens ?? null,
-              usageSource: turn.run_usage.usage_source ?? null,
+              usageSource: turn.run_usage.source ?? null,
             }
           : undefined,
       });

@@ -21,7 +21,8 @@ from app.agent.execution.types import ExecutionMode
 from app.db.postgres.models.agents import Agent, AgentRun, AgentStatus
 from app.db.postgres.models.agent_threads import AgentThread, AgentThreadTurn
 from app.services.runtime_attachment_service import RuntimeAttachmentService
-from app.services.context_status_service import ContextStatusService
+from app.services.context_window_service import ContextWindowService
+from app.services.model_accounting import usage_payload_from_run
 from app.services.thread_service import ThreadService, ThreadTurnPage
 from app.services.usage_quota_service import QuotaExceededError
 
@@ -42,14 +43,7 @@ def _turns_to_messages(turns: list[AgentThreadTurn]) -> list[dict[str, Any]]:
 
 
 def _serialize_run_usage(run: AgentRun | None) -> dict[str, Any] | None:
-    if run is None:
-        return None
-    return {
-        "input_tokens": int(run.input_tokens) if run.input_tokens is not None else None,
-        "output_tokens": int(run.output_tokens) if run.output_tokens is not None else None,
-        "total_tokens": int(run.total_tokens if run.total_tokens is not None else run.usage_tokens or 0),
-        "usage_source": run.usage_source,
-    }
+    return usage_payload_from_run(run)
 
 
 def _turn_final_output(turn: AgentThreadTurn) -> Any:
@@ -314,7 +308,8 @@ async def stream_embedded_agent(
                 payload={
                     "status": "running",
                     "thread_id": thread_id_value,
-                    "context_status": ContextStatusService.read_from_run(run_row),
+                    "context_window": ContextWindowService.read_from_run(run_row),
+                    "run_usage": _serialize_run_usage(run_row),
                 },
             )
             seq += 1

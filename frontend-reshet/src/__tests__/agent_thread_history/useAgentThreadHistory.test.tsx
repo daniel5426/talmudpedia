@@ -53,7 +53,7 @@ describe("useAgentThreadHistory", () => {
             input_tokens: 30,
             output_tokens: 12,
             total_tokens: 42,
-            usage_source: "provider_reported",
+            source: "exact",
           },
         },
         {
@@ -69,7 +69,7 @@ describe("useAgentThreadHistory", () => {
             input_tokens: 18,
             output_tokens: 6,
             total_tokens: 24,
-            usage_source: "sdk_reported",
+            source: "exact",
           },
         },
       ],
@@ -186,13 +186,13 @@ describe("useAgentThreadHistory", () => {
       inputTokens: 18,
       outputTokens: 6,
       totalTokens: 24,
-      usageSource: "sdk_reported",
+      usageSource: "exact",
     });
     expect(assistantMessages[1].tokenUsage).toEqual({
       inputTokens: 30,
       outputTokens: 12,
       totalTokens: 42,
-      usageSource: "provider_reported",
+      usageSource: "exact",
     });
     expect(assistantMessages[0].responseBlocks?.some((block) => block.kind === "tool_call")).toBe(true);
     expect(assistantMessages[1].responseBlocks?.some((block) => block.kind === "tool_call")).toBe(true);

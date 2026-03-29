@@ -118,6 +118,10 @@ async def db_session(test_engine):
 
     session_factory = async_sessionmaker(test_engine, expire_on_commit=False, class_=AsyncSession)
 
+    if not USE_REAL_DB:
+        async with test_engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+
     original_factory = engine_module.sessionmaker
     original_session_factory = session_module.sessionmaker
     engine_module.sessionmaker = session_factory

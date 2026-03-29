@@ -74,7 +74,7 @@ export type {
 export { credentialsService } from "./credentials";
 export { artifactsService } from "./artifacts";
 export { publishedAppsService } from "./published-apps";
-export { mergeContextStatus } from "./context-status";
+export { mergeContextWindow } from "./context-window";
 export {
   isDraftDevServingStatus,
   isDraftDevPendingStatus,
@@ -86,7 +86,7 @@ export {
   OPENCODE_CODING_MODEL_AUTO_ID,
   listOpenCodeCodingModels,
 } from "./coding-agent-models";
-export type { ContextStatus, ContextStatusUsage } from "./context-status";
+export type { ContextWindow } from "./context-window";
 export {
   LLM_PROVIDER_OPTIONS,
   VECTOR_STORE_PROVIDER_OPTIONS,

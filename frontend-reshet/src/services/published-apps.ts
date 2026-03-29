@@ -1,6 +1,6 @@
 import { httpClient } from "./http";
 import { useAuthStore } from "@/lib/store/useAuthStore";
-import type { ContextStatus } from "./context-status";
+import type { ContextWindow } from "./context-window";
 
 export type PublishedAppStatus = "draft" | "published" | "paused" | "archived";
 export type PublishedAppVisibility = "public" | "private";
@@ -322,7 +322,16 @@ export interface CodingAgentRun {
   sandbox_id?: string | null;
   sandbox_status?: string | null;
   sandbox_started_at?: string | null;
-  context_status?: ContextStatus | null;
+  context_window?: ContextWindow | null;
+  run_usage?: {
+    source?: string | null;
+    input_tokens?: number | null;
+    output_tokens?: number | null;
+    total_tokens?: number | null;
+    cached_input_tokens?: number | null;
+    cached_output_tokens?: number | null;
+    reasoning_tokens?: number | null;
+  } | null;
 }
 
 export interface CodingAgentChatSession {
@@ -354,7 +363,7 @@ export interface CodingAgentChatSessionDetail {
   session: CodingAgentChatSession;
   messages: CodingAgentChatMessage[];
   run_events?: CodingAgentRunEvent[];
-  context_status?: ContextStatus | null;
+  context_window?: ContextWindow | null;
   paging: {
     has_more: boolean;
     next_before_message_id?: string | null;
@@ -371,7 +380,16 @@ export interface AppVersionListItem extends PublishedAppRevision {
 export interface CodingAgentActiveRunState {
   run_id: string;
   status: string;
-  context_status?: ContextStatus | null;
+  context_window?: ContextWindow | null;
+  run_usage?: {
+    source?: string | null;
+    input_tokens?: number | null;
+    output_tokens?: number | null;
+    total_tokens?: number | null;
+    cached_input_tokens?: number | null;
+    cached_output_tokens?: number | null;
+    reasoning_tokens?: number | null;
+  } | null;
 }
 
 export interface CodingAgentPromptQueueItem {

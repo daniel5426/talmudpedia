@@ -30,6 +30,7 @@ Artifact runtime revision, deploy, and dispatch-time credential lifecycle.
 - duplicate an artifact into a new tenant draft with Google Drive-style incremented names
 - read and update the persisted artifact working-draft snapshot through the admin API
 - keep saved-artifact working-draft persistence isolated from unrelated `draft_key`-scoped shared drafts
+- link draft-key-scoped artifact coding sessions and shared drafts to the saved artifact during artifact create so artifact history is queryable by `artifact_id`
 - reject wrapped legacy `tool_contract` payloads in saved artifact working drafts
 - verify bundle builder hash stability
 - verify build-hash stability across source-tree revisions
@@ -126,6 +127,9 @@ Artifact runtime revision, deploy, and dispatch-time credential lifecycle.
 - Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/artifact_runtime/test_artifact_working_draft_api.py`
 - Date: 2026-03-25 Asia/Hebron
 - Result: Pass (4 passed, 7 warnings)
+- Command: `PYTHONPATH=. pytest -q backend/tests/artifact_runtime/test_artifact_working_draft_api.py`
+- Date: 2026-03-29 Asia/Hebron
+- Result: PASS (`4 passed, 7 warnings`)
 - Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/artifact_runtime/test_artifact_versions_api.py -k excludes_detail_only_fields`
 - Date: 2026-03-26 17:09 EET
 - Result: Pass (1 passed, 2 deselected, 7 warnings)

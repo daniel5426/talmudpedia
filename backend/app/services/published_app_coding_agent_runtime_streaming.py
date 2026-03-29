@@ -10,7 +10,6 @@ from sqlalchemy import select
 from app.db.postgres.models.agents import AgentRun, RunStatus
 from app.db.postgres.models.published_apps import PublishedApp
 from app.services.apps_builder_trace import apps_builder_trace
-from app.services.context_status_service import ContextStatusService
 from app.services.published_app_coding_chat_history_service import PublishedAppCodingChatHistoryService
 from app.services.published_app_coding_agent_engines.base import EngineRunContext
 from app.services.published_app_coding_pipeline_trace import pipeline_trace
@@ -159,34 +158,6 @@ class PublishedAppCodingAgentRuntimeStreamingMixin:
         if rendered:
             return f"{class_name}: {rendered}"
         return class_name
-
-    async def _advance_live_context_status(
-        self,
-        *,
-        run: AgentRun,
-        event_name: str,
-        payload: dict[str, Any] | None,
-    ) -> dict[str, Any] | None:
-        next_status, runtime_metadata = ContextStatusService.advance_for_event(
-            existing_status=ContextStatusService.read_from_run(run),
-            existing_runtime_metadata=ContextStatusService.read_runtime_metadata_from_input_params(
-                run.input_params if isinstance(run.input_params, dict) else None
-            ),
-            event_name=event_name,
-            data=payload,
-        )
-        if next_status is None:
-            return None
-        run.input_params = ContextStatusService.attach_runtime_metadata_to_context(
-            ContextStatusService.attach_to_input_params(
-                run.input_params if isinstance(run.input_params, dict) else {},
-                next_status,
-            ),
-            runtime_metadata,
-        )
-        await self.db.commit()
-        await self.db.refresh(run)
-        return next_status
 
     async def _persist_assistant_chat_message_if_needed(
         self,
@@ -410,7 +381,8 @@ class PublishedAppCodingAgentRuntimeStreamingMixin:
             {
                 "status": run.status.value if hasattr(run.status, "value") else str(run.status),
                 "surface": CODING_AGENT_SURFACE,
-                "context_status": self.serialize_run(run).get("context_status"),
+                "context_window": self.serialize_run(run).get("context_window"),
+                "run_usage": self.serialize_run(run).get("run_usage"),
             },
         )
         yield emit("plan.updated", "plan", {"summary": "Coding-agent run started"})
@@ -537,18 +509,7 @@ class PublishedAppCodingAgentRuntimeStreamingMixin:
                         payload=payload,
                         diagnostics=diagnostics,
                     )
-                live_context_status = await self._advance_live_context_status(
-                    run=run,
-                    event_name=mapped_event,
-                    payload=payload,
-                )
                 yield emit(mapped_event, stage, payload, diagnostics)
-                if live_context_status is not None:
-                    yield emit(
-                        "context.status",
-                        "context",
-                        {"context_status": live_context_status},
-                    )
 
             run = await self.db.get(AgentRun, run_id) or run
             status = run.status.value if hasattr(run.status, "value") else str(run.status)

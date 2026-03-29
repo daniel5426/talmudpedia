@@ -169,6 +169,7 @@ class ArtifactCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     display_name: str
     description: Optional[str] = None
+    draft_key: Optional[str] = None
     kind: ArtifactKind
     runtime: ArtifactRuntimeConfig
     capabilities: ArtifactCapabilityConfig = Field(default_factory=ArtifactCapabilityConfig)
@@ -192,6 +193,7 @@ class ArtifactUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     display_name: Optional[str] = None
     description: Optional[str] = None
+    draft_key: Optional[str] = None
     runtime: Optional[ArtifactRuntimeConfig] = None
     capabilities: Optional[ArtifactCapabilityConfig] = None
     config_schema: Optional[Dict[str, Any]] = None

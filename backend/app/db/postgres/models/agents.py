@@ -152,6 +152,7 @@ class AgentRun(Base):
     resolved_provider_model_id = Column(String, nullable=True)
     usage_source = Column(String, nullable=True, index=True)
     cost_source = Column(String, nullable=True, index=True)
+    context_window_json = Column(JSONB, nullable=True)
     input_tokens = Column(Integer, nullable=True)
     output_tokens = Column(Integer, nullable=True)
     total_tokens = Column(Integer, nullable=True)
@@ -197,6 +198,7 @@ class AgentRun(Base):
     orchestration_group = relationship("OrchestrationGroup", foreign_keys=[orchestration_group_id])
     thread_turn = relationship("AgentThreadTurn", back_populates="run", uselist=False)
     traces = relationship("AgentTrace", back_populates="run", cascade="all, delete-orphan")
+    invocations = relationship("AgentRunInvocation", back_populates="run", cascade="all, delete-orphan")
 
     __table_args__ = (
         UniqueConstraint("parent_run_id", "spawn_key", name="uq_agent_runs_parent_spawn_key"),
@@ -236,3 +238,37 @@ class AgentTrace(Base):
     
     # Relationships
     run = relationship("AgentRun", back_populates="traces")
+
+
+class AgentRunInvocation(Base):
+    __tablename__ = "agent_run_invocations"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    run_id = Column(UUID(as_uuid=True), ForeignKey("agent_runs.id", ondelete="CASCADE"), nullable=False, index=True)
+    sequence = Column(Integer, nullable=False)
+    node_id = Column(String, nullable=True)
+    node_name = Column(String, nullable=True)
+    node_type = Column(String, nullable=True)
+    model_id = Column(String, nullable=True)
+    resolved_provider = Column(String, nullable=True)
+    resolved_provider_model_id = Column(String, nullable=True)
+    usage_source = Column(String, nullable=False, default="unknown", server_default=text("'unknown'"), index=True)
+    context_source = Column(String, nullable=False, default="unknown", server_default=text("'unknown'"))
+    input_tokens = Column(Integer, nullable=True)
+    output_tokens = Column(Integer, nullable=True)
+    total_tokens = Column(Integer, nullable=True)
+    cached_input_tokens = Column(Integer, nullable=True)
+    cached_output_tokens = Column(Integer, nullable=True)
+    reasoning_tokens = Column(Integer, nullable=True)
+    context_input_tokens = Column(Integer, nullable=True)
+    max_context_tokens = Column(Integer, nullable=True)
+    max_context_tokens_source = Column(String, nullable=True)
+    payload_json = Column(JSONB, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    run = relationship("AgentRun", back_populates="invocations")
+
+    __table_args__ = (
+        UniqueConstraint("run_id", "sequence", name="uq_agent_run_invocations_run_sequence"),
+        Index("ix_agent_run_invocations_run_sequence", "run_id", "sequence"),
+    )

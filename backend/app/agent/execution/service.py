@@ -31,18 +31,20 @@ from app.services.resource_policy_service import (
 )
 from app.services.model_accounting import (
     COST_SOURCE_UNKNOWN,
+    EXACT_USAGE_SOURCES,
+    USAGE_SOURCE_EXACT,
     USAGE_SOURCE_ESTIMATED,
-    USAGE_SOURCE_PROVIDER_REPORTED,
-    USAGE_SOURCE_SDK_REPORTED,
     USAGE_SOURCE_UNKNOWN,
     NormalizedUsage,
     billable_total_tokens,
     binding_pricing_snapshot,
-    build_legacy_usage_from_total,
+    build_usage_from_total,
     compute_cost_from_snapshot,
+    usage_payload_from_run,
 )
-from app.services.context_status_service import ContextStatusService
+from app.services.context_window_service import ContextWindowService
 from app.services.model_resolver import ModelResolver, ModelResolverError, ResolvedModelExecution
+from app.services.run_invocation_service import RunInvocationService
 
 logger = logging.getLogger(__name__)
 
@@ -86,41 +88,6 @@ class AgentExecutorService:
         patched = dict(graph_definition)
         patched["nodes"] = patched_nodes
         return patched
-
-    @staticmethod
-    def _estimate_usage_tokens_from_payload(input_params: Dict[str, Any], output_result: Dict[str, Any] | None) -> int:
-        total_chars = 0
-        if isinstance(input_params, dict):
-            raw_input = input_params.get("input")
-            if isinstance(raw_input, str):
-                total_chars += len(raw_input)
-            messages = input_params.get("messages")
-            if isinstance(messages, list):
-                for msg in messages:
-                    if isinstance(msg, dict):
-                        total_chars += AgentExecutorService._content_text_length(msg.get("content"))
-        if isinstance(output_result, dict):
-            messages = output_result.get("messages")
-            if isinstance(messages, list):
-                for msg in messages:
-                    if isinstance(msg, dict):
-                        total_chars += AgentExecutorService._content_text_length(msg.get("content"))
-            text = output_result.get("final_output")
-            if isinstance(text, str):
-                total_chars += len(text)
-        return max(0, int(total_chars // 4))
-
-    @staticmethod
-    def _content_text_length(content: Any) -> int:
-        if isinstance(content, str):
-            return len(content)
-        if isinstance(content, list):
-            total = 0
-            for item in content:
-                if isinstance(item, dict) and item.get("type") == "text":
-                    total += len(str(item.get("text") or ""))
-            return total
-        return 0
 
     @staticmethod
     def _safe_policy_snapshot_from_context(runtime_context: dict[str, Any] | None) -> ResourcePolicySnapshot | None:
@@ -224,28 +191,17 @@ class AgentExecutorService:
         return bool(context.get("grant_id") or context.get("principal_id"))
 
     @staticmethod
-    def _extract_usage_tokens_from_event(event: ExecutionEvent) -> int:
-        payload = event.data if isinstance(event.data, dict) else {}
-        candidates: list[Any] = []
-        for key in ("usage_tokens", "total_tokens", "tokens"):
-            candidates.append(payload.get(key))
-        usage = payload.get("usage")
-        if isinstance(usage, dict):
-            for key in ("total_tokens", "tokens", "usage_tokens"):
-                candidates.append(usage.get(key))
-        for candidate in candidates:
-            try:
-                parsed = int(candidate)
-                if parsed > 0:
-                    return parsed
-            except Exception:
-                continue
-        return 0
-
-    @staticmethod
     def _extract_usage_candidate(event: ExecutionEvent) -> tuple[NormalizedUsage | None, str | None]:
         payload = event.data if isinstance(event.data, dict) else {}
         usage = payload.get("usage")
+        usage_source = payload.get("usage_source")
+        nested_output = payload.get("output") if isinstance(payload.get("output"), dict) else None
+        if not isinstance(usage, dict) and isinstance(nested_output, dict):
+            nested_usage = nested_output.get("usage")
+            if isinstance(nested_usage, dict):
+                usage = nested_usage
+            if usage_source is None:
+                usage_source = nested_output.get("usage_source")
         if not isinstance(usage, dict):
             usage = payload if any(key in payload for key in ("input_tokens", "output_tokens", "total_tokens", "usage_tokens")) else None
         if not isinstance(usage, dict):
@@ -289,14 +245,23 @@ class AgentExecutorService:
         ).finalize()
         if not normalized.to_json():
             return None, None
-        source = payload.get("usage_source")
-        if source in {USAGE_SOURCE_PROVIDER_REPORTED, USAGE_SOURCE_SDK_REPORTED}:
-            return normalized, str(source)
+        source = str(usage_source or "").strip().lower() or None
+        if source in EXACT_USAGE_SOURCES:
+            return normalized, USAGE_SOURCE_EXACT
+        if source == USAGE_SOURCE_ESTIMATED:
+            return normalized, USAGE_SOURCE_ESTIMATED
         if normalized.input_tokens is not None or normalized.output_tokens is not None:
-            return normalized, USAGE_SOURCE_PROVIDER_REPORTED
+            return normalized, USAGE_SOURCE_EXACT
         if normalized.total_tokens is not None:
-            return normalized, USAGE_SOURCE_SDK_REPORTED
+            return normalized, USAGE_SOURCE_ESTIMATED
         return normalized, None
+
+    @staticmethod
+    def _extract_invocation_payload(event: ExecutionEvent) -> dict[str, Any] | None:
+        payload = event.data if isinstance(event.data, dict) else {}
+        output = payload.get("output") if isinstance(payload.get("output"), dict) else None
+        invocation = output.get("invocation") if isinstance(output, dict) and isinstance(output.get("invocation"), dict) else None
+        return dict(invocation) if isinstance(invocation, dict) else None
 
     @staticmethod
     def _maybe_int(value: Any) -> int | None:
@@ -306,6 +271,15 @@ class AgentExecutorService:
             return int(value)
         except Exception:
             return None
+
+    @staticmethod
+    def _serialize_run_usage_event(run: AgentRun) -> dict[str, Any]:
+        return usage_payload_from_run(run) or {
+            "source": USAGE_SOURCE_UNKNOWN,
+            "input_tokens": None,
+            "output_tokens": None,
+            "total_tokens": 0,
+        }
 
     @staticmethod
     def _select_better_usage(
@@ -319,8 +293,7 @@ class AgentExecutorService:
         if current_usage is None:
             return candidate_usage, candidate_source
         priority = {
-            USAGE_SOURCE_PROVIDER_REPORTED: 4,
-            USAGE_SOURCE_SDK_REPORTED: 3,
+            USAGE_SOURCE_EXACT: 4,
             USAGE_SOURCE_ESTIMATED: 2,
             USAGE_SOURCE_UNKNOWN: 1,
             None: 0,
@@ -369,7 +342,7 @@ class AgentExecutorService:
         run.resolved_provider_model_id = execution.binding.provider_model_id
         return execution
 
-    def _finalize_run_accounting(
+    async def _finalize_run_accounting(
         self,
         *,
         run: AgentRun,
@@ -379,30 +352,35 @@ class AgentExecutorService:
         input_params: dict[str, Any],
         output_result: dict[str, Any] | None,
     ) -> None:
-        usage = observed_usage.finalize() if observed_usage is not None else None
-        usage_source = observed_usage_source
-        if usage is None or not usage.to_json():
-            estimated_total = self._estimate_usage_tokens_from_payload(input_params, output_result)
-            if estimated_total > 0:
-                usage = build_legacy_usage_from_total(estimated_total)
-                usage_source = USAGE_SOURCE_ESTIMATED
+        invocation_service = RunInvocationService(self.db)
+        usage_payload, context_window = await invocation_service.recompute_run_aggregates(run)
+        usage = NormalizedUsage(
+            input_tokens=run.input_tokens,
+            output_tokens=run.output_tokens,
+            total_tokens=run.total_tokens,
+            cached_input_tokens=run.cached_input_tokens,
+            cached_output_tokens=run.cached_output_tokens,
+            reasoning_tokens=run.reasoning_tokens,
+        ).finalize()
+        if not usage.to_json():
+            observed = observed_usage.finalize() if observed_usage is not None else None
+            if observed is not None and observed.to_json():
+                run.usage_source = observed_usage_source or USAGE_SOURCE_UNKNOWN
+                run.input_tokens = observed.input_tokens
+                run.output_tokens = observed.output_tokens
+                run.total_tokens = observed.total_tokens
+                run.cached_input_tokens = observed.cached_input_tokens
+                run.cached_output_tokens = observed.cached_output_tokens
+                run.reasoning_tokens = observed.reasoning_tokens
+                run.usage_breakdown_json = observed.to_json() or None
+                run.usage_tokens = int(observed.total_tokens or 0)
+                usage = observed
             else:
+                run.usage_source = USAGE_SOURCE_UNKNOWN
+                run.usage_tokens = 0
                 usage = NormalizedUsage().finalize()
-                usage_source = USAGE_SOURCE_UNKNOWN
-
-        usage_payload = usage.to_json()
-        run.usage_source = usage_source or USAGE_SOURCE_UNKNOWN
-        run.input_tokens = usage.input_tokens
-        run.output_tokens = usage.output_tokens
-        run.total_tokens = usage.total_tokens
-        run.cached_input_tokens = usage.cached_input_tokens
-        run.cached_output_tokens = usage.cached_output_tokens
-        run.reasoning_tokens = usage.reasoning_tokens
-        run.usage_breakdown_json = usage_payload or None
-        if usage.total_tokens is not None:
-            run.usage_tokens = int(usage.total_tokens)
-        elif run.usage_tokens is None:
-            run.usage_tokens = 0
+        else:
+            run.usage_breakdown_json = usage_payload or usage.to_json() or None
 
         pricing_snapshot = resolved_execution.pricing_snapshot if resolved_execution is not None else (
             dict(run.pricing_snapshot_json or {}) if isinstance(run.pricing_snapshot_json, dict) else {}
@@ -422,24 +400,8 @@ class AgentExecutorService:
         run.cost_breakdown_json = normalized_cost.to_json() or None
         if normalized_cost.total_cost is not None:
             run.cost = f"{float(normalized_cost.total_cost):.6f}"
-
-        context_status = ContextStatusService.finalize_for_run(
-            existing_status=ContextStatusService.read_from_run(run),
-            run=run,
-            resolved_model_id=(
-                str(run.resolved_model_id)
-                if run.resolved_model_id
-                else str(run.requested_model_id)
-                if run.requested_model_id
-                else None
-            ),
-            resolved_context_window=resolved_execution.context_window if resolved_execution is not None else None,
-        )
-        if context_status is not None:
-            run.input_params = ContextStatusService.attach_to_input_params(
-                run.input_params if isinstance(run.input_params, dict) else input_params,
-                context_status,
-            )
+        if context_window is None:
+            ContextWindowService.write_to_run(run, None)
 
     @staticmethod
     def _extract_assistant_output_text(output_result: Dict[str, Any] | None) -> str | None:
@@ -737,13 +699,12 @@ class AgentExecutorService:
                 context_payload["resource_policy_principal"] = policy_snapshot.principal.to_payload()
         if quota_metadata.get("max_output_cap"):
             context_payload["quota_max_output_tokens"] = int(quota_metadata["max_output_cap"])
-        context_status = await ContextStatusService(self.db).build_pre_run_status(
+        context_window = await ContextWindowService(self.db).build_pre_run_window(
             tenant_id=agent.tenant_id,
             model_id=requested_model_ref or (str(requested_model_id) if requested_model_id else None),
             input_params=input_params,
             runtime_context=context_payload,
         )
-        context_payload["context_status"] = context_status
         input_params["context"] = context_payload
         input_params["thread_id"] = str(thread_result.thread.id)
 
@@ -761,6 +722,7 @@ class AgentExecutorService:
             external_user_id=external_user_id,
             surface=runtime_surface or None,
             input_params=input_params,
+            context_window_json=context_window,
             requested_model_id=requested_model_id,
             status=RunStatus.queued,
             root_run_id=root_run_id,
@@ -1114,9 +1076,6 @@ class AgentExecutorService:
             return
 
         try:
-            max_observed_usage_tokens = 0
-            best_usage: NormalizedUsage | None = None
-            best_usage_source: str | None = None
             turn = None
             if run.thread_id:
                 thread_service = ThreadService(db)
@@ -1137,10 +1096,10 @@ class AgentExecutorService:
                         for item in ((run_input_params.get("attachment_ids") or []) if isinstance(run_input_params, dict) else [])
                         if str(item).strip()
                     ],
-                    metadata=ContextStatusService.attach_turn_context_status(
-                        {"mode": mode.value},
-                        context_status=ContextStatusService.read_from_run(run),
-                    ),
+                    metadata={
+                        "mode": mode.value,
+                        "context_window": ContextWindowService.read_from_run(run),
+                    },
                 )
             # 5. Stream Execution Events (Platform-normalized)
             persist_event(
@@ -1155,58 +1114,31 @@ class AgentExecutorService:
                 )
             )
             await self._refresh_run_record(db, run)
+            invocation_service = RunInvocationService(db)
             async for event in adapter.stream(executable, run_input_params, config):
-                max_observed_usage_tokens = max(
-                    max_observed_usage_tokens,
-                    self._extract_usage_tokens_from_event(event),
-                )
-                candidate_usage, candidate_usage_source = self._extract_usage_candidate(event)
-                best_usage, best_usage_source = self._select_better_usage(
-                    best_usage,
-                    best_usage_source,
-                    candidate_usage,
-                    candidate_usage_source,
-                )
                 persist_event(event)
                 yield event
-                live_context_status, live_runtime_metadata = ContextStatusService.advance_for_event(
-                    existing_status=ContextStatusService.read_from_run(run),
-                    existing_runtime_metadata=(
-                        turn.metadata_.get("context_runtime")
-                        if turn is not None and isinstance(turn.metadata_, dict)
-                        else None
-                    ),
-                    event_name=(
-                        event.event
-                        if isinstance(event, ExecutionEvent)
-                        else event.get("event")
-                    ),
-                    data=(
-                        event.data
-                        if isinstance(event, ExecutionEvent) and isinstance(event.data, dict)
-                        else event.get("data")
-                        if isinstance(event, dict) and isinstance(event.get("data"), dict)
-                        else None
-                    ),
-                )
-                if live_context_status is not None:
-                    run.input_params = ContextStatusService.attach_runtime_metadata_to_context(
-                        ContextStatusService.attach_to_input_params(
-                            run.input_params if isinstance(run.input_params, dict) else run_input_params,
-                            live_context_status,
-                        ),
-                        live_runtime_metadata,
-                    )
+                invocation_payload = self._extract_invocation_payload(event)
+                if invocation_payload is not None:
+                    await invocation_service.append_from_payload(run=run, payload=invocation_payload)
+                    _, context_window = await invocation_service.recompute_run_aggregates(run)
                     if turn is not None:
-                        turn.metadata_ = ContextStatusService.attach_turn_context_status(
-                            turn.metadata_ if isinstance(turn.metadata_, dict) else {},
-                            context_status=live_context_status,
-                            runtime_metadata=live_runtime_metadata,
-                        )
+                        next_metadata = dict(turn.metadata_ or {})
+                        next_metadata["context_window"] = ContextWindowService.read_from_run(run)
+                        turn.metadata_ = next_metadata
                     await db.flush()
+                    usage_event = ExecutionEvent(
+                        event="run_usage.updated",
+                        data={"run_usage": self._serialize_run_usage_event(run)},
+                        run_id=str(run_id),
+                        visibility=EventVisibility.CLIENT_SAFE,
+                        metadata={"category": "usage", "mode": mode.value},
+                    )
+                    persist_event(usage_event)
+                    yield usage_event
                     context_event = ExecutionEvent(
-                        event="context.status",
-                        data={"context_status": live_context_status},
+                        event="context_window.updated",
+                        data={"context_window": context_window or ContextWindowService.read_from_run(run)},
                         run_id=str(run_id),
                         visibility=EventVisibility.CLIENT_SAFE,
                         metadata={"category": "context", "mode": mode.value},
@@ -1267,14 +1199,11 @@ class AgentExecutorService:
                     run.output_result = output_result
                     run.completed_at = datetime.utcnow()
 
-            if best_usage is None and max_observed_usage_tokens > 0:
-                best_usage = build_legacy_usage_from_total(max_observed_usage_tokens)
-                best_usage_source = USAGE_SOURCE_SDK_REPORTED
-            self._finalize_run_accounting(
+            await self._finalize_run_accounting(
                 run=run,
                 resolved_execution=resolved_execution,
-                observed_usage=best_usage,
-                observed_usage_source=best_usage_source,
+                observed_usage=None,
+                observed_usage_source=None,
                 input_params=run_input_params if isinstance(run_input_params, dict) else {},
                 output_result=run.output_result if isinstance(run.output_result, dict) else output_result if isinstance(output_result, dict) else None,
             )
@@ -1312,7 +1241,8 @@ class AgentExecutorService:
                         if final_status == RunStatus.failed
                         else None
                     ),
-                    "context_status": ContextStatusService.read_from_run(run),
+                    "context_window": ContextWindowService.read_from_run(run),
+                    "run_usage": self._serialize_run_usage_event(run),
                 },
                 run_id=str(run_id),
                 visibility=EventVisibility.CLIENT_SAFE,
@@ -1406,10 +1336,10 @@ class AgentExecutorService:
                 output_result["error"] = error_text
                 err_run.output_result = output_result
                 if err_run.usage_source is None:
-                    self._finalize_run_accounting(
+                    await self._finalize_run_accounting(
                         run=err_run,
                         resolved_execution=None,
-                        observed_usage=build_legacy_usage_from_total(getattr(err_run, "total_tokens", None) or err_run.usage_tokens),
+                        observed_usage=build_usage_from_total(getattr(err_run, "total_tokens", None) or err_run.usage_tokens),
                         observed_usage_source=(
                             USAGE_SOURCE_ESTIMATED
                             if (getattr(err_run, "total_tokens", None) or err_run.usage_tokens)

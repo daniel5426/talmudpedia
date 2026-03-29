@@ -21,7 +21,7 @@ Shared assistant-response normalization and timeline rendering used by the agent
 - Tool rows can expand to reveal the stored summary text when the summary differs from the short title.
 - Persisted run events can be replayed back into assistant response blocks for lazy trace loading and latest-turn thread hydration.
 - Finalization collapses duplicate assistant text blocks when persisted replay and saved final text resolve to the same assistant message.
-- Shared chat context status keeps the progress meter anchored to estimated context size even after actual token accounting arrives.
+- Shared chat context widget renders canonical context-window input usage instead of legacy estimated-total-with-reserve semantics.
 
 ## Last Run
 - Command: `pnpm --dir frontend-reshet test -- --runInBand src/__tests__/assistant_response_ui/chat_context_status.test.tsx`

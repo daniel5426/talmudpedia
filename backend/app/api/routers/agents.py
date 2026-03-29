@@ -55,7 +55,8 @@ from datetime import datetime
 from app.db.postgres.models.agent_threads import AgentThreadSurface, AgentThreadTurnStatus
 from app.db.postgres.models.agents import RunStatus
 from app.services.runtime_attachment_service import RuntimeAttachmentOwner, RuntimeAttachmentService
-from app.services.context_status_service import ContextStatusService
+from app.services.context_window_service import ContextWindowService
+from app.services.model_accounting import usage_payload_from_run
 from app.services.thread_service import ThreadService
 
 
@@ -81,12 +82,7 @@ def _optional_uuid(value: Any) -> Optional[UUID]:
 
 
 def _serialize_run_usage(run: AgentRun) -> dict[str, Any]:
-    return {
-        "input_tokens": int(run.input_tokens) if run.input_tokens is not None else None,
-        "output_tokens": int(run.output_tokens) if run.output_tokens is not None else None,
-        "total_tokens": int(run.total_tokens if run.total_tokens is not None else run.usage_tokens or 0),
-        "usage_source": run.usage_source,
-    }
+    return usage_payload_from_run(run) or {}
 
 
 # =============================================================================
@@ -864,7 +860,8 @@ async def stream_agent(
                 payload={
                     "status": "running",
                     "thread_id": thread_id_value,
-                    "context_status": ContextStatusService.read_from_run(run_row),
+                    "context_window": ContextWindowService.read_from_run(run_row),
+                    "run_usage": _serialize_run_usage(run_row),
                 },
             )
             seq += 1
@@ -1190,7 +1187,8 @@ async def get_run_status(
         "result": run.output_result,
         "error": run.error_message,
         "checkpoint": run.checkpoint,  # Debugging
-        "usage": _serialize_run_usage(run),
+        "run_usage": _serialize_run_usage(run),
+        "context_window": ContextWindowService.read_from_run(run),
         "lineage": {
             "root_run_id": str(run.root_run_id) if run.root_run_id else None,
             "parent_run_id": str(run.parent_run_id) if run.parent_run_id else None,

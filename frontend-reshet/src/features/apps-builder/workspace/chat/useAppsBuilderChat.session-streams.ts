@@ -1,5 +1,5 @@
 import { consumeRunStream as consumeRunStreamImpl } from "./useAppsBuilderChat.stream";
-import type { ContextStatus } from "@/services";
+import type { ContextWindow } from "@/services/context-window";
 import type { CodingAgentPendingQuestion } from "./stream-parsers";
 import type { SessionContainer } from "./useAppsBuilderChat.session-state";
 
@@ -21,7 +21,7 @@ type ConsumeSessionRunStreamOptions = {
   setSessionSending: (sessionKey: string, next: boolean) => void;
   setSessionStopping: (sessionKey: string, next: boolean) => void;
   setSessionThinking: (sessionKey: string, next: string) => void;
-  setSessionContextStatus: (sessionKey: string, next: ContextStatus | null) => void;
+  setSessionContextStatus: (sessionKey: string, next: ContextWindow | null) => void;
   pushSessionTimeline: (sessionKey: string, item: { kind?: "assistant" | "user" | "tool"; title: string; description?: string; tone?: "default" | "success" | "error" }) => void;
   upsertSessionAssistantTimeline: (sessionKey: string, assistantStreamId: string, description: string) => void;
   upsertSessionToolTimeline: (

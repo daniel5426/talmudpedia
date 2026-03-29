@@ -12,6 +12,91 @@ from app.agent.core.interfaces import LLMProvider
 logger = logging.getLogger(__name__)
 
 
+def _maybe_int(value: Any) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except Exception:
+        return None
+
+
+def _usage_from_mapping(mapping: dict[str, Any] | None) -> dict[str, int] | None:
+    if not isinstance(mapping, dict):
+        return None
+
+    normalized = {
+        "input_tokens": _maybe_int(
+            mapping.get("input_tokens")
+            or mapping.get("prompt_tokens")
+            or mapping.get("prompt_token_count")
+            or mapping.get("input_token_count")
+            or mapping.get("inputTokenCount")
+        ),
+        "output_tokens": _maybe_int(
+            mapping.get("output_tokens")
+            or mapping.get("completion_tokens")
+            or mapping.get("candidates_token_count")
+            or mapping.get("output_token_count")
+            or mapping.get("outputTokenCount")
+            or mapping.get("candidatesTokenCount")
+        ),
+        "total_tokens": _maybe_int(
+            mapping.get("total_tokens")
+            or mapping.get("usage_tokens")
+            or mapping.get("total_token_count")
+            or mapping.get("totalTokenCount")
+        ),
+        "cached_input_tokens": _maybe_int(
+            mapping.get("cached_input_tokens")
+            or mapping.get("cache_read_input_tokens")
+            or mapping.get("cached_content_token_count")
+            or mapping.get("cachedContentTokenCount")
+        ),
+        "cached_output_tokens": _maybe_int(
+            mapping.get("cached_output_tokens")
+            or mapping.get("cache_write_output_tokens")
+            or mapping.get("cachedOutputTokenCount")
+        ),
+        "reasoning_tokens": _maybe_int(
+            mapping.get("reasoning_tokens")
+            or mapping.get("thoughts_token_count")
+            or mapping.get("reasoningTokenCount")
+            or mapping.get("thoughtsTokenCount")
+        ),
+    }
+    if normalized["total_tokens"] is None and normalized["input_tokens"] is not None and normalized["output_tokens"] is not None:
+        normalized["total_tokens"] = normalized["input_tokens"] + normalized["output_tokens"]
+    payload = {key: value for key, value in normalized.items() if value is not None}
+    return payload or None
+
+
+def extract_usage_payload_from_response_metadata(metadata: Any) -> dict[str, int] | None:
+    if not isinstance(metadata, dict):
+        return None
+
+    candidates: list[dict[str, Any]] = [metadata]
+    for key in ("usage", "usage_metadata", "usageMetadata", "token_usage", "tokenUsage"):
+        nested = metadata.get(key)
+        if isinstance(nested, dict):
+            candidates.append(nested)
+
+    for candidate in candidates:
+        payload = _usage_from_mapping(candidate)
+        if payload:
+            return payload
+    return None
+
+
+def extract_usage_payload_from_message(message: Any) -> dict[str, int] | None:
+    direct_usage = getattr(message, "usage_metadata", None)
+    payload = _usage_from_mapping(direct_usage if isinstance(direct_usage, dict) else None)
+    if payload:
+        return payload
+    metadata = getattr(message, "response_metadata", None)
+    return extract_usage_payload_from_response_metadata(metadata)
+
+
 @dataclass
 class _NormalizedMessagePayload:
     text: str = ""
@@ -22,6 +107,7 @@ class _NormalizedMessagePayload:
     citations: list[dict[str, Any]] = field(default_factory=list)
     server_tool_results: list[dict[str, Any]] = field(default_factory=list)
     response_metadata: dict[str, Any] = field(default_factory=dict)
+    usage_metadata: dict[str, Any] = field(default_factory=dict)
 
 
 def _normalize_citation(annotation: Any) -> dict[str, Any] | None:
@@ -128,6 +214,9 @@ def _normalize_message_payload(message: Any) -> _NormalizedMessagePayload:
     metadata = getattr(message, "response_metadata", None)
     if isinstance(metadata, dict):
         payload.response_metadata = dict(metadata)
+    usage_metadata = getattr(message, "usage_metadata", None)
+    if isinstance(usage_metadata, dict):
+        payload.usage_metadata = dict(usage_metadata)
 
     for block in payload.content_blocks:
         block_type = block.get("type")
@@ -242,6 +331,8 @@ class LLMProviderAdapter(BaseChatModel):
             aggregated.server_tool_results.extend(normalized.server_tool_results)
             if normalized.response_metadata:
                 aggregated.response_metadata = normalized.response_metadata
+            if normalized.usage_metadata:
+                aggregated.usage_metadata = normalized.usage_metadata
 
         additional_kwargs: dict[str, Any] = {}
         if aggregated.reasoning:
@@ -258,6 +349,8 @@ class LLMProviderAdapter(BaseChatModel):
             "additional_kwargs": additional_kwargs,
             "response_metadata": aggregated.response_metadata,
         }
+        if aggregated.usage_metadata:
+            message_kwargs["usage_metadata"] = aggregated.usage_metadata
         if aggregated.tool_calls:
             message_kwargs["tool_calls"] = aggregated.tool_calls
         message = AIMessage(**message_kwargs)
@@ -325,6 +418,8 @@ class LLMProviderAdapter(BaseChatModel):
                     "additional_kwargs": additional_kwargs,
                     "response_metadata": normalized.response_metadata,
                 }
+                if normalized.usage_metadata:
+                    message_kwargs["usage_metadata"] = normalized.usage_metadata
                 if normalized.tool_calls:
                     message_kwargs["tool_calls"] = normalized.tool_calls
                 if normalized.tool_call_chunks:
@@ -361,6 +456,7 @@ class LLMProviderAdapter(BaseChatModel):
         raw_content = getattr(chunk, "content", None)
         raw_additional_kwargs = getattr(chunk, "additional_kwargs", None)
         raw_response_metadata = getattr(chunk, "response_metadata", None)
+        raw_usage_metadata = getattr(chunk, "usage_metadata", None)
         if (
             raw_content is not None
             or isinstance(raw_tool_calls, list)
@@ -371,6 +467,8 @@ class LLMProviderAdapter(BaseChatModel):
                 "additional_kwargs": dict(raw_additional_kwargs) if isinstance(raw_additional_kwargs, dict) else {},
                 "response_metadata": dict(raw_response_metadata) if isinstance(raw_response_metadata, dict) else {},
             }
+            if isinstance(raw_usage_metadata, dict):
+                message_kwargs["usage_metadata"] = dict(raw_usage_metadata)
             if isinstance(raw_tool_calls, list):
                 normalized_tool_calls = [
                     normalized

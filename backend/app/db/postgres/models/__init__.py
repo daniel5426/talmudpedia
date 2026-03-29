@@ -14,7 +14,7 @@ from .registry import (
     IntegrationCredentialCategory,
 )
 from .rag import RAGPipeline, VisualPipeline, ExecutablePipeline, PipelineJob, OperatorCategory, PipelineJobStatus, PipelineStepExecution, PipelineStepStatus, KnowledgeStore, KnowledgeStoreStatus, StorageBackend, RetrievalPolicy
-from .agents import Agent, AgentVersion, AgentRun, AgentTrace, RunStatus, AgentStatus
+from .agents import Agent, AgentVersion, AgentRun, AgentRunInvocation, AgentTrace, RunStatus, AgentStatus
 from .agent_threads import (
     AgentThread,
     AgentThreadTurn,

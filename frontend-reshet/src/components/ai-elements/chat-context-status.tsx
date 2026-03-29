@@ -1,6 +1,6 @@
 "use client";
 
-import type { ContextStatus } from "@/services/context-status";
+import type { ContextWindow } from "@/services/context-window";
 
 import {
   Context,
@@ -13,7 +13,7 @@ import {
 import { cn } from "@/lib/utils";
 
 type ChatContextStatusProps = {
-  contextStatus?: ContextStatus | null;
+  contextStatus?: ContextWindow | null;
   className?: string;
   triggerClassName?: string;
 };
@@ -63,15 +63,9 @@ export function ChatContextStatus({
     return null;
   }
 
-  const actualUsage = contextStatus.actual_usage || null;
-  const contextUsedTokens = Number(
-    contextStatus.estimated_total_tokens
-      ?? contextStatus.estimated_input_tokens
-      ?? actualUsage?.total_tokens
-      ?? 0,
-  );
-  const remainingTokens = Math.max(0, maxTokens - contextUsedTokens);
-  const usageRatio = contextStatus.estimated_usage_ratio ?? (contextUsedTokens / maxTokens);
+  const contextUsedTokens = Number(contextStatus.input_tokens ?? 0);
+  const remainingTokens = Math.max(0, Number(contextStatus.remaining_tokens ?? (maxTokens - contextUsedTokens)));
+  const usageRatio = contextStatus.usage_ratio ?? (contextUsedTokens / maxTokens);
 
   return (
     <Context
@@ -89,20 +83,13 @@ export function ChatContextStatus({
         <ContextContentHeader />
         <ContextContentBody className="space-y-2">
           <StatusRow
-            label={contextStatus.source === "estimated_plus_actual" ? "Input" : "Estimated input"}
-            value={actualUsage?.input_tokens ?? contextStatus.estimated_input_tokens}
+            label={contextStatus.source === "exact" ? "Input" : "Estimated input"}
+            value={contextStatus.input_tokens}
           />
-          <StatusRow
-            label={contextStatus.source === "estimated_plus_actual" ? "Output" : "Reserved output"}
-            value={contextStatus.source === "estimated_plus_actual"
-              ? actualUsage?.output_tokens
-              : contextStatus.reserved_output_tokens}
-          />
-          <StatusRow label="Reasoning" value={actualUsage?.reasoning_tokens} />
-          <StatusRow label="Cache" value={actualUsage?.cached_input_tokens} />
+          <StatusRow label="Remaining" value={contextStatus.remaining_tokens} />
         </ContextContentBody>
         <ContextContentFooter>
-          <span className="text-muted-foreground">Context estimate</span>
+          <span className="text-muted-foreground">Context window</span>
           <span>
             {compactNumber(remainingTokens)} left
             <span className="ml-2 text-muted-foreground">

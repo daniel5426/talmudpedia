@@ -21,7 +21,7 @@ Frontend coverage for published-apps admin and public runtime surfaces outside t
 - Builder file-filter and blocked path rules.
 - Chat timeline/thread rendering behaviors.
 - Chat panel shimmer cutoff and scroll-fade activation.
-- Chat footer chrome can render the context-usage indicator without pulling runtime-only `tokenlens` into tests.
+- Chat footer chrome can render the canonical context-window indicator without pulling runtime-only `tokenlens` into tests.
 - Coding-agent stream speed/coalescing expectations.
 - Preview auth token channel updates and iframe src stability across token refreshes.
 - Preview keeps the iframe mounted during same-session transient pending/recovering states instead of immediately blanking it.

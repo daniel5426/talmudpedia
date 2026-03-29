@@ -29,7 +29,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import type { ArtifactCodingChatSession, ArtifactCodingModelOption } from "@/services/artifacts";
-import type { ContextStatus } from "@/services/context-status";
+import type { ContextWindow } from "@/services/context-window";
 
 import { ArtifactCodingChatQuestionPanel } from "./ArtifactCodingChatQuestionPanel";
 import { ArtifactCodingChatScrollBindings } from "./ArtifactCodingChatScrollBindings";
@@ -51,7 +51,7 @@ type ArtifactCodingChatPanelProps = {
   isStopping: boolean;
   timeline: TimelineItem[];
   activeThinkingSummary: string;
-  activeContextStatus: ContextStatus | null;
+  activeContextStatus: ContextWindow | null;
   chatSessions: ArtifactCodingChatSession[];
   isHistoryOpen: boolean;
   onHistoryOpenChange: (next: boolean) => void;

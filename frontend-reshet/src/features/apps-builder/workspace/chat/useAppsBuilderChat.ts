@@ -2,11 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   publishedAppsService,
   listOpenCodeCodingModels,
-  mergeContextStatus,
 } from "@/services";
+import { mergeContextWindow, type ContextWindow } from "@/services/context-window";
 import type {
   CodingAgentChatSession,
-  ContextStatus,
   OpenCodeCodingModelOption,
 } from "@/services";
 import { timelineId, type TimelineItem } from "./chat-model";
@@ -53,7 +52,7 @@ export type UseAppsBuilderChatResult = {
   isStopping: boolean;
   timeline: TimelineItem[];
   activeThinkingSummary: string;
-  activeContextStatus: ContextStatus | null;
+  activeContextStatus: ContextWindow | null;
   chatSessions: CodingAgentChatSession[];
   activeChatSessionId: string | null;
   activateDraftChat: () => void;
@@ -213,9 +212,9 @@ export function useAppsBuilderChat({
     });
   }, [mutateSession]);
 
-  const setSessionContextStatus = useCallback((sessionKey: string, next: ContextStatus | null) => {
+  const setSessionContextStatus = useCallback((sessionKey: string, next: ContextWindow | null) => {
     mutateSession(sessionKey, (session) => {
-      session.contextStatus = mergeContextStatus(session.contextStatus, next);
+      session.contextStatus = mergeContextWindow(session.contextStatus, next);
     });
   }, [mutateSession]);
 
@@ -614,7 +613,7 @@ export function useAppsBuilderChat({
         target.queuedPrompts = [];
         target.pendingQuestion = null;
         target.activeThinkingSummary = "";
-        target.contextStatus = mergeContextStatus(target.contextStatus, detail.context_status);
+        target.contextStatus = mergeContextWindow(target.contextStatus, detail.context_window);
         target.history.initialized = true;
         target.history.hasMore = paging.hasMore;
         target.history.nextBeforeMessageId = paging.nextBeforeMessageId;

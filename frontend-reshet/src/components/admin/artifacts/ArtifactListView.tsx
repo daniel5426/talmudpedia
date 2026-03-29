@@ -40,6 +40,19 @@ function kindIcon(kind: ArtifactKind) {
   return Wrench
 }
 
+const createdAtFormatter = new Intl.DateTimeFormat(undefined, {
+  year: "numeric",
+  month: "short",
+  day: "numeric",
+})
+
+function formatCreatedAt(createdAt?: string) {
+  if (!createdAt) return "—"
+  const date = new Date(createdAt)
+  if (Number.isNaN(date.getTime())) return "—"
+  return createdAtFormatter.format(date)
+}
+
 export function ArtifactListView({
   artifacts,
   loading = false,
@@ -202,6 +215,7 @@ export function ArtifactListView({
               <TableHead>Kind</TableHead>
               <TableHead>Owner</TableHead>
               <TableHead>Version</TableHead>
+              <TableHead>Created</TableHead>
               <TableHead className="text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
@@ -232,6 +246,9 @@ export function ArtifactListView({
                   <TableCell>
                     <Skeleton className="h-4 w-10" />
                   </TableCell>
+                  <TableCell>
+                    <Skeleton className="h-4 w-20" />
+                  </TableCell>
                   <TableCell className="text-right">
                     <div className="flex justify-end">
                       <Skeleton className="h-8 w-8 rounded-md" />
@@ -241,7 +258,7 @@ export function ArtifactListView({
               ))
             ) : filteredArtifacts.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={selectionMode ? 6 : 5} className="py-12 text-center text-muted-foreground">
+                <TableCell colSpan={selectionMode ? 7 : 6} className="py-12 text-center text-muted-foreground">
                   <div className="flex flex-col items-center gap-2">
                     <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted">
                       <Package className="h-6 w-6" />
@@ -288,6 +305,7 @@ export function ArtifactListView({
                       <Badge variant={artifact.owner_type === "system" ? "secondary" : "outline"}>{artifact.owner_type}</Badge>
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground">{artifact.version}</TableCell>
+                    <TableCell className="text-sm text-muted-foreground">{formatCreatedAt(artifact.created_at)}</TableCell>
                     <TableCell className="text-right">
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>

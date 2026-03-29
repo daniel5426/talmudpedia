@@ -35,7 +35,8 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import type { AppVersionListItem, CodingAgentChatSession, ContextStatus, OpenCodeCodingModelOption, PublishedAppRevision } from "@/services";
+import type { AppVersionListItem, CodingAgentChatSession, OpenCodeCodingModelOption, PublishedAppRevision } from "@/services";
+import type { ContextWindow } from "@/services/context-window";
 
 import {
   TimelineItem,
@@ -58,7 +59,7 @@ type AppsBuilderChatPanelProps = {
   isStopping: boolean;
   timeline: TimelineItem[];
   activeThinkingSummary: string;
-  activeContextStatus: ContextStatus | null;
+  activeContextStatus: ContextWindow | null;
   chatSessions: CodingAgentChatSession[];
   activeChatSessionId: string | null;
   onActivateDraftChat: () => void;

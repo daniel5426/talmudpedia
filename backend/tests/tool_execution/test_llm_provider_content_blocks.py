@@ -1,7 +1,7 @@
 import pytest
 from langchain_core.messages import AIMessageChunk
 
-from app.agent.core.llm_adapter import LLMProviderAdapter
+from app.agent.core.llm_adapter import LLMProviderAdapter, extract_usage_payload_from_message
 from app.agent.executors.standard import ReasoningNodeExecutor
 from app.agent.execution.tool_input_contracts import ToolSchemaValidationError
 
@@ -106,6 +106,27 @@ async def test_llm_provider_adapter_ainvoke_preserves_reasoning_and_tool_calls()
     assert response.tool_calls[0]["id"] == "call-1"
     assert response.tool_calls[0]["name"] == "web_search"
     assert response.tool_calls[0]["args"] == {"query": "gemini"}
+
+
+def test_extract_usage_payload_from_message_supports_gemini_usage_metadata():
+    message = AIMessageChunk(
+        content="done",
+        response_metadata={
+            "usage_metadata": {
+                "prompt_token_count": 120,
+                "candidates_token_count": 45,
+                "total_token_count": 165,
+                "thoughts_token_count": 12,
+            }
+        },
+    )
+
+    assert extract_usage_payload_from_message(message) == {
+        "input_tokens": 120,
+        "output_tokens": 45,
+        "total_tokens": 165,
+        "reasoning_tokens": 12,
+    }
 
 
 def test_build_langchain_tool_rejects_null_property_schema():

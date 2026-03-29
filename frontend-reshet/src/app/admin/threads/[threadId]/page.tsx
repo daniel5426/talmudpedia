@@ -25,6 +25,12 @@ type RuntimeAttachmentDto = {
   mime_type: string
 }
 
+type UsageBucket = {
+  input_tokens?: number | null
+  output_tokens?: number | null
+  total_tokens?: number | null
+}
+
 type ThreadTurn = {
   id?: string
   run_id?: string
@@ -33,10 +39,10 @@ type ThreadTurn = {
   user_input_text?: string | null
   assistant_output_text?: string | null
   run_usage?: {
+    source?: string | null
     input_tokens?: number | null
     output_tokens?: number | null
     total_tokens?: number | null
-    usage_source?: string | null
   } | null
   attachments?: RuntimeAttachmentDto[]
   created_at?: string
@@ -55,6 +61,8 @@ type ThreadDetails = {
   actor_email?: string | null
   token_usage?: {
     total_tokens?: number
+    exact_total_tokens?: number
+    estimated_total_tokens?: number
   } | null
   turns: ThreadTurn[]
   paging?: {
@@ -73,6 +81,17 @@ const formatValue = (value?: string | null) => {
 const formatTokenCount = (value?: number | null) => {
   if (value === null || value === undefined) return "—"
   return `${new Intl.NumberFormat("en-US").format(value)} tokens`
+}
+
+const formatUsageSummary = (actual?: number | null, estimated?: number | null) => {
+  const actualLabel = `Exact ${formatTokenCount(actual)}`
+  const estimatedLabel = `Estimate ${formatTokenCount(estimated)}`
+  const hasActual = actual !== null && actual !== undefined
+  const hasEstimated = estimated !== null && estimated !== undefined
+  if (!hasActual && !hasEstimated) return actualLabel
+  if (!hasActual) return estimatedLabel
+  if (!hasEstimated) return actualLabel
+  return `${actualLabel} / ${estimatedLabel}`
 }
 
 export default function AdminThreadPage() {
@@ -285,7 +304,10 @@ export default function AdminThreadPage() {
             )}
             <div className="text-muted-foreground/40">/</div>
             <div className="min-w-0 truncate font-medium text-foreground/90">
-              {formatTokenCount(thread.token_usage?.total_tokens ?? null)}
+              {formatUsageSummary(
+                thread.token_usage?.exact_total_tokens ?? null,
+                thread.token_usage?.estimated_total_tokens ?? null,
+              )}
             </div>
           </div>
           <button

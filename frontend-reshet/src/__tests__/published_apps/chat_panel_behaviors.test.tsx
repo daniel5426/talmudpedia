@@ -179,17 +179,13 @@ describe("apps builder chat panel behaviors", () => {
         ]}
         activeThinkingSummary=""
         activeContextStatus={{
+          source: "estimated",
           model_id: "opencode/gpt-5",
           max_tokens: 256000,
           max_tokens_source: "opencode_default",
-          reserved_output_tokens: 4096,
-          estimated_input_tokens: 2048,
-          estimated_total_tokens: 6144,
-          estimated_remaining_tokens: 249856,
-          estimated_usage_ratio: 0.024,
-          near_limit: false,
-          compaction_recommended: false,
-          source: "estimated_pre_run",
+          input_tokens: 2048,
+          remaining_tokens: 253952,
+          usage_ratio: 0.008,
         }}
         chatSessions={[]}
         activeChatSessionId={null}

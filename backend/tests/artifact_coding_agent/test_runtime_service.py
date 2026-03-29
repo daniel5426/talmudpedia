@@ -133,29 +133,21 @@ async def _create_artifact_coding_worker_run(
 
 
 @pytest.mark.asyncio
-async def test_run_response_snapshot_includes_context_status(db_session):
+async def test_run_response_snapshot_includes_context_window(db_session):
     _ = db_session
     run = AgentRun(
         id=uuid4(),
         status=RunStatus.queued,
         surface="artifact_coding_agent",
         created_at=datetime.now(timezone.utc),
-        input_params={
-            "context": {
-                "context_status": {
-                    "model_id": "openai/gpt-5",
-                    "max_tokens": 1_050_000,
-                    "max_tokens_source": "provider_fallback",
-                    "reserved_output_tokens": 8192,
-                    "estimated_input_tokens": 3200,
-                    "estimated_total_tokens": 11392,
-                    "estimated_remaining_tokens": 1_038_608,
-                    "estimated_usage_ratio": 0.0108,
-                    "near_limit": False,
-                    "compaction_recommended": False,
-                    "source": "estimated_pre_run",
-                }
-            }
+        context_window_json={
+            "source": "estimated",
+            "model_id": "openai/gpt-5",
+            "max_tokens": 1_050_000,
+            "max_tokens_source": "provider_fallback",
+            "input_tokens": 3200,
+            "remaining_tokens": 1_046_800,
+            "usage_ratio": 3200 / 1_050_000,
         },
     )
 
@@ -164,9 +156,9 @@ async def test_run_response_snapshot_includes_context_status(db_session):
         session_scope={"chat_session_id": "session-1", "artifact_id": "artifact-1", "draft_key": "draft-1"},
     )
 
-    assert payload.context_status is not None
-    assert payload.context_status.max_tokens == 1_050_000
-    assert payload.context_status.model_id == "openai/gpt-5"
+    assert payload.context_window is not None
+    assert payload.context_window.max_tokens == 1_050_000
+    assert payload.context_window.model_id == "openai/gpt-5"
 
 
 @pytest.mark.asyncio
@@ -948,8 +940,8 @@ async def test_prepare_session_run_input_uses_native_session_thread_and_orchestr
     assert prepared_input["input_params"]["messages"] == [
         {"role": "user", "content": "Initial human request"},
         {"role": "assistant", "content": "Initial assistant reply"},
-        {"role": "system", "content": "Apply the requested changes without re-asking."},
     ]
+    assert prepared_input["input_params"]["input"] == "Apply the requested changes without re-asking."
     assert prepared_input["input_params"]["context"]["conversation_message_role"] == "orchestrator"
 
 
@@ -1095,12 +1087,59 @@ async def test_continue_prompt_run_uses_session_history_and_persists_orchestrato
     assert captured["input_params"]["messages"] == [
         {"role": "user", "content": "Initial human request"},
         {"role": "assistant", "content": "Initial assistant reply"},
-        {"role": "system", "content": "Set slug to native-continuation and add README.md"},
     ]
+    assert captured["input_params"]["input"] == "Set slug to native-continuation and add README.md"
 
     messages = await ArtifactCodingChatHistoryService(db_session).list_messages_page(session_id=prepared.session.id, limit=10)
     serialized = [item.role for item in messages[0]]
     assert "orchestrator" in serialized
+
+
+@pytest.mark.asyncio
+async def test_prepare_session_run_input_does_not_duplicate_current_prompt_in_history(db_session):
+    tenant, user = await _seed_tenant_and_user(db_session)
+    runtime = ArtifactCodingRuntimeService(db_session)
+    agent = await ensure_artifact_coding_agent_profile(db_session, tenant.id, actor_user_id=user.id)
+    prepared = await runtime.prepare_session(
+        tenant_id=tenant.id,
+        user_id=user.id,
+        agent_id=agent.id,
+        title_prompt="Prepare no-dup run input",
+        artifact_id=None,
+        draft_key=None,
+        chat_session_id=None,
+        draft_snapshot=runtime.build_initial_snapshot_from_seed({"kind": "tool_impl"}),
+        replace_snapshot=True,
+    )
+    initial_run_id = uuid4()
+    await runtime.history.persist_user_message(
+        session_id=prepared.session.id,
+        run_id=initial_run_id,
+        content="Initial human request",
+    )
+    await runtime.history.persist_assistant_message(
+        session_id=prepared.session.id,
+        run_id=initial_run_id,
+        content="Initial assistant reply",
+    )
+    await db_session.commit()
+
+    prompt = "implement the all thing in one run, dont stop anymore"
+    prepared_input = await runtime.prepare_session_run_input(
+        tenant_id=tenant.id,
+        user_id=user.id,
+        session=prepared.session,
+        shared_draft=prepared.shared_draft,
+        prompt=prompt,
+        prompt_role="user",
+        model_id=None,
+    )
+
+    assert prepared_input["input_params"]["messages"] == [
+        {"role": "user", "content": "Initial human request"},
+        {"role": "assistant", "content": "Initial assistant reply"},
+    ]
+    assert prepared_input["input_params"]["input"] == prompt
 
 
 @pytest.mark.asyncio
@@ -1239,7 +1278,9 @@ async def test_artifact_coding_set_tool_contract_accepts_inner_contract_object(d
 
     assert result["ok"] is True
     assert result["changed_fields"] == ["tool_contract"]
-    assert '"deal_id"' in result["draft_snapshot"]["tool_contract"]
+    assert "draft_snapshot" not in result
+    assert result["updated_at"]
+    assert '"deal_id"' in prepared.shared_draft.working_draft_snapshot["tool_contract"]
 
 
 @pytest.mark.asyncio
@@ -1292,7 +1333,8 @@ async def test_artifact_coding_set_tool_contract_normalizes_stringified_nested_o
         artifact_tools_module.get_session = original_session
 
     assert result["ok"] is True
-    tool_contract = json.loads(result["draft_snapshot"]["tool_contract"])
+    assert "draft_snapshot" not in result
+    tool_contract = json.loads(prepared.shared_draft.working_draft_snapshot["tool_contract"])
     assert tool_contract["input_schema"]["properties"]["deal_id"]["type"] == "integer"
     assert tool_contract["output_schema"]["properties"]["ok"]["type"] == "boolean"
     assert tool_contract["tool_ui"]["template"] == "activity-summary-ui"
@@ -1361,7 +1403,175 @@ async def test_artifact_coding_read_file_can_return_numbered_range_and_exact_rep
     assert read_result["content"] == "beta\ngamma"
     assert read_result["numbered_content"] == "2: beta\n3: gamma"
     assert replace_result["ok"] is True
-    assert "beta_updated" in replace_result["draft_snapshot"]["source_files"][0]["content"]
+    assert "draft_snapshot" not in replace_result
+    assert "beta_updated" in prepared.shared_draft.working_draft_snapshot["source_files"][0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_artifact_coding_read_file_accepts_start_only_with_bounded_window(db_session):
+    tenant, user = await _seed_tenant_and_user(db_session)
+    agent = await ensure_artifact_coding_agent_profile(db_session, tenant.id, actor_user_id=user.id)
+    runtime = ArtifactCodingRuntimeService(db_session)
+    prepared = await runtime.prepare_session(
+        tenant_id=tenant.id,
+        user_id=user.id,
+        agent_id=agent.id,
+        title_prompt="Read bounded forward window",
+        artifact_id=None,
+        draft_key=None,
+        chat_session_id=None,
+        draft_snapshot={
+            **runtime.build_initial_snapshot_from_seed({"kind": "tool_impl"}),
+            "source_files": [{"path": "main.py", "content": "\n".join(f"line_{i}" for i in range(1, 251)) + "\n"}],
+            "entry_module_path": "main.py",
+        },
+        replace_snapshot=True,
+    )
+    worker_run = await _create_artifact_coding_worker_run(
+        db_session,
+        tenant=tenant,
+        user=user,
+        agent=agent,
+        session=prepared.session,
+        shared_draft=prepared.shared_draft,
+    )
+
+    @asynccontextmanager
+    async def _session_override():
+        yield db_session
+
+    from app.services import artifact_coding_agent_tools as artifact_tools_module
+
+    original_session = artifact_tools_module.get_session
+    artifact_tools_module.get_session = _session_override
+    try:
+        read_result = await artifact_coding_read_file(
+            {
+                "run_id": str(worker_run.id),
+                "path": "main.py",
+                "start_line": 25,
+                "include_line_numbers": True,
+            }
+        )
+    finally:
+        artifact_tools_module.get_session = original_session
+
+    assert read_result["start_line"] == 25
+    assert read_result["end_line"] == 224
+    assert read_result["truncated"] is True
+    assert read_result["numbered_content"].startswith("25: line_25")
+    assert read_result["numbered_content"].endswith("224: line_224")
+
+
+@pytest.mark.asyncio
+async def test_artifact_coding_read_file_accepts_end_only_with_bounded_window(db_session):
+    tenant, user = await _seed_tenant_and_user(db_session)
+    agent = await ensure_artifact_coding_agent_profile(db_session, tenant.id, actor_user_id=user.id)
+    runtime = ArtifactCodingRuntimeService(db_session)
+    prepared = await runtime.prepare_session(
+        tenant_id=tenant.id,
+        user_id=user.id,
+        agent_id=agent.id,
+        title_prompt="Read bounded backward window",
+        artifact_id=None,
+        draft_key=None,
+        chat_session_id=None,
+        draft_snapshot={
+            **runtime.build_initial_snapshot_from_seed({"kind": "tool_impl"}),
+            "source_files": [{"path": "main.py", "content": "\n".join(f"line_{i}" for i in range(1, 251)) + "\n"}],
+            "entry_module_path": "main.py",
+        },
+        replace_snapshot=True,
+    )
+    worker_run = await _create_artifact_coding_worker_run(
+        db_session,
+        tenant=tenant,
+        user=user,
+        agent=agent,
+        session=prepared.session,
+        shared_draft=prepared.shared_draft,
+    )
+
+    @asynccontextmanager
+    async def _session_override():
+        yield db_session
+
+    from app.services import artifact_coding_agent_tools as artifact_tools_module
+
+    original_session = artifact_tools_module.get_session
+    artifact_tools_module.get_session = _session_override
+    try:
+        read_result = await artifact_coding_read_file(
+            {
+                "run_id": str(worker_run.id),
+                "path": "main.py",
+                "end_line": 210,
+                "include_line_numbers": True,
+            }
+        )
+    finally:
+        artifact_tools_module.get_session = original_session
+
+    assert read_result["start_line"] == 11
+    assert read_result["end_line"] == 210
+    assert read_result["truncated"] is True
+    assert read_result["numbered_content"].startswith("11: line_11")
+    assert read_result["numbered_content"].endswith("210: line_210")
+
+
+@pytest.mark.asyncio
+async def test_artifact_coding_read_file_caps_large_default_read(db_session):
+    tenant, user = await _seed_tenant_and_user(db_session)
+    agent = await ensure_artifact_coding_agent_profile(db_session, tenant.id, actor_user_id=user.id)
+    runtime = ArtifactCodingRuntimeService(db_session)
+    prepared = await runtime.prepare_session(
+        tenant_id=tenant.id,
+        user_id=user.id,
+        agent_id=agent.id,
+        title_prompt="Cap large default read",
+        artifact_id=None,
+        draft_key=None,
+        chat_session_id=None,
+        draft_snapshot={
+            **runtime.build_initial_snapshot_from_seed({"kind": "tool_impl"}),
+            "source_files": [{"path": "main.py", "content": "\n".join(f"line_{i}" for i in range(1, 401)) + "\n"}],
+            "entry_module_path": "main.py",
+        },
+        replace_snapshot=True,
+    )
+    worker_run = await _create_artifact_coding_worker_run(
+        db_session,
+        tenant=tenant,
+        user=user,
+        agent=agent,
+        session=prepared.session,
+        shared_draft=prepared.shared_draft,
+    )
+
+    @asynccontextmanager
+    async def _session_override():
+        yield db_session
+
+    from app.services import artifact_coding_agent_tools as artifact_tools_module
+
+    original_session = artifact_tools_module.get_session
+    artifact_tools_module.get_session = _session_override
+    try:
+        read_result = await artifact_coding_read_file(
+            {
+                "run_id": str(worker_run.id),
+                "path": "main.py",
+            }
+        )
+    finally:
+        artifact_tools_module.get_session = original_session
+
+    assert read_result["start_line"] == 1
+    assert read_result["end_line"] == 200
+    assert read_result["total_lines"] == 400
+    assert read_result["truncated"] is True
+    assert read_result["content"].splitlines()[0] == "line_1"
+    assert read_result["content"].splitlines()[-1] == "line_200"
 
 
 @pytest.mark.asyncio

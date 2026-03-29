@@ -1,6 +1,6 @@
 # Artifact Coding Agent Tests
 
-Last Updated: 2026-03-29
+Last Updated: 2026-03-30
 
 ## Scope
 
@@ -23,6 +23,7 @@ Track backend coverage for the artifact-coding agent runtime across locked draft
 - stored `orchestrator` chat turns are mapped to model-facing `system` messages when rebuilding session history
 - native `continue_prompt_run(...)` persists visible `orchestrator` turns and starts the next run from real stored session history on the same thread
 - `prepare_session_run_input(...)` builds kernel-ready child-run payloads from true stored session history, uses the session's native `agent_thread_id`, and preserves `orchestrator` authority in model-facing messages
+- `prepare_session_run_input(...)` no longer injects the live prompt into `messages`, so the generic executor remains the single source of current-turn insertion and artifact-coding runs avoid duplicate latest-user turns
 - architect-worker continuation now stays separate from true orchestrator/system instructions, so only explicit orchestrator control turns map to model-facing `system`
 - runtime state serialization now exposes `persistence_readiness` separately from `verification_state`
 - artifact coding tools now resolve against the run-pinned shared draft even if the mutable session binding changes later
@@ -38,6 +39,7 @@ Track backend coverage for the artifact-coding agent runtime across locked draft
 - contract mutation now uses kind-specific tools with exact contract schemas, so the model no longer needs a generic `contract_payload` wrapper path
 - tool-contract mutation now normalizes stringified nested `input_schema`, `output_schema`, and `tool_ui` objects before persisting the draft
 - source editing now uses exact `old_text` replacement plus numbered read/search context instead of fragile line-range patch guessing
+- read-file now accepts one-sided line bounds and large-file default reads through bounded windows instead of rejecting partial ranges or dumping full huge files
 - the coding-agent tool surface now includes explicit runtime-contract validation for the required `execute(inputs, config, context)` entrypoint
 - artifact coding runtime can build javascript create-mode starter drafts from seed input
 - artifact coding tool surface now includes safe credential metadata listing for `@{credential-id}` authoring without exposing secret values
@@ -45,10 +47,15 @@ Track backend coverage for the artifact-coding agent runtime across locked draft
 - tool execution scope is now derived strictly from the run-bound session/shared-draft context, not caller-supplied payload overrides
 - existing artifact-coding chats now reject mismatched `artifact_id` / `draft_key` rebinding attempts instead of silently rewriting scope
 - run lookup/control paths now enforce bound-session ownership for the current user even when the requested run is not the session's latest run
-- artifact run serializers now expose `context_status` snapshots for chat-session/runtime consumers
+- artifact run serializers now expose canonical `context_window` snapshots plus `run_usage` for chat-session/runtime consumers
+- artifact write tools now return compact mutation results without embedding full `draft_snapshot` payloads
+- artifact draft refresh now has a dedicated session snapshot read path instead of relying on tool result snapshots
 
 ## Last Run
 
+- Command: `PYTHONPATH=. pytest -q backend/tests/artifact_coding_agent/test_runtime_service.py`
+- Date: 2026-03-29 Asia/Hebron
+- Result: PASS (`35 passed, 5 warnings`)
 - Command: `cd backend && PYTHONPATH=. pytest -q tests/artifact_coding_agent/test_runtime_service.py`
 - Date: 2026-03-29 Asia/Hebron
 - Result: PASS (`31 passed, 5 warnings`)
@@ -124,6 +131,12 @@ Track backend coverage for the artifact-coding agent runtime across locked draft
 - Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/artifact_coding_agent/test_runtime_service.py`
 - Date: 2026-03-29 21:59 EEST
 - Result: PASS (`32 passed, 5 warnings`)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/artifact_coding_agent/test_runtime_service.py`
+- Date: 2026-03-29 22:00 EEST
+- Result: PASS (`35 passed, 5 warnings`)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/artifact_coding_agent/test_runtime_service.py`
+- Date: 2026-03-30 01:07 EEST
+- Result: PASS (`36 passed, 5 warnings`)
 
 ## Known Gaps
 

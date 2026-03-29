@@ -1,6 +1,6 @@
 # Tool Execution Tests
 
-Last Updated: 2026-03-22
+Last Updated: 2026-03-29
 
 ## Scope
 Validate MCP/function/agent-call execution paths in the `ToolNodeExecutor`.
@@ -28,6 +28,7 @@ Validate MCP/function/agent-call execution paths in the `ToolNodeExecutor`.
 - Reasoning-node tool-call chunk buffering merges dict-style partial args (`path` + `content`) into one valid write payload.
 - Reasoning-node tool-call finalization prefers provider fallback tool-calls when chunked args cannot be parsed as JSON.
 - LangChain adapter normalizes `content_blocks` into runtime-compatible text, reasoning, tool-call chunks, citations, and built-in/server-tool result metadata.
+- LangChain/Gemini `response_metadata.usage_metadata` is normalized into exact shared token-usage payloads for executor accounting.
 - Pre-bind tool schema validation rejects null/malformed property schema nodes before provider invocation and preserves nested object/array shapes in generated LangChain args schemas.
 - Function tool execution merges `args` payload with top-level execution context (preserves runtime metadata like `run_id`).
 - Function tool execution also decodes JSON-string `args` payloads before merge.
@@ -58,6 +59,9 @@ Validate MCP/function/agent-call execution paths in the `ToolNodeExecutor`.
 - non-UUID artifact bindings are rejected; artifact-backed tools must resolve to UUID-backed tenant or system artifacts
 
 ## Last Run
+- Command: `PYTHONPATH=. pytest -q backend/tests/tool_execution/test_llm_provider_content_blocks.py`
+- Date/Time: 2026-03-29 Asia/Hebron
+- Result: PASS (`6 passed, 2 warnings`)
 - Command: `pytest -q backend/tests/builtin_tools_registry/test_builtin_registry_api.py backend/tests/tools_guardrails/test_tools_runtime_guardrails.py backend/tests/tool_execution/test_agent_call_tool_execution.py backend/tests/agent_tool_usecases/test_agent_builtin_tool_flow.py`
 - Date/Time: 2026-02-14 20:47 EET
 - Result: pass (`16 passed`)

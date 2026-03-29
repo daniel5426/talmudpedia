@@ -1,4 +1,4 @@
-import type { ContextStatus } from "@/services/context-status";
+import type { ContextWindow } from "@/services/context-window";
 import type { CodingAgentPendingQuestion } from "./stream-parsers";
 import {
   timelineId,
@@ -61,7 +61,7 @@ export type SessionContainer = {
   isSending: boolean;
   isStopping: boolean;
   activeThinkingSummary: string;
-  contextStatus: ContextStatus | null;
+  contextStatus: ContextWindow | null;
   history: SessionHistoryState;
   activeRunIdRef: { current: string | null };
   lastKnownRunIdRef: { current: string | null };

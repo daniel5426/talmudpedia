@@ -146,10 +146,11 @@ export function formDataFromDraftSnapshot(
   };
 }
 
-export function buildArtifactPayload(formData: ArtifactFormData): ArtifactCreateRequest {
+export function buildArtifactPayload(formData: ArtifactFormData, draftKey?: string | null): ArtifactCreateRequest {
   const payload: ArtifactCreateRequest = {
     display_name: formData.display_name,
     description: formData.description || undefined,
+    draft_key: draftKey || undefined,
     kind: formData.kind,
     runtime: {
       language: formData.language,
@@ -171,10 +172,11 @@ export function buildArtifactPayload(formData: ArtifactFormData): ArtifactCreate
   return payload;
 }
 
-export function buildArtifactUpdatePayload(formData: ArtifactFormData): ArtifactUpdateRequest {
+export function buildArtifactUpdatePayload(formData: ArtifactFormData, draftKey?: string | null): ArtifactUpdateRequest {
   const payload: ArtifactUpdateRequest = {
     display_name: formData.display_name,
     description: formData.description || undefined,
+    draft_key: draftKey || undefined,
     runtime: {
       language: formData.language,
       source_files: formData.source_files.map((file) => ({

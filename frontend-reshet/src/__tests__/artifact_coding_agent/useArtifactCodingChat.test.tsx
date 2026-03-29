@@ -11,6 +11,7 @@ jest.mock("@/services/artifacts", () => ({
     submitCodingAgentPrompt: jest.fn(),
     streamCodingAgentRun: jest.fn(),
     getCodingAgentChatSession: jest.fn(),
+    getCodingAgentChatSessionDraftSnapshot: jest.fn(),
     cancelCodingAgentRun: jest.fn(),
   },
 }));
@@ -21,6 +22,7 @@ const mockedArtifactsService = artifactsService as unknown as {
   submitCodingAgentPrompt: jest.Mock;
   streamCodingAgentRun: jest.Mock;
   getCodingAgentChatSession: jest.Mock;
+  getCodingAgentChatSessionDraftSnapshot: jest.Mock;
   cancelCodingAgentRun: jest.Mock;
 };
 
@@ -91,7 +93,7 @@ function createFiniteStreamingResponse(frames: string[]): Response {
 function buildSessionDetail(
   artifactId?: string | null,
   draftKey?: string | null,
-  contextStatus?: Record<string, unknown> | null,
+  contextWindow?: Record<string, unknown> | null,
 ) {
   return {
     session: {
@@ -108,7 +110,7 @@ function buildSessionDetail(
     messages: [],
     run_events: [],
     draft_snapshot: {},
-    context_status: contextStatus ?? null,
+    context_window: contextWindow ?? null,
     paging: {
       has_more: false,
       next_before_message_id: null,
@@ -123,6 +125,11 @@ describe("useArtifactCodingChat scope payloads", () => {
     mockedArtifactsService.listCodingAgentModels.mockResolvedValue([]);
     mockedArtifactsService.streamCodingAgentRun.mockResolvedValue(createClosedStreamResponse());
     mockedArtifactsService.getCodingAgentChatSession.mockResolvedValue(buildSessionDetail());
+    mockedArtifactsService.getCodingAgentChatSessionDraftSnapshot.mockResolvedValue({
+      session_id: "session-1",
+      draft_snapshot: {},
+      updated_at: "2026-03-25T10:00:00Z",
+    });
     mockedArtifactsService.cancelCodingAgentRun.mockResolvedValue({
       run_id: "run-1",
       status: "cancelled",
@@ -294,25 +301,21 @@ describe("useArtifactCodingChat scope payloads", () => {
         artifact_id: null,
         draft_key: "draft-create-1",
         created_at: "2026-03-25T10:00:00Z",
-        context_status: {
+        context_window: {
+          source: "estimated",
           model_id: "openai/gpt-5",
           max_tokens: 1050000,
           max_tokens_source: "provider_fallback",
-          reserved_output_tokens: 8192,
-          estimated_input_tokens: 3200,
-          estimated_total_tokens: 11392,
-          estimated_remaining_tokens: 1038608,
-          estimated_usage_ratio: 0.0108,
-          near_limit: false,
-          compaction_recommended: false,
-          source: "estimated_pre_run",
+          input_tokens: 3200,
+          remaining_tokens: 1046800,
+          usage_ratio: 3200 / 1050000,
         },
       },
     });
     mockedArtifactsService.streamCodingAgentRun.mockResolvedValue(
       createFiniteStreamingResponse([
-        'data: {"event":"run.accepted","payload":{"context_status":{"model_id":"openai/gpt-5","max_tokens":1050000,"max_tokens_source":"provider_fallback","reserved_output_tokens":8192,"estimated_input_tokens":4000,"estimated_total_tokens":12192,"estimated_remaining_tokens":1037808,"estimated_usage_ratio":0.0116,"near_limit":false,"compaction_recommended":false,"source":"estimated_pre_run"}}}\n\n',
-        'data: {"event":"run.completed","payload":{"context_status":{"model_id":"openai/gpt-5","max_tokens":1050000,"max_tokens_source":"provider_fallback","reserved_output_tokens":8192,"estimated_input_tokens":4000,"estimated_total_tokens":12192,"estimated_remaining_tokens":1037808,"estimated_usage_ratio":0.0116,"near_limit":false,"compaction_recommended":false,"source":"estimated_plus_actual","actual_usage":{"input_tokens":4100,"output_tokens":700,"total_tokens":4800}}}}\n\n',
+        'data: {"event":"run.accepted","payload":{"context_window":{"source":"estimated","model_id":"openai/gpt-5","max_tokens":1050000,"max_tokens_source":"provider_fallback","input_tokens":4000,"remaining_tokens":1046000,"usage_ratio":0.0038}}}\n\n',
+        'data: {"event":"run.completed","payload":{"context_window":{"source":"exact","model_id":"openai/gpt-5","max_tokens":1050000,"max_tokens_source":"provider_fallback","input_tokens":4100,"remaining_tokens":1045900,"usage_ratio":0.0039},"run_usage":{"source":"exact","input_tokens":4100,"output_tokens":700,"total_tokens":4800}}}\n\n',
       ]),
     );
 
@@ -338,8 +341,8 @@ describe("useArtifactCodingChat scope payloads", () => {
     });
 
     await waitFor(() => {
-      expect(result.current.activeContextStatus?.source).toBe("estimated_plus_actual");
-      expect(result.current.activeContextStatus?.actual_usage?.total_tokens).toBe(4800);
+      expect(result.current.activeContextStatus?.source).toBe("exact");
+      expect(result.current.activeContextStatus?.input_tokens).toBe(4100);
     });
   });
 
@@ -354,24 +357,20 @@ describe("useArtifactCodingChat scope payloads", () => {
         artifact_id: null,
         draft_key: "draft-create-1",
         created_at: "2026-03-25T10:00:00Z",
-        context_status: {
+        context_window: {
+          source: "estimated",
           model_id: "openai/gpt-5",
           max_tokens: 1050000,
           max_tokens_source: "provider_fallback",
-          reserved_output_tokens: 8192,
-          estimated_input_tokens: 3200,
-          estimated_total_tokens: 11392,
-          estimated_remaining_tokens: 1038608,
-          estimated_usage_ratio: 0.0108,
-          near_limit: false,
-          compaction_recommended: false,
-          source: "estimated_pre_run",
+          input_tokens: 3200,
+          remaining_tokens: 1046800,
+          usage_ratio: 3200 / 1050000,
         },
       },
     });
     mockedArtifactsService.streamCodingAgentRun.mockResolvedValue(
       createFiniteStreamingResponse([
-        'data: {"event":"context.status","payload":{"context_status":{"model_id":"openai/gpt-5","max_tokens":1050000,"max_tokens_source":"provider_fallback","reserved_output_tokens":8192,"estimated_input_tokens":4040,"estimated_total_tokens":12232,"estimated_remaining_tokens":1037768,"estimated_usage_ratio":0.0116,"near_limit":false,"compaction_recommended":false,"source":"estimated_in_flight"}}}\n\n',
+        'data: {"event":"context_window.updated","payload":{"context_window":{"source":"estimated","model_id":"openai/gpt-5","max_tokens":1050000,"max_tokens_source":"provider_fallback","input_tokens":4040,"remaining_tokens":1045960,"usage_ratio":0.0039}}}\n\n',
         'data: {"event":"run.completed","payload":{"status":"completed"}}\n\n',
       ]),
     );
@@ -398,8 +397,8 @@ describe("useArtifactCodingChat scope payloads", () => {
     });
 
     await waitFor(() => {
-      expect(result.current.activeContextStatus?.source).toBe("estimated_in_flight");
-      expect(result.current.activeContextStatus?.estimated_input_tokens).toBe(4040);
+      expect(result.current.activeContextStatus?.source).toBe("estimated");
+      expect(result.current.activeContextStatus?.input_tokens).toBe(4040);
     });
   });
 
@@ -414,24 +413,20 @@ describe("useArtifactCodingChat scope payloads", () => {
         artifact_id: null,
         draft_key: "draft-create-1",
         created_at: "2026-03-25T10:00:00Z",
-        context_status: {
+        context_window: {
+          source: "estimated",
           model_id: "openai/gpt-5",
           max_tokens: 1050000,
           max_tokens_source: "provider_fallback",
-          reserved_output_tokens: 8192,
-          estimated_input_tokens: 3200,
-          estimated_total_tokens: 11392,
-          estimated_remaining_tokens: 1038608,
-          estimated_usage_ratio: 0.0108,
-          near_limit: false,
-          compaction_recommended: false,
-          source: "estimated_pre_run",
+          input_tokens: 3200,
+          remaining_tokens: 1046800,
+          usage_ratio: 3200 / 1050000,
         },
       },
     });
     mockedArtifactsService.streamCodingAgentRun.mockResolvedValue(
       createFiniteStreamingResponse([
-        'data: {"event":"run.completed","payload":{"context_status":{"model_id":"openai/gpt-5","max_tokens":1050000,"max_tokens_source":"provider_fallback","reserved_output_tokens":8192,"estimated_input_tokens":4040,"estimated_total_tokens":12232,"estimated_remaining_tokens":1037768,"estimated_usage_ratio":0.0116,"near_limit":false,"compaction_recommended":false,"source":"estimated_plus_actual","actual_usage":{"total_tokens":4800}}}}\n\n',
+        'data: {"event":"run.completed","payload":{"context_window":{"source":"exact","model_id":"openai/gpt-5","max_tokens":1050000,"max_tokens_source":"provider_fallback","input_tokens":4040,"remaining_tokens":1045960,"usage_ratio":0.0039},"run_usage":{"source":"exact","total_tokens":4800}}}\n\n',
       ]),
     );
     mockedArtifactsService.getCodingAgentChatSession.mockResolvedValue(
@@ -439,17 +434,13 @@ describe("useArtifactCodingChat scope payloads", () => {
         null,
         "draft-create-1",
         {
+          source: "estimated",
           model_id: "openai/gpt-5",
           max_tokens: 1050000,
           max_tokens_source: "provider_fallback",
-          reserved_output_tokens: 8192,
-          estimated_input_tokens: 3200,
-          estimated_total_tokens: 11392,
-          estimated_remaining_tokens: 1038608,
-          estimated_usage_ratio: 0.0108,
-          near_limit: false,
-          compaction_recommended: false,
-          source: "estimated_pre_run",
+          input_tokens: 3200,
+          remaining_tokens: 1046800,
+          usage_ratio: 3200 / 1050000,
         },
       ),
     );
@@ -476,8 +467,61 @@ describe("useArtifactCodingChat scope payloads", () => {
     });
 
     await waitFor(() => {
-      expect(result.current.activeContextStatus?.source).toBe("estimated_plus_actual");
-      expect(result.current.activeContextStatus?.estimated_total_tokens).toBe(12232);
+      expect(result.current.activeContextStatus?.source).toBe("exact");
+      expect(result.current.activeContextStatus?.input_tokens).toBe(4040);
+    });
+  });
+
+  it("refreshes the draft snapshot from the dedicated session endpoint when artifact draft updates stream in", async () => {
+    const onApplyDraftSnapshot = jest.fn();
+    mockedArtifactsService.submitCodingAgentPrompt.mockResolvedValue({
+      submission_status: "started",
+      chat_session_id: "session-1",
+      run: {
+        run_id: "run-1",
+        status: "queued",
+        chat_session_id: "session-1",
+        artifact_id: null,
+        draft_key: "draft-create-1",
+        created_at: "2026-03-25T10:00:00Z",
+      },
+    });
+    mockedArtifactsService.streamCodingAgentRun.mockResolvedValue(
+      createFiniteStreamingResponse([
+        'data: {"event":"artifact.draft.updated","payload":{"session_id":"session-1","tool_slug":"artifact-coding-replace-file","changed_fields":["source_files"]}}\n\n',
+        'data: {"event":"run.completed","payload":{"status":"completed"}}\n\n',
+      ]),
+    );
+    mockedArtifactsService.getCodingAgentChatSessionDraftSnapshot.mockResolvedValue({
+      session_id: "session-1",
+      draft_snapshot: { display_name: "Updated draft" },
+      updated_at: "2026-03-25T10:01:00Z",
+    });
+
+    const { result } = renderHook(() =>
+      useArtifactCodingChat({
+        tenantSlug: "tenant-1",
+        tenantId: "tenant-id-1",
+        artifactId: null,
+        draftKey: "draft-create-1",
+        isCreateMode: true,
+        getDraftSnapshot: () => ({ display_name: "Draft artifact" }),
+        onApplyDraftSnapshot,
+        onError: jest.fn(),
+      }),
+    );
+
+    await waitFor(() => {
+      expect(mockedArtifactsService.listCodingAgentModels).toHaveBeenCalled();
+    });
+
+    await act(async () => {
+      await result.current.sendMessage("Update the draft");
+    });
+
+    await waitFor(() => {
+      expect(mockedArtifactsService.getCodingAgentChatSessionDraftSnapshot).toHaveBeenCalledWith("session-1", "tenant-1");
+      expect(onApplyDraftSnapshot).toHaveBeenCalledWith({ display_name: "Updated draft" });
     });
   });
 });

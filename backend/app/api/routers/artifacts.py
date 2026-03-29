@@ -31,6 +31,7 @@ from app.api.schemas.artifacts import (
     PythonPackageVerificationResponse,
 )
 from app.services.artifact_coding_agent_tools import _initial_snapshot_for_kind, _serialize_form_state
+from app.services.artifact_coding_chat_history_service import ArtifactCodingChatHistoryService
 from app.services.artifact_coding_shared_draft_service import ArtifactCodingSharedDraftService
 from app.db.postgres.models.artifact_runtime import Artifact as ArtifactModel
 from app.db.postgres.models.artifact_runtime import ArtifactKind, ArtifactOwnerType, ArtifactRevision as ArtifactRevisionModel, ArtifactRunStatus, ArtifactStatus
@@ -235,6 +236,28 @@ def _artifact_to_schema(artifact: ArtifactModel, *, include_code: bool = False) 
         updated_at=artifact.updated_at,
         system_key=artifact.system_key,
         tags=["published"] if artifact.status == ArtifactStatus.PUBLISHED else ["draft"],
+    )
+
+
+async def _link_artifact_coding_scope_to_saved_artifact(
+    *,
+    db: AsyncSession,
+    tenant_id: UUID,
+    artifact_id: UUID,
+    draft_key: str | None,
+) -> None:
+    normalized_draft_key = str(draft_key or "").strip() or None
+    if normalized_draft_key is None:
+        return
+    await ArtifactCodingSharedDraftService(db).link_scope_to_artifact(
+        tenant_id=tenant_id,
+        draft_key=normalized_draft_key,
+        artifact_id=artifact_id,
+    )
+    await ArtifactCodingChatHistoryService(db).link_sessions_to_artifact(
+        tenant_id=tenant_id,
+        draft_key=normalized_draft_key,
+        artifact_id=artifact_id,
     )
 
 
@@ -542,6 +565,12 @@ async def create_artifact_draft(
         await ToolBindingService(db).sync_artifact_tool_binding(artifact)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    await _link_artifact_coding_scope_to_saved_artifact(
+        db=db,
+        tenant_id=tenant.id,
+        artifact_id=artifact.id,
+        draft_key=request.draft_key,
+    )
     await db.commit()
     refreshed = await ArtifactRegistryService(db).get_tenant_artifact(artifact_id=artifact.id, tenant_id=tenant.id)
     return _artifact_to_schema(refreshed, include_code=True)
@@ -592,6 +621,12 @@ async def update_artifact(
         await ToolBindingService(db).sync_artifact_tool_binding(artifact)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    await _link_artifact_coding_scope_to_saved_artifact(
+        db=db,
+        tenant_id=tenant.id,
+        artifact_id=artifact.id,
+        draft_key=update_data.draft_key,
+    )
     await db.commit()
     refreshed = await ArtifactRegistryService(db).get_tenant_artifact(artifact_id=artifact.id, tenant_id=tenant.id)
     return _artifact_to_schema(refreshed, include_code=True)

@@ -15,7 +15,7 @@ from app.db.postgres.models.agents import AgentRun
 from app.core.scope_registry import is_platform_admin_role
 from app.services.admin_monitoring_service import AdminMonitoringService
 from app.services.runtime_attachment_service import RuntimeAttachmentService
-from app.services.model_accounting import usage_total_expr
+from app.services.model_accounting import usage_payload_from_run, usage_total_expr
 from app.services.thread_service import ThreadService
 from pydantic import BaseModel
 
@@ -33,14 +33,7 @@ def _current_month_bounds_utc() -> tuple[datetime, datetime]:
 
 
 def _serialize_run_usage(run: AgentRun | None) -> dict[str, Any] | None:
-    if run is None:
-        return None
-    return {
-        "input_tokens": int(run.input_tokens) if run.input_tokens is not None else None,
-        "output_tokens": int(run.output_tokens) if run.output_tokens is not None else None,
-        "total_tokens": int(run.total_tokens if run.total_tokens is not None else run.usage_tokens or 0),
-        "usage_source": run.usage_source,
-    }
+    return usage_payload_from_run(run)
 
 # --- Dependencies & Helpers ---
 
@@ -440,10 +433,21 @@ async def get_thread_details(
     thread_row = await monitoring.get_thread_row(tid, month_start=period_start, month_end=period_end)
     turns = list(page_result.page.turns or [])
     total_tokens = 0
+    total_exact_tokens = 0
+    total_estimated_tokens = 0
+    has_exact_usage = False
+    has_estimated_usage = False
     for turn in turns:
         run_usage = _serialize_run_usage(getattr(turn, "run", None))
         if run_usage is not None:
             total_tokens += int(run_usage["total_tokens"] or 0)
+            source = str(run_usage.get("source") or "").strip().lower()
+            if source == "exact":
+                has_exact_usage = True
+                total_exact_tokens += int(run_usage.get("total_tokens") or 0)
+            elif source == "estimated":
+                has_estimated_usage = True
+                total_estimated_tokens += int(run_usage.get("total_tokens") or 0)
     return {
         "id": str(thread.id),
         "title": thread.title,
@@ -462,6 +466,8 @@ async def get_thread_details(
         "last_activity_at": thread.last_activity_at,
         "token_usage": {
             "total_tokens": total_tokens,
+            "exact_total_tokens": total_exact_tokens if has_exact_usage else None,
+            "estimated_total_tokens": total_estimated_tokens if has_estimated_usage else None,
         },
         "turns": [
             {
@@ -472,6 +478,7 @@ async def get_thread_details(
                 "user_input_text": turn.user_input_text,
                 "assistant_output_text": turn.assistant_output_text,
                 "run_usage": _serialize_run_usage(getattr(turn, "run", None)),
+                "context_window": getattr(getattr(turn, "run", None), "context_window_json", None),
                 "created_at": turn.created_at,
                 "completed_at": turn.completed_at,
                 "attachments": [

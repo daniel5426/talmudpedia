@@ -30,9 +30,11 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Base
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field, create_model
 from app.services.model_resolver import ModelResolver
-from app.agent.core.llm_adapter import LLMProviderAdapter
+from app.agent.core.llm_adapter import LLMProviderAdapter, extract_usage_payload_from_message
 from app.agent.cel_engine import evaluate_template
+from app.services.context_window_service import ContextWindowService
 from app.services.prompt_reference_resolver import PromptReferenceResolver
+from app.services.run_invocation_service import RunInvocationService
 from app.services.resource_policy_service import ResourcePolicySnapshot
 
 logger = logging.getLogger(__name__)
@@ -80,6 +82,31 @@ def _truncate_tool_result_text(text: str, *, limit: int) -> str:
     return text[:limit] + "... [truncated]"
 
 
+def _serialize_message_for_accounting(message: Any) -> dict[str, Any]:
+    if isinstance(message, dict):
+        return dict(message)
+    payload: dict[str, Any] = {
+        "role": getattr(message, "type", None) or message.__class__.__name__,
+        "content": getattr(message, "content", None),
+    }
+    tool_calls = getattr(message, "tool_calls", None)
+    if isinstance(tool_calls, list) and tool_calls:
+        payload["tool_calls"] = tool_calls
+    name = getattr(message, "name", None)
+    if name:
+        payload["name"] = name
+    return payload
+
+
+def _serialize_tool_for_accounting(tool: Any) -> dict[str, Any]:
+    return {
+        "name": str(getattr(tool, "name", None) or getattr(tool, "slug", None) or ""),
+        "description": getattr(tool, "description", None),
+        "input_schema": getattr(tool, "input_schema", None),
+        "parameter_schema": getattr(tool, "parameter_schema", None),
+    }
+
+
 def _truncate_tool_result_payload(payload: Any, *, limit: int) -> Any:
     if payload is None or isinstance(payload, (bool, int, float)):
         return payload
@@ -102,6 +129,22 @@ def _truncate_tool_result_payload(payload: Any, *, limit: int) -> Any:
     if len(rendered) <= limit:
         return payload
     return _truncate_tool_result_text(rendered, limit=limit)
+
+
+def _merge_usage_payloads(*payloads: dict[str, int] | None) -> dict[str, int] | None:
+    totals: dict[str, int] = {}
+    for payload in payloads:
+        if not isinstance(payload, dict):
+            continue
+        for key, value in payload.items():
+            try:
+                parsed = int(value)
+            except Exception:
+                continue
+            if parsed < 0:
+                continue
+            totals[key] = totals.get(key, 0) + parsed
+    return totals or None
 
 
 def _json_schema_type_to_python(
@@ -462,7 +505,8 @@ class LLMNodeExecutor(BaseNodeExecutor):
         resolver = ModelResolver(self.db, self.tenant_id)
         policy_snapshot = _policy_snapshot_from_state(state)
         try:
-            provider = await resolver.resolve(model_id, policy_snapshot=policy_snapshot)
+            resolved_execution = await resolver.resolve_for_execution(model_id, policy_snapshot=policy_snapshot)
+            provider = resolved_execution.provider_instance
         except Exception as e:
             logger.error(f"Failed to resolve model {model_id}: {e}")
             if emitter:
@@ -479,6 +523,12 @@ class LLMNodeExecutor(BaseNodeExecutor):
         try:
             adapter = LLMProviderAdapter(provider)
             full_content = ""
+            last_message: Optional[BaseMessage] = None
+            streamed_usage_payload: dict[str, int] | None = None
+            estimated_input_tokens = ContextWindowService.estimate_prompt_input_tokens(
+                messages=[_serialize_message_for_accounting(message) for message in formatted_messages],
+                system_prompt=system_prompt,
+            )
             
             # Emit node start
             if emitter:
@@ -492,6 +542,10 @@ class LLMNodeExecutor(BaseNodeExecutor):
                     system_prompt=system_prompt,
                     max_tokens=configured_max_tokens,
                 ):
+                    last_message = chunk.message if hasattr(chunk, "message") else None
+                    chunk_usage_payload = extract_usage_payload_from_message(last_message)
+                    if chunk_usage_payload:
+                        streamed_usage_payload = chunk_usage_payload
                     token_content = chunk.message.content if hasattr(chunk, 'message') else ""
                     
                     # Handle reasoning content if supported
@@ -514,6 +568,8 @@ class LLMNodeExecutor(BaseNodeExecutor):
                     max_tokens=configured_max_tokens,
                 )
                 full_content = response.content
+                streamed_usage_payload = extract_usage_payload_from_message(response)
+                last_message = response
                 if emitter:
                     emitter.emit_token(full_content, node_id)
             except Exception as stream_error:
@@ -524,12 +580,37 @@ class LLMNodeExecutor(BaseNodeExecutor):
                     max_tokens=configured_max_tokens,
                 )
                 full_content = response.content
+                streamed_usage_payload = extract_usage_payload_from_message(response)
+                last_message = response
                 if emitter:
                     emitter.emit_token(full_content, node_id)
             
             # Emit node end
             if emitter:
-                emitter.emit_node_end(node_id, node_name, "llm", {"content_length": len(full_content)})
+                invocation_payload = RunInvocationService.build_invocation_payload(
+                    model_id=str(getattr(resolved_execution.logical_model, "id", None) or model_id),
+                    resolved_provider=resolved_execution.resolved_provider,
+                    resolved_provider_model_id=resolved_execution.binding.provider_model_id,
+                    node_id=node_id,
+                    node_name=node_name,
+                    node_type="llm",
+                    max_context_tokens=resolved_execution.context_window,
+                    max_context_tokens_source="resolved_execution" if resolved_execution.context_window else "unknown",
+                    estimated_input_tokens=estimated_input_tokens,
+                    exact_usage_payload=streamed_usage_payload,
+                    estimated_output_tokens=RunInvocationService.estimate_output_tokens(last_message or full_content),
+                )
+                emitter.emit_node_end(
+                    node_id,
+                    node_name,
+                    "llm",
+                    {
+                        "content_length": len(full_content),
+                        "usage": invocation_payload["usage"],
+                        "usage_source": invocation_payload["usage"].get("source"),
+                        "invocation": invocation_payload,
+                    },
+                )
             
             return {
                 "messages": [AIMessage(content=full_content)]
@@ -1429,9 +1510,9 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
         emitter: Any,
         node_id: str,
         has_tool_signals: bool,
-    ) -> tuple[str, Optional[BaseMessage]]:
+    ) -> tuple[str, Optional[BaseMessage], bool]:
         if str(full_content).strip() or has_tool_signals:
-            return full_content, last_message
+            return full_content, last_message, False
 
         try:
             fallback_instruction = "Respond to the user directly in plain text. Do not call tools. Keep it concise."
@@ -1451,11 +1532,11 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
             if fallback_text.strip():
                 if emitter:
                     emitter.emit_token(fallback_text, node_id)
-                return fallback_text, fallback_response
-            return full_content, fallback_response
+                return fallback_text, fallback_response, True
+            return full_content, fallback_response, True
         except Exception as exc:
             logger.warning(f"Fallback text response generation failed: {exc}")
-            return full_content, last_message
+            return full_content, last_message, False
 
     async def execute(self, state: Dict[str, Any], config: Dict[str, Any], context: Dict[str, Any] = None) -> Dict[str, Any]:
         logger.debug(f"Executing Agent (Reasoning) node")
@@ -1489,7 +1570,8 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
         resolver = ModelResolver(self.db, self.tenant_id)
         policy_snapshot = _policy_snapshot_from_state(state)
         try:
-            provider = await resolver.resolve(model_id, policy_snapshot=policy_snapshot)
+            resolved_execution = await resolver.resolve_for_execution(model_id, policy_snapshot=policy_snapshot)
+            provider = resolved_execution.provider_instance
         except Exception as e:
             logger.error(f"Failed to resolve model {model_id}: {e}")
             if emitter:
@@ -1543,6 +1625,7 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
                 if getattr(t, "slug", None)
             }
             langchain_tools = [self._build_langchain_tool(t) for t in tool_records] if tools else []
+            tool_accounting_payloads = [_serialize_tool_for_accounting(t) for t in tool_records]
 
             conversation_messages = list(formatted_messages)
             emitted_messages: List[BaseMessage] = []
@@ -1555,6 +1638,12 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
                 tool_call_buffers: Dict[str, Dict[str, Any]] = {}
                 tool_call_order: List[str] = []
                 last_message: Optional[BaseMessage] = None
+                streamed_usage_payload: dict[str, int] | None = None
+                estimated_input_tokens = ContextWindowService.estimate_prompt_input_tokens(
+                    messages=[_serialize_message_for_accounting(message) for message in conversation_messages],
+                    system_prompt=instructions,
+                    tools=tool_accounting_payloads,
+                )
 
                 # Stream tokens and buffer tool call chunks
                 try:
@@ -1566,6 +1655,9 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
                         max_tokens=max_tokens,
                     ):
                         last_message = chunk.message if hasattr(chunk, "message") else None
+                        chunk_usage_payload = extract_usage_payload_from_message(last_message)
+                        if chunk_usage_payload:
+                            streamed_usage_payload = chunk_usage_payload
                         if last_message is not None:
                             self._buffer_tool_call_chunks(last_message, tool_call_buffers, tool_call_order)
                         token_content = chunk.message.content if hasattr(chunk, "message") else ""
@@ -1583,6 +1675,7 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
                         max_tokens=max_tokens,
                     )
                     full_content = response.content
+                    streamed_usage_payload = extract_usage_payload_from_message(response)
                     if emitter:
                         emitter.emit_token(full_content, node_id)
                     last_message = response
@@ -1590,7 +1683,7 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
                 has_tool_signals = bool(tool_call_buffers)
                 if last_message is not None and getattr(last_message, "tool_calls", None):
                     has_tool_signals = True
-                full_content, last_message = await self._ensure_text_response(
+                full_content, last_message, fallback_used = await self._ensure_text_response(
                     adapter=adapter,
                     full_content=full_content,
                     last_message=last_message,
@@ -1602,9 +1695,38 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
                     node_id=node_id,
                     has_tool_signals=has_tool_signals,
                 )
+                final_usage_payload = extract_usage_payload_from_message(last_message)
+                iteration_usage_payload = (
+                    _merge_usage_payloads(streamed_usage_payload, final_usage_payload)
+                    if fallback_used
+                    else (final_usage_payload or streamed_usage_payload)
+                )
+                invocation_payload = RunInvocationService.build_invocation_payload(
+                    model_id=str(getattr(resolved_execution.logical_model, "id", None) or model_id),
+                    resolved_provider=resolved_execution.resolved_provider,
+                    resolved_provider_model_id=resolved_execution.binding.provider_model_id,
+                    node_id=node_id,
+                    node_name=node_name,
+                    node_type="agent",
+                    max_context_tokens=resolved_execution.context_window,
+                    max_context_tokens_source="resolved_execution" if resolved_execution.context_window else "unknown",
+                    estimated_input_tokens=estimated_input_tokens,
+                    exact_usage_payload=iteration_usage_payload,
+                    estimated_output_tokens=RunInvocationService.estimate_output_tokens(last_message),
+                )
 
                 if emitter:
-                    emitter.emit_node_end(node_id, node_name, "agent", {"content_length": len(full_content)})
+                    emitter.emit_node_end(
+                        node_id,
+                        node_name,
+                        "agent",
+                        {
+                            "content_length": len(full_content),
+                            "usage": invocation_payload["usage"],
+                            "usage_source": invocation_payload["usage"].get("source"),
+                            "invocation": invocation_payload,
+                        },
+                    )
 
                 # Handle structured output
                 result_content: Any = full_content
