@@ -28,6 +28,9 @@ interface ArtifactConfigPanelProps {
   onConvertTargetKindChange: (value: ArtifactKind) => void;
   onConvertKind: () => void;
   onPromptMentionClick: (promptId: string, tokenRange: { from: number; to: number }) => void;
+  onCopyConfig: () => void;
+  onPasteConfig: () => void;
+  configClipboardStatus?: string | null;
 }
 
 export function ArtifactConfigPanel({
@@ -43,15 +46,31 @@ export function ArtifactConfigPanel({
   onConvertTargetKindChange,
   onConvertKind,
   onPromptMentionClick,
+  onCopyConfig,
+  onPasteConfig,
+  configClipboardStatus,
 }: ArtifactConfigPanelProps) {
   const [activeTab, setActiveTab] = useState("general")
 
   return (
     <div className="flex h-full w-full flex-col overflow-y-auto bg-background [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:bg-border">
       <div className="mx-auto w-full max-w-5xl px-6 py-12 md:px-12">
-        <div className="mb-12">
-          <h2 className="text-xl font-medium tracking-tight">Configuration Profile</h2>
-          <p className="mt-1 text-sm text-muted-foreground/80">Properties, runtime targets, and boundary definitions.</p>
+        <div className="mb-12 flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+          <div>
+            <h2 className="text-xl font-medium tracking-tight">Configuration Profile</h2>
+            <p className="mt-1 text-sm text-muted-foreground/80">Properties, runtime targets, and boundary definitions.</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {configClipboardStatus ? (
+              <span className="text-xs text-muted-foreground">{configClipboardStatus}</span>
+            ) : null}
+            <Button type="button" variant="outline" size="sm" onClick={onCopyConfig}>
+              Copy config
+            </Button>
+            <Button type="button" variant="outline" size="sm" onClick={onPasteConfig}>
+              Paste config
+            </Button>
+          </div>
         </div>
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-8">
           <TabsList className="grid w-full grid-cols-5">

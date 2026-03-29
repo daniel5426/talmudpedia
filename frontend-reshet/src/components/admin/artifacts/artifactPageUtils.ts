@@ -13,6 +13,28 @@ import {
 import { ArtifactFormData, createFormDataForKind } from "@/components/admin/artifacts/artifactEditorState";
 import { canonicalizeCredentialMentions } from "@/lib/credential-mentions";
 
+type ArtifactConfigClipboardSnapshot = Pick<
+  ArtifactFormData,
+  | "display_name"
+  | "description"
+  | "entry_module_path"
+  | "dependencies"
+  | "runtime_target"
+  | "capabilities"
+  | "config_schema"
+  | "agent_contract"
+  | "rag_contract"
+  | "tool_contract"
+>;
+
+type ArtifactConfigClipboardEnvelope = {
+  type: "talmudpedia.artifact-config";
+  version: 1;
+  kind: ArtifactKind;
+  language: ArtifactLanguage;
+  config: ArtifactConfigClipboardSnapshot;
+};
+
 export function parseObjectJson(text: string, label: string): Record<string, unknown> {
   let parsed: unknown;
   try {
@@ -253,6 +275,69 @@ export function serializeArtifactFormData(formData: ArtifactFormData): string {
     tool_contract: normalizeJsonText(formData.tool_contract),
     source_files: formData.source_files.map((file) => ({ path: file.path, content: file.content })),
   });
+}
+
+export function buildArtifactConfigClipboardText(formData: ArtifactFormData): string {
+  const payload: ArtifactConfigClipboardEnvelope = {
+    type: "talmudpedia.artifact-config",
+    version: 1,
+    kind: formData.kind,
+    language: formData.language,
+    config: {
+      display_name: formData.display_name,
+      description: formData.description,
+      entry_module_path: formData.entry_module_path,
+      dependencies: formData.dependencies,
+      runtime_target: formData.runtime_target,
+      capabilities: formData.capabilities,
+      config_schema: formData.config_schema,
+      agent_contract: formData.agent_contract,
+      rag_contract: formData.rag_contract,
+      tool_contract: formData.tool_contract,
+    },
+  };
+
+  return JSON.stringify(payload, null, 2);
+}
+
+export function parseArtifactConfigClipboardText(
+  text: string,
+  currentFormData: Pick<ArtifactFormData, "kind" | "language" | "source_files">,
+): ArtifactConfigClipboardSnapshot {
+  const parsed = parseObjectJson(text, "Copied configuration");
+
+  if (parsed.type !== "talmudpedia.artifact-config" || parsed.version !== 1) {
+    throw new Error("Clipboard does not contain a copied artifact configuration");
+  }
+  if (parsed.kind !== currentFormData.kind) {
+    throw new Error("Copied configuration kind does not match this artifact");
+  }
+  if (parsed.language !== currentFormData.language) {
+    throw new Error("Copied configuration language does not match this artifact");
+  }
+  if (!isRecord(parsed.config)) {
+    throw new Error("Copied configuration is missing its config payload");
+  }
+
+  const config = parsed.config;
+  const nextSnapshot: ArtifactConfigClipboardSnapshot = {
+    display_name: typeof config.display_name === "string" ? config.display_name : "",
+    description: typeof config.description === "string" ? config.description : "",
+    entry_module_path: typeof config.entry_module_path === "string" ? config.entry_module_path : "",
+    dependencies: typeof config.dependencies === "string" ? config.dependencies : "",
+    runtime_target: typeof config.runtime_target === "string" ? config.runtime_target : "cloudflare_workers",
+    capabilities: typeof config.capabilities === "string" ? config.capabilities : JSON.stringify({}, null, 2),
+    config_schema: typeof config.config_schema === "string" ? config.config_schema : JSON.stringify({}, null, 2),
+    agent_contract: typeof config.agent_contract === "string" ? config.agent_contract : JSON.stringify({}, null, 2),
+    rag_contract: typeof config.rag_contract === "string" ? config.rag_contract : JSON.stringify({}, null, 2),
+    tool_contract: typeof config.tool_contract === "string" ? config.tool_contract : JSON.stringify({}, null, 2),
+  };
+
+  if (!currentFormData.source_files.some((file) => file.path === nextSnapshot.entry_module_path)) {
+    throw new Error("Copied entry module path does not exist in this artifact's files");
+  }
+
+  return nextSnapshot;
 }
 
 function isPythonPath(path: string): boolean {

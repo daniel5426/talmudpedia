@@ -1,4 +1,4 @@
-Last Updated: 2026-03-27
+Last Updated: 2026-03-30
 
 # Test State
 
@@ -14,6 +14,7 @@ Artifact admin editor payload, dependency authoring, and form-state handling.
 - `artifact_list_view.test.tsx`
 - `artifact_test_panel.test.tsx`
 - `artifact_test_input.test.ts`
+- `artifact_workspace_utils.test.ts`
 
 ## Key Scenarios Covered
 
@@ -36,6 +37,9 @@ Artifact admin editor payload, dependency authoring, and form-state handling.
 - stop unwrapping wrapped legacy tool-contract shapes when generating artifact test input schemas
 - run artifact tests with the latest in-editor JSON even when edit and run happen in one interaction
 - treat semantically equivalent JSON/dependency formatting as clean after save so the unsaved indicator clears
+- round-trip copied artifact configuration payloads across artifact editors of the same kind/language
+- reject copied configuration payloads when the kind or entry module path does not match the current artifact
+- validate inline file rename path rules before the workspace editor applies a renamed filename
 
 ## Last Run
 
@@ -69,6 +73,9 @@ Artifact admin editor payload, dependency authoring, and form-state handling.
 - Command: `pnpm --dir frontend-reshet test -- --runInBand src/__tests__/artifacts_admin/artifact_routes.test.ts src/__tests__/admin_url_state/url_query_state.test.ts src/__tests__/resource_policy_sets/resource_policy_sets_page.test.tsx`
 - Date: 2026-03-27 Asia/Hebron
 - Result: Pass (3 suites, 9 tests)
+- Command: `pnpm --dir frontend-reshet test -- --runInBand src/__tests__/artifacts_admin/artifact_page_utils.test.ts src/__tests__/artifacts_admin/artifact_workspace_utils.test.ts`
+- Date: 2026-03-30 Asia/Hebron
+- Result: Pass (2 suites, 14 tests)
 
 ## Known Gaps
 
@@ -76,3 +83,4 @@ Artifact admin editor payload, dependency authoring, and form-state handling.
 - no end-to-end frontend test yet for artifact save flows with source credential refs
 - no browser-level coverage yet for the full config tab switch flow
 - no browser-level coverage with the real Monaco editor; the artifact test panel regression uses a focused editor mock
+- no browser-level coverage yet for the config-tab clipboard shortcuts or the double-click inline file rename interaction

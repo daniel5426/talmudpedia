@@ -162,15 +162,23 @@ export const INITIAL_THREADS: TemplateThread[] = [
 
 export const EMPTY_SUGGESTIONS = {
   en: [
-    "Summarize recent activity for the selected client",
-    "Show bank concentration for this client",
-    "Explain the latest deal for this client",
-    "Compare one recent deal against market context",
+    "Summarize recent activity",
+    "Show bank concentration",
+    "Show currency concentration",
+    "Explain the latest deal",
+    "Compare a recent deal to market",
+    "How much future exposure is still uncovered?",
+    "Which deals need follow-up right now?",
+    "Show deals furthest from market",
   ],
   he: [
-    "סכם את הפעילות האחרונה של הלקוח הנבחר",
-    "הצג ריכוזיות בנקים עבור הלקוח הזה",
-    "הסבר את העסקה האחרונה של הלקוח הזה",
-    "השווה עסקה אחרונה אחת להקשר השוק",
+    "סכם את הפעילות האחרונה",
+    "הצג ריכוזיות בנקים",
+    "הצג ריכוזיות מטבעות",
+    "הסבר את העסקה האחרונה",
+    "השווה עסקה אחרונה להקשר השוק",
+    "כמה מהחשיפה העתידית עדיין לא מכוסה?",
+    "אילו עסקאות דורשות כרגע מעקב?",
+    "הצג עסקאות שנראות הכי רחוק מהשוק",
   ],
 } as const;

@@ -22,10 +22,10 @@ const LocaleContext = createContext<LocaleContextValue | null>(null);
 export function LocaleProvider({ children }: { children: ReactNode }) {
   const [locale, setLocaleState] = useState<Locale>(() => {
     if (typeof window === "undefined") {
-      return "en";
+      return "he";
     }
     const stored = window.localStorage.getItem(STORAGE_KEY);
-    return stored === "he" ? "he" : "en";
+    return stored === "en" ? "en" : "he";
   });
 
   useEffect(() => {

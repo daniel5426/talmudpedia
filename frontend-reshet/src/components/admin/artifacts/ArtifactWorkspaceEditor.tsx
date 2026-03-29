@@ -3,6 +3,23 @@
 import type { ChangeEvent } from "react"
 import { useCallback, useMemo, useRef, useState } from "react"
 import { ArtifactCredentialCodeEditor } from "@/components/admin/artifacts/ArtifactCredentialCodeEditor"
+import { ArtifactWorkspaceSidebarHeader } from "@/components/admin/artifacts/ArtifactWorkspaceSidebarHeader"
+import { ArtifactWorkspaceTabs } from "@/components/admin/artifacts/ArtifactWorkspaceTabs"
+import {
+  ARTIFACT_CONFIG_FILE_PATH,
+  buildRenamedFilePath,
+  buildTree,
+  collectDirectoryPaths,
+  DEFAULT_SIDEBAR_WIDTH,
+  editorLanguageForPath,
+  MAX_SIDEBAR_WIDTH,
+  MIN_SIDEBAR_WIDTH,
+  moveFilePath,
+  nextAvailableDirPath,
+  nextAvailablePath,
+  normalizeImportedPath,
+  type TreeNode,
+} from "@/components/admin/artifacts/artifactWorkspaceUtils"
 import { Skeleton } from "@/components/ui/skeleton"
 import { normalizeCredentialMentionLabels } from "@/lib/credential-mentions"
 import { cn } from "@/lib/utils"
@@ -12,12 +29,9 @@ import {
   ChevronDown,
   ChevronRight,
   FileCode2,
-  FilePlus2,
   Folder,
   FolderOpen,
-  FolderPlus,
   Settings2,
-  Upload,
   X,
 } from "lucide-react"
 
@@ -34,6 +48,7 @@ interface ArtifactWorkspaceEditorProps {
   activeFilePath: string
   entryModulePath?: string
   onActiveFileChange: (path: string) => void
+  onEntryModulePathChange: (path: string) => void
   onSourceFilesChange: (files: ArtifactSourceFile[]) => void
   /** Controlled sidebar open state. */
   sidebarOpen?: boolean
@@ -42,118 +57,6 @@ interface ArtifactWorkspaceEditorProps {
   /** Slot rendered as the content of the config file. */
   configContent?: React.ReactNode
   availableCredentials?: IntegrationCredential[]
-}
-
-type TreeNode = {
-  name: string
-  path: string
-  kind: "directory" | "file"
-  children?: TreeNode[]
-}
-
-/* ------------------------------------------------------------------ */
-/*  Constants                                                          */
-/* ------------------------------------------------------------------ */
-
-const DEFAULT_NEW_FILE_BASENAME = "module"
-const MIN_SIDEBAR_WIDTH = 160
-const MAX_SIDEBAR_WIDTH = 480
-const DEFAULT_SIDEBAR_WIDTH = 240
-
-/* ------------------------------------------------------------------ */
-/*  Helpers                                                            */
-/* ------------------------------------------------------------------ */
-
-function nextAvailablePath(sourceFiles: ArtifactSourceFile[], directory: string, language: ArtifactLanguage): string {
-  const paths = new Set(sourceFiles.map((f) => f.path))
-  const extension = language === "javascript" ? "js" : "py"
-  let idx = 1
-  while (true) {
-    const candidate = directory
-      ? `${directory}/${DEFAULT_NEW_FILE_BASENAME}_${idx}.${extension}`
-      : `${DEFAULT_NEW_FILE_BASENAME}_${idx}.${extension}`
-    if (!paths.has(candidate)) return candidate
-    idx += 1
-  }
-}
-
-function nextAvailableDirPath(sourceFiles: ArtifactSourceFile[], parent: string): string {
-  const dirNames = new Set<string>()
-  const prefix = parent ? `${parent}/` : ""
-  sourceFiles.forEach((f) => {
-    if (f.path.startsWith(prefix)) {
-      const rest = f.path.slice(prefix.length)
-      const firstSeg = rest.split("/")[0]
-      if (rest.includes("/")) dirNames.add(firstSeg)
-    }
-  })
-  let idx = 1
-  while (true) {
-    const candidate = `folder_${idx}`
-    if (!dirNames.has(candidate)) return candidate
-    idx += 1
-  }
-}
-
-function buildTree(sourceFiles: ArtifactSourceFile[]): TreeNode[] {
-  const root: TreeNode = { name: "__root__", path: "", kind: "directory", children: [] }
-
-  const ensureDir = (parent: TreeNode, name: string, path: string): TreeNode => {
-    const existing = parent.children!.find((c) => c.name === name && c.kind === "directory")
-    if (existing) return existing
-    const node: TreeNode = { name, path, kind: "directory", children: [] }
-    parent.children!.push(node)
-    return node
-  }
-
-  sourceFiles.forEach((file) => {
-    const parts = file.path.split("/").filter(Boolean)
-    let current = root
-    parts.forEach((part, idx) => {
-      const isLeaf = idx === parts.length - 1
-      const fullPath = parts.slice(0, idx + 1).join("/")
-      if (isLeaf) {
-        current.children!.push({ name: part, path: fullPath, kind: "file" })
-      } else {
-        current = ensureDir(current, part, fullPath)
-      }
-    })
-  })
-
-  const sort = (nodes: TreeNode[]): TreeNode[] =>
-    nodes
-      .map((n) =>
-        n.kind === "directory" ? { ...n, children: sort(n.children || []) } : n
-      )
-      .sort((a, b) => {
-        if (a.kind !== b.kind) return a.kind === "directory" ? -1 : 1
-        return a.name.localeCompare(b.name)
-      })
-
-  return sort(root.children || [])
-}
-
-function collectDirectoryPaths(nodes: TreeNode[]): string[] {
-  return nodes.flatMap((n) =>
-    n.kind === "directory" ? [n.path, ...collectDirectoryPaths(n.children || [])] : []
-  )
-}
-
-/** Move a source file from one path to another (handles directory moves). */
-function moveFilePath(oldPath: string, newParent: string, fileName: string): string {
-  return newParent ? `${newParent}/${fileName}` : fileName
-}
-
-function editorLanguageForPath(path: string): "python" | "javascript" | "typescript" {
-  const normalized = String(path || "").toLowerCase()
-  if (normalized.endsWith(".ts") || normalized.endsWith(".mts")) return "typescript"
-  if (normalized.endsWith(".js") || normalized.endsWith(".mjs")) return "javascript"
-  return "python"
-}
-
-function normalizeImportedPath(file: File): string {
-  const rawPath = String((file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name || "").trim()
-  return rawPath.replaceAll("\\", "/").replace(/^\/+/, "").split("/").filter(Boolean).join("/")
 }
 
 /* ------------------------------------------------------------------ */
@@ -169,6 +72,7 @@ export function ArtifactWorkspaceEditor({
   activeFilePath,
   entryModulePath,
   onActiveFileChange,
+  onEntryModulePathChange,
   onSourceFilesChange,
   sidebarOpen: controlledSidebarOpen,
   onSidebarOpenChange,
@@ -220,7 +124,7 @@ export function ArtifactWorkspaceEditor({
 
   const activeFile = useMemo(
     () => {
-      if (activeFilePath === "__CONFIG__") return null
+      if (activeFilePath === ARTIFACT_CONFIG_FILE_PATH) return null
       return sourceFiles.find((f) => f.path === activeFilePath) ?? sourceFiles[0] ?? null
     },
     [activeFilePath, sourceFiles]
@@ -237,6 +141,8 @@ export function ArtifactWorkspaceEditor({
   const [draggingNode, setDraggingNode] = useState<string | null>(null)
   const [dropTargetDir, setDropTargetDir] = useState<string | null>(null)
   const importInputRef = useRef<HTMLInputElement | null>(null)
+  const [renamingPath, setRenamingPath] = useState<string | null>(null)
+  const [renameValue, setRenameValue] = useState("")
 
   // ---- scroll state for tab transition effect ----
   const [isScrolled, setIsScrolled] = useState(false)
@@ -355,6 +261,62 @@ export function ArtifactWorkspaceEditor({
       cur.includes(path) ? cur.filter((v) => v !== path) : [...cur, path]
     )
   }
+
+  const startRenamingPath = useCallback((path: string) => {
+    if (loading) return
+    setRenamingPath(path)
+    setRenameValue(path.split("/").pop() || path)
+    setOpenTabs((prev) => (prev.includes(path) ? prev : [...prev, path]))
+  }, [loading])
+
+  const cancelRenaming = useCallback(() => {
+    setRenamingPath(null)
+    setRenameValue("")
+  }, [])
+
+  const commitRename = useCallback((path: string) => {
+    if (loading || renamingPath !== path) return
+
+    let nextPath = path
+    try {
+      nextPath = buildRenamedFilePath(path, renameValue)
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Invalid file name")
+      return
+    }
+
+    if (nextPath !== path && sourceFiles.some((file) => file.path === nextPath)) {
+      alert(`A file named "${nextPath}" already exists`)
+      return
+    }
+
+    if (nextPath === path) {
+      cancelRenaming()
+      return
+    }
+
+    onSourceFilesChange(
+      sourceFiles.map((file) => (file.path === path ? { ...file, path: nextPath } : file)),
+    )
+    setOpenTabs((prev) => prev.map((tabPath) => (tabPath === path ? nextPath : tabPath)))
+    if (activeFilePath === path) {
+      activatePath(nextPath)
+    }
+    if (entryModulePath === path) {
+      onEntryModulePathChange(nextPath)
+    }
+    cancelRenaming()
+  }, [
+    activeFilePath,
+    cancelRenaming,
+    entryModulePath,
+    loading,
+    onEntryModulePathChange,
+    onSourceFilesChange,
+    renameValue,
+    renamingPath,
+    sourceFiles,
+  ])
 
   /* ---- sidebar resize via border ---- */
   const handleSidebarBorderPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -569,13 +531,14 @@ export function ArtifactWorkspaceEditor({
     const isActive = node.path === activeFile?.path
     const isEntry = node.path === entryModulePath
     const isGitkeep = node.name === ".gitkeep"
+    const isRenaming = renamingPath === node.path
 
     if (isGitkeep) return <span key={node.path} />
 
     return (
       <div
         key={node.path}
-        draggable={!isEntry}
+        draggable={!isEntry && !isRenaming}
         onDragStart={(e) => handleNodeDragStart(e, node.path)}
         onDragEnd={handleNodeDragEnd}
         className={cn(
@@ -585,21 +548,44 @@ export function ArtifactWorkspaceEditor({
       >
         <button
           type="button"
+          data-artifact-file-row={node.path}
           className={cn(
             "flex min-w-0 flex-1 items-center gap-1 text-left text-[13px]",
             !isActive && palette.rowHover,
             palette.text
           )}
           style={{ paddingLeft: `${10 + depth * 16}px` }}
-          onClick={() => {
+          onClick={(event) => {
             activatePath(node.path)
             setOpenTabs((prev) =>
               prev.includes(node.path) ? prev : [...prev, node.path]
             )
+            if (event.detail === 2) {
+              startRenamingPath(node.path)
+            }
           }}
         >
           <FileCode2 className="h-[14px] w-[14px] shrink-0 text-[#519aba]" />
-          <span className="truncate pl-0.5">{node.name}</span>
+          {isRenaming ? (
+            <input
+              value={renameValue}
+              autoFocus
+              aria-label={`Rename ${node.name}`}
+              className="min-w-0 flex-1 rounded-sm border border-border bg-background px-1 py-0 text-[13px] outline-none"
+              onClick={(event) => event.stopPropagation()}
+              onChange={(event) => setRenameValue(event.target.value)}
+              onBlur={() => commitRename(node.path)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault()
+                  commitRename(node.path)
+                } else if (event.key === "Escape") {
+                  event.preventDefault()
+                  cancelRenaming()
+                }
+              }}
+            />
+          ) : <span className="truncate pl-0.5">{node.name}</span>}
           {isEntry && (
             <span
               className={cn(
@@ -611,7 +597,7 @@ export function ArtifactWorkspaceEditor({
             </span>
           )}
         </button>
-        {!isEntry && sourceFiles.length > 1 && (
+        {!isEntry && !isRenaming && sourceFiles.length > 1 && (
           <button
             type="button"
             className={cn(
@@ -632,23 +618,6 @@ export function ArtifactWorkspaceEditor({
   /* ================================================================ */
   /*  Render                                                           */
   /* ================================================================ */
-
-  const visibleTabs = useMemo(() => {
-    const sourcePaths = sourceFiles.map((f) => f.path)
-    const sourcePathSet = new Set(sourcePaths)
-    const kept = openTabs.filter((path) => path === "__CONFIG__" || sourcePathSet.has(path))
-    const withActive =
-      (activeFilePath === "__CONFIG__" || sourcePathSet.has(activeFilePath)) && !kept.includes(activeFilePath)
-        ? [...kept, activeFilePath]
-        : kept
-
-    if (sourcePaths.length === 0) {
-      return withActive
-    }
-
-    const hasFileTab = withActive.some((path) => path !== "__CONFIG__")
-    return hasFileTab ? withActive : sourcePaths
-  }, [activeFilePath, openTabs, sourceFiles])
 
   return (
     <div className={cn("flex h-full min-h-0 min-w-0 overflow-hidden", palette.appBg, palette.text)}>
@@ -675,57 +644,14 @@ export function ArtifactWorkspaceEditor({
             onDrop={(e) => handleDirDrop(e, "__root__")}
           >
             {/* Items count header + action buttons */}
-            <div
-              className={cn(
-                "flex h-[34px] shrink-0 items-center justify-between pl-3 pr-2 pt-1",
-                palette.subtleBorder
-              )}
-            >
-              <span className={cn("text-[11px] font-medium uppercase tracking-[0.08em]", palette.dim)}>
-                {sourceFiles.filter((f) => !f.path.endsWith("/.gitkeep")).length} items
-              </span>
-              <div className="flex items-center">
-                <button
-                  type="button"
-                  className={cn(
-                    "flex h-[22px] w-[22px] items-center justify-center rounded-[3px] transition-colors",
-                    palette.dim,
-                    palette.buttonHover
-                  )}
-                  onClick={handleAddFile}
-                  disabled={loading}
-                  title="New file"
-                >
-                  <FilePlus2 className="h-[14px] w-[14px]" />
-                </button>
-                <button
-                  type="button"
-                  className={cn(
-                    "flex h-[22px] w-[22px] items-center justify-center rounded-[3px] transition-colors",
-                    palette.dim,
-                    palette.buttonHover
-                  )}
-                  onClick={() => importInputRef.current?.click()}
-                  disabled={loading}
-                  title="Import files"
-                >
-                  <Upload className="h-[14px] w-[14px]" />
-                </button>
-                <button
-                  type="button"
-                  className={cn(
-                    "flex h-[22px] w-[22px] items-center justify-center rounded-[3px] transition-colors",
-                    palette.dim,
-                    palette.buttonHover
-                  )}
-                  onClick={handleAddDir}
-                  disabled={loading}
-                  title="New folder"
-                >
-                  <FolderPlus className="h-[14px] w-[14px]" />
-                </button>
-              </div>
-            </div>
+            <ArtifactWorkspaceSidebarHeader
+              itemCount={sourceFiles.filter((file) => !file.path.endsWith("/.gitkeep")).length}
+              loading={loading}
+              palette={palette}
+              onAddFile={handleAddFile}
+              onImportFiles={() => importInputRef.current?.click()}
+              onAddFolder={handleAddDir}
+            />
 
             {/* File tree */}
             <div className="flex-1 overflow-y-auto overflow-x-hidden py-0.5">
@@ -743,21 +669,21 @@ export function ArtifactWorkspaceEditor({
                   <div
                     className={cn(
                       "group flex h-[22px] items-center transition-colors duration-75",
-                      activeFilePath === "__CONFIG__" && palette.activeRow
+                      activeFilePath === ARTIFACT_CONFIG_FILE_PATH && palette.activeRow
                     )}
                   >
                     <button
                       type="button"
                       className={cn(
                         "flex min-w-0 flex-1 items-center gap-1 text-left text-[13px]",
-                        activeFilePath !== "__CONFIG__" && palette.rowHover,
+                        activeFilePath !== ARTIFACT_CONFIG_FILE_PATH && palette.rowHover,
                         palette.text
                       )}
                       style={{ paddingLeft: `10px` }}
                       onClick={() => {
-                        activatePath("__CONFIG__")
+                        activatePath(ARTIFACT_CONFIG_FILE_PATH)
                         setOpenTabs((prev) =>
-                          prev.includes("__CONFIG__") ? prev : [...prev, "__CONFIG__"]
+                          prev.includes(ARTIFACT_CONFIG_FILE_PATH) ? prev : [...prev, ARTIFACT_CONFIG_FILE_PATH]
                         )
                       }}
                     >
@@ -792,149 +718,29 @@ export function ArtifactWorkspaceEditor({
 
       {/* -------- MAIN AREA -------- */}
       <div className="relative flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden">
-        {/* Tab bar wrapper */}
-        <div className="relative z-10 flex h-[35px] shrink-0 mr-3 items-stretch overflow-x-auto bg-background transition-colors duration-300 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
-          <div
-            className={cn(
-              "flex rounded-md shrink-0 items-stretch w-max transition-colors duration-300",
-              palette.topBarBg
-            )}
-          >
-            {visibleTabs.map((filePath, idx) => {
-              if (filePath === "__CONFIG__") {
-                const isActive = activeFilePath === "__CONFIG__"
-                const isDragging = draggingTab === "__CONFIG__"
-                const isDropTarget = tabDropIndex === idx
-                return (
-                  <div
-                    key="__CONFIG__"
-                    draggable
-                    onDragStart={(e) => handleTabDragStart(e, "__CONFIG__")}
-                    onDragEnd={handleTabDragEnd}
-                    onDragOver={(e) => handleTabDragOver(e, idx)}
-                    onDrop={(e) => handleTabDrop(e, idx)}
-                    className={cn(
-                      "group relative z-10 flex min-w-[100px] max-w-[180px] shrink-0 items-center gap-1.5 rounded-t-md px-3 text-[12px] transition-colors duration-75",
-                      isActive
-                        ? cn(palette.activeTab, "border-b-0 -mb-px z-[1]")
-                        : cn(palette.inactiveTab, palette.tabHover, "rounded-md"),
-                      isDragging && "opacity-40",
-                      isDropTarget && "border-l-2 border-l-[#3794ff]",
-                      idx === 0 && "rounded-tl-none"
-                    )}
-                    style={{
-                      ...(isActive
-                        ? {
-                            borderLeft: idx === 0 ? undefined : `1px solid var(--border)`,
-                            borderRight: `1px solid var(--border)`,
-                            borderTop: `1px solid var(--border)`,
-                            boxShadow: `inset 0 1px 0 0 0`,
-                          }
-                        : {}),
-                    }}
-                    onClick={() => {
-                      if (loading) return
-                      activatePath("__CONFIG__")
-                    }}
-                  >
-                    <Settings2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                    <span className="truncate">Configuration</span>
-                    <button
-                      type="button"
-                      className={cn(
-                        "ml-auto flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[3px] opacity-0 transition-opacity group-hover:opacity-100",
-                        palette.muted,
-                        palette.buttonHover
-                      )}
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        handleCloseTab("__CONFIG__")
-                      }}
-                      title="Close tab"
-                    >
-                      <X className="h-3 w-3" />
-                    </button>
-                  </div>
-                )
-              }
-
-              const file = sourceFiles.find((f) => f.path === filePath)
-              if (!file) return null
-              const isActive = file.path === activeFile?.path
-              const isEntry = file.path === entryModulePath
-              const isDragging = draggingTab === file.path
-              const isDropTarget = tabDropIndex === idx
-
-              return (
-                <div
-                  key={file.path}
-                  draggable
-                  onDragStart={(e) => handleTabDragStart(e, file.path)}
-                  onDragEnd={handleTabDragEnd}
-                  onDragOver={(e) => handleTabDragOver(e, idx)}
-                  onDrop={(e) => handleTabDrop(e, idx)}
-                  className={cn(
-                    "group relative z-10 flex min-w-[100px] max-w-[180px] shrink-0 items-center gap-1.5 rounded-t-md px-3 text-[12px] transition-colors duration-75",
-                    isActive
-                      ? cn(palette.activeTab, "border-b-0 -mb-px z-[1]")
-                      : cn(palette.inactiveTab, palette.tabHover, "rounded-md"),
-                    isDragging && "opacity-40",
-                    isDropTarget && "border-l-2 border-l-[#3794ff]",
-                    idx === 0 && "rounded-tl-none"
-                  )}
-                  style={{
-                    ...(isActive
-                      ? {
-                          borderLeft: idx === 0 ? undefined : `1px solid var(--border)`,
-                          borderRight: `1px solid var(--border)`,
-                          borderTop: `1px solid var(--border)`,
-                          boxShadow: `inset 0 1px 0 0 0`,
-                        }
-                      : {}),
-                  }}
-                  onClick={() => {
-                    if (loading) return
-                    activatePath(file.path)
-                  }}
-                >
-                  <FileCode2 className="h-3.5 w-3.5 shrink-0 text-[#519aba]" />
-                  <span className="truncate">{file.path.split("/").pop()}</span>
-                  {isEntry && (
-                    <span className={cn("text-[9px] font-medium uppercase tracking-[0.08em]", palette.accent)}>
-                      M
-                    </span>
-                  )}
-                  {!isEntry && (
-                    <button
-                      type="button"
-                      className={cn(
-                        "ml-auto flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[3px] opacity-0 transition-opacity group-hover:opacity-100",
-                        palette.muted,
-                        palette.buttonHover
-                      )}
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        handleCloseTab(file.path)
-                      }}
-                      title="Close tab"
-                    >
-                      <X className="h-3 w-3" />
-                    </button>
-                  )}
-                </div>
-              )
-            })}
-          </div>
-          {/* Drop zone at end */}
-          <div
-            className="min-w-[40px] flex-1"
-            onDragOver={(e) => {
-              e.preventDefault()
-              setTabDropIndex(visibleTabs.length)
-            }}
-            onDrop={(e) => handleTabDrop(e, visibleTabs.length)}
-          />
-        </div>
+        <ArtifactWorkspaceTabs
+          activeFilePath={activeFilePath}
+          sourceFiles={sourceFiles}
+          openTabs={openTabs}
+          entryModulePath={entryModulePath}
+          loading={loading}
+          draggingTab={draggingTab}
+          tabDropIndex={tabDropIndex}
+          renamingPath={renamingPath}
+          renameValue={renameValue}
+          palette={palette}
+          onActivatePath={activatePath}
+          onCloseTab={handleCloseTab}
+          onTabDragStart={handleTabDragStart}
+          onTabDragOver={handleTabDragOver}
+          onTabDrop={handleTabDrop}
+          onTabDragEnd={handleTabDragEnd}
+          onTabDropIndexChange={setTabDropIndex}
+          onStartRenaming={startRenamingPath}
+          onRenameValueChange={setRenameValue}
+          onCommitRename={commitRename}
+          onCancelRename={cancelRenaming}
+        />
 
         {/* Scroll shadow effect */}
         <div
@@ -949,7 +755,7 @@ export function ArtifactWorkspaceEditor({
         <div className="min-h-0 flex-1 flex flex-col pt-1">
           {loading ? (
             <div className="flex-1 bg-background" />
-          ) : activeFilePath === "__CONFIG__" ? (
+          ) : activeFilePath === ARTIFACT_CONFIG_FILE_PATH ? (
             <div 
                className="flex-1 overflow-auto bg-background"
                onScroll={(e) => setIsScrolled(e.currentTarget.scrollTop > 0)}

@@ -1397,6 +1397,14 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
         if not configured_tools:
             return None
 
+        def _normalize_tool_label(value: Any) -> str:
+            text = str(value or "").strip().lower()
+            if not text:
+                return ""
+            text = re.sub(r"[_\-]+", " ", text)
+            text = re.sub(r"[^a-z0-9\s]", " ", text)
+            return re.sub(r"\s+", " ", text).strip()
+
         configured = [str(tool) for tool in configured_tools if tool]
 
         tool_id = tool_call.get("tool_id")
@@ -1411,6 +1419,7 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
             return None
 
         tool_name_lower = str(tool_name).lower()
+        normalized_tool_name = _normalize_tool_label(tool_name)
         if tool_name in configured:
             return str(tool_name)
 
@@ -1447,6 +1456,7 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
         except Exception:
             return None
 
+        normalized_matches: list[str] = []
         for tool in tools:
             if not tool:
                 continue
@@ -1454,6 +1464,18 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
             slug = str(tool.slug).lower() if getattr(tool, "slug", None) else ""
             if tool_name_lower in (name, slug):
                 return str(tool.id)
+            normalized_name = _normalize_tool_label(tool.name)
+            normalized_slug = _normalize_tool_label(getattr(tool, "slug", ""))
+            if normalized_tool_name and normalized_tool_name in (normalized_name, normalized_slug):
+                return str(tool.id)
+            if normalized_tool_name and (
+                f" {normalized_tool_name} " in f" {normalized_name} "
+                or f" {normalized_tool_name} " in f" {normalized_slug} "
+            ):
+                normalized_matches.append(str(tool.id))
+
+        if len(normalized_matches) == 1:
+            return normalized_matches[0]
 
         return None
 

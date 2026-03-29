@@ -1,7 +1,9 @@
 import {
   buildArtifactPayload,
+  buildArtifactConfigClipboardText,
   formDataFromArtifact,
   getArtifactLanguageWarningPaths,
+  parseArtifactConfigClipboardText,
   parseToolContract,
   serializeArtifactFormData,
 } from "@/components/admin/artifacts/artifactPageUtils";
@@ -157,5 +159,59 @@ describe("artifactPageUtils and credential mentions", () => {
     };
 
     expect(serializeArtifactFormData(compact)).toBe(serializeArtifactFormData(pretty));
+  });
+
+  it("round-trips copied artifact configuration payloads", () => {
+    const formData = {
+      ...createFormDataForKind("tool_impl", "javascript"),
+      display_name: "Shared Config",
+      description: "Moves across accounts",
+      entry_module_path: "main.js",
+      dependencies: "zod, openai",
+    };
+
+    const text = buildArtifactConfigClipboardText(formData);
+    const parsed = parseArtifactConfigClipboardText(text, {
+      kind: "tool_impl",
+      language: "javascript",
+      source_files: formData.source_files,
+    });
+
+    expect(parsed).toMatchObject({
+      display_name: "Shared Config",
+      description: "Moves across accounts",
+      entry_module_path: "main.js",
+      dependencies: "zod, openai",
+      runtime_target: "cloudflare_workers",
+    });
+  });
+
+  it("rejects copied configuration when the artifact kind does not match", () => {
+    const formData = createFormDataForKind("tool_impl", "javascript");
+    const text = buildArtifactConfigClipboardText(formData);
+
+    expect(() =>
+      parseArtifactConfigClipboardText(text, {
+        kind: "agent_node",
+        language: "javascript",
+        source_files: [{ path: "main.js", content: "" }],
+      }),
+    ).toThrow("Copied configuration kind does not match this artifact");
+  });
+
+  it("rejects copied configuration when the entry module path is missing locally", () => {
+    const formData = createFormDataForKind("tool_impl", "javascript");
+    const text = buildArtifactConfigClipboardText({
+      ...formData,
+      entry_module_path: "src/main.js",
+    });
+
+    expect(() =>
+      parseArtifactConfigClipboardText(text, {
+        kind: "tool_impl",
+        language: "javascript",
+        source_files: [{ path: "main.js", content: "" }],
+      }),
+    ).toThrow("Copied entry module path does not exist in this artifact's files");
   });
 });

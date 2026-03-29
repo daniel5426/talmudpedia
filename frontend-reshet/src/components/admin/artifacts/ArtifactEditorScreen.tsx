@@ -16,6 +16,7 @@ import { ArtifactConfigPanel } from "@/components/admin/artifacts/ArtifactConfig
 import { ArtifactEditorHeader } from "@/components/admin/artifacts/ArtifactEditorHeader"
 import { ArtifactTestPanel } from "@/components/admin/artifacts/ArtifactTestPanel"
 import { ArtifactWorkspaceEditor } from "@/components/admin/artifacts/ArtifactWorkspaceEditor"
+import { ARTIFACT_CONFIG_FILE_PATH } from "@/components/admin/artifacts/artifactWorkspaceUtils"
 import { ArtifactCodingChatPanel } from "@/features/artifact-coding/ArtifactCodingChatPanel"
 import { useArtifactCodingChat } from "@/features/artifact-coding/useArtifactCodingChat"
 import { credentialsService, type IntegrationCredential } from "@/services"
@@ -32,6 +33,7 @@ import {
 import { type ArtifactFormData, createFormDataForKind } from "@/components/admin/artifacts/artifactEditorState"
 import {
   buildArtifactPayload,
+  buildArtifactConfigClipboardText,
   buildArtifactUpdatePayload,
   buildConvertPayload,
   formDataFromArtifact,
@@ -39,6 +41,7 @@ import {
   formDataFromDraftSnapshot,
   getArtifactLanguageWarningPaths,
   kindLabel,
+  parseArtifactConfigClipboardText,
   parseToolContract,
   serializeArtifactFormData,
   tryParseObject,
@@ -58,7 +61,7 @@ type ArtifactEditorScreenProps = {
 }
 
 function getDefaultActiveFilePath(formData: ArtifactFormData): string {
-  return formData.entry_module_path || formData.source_files[0]?.path || "__CONFIG__"
+  return formData.entry_module_path || formData.source_files[0]?.path || ARTIFACT_CONFIG_FILE_PATH
 }
 
 function createArtifactChatDraftKey(): string {
@@ -95,9 +98,11 @@ export function ArtifactEditorScreen({
   const [loadingVersions, setLoadingVersions] = useState(false)
   const [applyingRevisionId, setApplyingRevisionId] = useState<string | null>(null)
   const [publishWarningOpen, setPublishWarningOpen] = useState(false)
+  const [configClipboardStatus, setConfigClipboardStatus] = useState<string | null>(null)
   const promptMentionModal = usePromptMentionModal<{ tokenRange: { from: number; to: number } }>()
   const lastWorkingDraftSignatureRef = useRef<string | null>(null)
   const workingDraftSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const configClipboardStatusTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const viewMode = mode
 
   const collapseAppSidebarOnEnter = useEffectEvent(() => {
@@ -279,8 +284,27 @@ export function ArtifactEditorScreen({
     }
   }, [currentFormSignature, mode, persistWorkingDraft, selectedArtifact?.id])
 
+  useEffect(() => {
+    return () => {
+      if (configClipboardStatusTimeoutRef.current) {
+        clearTimeout(configClipboardStatusTimeoutRef.current)
+      }
+    }
+  }, [])
+
   const updateFormData = useCallback((field: keyof ArtifactFormData, value: string | ArtifactKind | ArtifactLanguage | ArtifactFormData["source_files"]) => {
     setFormData((prev) => ({ ...prev, [field]: value }))
+  }, [])
+
+  const showConfigClipboardStatus = useCallback((status: string) => {
+    if (configClipboardStatusTimeoutRef.current) {
+      clearTimeout(configClipboardStatusTimeoutRef.current)
+    }
+    setConfigClipboardStatus(status)
+    configClipboardStatusTimeoutRef.current = setTimeout(() => {
+      setConfigClipboardStatus(null)
+      configClipboardStatusTimeoutRef.current = null
+    }, 2500)
   }, [])
 
   const applyDraftSnapshot = useCallback((snapshot: Record<string, unknown>) => {
@@ -470,6 +494,60 @@ export function ArtifactEditorScreen({
     updateFormData("tool_contract", fillPromptMentionJsonToken(formData.tool_contract, promptMentionModal.context.tokenRange, content))
   }, [formData.kind, formData.tool_contract, promptMentionModal.context, updateFormData])
 
+  const handleCopyConfig = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(buildArtifactConfigClipboardText(formData))
+      showConfigClipboardStatus("Configuration copied")
+    } catch (error) {
+      console.error("Failed to copy artifact configuration", error)
+      alert(error instanceof Error ? error.message : "Failed to copy configuration")
+    }
+  }, [formData, showConfigClipboardStatus])
+
+  const handlePasteConfig = useCallback(async () => {
+    try {
+      const text = await navigator.clipboard.readText()
+      const nextConfig = parseArtifactConfigClipboardText(text, {
+        kind: formData.kind,
+        language: formData.language,
+        source_files: formData.source_files,
+      })
+      setFormData((prev) => ({ ...prev, ...nextConfig }))
+      showConfigClipboardStatus("Configuration pasted")
+    } catch (error) {
+      console.error("Failed to paste artifact configuration", error)
+      alert(error instanceof Error ? error.message : "Failed to paste configuration")
+    }
+  }, [formData.kind, formData.language, formData.source_files, showConfigClipboardStatus])
+
+  const handleConfigShortcuts = useEffectEvent((event: KeyboardEvent) => {
+    if (activeFilePath !== ARTIFACT_CONFIG_FILE_PATH) return
+    if (!(event.metaKey || event.ctrlKey)) return
+
+    const target = event.target
+    const isEditableTarget =
+      target instanceof HTMLElement &&
+      (target.isContentEditable ||
+        ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName) ||
+        target.closest("[contenteditable='true']"))
+
+    const key = event.key.toLowerCase()
+    if (!isEditableTarget && !event.shiftKey && !event.altKey && (key === "c" || key === "p")) {
+      event.preventDefault()
+      void handleCopyConfig()
+      return
+    }
+    if (!isEditableTarget && !event.shiftKey && !event.altKey && key === "v") {
+      event.preventDefault()
+      void handlePasteConfig()
+    }
+  })
+
+  useEffect(() => {
+    window.addEventListener("keydown", handleConfigShortcuts)
+    return () => window.removeEventListener("keydown", handleConfigShortcuts)
+  }, [handleConfigShortcuts])
+
   const artifactCodingChat = useArtifactCodingChat({
     tenantSlug: currentTenant?.slug,
     tenantId: currentTenant?.id || null,
@@ -493,6 +571,7 @@ export function ArtifactEditorScreen({
         activeFilePath={activeFilePath}
         entryModulePath={formData.entry_module_path}
         onActiveFileChange={setActiveFilePath}
+        onEntryModulePathChange={(path) => updateFormData("entry_module_path", path)}
         onSourceFilesChange={(files) => updateFormData("source_files", files)}
         sidebarOpen={sidebarOpen}
         onSidebarOpenChange={setSidebarOpen}
@@ -511,6 +590,13 @@ export function ArtifactEditorScreen({
             onConvertTargetKindChange={setConvertTargetKind}
             onConvertKind={handleConvertKind}
             onPromptMentionClick={(promptId, tokenRange) => promptMentionModal.openPromptMentionModal(promptId, { tokenRange })}
+            onCopyConfig={() => {
+              void handleCopyConfig()
+            }}
+            onPasteConfig={() => {
+              void handlePasteConfig()
+            }}
+            configClipboardStatus={configClipboardStatus}
           />
         }
       />

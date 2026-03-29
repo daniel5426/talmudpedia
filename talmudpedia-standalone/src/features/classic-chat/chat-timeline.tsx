@@ -65,10 +65,49 @@ type ChatTimelineProps = {
   isLoadingOlderMessages?: boolean;
 };
 
+const UI_BLOCK_KINDS = ['"kind":"kpi"', '"kind":"pie"', '"kind":"bar"', '"kind":"compare"', '"kind":"table"', '"kind":"note"'] as const;
+
+function isLikelyUiBlocksJson(text: string): boolean {
+  const compact = text.replace(/\s+/g, "");
+  return (
+    (compact.includes('"rows":[') || compact.includes('"blocks":[')) &&
+    UI_BLOCK_KINDS.some((kind) => compact.includes(kind))
+  );
+}
+
+function stripLeakedUiBlocksJson(text: string): string {
+  let sanitized = text;
+
+  sanitized = sanitized.replace(/```json\s*([\s\S]*?)```/gi, (fullMatch, jsonBody: string) =>
+    isLikelyUiBlocksJson(jsonBody) ? "" : fullMatch,
+  );
+
+  const lines = sanitized.split("\n");
+  for (let index = 0; index < lines.length; index += 1) {
+    if (!lines[index]?.trimStart().startsWith("{")) {
+      continue;
+    }
+    const candidate = lines.slice(index).join("\n").trim();
+    if (isLikelyUiBlocksJson(candidate)) {
+      sanitized = lines.slice(0, index).join("\n");
+      break;
+    }
+  }
+
+  return sanitized.trim();
+}
+
 function messageText(message: TemplateMessage) {
-  if (message.text) return message.text;
+  if (message.text) {
+    return message.role === "assistant" ? stripLeakedUiBlocksJson(message.text) : message.text;
+  }
   const firstTextBlock = message.blocks?.find((block) => block.kind === "text");
-  return firstTextBlock?.kind === "text" ? firstTextBlock.content : "";
+  if (firstTextBlock?.kind !== "text") {
+    return "";
+  }
+  return message.role === "assistant"
+    ? stripLeakedUiBlocksJson(firstTextBlock.content)
+    : firstTextBlock.content;
 }
 
 function renderAttachments(message: TemplateMessage) {
@@ -120,7 +159,8 @@ function hasRunningTask(message: TemplateMessage): boolean {
 
 function renderBlock(block: TemplateRenderBlock) {
   if (block.kind === "text") {
-    return <MessageResponse key={block.id}>{block.content}</MessageResponse>;
+    const content = stripLeakedUiBlocksJson(block.content);
+    return content ? <MessageResponse key={block.id}>{content}</MessageResponse> : null;
   }
 
   if (block.kind === "reasoning") {

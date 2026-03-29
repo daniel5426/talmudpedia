@@ -21,6 +21,7 @@ import type {
   PricoWidgetRow,
   PricoWidgetBundle,
 } from "./contract";
+import { useLocale } from "../classic-chat/locale-context";
 
 const WIDGET_COLORS = [
   "var(--chart-1)",
@@ -100,7 +101,7 @@ function widgetShell(widget: PricoWidget, children: React.ReactNode) {
   );
 }
 
-function renderChart(widget: Extract<PricoWidget, { kind: "pie" | "bar" }>) {
+function renderChart(widget: Extract<PricoWidget, { kind: "pie" | "bar" }>, isRtl: boolean) {
   const config = Object.fromEntries(
     widget.data.map((item, index) => [
       item.label,
@@ -146,10 +147,22 @@ function renderChart(widget: Extract<PricoWidget, { kind: "pie" | "bar" }>) {
   return widgetShell(
     widget,
     <ChartContainer className="h-52 w-full" config={config}>
-      <BarChart data={widget.data} layout="vertical" margin={{ left: 8, right: 8 }}>
+      <BarChart
+        data={widget.data}
+        layout="vertical"
+        margin={{ left: isRtl ? 8 : 16, right: isRtl ? 16 : 8 }}
+      >
         <CartesianGrid horizontal={false} strokeDasharray="3 3" />
-        <XAxis type="number" tickLine={false} axisLine={false} />
-        <YAxis dataKey="label" type="category" width={90} tickLine={false} axisLine={false} />
+        <XAxis type="number" reversed={isRtl} tickLine={false} axisLine={false} />
+        <YAxis
+          dataKey="label"
+          type="category"
+          width={90}
+          orientation={isRtl ? "right" : "left"}
+          tickLine={false}
+          axisLine={false}
+          tick={{ textAnchor: "end" }}
+        />
         <ChartTooltip content={<ChartTooltipContent />} />
         <Bar dataKey="value" radius={3}>
           {widget.data.map((entry, index) => (
@@ -223,7 +236,7 @@ function renderNote(widget: PricoNoteWidget) {
   return widgetShell(widget, <div className="text-sm leading-relaxed text-muted-foreground">{widget.text}</div>);
 }
 
-export function renderWidget(widget: PricoWidget) {
+export function renderWidget(widget: PricoWidget, isRtl = false) {
   if (widget.kind === "kpi") {
     return widgetShell(
       widget,
@@ -231,7 +244,7 @@ export function renderWidget(widget: PricoWidget) {
     );
   }
   if (widget.kind === "pie" || widget.kind === "bar") {
-    return renderChart(widget);
+    return renderChart(widget, isRtl);
   }
   if (widget.kind === "compare") {
     return renderCompare(widget);
@@ -250,6 +263,7 @@ type PricoWidgetBundleViewProps = {
 };
 
 export function PricoWidgetBundleView({ bundle }: PricoWidgetBundleViewProps) {
+  const { isRtl } = useLocale();
   const normalizedRows = bundle.rows.map(normalizeRow);
 
   return (
@@ -262,7 +276,7 @@ export function PricoWidgetBundleView({ bundle }: PricoWidgetBundleViewProps) {
       ) : null}
       {normalizedRows.map((row, index) => (
         <div key={`row-${index}`} className="grid grid-cols-1 gap-3 md:grid-cols-12">
-          {row.widgets.map((widget) => renderWidget(widget))}
+          {row.widgets.map((widget) => renderWidget(widget, isRtl))}
         </div>
       ))}
     </div>
