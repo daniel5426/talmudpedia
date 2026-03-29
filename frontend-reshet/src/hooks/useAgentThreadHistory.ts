@@ -121,7 +121,8 @@ export const mapTurnsToMessages = async (threadId: string, turns: ThreadTurn[]):
   await Promise.all(
     sortedTurns.map(async (turn, index) => {
       const rawAssistantText = String(turn.assistant_output_text ?? "").trim();
-      if (!rawAssistantText) return;
+      const runId = String(turn.run_id || "").trim();
+      if (!rawAssistantText && !runId) return;
       const turnKey = String(turn.id ?? index);
       const blocks = await buildResponseBlocksFromTurn(turn, rawAssistantText);
       responseBlocksByTurnKey.set(turnKey, blocks);
@@ -167,9 +168,9 @@ export const mapTurnsToMessages = async (threadId: string, turns: ThreadTurn[]):
       }
     }
 
-    if (assistantText) {
+    const responseBlocks = responseBlocksByTurnKey.get(turnKey);
+    if (assistantText || (responseBlocks && responseBlocks.length > 0)) {
       const assistantTimestamp = parseTimestamp(turn.completed_at, baseTimestamp + 1);
-      const responseBlocks = responseBlocksByTurnKey.get(turnKey);
       next.push({
         id: `${threadId}:turn:${turnKey}:assistant`,
         role: "assistant",

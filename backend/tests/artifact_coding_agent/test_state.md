@@ -1,6 +1,6 @@
 # Artifact Coding Agent Tests
 
-Last Updated: 2026-03-27
+Last Updated: 2026-03-29
 
 ## Scope
 
@@ -28,6 +28,8 @@ Track backend coverage for the artifact-coding agent runtime across locked draft
 - artifact coding tools now resolve against the run-pinned shared draft even if the mutable session binding changes later
 - completed artifact-coding runs that emitted `tool.failed` are reconciled to true failed runs and persist a failure assistant message instead of a false success summary
 - session-detail reload now returns run events for runs that only have a stored user turn, so failed/interrupted partial history is still reconstructible from trace events
+- artifact prompt submission now creates the backing `agent_thread_turn` immediately, so admin thread detail does not go blank when a run is aborted before executor startup finishes
+- artifact cancel now persists the cancelled thread turn plus any streamed partial assistant text, keeping admin thread detail and artifact chat history aligned after a manual abort
 - artifact test tools now enforce one active test run at a time and add a server-side `artifact_coding_await_last_test_result` wait path for Cloudflare cold-start / queue delay
 - artifact test tools now return ordered run events and a failure summary so the agent can inspect why a test failed
 - delegated artifact-worker instructions now tell the model to start one test run, wait for terminal result, and avoid `queued` polling loops
@@ -105,6 +107,9 @@ Track backend coverage for the artifact-coding agent runtime across locked draft
 - Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/artifact_coding_agent/test_runtime_service.py`
 - Date: 2026-03-27 Asia/Hebron
 - Result: PASS (`25 passed, 5 warnings`)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/artifact_coding_agent/test_runtime_service.py`
+- Date: 2026-03-29 Asia/Hebron
+- Result: PASS (`27 passed, 5 warnings`)
 
 ## Known Gaps
 

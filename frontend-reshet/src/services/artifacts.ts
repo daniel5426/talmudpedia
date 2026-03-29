@@ -337,6 +337,10 @@ export interface ArtifactCodingAnswerQuestionRequest {
   answers: string[][];
 }
 
+export interface ArtifactCodingCancelRunRequest {
+  assistant_output_text?: string;
+}
+
 export interface ArtifactCodingRevertRequest {
   run_id: string;
 }
@@ -603,11 +607,15 @@ export const artifactsService = {
     return httpClient.get<ArtifactCodingRun>(url);
   },
 
-  cancelCodingAgentRun: async (runId: string, tenantSlug?: string): Promise<ArtifactCodingRun> => {
+  cancelCodingAgentRun: async (
+    runId: string,
+    tenantSlug?: string,
+    payload: ArtifactCodingCancelRunRequest = {},
+  ): Promise<ArtifactCodingRun> => {
     const url = tenantSlug
       ? `/admin/artifacts/coding-agent/v1/runs/${runId}/cancel?tenant_slug=${tenantSlug}`
       : `/admin/artifacts/coding-agent/v1/runs/${runId}/cancel`;
-    return httpClient.post<ArtifactCodingRun>(url, {});
+    return httpClient.post<ArtifactCodingRun>(url, payload);
   },
 
   answerCodingAgentRunQuestion: async (

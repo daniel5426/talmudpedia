@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.execution.service import AgentExecutorService
 from app.agent.execution.types import ExecutionMode
-from app.db.postgres.models.agent_threads import AgentThreadSurface
+from app.db.postgres.models.agent_threads import AgentThreadSurface, AgentThreadTurnStatus
 from app.db.postgres.models.agents import AgentRun, RunStatus
 from app.db.postgres.models.artifact_runtime import Artifact, ArtifactCodingSession, ArtifactCodingSharedDraft, ArtifactRun
 from app.services.artifact_coding_agent_profile import ensure_artifact_coding_agent_profile
@@ -57,6 +57,53 @@ class ArtifactCodingRuntimeService:
     def _normalize_draft_key(value: str | None) -> str | None:
         text = str(value or "").strip()
         return text or None
+
+    @staticmethod
+    def _session_id_for_run(run: AgentRun) -> UUID | None:
+        input_context = run.input_params.get("context") if isinstance(run.input_params, dict) else {}
+        if not isinstance(input_context, dict):
+            return None
+        raw = input_context.get("artifact_coding_session_id")
+        try:
+            return UUID(str(raw)) if raw else None
+        except Exception:
+            return None
+
+    @staticmethod
+    def _run_input_text(run: AgentRun) -> str | None:
+        input_params = run.input_params if isinstance(run.input_params, dict) else {}
+        raw = input_params.get("input_display_text") or input_params.get("input")
+        text = str(raw or "").strip()
+        return text or None
+
+    @staticmethod
+    def _apply_partial_assistant_text(run: AgentRun, partial_assistant_text: str | None) -> None:
+        partial_text = str(partial_assistant_text or "").strip()
+        if not partial_text:
+            return
+        output_result = dict(run.output_result or {}) if isinstance(run.output_result, dict) else {}
+        messages = output_result.get("messages")
+        if not isinstance(messages, list):
+            messages = []
+        messages.append({"role": "assistant", "content": partial_text})
+        output_result["messages"] = messages
+        output_result["final_output"] = partial_text
+        run.output_result = output_result
+
+    async def _ensure_thread_turn_started(
+        self,
+        *,
+        run: AgentRun,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        if run.thread_id is None:
+            return
+        await ThreadService(self.db).start_turn(
+            thread_id=run.thread_id,
+            run_id=run.id,
+            user_input_text=self._run_input_text(run),
+            metadata=metadata,
+        )
 
     @staticmethod
     def build_initial_snapshot_from_seed(draft_seed: dict[str, Any]) -> dict[str, Any]:
@@ -415,6 +462,10 @@ class ArtifactCodingRuntimeService:
         prompt_role: str,
     ) -> None:
         run.surface = ARTIFACT_CODING_AGENT_SURFACE
+        await self._ensure_thread_turn_started(
+            run=run,
+            metadata={"surface": ARTIFACT_CODING_AGENT_SURFACE},
+        )
         await self.history.mark_run_started(session=session, run_id=run.id)
         await self.shared_drafts.set_last_run(shared_draft=shared_draft, run_id=run.id)
         await self.shared_drafts.create_run_snapshot(
@@ -434,6 +485,53 @@ class ArtifactCodingRuntimeService:
                 run_id=run.id,
                 content=prompt,
             )
+
+    async def cancel_run(
+        self,
+        *,
+        run: AgentRun,
+        partial_assistant_text: str | None = None,
+    ) -> tuple[AgentRun, ArtifactCodingSession | None]:
+        session_id = self._session_id_for_run(run)
+        session = await self.db.get(ArtifactCodingSession, session_id) if session_id is not None else None
+        status = str(getattr(run.status, "value", run.status) or "").strip().lower()
+        turn_status = AgentThreadTurnStatus.cancelled
+
+        if status not in {
+            RunStatus.completed.value,
+            RunStatus.failed.value,
+            RunStatus.cancelled.value,
+        }:
+            run.status = RunStatus.cancelled
+            run.completed_at = datetime.now(timezone.utc)
+            run.error_message = None
+        elif status == RunStatus.failed.value:
+            turn_status = AgentThreadTurnStatus.failed
+        elif status == RunStatus.completed.value:
+            turn_status = AgentThreadTurnStatus.completed
+
+        self._apply_partial_assistant_text(run, partial_assistant_text)
+        await self._ensure_thread_turn_started(
+            run=run,
+            metadata={"surface": ARTIFACT_CODING_AGENT_SURFACE, "cancelled": True},
+        )
+        if run.thread_id is not None:
+            assistant_text = self.history._extract_assistant_output_text(run)
+            await ThreadService(self.db).complete_turn(
+                run_id=run.id,
+                status=turn_status,
+                assistant_output_text=assistant_text,
+                metadata={"cancelled": True},
+            )
+
+        if session is not None:
+            await self.history.reconcile_session_run(session=session, run=run)
+
+        await self.db.commit()
+        await self.db.refresh(run)
+        if session is not None:
+            await self.db.refresh(session)
+        return run, session
 
     async def reconcile_session_run(
         self,

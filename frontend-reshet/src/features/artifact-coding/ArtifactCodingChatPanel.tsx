@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Clock, Plus, Square } from "lucide-react";
+import { Square } from "lucide-react";
 
 import {
   Conversation,
@@ -50,9 +50,8 @@ type ArtifactCodingChatPanelProps = {
   timeline: TimelineItem[];
   activeThinkingSummary: string;
   chatSessions: ArtifactCodingChatSession[];
-  activeChatSessionId: string | null;
-  onStartNewChat: () => void;
-  onOpenHistory: () => void;
+  isHistoryOpen: boolean;
+  onHistoryOpenChange: (next: boolean) => void;
   onLoadChatSession: (sessionId: string) => Promise<void>;
   onSendMessage: (text: string) => Promise<void>;
   onStopRun: () => void;
@@ -81,9 +80,8 @@ export function ArtifactCodingChatPanel({
   timeline,
   activeThinkingSummary,
   chatSessions,
-  activeChatSessionId,
-  onStartNewChat,
-  onOpenHistory,
+  isHistoryOpen,
+  onHistoryOpenChange,
   onLoadChatSession,
   onSendMessage,
   onStopRun,
@@ -102,12 +100,12 @@ export function ArtifactCodingChatPanel({
   revertingRunId,
   onRevertToRun,
 }: ArtifactCodingChatPanelProps) {
-  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
-  const [isScrolled, setIsScrolled] = useState(false);
+  const [isAwayFromTop, setIsAwayFromTop] = useState(false);
   const [scrollContainer, setScrollContainer] = useState<HTMLElement | null>(null);
   const topSentinelRef = useRef<HTMLDivElement>(null);
   const isLoadingOlderRef = useRef(false);
   const handleScrollContainerChange = useCallback((node: HTMLElement | null) => {
+    setIsAwayFromTop(Boolean(node && node.scrollTop > 0));
     setScrollContainer((current) => (current === node ? current : node));
   }, []);
 
@@ -141,10 +139,6 @@ export function ArtifactCodingChatPanel({
     [lastToolAfterCurrentUser],
   );
   const runningSessionIdSet = useMemo(() => new Set(runningSessionIds), [runningSessionIds]);
-  const activeSessionIsRunning = useMemo(
-    () => Boolean(activeChatSessionId && runningSessionIdSet.has(activeChatSessionId)),
-    [activeChatSessionId, runningSessionIdSet],
-  );
 
   useEffect(() => {
     const sentinel = topSentinelRef.current;
@@ -171,10 +165,13 @@ export function ArtifactCodingChatPanel({
 
   useEffect(() => {
     if (!scrollContainer) return;
-    const handleScroll = () => setIsScrolled(scrollContainer.scrollTop > 5);
+    const handleScroll = () => {
+      setIsAwayFromTop(scrollContainer.scrollTop > 0);
+    };
     scrollContainer.addEventListener("scroll", handleScroll, { passive: true });
-    handleScroll();
-    return () => scrollContainer.removeEventListener("scroll", handleScroll);
+    return () => {
+      scrollContainer.removeEventListener("scroll", handleScroll);
+    };
   }, [scrollContainer]);
 
   if (!isOpen) {
@@ -184,42 +181,18 @@ export function ArtifactCodingChatPanel({
   return (
     <aside
       className={cn(
-        "flex h-full min-h-0 shrink-0 flex-col overflow-hidden bg-background",
+        "flex h-full min-h-0 shrink-0 flex-col overflow-hidden !bg-transparent",
         layoutMode === "playground" ? "w-full" : "w-[430px]",
       )}
     >
-      <div className="relative z-10 flex h-7 shrink-0 items-center gap-1 bg-background px-2 pt-2">
+      <div className="relative flex min-h-0 flex-1 flex-col px-3 pb-2 pt-0">
         <div
-          className={cn(
-            "pointer-events-none absolute inset-x-0 top-full z-10 h-8 bg-gradient-to-b from-background via-background/90 to-transparent transition-opacity duration-300",
-            isScrolled ? "opacity-100" : "opacity-0",
-          )}
           aria-hidden="true"
+          className={cn(
+            "pointer-events-none absolute inset-x-3 top-0 z-10 h-8 bg-gradient-to-b from-background via-background/92 to-transparent transition-opacity duration-200",
+            isAwayFromTop ? "opacity-100" : "opacity-0",
+          )}
         />
-        <div className="flex min-w-0 flex-1 items-center gap-2 px-1">
-          {activeSessionIsRunning ? <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-blue-500" /> : null}
-        </div>
-        <div className="flex mr-1 mb-2 border rounded-md items-center gap-1">
-        <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-foreground" onClick={onStartNewChat} aria-label="Create new chat" disabled={controlsDisabled}>
-          <Plus className="h-3.5 w-3.5" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-6 w-6 text-muted-foreground hover:text-foreground"
-          disabled={controlsDisabled}
-          onClick={() => {
-            onOpenHistory();
-            setIsHistoryOpen(true);
-          }}
-          aria-label="Chat history"
-        >
-          <Clock className="h-3.5 w-3.5" />
-        </Button>
-        </div>
-      </div>
-
-      <div className="flex min-h-0 flex-1 flex-col px-3 pb-2 pt-1">
         <Conversation className="flex min-h-0 flex-1 flex-col transition-all">
           <ArtifactCodingChatScrollBindings onScrollContainerChange={handleScrollContainerChange} />
           <ConversationContent className="gap-2 px-0 py-0 pb-30">
@@ -302,7 +275,7 @@ export function ArtifactCodingChatPanel({
         </div>
       </div>
 
-      <Dialog open={isHistoryOpen} onOpenChange={setIsHistoryOpen}>
+      <Dialog open={isHistoryOpen} onOpenChange={onHistoryOpenChange}>
         <DialogContent className="w-[min(44rem,calc(100vw-2rem))] max-w-[calc(100vw-2rem)] overflow-hidden p-0 sm:max-w-2xl">
           <div className="flex max-h-[75vh] min-h-0 flex-col p-6">
             <DialogHeader className="shrink-0 pr-8">
@@ -320,7 +293,7 @@ export function ArtifactCodingChatPanel({
                       className="w-full overflow-hidden rounded-md px-3 py-2 text-left text-sm transition-colors hover:bg-muted"
                       onClick={() => {
                         void onLoadChatSession(session.id);
-                        setIsHistoryOpen(false);
+                        onHistoryOpenChange(false);
                       }}
                     >
                       <div className="flex items-center gap-2">

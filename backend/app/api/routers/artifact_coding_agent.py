@@ -118,6 +118,10 @@ class ArtifactCodingAnswerQuestionRequest(BaseModel):
     answers: List[List[str]] = Field(default_factory=list)
 
 
+class ArtifactCodingCancelRunRequest(BaseModel):
+    assistant_output_text: Optional[str] = None
+
+
 class ArtifactCodingRevertRequest(BaseModel):
     run_id: UUID
 
@@ -571,6 +575,7 @@ def _session_id_for_run(run: AgentRun) -> UUID | None:
 @router.post("/runs/{run_id}/cancel", response_model=ArtifactCodingRunResponse)
 async def cancel_artifact_coding_run(
     run_id: UUID,
+    payload: ArtifactCodingCancelRunRequest,
     _: Dict[str, Any] = Depends(require_scopes("artifacts.write")),
     artifact_ctx=Depends(get_artifact_context),
 ):
@@ -578,18 +583,11 @@ async def cancel_artifact_coding_run(
     run = await db.get(AgentRun, run_id)
     if run is None or run.tenant_id != tenant.id or str(run.surface or "") != ARTIFACT_CODING_AGENT_SURFACE:
         raise HTTPException(status_code=404, detail="Artifact coding run not found")
-    status = str(getattr(run.status, "value", run.status))
-    if status not in {RunStatus.completed.value, RunStatus.failed.value, RunStatus.cancelled.value}:
-        run.status = RunStatus.cancelled
-        run.completed_at = datetime.utcnow()
-        await db.commit()
-    session = None
-    session_id = _session_id_for_run(run)
-    if session_id is not None:
-        session = await db.get(ArtifactCodingSession, session_id)
-        if session is not None and session.active_run_id == run.id:
-            session.active_run_id = None
-            await db.commit()
+    runtime = ArtifactCodingRuntimeService(db)
+    run, session = await runtime.cancel_run(
+        run=run,
+        partial_assistant_text=payload.assistant_output_text,
+    )
     return _run_response_from_snapshot(run, session_scope=_session_scope_snapshot(session))
 
 

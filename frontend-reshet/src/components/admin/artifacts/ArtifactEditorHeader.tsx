@@ -1,6 +1,6 @@
 "use client"
 
-import { Bot, ChevronDown, Database, Loader2, PanelLeft, Play, Plus, RefreshCw, Save, Upload, Wrench } from "lucide-react"
+import { Bot, ChevronDown, Clock3, Database, Loader2, PanelLeft, Play, Plus, RefreshCw, Save, Upload, Wrench } from "lucide-react"
 
 import { AdminPageHeader } from "@/components/admin/AdminPageHeader"
 import { ArtifactVersionsDropdown } from "@/components/admin/artifacts/ArtifactVersionsDropdown"
@@ -42,6 +42,8 @@ type ArtifactEditorHeaderProps = {
   onCreateArtifact: (kind: ArtifactKind, language: ArtifactLanguage) => void
   onToggleSidebar: () => void
   onToggleAgentPanel: () => void
+  onStartNewChat: () => void
+  onOpenChatHistory: () => void
   onVersionsOpenChange: (open: boolean) => void
   onSelectVersion: (revisionId: string) => void
   onPublish: () => void
@@ -76,6 +78,8 @@ export function ArtifactEditorHeader({
   onCreateArtifact,
   onToggleSidebar,
   onToggleAgentPanel,
+  onStartNewChat,
+  onOpenChatHistory,
   onVersionsOpenChange,
   onSelectVersion,
   onPublish,
@@ -99,7 +103,7 @@ export function ArtifactEditorHeader({
   }
 
   return (
-    <AdminPageHeader contentClassName="h-12 items-center">
+    <AdminPageHeader contentClassName="h-12 items-center" scrollEffectMode="none">
       <div className="flex min-w-0 flex-1 items-center gap-3">
         <CustomBreadcrumb items={breadcrumbItems} />
       </div>
@@ -172,22 +176,62 @@ export function ArtifactEditorHeader({
               onSelectVersion={onSelectVersion}
             />
           ) : null}
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={onToggleAgentPanel}
-            disabled={controlsDisabled}
-            className="mr-1 h-8 w-8 text-muted-foreground hover:text-foreground"
-            title={isAgentPanelOpen ? "Close coding agent panel" : "Open coding agent panel"}
-          >
-            <KesherLogo
-              size={23}
+          <div className="mr-1 flex items-center">
+            <div
               className={cn(
-                "h-4 w-4 transition-transform duration-200",
-                isAgentPanelOpen ? "rotate-90 text-foreground" : "text-sky-600",
-              )}
-            />
-          </Button>
+                "flex items-center rounded-full p-1 transition-all duration-200 ease-out",
+                isAgentPanelOpen ? "gap-1 border border-border/70 bg-background/80 backdrop-blur-sm" : "gap-0 border-transparent bg-transparent",
+              )}>
+              <div
+                className={cn(
+                  "flex items-center overflow-hidden transition-all duration-200 ease-out",
+                  isAgentPanelOpen ? "mr-1 max-w-24 opacity-100" : "mr-0 max-w-0 opacity-0",
+                )}
+                aria-hidden={!isAgentPanelOpen}
+              >
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  onClick={onStartNewChat}
+                  disabled={controlsDisabled || !isAgentPanelOpen}
+                  className="h-6 w-6 rounded-full text-muted-foreground hover:text-foreground"
+                  title="Create new chat"
+                  aria-label="Create new chat"
+                  tabIndex={isAgentPanelOpen ? 0 : -1}
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                </Button>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  onClick={onOpenChatHistory}
+                  disabled={controlsDisabled || !isAgentPanelOpen}
+                  className="h-6 w-6 rounded-full text-muted-foreground hover:text-foreground"
+                  title="Chat history"
+                  aria-label="Chat history"
+                  tabIndex={isAgentPanelOpen ? 0 : -1}
+                >
+                  <Clock3 className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={onToggleAgentPanel}
+                disabled={controlsDisabled}
+                className="relative z-10 h-6 w-6 shrink-0 rounded-full p-0 text-muted-foreground hover:text-foreground"
+                title={isAgentPanelOpen ? "Close coding agent panel" : "Open coding agent panel"}
+              >
+                <KesherLogo
+                  size={23}
+                  className={cn(
+                    "h-4 w-4 transition-transform duration-200",
+                    isAgentPanelOpen ? "rotate-90 text-foreground" : "text-sky-600",
+                  )}
+                />
+              </Button>
+            </div>
+          </div>
           <Button size="sm" variant="outline" onClick={onRunTest} disabled={controlsDisabled}>
             <Play className="mr-2 h-4 w-4 fill-current" />
             Test

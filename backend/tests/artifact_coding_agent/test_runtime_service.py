@@ -8,6 +8,7 @@ from sqlalchemy import select
 
 from app.agent.execution.trace_recorder import ExecutionTraceRecorder
 from app.api.routers.artifact_coding_agent import _build_session_detail_response
+from app.db.postgres.models.agent_threads import AgentThreadTurn, AgentThreadTurnStatus
 from app.db.postgres.models.agents import AgentRun, RunStatus
 from app.db.postgres.models.artifact_runtime import ArtifactCodingMessage, ArtifactCodingSession, ArtifactCodingSharedDraft, ArtifactRun, ArtifactRunDomain, ArtifactRunEvent, ArtifactRunStatus
 from app.db.postgres.models.registry import IntegrationCredential, IntegrationCredentialCategory, ToolRegistry
@@ -442,6 +443,132 @@ async def test_reconcile_session_run_marks_completed_run_failed_after_tool_failu
     assert run.error_message == "Artifact coding shared draft mismatch"
     assert assistant_message is not None
     assert assistant_message.content == "Execution failed: Artifact coding shared draft mismatch"
+
+
+@pytest.mark.asyncio
+async def test_start_prompt_run_creates_thread_turn_immediately(db_session, monkeypatch):
+    tenant, user = await _seed_tenant_and_user(db_session)
+    runtime = ArtifactCodingRuntimeService(db_session)
+
+    created_run_id = uuid4()
+
+    async def fake_start_run(self, *, agent_id, input_params, user_id, background, mode, requested_scopes, thread_id, **kwargs):
+        del self, background, mode, requested_scopes, kwargs
+        run = AgentRun(
+            id=created_run_id,
+            tenant_id=tenant.id,
+            agent_id=agent_id,
+            user_id=user_id,
+            initiator_user_id=user_id,
+            thread_id=thread_id,
+            surface="artifact_coding_agent",
+            status=RunStatus.queued,
+            input_params=input_params,
+            output_result=None,
+        )
+        db_session.add(run)
+        await db_session.flush()
+        return created_run_id
+
+    monkeypatch.setattr("app.services.artifact_coding_runtime_service.AgentExecutorService.start_run", fake_start_run)
+
+    session, _shared_draft, run = await runtime.start_prompt_run(
+        tenant_id=tenant.id,
+        user_id=user.id,
+        user_prompt="Create the artifact",
+        artifact_id=None,
+        draft_key=f"draft-{uuid4().hex[:8]}",
+        chat_session_id=None,
+        draft_snapshot=runtime.build_initial_snapshot_from_seed({"kind": "tool_impl"}),
+        model_id=None,
+    )
+
+    turn = (
+        await db_session.execute(
+            select(AgentThreadTurn).where(AgentThreadTurn.run_id == run.id)
+        )
+    ).scalar_one_or_none()
+
+    assert session.agent_thread_id == run.thread_id
+    assert turn is not None
+    assert turn.user_input_text == "Create the artifact"
+    assert turn.status == AgentThreadTurnStatus.running
+
+
+@pytest.mark.asyncio
+async def test_cancel_run_persists_partial_assistant_text_and_cancelled_turn(db_session):
+    tenant, user = await _seed_tenant_and_user(db_session)
+    agent = await ensure_artifact_coding_agent_profile(db_session, tenant.id, actor_user_id=user.id)
+    runtime = ArtifactCodingRuntimeService(db_session)
+    prepared = await runtime.prepare_session(
+        tenant_id=tenant.id,
+        user_id=user.id,
+        agent_id=agent.id,
+        title_prompt="Cancel the run",
+        artifact_id=None,
+        draft_key=f"draft-{uuid4().hex[:8]}",
+        chat_session_id=None,
+        draft_snapshot=runtime.build_initial_snapshot_from_seed({"kind": "tool_impl"}),
+        replace_snapshot=True,
+    )
+
+    run = AgentRun(
+        tenant_id=tenant.id,
+        agent_id=agent.id,
+        user_id=user.id,
+        initiator_user_id=user.id,
+        thread_id=prepared.session.agent_thread_id,
+        surface="artifact_coding_agent",
+        status=RunStatus.running,
+        input_params={
+            "input": "Cancel the run",
+            "context": {
+                "thread_id": str(prepared.session.agent_thread_id),
+                "artifact_coding_session_id": str(prepared.session.id),
+                "artifact_coding_shared_draft_id": str(prepared.shared_draft.id),
+            },
+        },
+        output_result=None,
+    )
+    db_session.add(run)
+    await db_session.flush()
+    await runtime.register_session_run(
+        session=prepared.session,
+        shared_draft=prepared.shared_draft,
+        run=run,
+        prompt="Cancel the run",
+        prompt_role="user",
+    )
+    await db_session.commit()
+
+    cancelled_run, session = await runtime.cancel_run(
+        run=run,
+        partial_assistant_text="partial reply before abort",
+    )
+
+    turn = (
+        await db_session.execute(
+            select(AgentThreadTurn).where(AgentThreadTurn.run_id == cancelled_run.id)
+        )
+    ).scalar_one_or_none()
+    assistant_message = (
+        await db_session.execute(
+            select(ArtifactCodingMessage).where(
+                ArtifactCodingMessage.session_id == prepared.session.id,
+                ArtifactCodingMessage.run_id == cancelled_run.id,
+                ArtifactCodingMessage.role == "assistant",
+            )
+        )
+    ).scalar_one_or_none()
+
+    assert session is not None
+    assert cancelled_run.status == RunStatus.cancelled
+    assert turn is not None
+    assert turn.status == AgentThreadTurnStatus.cancelled
+    assert turn.user_input_text == "Cancel the run"
+    assert turn.assistant_output_text == "partial reply before abort"
+    assert assistant_message is not None
+    assert assistant_message.content == "partial reply before abort"
 
 
 @pytest.mark.asyncio

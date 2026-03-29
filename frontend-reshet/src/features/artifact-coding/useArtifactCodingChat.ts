@@ -44,6 +44,15 @@ function createClientMessageId(): string {
   return `msg-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+function buildAbortAssistantText(timeline: TimelineItem[], runId: string): string | null {
+  const parts = timeline
+    .filter((item) => item.kind === "assistant" && item.runId === runId)
+    .map((item) => String(item.description || "").trim())
+    .filter(Boolean);
+  if (parts.length === 0) return null;
+  return parts.join("\n\n");
+}
+
 function buildTimelineFromDetail(detail: ArtifactCodingChatSessionDetail): TimelineItem[] {
   return buildArtifactCodingTimeline(detail.messages || [], detail.run_events || []);
 }
@@ -155,7 +164,9 @@ export function useArtifactCodingChat({
     if (!activeRunId) return;
     setIsStopping(true);
     try {
-      await artifactsService.cancelCodingAgentRun(activeRunId, tenantSlug);
+      await artifactsService.cancelCodingAgentRun(activeRunId, tenantSlug, {
+        assistant_output_text: buildAbortAssistantText(timeline, activeRunId) || undefined,
+      });
       const reader = abortReaderMapRef.current.get(activeSessionKey) || null;
       abortReaderMapRef.current.delete(activeSessionKey);
       if (reader) {
@@ -165,7 +176,7 @@ export function useArtifactCodingChat({
     } finally {
       setIsStopping(false);
     }
-  }, [activeRunId, activeSessionKey, tenantSlug]);
+  }, [activeRunId, activeSessionKey, tenantSlug, timeline]);
 
   const consumeRunStream = useCallback(async (runId: string, sessionId: string) => {
     const sessionKey = sessionId || DRAFT_SESSION_KEY;

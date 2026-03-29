@@ -417,6 +417,29 @@ class AgentExecutorService:
         )
 
     @staticmethod
+    def _extract_turn_assistant_output_text(run: AgentRun) -> str | None:
+        output_result = run.output_result if isinstance(run.output_result, dict) else None
+        assistant_text = AgentExecutorService._extract_assistant_output_text(output_result)
+        if assistant_text:
+            return assistant_text
+        status = str(getattr(run.status, "value", run.status) or "").strip().lower()
+        if status == RunStatus.failed.value:
+            error_text = str(getattr(run, "error_message", "") or "").strip()
+            if error_text:
+                return f"Execution failed: {error_text}"
+        return None
+
+    @staticmethod
+    def _thread_turn_status_for_run(run: AgentRun) -> AgentThreadTurnStatus:
+        if run.status == RunStatus.paused:
+            return AgentThreadTurnStatus.paused
+        if run.status == RunStatus.failed:
+            return AgentThreadTurnStatus.failed
+        if run.status == RunStatus.cancelled:
+            return AgentThreadTurnStatus.cancelled
+        return AgentThreadTurnStatus.completed
+
+    @staticmethod
     def _extract_turn_metadata(output_result: Dict[str, Any] | None) -> Dict[str, Any] | None:
         if not isinstance(output_result, dict):
             return None
@@ -1200,16 +1223,8 @@ class AgentExecutorService:
                 thread_service = ThreadService(db)
                 await thread_service.complete_turn(
                     run_id=run_id,
-                    status=(
-                        AgentThreadTurnStatus.paused
-                        if run.status == RunStatus.paused
-                        else AgentThreadTurnStatus.failed
-                        if run.status == RunStatus.failed
-                        else AgentThreadTurnStatus.completed
-                    ),
-                    assistant_output_text=self._extract_assistant_output_text(
-                        run.output_result if isinstance(run.output_result, dict) else None
-                    ),
+                    status=self._thread_turn_status_for_run(run),
+                    assistant_output_text=self._extract_turn_assistant_output_text(run),
                     metadata=self._extract_turn_metadata(
                         run.output_result if isinstance(run.output_result, dict) else None
                     ),
@@ -1307,7 +1322,7 @@ class AgentExecutorService:
                     await thread_service.complete_turn(
                         run_id=run_id,
                         status=AgentThreadTurnStatus.failed,
-                        assistant_output_text=self._extract_assistant_output_text(err_run.output_result),
+                        assistant_output_text=self._extract_turn_assistant_output_text(err_run),
                         metadata={"error": error_text},
                     )
                 await err_db.commit()

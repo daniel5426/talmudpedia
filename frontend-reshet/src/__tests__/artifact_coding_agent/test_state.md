@@ -1,6 +1,6 @@
 # Artifact Coding Agent Frontend Tests
 
-Last Updated: 2026-03-25
+Last Updated: 2026-03-29
 
 ## Scope
 
@@ -20,6 +20,7 @@ Track frontend coverage for the artifact page coding chat panel and artifact-spe
 - saved-artifact prompts omit `draft_key` while create-mode prompts keep it
 - history/session loading for saved artifacts and create drafts
 - stop flow and pending-question flow
+- manual abort now forwards streamed assistant text to the cancel API so a stopped run can persist the partial reply
 - terminal run completion/failure settles lingering running tool rows
 - history rebuild preserves assistant text segments around tool calls
 - history rebuild can now recover partial assistant/tool history from run events even when no assistant message was durably persisted for that run
@@ -39,6 +40,9 @@ Track frontend coverage for the artifact page coding chat panel and artifact-spe
 - Command: `pnpm --dir frontend-reshet test -- --runInBand src/__tests__/artifact_coding_agent/chat_model.test.ts`
 - Date: 2026-03-25 17:53 EET
 - Result: pass (`5 passed`)
+- Command: `pnpm --dir frontend-reshet test -- --runInBand src/__tests__/artifact_coding_agent/useArtifactCodingChat.test.tsx`
+- Date: 2026-03-29 Asia/Hebron
+- Result: pass (`3 passed`)
 
 ## Known Gaps
 

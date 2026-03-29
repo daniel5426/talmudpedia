@@ -89,6 +89,7 @@ export function ArtifactEditorScreen({
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [artifactChatDraftKey, setArtifactChatDraftKey] = useState(initialDraftKey || "")
   const [chatError, setChatError] = useState<string | null>(null)
+  const [isChatHistoryOpen, setIsChatHistoryOpen] = useState(false)
   const [versionsOpen, setVersionsOpen] = useState(false)
   const [artifactVersions, setArtifactVersions] = useState<ArtifactVersionListItem[]>([])
   const [loadingVersions, setLoadingVersions] = useState(false)
@@ -559,6 +560,11 @@ export function ArtifactEditorScreen({
         }}
         onToggleSidebar={() => setSidebarOpen((prev) => !prev)}
         onToggleAgentPanel={() => artifactCodingChat.setIsAgentPanelOpen(!artifactCodingChat.isAgentPanelOpen)}
+        onStartNewChat={artifactCodingChat.startNewChat}
+        onOpenChatHistory={() => {
+          void artifactCodingChat.refreshChatSessions()
+          setIsChatHistoryOpen(true)
+        }}
         onVersionsOpenChange={setVersionsOpen}
         onSelectVersion={(revisionId) => {
           void applyArtifactVersion(revisionId)
@@ -608,11 +614,8 @@ export function ArtifactEditorScreen({
             timeline={artifactCodingChat.timeline}
             activeThinkingSummary={artifactCodingChat.activeThinkingSummary}
             chatSessions={artifactCodingChat.chatSessions}
-            activeChatSessionId={artifactCodingChat.activeChatSessionId}
-            onStartNewChat={artifactCodingChat.startNewChat}
-            onOpenHistory={() => {
-              void artifactCodingChat.refreshChatSessions()
-            }}
+            isHistoryOpen={isChatHistoryOpen}
+            onHistoryOpenChange={setIsChatHistoryOpen}
             onLoadChatSession={artifactCodingChat.loadChatSession}
             onSendMessage={artifactCodingChat.sendMessage}
             onStopRun={artifactCodingChat.stopCurrentRun}

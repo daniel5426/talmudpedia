@@ -1,6 +1,6 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 
-import { useAgentThreadHistory } from "@/hooks/useAgentThreadHistory";
+import { mapTurnsToMessages, useAgentThreadHistory } from "@/hooks/useAgentThreadHistory";
 import { adminService, agentService } from "@/services";
 
 jest.mock("@/services", () => ({
@@ -202,5 +202,50 @@ describe("useAgentThreadHistory", () => {
     expect(
       assistantMessages[1].responseBlocks?.find((block) => block.kind === "assistant_text" && block.text.includes("What is your favorite programming language?")),
     ).toBeTruthy();
+  });
+
+  it("hydrates tool trace blocks even when the persisted assistant text is empty", async () => {
+    mockedAgentService.getRunEvents.mockResolvedValue({
+      run_id: "run-aborted",
+      event_count: 2,
+      events: [
+        {
+          seq: 1,
+          ts: "2026-03-29T15:00:01Z",
+          event: "on_tool_start",
+          run_id: "run-aborted",
+          name: "Artifact Coding Read File",
+          span_id: "tool-1",
+          data: { input: { path: "main.py" } },
+        },
+        {
+          seq: 2,
+          ts: "2026-03-29T15:00:02Z",
+          event: "on_tool_end",
+          run_id: "run-aborted",
+          name: "Artifact Coding Read File",
+          span_id: "tool-1",
+          data: { output: { path: "main.py" } },
+        },
+      ],
+    } as any);
+
+    const messages = await mapTurnsToMessages("thread-1", [
+      {
+        id: "turn-1",
+        run_id: "run-aborted",
+        turn_index: 0,
+        user_input_text: "Inspect the file",
+        assistant_output_text: null,
+        created_at: "2026-03-29T15:00:00Z",
+        completed_at: "2026-03-29T15:00:03Z",
+      },
+    ]);
+
+    expect(messages).toHaveLength(2);
+    expect(messages[1].role).toBe("assistant");
+    expect(messages[1].content).toBe("");
+    expect(messages[1].runId).toBe("run-aborted");
+    expect(messages[1].responseBlocks?.some((block) => block.kind === "tool_call")).toBe(true);
   });
 });

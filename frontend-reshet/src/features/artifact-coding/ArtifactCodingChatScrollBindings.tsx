@@ -13,8 +13,14 @@ export function ArtifactCodingChatScrollBindings({
 
   useEffect(() => {
     const node = scrollRef.current;
+    if (node) {
+      node.setAttribute("data-admin-page-scroll", "true");
+    }
     onScrollContainerChange(node);
     return () => {
+      if (node) {
+        node.removeAttribute("data-admin-page-scroll");
+      }
       onScrollContainerChange(null);
     };
   }, [onScrollContainerChange, scrollRef]);

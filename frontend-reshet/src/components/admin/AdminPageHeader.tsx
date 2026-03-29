@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils"
 type AdminPageHeaderProps = ComponentPropsWithoutRef<"header"> & {
   children: ReactNode
   contentClassName?: string
+  scrollEffectMode?: "full" | "none"
 }
 
 function isScrollable(element: HTMLElement) {
@@ -22,6 +23,7 @@ export function AdminPageHeader({
   children,
   className,
   contentClassName,
+  scrollEffectMode = "full",
   ...props
 }: AdminPageHeaderProps) {
   const headerRef = useRef<HTMLElement | null>(null)
@@ -39,29 +41,33 @@ export function AdminPageHeader({
     }
 
     const collectTargets = () => {
-      const nextTargets = new Set<HTMLElement | Window>()
+      const explicitTargets = new Set<HTMLElement>()
+      const fallbackTargets = new Set<HTMLElement | Window>()
 
       if (sibling instanceof HTMLElement) {
         if (sibling.matches("[data-admin-page-scroll]") && isScrollable(sibling)) {
-          nextTargets.add(sibling)
-        }
-        if (isScrollable(sibling)) {
-          nextTargets.add(sibling)
+          explicitTargets.add(sibling)
+        } else if (isScrollable(sibling)) {
+          fallbackTargets.add(sibling)
         }
         sibling
           .querySelectorAll<HTMLElement>("[data-admin-page-scroll], .admin-page-scroll")
           .forEach((element) => {
             if (isScrollable(element)) {
-              nextTargets.add(element)
+              explicitTargets.add(element)
             }
           })
       }
 
-      if (nextTargets.size === 0) {
-        nextTargets.add(window)
+      if (explicitTargets.size > 0) {
+        return new Set<HTMLElement | Window>(explicitTargets)
       }
 
-      return nextTargets
+      if (fallbackTargets.size === 0) {
+        fallbackTargets.add(window)
+      }
+
+      return fallbackTargets
     }
 
     const bindTargets = () => {
@@ -119,7 +125,8 @@ export function AdminPageHeader({
       ref={headerRef}
       className={cn(
         "relative z-30 shrink-0 overflow-visible bg-background/100 supports-[backdrop-filter]:bg-background/100 transition-[background-color,backdrop-filter] duration-300",
-        isScrolled &&
+        scrollEffectMode === "full" &&
+          isScrolled &&
           "bg-background/80 backdrop-blur-md supports-[backdrop-filter]:bg-background/65",
         className,
       )}
@@ -132,7 +139,7 @@ export function AdminPageHeader({
         aria-hidden="true"
         className={cn(
           "pointer-events-none absolute inset-x-0 top-full z-10 h-5 bg-gradient-to-b from-background via-background/95 to-transparent transition-opacity duration-0 supports-[backdrop-filter]:from-background supports-[backdrop-filter]:via-background/70",
-          isScrolled ? "opacity-100" : "opacity-0",
+          scrollEffectMode === "full" && isScrolled ? "opacity-100" : "opacity-0",
         )}
       />
     </header>
