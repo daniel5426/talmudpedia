@@ -1,8 +1,8 @@
 # Talmudpedia Standalone
 
-Last Updated: 2026-03-22
+Last Updated: 2026-03-29
 
-Standalone Vite app with Vercel-compatible serverless BFF routes for embedding a published Talmudpedia agent through the server-only `@agents24/embed-sdk`.
+Standalone Vite app with Vercel-compatible serverless BFF routes for embedding a published Talmudpedia agent through the public server-only `@agents24/embed-sdk` npm package.
 
 Important rule:
 - this app is intentionally treated as a real customer standalone app
@@ -16,9 +16,9 @@ Important rule:
 - `api/`: Vercel function handlers for the thin BFF
 - `server/`: shared server-only helpers and provisioning scripts
 - `/api/session`: local cookie-backed user identity
+- selected demo-client list sourced from `server/prico-demo/frozen_snapshot/prico/lekohot.json`
 - `/api/agent/*`: thread history and streaming chat routes
-- `/api/prico-tools/*`: local demo tool endpoints for the PRICO showcase
-- `/api/prico-tools/widget-output`: render-only JSON widget bundle validation for PRICO analytical UI
+- `legacy-sql-read/`: parked PRICO SQL-backed routes/helpers kept for reuse outside the active serverless path
 
 ## Environment
 
@@ -73,15 +73,11 @@ The provisioner uses `TALMUDPEDIA_ADMIN_BEARER_TOKEN` when present. If it is uns
 
 The script prints the created agent id. Set `TALMUDPEDIA_AGENT_ID` in `.env` to that value before running the standalone app.
 
-## PRICO Demo Runtime
+## PRICO Legacy
 
-The standalone Vercel functions now host:
+The old SQL-backed PRICO runtime and `/api/prico-tools/*` handlers are no longer part of the active standalone app surface.
 
-- `/api/prico-tools/*` read-only demo endpoints for the five PRICO tool contracts
-- `/api/prico-tools/widget-output` render-only widget bundle contract for optional analytical chat UI
-- live SQL-backed PRICO reads when `PRICO_DB_*` is configured locally
-- local session state with a selected demo client
-- chat forwarding that injects selected client context into the embedded-agent request
+They now live under `legacy-sql-read/` so they can be reused later without keeping them on the active Vercel/serverless path.
 
 ## Showcase Data Seed
 
@@ -109,6 +105,9 @@ pnpm preview
 
 This app is now structured for direct deployment from `talmudpedia-standalone/`:
 
+- In Vercel, connect the repo but set the project Root Directory to `talmudpedia-standalone/`.
+- That keeps Vercel scoped to this app's install/build/output path instead of deploying the rest of the repository.
+
 ```bash
 pnpm install
 pnpm dlx vercel
@@ -134,6 +133,7 @@ Deployment behavior:
 - Vite builds to `dist/`
 - `vercel.json` serves `dist/` as the static output
 - `api/` contains the deployed serverless handlers
+- `@agents24/embed-sdk` resolves from npm instead of `../packages/embed-sdk`
 - all non-`/api/*` routes rewrite to `index.html`
 - local development does not depend on `vercel dev`
 

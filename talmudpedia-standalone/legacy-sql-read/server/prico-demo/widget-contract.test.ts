@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { validatePricoWidgetBundle } from "../../src/features/prico-widgets/contract.js";
+import { validatePricoWidgetBundle } from "../../../src/features/prico-widgets/contract.js";
 
 test("validatePricoWidgetBundle accepts a multi-row JSON bundle", () => {
   const parsed = validatePricoWidgetBundle({

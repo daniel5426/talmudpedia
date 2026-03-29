@@ -1,6 +1,6 @@
 import type { PricoWidgetOutputRequest, PricoWidgetOutputResponse } from "./contracts.js";
 import { PricoToolError } from "./contracts.js";
-import { validatePricoWidgetBundle } from "../../src/features/prico-widgets/contract.js";
+import { validatePricoWidgetBundle } from "../../../src/features/prico-widgets/contract.js";
 
 export async function renderPricoWidgetOutput(
   payload: PricoWidgetOutputRequest,

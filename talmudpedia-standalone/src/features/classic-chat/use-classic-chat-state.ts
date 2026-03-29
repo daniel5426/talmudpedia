@@ -19,6 +19,7 @@ import {
 import {
   applyRuntimeEvent,
   createId,
+  formatRelativeTimestamp,
   isWidgetToolEvent,
   mapThreadDetail,
   mapRuntimeAttachment,
@@ -31,10 +32,44 @@ import type { ComposerSubmitPayload, TemplateAttachment, TemplateMessage, Templa
 
 const THREAD_PAGE_SIZE = 20;
 
+function readThreadIdFromUrl(): string {
+  if (typeof window === "undefined") {
+    return "";
+  }
+  return new URL(window.location.href).searchParams.get("thread")?.trim() || "";
+}
+
+function writeThreadIdToUrl(threadId: string): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  const url = new URL(window.location.href);
+  if (threadId && !threadId.startsWith("local-")) {
+    url.searchParams.set("thread", threadId);
+  } else {
+    url.searchParams.delete("thread");
+  }
+  window.history.replaceState({}, "", url);
+}
+
+function createHydratingThreadPlaceholder(threadId: string): TemplateThread {
+  return {
+    id: threadId,
+    title: "Loading chat...",
+    preview: "Loading chat...",
+    updatedAt: formatRelativeTimestamp(null),
+    messages: [],
+    isLoaded: false,
+    hasMoreHistory: false,
+    nextBeforeTurnIndex: null,
+    isLoadingOlderHistory: false,
+  };
+}
+
 export function useClassicChatState() {
   const { session } = useSession();
   const [threads, setThreads] = useState<TemplateThread[]>([]);
-  const [activeThreadId, setActiveThreadId] = useState<string>("");
+  const [activeThreadId, setActiveThreadId] = useState<string>(() => readThreadIdFromUrl());
   const [visibleHistoryCount, setVisibleHistoryCount] = useState(HISTORY_PAGE_SIZE);
   const [inputValue, setInputValue] = useState("");
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -43,6 +78,7 @@ export function useClassicChatState() {
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const [likedMessageIds, setLikedMessageIds] = useState<Record<string, boolean>>({});
   const [dislikedMessageIds, setDislikedMessageIds] = useState<Record<string, boolean>>({});
+  const requestedThreadIdRef = useRef(readThreadIdFromUrl());
   const activeThreadIdRef = useRef(activeThreadId);
   const hydratedThreadIdsRef = useRef<Set<string>>(new Set());
 
@@ -64,6 +100,10 @@ export function useClassicChatState() {
   }, [activeThreadId]);
 
   useEffect(() => {
+    writeThreadIdToUrl(activeThreadId);
+  }, [activeThreadId]);
+
+  useEffect(() => {
     if (session?.selectedClientId) {
       setSubmitError(null);
     }
@@ -76,9 +116,16 @@ export function useClassicChatState() {
       try {
         const history = await fetchAgentThreads();
         if (cancelled) return;
+        const requestedThreadId = requestedThreadIdRef.current;
         const mappedThreads = history.items.map(mapThreadSummary);
-        setThreads(mappedThreads);
-        setActiveThreadId((current) => current || mappedThreads[0]?.id || "");
+        const initialThreads =
+          requestedThreadId &&
+          !requestedThreadId.startsWith("local-") &&
+          !mappedThreads.some((thread) => thread.id === requestedThreadId)
+            ? [createHydratingThreadPlaceholder(requestedThreadId), ...mappedThreads]
+            : mappedThreads;
+        setThreads(initialThreads);
+        setActiveThreadId((current) => current || requestedThreadId || initialThreads[0]?.id || "");
       } catch (error) {
         if (!cancelled) {
           console.error("Failed to load thread history", error);
@@ -101,7 +148,10 @@ export function useClassicChatState() {
     }
 
     const thread = threads.find((item) => item.id === activeThreadId);
-    if (!thread || thread.isLoaded) {
+    if (!thread) {
+      return;
+    }
+    if (thread.isLoaded) {
       hydratedThreadIdsRef.current.add(activeThreadId);
       return;
     }
@@ -286,6 +336,10 @@ export function useClassicChatState() {
         preview: previewFromMessage(userMessage),
         updatedAt: "Just now",
         messages: [...threadMessages, userMessage, assistantMessage],
+        isLoaded: true,
+        hasMoreHistory: existingThread?.hasMoreHistory ?? false,
+        nextBeforeTurnIndex: existingThread?.nextBeforeTurnIndex ?? null,
+        isLoadingOlderHistory: false,
       };
 
       const remaining = current.filter((t) => t.id !== threadId);
@@ -537,6 +591,7 @@ export function useClassicChatState() {
     dislikedMessageIds,
     hasMoreHistory: !isLoadingHistory && hasMoreHistory,
     inputValue,
+    isLoadingHistory,
     isResponding,
     submitError,
     likedMessageIds,

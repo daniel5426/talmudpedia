@@ -1,4 +1,5 @@
 import { embedClient, env } from "../../_lib/embed.js";
+import { listDemoClients } from "../../_lib/demo-clients.js";
 import { toEmbedErrorPayload } from "../../_lib/errors.js";
 import { json } from "../../_lib/http.js";
 import { ensureSession, setSelectedClient } from "../../_lib/session.js";
@@ -59,7 +60,7 @@ export async function POST(request: Request): Promise<Response> {
     return json({ error: "clientId is required" }, { headers: responseHeaders, status: 400 });
   }
 
-  const matchedClient = session.availableClients.find((client) => client.id === requestedClientId);
+  const matchedClient = listDemoClients().find((client) => client.id === requestedClientId);
   if (!matchedClient) {
     return json(
       { error: "clientId must match one of the demo clients." },

@@ -1,6 +1,6 @@
 import { createHmac, randomUUID } from "node:crypto";
 
-import { listDemoClients } from "../../server/prico-demo/service.js";
+import { listDemoClients } from "./demo-clients.js";
 import {
   appendExpiredCookie,
   appendSetCookie,

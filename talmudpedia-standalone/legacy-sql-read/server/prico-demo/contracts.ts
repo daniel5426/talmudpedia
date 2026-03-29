@@ -1,4 +1,4 @@
-import type { PricoWidgetBundle, PricoWidgetRow } from "../../src/features/prico-widgets/contract.js";
+import type { PricoWidgetBundle, PricoWidgetRow } from "../../../src/features/prico-widgets/contract.js";
 
 export type DemoClient = {
   id: string;

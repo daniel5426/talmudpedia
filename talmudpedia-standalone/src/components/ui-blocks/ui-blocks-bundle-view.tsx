@@ -1,5 +1,6 @@
 import type { UIBlock, UIBlocksBundle } from "@agents24/ui-blocks-contract";
 import { Fragment } from "react";
+import { motion, useReducedMotion } from "motion/react";
 
 import { BarBlock } from "./blocks/bar-block";
 import { CompareBlock } from "./blocks/compare-block";
@@ -64,27 +65,71 @@ function BundleViewInner({
   className?: string;
 }) {
   const theme = useWidgetTheme();
+  const prefersReducedMotion = useReducedMotion();
   const normalizedRows = bundle.rows.map(normalizeRow);
 
+  const titleTransition = prefersReducedMotion
+    ? { duration: 0 }
+    : { duration: 0.28, ease: "easeOut" as const };
+  const rowTransition = prefersReducedMotion
+    ? { duration: 0 }
+    : { duration: 0.38, ease: "easeOut" as const };
+
   return (
-    <div className={cx("space-y-4", className)}>
+    <motion.div
+      animate={prefersReducedMotion ? undefined : "visible"}
+      className={cx("space-y-4", className)}
+      initial={prefersReducedMotion ? false : "hidden"}
+      variants={
+        prefersReducedMotion
+          ? undefined
+          : {
+              hidden: {},
+              visible: {
+                transition: {
+                  delayChildren: 0.04,
+                  staggerChildren: 0.08,
+                },
+              },
+            }
+      }
+    >
       {bundle.title || bundle.subtitle ? (
-        <div>
+        <motion.div
+          initial={prefersReducedMotion ? false : { opacity: 0, y: 10, height: 0 }}
+          animate={prefersReducedMotion ? undefined : { opacity: 1, y: 0, height: "auto" }}
+          transition={titleTransition}
+          className="overflow-hidden"
+        >
           <div className={cx(theme.bundleTitle, !bundle.title && "invisible")} aria-hidden={!bundle.title}>
             {bundle.title ?? "placeholder"}
           </div>
           <div className={cx(theme.bundleSubtitle, !bundle.subtitle && "invisible")} aria-hidden={!bundle.subtitle}>
             {bundle.subtitle ?? "placeholder"}
           </div>
-        </div>
+        </motion.div>
       ) : null}
 
       {normalizedRows.map((row, index) => (
-        <div key={`row-${index}`} className="grid grid-cols-1 gap-4 md:grid-cols-12">
-          {row.blocks.map((block) => renderBlock(block))}
-        </div>
+        <motion.div
+          key={`row-${index}`}
+          className="overflow-hidden"
+          variants={
+            prefersReducedMotion
+              ? undefined
+              : {
+                  hidden: { opacity: 0, y: 22, height: 0, filter: "blur(8px)" },
+                  visible: { opacity: 1, y: 0, height: "auto", filter: "blur(0px)" },
+                }
+          }
+          transition={rowTransition}
+        >
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-12">
+            {row.blocks.map((block) => renderBlock(block))}
+          </div>
+        </motion.div>
       ))}
-    </div>
+    </motion.div>
   );
 }
 

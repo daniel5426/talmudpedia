@@ -24,6 +24,7 @@ export function ClassicChatApp() {
     dislikedMessageIds,
     hasMoreHistory,
     inputValue,
+    isLoadingHistory,
     isResponding,
     likedMessageIds,
     loadMoreHistory,
@@ -42,6 +43,8 @@ export function ClassicChatApp() {
   } = useClassicChatState();
 
   const hasMessages = Boolean(activeThread?.messages.length);
+  const isActiveThreadLoading =
+    isLoadingHistory || Boolean(activeThreadId && (!activeThread || !activeThread.isLoaded));
 
   return (
     <SidebarProvider
@@ -76,7 +79,11 @@ export function ClassicChatApp() {
           />
 
           <main className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
-            {hasMessages && activeThread ? (
+            {isActiveThreadLoading ? (
+              <div className="flex min-h-0 flex-1 items-center justify-center px-4 text-sm text-muted-foreground">
+                Loading chat...
+              </div>
+            ) : hasMessages && activeThread ? (
               <ChatTimeline
                 copiedMessageId={copiedMessageId}
                 dislikedMessageIds={dislikedMessageIds}

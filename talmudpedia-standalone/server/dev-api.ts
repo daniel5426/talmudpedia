@@ -4,11 +4,6 @@ import * as uploadRoute from "../api/agent/attachments/upload.js";
 import * as chatStreamRoute from "../api/agent/chat/stream.js";
 import * as threadRoute from "../api/agent/threads/[threadId].js";
 import * as threadsRoute from "../api/agent/threads/index.js";
-import * as bankConcentrationRoute from "../api/prico-tools/bank-concentration.js";
-import * as clientActivitySummaryRoute from "../api/prico-tools/client-activity-summary.js";
-import * as currencyConcentrationRoute from "../api/prico-tools/currency-concentration.js";
-import * as dealExplainerRoute from "../api/prico-tools/deal-explainer.js";
-import * as marketContextRoute from "../api/prico-tools/market-context.js";
 import * as sessionClientRoute from "../api/session/client.js";
 import * as sessionRoute from "../api/session.js";
 
@@ -31,26 +26,6 @@ const routes: Array<{
   },
   { match: (pathname) => pathname === "/api/agent/attachments/upload", module: uploadRoute },
   { match: (pathname) => pathname === "/api/agent/chat/stream", module: chatStreamRoute },
-  {
-    match: (pathname) => pathname === "/api/prico-tools/client-activity-summary",
-    module: clientActivitySummaryRoute,
-  },
-  {
-    match: (pathname) => pathname === "/api/prico-tools/bank-concentration",
-    module: bankConcentrationRoute,
-  },
-  {
-    match: (pathname) => pathname === "/api/prico-tools/currency-concentration",
-    module: currencyConcentrationRoute,
-  },
-  {
-    match: (pathname) => pathname === "/api/prico-tools/deal-explainer",
-    module: dealExplainerRoute,
-  },
-  {
-    match: (pathname) => pathname === "/api/prico-tools/market-context",
-    module: marketContextRoute,
-  },
 ];
 
 function toRequest(req: IncomingMessage): Request {

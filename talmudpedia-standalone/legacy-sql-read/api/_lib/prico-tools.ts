@@ -13,7 +13,7 @@ import {
 } from "../../server/prico-demo/service.js";
 import { renderPricoWidgetOutput } from "../../server/prico-demo/widget-output-service.js";
 import { toPricoErrorPayload } from "./errors.js";
-import { json } from "./http.js";
+import { json } from "../../../api/_lib/http.js";
 
 async function readJson<T>(request: Request): Promise<T> {
   return (await request.json()) as T;
