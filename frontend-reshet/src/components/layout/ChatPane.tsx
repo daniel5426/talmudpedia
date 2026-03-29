@@ -5,6 +5,7 @@ import React, {
   useRef,
   useEffect,
   useCallback,
+  useLayoutEffect,
   type ReactNode,
 } from "react";
 import { nanoid } from "nanoid";
@@ -310,6 +311,67 @@ type ChatPaneProps = {
   noHeader?: boolean;
 };
 
+function ChatHistoryBindings({
+  hasOlderHistory,
+  isLoadingOlderHistory,
+  onLoadOlderHistory,
+}: {
+  hasOlderHistory: boolean;
+  isLoadingOlderHistory: boolean;
+  onLoadOlderHistory?: (() => Promise<unknown>) | null;
+}) {
+  const { scrollRef } = useStickToBottomContext();
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  const loadInFlightRef = useRef(false);
+
+  const handleLoadOlderHistory = useCallback(async () => {
+    if (!hasOlderHistory || !onLoadOlderHistory || loadInFlightRef.current) return;
+    const scrollContainer = scrollRef.current;
+    loadInFlightRef.current = true;
+    const previousScrollHeight = scrollContainer?.scrollHeight ?? 0;
+    const previousScrollTop = scrollContainer?.scrollTop ?? 0;
+    try {
+      await onLoadOlderHistory();
+      requestAnimationFrame(() => {
+        const nextContainer = scrollRef.current;
+        if (!nextContainer) return;
+        nextContainer.scrollTop = Math.max(
+          0,
+          nextContainer.scrollHeight - previousScrollHeight + previousScrollTop,
+        );
+      });
+    } finally {
+      requestAnimationFrame(() => {
+        loadInFlightRef.current = false;
+      });
+    }
+  }, [hasOlderHistory, onLoadOlderHistory, scrollRef]);
+
+  useLayoutEffect(() => {
+    const root = scrollRef.current;
+    const target = sentinelRef.current;
+    if (!root || !target || !hasOlderHistory) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) {
+          void handleLoadOlderHistory();
+        }
+      },
+      { root, threshold: 0.95 },
+    );
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [handleLoadOlderHistory, hasOlderHistory, scrollRef]);
+
+  return (
+    <div ref={sentinelRef} className="flex h-6 w-full items-center justify-center">
+      {isLoadingOlderHistory ? (
+        <span className="text-xs text-muted-foreground">Loading older messages...</span>
+      ) : null}
+    </div>
+  );
+}
+
 export function ChatWorkspace({
   controller,
   chatId,
@@ -362,15 +424,16 @@ export function ChatWorkspace({
 
   const isPaused = (controller as any).isPaused || false;
   const pendingApproval = (controller as any).pendingApproval || false;
+  const hasOlderHistory = Boolean((controller as any).hasOlderHistory);
+  const isLoadingOlderHistory = Boolean((controller as any).isLoadingOlderHistory);
+  const loadOlderHistory =
+    ((controller as any).loadOlderHistory as (() => Promise<unknown>) | undefined) || null;
   // Auto (Agent Router) - Get direction for RTL/LTR layout
   const { direction } = useDirection();
   // Auto (Agent Router) - Refs for container management
   const containerRef = useRef<HTMLDivElement>(null);
   // Auto (Agent Router) - Container width state for responsive layout
   const [containerWidth, setContainerWidth] = useState<number>(1000);
-  // Auto (Agent Router) - Scroll to bottom context for auto-scrolling
-  useStickToBottomContext();
-
   // Smoothing the streaming content for a better UX (typewriter effect)
   const smoothedStreamingContent = useSmoothStream(streamingContent, isLoading);
 
@@ -595,6 +658,11 @@ export function ChatWorkspace({
           </div>
         ) : (
           <>
+            <ChatHistoryBindings
+              hasOlderHistory={hasOlderHistory}
+              isLoadingOlderHistory={isLoadingOlderHistory}
+              onLoadOlderHistory={loadOlderHistory}
+            />
             {displayMessages.length > 0 &&
               (() => {
                 const renderKeyCounts = new Map<string, number>();

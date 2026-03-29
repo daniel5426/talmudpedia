@@ -80,7 +80,7 @@ function BaseNodeComponent({
     return (
         <div
             className={cn(
-                "relative min-w-[200px] flex flex-col p-0 rounded-2xl bg-background/90 backdrop-blur-md transition-all duration-300 border",
+                "relative flex flex-col p-0 rounded-2xl bg-background/90 backdrop-blur-md transition-all duration-300 border",
                 selected ? "border-primary ring-2 ring-primary/20 shadow-lg shadow-primary/5" : "border-border/50 shadow-sm",
                 data.executionStatus && statusBorder[data.executionStatus as keyof typeof statusBorder],
                 className

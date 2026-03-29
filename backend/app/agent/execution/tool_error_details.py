@@ -4,6 +4,8 @@ from typing import Any
 
 import httpx
 
+from app.services.ui_blocks import UIBlocksValidationError
+
 
 def _truncate_text(value: Any, limit: int = 2000) -> str | None:
     if value is None:
@@ -46,6 +48,11 @@ def build_tool_exception_details(exc: Exception) -> dict[str, Any]:
             details["stdout_excerpt"] = exc.stdout_excerpt
         if exc.stderr_excerpt:
             details["stderr_excerpt"] = exc.stderr_excerpt
+        return details
+
+    if isinstance(exc, UIBlocksValidationError):
+        details["code"] = exc.code
+        details["details"] = exc.details
         return details
 
     if isinstance(exc, httpx.HTTPStatusError):

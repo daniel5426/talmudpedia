@@ -5,7 +5,11 @@ from uuid import UUID
 from langchain_core.messages import AIMessage
 
 from app.agent.registry import AgentExecutorRegistry, AgentOperatorRegistry
-from app.agent.graph.contracts import extract_runtime_node_output, get_node_output_contract
+from app.agent.graph.contracts import (
+    extract_runtime_node_output,
+    get_node_output_contract,
+    resolve_node_display_name,
+)
 from app.agent.graph.ir import GraphIRNode
 
 logger = logging.getLogger(__name__)
@@ -22,6 +26,8 @@ def build_node_fn(node: GraphIRNode, tenant_id: Optional[UUID], db: Any):
         return error_node
 
     executor = executor_cls(tenant_id, db)
+    operator_spec = AgentOperatorRegistry.get(node.type)
+    node_display_name = resolve_node_display_name(node, operator_spec=operator_spec, node_type=node.type)
 
     async def node_fn(state: Any, config: Any = None):
         configurable = config.get("configurable", {}) if config else {}
@@ -42,7 +48,7 @@ def build_node_fn(node: GraphIRNode, tenant_id: Optional[UUID], db: Any):
             "emitter": emitter,
             "node_id": node.id,
             "node_type": node.type,
-            "node_name": node.config.get("label", node.id),
+            "node_name": node_display_name,
             "mode": configurable.get("mode") or state_context.get("mode"),
             "run_id": configurable.get("run_id") or configurable.get("thread_id") or state_context.get("run_id"),
             "root_run_id": configurable.get("root_run_id") or state_context.get("root_run_id"),
@@ -92,17 +98,18 @@ def build_node_fn(node: GraphIRNode, tenant_id: Optional[UUID], db: Any):
                     state_update["node_outputs"] = node_outputs
                     state_update["_node_outputs"] = legacy_node_outputs
                     if emitter:
-                        operator_spec = AgentOperatorRegistry.get(node.type)
                         declared_contract = get_node_output_contract(
                             node_id=node.id,
                             node_type=node.type,
-                            node_label=node.config.get("label", node.id),
+                            node_label=node_display_name,
                             config=node_config,
                             operator_spec=operator_spec,
                         )
                         emitter.emit_internal_event(
                             "workflow.node_output_published",
                             {
+                                "node_id": node.id,
+                                "node_name": node_display_name,
                                 "node_type": node.type,
                                 "declared_output_keys": [
                                     str(item.get("key") or "").strip()
@@ -110,6 +117,7 @@ def build_node_fn(node: GraphIRNode, tenant_id: Optional[UUID], db: Any):
                                     if isinstance(item, dict) and str(item.get("key") or "").strip()
                                 ],
                                 "published_output_keys": sorted(published_output.keys()),
+                                "published_output": published_output,
                             },
                             node_id=node.id,
                             category="workflow_contract",

@@ -61,6 +61,7 @@ import { KnowledgeStoreSelect } from "../shared/KnowledgeStoreSelect"
 import { RetrievalPipelineSelect } from "../shared/RetrievalPipelineSelect"
 import { SearchableResourceInput } from "../shared/SearchableResourceInput"
 import { PromptMentionInput } from "../shared/PromptMentionInput"
+import { filterVariableSuggestions, type VariableSuggestionOption } from "../shared/variable-suggestions"
 import { PromptModal } from "../shared/PromptModal"
 import { usePromptMentionModal } from "../shared/usePromptMentionModal"
 import { fillMentionInValue } from "@/lib/prompt-mentions"
@@ -106,7 +107,7 @@ interface ConfigPanelProps {
     data: AgentNodeData
     onConfigChange: (nodeId: string, config: Record<string, unknown>) => void
     onClose: () => void
-    availableVariables?: any[]
+    availableVariables?: VariableSuggestionOption[]
     graphAnalysis?: AgentGraphAnalysis | null
 }
 
@@ -259,7 +260,7 @@ function SmartInput({
     placeholder?: string
     className?: string
     multiline?: boolean
-    availableVariables?: any[]
+    availableVariables?: VariableSuggestionOption[]
     mode?: "template" | "expression" | "variable"
 }) {
     const inputRef = useRef<HTMLInputElement | HTMLTextAreaElement | null>(null)
@@ -329,12 +330,7 @@ function SmartInput({
 
         const menuWidth = Math.min(320, Math.max(220, rect.width * 0.9))
         const suggestionCount = suggestionType === "variables"
-            ? (
-                availableVariables?.filter((variable) =>
-                    normalizedSearchTerm.length === 0 ||
-                    variable.name.toLowerCase().includes(normalizedSearchTerm)
-                ).length || 0
-            )
+            ? filterVariableSuggestions(availableVariables, normalizedSearchTerm).length
             : EXPRESSION_OPERATORS.filter((operator) =>
                 normalizedSearchTerm.length === 0 ||
                 operator.toLowerCase().includes(normalizedSearchTerm)
@@ -441,16 +437,13 @@ function SmartInput({
         setShowSuggestions(true)
     }
 
-    const filteredVariables = availableVariables?.filter((variable) =>
-        normalizedSearchTerm.length === 0 ||
-        variable.name.toLowerCase().includes(normalizedSearchTerm)
-    ) || []
+    const filteredVariables = filterVariableSuggestions(availableVariables, normalizedSearchTerm)
     const filteredOperators = EXPRESSION_OPERATORS.filter((operator) =>
         normalizedSearchTerm.length === 0 ||
         operator.toLowerCase().includes(normalizedSearchTerm)
     )
 
-    const insertVariable = (varName: string) => {
+    const insertVariable = (insertText: string) => {
         const textBeforeCursor = value.slice(0, cursorPosition)
         const textAfterCursor = value.slice(cursorPosition)
 
@@ -458,9 +451,9 @@ function SmartInput({
             const templateContext = detectTemplateContext(textBeforeCursor)
             if (templateContext) {
                 const prefix = textBeforeCursor.slice(0, templateContext.replaceFrom)
-                const insertText = `{{ ${varName} }}`
-                const newText = prefix + insertText + textAfterCursor
-                pendingSelectionRef.current = prefix.length + insertText.length
+                const templateToken = `{{ ${insertText} }}`
+                const newText = prefix + templateToken + textAfterCursor
+                pendingSelectionRef.current = prefix.length + templateToken.length
                 onChange(newText)
                 setShowSuggestions(false)
             }
@@ -470,14 +463,13 @@ function SmartInput({
         const tokenMatch = textBeforeCursor.match(/[A-Za-z_][A-Za-z0-9_.\[\]]*$/)
         if (tokenMatch) {
             const prefix = textBeforeCursor.slice(0, textBeforeCursor.length - tokenMatch[0].length)
-            const newText = prefix + varName + textAfterCursor
-            pendingSelectionRef.current = prefix.length + varName.length
+            const newText = prefix + insertText + textAfterCursor
+            pendingSelectionRef.current = prefix.length + insertText.length
             onChange(newText)
             setShowSuggestions(false)
             return
         }
 
-        const insertText = varName
         const newText = textBeforeCursor + insertText + textAfterCursor
         pendingSelectionRef.current = textBeforeCursor.length + insertText.length
         onChange(newText)
@@ -509,7 +501,7 @@ function SmartInput({
             if (suggestionType === "variables") {
                 const selected = filteredVariables[selectedIndex]
                 if (selected) {
-                    insertVariable(selected.name)
+                    insertVariable(selected.insertText)
                 }
             } else {
                 const selected = filteredOperators[selectedIndex]
@@ -525,13 +517,15 @@ function SmartInput({
     const suggestionList =
         suggestionType === "variables"
             ? filteredVariables.map(v => ({
-                key: v.name,
-                label: v.name,
-                meta: v.type || "any",
+                key: v.id,
+                label: v.displayLabel,
+                insertText: v.insertText,
+                meta: v.groupLabel || v.type || "any",
             }))
             : filteredOperators.map(op => ({
                 key: op,
                 label: op,
+                insertText: op,
                 meta: "Operator",
             }))
 
@@ -627,9 +621,9 @@ function SmartInput({
                             onMouseDown={(e) => {
                                 e.preventDefault()
                                 if (suggestionType === "variables") {
-                                    insertVariable(item.label)
+                                    insertVariable(item.insertText)
                                 } else {
-                                    insertOperator(item.label)
+                                    insertOperator(item.insertText)
                                 }
                             }}
                         >
@@ -663,7 +657,7 @@ function ListEditor({
     onChange: (items: any[]) => void
     fields: { key: string; label: string; placeholder?: string; type?: "text" | "select" | "expression"; options?: string[] }[]
     addItemLabel?: string
-    availableVariables?: any[]
+    availableVariables?: VariableSuggestionOption[]
     layout?: "grid" | "stacked"
 }) {
     const handleAdd = () => {
@@ -1078,7 +1072,7 @@ function ConfigField({
     tools: ResourceOption[]
     namespaces: ResourceOption[]
     agentOptions: ResourceOption[]
-    availableVariables?: any[]
+    availableVariables?: VariableSuggestionOption[]
     graphAnalysis?: AgentGraphAnalysis | null
     fieldContract?: Record<string, unknown>
     toolCatalog: ToolDefinition[]

@@ -84,8 +84,15 @@ class AdminService {
     return httpClient.get<ThreadListResponse>(`/admin/users/${userId}/threads?${queryString}`);
   }
 
-  async getThread(threadId: string): Promise<Record<string, unknown>> {
-    return httpClient.get<Record<string, unknown>>(`/admin/threads/${threadId}`);
+  async getThread(
+    threadId: string,
+    options?: { beforeTurnIndex?: number; limit?: number }
+  ): Promise<Record<string, unknown>> {
+    const query = new URLSearchParams();
+    if (typeof options?.beforeTurnIndex === "number") query.set("before_turn_index", String(options.beforeTurnIndex));
+    if (typeof options?.limit === "number") query.set("limit", String(options.limit));
+    const suffix = query.toString() ? `?${query.toString()}` : "";
+    return httpClient.get<Record<string, unknown>>(`/admin/threads/${threadId}${suffix}`);
   }
 
   async updateUser(userId: string, data: { full_name?: string }): Promise<void> {

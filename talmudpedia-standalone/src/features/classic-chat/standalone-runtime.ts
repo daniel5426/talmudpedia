@@ -37,6 +37,10 @@ export type AgentThreadTurnDto = {
 
 export type AgentThreadDetailDto = AgentThreadSummaryDto & {
   turns: AgentThreadTurnDto[];
+  paging: {
+    has_more: boolean;
+    next_before_turn_index: number | null;
+  };
 };
 
 export type StandaloneRuntimeEvent = {
@@ -102,8 +106,19 @@ export async function fetchAgentThreads(): Promise<{
   return parseJsonOrThrow(response, "Failed to fetch thread history.");
 }
 
-export async function fetchAgentThread(threadId: string): Promise<AgentThreadDetailDto> {
-  const response = await fetch(`/api/agent/threads/${threadId}`, {
+export async function fetchAgentThread(
+  threadId: string,
+  options?: { beforeTurnIndex?: number; limit?: number },
+): Promise<AgentThreadDetailDto> {
+  const query = new URLSearchParams();
+  if (typeof options?.beforeTurnIndex === "number") {
+    query.set("before_turn_index", String(options.beforeTurnIndex));
+  }
+  if (typeof options?.limit === "number") {
+    query.set("limit", String(options.limit));
+  }
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  const response = await fetch(`/api/agent/threads/${threadId}${suffix}`, {
     credentials: "same-origin",
   });
   return parseJsonOrThrow(response, "Failed to fetch thread details.");

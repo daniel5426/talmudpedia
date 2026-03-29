@@ -118,4 +118,91 @@ describe("playground persisted trace replay", () => {
       output: { count: 4 },
     });
   });
+
+  it("replaces summary node outputs with published workflow outputs", () => {
+    const steps = buildExecutionStepsFromRunEvents([
+      {
+        sequence: 1,
+        timestamp: "2026-03-29T02:38:23Z",
+        event: "node_start",
+        name: "Agent",
+        span_id: "node-jF-Teg",
+        data: {
+          type: "agent",
+          input: { model: "model-1" },
+        },
+      },
+      {
+        sequence: 2,
+        timestamp: "2026-03-29T02:38:25Z",
+        event: "node_end",
+        name: "Agent",
+        span_id: "node-jF-Teg",
+        data: {
+          type: "agent",
+          output: { content_length: 26 },
+        },
+      },
+      {
+        sequence: 3,
+        timestamp: "2026-03-29T02:38:25.100Z",
+        event: "workflow.node_output_published",
+        span_id: "node-jF-Teg",
+        data: {
+          node_name: "Reply Agent",
+          published_output: { output_text: "hello world hello boganda." },
+        },
+      },
+      {
+        sequence: 4,
+        timestamp: "2026-03-29T02:38:25.200Z",
+        event: "node_start",
+        name: "end",
+        span_id: "end",
+        data: {
+          type: "end",
+          input: { has_schema: true },
+        },
+      },
+      {
+        sequence: 5,
+        timestamp: "2026-03-29T02:38:25.300Z",
+        event: "workflow.end_materialized",
+        span_id: "end",
+        data: {
+          schema_name: "workflow_result",
+          final_output: { response: "hello world hello boganda." },
+        },
+      },
+      {
+        sequence: 6,
+        timestamp: "2026-03-29T02:38:25.400Z",
+        event: "node_end",
+        name: "end",
+        span_id: "end",
+        data: {
+          type: "end",
+          output: { has_output: true },
+        },
+      },
+    ]);
+
+    expect(steps).toHaveLength(2);
+    expect(steps[0]).toMatchObject({
+      id: "node-jF-Teg",
+      name: "Reply Agent",
+      type: "node",
+      status: "completed",
+      input: { model: "model-1" },
+      output: { output_text: "hello world hello boganda." },
+    });
+    expect(steps[1]).toMatchObject({
+      id: "end",
+      name: "end",
+      type: "node",
+      status: "completed",
+      input: { has_schema: true },
+      output: { response: "hello world hello boganda." },
+    });
+  });
 });

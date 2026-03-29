@@ -13,6 +13,7 @@ import {
   type MentionSegment,
 } from "@/lib/prompt-mentions"
 import { BookOpen } from "lucide-react"
+import { filterVariableSuggestions, type VariableSuggestionOption } from "./variable-suggestions"
 
 // ---------------------------------------------------------------------------
 // Types
@@ -23,7 +24,7 @@ interface PromptMentionInputProps {
   value: string
   onChange: (value: string) => void
   surface?: string
-  availableVariables?: Array<{ name: string; type?: string }>
+  availableVariables?: VariableSuggestionOption[]
   placeholder?: string
   className?: string
   multiline?: boolean
@@ -33,7 +34,7 @@ interface PromptMentionInputProps {
 
 type MentionSuggestion =
   | { kind: "prompt"; key: string; prompt: PromptMentionRecord }
-  | { kind: "variable"; key: string; variable: { name: string; type?: string } }
+  | { kind: "variable"; key: string; variable: VariableSuggestionOption }
 
 const promptMentionInputVariants = cva(
   "w-full text-foreground outline-none transition-[color,box-shadow] placeholder:text-muted-foreground/40 [&:empty]:before:content-[attr(data-placeholder)] [&:empty]:before:text-muted-foreground/40 [&:empty]:before:pointer-events-none",
@@ -120,21 +121,14 @@ export function PromptMentionInput({
     [value, nameMap]
   )
   const variableResults = useMemo(
-    () =>
-      availableVariables.filter((variable) => {
-        if (!mentionQuery.trim()) {
-          return true
-        }
-        const normalizedQuery = mentionQuery.trim().toLowerCase()
-        return variable.name.toLowerCase().includes(normalizedQuery)
-      }),
+    () => filterVariableSuggestions(availableVariables, mentionQuery),
     [availableVariables, mentionQuery]
   )
   const suggestionItems = useMemo<MentionSuggestion[]>(
     () => [
       ...variableResults.map((variable) => ({
         kind: "variable" as const,
-        key: `variable:${variable.name}`,
+        key: `variable:${variable.id}`,
         variable,
       })),
       ...mentionResults.map((prompt) => ({
@@ -438,7 +432,7 @@ export function PromptMentionInput({
   )
 
   const insertVariableAlias = useCallback(
-    (variableName: string) => {
+    (insertText: string) => {
       const editor = editorRef.current
       if (!editor) return
 
@@ -454,7 +448,7 @@ export function PromptMentionInput({
       const serializedValue = extractValueFromDOM()
       const serializedFrom = mapPlainOffsetToSerializedOffset(editor, queryStart)
       const serializedTo = mapPlainOffsetToSerializedOffset(editor, plainCursorOffset)
-      const variableToken = `{{ ${variableName} }}`
+      const variableToken = `{{ ${insertText} }}`
       const nextValue =
         serializedValue.slice(0, serializedFrom) +
         variableToken +
@@ -506,7 +500,7 @@ export function PromptMentionInput({
           insertMention(selected.prompt)
           return
         }
-        insertVariableAlias(selected.variable.name)
+        insertVariableAlias(selected.variable.insertText)
       } else if (e.key === "Escape") {
         e.preventDefault()
         setShowMentionMenu(false)
@@ -582,7 +576,7 @@ export function PromptMentionInput({
                   insertMention(item.prompt)
                   return
                 }
-                insertVariableAlias(item.variable.name)
+                insertVariableAlias(item.variable.insertText)
               }}
             >
               {item.kind === "prompt" ? (
@@ -593,8 +587,8 @@ export function PromptMentionInput({
                 </span>
               )}
               <div className="flex flex-col min-w-0">
-                <span className="font-medium truncate">
-                  {item.kind === "prompt" ? item.prompt.name : item.variable.name}
+                  <span className="font-medium truncate">
+                  {item.kind === "prompt" ? item.prompt.name : item.variable.displayLabel}
                 </span>
                 {item.kind === "prompt" && item.prompt.description ? (
                   <span className="text-[10px] text-muted-foreground truncate">
@@ -602,7 +596,7 @@ export function PromptMentionInput({
                   </span>
                 ) : item.kind === "variable" ? (
                   <span className="text-[10px] text-muted-foreground truncate">
-                    {item.variable.type || "Variable"}
+                    {item.variable.groupLabel || item.variable.type || "Variable"}
                   </span>
                 ) : null}
               </div>

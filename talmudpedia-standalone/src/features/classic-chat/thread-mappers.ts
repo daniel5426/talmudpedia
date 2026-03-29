@@ -1,3 +1,7 @@
+import {
+  UI_BLOCKS_OUTPUT_KIND,
+  validateUIBlocksBundle,
+} from "@agents24/ui-blocks-contract";
 import type {
   AgentAttachmentDto,
   AgentThreadDetailDto,
@@ -11,9 +15,10 @@ import type {
   TemplateTextBlock,
   TemplateThread,
 } from "./types";
-import { validatePricoWidgetBundle } from "../prico-widgets/contract";
 
 const FALLBACK_PREVIEW = "Start a new conversation.";
+const UI_BLOCKS_RENDERER_KIND = "ui_blocks";
+const UI_BLOCKS_TOOL_SLUG = "builtin-ui-blocks";
 
 export function createId() {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
@@ -76,6 +81,9 @@ export function mapThreadSummary(summary: AgentThreadSummaryDto): TemplateThread
     updatedAt: formatRelativeTimestamp(summary.last_activity_at || summary.updated_at),
     messages: [],
     isLoaded: false,
+    hasMoreHistory: false,
+    nextBeforeTurnIndex: null,
+    isLoadingOlderHistory: false,
   };
 }
 
@@ -135,6 +143,12 @@ export function mapThreadDetail(detail: AgentThreadDetailDto): TemplateThread {
     updatedAt: formatRelativeTimestamp(detail.last_activity_at || detail.updated_at),
     messages,
     isLoaded: true,
+    hasMoreHistory: Boolean(detail.paging?.has_more),
+    nextBeforeTurnIndex:
+      detail.paging?.next_before_turn_index === null || detail.paging?.next_before_turn_index === undefined
+        ? null
+        : detail.paging.next_before_turn_index,
+    isLoadingOlderHistory: false,
   };
 }
 
@@ -154,7 +168,7 @@ export function applyRuntimeEvent(
   blocks: TemplateRenderBlock[],
   event: StandaloneRuntimeEvent,
 ): TemplateRenderBlock[] {
-  const widgetToolResult = extractWidgetToolResult(event);
+  const uiBlocksResult = extractUIBlocksToolResult(event);
 
   if (event.event === "assistant.delta") {
     const content = String(event.payload.content || "");
@@ -205,12 +219,12 @@ export function applyRuntimeEvent(
   }
 
   if (event.event === "tool.started") {
-    if (isWidgetToolEvent(event)) {
+    if (isUIBlocksToolEvent(event)) {
       return [
         ...blocks,
         {
           id: createId(),
-          kind: "widget_loading",
+          kind: "ui_blocks_loading",
           spanId: typeof event.payload.span_id === "string" ? event.payload.span_id : undefined,
         },
       ];
@@ -229,11 +243,11 @@ export function applyRuntimeEvent(
   }
 
   if (event.event === "tool.completed" || event.event === "tool.failed") {
-    const widgetLoadingIndex = [...blocks]
+    const uiBlocksLoadingIndex = [...blocks]
       .map((block, index) => ({ block, index }))
       .reverse()
       .find(({ block }) => {
-        if (block.kind !== "widget_loading") {
+        if (block.kind !== "ui_blocks_loading") {
           return false;
         }
         const spanId = typeof event.payload.span_id === "string" ? event.payload.span_id : null;
@@ -243,40 +257,31 @@ export function applyRuntimeEvent(
         return block.spanId === spanId;
       })?.index;
 
-    if (event.event === "tool.completed" && widgetToolResult) {
-      const parsed = validatePricoWidgetBundle(widgetToolResult.bundle);
-      if (!parsed.ok) {
-        const fallbackBlock = {
-          id: createId(),
-          kind: "text" as const,
-          content: "Unable to render widget bundle.",
-        };
-        if (typeof widgetLoadingIndex === "number") {
-          return [
-            ...blocks.slice(0, widgetLoadingIndex),
-            fallbackBlock,
-            ...blocks.slice(widgetLoadingIndex + 1),
-          ];
-        }
-        return [...blocks, fallbackBlock];
-      }
-      const nextBlock = {
-        id: createId(),
-        kind: "widget_bundle" as const,
-        bundle: parsed.bundle,
-      };
-      if (typeof widgetLoadingIndex === "number") {
+    if (event.event === "tool.completed" && uiBlocksResult) {
+      const parsed = validateUIBlocksBundle(uiBlocksResult.bundle);
+      const nextBlock = parsed.ok
+        ? {
+            id: createId(),
+            kind: "ui_blocks_bundle" as const,
+            bundle: parsed.bundle,
+          }
+        : {
+            id: createId(),
+            kind: "text" as const,
+            content: "Unable to render UI blocks bundle.",
+          };
+      if (typeof uiBlocksLoadingIndex === "number") {
         return [
-          ...blocks.slice(0, widgetLoadingIndex),
+          ...blocks.slice(0, uiBlocksLoadingIndex),
           nextBlock,
-          ...blocks.slice(widgetLoadingIndex + 1),
+          ...blocks.slice(uiBlocksLoadingIndex + 1),
         ];
       }
       return [...blocks, nextBlock];
     }
 
-    if (event.event === "tool.failed" && typeof widgetLoadingIndex === "number") {
-      return blocks.filter((_, index) => index !== widgetLoadingIndex);
+    if (event.event === "tool.failed" && typeof uiBlocksLoadingIndex === "number") {
+      return blocks.filter((_, index) => index !== uiBlocksLoadingIndex);
     }
     const spanId = typeof event.payload.span_id === "string" ? event.payload.span_id : null;
     const taskIndex = [...blocks]
@@ -317,21 +322,23 @@ export function applyRuntimeEvent(
   return blocks;
 }
 
-export function isWidgetToolEvent(event: StandaloneRuntimeEvent): boolean {
+export function isUIBlocksToolEvent(event: StandaloneRuntimeEvent): boolean {
+  const rendererKind = String(event.payload.renderer_kind || "").trim().toLowerCase();
   const toolSlug = String(event.payload.tool_slug || "").trim().toLowerCase();
-  const toolName = String(event.payload.tool || "").trim().toLowerCase();
-  return toolSlug === "prico-widget-output" || toolName === "prico widget output";
+  return rendererKind === UI_BLOCKS_RENDERER_KIND || toolSlug === UI_BLOCKS_TOOL_SLUG;
 }
 
-type WidgetToolResult = {
+export const isWidgetToolEvent = isUIBlocksToolEvent;
+
+type UIBlocksToolResult = {
   bundle: unknown;
 };
 
-function extractWidgetToolResult(event: StandaloneRuntimeEvent): WidgetToolResult | null {
-  if (!isWidgetToolEvent(event)) {
+function extractUIBlocksToolResult(event: StandaloneRuntimeEvent): UIBlocksToolResult | null {
+  if (!isUIBlocksToolEvent(event)) {
     return null;
   }
-  const output = unwrapWidgetOutput(event.payload.output);
+  const output = unwrapUIBlocksOutput(event.payload.output);
   if (!output) {
     return null;
   }
@@ -344,22 +351,22 @@ function extractWidgetToolResult(event: StandaloneRuntimeEvent): WidgetToolResul
   };
 }
 
-function unwrapWidgetOutput(value: unknown): Record<string, unknown> | null {
+function unwrapUIBlocksOutput(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object") {
     return null;
   }
   const record = value as Record<string, unknown>;
-  if (record.kind === "prico_widget_bundle" && record.bundle && typeof record.bundle === "object") {
+  if (record.kind === UI_BLOCKS_OUTPUT_KIND && record.bundle && typeof record.bundle === "object") {
     return record;
   }
   if (record.body && typeof record.body === "object") {
-    return unwrapWidgetOutput(record.body);
+    return unwrapUIBlocksOutput(record.body);
   }
   if (record.result && typeof record.result === "object") {
-    return unwrapWidgetOutput(record.result);
+    return unwrapUIBlocksOutput(record.result);
   }
   if (record.context && typeof record.context === "object") {
-    return unwrapWidgetOutput(record.context);
+    return unwrapUIBlocksOutput(record.context);
   }
   return null;
 }

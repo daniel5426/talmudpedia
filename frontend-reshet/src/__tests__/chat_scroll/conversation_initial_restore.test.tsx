@@ -38,7 +38,7 @@ describe("Conversation initial restore behavior", () => {
     expect(stickToBottomMock).toHaveBeenCalledWith(
       expect.objectContaining({
         initial: "instant",
-        resize: "auto",
+        resize: "instant",
         role: "log",
       }),
     );
@@ -50,6 +50,16 @@ describe("Conversation initial restore behavior", () => {
     expect(stickToBottomMock).toHaveBeenCalledWith(
       expect.objectContaining({
         initial: "auto",
+      }),
+    );
+  });
+
+  it("allows explicit auto resize follow mode when a surface opts in", () => {
+    render(<Conversation resizeScrollBehavior="auto">content</Conversation>);
+
+    expect(stickToBottomMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        resize: "auto",
       }),
     );
   });

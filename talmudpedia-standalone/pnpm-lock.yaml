@@ -11,6 +11,9 @@ importers:
       '@agents24/embed-sdk':
         specifier: file:../packages/embed-sdk
         version: file:../packages/embed-sdk
+      '@agents24/ui-blocks-contract':
+        specifier: ^0.1.0
+        version: 0.1.0
       '@fontsource-variable/noto-sans':
         specifier: ^5.2.10
         version: 5.2.10
@@ -213,6 +216,9 @@ packages:
   '@agents24/embed-sdk@file:../packages/embed-sdk':
     resolution: {directory: ../packages/embed-sdk, type: directory}
     engines: {node: '>=18.17'}
+
+  '@agents24/ui-blocks-contract@0.1.0':
+    resolution: {integrity: sha512-Re7VbIm+z+4zrtGnvGT9mVj4jAC8vyGHC072xnQmROEV5RdqPqk57kP2qwZEq1/zkYCr19u7YrR5Gex9BxsWiw==}
 
   '@ai-sdk/gateway@3.0.66':
     resolution: {integrity: sha512-SIQ0YY0iMuv+07HLsZ+bB990zUJ6S4ujORAh+Jv1V2KGNn73qQKnGO0JBk+w+Res8YqOFSycwDoWcFlQrVxS4A==}
@@ -4735,6 +4741,10 @@ packages:
 snapshots:
 
   '@agents24/embed-sdk@file:../packages/embed-sdk': {}
+
+  '@agents24/ui-blocks-contract@0.1.0':
+    dependencies:
+      zod: 4.3.6
 
   '@ai-sdk/gateway@3.0.66(zod@4.3.6)':
     dependencies:

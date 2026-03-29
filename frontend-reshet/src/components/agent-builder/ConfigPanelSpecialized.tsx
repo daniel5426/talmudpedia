@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState, type ReactNode } from "react"
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { Plus, Settings2, Trash2 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -295,10 +295,17 @@ export function EndNodeSettings({
   const normalized = normalizeEndConfig(value)
   const [open, setOpen] = useState(false)
   const [draft, setDraft] = useState(normalized)
+  const draftRef = useRef(normalized)
 
   useEffect(() => {
     setDraft(normalized)
+    draftRef.current = normalized
   }, [value])
+
+  const updateDraft = (next: { output_schema: EndOutputSchemaConfig; output_bindings: EndOutputBinding[] }) => {
+    draftRef.current = next
+    setDraft(next)
+  }
 
   const schemaLabel = normalized.output_schema.name?.trim() || "workflow_result"
 
@@ -333,7 +340,7 @@ export function EndNodeSettings({
       >
         <DialogContent
           showCloseButton={false}
-          className="w-[min(96vw,1180px)] max-w-[1180px] rounded-xl border border-border/50 bg-background p-0 shadow-lg"
+          className="!w-[min(46vw,1160px)] !max-w-[1160px] rounded-xl border border-border/50 bg-background p-0 shadow-lg"
           onPointerDownOutside={(event) => {
             const target = event.target as HTMLElement | null
             if (target?.closest("[data-value-ref-picker-portal='true']")) {
@@ -352,7 +359,7 @@ export function EndNodeSettings({
             Configure the JSON schema and bindings returned by the End node.
           </DialogDescription>
           <div className="max-h-[min(86vh,920px)] overflow-auto p-4">
-            <EndContractEditor value={draft} analysis={analysis} onChange={setDraft} />
+            <EndContractEditor value={draft} analysis={analysis} onChange={updateDraft} />
           </div>
           <div className="flex items-center justify-between border-t border-border/30 px-4 py-3">
             <Button
@@ -378,7 +385,7 @@ export function EndNodeSettings({
                       },
                       output_bindings: fallback.output_bindings,
                     }
-                setDraft(nextSchema)
+                updateDraft(nextSchema)
               }}
               className="h-8 rounded-lg px-3 text-[12px] text-muted-foreground hover:text-foreground"
             >
@@ -389,7 +396,7 @@ export function EndNodeSettings({
                 type="button"
                 variant="ghost"
                 onClick={() => {
-                  setDraft(normalizeEndConfig(value))
+                  updateDraft(normalizeEndConfig(value))
                   setOpen(false)
                 }}
                 className="h-8 rounded-lg px-3 text-[12px]"
@@ -399,7 +406,7 @@ export function EndNodeSettings({
               <Button
                 type="button"
                 onClick={() => {
-                  onChange(draft)
+                  onChange(draftRef.current)
                   setOpen(false)
                 }}
                 className="h-8 rounded-lg px-3 text-[12px]"

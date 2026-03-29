@@ -9,6 +9,7 @@ from sqlalchemy import and_, delete, desc, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agent.execution.output_projection import extract_assistant_output_text
 from app.agent.execution.trace_recorder import ExecutionTraceRecorder
 from app.db.postgres.models.agents import AgentRun, RunStatus
 from app.db.postgres.models.agent_threads import AgentThread
@@ -53,29 +54,10 @@ class ArtifactCodingChatHistoryService:
         error_text = str(getattr(run, "error_message", "") or output_result.get("error") or "").strip()
         if status == RunStatus.failed.value and error_text:
             return f"Execution failed: {error_text}"
-        final_output = output_result.get("final_output")
-        if isinstance(final_output, str) and final_output.strip():
-            return final_output.strip()
-        messages = output_result.get("messages")
-        if isinstance(messages, list):
-            last_assistant: str | None = None
-            for item in messages:
-                if not isinstance(item, dict):
-                    continue
-                role = str(item.get("role") or item.get("type") or "").strip().lower()
-                if role not in {"assistant", "ai"}:
-                    continue
-                content = str(item.get("content") or "").strip()
-                if content:
-                    last_assistant = content
-            if last_assistant:
-                return last_assistant
-        state = output_result.get("state")
-        if isinstance(state, dict):
-            last_output = state.get("last_agent_output")
-            if isinstance(last_output, str) and last_output.strip():
-                return last_output.strip()
-        return None
+        return extract_assistant_output_text(
+            output_result,
+            allow_final_output_fallback=True,
+        )
 
     def serialize_session(self, session: ArtifactCodingSession) -> dict[str, Any]:
         return {

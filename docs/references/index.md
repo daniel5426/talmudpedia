@@ -31,6 +31,8 @@ This section is for stable supporting documentation used as lookup material by h
   - Current dependency and component inventory for the `classic-chat` published-app starter template.
 - `embedded_agent_sdk_standalone_integration_guide.md`
   - Canonical standalone-app integration guide for the server-only embed SDK.
+- `ui_blocks_tool_reference.md`
+  - Canonical built-in `UI Blocks` tool contract and frontend integration reference.
 - `railway_launch_runbook.md`
   - Canonical Railway launch runbook for the core platform, including backend, worker, Crawl4AI, Redis/Postgres, and R2 wiring.
 - `deployment_spec.md`

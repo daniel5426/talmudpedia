@@ -2,6 +2,8 @@ import { agentService, type AgentRunEventsResponse } from "@/services/agent";
 
 export interface ExecutionStep {
   id: string;
+  nodeId?: string;
+  spanId?: string;
   name: string;
   type: string;
   status: "pending" | "running" | "completed" | "error";
@@ -75,6 +77,38 @@ function resolveStepId(
   return fallback;
 }
 
+function resolveSpanId(
+  rawEvent: Record<string, unknown>,
+  payload: Record<string, unknown>,
+): string | undefined {
+  const payloadSpanId = toText(payload.span_id || "").trim();
+  if (payloadSpanId) return payloadSpanId;
+  const rawSpanId = toText(rawEvent.span_id || "").trim();
+  return rawSpanId || undefined;
+}
+
+function resolveNodeId(
+  rawEvent: Record<string, unknown>,
+  payload: Record<string, unknown>,
+  eventName: string,
+): string | undefined {
+  const payloadNodeId = toText(payload.node_id || payload.source_node_id || "").trim();
+  if (payloadNodeId) return payloadNodeId;
+
+  const spanId = resolveSpanId(rawEvent, payload);
+  if (
+    spanId &&
+    (eventName.startsWith("node_") ||
+      eventName.startsWith("on_chain_") ||
+      eventName === "workflow.node_output_published" ||
+      eventName === "workflow.end_materialized")
+  ) {
+    return spanId;
+  }
+
+  return undefined;
+}
+
 function resolveStartInput(
   rawEvent: Record<string, unknown>,
   payload: Record<string, unknown>,
@@ -130,6 +164,23 @@ function resolveNodeName(
   );
 }
 
+function updateExistingStepOutput(
+  steps: ExecutionStep[],
+  stepId: string,
+  output: unknown,
+  name?: string,
+  nodeId?: string,
+) {
+  const index = steps.findIndex((step) => step.id === stepId)
+  if (index === -1) return
+  steps[index] = {
+    ...steps[index],
+    name: name || steps[index].name,
+    nodeId: nodeId || steps[index].nodeId,
+    output,
+  }
+}
+
 function buildCompletedStep(
   rawEvent: Record<string, unknown>,
   payload: Record<string, unknown>,
@@ -140,6 +191,8 @@ function buildCompletedStep(
 ): ExecutionStep {
   return {
     id: resolveStepId(rawEvent, payload, fallbackId),
+    nodeId: stepType === "node" ? resolveNodeId(rawEvent, payload, eventName) : undefined,
+    spanId: resolveSpanId(rawEvent, payload),
     name:
       stepType === "tool"
         ? resolveToolName(rawEvent, payload)
@@ -180,6 +233,8 @@ export function buildExecutionStepsFromRunEvents(
     if (eventName === "on_tool_start" || eventName === "tool.started") {
       const step: ExecutionStep = {
         id: stepId,
+        nodeId: resolveNodeId(rawEvent, payload, eventName),
+        spanId: resolveSpanId(rawEvent, payload),
         name: resolveToolName(rawEvent, payload),
         type: "tool",
         status: "running",
@@ -227,6 +282,8 @@ export function buildExecutionStepsFromRunEvents(
     if (eventName === "node_start" || eventName === "on_chain_start") {
       const step: ExecutionStep = {
         id: stepId,
+        nodeId: resolveNodeId(rawEvent, payload, eventName),
+        spanId: resolveSpanId(rawEvent, payload),
         name: resolveNodeName(rawEvent, payload, eventName),
         type: "node",
         status: "running",
@@ -243,12 +300,40 @@ export function buildExecutionStepsFromRunEvents(
         steps.push(buildCompletedStep(rawEvent, payload, "node", eventName, fallbackId, index));
         return;
       }
+      const existingOutput = steps[existingIndex]?.output;
       steps[existingIndex] = {
         ...steps[existingIndex],
         status: "completed",
-        output: resolveEndOutput(rawEvent, payload),
+        output: existingOutput !== undefined ? existingOutput : resolveEndOutput(rawEvent, payload),
       };
       activeStepIndexById.delete(stepId);
+      return;
+    }
+
+    if (eventName === "workflow.node_output_published") {
+      const publishedOutput = payload.published_output;
+      if (publishedOutput !== undefined) {
+        updateExistingStepOutput(
+          steps,
+          stepId,
+          publishedOutput,
+          toText(payload.node_name || "").trim() || undefined,
+          resolveNodeId(rawEvent, payload, eventName),
+        );
+      }
+      return;
+    }
+
+    if (eventName === "workflow.end_materialized") {
+      if (payload.final_output !== undefined) {
+        updateExistingStepOutput(
+          steps,
+          stepId,
+          payload.final_output,
+          toText(payload.node_name || "").trim() || undefined,
+          resolveNodeId(rawEvent, payload, eventName),
+        );
+      }
       return;
     }
 
@@ -268,6 +353,24 @@ export function buildExecutionStepsFromRunEvents(
   });
 
   return steps;
+}
+
+export function isExecutionTraceEvent(eventName: string): boolean {
+  return new Set([
+    "on_tool_start",
+    "on_tool_end",
+    "tool.started",
+    "tool.completed",
+    "tool.failed",
+    "node_start",
+    "node_end",
+    "on_chain_start",
+    "on_chain_end",
+    "workflow.node_output_published",
+    "workflow.end_materialized",
+    "error",
+    "run.failed",
+  ]).has(String(eventName || "").trim());
 }
 
 export async function buildExecutionStepsFromRunTrace(

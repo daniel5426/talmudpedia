@@ -5,7 +5,7 @@ from uuid import uuid4
 
 import pytest
 
-from app.db.postgres.models.agent_threads import AgentThread, AgentThreadSurface, AgentThreadTurn
+from app.db.postgres.models.agent_threads import AgentThread, AgentThreadSurface, AgentThreadTurn, AgentThreadTurnStatus
 from app.db.postgres.models.agents import Agent, AgentRun
 from app.db.postgres.models.identity import Tenant, User
 from app.services.thread_service import ThreadService
@@ -150,3 +150,103 @@ async def test_repair_thread_turn_indices_resequences_duplicate_zero_turns(db_se
     assert repaired is not None
     assert [turn.user_input_text for turn in repaired.turns] == ["older", "newer"]
     assert [turn.turn_index for turn in repaired.turns] == [0, 1]
+
+
+@pytest.mark.asyncio
+async def test_complete_turn_keeps_assistant_text_separate_from_structured_final_output(db_session):
+    tenant, user, agent = await _seed_thread_context(db_session)
+    thread = AgentThread(
+        tenant_id=tenant.id,
+        user_id=user.id,
+        agent_id=agent.id,
+        surface=AgentThreadSurface.internal,
+        title="Structured output thread",
+    )
+    db_session.add(thread)
+    await db_session.flush()
+
+    run = AgentRun(
+        tenant_id=tenant.id,
+        agent_id=agent.id,
+        user_id=user.id,
+        initiator_user_id=user.id,
+        thread_id=thread.id,
+        input_params={"input": "hello"},
+    )
+    db_session.add(run)
+    await db_session.flush()
+
+    service = ThreadService(db_session)
+    await service.start_turn(
+        thread_id=thread.id,
+        run_id=run.id,
+        user_input_text="hello",
+    )
+    await service.complete_turn(
+        run_id=run.id,
+        status=AgentThreadTurnStatus.completed,
+        assistant_output_text="Visible assistant reply",
+        metadata={"final_output": {"answer": "machine result"}},
+    )
+    await db_session.commit()
+
+    stored = await service.get_thread_with_turns(
+        tenant_id=tenant.id,
+        thread_id=thread.id,
+        user_id=user.id,
+    )
+
+    assert stored is not None
+    turn = stored.turns[0]
+    assert turn.assistant_output_text == "Visible assistant reply"
+    assert turn.metadata_["final_output"] == {"answer": "machine result"}
+
+
+@pytest.mark.asyncio
+async def test_complete_turn_keeps_assistant_text_when_string_final_output_differs(db_session):
+    tenant, user, agent = await _seed_thread_context(db_session)
+    thread = AgentThread(
+        tenant_id=tenant.id,
+        user_id=user.id,
+        agent_id=agent.id,
+        surface=AgentThreadSurface.internal,
+        title="String output thread",
+    )
+    db_session.add(thread)
+    await db_session.flush()
+
+    run = AgentRun(
+        tenant_id=tenant.id,
+        agent_id=agent.id,
+        user_id=user.id,
+        initiator_user_id=user.id,
+        thread_id=thread.id,
+        input_params={"input": "hello"},
+    )
+    db_session.add(run)
+    await db_session.flush()
+
+    service = ThreadService(db_session)
+    await service.start_turn(
+        thread_id=thread.id,
+        run_id=run.id,
+        user_input_text="hello",
+    )
+    await service.complete_turn(
+        run_id=run.id,
+        status=AgentThreadTurnStatus.completed,
+        assistant_output_text="Chat-facing reply",
+        metadata={"final_output": "Workflow-facing reply"},
+    )
+    await db_session.commit()
+
+    stored = await service.get_thread_with_turns(
+        tenant_id=tenant.id,
+        thread_id=thread.id,
+        user_id=user.id,
+    )
+
+    assert stored is not None
+    turn = stored.turns[0]
+    assert turn.assistant_output_text == "Chat-facing reply"
+    assert turn.metadata_["final_output"] == "Workflow-facing reply"

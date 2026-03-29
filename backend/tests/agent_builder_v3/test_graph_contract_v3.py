@@ -67,6 +67,7 @@ async def test_graph_v3_analysis_exposes_inventory_and_metadata():
     register_standard_operators()
     compiler = AgentCompiler()
     graph = _base_v3_graph()
+    graph.nodes[1].config["name"] = "Reply Agent"
 
     graph_ir = await compiler.compile(agent_id=uuid4(), version=1, graph=graph)
     analysis = graph_ir.metadata.get("analysis") or {}
@@ -75,7 +76,18 @@ async def test_graph_v3_analysis_exposes_inventory_and_metadata():
     assert analysis["inventory"]["workflow_input"][0]["key"] == "input_as_text"
     assert any(item["key"] == "customer_name" for item in analysis["inventory"]["state"])
     agent_outputs = next(item for item in analysis["inventory"]["node_outputs"] if item["node_id"] == "agent_1")
-    assert any(field["key"] == "output_text" for field in agent_outputs["fields"])
+    assert agent_outputs["node_label"] == "Reply Agent"
+    assert [field["key"] for field in agent_outputs["fields"]] == ["output_text"]
+    global_suggestions = analysis["inventory"]["template_suggestions"]["global"]
+    end_suggestions = analysis["inventory"]["template_suggestions"]["by_node"]["end"]
+    agent_suggestions = analysis["inventory"]["template_suggestions"]["by_node"]["agent_1"]
+    assert [item["insert_text"] for item in global_suggestions] == [
+        "workflow_input.input_as_text",
+        "state.customer_name",
+    ]
+    assert [item["display_label"] for item in end_suggestions] == ["Reply Agent / Output Text"]
+    assert [item["insert_text"] for item in end_suggestions] == ["upstream.agent_1.output_text"]
+    assert agent_suggestions == []
 
 
 @pytest.mark.asyncio
@@ -181,14 +193,25 @@ async def test_graph_v3_rejects_set_state_value_ref_type_mismatch():
     assert any("type mismatch" in error.message for error in errors)
 
 
-def test_assistant_output_prefers_final_output_over_last_assistant_message():
+def test_assistant_output_prefers_latest_assistant_message_over_final_output():
     output = AgentExecutorService._extract_assistant_output_text(
         {
             "final_output": "authoritative end output",
             "messages": [
-                {"role": "assistant", "content": "stale assistant message"},
+                {"role": "assistant", "content": "assistant-facing reply"},
             ],
         }
     )
 
-    assert output == "authoritative end output"
+    assert output == "assistant-facing reply"
+
+
+def test_assistant_output_can_fallback_to_final_output_when_no_chat_text_exists():
+    output = AgentExecutorService._extract_assistant_output_text(
+        {
+            "final_output": "workflow return text",
+            "messages": [],
+        }
+    )
+
+    assert output == "workflow return text"

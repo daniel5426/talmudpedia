@@ -60,11 +60,13 @@ def normalize_filtered_event_to_v2(
                 "action": data.get("action"),
                 "display_name": data.get("display_name"),
                 "summary": data.get("summary"),
+                "renderer_kind": data.get("renderer_kind"),
             },
             [],
         )
 
     if event_name == "on_tool_end":
+        output = data.get("output") if isinstance(data.get("output"), dict) else None
         return (
             "tool.completed",
             "tool",
@@ -76,6 +78,8 @@ def normalize_filtered_event_to_v2(
                 "action": data.get("action"),
                 "display_name": data.get("display_name"),
                 "summary": data.get("summary"),
+                "renderer_kind": data.get("renderer_kind"),
+                "output_kind": output.get("kind") if isinstance(output, dict) else None,
             },
             [],
         )
@@ -93,6 +97,7 @@ def normalize_filtered_event_to_v2(
                 "action": data.get("action"),
                 "display_name": data.get("display_name"),
                 "summary": data.get("summary"),
+                "renderer_kind": data.get("renderer_kind"),
             },
             [{"message": str(data.get("error") or "Tool failed")}],
         )

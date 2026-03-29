@@ -1,6 +1,6 @@
 # Agent Graph Spec
 
-Last Updated: 2026-03-23
+Last Updated: 2026-03-29
 
 This document is the canonical graph-definition contract for the agent builder and backend compiler.
 
@@ -62,6 +62,7 @@ Current normalization behavior:
 GraphSpec `3.0` adds:
 - typed workflow/state inventory
 - explicit node output contracts
+- node-scoped template suggestion inventory for builder text/prompt inputs
 - structured value references for data-binding fields
 - schema-driven `End`
 
@@ -114,16 +115,17 @@ Every runtime-producing node must declare a stable output contract. This invento
 - type checks
 - `End` bindings
 - runtime publication filtering
+- builder template/prompt suggestion scoping
 
 Current baseline output contracts:
 - `start`
   - workflow input inventory only
 - `agent`
-  - `output_text`
-  - `output_json` when structured output exists
+  - `output_text` in text mode
+  - `output_json` in structured-output mode
 - `llm`
-  - `output_text`
-  - `output_json` when structured output exists
+  - `output_text` in text mode
+  - `output_json` in structured-output mode
 - `tool`
   - `result`
 - `rag`
@@ -146,6 +148,24 @@ Current baseline output contracts:
   - output fields derived from artifact metadata
 
 `set_state` is state-writing, not output-primary.
+
+## Builder Suggestion Inventory
+
+Graph analysis now exposes two different downstream contracts:
+- raw typed inventory
+  - `workflow_input`
+  - `state`
+  - `node_outputs`
+- builder text/prompt suggestion inventory
+  - `template_suggestions.global`
+  - `template_suggestions.by_node`
+
+Rules:
+- the typed inventory remains graph-wide and is used by ValueRef pickers and validation
+- template suggestions are deduplicated and builder-facing
+- global suggestions include workflow input and state
+- `template_suggestions.by_node[nodeId]` includes only direct incoming node outputs for that node
+- builder menus should render friendly labels while inserting one stable token per semantic value
 
 ## End Node Contract
 
@@ -174,7 +194,8 @@ When `End` exists, public execution surfaces should treat `final_output` as auth
 
 Implications:
 - execution results must expose `final_output`
-- chat/thread rendering may still expose assistant text separately
+- persisted chat/thread surfaces may still expose `assistant_output_text` separately
+- `assistant_output_text` and `final_output` are distinct internal concepts and must not be treated as implicit aliases
 - “last assistant message” is not the canonical workflow result when `End` is present
 
 ## Edge Contract

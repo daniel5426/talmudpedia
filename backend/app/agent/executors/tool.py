@@ -42,6 +42,7 @@ from app.services.published_app_coding_agent_tools import (
 )
 from app.services.resource_policy_service import ResourcePolicySnapshot
 from app.services.tool_function_registry import ensure_tool_functions_registered, get_tool_function, run_tool_function
+from app.services.ui_blocks import UI_BLOCKS_BUILTIN_KEY, normalize_ui_blocks_tool_input
 from app.services.web_search import create_web_search_provider
 
 logger = logging.getLogger(__name__)
@@ -980,6 +981,14 @@ class ToolNodeExecutor(BaseNodeExecutor):
 
         return {"operation": operation, "result": result}
 
+    async def _execute_ui_blocks_builtin(
+        self,
+        input_data: dict[str, Any],
+        implementation_config: dict[str, Any],
+    ) -> dict[str, Any]:
+        _ = implementation_config
+        return normalize_ui_blocks_tool_input(input_data)
+
     async def _execute_builtin_dispatch(
         self,
         *,
@@ -1014,6 +1023,8 @@ class ToolNodeExecutor(BaseNodeExecutor):
             return await self._execute_json_transform_builtin(input_data, implementation_config)
         if builtin_key == "datetime_utils":
             return await self._execute_datetime_utils_builtin(input_data, implementation_config)
+        if builtin_key == UI_BLOCKS_BUILTIN_KEY:
+            return await self._execute_ui_blocks_builtin(input_data, implementation_config)
 
         return None
 

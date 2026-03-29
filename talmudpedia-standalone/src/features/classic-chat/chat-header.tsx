@@ -1,4 +1,4 @@
-import { Languages, Moon, Search, Sun } from "lucide-react";
+import { Languages, LayoutGrid, Moon, Search, Sun } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -84,6 +84,18 @@ export function ChatHeader({
           <Search className="size-3.5" />
           <span className="sr-only">Search</span>
         </Button>
+
+        <a href="/widget-lab" className="inline-flex">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 rounded-md"
+            aria-label={isHebrew ? "פתח סטודיו UI Blocks" : "Open UI Blocks studio"}
+          >
+            <LayoutGrid className="size-3.5" />
+            <span className="sr-only">{isHebrew ? "פתח סטודיו UI Blocks" : "Open UI Blocks studio"}</span>
+          </Button>
+        </a>
 
         <Button
           variant="ghost"

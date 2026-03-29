@@ -14,6 +14,7 @@ import { CustomBreadcrumb } from "@/components/ui/custom-breadcrumb"
 
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { agentService, Agent, AgentGraphDefinition } from "@/services"
 import { AgentBuilder, AgentNodeData } from "@/components/agent-builder"
 import { normalizeGraphSpecForSave } from "@/components/agent-builder/graphspec"
@@ -29,6 +30,7 @@ export default function AgentBuilderPage() {
     const [isSaving, setIsSaving] = useState(false)
     const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle")
     const [error, setError] = useState<string | null>(null)
+    const [builderMode, setBuilderMode] = useState<"build" | "execute">("build")
 
     // Store current graph state for saving
     const graphRef = useRef<AgentGraphDefinition>({ spec_version: "3.0", nodes: [], edges: [] })
@@ -146,6 +148,21 @@ export default function AgentBuilderPage() {
                     </div>
                     </div>
 
+                    <div className="flex flex-1 justify-center">
+                        {agent && (
+                            <Tabs value={builderMode} onValueChange={(value) => setBuilderMode(value as "build" | "execute")} className="gap-0">
+                                <TabsList className="h-8 p-1">
+                                    <TabsTrigger value="build" className="px-4 text-[11px]">
+                                        Build
+                                    </TabsTrigger>
+                                    <TabsTrigger value="execute" className="px-4 text-[11px]">
+                                        Execute
+                                    </TabsTrigger>
+                                </TabsList>
+                            </Tabs>
+                        )}
+                    </div>
+
                     <div className="flex items-center gap-2">
                         <HeaderConfigEditor
                             name={agentName}
@@ -228,6 +245,8 @@ export default function AgentBuilderPage() {
                         initialNodes={agent.graph_definition?.nodes || []}
                         initialEdges={agent.graph_definition?.edges || []}
                         onSave={handleGraphChange}
+                        mode={builderMode}
+                        onModeChange={setBuilderMode}
                     />
                 )}
             </main>

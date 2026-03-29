@@ -1,6 +1,6 @@
 # Published Apps Backend Tests
 
-Last Updated: 2026-03-23
+Last Updated: 2026-03-30
 
 ## Scope of the feature
 - Admin CRUD for published apps and builder state primitives.
@@ -33,6 +33,7 @@ Last Updated: 2026-03-23
 - Public preview stream uses token auth and persists run-native thread records.
 - Runtime bootstrap contract includes `request_contract_version=thread.v1`.
 - Agent integration contract payload is exposed and validated.
+- Agent integration contract exposes `frontend_requirements` for frontend-dependent tools such as the new built-in `UI Blocks` tool, including installer command metadata.
 - Legacy publish helper now routes publish through selected version flow.
 
 ## Last run command + date/time + result
@@ -57,6 +58,9 @@ Last Updated: 2026-03-23
 - Command: `pytest -q backend/tests/published_apps/test_app_stats_api.py backend/tests/published_apps/test_admin_apps_page_fetch_probe.py`
 - Date: 2026-03-22
 - Result: PASS (4 passed, 1 skipped)
+- Command: `PYTHONPATH=/Users/danielbenassaya/Code/personal/talmudpedia/backend python3 -m pytest -q /Users/danielbenassaya/Code/personal/talmudpedia/backend/tests/builtin_tools_registry/test_builtin_registry_api.py /Users/danielbenassaya/Code/personal/talmudpedia/backend/tests/published_apps/test_builder_agent_integration_contract.py /Users/danielbenassaya/Code/personal/talmudpedia/backend/tests/builtin_tool_execution/test_builtin_tool_executor.py`
+- Date: 2026-03-30
+- Result: PASS (28 passed, 7 warnings)
 
 ## Known gaps or follow-ups
 - Add explicit regression tests for removed `/admin/apps/{app_id}/publish` route in this folder (currently covered under `backend/tests/app_versions/`).

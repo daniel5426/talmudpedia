@@ -91,6 +91,8 @@ export class EmbeddedAgentClient {
     {
       externalUserId,
       externalSessionId,
+      beforeTurnIndex,
+      limit,
     }: EmbeddedAgentThreadDetailOptions,
   ): Promise<EmbeddedAgentThreadDetail> {
     const search = new URLSearchParams({
@@ -98,6 +100,12 @@ export class EmbeddedAgentClient {
     });
     if (externalSessionId) {
       search.set("external_session_id", externalSessionId);
+    }
+    if (typeof beforeTurnIndex === "number") {
+      search.set("before_turn_index", String(beforeTurnIndex));
+    }
+    if (typeof limit === "number") {
+      search.set("limit", String(limit));
     }
     return this.requestJson<EmbeddedAgentThreadDetail>(
       `${this.baseUrl}/public/embed/agents/${agentId}/threads/${threadId}?${search.toString()}`,

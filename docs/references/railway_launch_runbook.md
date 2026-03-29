@@ -1,6 +1,6 @@
 # Railway Launch Runbook
 
-Last Updated: 2026-03-27
+Last Updated: 2026-03-28
 
 This is the canonical runbook for launching the core Talmudpedia platform on Railway.
 
@@ -34,12 +34,13 @@ Keep these systems external:
 
 ### Backend
 
-Use `backend/railway.env.example` as the source template.
+Use the root-level Railway import templates plus Railway UI variables.
 
 Operational split:
 
 - local backend env: `backend/.env.local`
-- Railway sync source: `backend/.env.railway`
+- Railway shared import template: `/.env.shared`
+- Railway backend import template: `/.env.backend`
 
 Required groups:
 
@@ -64,12 +65,12 @@ Production defaults that must stay disabled:
 
 ### Frontend
 
-Use `frontend-reshet/railway.env.example` as the source template.
+Use the root-level frontend Railway import template.
 
 Operational split:
 
 - local frontend env: `frontend-reshet/.env.local`
-- Railway sync source: `frontend-reshet/.env.railway`
+- Railway frontend import template: `/.env.frontend`
 
 Required values:
 
@@ -132,21 +133,34 @@ Required values:
 9. Publish one app and verify host-based runtime.
 10. Run one `web_crawler` smoke test and one published-app smoke test.
 
-## Railway Env Sync
+## Railway Variables Workflow
 
 Deployment env changes are not automatic from local `.env` files.
 
-Use the sync script after editing the dedicated Railway env files:
+Preferred workflow:
 
-```bash
-python3 backend/scripts/sync_railway_env.py --sync-worker
-```
+1. maintain local-only values in `backend/.env.local` and `frontend-reshet/.env.local`
+2. maintain Railway import/reference templates in:
+   - `/.env.shared`
+   - `/.env.backend`
+   - `/.env.backend-worker`
+   - `/.env.frontend`
+3. import/update those values in the Railway UI
+4. review the staged variable changes in Railway
+5. deploy the staged variable changes in Railway
 
-Dry-run mode:
+Recommended structure:
 
-```bash
-python3 backend/scripts/sync_railway_env.py --sync-worker --dry-run
-```
+- Shared Variables:
+  - secrets and common config used by multiple services
+- Service Variables:
+  - service-specific values
+  - reference variables such as `${{Postgres.DATABASE_URL}}`, `${{Redis.REDIS_URL}}`, and `${{ shared.SECRET_KEY }}`
+
+Legacy helper:
+
+- [`backend/scripts/sync_railway_env.py`](/Users/danielbenassaya/Code/personal/talmudpedia/backend/scripts/sync_railway_env.py) can still push variables via the CLI
+- treat it as optional tooling, not the primary Railway env workflow
 
 ## Validation Checklist
 

@@ -1,4 +1,4 @@
-Last Updated: 2026-03-25
+Last Updated: 2026-03-29
 
 ## Scope
 Playground-specific trace inspection behavior for assistant responses, including persisted trace replay into the execution sidebar and reset behavior across playground state changes.
@@ -11,6 +11,8 @@ Playground-specific trace inspection behavior for assistant responses, including
 ## Key Scenarios Covered
 - Persisted recorder-style run events replay into sidebar execution steps.
 - Persisted v2 tool lifecycle envelopes remain compatible with sidebar replay.
+- Persisted workflow publication events replace summary node/end payloads with the actual published node output and materialized final output.
+- Live streamed builder/playground execution uses the same trace reducer, preserving published node output and End `final_output`.
 - The playground controller can load and swap inspected traces by assistant-response `runId`.
 - New thread, thread load, and agent switch clear inspected trace state.
 - Clicking `Trace` on a playground assistant response opens the sidebar without changing message content.
@@ -23,6 +25,12 @@ Playground-specific trace inspection behavior for assistant responses, including
 - Deep-linking to a hidden playground agent redirects to the first visible agent when available.
 
 ## Last Run
+- Command: `cd frontend-reshet && pnpm test -- --runTestsByPath src/__tests__/agent_playground/trace_steps.test.ts src/__tests__/agent_playground/useAgentRunController.test.tsx --watch=false`
+- Date: 2026-03-29 Asia/Hebron
+- Result: Pass
+- Command: `cd frontend-reshet && pnpm test -- --runTestsByPath src/__tests__/agent_playground/trace_steps.test.ts --watch=false`
+- Date: 2026-03-29 Asia/Hebron
+- Result: Pass
 - Command: `cd frontend-reshet && npm test -- --runInBand src/__tests__/agent_playground/trace_steps.test.ts src/__tests__/agent_playground/useAgentRunController.test.tsx src/__tests__/agent_playground/playground_page_trace.test.tsx src/__tests__/assistant_response_ui/trace_loader.test.ts src/__tests__/assistant_response_ui/normalizer.test.ts`
 - Date: 2026-03-14 21:19 EET
 - Result: Pass

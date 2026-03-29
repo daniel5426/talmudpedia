@@ -1,6 +1,6 @@
 # Built-in Tool Execution Tests
 
-Last Updated: 2026-03-19
+Last Updated: 2026-03-29
 
 ## Scope
 Covers runtime behavior of Built-in Tools v1 dispatch and mode-based execution guardrails.
@@ -19,6 +19,7 @@ Covers runtime behavior of Built-in Tools v1 dispatch and mode-based execution g
 - `web_search` fallback to provider env keys (`SERPER_API_KEY`, `TAVILY_API_KEY`, `EXA_API_KEY`) when no credential override is present.
 - `json_transform` and `datetime_utils` behavior contracts.
 - Legacy widget built-ins are absent from the built-in registry after the OpenUI hard cut.
+- `ui_blocks` built-in validates starter-block bundles and returns canonical `ui_blocks_bundle` output.
 
 ## Last run command + result
 - Command: `PYTHONPATH=/Users/danielbenassaya/Code/personal/talmudpedia/backend python3 -m pytest -q /Users/danielbenassaya/Code/personal/talmudpedia/backend/tests/builtin_tool_execution/test_builtin_tool_executor.py`

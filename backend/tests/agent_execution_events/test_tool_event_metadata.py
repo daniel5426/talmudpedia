@@ -45,6 +45,48 @@ def test_normalize_filtered_event_to_v2_preserves_tool_display_metadata():
     assert payload["summary"] == "Validate agent graph"
 
 
+def test_ui_blocks_tool_metadata_and_completed_output_kind_are_preserved():
+    metadata = resolve_tool_event_metadata(
+        tool_slug="builtin-ui-blocks",
+        tool_name="UI Blocks",
+        input_data={"rows": [{"blocks": [{"kind": "note", "id": "n1", "span": 12, "title": "Note", "text": "ok"}]}]},
+    )
+
+    assert metadata["renderer_kind"] == "ui_blocks"
+
+    event_name, stage, payload, diagnostics = normalize_filtered_event_to_v2(
+        raw_event={
+            "event": "on_tool_end",
+            "name": "UI Blocks",
+            "span_id": "call-ui-1",
+            "data": {
+                "tool_slug": "builtin-ui-blocks",
+                "renderer_kind": "ui_blocks",
+                "display_name": "UI Blocks",
+                "output": {
+                    "kind": "ui_blocks_bundle",
+                    "contract_version": "v1",
+                    "bundle": {
+                        "rows": [
+                            {
+                                "blocks": [
+                                    {"kind": "note", "id": "n1", "span": 12, "title": "Note", "text": "ok"}
+                                ]
+                            }
+                        ]
+                    },
+                },
+            },
+        }
+    )
+
+    assert event_name == "tool.completed"
+    assert stage == "tool"
+    assert diagnostics == []
+    assert payload["renderer_kind"] == "ui_blocks"
+    assert payload["output_kind"] == "ui_blocks_bundle"
+
+
 def test_normalize_filtered_event_to_v2_keeps_generic_error_non_terminal():
     event_name, stage, payload, diagnostics = normalize_filtered_event_to_v2(
         raw_event={

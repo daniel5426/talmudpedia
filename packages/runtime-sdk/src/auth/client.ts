@@ -37,6 +37,10 @@ type PublishedAppThreadDetail = PublishedAppThreadSummary & {
     completed_at?: string | null;
     metadata?: Record<string, unknown> | null;
   }>;
+  paging: {
+    has_more: boolean;
+    next_before_turn_index: number | null;
+  };
 };
 
 type PublishedAppThreadListResponse = {
@@ -160,9 +164,16 @@ export function createPublishedAppAuthClient(options: AuthClientOptions) {
       });
     },
 
-    async getThread(threadId: string, token?: string): Promise<PublishedAppThreadDetail> {
-      return request<PublishedAppThreadDetail>(`/public/external/apps/${slug}/threads/${encodeURIComponent(threadId)}`, {
-        headers: { Authorization: `Bearer ${requireBearer(token)}` },
+    async getThread(
+      threadId: string,
+      options?: { token?: string; beforeTurnIndex?: number; limit?: number },
+    ): Promise<PublishedAppThreadDetail> {
+      const query = new URLSearchParams();
+      if (typeof options?.beforeTurnIndex === "number") query.set("before_turn_index", String(options.beforeTurnIndex));
+      if (typeof options?.limit === "number") query.set("limit", String(options.limit));
+      const suffix = query.toString() ? `?${query.toString()}` : "";
+      return request<PublishedAppThreadDetail>(`/public/external/apps/${slug}/threads/${encodeURIComponent(threadId)}${suffix}`, {
+        headers: { Authorization: `Bearer ${requireBearer(options?.token)}` },
       });
     },
 

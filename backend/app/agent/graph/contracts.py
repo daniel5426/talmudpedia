@@ -189,6 +189,75 @@ def normalize_value_ref(raw: Any) -> dict[str, Any]:
     return normalized
 
 
+def resolve_operator_display_name(operator_spec: Any | None, node_type: str) -> str | None:
+    if operator_spec is not None:
+        for attr in ("display_name", "displayName", "name"):
+            value = str(getattr(operator_spec, attr, "") or "").strip()
+            if value:
+                return value
+        ui = getattr(operator_spec, "ui", None)
+        if isinstance(ui, dict):
+            for key in ("display_name", "displayName", "name", "title"):
+                value = str(ui.get(key) or "").strip()
+                if value:
+                    return value
+    return str(node_type or "").replace("_", " ").strip().title() or None
+
+
+def _node_data_value(node: Any, key: str) -> str | None:
+    data = getattr(node, "data", None)
+    if isinstance(data, dict):
+        value = str(data.get(key) or "").strip()
+        return value or None
+    return None
+
+
+def resolve_node_display_name(node: Any, *, operator_spec: Any | None = None, node_type: str | None = None) -> str:
+    config = getattr(node, "config", None)
+    if isinstance(config, dict):
+        for key in ("name", "label"):
+            value = str(config.get(key) or "").strip()
+            if value:
+                return value
+
+    data_display_name = _node_data_value(node, "displayName")
+    if data_display_name:
+        return data_display_name
+
+    direct_label = str(getattr(node, "label", "") or "").strip()
+    if direct_label:
+        return direct_label
+
+    operator_display = resolve_operator_display_name(operator_spec, str(node_type or getattr(node, "type", "") or ""))
+    if operator_display:
+        return operator_display
+
+    return str(getattr(node, "id", "") or node_type or "node").strip() or "node"
+
+
+def _build_template_suggestion(
+    *,
+    suggestion_id: str,
+    display_label: str,
+    insert_text: str,
+    value_type: Any,
+    namespace: str,
+    key: str,
+    node_id: str | None = None,
+) -> dict[str, Any]:
+    payload = {
+        "id": suggestion_id,
+        "display_label": display_label,
+        "insert_text": insert_text,
+        "type": normalize_value_type(value_type),
+        "namespace": namespace,
+        "key": key,
+    }
+    if node_id:
+        payload["node_id"] = node_id
+    return payload
+
+
 def normalize_end_output_config(config: dict[str, Any] | None) -> dict[str, Any]:
     raw = dict(config or {})
     if not isinstance(raw.get("output_schema"), dict):
@@ -232,6 +301,11 @@ def get_node_output_contract(
     contract = operator_spec.output_contract if operator_spec and isinstance(getattr(operator_spec, "output_contract", None), dict) else {}
     fields = contract.get("fields") if isinstance(contract.get("fields"), list) else None
 
+    # Agent/LLM outputs are config-dependent. Do not trust a static registry
+    # contract here because the builder should only see the active output mode.
+    if node_type in {"agent", "llm"}:
+        fields = None
+
     if fields is None:
         artifact_output_schema = config.get("_artifact_output_schema")
         artifact_ui = config.get("_artifact_node_ui") if isinstance(config.get("_artifact_node_ui"), dict) else {}
@@ -250,13 +324,15 @@ def get_node_output_contract(
 
     if fields is None:
         if node_type == "agent":
-            fields = [{"key": "output_text", "type": "string"}]
             if str(config.get("output_format") or "").strip().lower() == "json" or isinstance(config.get("output_schema"), dict):
-                fields.append({"key": "output_json", "type": "unknown"})
+                fields = [{"key": "output_json", "type": "unknown", "label": "Output JSON"}]
+            else:
+                fields = [{"key": "output_text", "type": "string", "label": "Output Text"}]
         elif node_type == "llm":
-            fields = [{"key": "output_text", "type": "string"}]
             if str(config.get("output_format") or "").strip().lower() == "json" or isinstance(config.get("output_schema"), dict):
-                fields.append({"key": "output_json", "type": "unknown"})
+                fields = [{"key": "output_json", "type": "unknown", "label": "Output JSON"}]
+            else:
+                fields = [{"key": "output_text", "type": "string", "label": "Output Text"}]
         elif node_type == "tool":
             fields = [{"key": "result", "type": "unknown"}]
         elif node_type in {"rag", "vector_search"}:
@@ -298,33 +374,9 @@ def get_node_output_contract(
     return {
         "node_id": node_id,
         "node_type": node_type,
-        "node_label": node_label or node_id,
+        "node_label": str(node_label or node_id).strip() or node_id,
         "fields": normalized_fields,
     }
-
-
-def _template_variable_entries(item: dict[str, Any]) -> list[dict[str, Any]]:
-    namespace = str(item.get("namespace") or "")
-    key = str(item.get("key") or "")
-    node_id = str(item.get("node_id") or "")
-    value_type = normalize_value_type(item.get("type"))
-    label = str(item.get("label") or key).strip()
-    entries: list[dict[str, Any]] = []
-
-    if namespace == "workflow_input":
-        canonical = f"workflow_input.{key}"
-        entries.append({"name": canonical, "type": value_type, "label": label, "namespace": namespace, "key": key})
-        entries.append({"name": key, "type": value_type, "label": label, "namespace": namespace, "key": key})
-    elif namespace == "state":
-        canonical = f"state.{key}"
-        entries.append({"name": canonical, "type": value_type, "label": label, "namespace": namespace, "key": key})
-        entries.append({"name": key, "type": value_type, "label": label, "namespace": namespace, "key": key})
-    elif namespace == "node_output" and node_id:
-        canonical = f"node_outputs.{node_id}.{key}"
-        upstream_alias = f"upstream.{node_id}.{key}"
-        entries.append({"name": canonical, "type": value_type, "label": label, "namespace": namespace, "key": key, "node_id": node_id})
-        entries.append({"name": upstream_alias, "type": value_type, "label": label, "namespace": namespace, "key": key, "node_id": node_id})
-    return entries
 
 
 def build_graph_analysis(
@@ -338,9 +390,18 @@ def build_graph_analysis(
     state_inventory: list[dict[str, Any]] = []
     state_by_key: dict[str, dict[str, Any]] = {}
     node_output_inventory: list[dict[str, Any]] = []
-    template_variables: list[dict[str, Any]] = []
     operator_contracts: dict[str, Any] = {}
     effective_spec_version = str(getattr(graph, "spec_version", None) or GRAPH_SPEC_V1)
+    incoming_sources_by_target: dict[str, list[str]] = {}
+
+    for edge in getattr(graph, "edges", []) or []:
+        source = str(getattr(edge, "source", None) or (edge.get("source") if isinstance(edge, dict) else "") or "").strip()
+        target = str(getattr(edge, "target", None) or (edge.get("target") if isinstance(edge, dict) else "") or "").strip()
+        if not source or not target:
+            continue
+        incoming_sources_by_target.setdefault(target, [])
+        if source not in incoming_sources_by_target[target]:
+            incoming_sources_by_target[target].append(source)
 
     workflow_input_inventory = [
         {
@@ -475,7 +536,7 @@ def build_graph_analysis(
         output_contract = get_node_output_contract(
             node_id=node.id,
             node_type=normalized_type,
-            node_label=getattr(node, "label", None),
+            node_label=resolve_node_display_name(node, operator_spec=operator_spec, node_type=normalized_type),
             config=node.config if isinstance(node.config, dict) else {},
             operator_spec=operator_spec,
         )
@@ -487,23 +548,69 @@ def build_graph_analysis(
         if output_contract["fields"]:
             node_output_inventory.append(output_contract)
 
+    template_global_suggestions: list[dict[str, Any]] = []
     for item in workflow_input_inventory:
-        template_variables.extend(_template_variable_entries(item))
-    for item in state_inventory:
-        template_variables.extend(_template_variable_entries(item))
-    for output_group in node_output_inventory:
-        for field in output_group["fields"]:
-            template_variables.extend(
-                _template_variable_entries(
-                    {
-                        "namespace": "node_output",
-                        "node_id": output_group["node_id"],
-                        "key": field["key"],
-                        "type": field["type"],
-                        "label": f"{output_group['node_label']} / {field['label']}",
-                    }
-                )
+        key = str(item.get("key") or "").strip()
+        if not key:
+            continue
+        template_global_suggestions.append(
+            _build_template_suggestion(
+                suggestion_id=f"workflow_input:{key}",
+                display_label=str(item.get("label") or key).strip() or key,
+                insert_text=f"workflow_input.{key}",
+                value_type=item.get("type"),
+                namespace="workflow_input",
+                key=key,
             )
+        )
+
+    for item in state_inventory:
+        key = str(item.get("key") or "").strip()
+        if not key:
+            continue
+        template_global_suggestions.append(
+            _build_template_suggestion(
+                suggestion_id=f"state:{key}",
+                display_label=str(item.get("label") or key).strip() or key,
+                insert_text=f"state.{key}",
+                value_type=item.get("type"),
+                namespace="state",
+                key=key,
+            )
+        )
+
+    template_suggestions_by_node: dict[str, list[dict[str, Any]]] = {}
+    for node in getattr(graph, "nodes", []) or []:
+        node_id = str(getattr(node, "id", "") or "").strip()
+        if not node_id:
+            continue
+        scoped: list[dict[str, Any]] = []
+        seen_suggestion_ids: set[str] = set()
+        for source_node_id in incoming_sources_by_target.get(node_id, []):
+            output_group = next((group for group in node_output_inventory if str(group.get("node_id")) == source_node_id), None)
+            if not output_group:
+                continue
+            node_label = str(output_group.get("node_label") or source_node_id).strip() or source_node_id
+            for field in output_group.get("fields", []):
+                field_key = str(field.get("key") or "").strip()
+                if not field_key:
+                    continue
+                suggestion_id = f"node_output:{source_node_id}:{field_key}"
+                if suggestion_id in seen_suggestion_ids:
+                    continue
+                seen_suggestion_ids.add(suggestion_id)
+                scoped.append(
+                    _build_template_suggestion(
+                        suggestion_id=suggestion_id,
+                        display_label=f"{node_label} / {str(field.get('label') or field_key).strip() or field_key}",
+                        insert_text=f"upstream.{source_node_id}.{field_key}",
+                        value_type=field.get("type"),
+                        namespace="node_output",
+                        key=field_key,
+                        node_id=source_node_id,
+                    )
+                )
+        template_suggestions_by_node[node_id] = scoped
 
     end_nodes = graph.get_output_nodes() if hasattr(graph, "get_output_nodes") else []
     for end_node in end_nodes:
@@ -573,7 +680,10 @@ def build_graph_analysis(
             "workflow_input": workflow_input_inventory,
             "state": state_inventory,
             "node_outputs": node_output_inventory,
-            "template_variables": template_variables,
+            "template_suggestions": {
+                "global": template_global_suggestions,
+                "by_node": template_suggestions_by_node,
+            },
         },
         "operator_contracts": operator_contracts,
         "errors": errors,

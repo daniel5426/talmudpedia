@@ -56,6 +56,10 @@ export type EmbeddedAgentThreadTurn = {
 
 export type EmbeddedAgentThreadDetail = EmbeddedAgentThreadSummary & {
   turns: EmbeddedAgentThreadTurn[];
+  paging: {
+    has_more: boolean;
+    next_before_turn_index: number | null;
+  };
 };
 
 export type EmbeddedAgentThreadsResponse = {
@@ -94,6 +98,8 @@ export type EmbeddedAgentThreadListOptions = {
 export type EmbeddedAgentThreadDetailOptions = {
   externalUserId: string;
   externalSessionId?: string;
+  beforeTurnIndex?: number;
+  limit?: number;
 };
 
 export type EmbeddedAgentThreadDeleteOptions = {

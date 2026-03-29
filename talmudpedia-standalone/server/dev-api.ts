@@ -9,7 +9,6 @@ import * as clientActivitySummaryRoute from "../api/prico-tools/client-activity-
 import * as currencyConcentrationRoute from "../api/prico-tools/currency-concentration.js";
 import * as dealExplainerRoute from "../api/prico-tools/deal-explainer.js";
 import * as marketContextRoute from "../api/prico-tools/market-context.js";
-import * as widgetOutputRoute from "../api/prico-tools/widget-output.js";
 import * as sessionClientRoute from "../api/session/client.js";
 import * as sessionRoute from "../api/session.js";
 
@@ -51,10 +50,6 @@ const routes: Array<{
   {
     match: (pathname) => pathname === "/api/prico-tools/market-context",
     module: marketContextRoute,
-  },
-  {
-    match: (pathname) => pathname === "/api/prico-tools/widget-output",
-    module: widgetOutputRoute,
   },
 ];
 

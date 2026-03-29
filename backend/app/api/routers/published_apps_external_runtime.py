@@ -4,7 +4,7 @@ from typing import Any, Dict, Optional
 from urllib.parse import urlparse
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -258,6 +258,8 @@ async def external_list_threads(
 async def external_get_thread(
     app_slug: str,
     thread_id: UUID,
+    before_turn_index: int | None = Query(default=None, ge=0),
+    limit: int = Query(default=20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
     principal: Dict[str, Any] = Depends(get_current_published_app_principal),
 ):
@@ -267,15 +269,21 @@ async def external_get_thread(
     repaired = await service.repair_thread_turn_indices(thread_id=thread_id)
     if repaired:
         await db.commit()
-    thread = await service.get_thread_with_turns(
+    page_result = await service.get_thread_turn_page(
         tenant_id=app.tenant_id,
         thread_id=thread_id,
         app_account_id=UUID(principal["app_account_id"]),
         published_app_id=app.id,
+        before_turn_index=before_turn_index,
+        limit=limit,
     )
-    if thread is None:
+    if page_result is None:
         raise HTTPException(status_code=404, detail="Thread not found")
-    return _serialize_thread_detail(thread)
+    return await _serialize_thread_detail(
+        db=db,
+        thread=page_result.thread,
+        page=page_result.page,
+    )
 
 
 # Imported late to avoid widening the host-runtime import surface at module import time.

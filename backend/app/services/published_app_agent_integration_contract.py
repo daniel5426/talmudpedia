@@ -12,6 +12,7 @@ from app.db.postgres.models.agents import Agent
 from app.db.postgres.models.published_apps import PublishedApp
 from app.db.postgres.models.registry import ToolRegistry
 from app.services.prompt_reference_resolver import PromptReferenceResolver
+from app.services.ui_blocks import frontend_requirements_for_tool
 
 SUPPORTED_X_UI_KINDS = ("chart", "table", "stat")
 X_UI_KEY = "x-ui"
@@ -198,6 +199,7 @@ def _serialize_tool(
         "input_schema": input_schema,
         "output_schema": output_schema,
         "ui_hints": _build_ui_hints(schema, input_schema, output_schema),
+        "frontend_requirements": frontend_requirements_for_tool(tool),
     }
 
 

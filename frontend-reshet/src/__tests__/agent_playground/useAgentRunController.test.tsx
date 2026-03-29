@@ -1,4 +1,5 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
+import { TextDecoder, TextEncoder } from "util";
 
 import type { ChatMessage } from "@/components/layout/useChatController";
 import { useAgentRunController } from "@/hooks/useAgentRunController";
@@ -35,6 +36,12 @@ jest.mock("@/hooks/useAgentThreadHistory", () => ({
 }));
 
 const mockedAgentService = agentService as jest.Mocked<typeof agentService>;
+
+beforeAll(() => {
+  Object.assign(globalThis, {
+    TextDecoder,
+  });
+});
 
 const assistantMessage: ChatMessage = {
   id: "assistant-1",
@@ -184,6 +191,66 @@ describe("useAgentRunController trace inspection", () => {
 
     await waitFor(() => {
       expect(result.current.executionSteps).toHaveLength(0);
+    });
+  });
+
+  it("builds live execution steps from streamed workflow publication events", async () => {
+    const encoder = new TextEncoder();
+    const streamPayload = [
+      'data: {"event":"node_start","run_id":"run-live","span_id":"agent_1","name":"Agent","data":{"type":"agent","input":{"model":"model-1"}}}\n\n',
+      'data: {"event":"node_end","run_id":"run-live","span_id":"agent_1","name":"Agent","data":{"type":"agent","output":{"content_length":26}}}\n\n',
+      'data: {"event":"workflow.node_output_published","run_id":"run-live","span_id":"agent_1","data":{"node_id":"agent_1","node_name":"Reply Agent","published_output":{"output_text":"hello world"}}}\n\n',
+      'data: {"event":"node_start","run_id":"run-live","span_id":"end","name":"End","data":{"type":"end","input":{"has_schema":true}}}\n\n',
+      'data: {"event":"workflow.end_materialized","run_id":"run-live","span_id":"end","data":{"node_id":"end","node_name":"End","final_output":{"response":"hello world"}}}\n\n',
+      'data: {"event":"node_end","run_id":"run-live","span_id":"end","name":"End","data":{"type":"end","output":{"has_output":true}}}\n\n',
+      'data: {"event":"assistant.delta","run_id":"run-live","payload":{"content":"hello world"}}\n\n',
+      'data: {"event":"run.completed","run_id":"run-live","payload":{"status":"completed"}}\n\n',
+      "data: [DONE]\n\n",
+    ].join("");
+
+    mockedAgentService.streamAgent.mockResolvedValue({
+      headers: {
+        get: (name: string) => (name === "X-Thread-ID" ? "thread-live" : null),
+      },
+      body: {
+        getReader: () => {
+          let consumed = false;
+          return {
+            read: async () => {
+              if (consumed) {
+                return { done: true, value: undefined };
+              }
+              consumed = true;
+              return { done: false, value: encoder.encode(streamPayload) };
+            },
+          };
+        },
+      },
+    } as Response);
+
+    const { result } = renderHook(({ agentId }) => useAgentRunController(agentId), {
+      initialProps: { agentId: "agent-1" as string | undefined },
+    });
+
+    await act(async () => {
+      await result.current.handleSubmit({ text: "hello", files: [] });
+    });
+
+    await waitFor(() => {
+      expect(result.current.executionSteps).toHaveLength(2);
+    });
+
+    expect(result.current.executionSteps[0]).toMatchObject({
+      id: "agent_1",
+      nodeId: "agent_1",
+      name: "Reply Agent",
+      output: { output_text: "hello world" },
+    });
+    expect(result.current.executionSteps[1]).toMatchObject({
+      id: "end",
+      nodeId: "end",
+      name: "End",
+      output: { response: "hello world" },
     });
   });
 });

@@ -1,6 +1,6 @@
 # Embedded Agent Runtime Spec
 
-Last Updated: 2026-03-20
+Last Updated: 2026-03-29
 
 This document defines the canonical v1 external embed/plugin contract for published agents used inside customer-owned applications.
 
@@ -185,6 +185,7 @@ Each turn includes:
 - `turn_index`
 - `user_input_text`
 - `assistant_output_text`
+- `final_output`
 - `status`
 - `usage_tokens`
 - `metadata`
@@ -200,6 +201,7 @@ Important boundary:
 - these events are returned in `run-stream.v2` envelope shape
 - this is intended for replaying tool and reasoning history on old chats without bypassing the embed contract
 - final assistant text still comes from `assistant_output_text`, not token replay
+- `final_output` is the workflow-facing return value and may differ from `assistant_output_text`
 
 ## Canonical Implementation References
 

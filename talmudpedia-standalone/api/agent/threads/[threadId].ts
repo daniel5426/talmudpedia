@@ -10,11 +10,18 @@ function readThreadId(request: Request): string {
 export async function GET(request: Request): Promise<Response> {
   const headers = new Headers();
   const session = ensureSession(request, headers, env.SESSION_COOKIE_SECRET);
+  const url = new URL(request.url);
+  const beforeTurnIndexRaw = url.searchParams.get("before_turn_index");
+  const limitRaw = url.searchParams.get("limit");
+  const beforeTurnIndex = beforeTurnIndexRaw ? Number(beforeTurnIndexRaw) : undefined;
+  const limit = limitRaw ? Number(limitRaw) : undefined;
 
   try {
     return json(
       await embedClient.getAgentThread(env.TALMUDPEDIA_AGENT_ID, readThreadId(request), {
         externalUserId: session.userId,
+        beforeTurnIndex: Number.isFinite(beforeTurnIndex) ? beforeTurnIndex : undefined,
+        limit: Number.isFinite(limit) ? limit : undefined,
       }),
       { headers },
     );

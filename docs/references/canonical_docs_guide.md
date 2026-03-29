@@ -78,6 +78,8 @@ This guide lists the current canonical documentation entry points after the firs
 - `docs/references/embedded_agent_sdk_standalone_integration_guide.md`
   - Canonical customer integration guide for building a standalone app with `@agents24/embed-sdk`.
   - Use this alongside `packages/embed-sdk/README.md` for the server-only embed SDK contract and customer-backend architecture.
+- `docs/references/ui_blocks_tool_reference.md`
+  - Canonical built-in `UI Blocks` tool contract and custom-frontend integration reference.
 - `docs/references/embed_sdk_release_runbook.md`
   - Operational runbook for releasing `@agents24/embed-sdk`, including direct GitHub Actions publish, npm auth, provenance, and fallback manual publish steps.
 - `docs/references/railway_launch_runbook.md`

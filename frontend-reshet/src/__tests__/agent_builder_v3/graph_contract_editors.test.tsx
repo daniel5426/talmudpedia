@@ -19,7 +19,7 @@ const analysis: AgentGraphAnalysis = {
         ],
       },
     ],
-    template_variables: [],
+    template_suggestions: { global: [], by_node: {} },
   },
   operator_contracts: {},
   errors: [],
@@ -98,6 +98,41 @@ describe("graph contract editors", () => {
         },
       ],
     })
+  })
+
+  it("shows the saved node-output binding label in the End picker trigger", () => {
+    render(
+      <EndContractEditor
+        value={{
+          output_schema: {
+            name: "result",
+            mode: "simple",
+            schema: {
+              type: "object",
+              additionalProperties: false,
+              properties: { reply: { type: "string" } },
+              required: ["reply"],
+            },
+          },
+          output_bindings: [
+            {
+              json_pointer: "/reply",
+              value_ref: {
+                label: "stale label",
+                expected_type: "string",
+                key: "category",
+                node_id: "classify_1",
+                namespace: "node_output",
+              },
+            },
+          ],
+        }}
+        analysis={analysis}
+        onChange={jest.fn()}
+      />,
+    )
+
+    expect(screen.getByRole("combobox", { name: /select value/i })).toHaveTextContent("Classifier / category (string)")
   })
 
   it("appends a new property row in the End simple editor", () => {

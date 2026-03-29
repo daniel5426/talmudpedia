@@ -409,6 +409,8 @@ async def get_threads(
 @router.get("/threads/{thread_id}")
 async def get_thread_details(
     thread_id: str,
+    before_turn_index: int | None = Query(default=None, ge=0),
+    limit: int = Query(default=20, ge=1, le=100),
     _: Dict[str, Any] = Depends(require_scopes("threads.read")),
     context: Dict[str, Any] = Depends(get_admin_context),
     db: AsyncSession = Depends(get_db),
@@ -425,15 +427,18 @@ async def get_thread_details(
     repaired = await service.repair_thread_turn_indices(thread_id=tid)
     if repaired:
         await db.commit()
-    thread = await service.get_thread_with_turns(
+    page_result = await service.get_thread_turn_page(
         tenant_id=tenant_id,
         thread_id=tid,
+        before_turn_index=before_turn_index,
+        limit=limit,
     )
-    if not thread:
+    if not page_result:
         raise HTTPException(status_code=404, detail="Thread not found")
+    thread = page_result.thread
 
     thread_row = await monitoring.get_thread_row(tid, month_start=period_start, month_end=period_end)
-    turns = list(thread.turns or [])
+    turns = list(page_result.page.turns or [])
     total_tokens = 0
     for turn in turns:
         run_usage = _serialize_run_usage(getattr(turn, "run", None))
@@ -478,6 +483,10 @@ async def get_thread_details(
             }
             for turn in turns
         ],
+        "paging": {
+            "has_more": bool(page_result.page.has_more),
+            "next_before_turn_index": page_result.page.next_before_turn_index,
+        },
     }
 
 @router.get("/users/{user_id}")

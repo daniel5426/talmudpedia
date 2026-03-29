@@ -44,20 +44,26 @@ export interface AgentGraphNodeOutputGroup {
   fields: AgentGraphInventoryItem[];
 }
 
+export interface AgentGraphTemplateSuggestion {
+  id: string;
+  display_label: string;
+  insert_text: string;
+  type: string;
+  namespace: string;
+  key: string;
+  node_id?: string;
+}
+
 export interface AgentGraphAnalysis {
   spec_version: string;
   inventory: {
     workflow_input: AgentGraphInventoryItem[];
     state: AgentGraphInventoryItem[];
     node_outputs: AgentGraphNodeOutputGroup[];
-    template_variables: Array<{
-      name: string;
-      type: string;
-      label?: string;
-      namespace: string;
-      key: string;
-      node_id?: string;
-    }>;
+    template_suggestions: {
+      global: AgentGraphTemplateSuggestion[];
+      by_node: Record<string, AgentGraphTemplateSuggestion[]>;
+    };
   };
   operator_contracts: Record<string, Record<string, unknown>>;
   errors: Array<Record<string, unknown>>;
@@ -192,6 +198,14 @@ export interface ToolDefinition {
   builtin_template_id?: string | null;
   is_builtin_template?: boolean;
   is_builtin_instance?: boolean;
+  frontend_requirements?: {
+    required: boolean;
+    renderer_kind: string;
+    package_name: string;
+    contract_package_name: string;
+    hosted_template_support?: Record<string, boolean>;
+    install_docs_url?: string;
+  } | null;
 }
 
 export interface CreateToolRequest {

@@ -1,6 +1,6 @@
 # Test State: Agent Builder v3
 
-Last Updated: 2026-03-22
+Last Updated: 2026-03-29
 
 **Scope**
 Graph Spec 3.0 frontend serialization defaults, Start/End/Set State contract editor behavior, graph-analysis hook behavior, and ConfigPanel contract-driven ValueRef filtering for the agent builder.
@@ -9,6 +9,7 @@ Graph Spec 3.0 frontend serialization defaults, Start/End/Set State contract edi
 - `graphspec_v3_serialization.test.ts`
 - `graph_contract_editors.test.tsx`
 - `use_agent_graph_analysis.test.tsx`
+- `template_suggestions.test.tsx`
 - `config_panel_value_ref_contracts.test.tsx`
 - `config_panel_artifact_contracts.test.tsx`
 
@@ -20,14 +21,19 @@ Graph Spec 3.0 frontend serialization defaults, Start/End/Set State contract edi
 - End editor filters binding options by compatible types and emits structured `ValueRef` bindings through the new searchable picker UI
 - Set State editor supports typed assignments and `ValueRef` sources
 - Graph analysis hook debounces requests and submits normalized v3 graphs
+- Builder prompt/template suggestions use scoped graph-analysis inventory, show friendly labels, and insert one stable token per value
 - ConfigPanel filters `value_ref` options using backend operator field contracts in the specialized Classify surface
 - ConfigPanel opens End structured output in a modal from the output row
+- ConfigPanel persists the selected End property binding when saving the structured-output modal
 - ConfigPanel renders artifact field-mapping inputs from backend-provided artifact operator contracts
 
 **Last Run**
-- Command: `pnpm test -- --runTestsByPath src/__tests__/agent_builder_v3/graphspec_v3_serialization.test.ts src/__tests__/agent_builder_v3/graph_contract_editors.test.tsx src/__tests__/agent_builder_v3/config_panel_value_ref_contracts.test.tsx src/__tests__/agent_builder_v3/config_panel_artifact_contracts.test.tsx --watch=false`
-- Date: 2026-03-22
-- Result: Pass (4 suites, 10 tests)
+- Command: `pnpm test -- --runTestsByPath src/__tests__/agent_builder_v3/graph_contract_editors.test.tsx src/__tests__/agent_builder_v3/config_panel_value_ref_contracts.test.tsx src/__tests__/agent_builder_v3/use_agent_graph_analysis.test.tsx src/__tests__/agent_builder_v3/template_suggestions.test.tsx --watch=false`
+- Date: 2026-03-29 Asia/Hebron
+- Result: Pass (4 suites, 13 tests)
+- Command: `pnpm test -- --runTestsByPath src/__tests__/agent_builder_v3/config_panel_value_ref_contracts.test.tsx src/__tests__/agent_builder_v3/graph_contract_editors.test.tsx --watch=false`
+- Date: 2026-03-29 02:16 EEST
+- Result: Pass (2 suites, 7 tests)
 
 **Known Gaps / Follow-ups**
 - No full builder-session test yet that edits nodes through the canvas, saves, reloads, and re-fetches live analysis end-to-end

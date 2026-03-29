@@ -46,6 +46,7 @@ import {
 import { normalizeBuilderNode, normalizeBuilderEdges } from "./graphspec"
 import { getRenderGraphForMode } from "./runtime-merge"
 import { useAgentGraphAnalysis } from "./useAgentGraphAnalysis"
+import { getTemplateSuggestionsForNode } from "./template-suggestions"
 import { AgentExecutionEvent } from "@/services"
 import { AlertTriangle, LayoutGrid, Trash2 } from "lucide-react"
 
@@ -58,10 +59,13 @@ interface AgentBuilderProps {
     onRun?: () => void
     isSaving?: boolean
     isCompiling?: boolean
+    mode?: "build" | "execute"
+    onModeChange?: (mode: "build" | "execute") => void
 }
 
 function matchesStepToNode(step: ExecutionStep, node: Node<AgentNodeData>, data: AgentNodeData): boolean {
     return (
+        step.nodeId === node.id ||
         step.name === data.displayName ||
         step.name.toLowerCase() === data.nodeType.toLowerCase() ||
         step.id.includes(node.id) ||
@@ -219,6 +223,8 @@ function AgentBuilderInner({
     onRun,
     isSaving = false,
     isCompiling = false,
+    mode: controlledMode,
+    onModeChange,
 }: AgentBuilderProps) {
     const reactFlowWrapper = useRef<HTMLDivElement>(null)
     const { screenToFlowPosition, getViewport, setViewport, getNodes, fitView } = useReactFlow()
@@ -233,9 +239,16 @@ function AgentBuilderInner({
     const [nodes, setNodes, onNodesChange] = useNodesState<Node<AgentNodeData>>(normalizedInitialNodes)
     const [edges, setEdges, onEdgesChange] = useEdgesState(normalizedInitialEdges)
     const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
-    const [mode, setMode] = useState<"build" | "execute">("build")
+    const [internalMode, setInternalMode] = useState<"build" | "execute">("build")
     const [interactionMode, setInteractionMode] = useState<InteractionMode>("pan")
     const [isCatalogVisible, setIsCatalogVisible] = useState(true)
+    const mode = controlledMode ?? internalMode
+    const setMode = useCallback((nextMode: "build" | "execute") => {
+        if (controlledMode === undefined) {
+            setInternalMode(nextMode)
+        }
+        onModeChange?.(nextMode)
+    }, [controlledMode, onModeChange])
 
     useEffect(() => {
         setNodes((nds) => {
@@ -262,6 +275,10 @@ function AgentBuilderInner({
         runStatus: currentRunStatus,
     })
     const { analysis: graphAnalysis } = useAgentGraphAnalysis(agentId, nodes as Node<AgentNodeData>[], edges)
+    const selectedNodeTemplateSuggestions = useMemo(
+        () => getTemplateSuggestionsForNode(graphAnalysis, selectedNodeId),
+        [graphAnalysis, selectedNodeId],
+    )
 
     // History management using shared hook
     const {
@@ -704,31 +721,14 @@ function AgentBuilderInner({
         setIsCatalogVisible(true)
     }, [mode])
 
+    useEffect(() => {
+        if (mode === "execute") {
+            setIsCatalogVisible(false)
+        }
+    }, [mode])
+
     return (
         <div className="relative flex h-full w-full overflow-hidden bg-background">
-            {/* Header Center: Build/Execute Tabs */}
-            {agentId && (
-                <div className="absolute top-3 left-1/2 -translate-x-1/2 z-50 flex items-center gap-1 bg-background/95 backdrop-blur-md border rounded-xl p-1">
-                    <button
-                        className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${mode === "build" ? "bg-primary text-primary-foreground" : "hover:bg-muted"
-                            }`}
-                        onClick={() => setMode("build")}
-                    >
-                        Build
-                    </button>
-                    <button
-                        className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${mode === "execute" ? "bg-primary text-primary-foreground" : "hover:bg-muted"
-                            }`}
-                        onClick={() => {
-                            setMode("execute")
-                            setIsCatalogVisible(false)
-                        }}
-                    >
-                        Execute
-                    </button>
-                </div>
-            )}
-
             {/* Left Side Panels */}
 
             {/* 1. Build Mode: Catalog */}
@@ -883,7 +883,7 @@ function AgentBuilderInner({
                             data={safeSelectedNodeData}
                             onConfigChange={handleConfigChange}
                             onClose={() => setSelectedNodeId(null)}
-                            availableVariables={graphAnalysis?.inventory?.template_variables || []}
+                            availableVariables={selectedNodeTemplateSuggestions}
                             graphAnalysis={graphAnalysis}
                         />
                     )}

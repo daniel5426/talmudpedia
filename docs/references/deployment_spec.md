@@ -1,6 +1,6 @@
 # Deployment Spec
 
-Last Updated: 2026-03-27
+Last Updated: 2026-03-28
 
 This document is the canonical source of truth for the current Talmudpedia hosting and deployment state.
 
@@ -205,6 +205,10 @@ Current tracked deployment files in repo:
 - [`backend/railway.env.example`](/Users/danielbenassaya/Code/personal/talmudpedia/backend/railway.env.example)
 - [`backend/scripts/railway_predeploy.sh`](/Users/danielbenassaya/Code/personal/talmudpedia/backend/scripts/railway_predeploy.sh)
 - [`backend/scripts/start_celery_worker.sh`](/Users/danielbenassaya/Code/personal/talmudpedia/backend/scripts/start_celery_worker.sh)
+- [`/.env.shared`](/Users/danielbenassaya/Code/personal/talmudpedia/.env.shared)
+- [`/.env.backend`](/Users/danielbenassaya/Code/personal/talmudpedia/.env.backend)
+- [`/.env.backend-worker`](/Users/danielbenassaya/Code/personal/talmudpedia/.env.backend-worker)
+- [`/.env.frontend`](/Users/danielbenassaya/Code/personal/talmudpedia/.env.frontend)
 - [`deploy/crawl4ai/Dockerfile`](/Users/danielbenassaya/Code/personal/talmudpedia/deploy/crawl4ai/Dockerfile)
 - [`deploy/crawl4ai/railway.toml`](/Users/danielbenassaya/Code/personal/talmudpedia/deploy/crawl4ai/railway.toml)
 - [`docs/references/railway_launch_runbook.md`](/Users/danielbenassaya/Code/personal/talmudpedia/docs/references/railway_launch_runbook.md)
@@ -216,39 +220,38 @@ Use two separate env file classes:
 - local runtime
   - backend: `backend/.env.local`
   - frontend: `frontend-reshet/.env.local`
-- deployment sync source
-  - backend: `backend/.env.railway`
-  - frontend: `frontend-reshet/.env.railway`
+- Railway import/reference templates
+  - shared vars: `/.env.shared`
+  - backend vars: `/.env.backend`
+  - backend-worker vars: `/.env.backend-worker`
+  - frontend vars: `/.env.frontend`
 
 Rules:
 
 - local files are for local development only
-- `.env.railway` files are the intended source for Railway-managed deployed variables
+- Railway UI is the deployed source of truth
+- root-level `.env.*` files are import/reference templates for Railway, not live synced config
 - changing local env files does not change Railway
-- changing `.env.railway` files does not change Railway until sync is run
+- changing root-level Railway template files does not change Railway until you import/apply the staged variable changes in Railway
 
 Backend local env loading now prefers:
 
 1. `backend/.env.local`
 2. `backend/.env`
 
-Deployment sync command:
+Recommended Railway-native workflow:
 
-```bash
-python3 backend/scripts/sync_railway_env.py --sync-worker
-```
+- import `/.env.shared` into Project Settings -> Shared Variables
+- import `/.env.backend` into the `backend` service
+- import `/.env.backend-worker` into the `backend-worker` service
+- import `/.env.frontend` into the `frontend` service
+- review Railway staged variable changes
+- deploy the staged changes in Railway
 
-That command:
+Legacy workflow note:
 
-- syncs `backend/.env.railway` into `backend`
-- syncs `backend/.env.railway` into `backend-worker` when `--sync-worker` is used
-- syncs `frontend-reshet/.env.railway` into `frontend`
-
-Safe verification mode:
-
-```bash
-python3 backend/scripts/sync_railway_env.py --sync-worker --dry-run
-```
+- [`backend/scripts/sync_railway_env.py`](/Users/danielbenassaya/Code/personal/talmudpedia/backend/scripts/sync_railway_env.py) still exists as an optional CLI helper
+- it is no longer the preferred env-management path
 
 ## Known Drift From Intended Production Spec
 

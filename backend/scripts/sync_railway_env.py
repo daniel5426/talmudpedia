@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import time
 import shutil
 import subprocess
 import sys
@@ -91,10 +92,35 @@ def set_service_vars(service: str, values: dict[str, str], *, dry_run: bool) -> 
             print(f"  - {key}")
         return
     for key, value in values.items():
-        subprocess.run(
-            ["railway", "variable", "set", f"{key}={value}", "--service", service],
-            check=True,
-        )
+        _set_service_var_with_retry(service=service, key=key, value=value)
+
+
+def _set_service_var_with_retry(*, service: str, key: str, value: str, max_attempts: int = 6) -> None:
+    last_error: subprocess.CalledProcessError | None = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            subprocess.run(
+                ["railway", "variable", "set", f"{key}={value}", "--service", service],
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+            return
+        except subprocess.CalledProcessError as exc:
+            last_error = exc
+            stderr = getattr(exc, "stderr", None) or ""
+            stdout = getattr(exc, "stdout", None) or ""
+            combined = f"{stdout}\n{stderr}".lower()
+            if "rate limit" not in combined or attempt >= max_attempts:
+                raise
+            delay_seconds = min(30, 2 ** (attempt - 1))
+            print(
+                f"[retry] {service}: Railway rate limited variable `{key}` "
+                f"(attempt {attempt}/{max_attempts}), sleeping {delay_seconds}s"
+            )
+            time.sleep(delay_seconds)
+    if last_error is not None:
+        raise last_error
 
 
 def main() -> int:

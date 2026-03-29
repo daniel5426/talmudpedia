@@ -46,6 +46,7 @@ from app.services.published_app_auth_shell_renderer import render_published_app_
 from app.services.thread_service import ThreadService
 from app.services.runtime_attachment_service import RuntimeAttachmentOwner, RuntimeAttachmentService
 from app.services.embedded_agent_runtime_service import list_public_run_events
+from app.services.thread_service import ThreadTurnPage
 from app.services.published_app_bundle_storage import (
     PublishedAppBundleAssetNotFound,
     PublishedAppBundleStorage,
@@ -93,8 +94,20 @@ def _turn_final_output(turn: Any) -> Any:
     return metadata.get("final_output")
 
 
-async def _serialize_thread_detail(*, db: AsyncSession, thread: Any) -> dict[str, Any]:
-    turns = sorted(list(thread.turns or []), key=lambda item: int(item.turn_index or 0))
+def _serialize_thread_paging(page: ThreadTurnPage) -> dict[str, Any]:
+    return {
+        "has_more": bool(page.has_more),
+        "next_before_turn_index": page.next_before_turn_index,
+    }
+
+
+async def _serialize_thread_detail(
+    *,
+    db: AsyncSession,
+    thread: Any,
+    page: ThreadTurnPage | None = None,
+) -> dict[str, Any]:
+    turns = list(page.turns if page is not None else sorted(list(thread.turns or []), key=lambda item: int(item.turn_index or 0)))
     serialized_turns: list[dict[str, Any]] = []
     for turn in turns:
         serialized_turns.append(
@@ -121,6 +134,9 @@ async def _serialize_thread_detail(*, db: AsyncSession, thread: Any) -> dict[str
     return {
         **_serialize_thread_summary(thread),
         "turns": serialized_turns,
+        "paging": _serialize_thread_paging(
+            page if page is not None else ThreadTurnPage(turns=turns, has_more=False, next_before_turn_index=None)
+        ),
     }
 
 
@@ -828,6 +844,8 @@ async def host_list_threads(
 async def host_get_thread(
     thread_id: UUID,
     request: Request,
+    before_turn_index: int | None = Query(default=None, ge=0),
+    limit: int = Query(default=20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
 ):
     app = await _resolve_host_app_or_404(db, request)
@@ -842,16 +860,20 @@ async def host_get_thread(
     repaired = await service.repair_thread_turn_indices(thread_id=thread_id)
     if repaired:
         await db.commit()
-    thread = await service.get_thread_with_turns(
+    page_result = await service.get_thread_turn_page(
         tenant_id=app.tenant_id,
         thread_id=thread_id,
         app_account_id=UUID(principal["app_account_id"]),
         published_app_id=app.id,
+        before_turn_index=before_turn_index,
+        limit=limit,
     )
-    if thread is None:
+    if page_result is None:
         raise HTTPException(status_code=404, detail="Thread not found")
 
-    response = JSONResponse(jsonable_encoder(await _serialize_thread_detail(db=db, thread=thread)))
+    response = JSONResponse(
+        jsonable_encoder(await _serialize_thread_detail(db=db, thread=page_result.thread, page=page_result.page))
+    )
     if stale_cookie:
         _clear_session_cookie(response=response, request=request)
     return response

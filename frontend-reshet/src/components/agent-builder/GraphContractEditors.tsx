@@ -19,7 +19,6 @@ import {
 import { Textarea } from "@/components/ui/textarea"
 import type { AgentGraphAnalysis } from "@/services/agent"
 import {
-  buildDefaultEndOutputBindings,
   buildDefaultEndOutputSchema,
   EndOutputBinding,
   EndOutputSchemaConfig,
@@ -36,7 +35,12 @@ import {
 const STATE_TYPE_OPTIONS = ["string", "number", "boolean", "object", "list"] as const
 
 function encodeValueRef(valueRef?: ValueRef) {
-  return valueRef ? JSON.stringify(valueRef) : ""
+  if (!valueRef) return ""
+  return JSON.stringify({
+    namespace: valueRef.namespace,
+    node_id: valueRef.node_id || undefined,
+    key: valueRef.key,
+  })
 }
 
 function decodeValueRef(raw: string): ValueRef | null {
@@ -46,24 +50,6 @@ function decodeValueRef(raw: string): ValueRef | null {
   } catch {
     return null
   }
-}
-
-function getValueRefOptionMeta(
-  analysis: AgentGraphAnalysis | null | undefined,
-  value: ValueRef | null | undefined,
-) {
-  if (!value) return null
-  const groups = getValueRefGroups(analysis)
-  for (const group of groups) {
-    const option = group.options.find(
-      (candidate) =>
-        candidate.value_ref.namespace === value.namespace &&
-        candidate.value_ref.key === value.key &&
-        candidate.value_ref.node_id === value.node_id,
-    )
-    if (option) return option
-  }
-  return null
 }
 
 export function ValueRefPicker({
@@ -79,6 +65,12 @@ export function ValueRefPicker({
 }) {
   const groups = useMemo(() => getValueRefGroups(analysis), [analysis])
   const selected = encodeValueRef(value || undefined)
+  const optionsByEncodedValue = useMemo(() => {
+    const entries = groups.flatMap((group) =>
+      group.options.map((option) => [encodeValueRef(option.value_ref), option] as const),
+    )
+    return new Map(entries)
+  }, [groups])
 
   const filteredGroups = useMemo(
     () =>
@@ -92,15 +84,19 @@ export function ValueRefPicker({
   )
 
   return (
-    <Select value={selected} onValueChange={(next) => onChange(decodeValueRef(next))}>
+    <Select
+      value={selected}
+      onValueChange={(next) => {
+        onChange(optionsByEncodedValue.get(next)?.value_ref || decodeValueRef(next))
+      }}
+    >
       <SelectTrigger
         aria-label="Select value"
-        className="h-9 w-full rounded-lg border-none bg-muted/40 text-[13px] shadow-none focus:ring-1 focus:ring-offset-0"
+        className="h-9 w-[220px] max-w-full min-w-0 rounded-lg border-none bg-muted/40 text-[13px] shadow-none focus:ring-1 focus:ring-offset-0 [&>span]:truncate"
       >
         <SelectValue placeholder="Select value..." />
       </SelectTrigger>
-      <SelectContent className="rounded-xl border-border/50">
-        <SelectItem value="__none__">Select value...</SelectItem>
+      <SelectContent className="rounded-xl border-border/50" data-value-ref-picker-portal="true">
         {filteredGroups.map((group) => (
           <SelectGroup key={group.label}>
             <SelectLabel>{group.label}</SelectLabel>
@@ -357,70 +353,6 @@ export function EndContractEditor({
             onChange={(event) => setAdvancedSchema(event.target.value)}
             className="min-h-[280px] resize-none rounded-lg bg-muted/40 border-none px-3 py-2.5 font-mono text-[13px] leading-6 shadow-none focus-visible:ring-1 focus-visible:ring-offset-0"
           />
-          <div className="space-y-2">
-            <div className="flex items-center justify-between px-0.5">
-              <Label className="text-[11px] font-bold uppercase tracking-tight text-foreground/50">Bindings</Label>
-              <Button
-                type="button"
-                variant="ghost"
-                onClick={() =>
-                  onChange({
-                    ...normalized,
-                    output_bindings: [
-                      ...normalized.output_bindings,
-                      { json_pointer: "/", value_ref: buildDefaultEndOutputBindings()[0].value_ref },
-                    ],
-                  })
-                }
-                className="h-7 rounded-lg px-2.5 text-[11px] text-muted-foreground hover:text-foreground"
-              >
-                <Plus className="mr-1 h-3 w-3" />
-                Add binding
-              </Button>
-            </div>
-            <div className="space-y-1.5">
-              {normalized.output_bindings.map((binding, index) => (
-                <div
-                  key={`binding-${index}`}
-                  className="grid grid-cols-[1fr_1.2fr_auto] gap-2 rounded-lg bg-muted/40 p-2"
-                >
-                  <Input
-                    value={binding.json_pointer}
-                    onChange={(event) => {
-                      const next = [...normalized.output_bindings]
-                      next[index] = { ...next[index], json_pointer: event.target.value }
-                      onChange({ ...normalized, output_bindings: next })
-                    }}
-                    placeholder="/property"
-                    className="h-9 bg-background/60 border-none rounded-lg text-[13px] focus-visible:ring-1 focus-visible:ring-offset-0 placeholder:text-muted-foreground/40"
-                  />
-                  <ValueRefPicker
-                    analysis={analysis}
-                    value={binding.value_ref}
-                    onChange={(valueRef) => {
-                      const next = [...normalized.output_bindings]
-                      next[index] = { ...next[index], value_ref: valueRef || buildDefaultEndOutputBindings()[0].value_ref }
-                      onChange({ ...normalized, output_bindings: next })
-                    }}
-                  />
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="h-9 w-9 rounded-lg text-muted-foreground/50 hover:text-foreground"
-                    onClick={() =>
-                      onChange({
-                        ...normalized,
-                        output_bindings: normalized.output_bindings.filter((_, bindingIndex) => bindingIndex !== index),
-                      })
-                    }
-                  >
-                    <Trash2 className="h-3 w-3" />
-                  </Button>
-                </div>
-              ))}
-            </div>
-          </div>
         </div>
       ) : (
         <div className="space-y-3">
@@ -442,7 +374,7 @@ export function EndContractEditor({
           <div className="space-y-2">
             <Label className="text-[11px] font-bold uppercase tracking-tight text-foreground/50 px-0.5">Properties</Label>
             <div>
-              <div className="grid grid-cols-[1.05fr_120px_1.15fr_36px] gap-2 px-1 pb-2 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/50">
+              <div className="grid grid-cols-[minmax(0,1fr)_104px_220px_36px] gap-2 px-1 pb-2 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/50">
                 <div>Name</div>
                 <div>Type</div>
                 <div>Value</div>
@@ -451,8 +383,11 @@ export function EndContractEditor({
 
               <div className="space-y-1.5">
                 {simpleRows.map((row, index) => (
-                  <div key={`end-row-${index}`} className="grid grid-cols-[1.05fr_120px_1.15fr_36px] gap-2">
-                    <div className="flex items-center gap-2">
+                  <div
+                    key={`end-row-${index}`}
+                    className="grid grid-cols-[minmax(0,1fr)_104px_220px_36px] gap-2 rounded-lg bg-muted/40 p-2"
+                  >
+                    <div className="flex min-w-0 items-center gap-2">
                       <Input
                         value={row.key}
                         onChange={(event) => {
@@ -461,24 +396,31 @@ export function EndContractEditor({
                           updateSimpleRows(next)
                         }}
                         placeholder="property name"
-                        className="h-9 bg-muted/40 border-none rounded-lg text-[13px] focus-visible:ring-1 focus-visible:ring-offset-0 placeholder:text-muted-foreground/40"
+                        className="h-9 bg-background/60 border-none rounded-lg text-[13px] focus-visible:ring-1 focus-visible:ring-offset-0 placeholder:text-muted-foreground/40"
                       />
                     </div>
-                    <select
+                    <Select
                       value={row.type}
-                      onChange={(event) => {
+                      onValueChange={(nextType) => {
                         const next = [...simpleRows]
-                        next[index] = { ...next[index], type: event.target.value }
+                        next[index] = { ...next[index], type: nextType }
                         updateSimpleRows(next)
                       }}
-                      className="h-9 rounded-lg bg-muted/40 border-none px-3 text-[13px] text-foreground outline-none focus:ring-1 focus:ring-offset-0"
                     >
-                      {STATE_TYPE_OPTIONS.map((option) => (
-                        <option key={option} value={option === "list" ? "array" : option}>
-                          {option === "list" ? "list" : option}
-                        </option>
-                      ))}
-                    </select>
+                      <SelectTrigger className="h-9 w-[104px] max-w-full min-w-0 rounded-lg border-none bg-background/60 px-3 text-[13px] shadow-none focus:ring-1 focus:ring-offset-0 [&>span]:truncate">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent className="rounded-xl border-border/50">
+                        {STATE_TYPE_OPTIONS.map((option) => {
+                          const value = option === "list" ? "array" : option
+                          return (
+                            <SelectItem key={option} value={value}>
+                              {option === "list" ? "list" : option}
+                            </SelectItem>
+                          )
+                        })}
+                      </SelectContent>
+                    </Select>
                     <ValueRefPicker
                       analysis={analysis}
                       value={row.binding || undefined}

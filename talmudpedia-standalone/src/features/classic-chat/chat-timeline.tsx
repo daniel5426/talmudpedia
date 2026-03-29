@@ -6,7 +6,7 @@ import {
   ThumbsDown,
   ThumbsUp,
 } from "lucide-react";
-import { useMemo } from "react";
+import { useCallback, useMemo, useRef, type UIEvent } from "react";
 
 import {
   Conversation,
@@ -31,9 +31,8 @@ import {
 } from "@/components/ai-elements/message";
 import { Shimmer } from "@/components/ai-elements/shimmer";
 import { Task } from "@/components/ai-elements/task";
-import { Skeleton } from "@/components/ui/skeleton";
+import { UIBlocksBundleView, UIBlocksLoadingSkeleton } from "@/components/ui-blocks";
 import { cn } from "@/lib/utils";
-import { PricoWidgetBundleView } from "../prico-widgets/renderer";
 
 import { BotInputArea } from "./bot-input-area";
 import { useLocale } from "./locale-context";
@@ -56,11 +55,14 @@ type ChatTimelineProps = {
   messages: TemplateMessage[];
   onCopyMessage: (messageId: string, text: string) => void;
   onInputValueChange: (value: string) => void;
+  onLoadOlderMessages?: () => Promise<void> | void;
   onRetryMessage: (messageId: string) => void;
   onSubmit: (payload: ComposerSubmitPayload) => void | Promise<void>;
   onToggleDislike: (messageId: string) => void;
   onToggleLike: (messageId: string) => void;
   onTopVisibilityChange: (isAtTop: boolean) => void;
+  hasOlderMessages?: boolean;
+  isLoadingOlderMessages?: boolean;
 };
 
 function messageText(message: TemplateMessage) {
@@ -139,12 +141,12 @@ function renderBlock(block: TemplateRenderBlock) {
     );
   }
 
-  if (block.kind === "widget_bundle") {
-    return <PricoWidgetBundleView key={block.id} bundle={block.bundle} />;
+  if (block.kind === "ui_blocks_bundle") {
+    return <UIBlocksBundleView key={block.id} bundle={block.bundle} />;
   }
 
-  if (block.kind === "widget_loading") {
-    return <WidgetBundleSkeleton key={block.id} />;
+  if (block.kind === "ui_blocks_loading") {
+    return <UIBlocksLoadingSkeleton key={block.id} />;
   }
 
   return (
@@ -169,64 +171,6 @@ function renderBlock(block: TemplateRenderBlock) {
   );
 }
 
-function WidgetBundleSkeleton() {
-  return (
-    <div className="space-y-3">
-      <div className="space-y-1">
-        <Skeleton className="h-4 w-40" />
-        <Skeleton className="h-3 w-56" />
-      </div>
-
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-12">
-        {Array.from({ length: 4 }).map((_, index) => (
-          <div key={`kpi-${index}`} className="col-span-1 rounded-sm bg-muted/40 p-3 md:col-span-3">
-            <Skeleton className="h-3 w-20" />
-            <Skeleton className="mt-4 h-8 w-16" />
-          </div>
-        ))}
-      </div>
-
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-12">
-        <div className="col-span-1 rounded-sm bg-muted/40 p-3 md:col-span-6">
-          <Skeleton className="h-3 w-28" />
-          <Skeleton className="mt-1 h-3 w-40" />
-          <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_160px]">
-            <Skeleton className="h-52 w-full rounded-full" />
-            <div className="space-y-2">
-              {Array.from({ length: 4 }).map((_, index) => (
-                <Skeleton key={`legend-${index}`} className="h-8 w-full" />
-              ))}
-            </div>
-          </div>
-        </div>
-
-        <div className="col-span-1 rounded-sm bg-muted/40 p-3 md:col-span-6">
-          <Skeleton className="h-3 w-32" />
-          <Skeleton className="mt-1 h-3 w-44" />
-          <div className="mt-4 space-y-3">
-            {Array.from({ length: 4 }).map((_, index) => (
-              <div key={`bar-${index}`} className="space-y-1">
-                <Skeleton className="h-3 w-24" />
-                <Skeleton className="h-8 w-full" />
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      <div className="rounded-sm bg-muted/40 p-3">
-        <Skeleton className="h-3 w-32" />
-        <div className="mt-4 space-y-2">
-          <Skeleton className="h-8 w-full" />
-          {Array.from({ length: 4 }).map((_, index) => (
-            <Skeleton key={`row-${index}`} className="h-10 w-full" />
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
-
 export function ChatTimeline({
   copiedMessageId,
   dislikedMessageIds,
@@ -237,15 +181,19 @@ export function ChatTimeline({
   messages,
   onCopyMessage,
   onInputValueChange,
+  onLoadOlderMessages,
   onRetryMessage,
   onSubmit,
   onToggleDislike,
   onToggleLike,
   onTopVisibilityChange,
+  hasOlderMessages = false,
+  isLoadingOlderMessages = false,
 }: ChatTimelineProps) {
   const { locale } = useLocale();
   const renderedMessages = useStreamingMessageView(messages);
   const hasMessages = renderedMessages.length > 0;
+  const loadInFlightRef = useRef(false);
 
   const timelineMessages = useMemo(
     () =>
@@ -258,15 +206,39 @@ export function ChatTimeline({
     [renderedMessages]
   );
 
+  const handleScrollCapture = useCallback((event: UIEvent<HTMLElement>) => {
+    const target = event.target as HTMLElement;
+    if (typeof target.scrollTop !== "number") {
+      return;
+    }
+    const isAtTop = target.scrollTop < 12;
+    onTopVisibilityChange(isAtTop);
+    if (!isAtTop || !hasOlderMessages || isLoadingOlderMessages || !onLoadOlderMessages || loadInFlightRef.current) {
+      return;
+    }
+    const previousScrollHeight = target.scrollHeight;
+    const previousScrollTop = target.scrollTop;
+    loadInFlightRef.current = true;
+    Promise.resolve(onLoadOlderMessages())
+      .then(() => {
+        requestAnimationFrame(() => {
+          target.scrollTop = Math.max(
+            0,
+            target.scrollHeight - previousScrollHeight + previousScrollTop,
+          );
+        });
+      })
+      .finally(() => {
+        requestAnimationFrame(() => {
+          loadInFlightRef.current = false;
+        });
+      });
+  }, [hasOlderMessages, isLoadingOlderMessages, onLoadOlderMessages, onTopVisibilityChange]);
+
   return (
     <Conversation
       className="flex min-h-0 flex-1 flex-col overflow-hidden no-scrollbar"
-      onScrollCapture={(event) => {
-        const target = event.target as HTMLElement;
-        if (typeof target.scrollTop === "number") {
-          onTopVisibilityChange(target.scrollTop < 12);
-        }
-      }}
+      onScrollCapture={handleScrollCapture}
     >
       <ConversationContent
         className={cn(
@@ -275,6 +247,11 @@ export function ChatTimeline({
         )}
       >
         <div className="h-px w-full shrink-0" />
+        {isLoadingOlderMessages ? (
+          <div className="w-full text-center text-xs text-muted-foreground">
+            Loading older messages...
+          </div>
+        ) : null}
 
         {timelineMessages.map((message) => (
           <Message

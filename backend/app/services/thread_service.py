@@ -5,8 +5,9 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 from uuid import UUID
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import set_committed_value
 from sqlalchemy.orm import joinedload, selectinload
 
 from app.db.postgres.models.agent_threads import (
@@ -28,6 +29,19 @@ class ThreadAccessError(Exception):
 class ThreadResolveResult:
     thread: AgentThread
     created: bool
+
+
+@dataclass
+class ThreadTurnPage:
+    turns: list[AgentThreadTurn]
+    has_more: bool
+    next_before_turn_index: int | None
+
+
+@dataclass
+class ThreadTurnPageResult:
+    thread: AgentThread
+    page: ThreadTurnPage
 
 
 class ThreadService:
@@ -261,13 +275,43 @@ class ThreadService:
         external_user_id: Optional[str] = None,
         external_session_id: Optional[str] = None,
     ) -> Optional[AgentThread]:
-        query = select(AgentThread).where(AgentThread.id == thread_id).options(selectinload(AgentThread.turns)).limit(1)
-        query = query.options(
-            selectinload(AgentThread.turns).joinedload(AgentThreadTurn.run),
-            selectinload(AgentThread.turns)
-            .selectinload(AgentThreadTurn.attachment_links)
-            .selectinload(AgentThreadTurnAttachment.attachment),
+        thread = await self._get_accessible_thread(
+            tenant_id=tenant_id,
+            thread_id=thread_id,
+            user_id=user_id,
+            app_account_id=app_account_id,
+            published_app_id=published_app_id,
+            agent_id=agent_id,
+            external_user_id=external_user_id,
+            external_session_id=external_session_id,
+            include_turns=True,
         )
+        if thread is None:
+            return None
+        thread.turns.sort(key=self._turn_sort_key)
+        return thread
+
+    async def _get_accessible_thread(
+        self,
+        *,
+        tenant_id: Optional[UUID],
+        thread_id: UUID,
+        user_id: Optional[UUID] = None,
+        app_account_id: Optional[UUID] = None,
+        published_app_id: Optional[UUID] = None,
+        agent_id: Optional[UUID] = None,
+        external_user_id: Optional[str] = None,
+        external_session_id: Optional[str] = None,
+        include_turns: bool = False,
+    ) -> Optional[AgentThread]:
+        query = select(AgentThread).where(AgentThread.id == thread_id).limit(1)
+        if include_turns:
+            query = query.options(
+                selectinload(AgentThread.turns).joinedload(AgentThreadTurn.run),
+                selectinload(AgentThread.turns)
+                .selectinload(AgentThreadTurn.attachment_links)
+                .selectinload(AgentThreadTurnAttachment.attachment),
+            )
         if tenant_id is not None:
             query = query.where(AgentThread.tenant_id == tenant_id)
         thread = (await self.db.execute(query)).scalar_one_or_none()
@@ -286,8 +330,71 @@ class ThreadService:
             return None
         if external_session_id is not None and thread.external_session_id != external_session_id:
             return None
-        thread.turns.sort(key=self._turn_sort_key)
         return thread
+
+    async def get_thread_turn_page(
+        self,
+        *,
+        tenant_id: Optional[UUID],
+        thread_id: UUID,
+        user_id: Optional[UUID] = None,
+        app_account_id: Optional[UUID] = None,
+        published_app_id: Optional[UUID] = None,
+        agent_id: Optional[UUID] = None,
+        external_user_id: Optional[str] = None,
+        external_session_id: Optional[str] = None,
+        before_turn_index: int | None = None,
+        limit: int = 20,
+    ) -> Optional[ThreadTurnPageResult]:
+        thread = await self._get_accessible_thread(
+            tenant_id=tenant_id,
+            thread_id=thread_id,
+            user_id=user_id,
+            app_account_id=app_account_id,
+            published_app_id=published_app_id,
+            agent_id=agent_id,
+            external_user_id=external_user_id,
+            external_session_id=external_session_id,
+            include_turns=False,
+        )
+        if thread is None:
+            return None
+
+        safe_limit = max(1, int(limit))
+        turn_query = (
+            select(AgentThreadTurn)
+            .where(AgentThreadTurn.thread_id == thread_id)
+            .options(
+                joinedload(AgentThreadTurn.run),
+                selectinload(AgentThreadTurn.attachment_links).selectinload(AgentThreadTurnAttachment.attachment),
+            )
+        )
+        if before_turn_index is not None:
+            turn_query = turn_query.where(AgentThreadTurn.turn_index < int(before_turn_index))
+        turn_query = turn_query.order_by(
+            desc(AgentThreadTurn.turn_index),
+            desc(AgentThreadTurn.created_at),
+            desc(AgentThreadTurn.completed_at),
+            desc(AgentThreadTurn.id),
+        ).limit(safe_limit + 1)
+
+        turn_rows = list((await self.db.execute(turn_query)).scalars().all())
+        has_more = len(turn_rows) > safe_limit
+        paged_turns = turn_rows[:safe_limit]
+        paged_turns.sort(key=self._turn_sort_key)
+        next_before_turn_index = None
+        if has_more and paged_turns:
+            next_before_turn_index = int(paged_turns[0].turn_index or 0)
+
+        set_committed_value(thread, "turns", paged_turns)
+        return ThreadTurnPageResult(
+            thread=thread,
+            page=ThreadTurnPage(
+                turns=paged_turns,
+                has_more=has_more,
+                next_before_turn_index=next_before_turn_index,
+            ),
+        )
 
     async def delete_threads(self, *, tenant_id: UUID, thread_ids: list[UUID]) -> int:
         if not thread_ids:

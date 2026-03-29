@@ -178,6 +178,28 @@ async def test_tool_dto_exposes_derived_config_and_ownership_metadata(client, db
 
 
 @pytest.mark.asyncio
+async def test_tools_api_exposes_frontend_requirements_for_ui_blocks_builtin(client, db_session):
+    tenant, user = await _seed_tenant_and_user(db_session)
+
+    await _ensure_builtin_template(
+        db_session,
+        builtin_key="ui_blocks",
+        implementation_type=ToolImplementationType.CUSTOM,
+        implementation={"type": "builtin", "builtin": "ui_blocks"},
+        execution={"strict_input_schema": True},
+    )
+
+    response = await client.get("/tools/builtins/templates", headers=_headers(user, tenant))
+    assert response.status_code == 200
+
+    ui_blocks_tool = next(item for item in response.json()["tools"] if item["builtin_key"] == "ui_blocks")
+    assert ui_blocks_tool["frontend_requirements"]["required"] is True
+    assert ui_blocks_tool["frontend_requirements"]["renderer_kind"] == "ui_blocks"
+    assert ui_blocks_tool["frontend_requirements"]["package_name"] == "@agents24/ui-blocks-react"
+    assert ui_blocks_tool["frontend_requirements"]["install_command"] == "npx @agents24/ui-blocks-react init"
+
+
+@pytest.mark.asyncio
 async def test_list_builtin_templates_returns_only_global_templates(client, db_session):
     tenant, user = await _seed_tenant_and_user(db_session)
 

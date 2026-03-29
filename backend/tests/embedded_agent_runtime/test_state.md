@@ -1,6 +1,6 @@
 # Embedded Agent Runtime Tests
 
-Last Updated: 2026-03-20
+Last Updated: 2026-03-29
 
 Scope:
 - Public embedded-agent runtime routes authenticated by tenant API keys.
@@ -14,6 +14,7 @@ Key scenarios covered:
 - Stream responses emit `run-stream.v2` envelopes and `X-Thread-ID`.
 - Embedded runtime persists thread ownership and exposes scoped thread history.
 - Thread detail returns per-turn historical `run_events` for replaying old tool/reasoning activity.
+- Thread detail preserves separate `assistant_output_text` and `final_output` values on persisted turns.
 - Embedded runtime supports scoped thread deletion through the public embed surface.
 - Attachment upload works through the public embed surface and attachment metadata is returned on thread turns.
 - Document attachments are processed before execution and thread deletion removes stored attachment bytes.

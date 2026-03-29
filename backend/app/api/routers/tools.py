@@ -33,6 +33,7 @@ from app.services.artifact_runtime.registry_service import ArtifactRegistryServi
 from app.db.postgres.models.artifact_runtime import ArtifactKind
 from app.services.builtin_tools import is_builtin_tools_v1_enabled
 from app.services.prompt_reference_resolver import PromptReferenceError, PromptReferenceResolver
+from app.services.ui_blocks import frontend_requirements_for_tool
 
 router = APIRouter(prefix="/tools", tags=["tools"])
 
@@ -138,6 +139,7 @@ class ToolResponse(BaseModel):
     builtin_template_id: Optional[uuid.UUID] = None
     is_builtin_template: bool = False
     is_builtin_instance: bool = False
+    frontend_requirements: Optional[dict[str, Any]] = None
     is_active: bool
     is_system: bool
     created_at: datetime
@@ -430,6 +432,7 @@ def _serialize_tool(tool: ToolRegistry | object) -> ToolResponse:
         builtin_template_id=getattr(tool, "builtin_template_id", None),
         is_builtin_template=_is_builtin_template(tool),
         is_builtin_instance=_is_builtin_instance(tool),
+        frontend_requirements=frontend_requirements_for_tool(tool),
         is_active=bool(getattr(tool, "is_active", False)),
         is_system=bool(getattr(tool, "is_system", False)),
         created_at=getattr(tool, "created_at"),

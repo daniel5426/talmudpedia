@@ -1,4 +1,4 @@
-Last Updated: 2026-03-22
+Last Updated: 2026-03-29
 
 # PRICO Widget Output Tool Vision Summary
 
@@ -85,26 +85,20 @@ Avoid or de-emphasize widgets when the answer is mainly about:
 
 ## Contract format recommendation
 
-Using a compact DSL instead of JSON is a good idea for this use case.
+This summary originally leaned toward a compact DSL.
 
-Why:
+That is now stale relative to the implemented direction.
 
-- lower token cost
-- easier for the model to emit consistently
-- easier to read in logs/debugging
-- expressive enough for rows, spans, charts, and tables
+Current hard-cut decision:
 
-The proposed line-based DSL is directionally good:
-
-- `screen`
-- `row`
-- widget commands like `kpi`, `pie`, `bar`, `table`, `note`
-- short attributes like `s`, `t`, `v`, `x`
-- block payloads ending with `end`
+- use strict JSON only
+- use renderer-side validation
+- use a fixed starter taxonomy
+- do not support a custom DSL in v1
 
 ## Recommended improvements
 
-### 1. Keep the DSL semantic, not visual-CSS-like
+### 1. Keep the contract semantic, not visual-CSS-like
 
 The agent should choose:
 
@@ -184,13 +178,27 @@ That means:
 
 This is the right product shape for the standalone app too, because it keeps the app flexible, agentic, and easier to evolve.
 
+## Current canonical follow-up
+
+The original PRICO-specific widget direction has now been generalized into the platform-facing `UI Blocks` shape:
+
+- neutral bundle naming
+- strict JSON
+- frontend renderer requirement metadata
+- hosted `classic-chat` support
+- OSS contract and renderer packages
+
+See the canonical current reference:
+
+- `docs/references/ui_blocks_tool_reference.md`
+
 ## Short recommendation
 
 Build:
 
 - narrow domain tools
 - one structured widget output tool
-- one compact DSL contract
+- one strict JSON contract
 - strong renderer-side validation
 
 Do not build:

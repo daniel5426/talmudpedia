@@ -2,7 +2,6 @@ import {
   Suggestion,
   Suggestions,
 } from "@/components/ai-elements/suggestion";
-import { Badge } from "@/components/ui/badge";
 
 import { useLocale } from "./locale-context";
 import { BotInputArea } from "./bot-input-area";

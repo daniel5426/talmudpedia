@@ -18,6 +18,8 @@ export function ClassicChatApp() {
   const {
     activeThread,
     activeThreadId,
+    activeThreadHasOlderHistory,
+    activeThreadIsLoadingOlderHistory,
     copiedMessageId,
     dislikedMessageIds,
     hasMoreHistory,
@@ -25,6 +27,7 @@ export function ClassicChatApp() {
     isResponding,
     likedMessageIds,
     loadMoreHistory,
+    loadOlderMessages,
     removeThread,
     newChat,
     retryAssistantMessage,
@@ -84,11 +87,14 @@ export function ClassicChatApp() {
                 messages={activeThread.messages}
                 onCopyMessage={copyMessage}
                 onInputValueChange={setInputValue}
+                onLoadOlderMessages={loadOlderMessages}
                 onRetryMessage={retryAssistantMessage}
                 onSubmit={submitMessage}
                 onToggleDislike={toggleDislike}
                 onToggleLike={toggleLike}
                 onTopVisibilityChange={setIsAtTop}
+                hasOlderMessages={activeThreadHasOlderHistory}
+                isLoadingOlderMessages={activeThreadIsLoadingOlderHistory}
               />
             ) : (
               <ChatEmptyState

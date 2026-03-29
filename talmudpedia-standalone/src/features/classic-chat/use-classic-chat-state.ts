@@ -29,6 +29,8 @@ import {
 import { useSession } from "./session-context";
 import type { ComposerSubmitPayload, TemplateAttachment, TemplateMessage, TemplateThread } from "./types";
 
+const THREAD_PAGE_SIZE = 20;
+
 export function useClassicChatState() {
   const { session } = useSession();
   const [threads, setThreads] = useState<TemplateThread[]>([]);
@@ -46,7 +48,7 @@ export function useClassicChatState() {
 
   const hydrateThread = useEffectEvent(async (threadId: string, isCancelled: () => boolean) => {
     try {
-      const detail = await fetchAgentThread(threadId);
+      const detail = await fetchAgentThread(threadId, { limit: THREAD_PAGE_SIZE });
       if (isCancelled()) return;
       upsertHydratedThread(detail);
       hydratedThreadIdsRef.current.add(threadId);
@@ -137,6 +139,9 @@ export function useClassicChatState() {
       updatedAt: "Just now",
       messages: [],
       isLoaded: true,
+      hasMoreHistory: false,
+      nextBeforeTurnIndex: null,
+      isLoadingOlderHistory: false,
     };
 
     startTransition(() => {
@@ -152,6 +157,56 @@ export function useClassicChatState() {
     setVisibleHistoryCount((current) =>
       Math.min(current + HISTORY_PAGE_SIZE, threads.length)
     );
+  };
+
+  const loadOlderMessages = async () => {
+    if (!activeThread?.id || activeThread.nextBeforeTurnIndex === null || activeThread.nextBeforeTurnIndex === undefined) {
+      return;
+    }
+    if (activeThread.isLoadingOlderHistory) {
+      return;
+    }
+
+    setThreads((current) =>
+      current.map((thread) =>
+        thread.id === activeThread.id
+          ? { ...thread, isLoadingOlderHistory: true }
+          : thread,
+      ),
+    );
+
+    try {
+      const detail = await fetchAgentThread(activeThread.id, {
+        beforeTurnIndex: activeThread.nextBeforeTurnIndex,
+        limit: THREAD_PAGE_SIZE,
+      });
+      const olderPage = mapThreadDetail(detail);
+      setThreads((current) =>
+        current.map((thread) =>
+          thread.id === activeThread.id
+            ? {
+                ...thread,
+                title: olderPage.title || thread.title,
+                updatedAt: thread.updatedAt,
+                messages: [...olderPage.messages, ...thread.messages],
+                isLoaded: true,
+                hasMoreHistory: olderPage.hasMoreHistory,
+                nextBeforeTurnIndex: olderPage.nextBeforeTurnIndex,
+                isLoadingOlderHistory: false,
+              }
+            : thread,
+        ),
+      );
+    } catch (error) {
+      console.error(`Failed to load older thread messages for ${activeThread.id}`, error);
+      setThreads((current) =>
+        current.map((thread) =>
+          thread.id === activeThread.id
+            ? { ...thread, isLoadingOlderHistory: false }
+            : thread,
+        ),
+      );
+    }
   };
 
   const removeThread = async (threadId: string) => {
@@ -439,6 +494,8 @@ export function useClassicChatState() {
   return {
     activeThread,
     activeThreadId,
+    activeThreadHasOlderHistory: Boolean(activeThread?.hasMoreHistory),
+    activeThreadIsLoadingOlderHistory: Boolean(activeThread?.isLoadingOlderHistory),
     copiedMessageId,
     dislikedMessageIds,
     hasMoreHistory: !isLoadingHistory && hasMoreHistory,
@@ -447,6 +504,7 @@ export function useClassicChatState() {
     submitError,
     likedMessageIds,
     loadMoreHistory,
+    loadOlderMessages,
     removeThread,
     newChat,
     retryAssistantMessage,
@@ -467,6 +525,7 @@ export function useClassicChatState() {
         const merged = {
           ...hydrated,
           preview: hydrated.preview || current[existingIndex].preview,
+          isLoadingOlderHistory: false,
         };
         const next = [...current];
         next[existingIndex] = merged;

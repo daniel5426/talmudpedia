@@ -21,7 +21,13 @@ type ThreadDetails = {
   id: string;
   title?: string | null;
   turns: ThreadTurn[];
+  paging?: {
+    has_more?: boolean;
+    next_before_turn_index?: number | null;
+  } | null;
 };
+
+const THREAD_PAGE_SIZE = 20;
 
 export default function AdminUserThreadPage() {
   const params = useParams()
@@ -30,6 +36,7 @@ export default function AdminUserThreadPage() {
   const [user, setUser] = useState<User | null>(null)
   const [thread, setThread] = useState<ThreadDetails | null>(null)
   const [loading, setLoading] = useState(true)
+  const [loadingOlder, setLoadingOlder] = useState(false)
 
   useEffect(() => {
     const fetchData = async () => {
@@ -37,7 +44,7 @@ export default function AdminUserThreadPage() {
       try {
         const [userData, threadData] = await Promise.all([
           adminService.getUserDetails(userId),
-          adminService.getThread(threadId),
+          adminService.getThread(threadId, { limit: THREAD_PAGE_SIZE }),
         ])
         setUser(userData.user)
         setThread(threadData as ThreadDetails)
@@ -49,6 +56,32 @@ export default function AdminUserThreadPage() {
     }
     fetchData()
   }, [userId, threadId])
+
+  const loadOlderTurns = async () => {
+    const nextBeforeTurnIndex = thread?.paging?.next_before_turn_index
+    if (nextBeforeTurnIndex === null || nextBeforeTurnIndex === undefined || loadingOlder) {
+      return
+    }
+    setLoadingOlder(true)
+    try {
+      const older = (await adminService.getThread(threadId, {
+        beforeTurnIndex: nextBeforeTurnIndex,
+        limit: THREAD_PAGE_SIZE,
+      })) as ThreadDetails
+      setThread((current) => {
+        if (!current) return older
+        return {
+          ...current,
+          turns: [...(older.turns || []), ...(current.turns || [])],
+          paging: older.paging ?? null,
+        }
+      })
+    } catch (error) {
+      console.error("Failed to load older thread turns", error)
+    } finally {
+      setLoadingOlder(false)
+    }
+  }
 
   if (loading) return <div className="p-6">Loading thread...</div>
   if (!thread) return <div className="p-6">Thread not found</div>
@@ -65,6 +98,20 @@ export default function AdminUserThreadPage() {
         />
       </AdminPageHeader>
       <div className="flex-1 overflow-auto p-6 space-y-4" data-admin-page-scroll>
+        {thread.paging?.has_more ? (
+          <div className="flex justify-center">
+            <button
+              type="button"
+              onClick={() => {
+                void loadOlderTurns()
+              }}
+              disabled={loadingOlder}
+              className="rounded-md border px-3 py-1.5 text-sm text-foreground disabled:opacity-50"
+            >
+              {loadingOlder ? "Loading older turns..." : "Load older turns"}
+            </button>
+          </div>
+        ) : null}
         {thread.turns.length === 0 ? (
           <div className="text-sm text-muted-foreground">No turns found.</div>
         ) : (

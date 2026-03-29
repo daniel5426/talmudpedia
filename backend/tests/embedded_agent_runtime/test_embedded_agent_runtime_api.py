@@ -142,7 +142,7 @@ async def test_embedded_agent_thread_detail_includes_run_events_and_delete_route
             user_input_text="hi",
             assistant_output_text="hello from embed",
             status=AgentThreadTurnStatus.completed,
-            metadata_={"final_output": {"answer": "hello from embed"}},
+            metadata_={"final_output": {"answer": "machine-facing embed output"}},
         )
     )
     stored_thread.last_run_id = run_row.id
@@ -202,7 +202,8 @@ async def test_embedded_agent_thread_detail_includes_run_events_and_delete_route
     assert len(payload["turns"]) == 1
     turn = payload["turns"][0]
     assert turn["run_id"] == str(run_id)
-    assert turn["final_output"] == {"answer": "hello from embed"}
+    assert turn["assistant_output_text"] == "hello from embed"
+    assert turn["final_output"] == {"answer": "machine-facing embed output"}
     assert [item["event"] for item in turn["run_events"]] == [
         "tool.started",
         "reasoning.update",

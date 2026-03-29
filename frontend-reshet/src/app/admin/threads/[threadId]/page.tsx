@@ -57,7 +57,13 @@ type ThreadDetails = {
     total_tokens?: number
   } | null
   turns: ThreadTurn[]
+  paging?: {
+    has_more?: boolean
+    next_before_turn_index?: number | null
+  } | null
 }
+
+const THREAD_PAGE_SIZE = 20
 
 const formatValue = (value?: string | null) => {
   const trimmed = String(value || "").trim()
@@ -77,6 +83,8 @@ export default function AdminThreadPage() {
   const [thread, setThread] = useState<ThreadDetails | null>(null)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [loading, setLoading] = useState(true)
+  const [isLoadingOlderHistory, setIsLoadingOlderHistory] = useState(false)
+  const [paging, setPaging] = useState<ThreadDetails["paging"]>(null)
   const [traceLoadingByMessageId, setTraceLoadingByMessageId] = useState<Record<string, boolean>>({})
   const [executionSteps, setExecutionSteps] = useState<ExecutionStep[]>([])
   const [traceCopyText, setTraceCopyText] = useState<string | null>(null)
@@ -92,7 +100,9 @@ export default function AdminThreadPage() {
     const fetchThread = async () => {
       setLoading(true)
       try {
-        const data = (await adminService.getThread(threadId)) as ThreadDetails
+        const data = (await adminService.getThread(threadId, {
+          limit: THREAD_PAGE_SIZE,
+        })) as ThreadDetails
         const mappedMessages = await mapTurnsToMessages(
           threadId,
           Array.isArray(data.turns) ? data.turns : [],
@@ -100,11 +110,13 @@ export default function AdminThreadPage() {
         if (!isMounted) return
         setThread(data)
         setMessages(mappedMessages)
+        setPaging(data.paging ?? null)
       } catch (error) {
         console.error("Failed to fetch thread", error)
         if (!isMounted) return
         setThread(null)
         setMessages([])
+        setPaging(null)
       } finally {
         if (isMounted) {
           setLoading(false)
@@ -145,7 +157,42 @@ export default function AdminThreadPage() {
     }
   }, [])
 
-  const controller = useMemo<ChatController & { currentResponseBlocks: []; isPaused: false; pendingApproval: false }>(
+  const loadOlderHistory = useCallback(async () => {
+    const nextBeforeTurnIndex = paging?.next_before_turn_index
+    if (nextBeforeTurnIndex === null || nextBeforeTurnIndex === undefined || isLoadingOlderHistory) {
+      return null
+    }
+    setIsLoadingOlderHistory(true)
+    try {
+      const data = (await adminService.getThread(threadId, {
+        beforeTurnIndex: nextBeforeTurnIndex,
+        limit: THREAD_PAGE_SIZE,
+      })) as ThreadDetails
+      const olderMessages = await mapTurnsToMessages(
+        threadId,
+        Array.isArray(data.turns) ? data.turns : [],
+      )
+      setMessages((current) => [...olderMessages, ...current])
+      setPaging(data.paging ?? null)
+      return data
+    } catch (error) {
+      console.error("Failed to load older thread turns", error)
+      return null
+    } finally {
+      setIsLoadingOlderHistory(false)
+    }
+  }, [isLoadingOlderHistory, paging?.next_before_turn_index, threadId])
+
+  const controller = useMemo<
+    ChatController & {
+      currentResponseBlocks: []
+      isPaused: false
+      pendingApproval: false
+      hasOlderHistory: boolean
+      isLoadingOlderHistory: boolean
+      loadOlderHistory: () => Promise<ThreadDetails | null>
+    }
+  >(
     () => ({
       messages,
       streamingContent: "",
@@ -180,8 +227,11 @@ export default function AdminThreadPage() {
       textareaRef,
       isPaused: false,
       pendingApproval: false,
+      hasOlderHistory: Boolean(paging?.has_more),
+      isLoadingOlderHistory,
+      loadOlderHistory,
     }),
-    [copiedMessageId, disliked, handleCopy, handleLoadTrace, liked, messages, traceLoadingByMessageId],
+    [copiedMessageId, disliked, handleCopy, handleLoadTrace, isLoadingOlderHistory, liked, loadOlderHistory, messages, paging?.has_more, traceLoadingByMessageId],
   )
 
   if (loading) {

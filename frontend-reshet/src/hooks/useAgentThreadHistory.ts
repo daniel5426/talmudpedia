@@ -23,6 +23,9 @@ export interface AgentChatHistoryItem {
   title: string;
   timestamp: number;
   messages: ChatMessage[];
+  hasMoreHistory?: boolean;
+  nextBeforeTurnIndex?: number | null;
+  isLoadingOlderHistory?: boolean;
 }
 
 type ThreadTurn = {
@@ -49,7 +52,13 @@ type ThreadDetails = {
   title?: string | null;
   updated_at?: string;
   turns?: ThreadTurn[];
+  paging?: {
+    has_more?: boolean;
+    next_before_turn_index?: number | null;
+  } | null;
 };
+
+const DEFAULT_THREAD_PAGE_SIZE = 20;
 
 const parseTimestamp = (value?: string, fallback: number = Date.now()): number => {
   if (!value) return fallback;
@@ -191,6 +200,9 @@ const mapListItem = (thread: Thread): AgentChatHistoryItem => ({
   title: String(thread.title || "Untitled thread"),
   timestamp: parseTimestamp(thread.updated_at),
   messages: [],
+  hasMoreHistory: false,
+  nextBeforeTurnIndex: null,
+  isLoadingOlderHistory: false,
 });
 
 const mapDetailsItem = (
@@ -204,6 +216,12 @@ const mapDetailsItem = (
   title: String(details.title || fallback?.title || "Untitled thread"),
   timestamp: parseTimestamp(details.updated_at, fallback?.timestamp ?? Date.now()),
   messages,
+  hasMoreHistory: Boolean(details.paging?.has_more),
+  nextBeforeTurnIndex:
+    details.paging?.next_before_turn_index === null || details.paging?.next_before_turn_index === undefined
+      ? null
+      : Number(details.paging.next_before_turn_index),
+  isLoadingOlderHistory: fallback?.isLoadingOlderHistory ?? false,
 });
 
 export function useAgentThreadHistory(userId: string | undefined) {
@@ -244,7 +262,7 @@ export function useAgentThreadHistory(userId: string | undefined) {
     if (item.messages.length > 0) return item;
 
     try {
-      const details = (await adminService.getThread(item.threadId)) as ThreadDetails;
+      const details = (await adminService.getThread(item.threadId, { limit: DEFAULT_THREAD_PAGE_SIZE })) as ThreadDetails;
       const mappedMessages = await mapTurnsToMessages(
         item.threadId,
         Array.isArray(details.turns) ? details.turns : [],
@@ -268,7 +286,7 @@ export function useAgentThreadHistory(userId: string | undefined) {
     }
 
     try {
-      const details = (await adminService.getThread(threadId)) as ThreadDetails;
+      const details = (await adminService.getThread(threadId, { limit: DEFAULT_THREAD_PAGE_SIZE })) as ThreadDetails;
       const mappedMessages = await mapTurnsToMessages(
         threadId,
         Array.isArray(details.turns) ? details.turns : [],
@@ -294,6 +312,7 @@ export function useAgentThreadHistory(userId: string | undefined) {
   }) => {
     if (!input.threadId) return;
     setHistory((prev) => {
+      const existing = prev.find((entry) => entry.threadId === input.threadId);
       const nextItem: AgentChatHistoryItem = {
         id: input.threadId,
         threadId: input.threadId,
@@ -301,11 +320,57 @@ export function useAgentThreadHistory(userId: string | undefined) {
         title: input.title,
         timestamp: input.timestamp,
         messages: input.messages,
+        hasMoreHistory: existing?.hasMoreHistory ?? false,
+        nextBeforeTurnIndex: existing?.nextBeforeTurnIndex ?? null,
+        isLoadingOlderHistory: false,
       };
       const filtered = prev.filter((entry) => entry.threadId !== input.threadId);
       return [nextItem, ...filtered].sort((a, b) => b.timestamp - a.timestamp).slice(0, 50);
     });
   }, []);
+
+  const loadOlderThreadMessages = useCallback(async (threadId: string): Promise<AgentChatHistoryItem | null> => {
+    if (!threadId) return null;
+    const existing = history.find((item) => item.threadId === threadId);
+    if (
+      !existing ||
+      existing.nextBeforeTurnIndex === null ||
+      existing.nextBeforeTurnIndex === undefined ||
+      existing.isLoadingOlderHistory
+    ) {
+      return existing || null;
+    }
+
+    setHistory((prev) =>
+      prev.map((entry) =>
+        entry.threadId === threadId ? { ...entry, isLoadingOlderHistory: true } : entry
+      )
+    );
+    try {
+      const details = (await adminService.getThread(threadId, {
+        limit: DEFAULT_THREAD_PAGE_SIZE,
+        beforeTurnIndex: existing.nextBeforeTurnIndex,
+      })) as ThreadDetails;
+      const olderMessages = await mapTurnsToMessages(
+        threadId,
+        Array.isArray(details.turns) ? details.turns : [],
+      );
+      const mapped = mapDetailsItem(details, existing, [...olderMessages, ...existing.messages]);
+      mapped.isLoadingOlderHistory = false;
+      setHistory((prev) =>
+        prev.map((entry) => (entry.threadId === mapped.threadId ? mapped : entry))
+      );
+      return mapped;
+    } catch (error) {
+      console.error("Failed to load older thread details", { threadId, error });
+      setHistory((prev) =>
+        prev.map((entry) =>
+          entry.threadId === threadId ? { ...entry, isLoadingOlderHistory: false } : entry
+        )
+      );
+      return null;
+    }
+  }, [history]);
 
   return {
     history,
@@ -313,6 +378,7 @@ export function useAgentThreadHistory(userId: string | undefined) {
     refreshHistory,
     loadThreadMessages,
     loadThreadById,
+    loadOlderThreadMessages,
     upsertHistoryItem,
   };
 }

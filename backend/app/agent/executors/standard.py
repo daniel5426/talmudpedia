@@ -367,13 +367,18 @@ class EndNodeExecutor(BaseNodeExecutor):
 
         if isinstance(config.get("output_schema"), dict) or isinstance(config.get("output_bindings"), list):
             try:
+                # End owns the workflow return contract only. Presentation-facing
+                # assistant text is derived elsewhere from assistant-visible output.
                 result["final_output"] = materialize_end_output(config=config, state=state)
                 if emitter:
                     emitter.emit_internal_event(
                         "workflow.end_materialized",
                         {
+                            "node_id": node_id,
+                            "node_name": node_name,
                             "schema_name": (config.get("output_schema") or {}).get("name"),
                             "binding_count": len(config.get("output_bindings") or []),
+                            "final_output": result["final_output"],
                         },
                         node_id=node_id,
                         category="workflow_contract",

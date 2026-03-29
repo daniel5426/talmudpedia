@@ -12,6 +12,7 @@ type ToolRecord = {
   id: string;
   slug: string;
   status: string;
+  builtin_key?: string | null;
 };
 
 type AgentRecord = {
@@ -20,12 +21,9 @@ type AgentRecord = {
   status: string;
 };
 
-const requiredEnvKeys = [
-  "TALMUDPEDIA_BASE_URL",
-  "TALMUDPEDIA_TENANT_ID",
-] as const;
+type RequiredEnvKey = "TALMUDPEDIA_BASE_URL" | "TALMUDPEDIA_TENANT_ID";
 
-function requireEnv(key: (typeof requiredEnvKeys)[number]): string {
+function requireEnv(key: RequiredEnvKey): string {
   const value = String(process.env[key] || "").trim();
   if (!value) {
     throw new Error(`Missing required environment variable: ${key}`);
@@ -266,46 +264,21 @@ function toolDefinitions() {
         additionalProperties: false,
       },
     },
-    {
-      name: "PRICO Widget Output",
-      slug: "prico-widget-output",
-      description:
-        "Render-only widget bundle contract for PRICO standalone chat responses. " +
-        "Input must be strict JSON: { rows, optional screen_title, optional screen_subtitle }. " +
-        "Each row is { widgets: [...] }. Allowed widgets: kpi, pie, bar, compare, table, note. " +
-        "Use only the documented keys. Do not invent aliases or extra keys. " +
-        "KPI = {kind,id,span,title,value}. " +
-        "Pie/bar = {kind,id,span,title,data:[{label,value}]}. " +
-        "Compare = {kind,id,span,title,leftLabel,leftValue,rightLabel,rightValue,optional delta}. " +
-        "Table = {kind,id,span,title,columns,rows}. " +
-        "Note = {kind,id,span,title,text}. " +
-        "If the JSON bundle is invalid, this tool returns HTTP 400 with code INVALID_WIDGET_DSL and structured retry hints.",
-      path: "/widget-output",
-      input_schema: {
-        type: "object",
-        properties: {
-          screen_title: { type: "string" },
-          screen_subtitle: { type: "string" },
-          rows: {
-            type: "array",
-            items: {
-              type: "object",
-              properties: {
-                widgets: {
-                  type: "array",
-                  items: { type: "object", additionalProperties: true },
-                },
-              },
-              required: ["widgets"],
-              additionalProperties: false,
-            },
-          },
-        },
-        required: ["rows"],
-        additionalProperties: false,
-      },
-    },
   ] as const;
+}
+
+async function resolveUIBlocksBuiltinTool(): Promise<ToolRecord> {
+  const builtin = (await listTools()).find(
+    (tool) =>
+      String(tool.slug || "").trim().toLowerCase() === "builtin-ui-blocks" ||
+      String(tool.builtin_key || "").trim().toLowerCase() === "ui_blocks",
+  );
+  if (!builtin) {
+    throw new Error(
+      "Could not find the built-in UI Blocks tool. Seed/publish built-ins in the platform before provisioning the PRICO demo.",
+    );
+  }
+  return builtin;
 }
 
 async function upsertTool(definition: ReturnType<typeof toolDefinitions>[number]): Promise<ToolRecord> {
@@ -367,28 +340,12 @@ function buildAgentGraph(modelId: string, toolIds: string[]) {
     "Prefer deal-specific tools when the user asks about a concrete deal id.",
     "Always surface evidence notes and any data-quality caveats returned by the tools.",
     "If the available demo data is partial or missing, say so clearly.",
-    "Use the PRICO Widget Output tool only when visuals materially help comprehension.",
-    "Do not use the PRICO Widget Output tool for purely explanatory answers.",
-    "When you use the PRICO Widget Output tool, call it at most once per answer and bundle all widgets in that one call.",
-    "If PRICO Widget Output fails with code INVALID_WIDGET_DSL, read the returned hint, fix the JSON, and retry exactly once.",
-    "If the second PRICO Widget Output attempt fails, stop retrying and answer with text only.",
-    "Keep normal assistant text as the primary answer even when you also produce widgets.",
-    "For the widget tool, pass strict JSON only, never DSL, prose, or shorthand.",
-    "Use only these widget kinds: kpi, pie, bar, compare, table, note.",
-    "Use only these keys. Do not invent synonyms. Do not add extra keys.",
-    "Bundle shape: { screen_title?: string, screen_subtitle?: string, rows: [{ widgets: Widget[] }] }.",
-    "KPI shape: { kind: 'kpi', id: string, span: number, title: string, optional subtitle: string, optional footnote: string, value: string }.",
-    "Pie shape: { kind: 'pie', id: string, span: number, title: string, optional subtitle: string, optional footnote: string, data: [{ label: string, value: number }] }.",
-    "Bar shape: { kind: 'bar', id: string, span: number, title: string, optional subtitle: string, optional footnote: string, data: [{ label: string, value: number }] }.",
-    "Compare shape: { kind: 'compare', id: string, span: number, title: string, optional subtitle: string, optional footnote: string, leftLabel: string, leftValue: number, rightLabel: string, rightValue: number, optional delta: string }.",
-    "Table shape: { kind: 'table', id: string, span: number, title: string, optional subtitle: string, optional footnote: string, columns: string[], rows: string[][] }.",
-    "Note shape: { kind: 'note', id: string, span: number, title: string, optional subtitle: string, optional footnote: string, text: string }.",
-    "Row span must be at most 12.",
-    "Widget ids must be unique within the bundle.",
-    "Table rows must have the same number of cells as columns.",
-    "Use numeric values for chart and compare numbers, not strings.",
-    "Canonical example widget payload:",
-    '{"screen_title":"Client Activity","screen_subtitle":"Last 30 days","rows":[{"widgets":[{"kind":"kpi","id":"deals","span":3,"title":"Deals","value":"24"},{"kind":"kpi","id":"volume","span":3,"title":"Volume","value":"$12.4M"},{"kind":"kpi","id":"bank","span":3,"title":"Top Bank","value":"Hapoalim"},{"kind":"kpi","id":"currency","span":3,"title":"Top Currency","value":"USD"}]},{"widgets":[{"kind":"pie","id":"banks","span":6,"title":"Bank Concentration","data":[{"label":"Hapoalim","value":45},{"label":"Discount","value":30},{"label":"Leumi","value":25}]},{"kind":"table","id":"recent","span":6,"title":"Recent Deals","columns":["deal","date","bank"],"rows":[["1","2026-03-10","Hapoalim"],["2","2026-03-09","Discount"]]}]}]}.',
+    "Use the UI Blocks tool only when visuals materially help comprehension.",
+    "Do not use the UI Blocks tool for purely explanatory answers.",
+    "Use UI Blocks mainly for concentration, ranking, summary metrics, and side-by-side comparisons.",
+    "Avoid UI Blocks for narrative deal explanations, caveats-only answers, or answers where one sentence is clearer than a chart.",
+    "When you use UI Blocks, call it at most once per answer.",
+    "Keep normal assistant text as the primary answer even when you also produce UI blocks.",
   ].join(" ");
 
   return {
@@ -468,6 +425,9 @@ async function main() {
     tools.push(tool);
     console.log(`Upserted tool: ${definition.slug} (${tool.id})`);
   }
+  const uiBlocksTool = await resolveUIBlocksBuiltinTool();
+  tools.push(uiBlocksTool);
+  console.log(`Attached builtin tool: ${uiBlocksTool.slug} (${uiBlocksTool.id})`);
 
   const agent = await upsertAgent(
     modelId,

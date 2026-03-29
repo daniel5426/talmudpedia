@@ -3,6 +3,10 @@ from __future__ import annotations
 from typing import Any
 
 from app.services.platform_architect_contracts import PLATFORM_ARCHITECT_DOMAIN_TOOLS
+from app.services.ui_blocks import (
+    UI_BLOCKS_RENDERER_KIND,
+    UI_BLOCKS_TOOL_SLUG,
+)
 
 
 def resolve_tool_event_metadata(
@@ -15,6 +19,8 @@ def resolve_tool_event_metadata(
     normalized_tool_slug = str(tool_slug or "").strip()
     if normalized_tool_slug:
         metadata["tool_slug"] = normalized_tool_slug
+        if normalized_tool_slug == UI_BLOCKS_TOOL_SLUG:
+            metadata["renderer_kind"] = UI_BLOCKS_RENDERER_KIND
 
     action = None
     if isinstance(input_data, dict):

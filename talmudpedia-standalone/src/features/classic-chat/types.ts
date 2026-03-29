@@ -1,3 +1,5 @@
+import type { UIBlocksBundle } from "@agents24/ui-blocks-contract";
+
 export type TemplateTaskStatus = "running" | "done" | "error";
 
 export type ComposerAttachmentInput = {
@@ -57,15 +59,15 @@ export type TemplateSourcesBlock = {
   sources: TemplateSource[];
 };
 
-export type TemplateWidgetBundleBlock = {
+export type TemplateUIBlocksBundleBlock = {
   id: string;
-  kind: "widget_bundle";
-  bundle: import("../prico-widgets/contract").PricoWidgetBundle;
+  kind: "ui_blocks_bundle";
+  bundle: UIBlocksBundle;
 };
 
-export type TemplateWidgetLoadingBlock = {
+export type TemplateUIBlocksLoadingBlock = {
   id: string;
-  kind: "widget_loading";
+  kind: "ui_blocks_loading";
   spanId?: string;
 };
 
@@ -74,8 +76,8 @@ export type TemplateRenderBlock =
   | TemplateReasoningBlock
   | TemplateTaskBlock
   | TemplateSourcesBlock
-  | TemplateWidgetBundleBlock
-  | TemplateWidgetLoadingBlock;
+  | TemplateUIBlocksBundleBlock
+  | TemplateUIBlocksLoadingBlock;
 
 export type TemplateMessage = {
   id: string;
@@ -94,4 +96,7 @@ export type TemplateThread = {
   updatedAt: string;
   messages: TemplateMessage[];
   isLoaded?: boolean;
+  hasMoreHistory?: boolean;
+  nextBeforeTurnIndex?: number | null;
+  isLoadingOlderHistory?: boolean;
 };

@@ -24,7 +24,7 @@ class _AnalyzeAgentService:
                     "workflow_input": [{"key": "input_as_text", "type": "string"}],
                     "state": [],
                     "node_outputs": [],
-                    "template_variables": [],
+                    "template_suggestions": {"global": [], "by_node": {}},
                 },
                 "operator_contracts": {},
                 "errors": [],

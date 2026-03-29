@@ -5,6 +5,12 @@ import os
 from typing import Any
 
 from app.db.postgres.models.registry import ToolImplementationType
+from app.services.ui_blocks import (
+    UI_BLOCKS_BUILTIN_KEY,
+    UI_BLOCKS_TOOL_SLUG,
+    ui_blocks_tool_input_schema,
+    ui_blocks_tool_output_schema,
+)
 
 
 BUILTIN_TOOLS_V1_ENV = "BUILTIN_TOOLS_V1"
@@ -218,6 +224,46 @@ def _specs() -> list[BuiltinToolTemplateSpec]:
             execution={"timeout_s": 20, "is_pure": True, "concurrency_group": "network", "max_concurrency": 4},
             input_schema=web_search_input,
             output_schema=web_search_output,
+        )
+    )
+
+    specs.append(
+        BuiltinToolTemplateSpec(
+            key=UI_BLOCKS_BUILTIN_KEY,
+            name="UI Blocks",
+            slug=UI_BLOCKS_TOOL_SLUG,
+            description=(
+                "Validate and normalize a strict JSON UI Blocks bundle for frontend rendering. "
+                "Use this tool when structured visual blocks materially improve comprehension, "
+                "such as concentration, rankings, summary metrics, or side-by-side comparisons. "
+                "Call it at most once per answer and pass strict JSON only, never DSL, prose, or shorthand. "
+                "Allowed block kinds: kpi, pie, bar, compare, table, note. "
+                "Use only the documented keys. Do not invent synonyms or extra fields. "
+                "Bundle shape: { title?: string, subtitle?: string, rows: [{ blocks: Block[] }] }. "
+                "KPI shape: { kind: 'kpi', id: string, span: number, title: string, subtitle?: string, footnote?: string, value: string }. "
+                "Pie shape: { kind: 'pie', id: string, span: number, title: string, subtitle?: string, footnote?: string, data: [{ label: string, value: number }] }. "
+                "Bar shape: { kind: 'bar', id: string, span: number, title: string, subtitle?: string, footnote?: string, data: [{ label: string, value: number }] }. "
+                "Compare shape: { kind: 'compare', id: string, span: number, title: string, subtitle?: string, footnote?: string, leftLabel: string, leftValue: number, rightLabel: string, rightValue: number, delta?: string }. "
+                "Table shape: { kind: 'table', id: string, span: number, title: string, subtitle?: string, footnote?: string, columns: string[], rows: string[][] }. "
+                "Note shape: { kind: 'note', id: string, span: number, title: string, subtitle?: string, footnote?: string, text: string }. "
+                "Validation rules: each row span must be at most 12, block ids must be unique within the bundle, "
+                "table rows must match the column count, and chart/compare numeric values must be numbers, not strings. "
+                "If validation fails, fix the JSON using the returned hint and retry once. "
+                "Canonical example: "
+                "{\"title\":\"Client Activity\",\"subtitle\":\"Last 30 days\",\"rows\":[{\"blocks\":[{\"kind\":\"kpi\",\"id\":\"deals\",\"span\":3,\"title\":\"Deals\",\"value\":\"24\"},{\"kind\":\"kpi\",\"id\":\"volume\",\"span\":3,\"title\":\"Volume\",\"value\":\"$12.4M\"},{\"kind\":\"kpi\",\"id\":\"bank\",\"span\":3,\"title\":\"Top Bank\",\"value\":\"Hapoalim\"},{\"kind\":\"kpi\",\"id\":\"currency\",\"span\":3,\"title\":\"Top Currency\",\"value\":\"USD\"}]},{\"blocks\":[{\"kind\":\"pie\",\"id\":\"banks\",\"span\":6,\"title\":\"Bank Concentration\",\"data\":[{\"label\":\"Hapoalim\",\"value\":45},{\"label\":\"Discount\",\"value\":30},{\"label\":\"Leumi\",\"value\":25}]},{\"kind\":\"table\",\"id\":\"recent\",\"span\":6,\"title\":\"Recent Deals\",\"columns\":[\"deal\",\"date\",\"bank\"],\"rows\":[[\"1\",\"2026-03-10\",\"Hapoalim\"],[\"2\",\"2026-03-09\",\"Discount\"]]}]}]}. "
+                "This tool renders no HTML and returns only the canonical ui_blocks_bundle envelope."
+            ),
+            implementation_type=ToolImplementationType.CUSTOM,
+            implementation={"type": "builtin", "builtin": UI_BLOCKS_BUILTIN_KEY},
+            execution={
+                "timeout_s": 10,
+                "is_pure": True,
+                "concurrency_group": "transform",
+                "max_concurrency": 8,
+                "strict_input_schema": True,
+            },
+            input_schema=ui_blocks_tool_input_schema(),
+            output_schema=ui_blocks_tool_output_schema(),
         )
     )
 

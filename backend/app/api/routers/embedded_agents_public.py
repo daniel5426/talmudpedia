@@ -129,6 +129,8 @@ async def get_embedded_agent_thread(
     thread_id: UUID,
     external_user_id: str = Query(..., min_length=1, max_length=255),
     external_session_id: str | None = Query(default=None, max_length=255),
+    before_turn_index: int | None = Query(default=None, ge=0),
+    limit: int = Query(default=20, ge=1, le=100),
     principal: dict[str, Any] = Depends(require_tenant_api_key_scopes("agents.embed")),
     db: AsyncSession = Depends(get_db),
 ):
@@ -136,17 +138,23 @@ async def get_embedded_agent_thread(
     if str(agent.tenant_id) != str(principal["tenant_id"]):
         raise HTTPException(status_code=404, detail="Published agent not found")
 
-    thread = await ThreadService(db).get_thread_with_turns(
+    service = ThreadService(db)
+    repaired = await service.repair_thread_turn_indices(thread_id=thread_id)
+    if repaired:
+        await db.commit()
+    page_result = await service.get_thread_turn_page(
         tenant_id=agent.tenant_id,
         thread_id=thread_id,
         agent_id=agent.id,
         external_user_id=external_user_id,
         external_session_id=external_session_id,
+        before_turn_index=before_turn_index,
+        limit=limit,
     )
-    if thread is None:
+    if page_result is None:
         raise HTTPException(status_code=404, detail="Thread not found")
     await db.commit()
-    return await serialize_thread_detail(db=db, thread=thread)
+    return await serialize_thread_detail(db=db, thread=page_result.thread, page=page_result.page)
 
 
 @router.delete("/{agent_id}/threads/{thread_id}")

@@ -452,3 +452,61 @@ async def test_json_transform_and_datetime_utils(monkeypatch):
     )
     assert diffed["context"]["operation"] == "diff"
     assert diffed["context"]["result"] == 30
+
+
+@pytest.mark.asyncio
+async def test_ui_blocks_builtin_normalizes_valid_bundle(monkeypatch):
+    tool = _make_tool(
+        implementation_type="CUSTOM",
+        builtin_key="ui_blocks",
+        config_schema={"implementation": {"type": "builtin", "builtin": "ui_blocks"}},
+    )
+
+    async def fake_load_tool(_self, _tool_id):
+        return tool
+
+    monkeypatch.setattr(ToolNodeExecutor, "_load_tool", fake_load_tool)
+
+    executor = ToolNodeExecutor(tenant_id=uuid4(), db=DummyDB())
+    result = await executor.execute(
+        state={
+            "context": {
+                "rows": [
+                    {
+                        "blocks": [
+                            {"kind": "note", "id": "dq", "span": 12, "title": "Data quality", "text": "Partial coverage"}
+                        ]
+                    }
+                ]
+            }
+        },
+        config={"tool_id": str(tool.id)},
+        context={"node_id": "tool-node"},
+    )
+
+    assert result["context"]["kind"] == "ui_blocks_bundle"
+    assert result["context"]["contract_version"] == "v1"
+    assert result["context"]["bundle"]["rows"][0]["blocks"][0]["kind"] == "note"
+
+
+@pytest.mark.asyncio
+async def test_ui_blocks_builtin_rejects_invalid_bundle(monkeypatch):
+    tool = _make_tool(
+        implementation_type="CUSTOM",
+        builtin_key="ui_blocks",
+        config_schema={"implementation": {"type": "builtin", "builtin": "ui_blocks"}},
+    )
+
+    async def fake_load_tool(_self, _tool_id):
+        return tool
+
+    monkeypatch.setattr(ToolNodeExecutor, "_load_tool", fake_load_tool)
+
+    executor = ToolNodeExecutor(tenant_id=uuid4(), db=DummyDB())
+
+    with pytest.raises(ValueError, match="At least one row is required"):
+        await executor.execute(
+            state={"context": {"rows": []}},
+            config={"tool_id": str(tool.id)},
+            context={"node_id": "tool-node"},
+        )

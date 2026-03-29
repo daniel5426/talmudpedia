@@ -15,6 +15,7 @@ from app.agent.runtime.registry import RuntimeAdapterRegistry
 from app.agent.runtime.base import RuntimeState
 from app.agent.execution.types import ExecutionEvent, EventVisibility, ExecutionMode
 from app.agent.execution.durable_checkpointer import DurableMemorySaver
+from app.agent.execution.output_projection import extract_assistant_output_text
 from app.agent.cel_engine import evaluate_template
 from app.agent.execution.trace_recorder import ExecutionTraceRecorder
 from app.db.postgres.models.agent_threads import AgentThreadSurface, AgentThreadTurnStatus
@@ -408,28 +409,12 @@ class AgentExecutorService:
 
     @staticmethod
     def _extract_assistant_output_text(output_result: Dict[str, Any] | None) -> str | None:
-        if not isinstance(output_result, dict):
-            return None
-        final_output = output_result.get("final_output")
-        if isinstance(final_output, str) and final_output.strip():
-            return final_output.strip()
-        messages = output_result.get("messages")
-        if isinstance(messages, list):
-            # Runtime state usually carries full conversation history.
-            # Persist only the latest assistant turn to avoid cumulative replay.
-            last_assistant: str | None = None
-            for msg in messages:
-                if not isinstance(msg, dict):
-                    continue
-                role = str(msg.get("role") or msg.get("type") or "").strip().lower()
-                content = msg.get("content")
-                if role in {"assistant", "ai"} and isinstance(content, str):
-                    text = content.strip()
-                    if text:
-                        last_assistant = text
-            if last_assistant:
-                return last_assistant
-        return None
+        # `assistant_output_text` is the persisted chat reply. `final_output` is
+        # the workflow return value, so only use it as a narrow textual fallback.
+        return extract_assistant_output_text(
+            output_result,
+            allow_final_output_fallback=True,
+        )
 
     @staticmethod
     def _extract_turn_metadata(output_result: Dict[str, Any] | None) -> Dict[str, Any] | None:

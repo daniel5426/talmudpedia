@@ -21,7 +21,7 @@ from app.agent.execution.types import ExecutionMode
 from app.db.postgres.models.agents import Agent, AgentRun, AgentStatus
 from app.db.postgres.models.agent_threads import AgentThread, AgentThreadTurn
 from app.services.runtime_attachment_service import RuntimeAttachmentService
-from app.services.thread_service import ThreadService
+from app.services.thread_service import ThreadService, ThreadTurnPage
 from app.services.usage_quota_service import QuotaExceededError
 
 
@@ -194,15 +194,33 @@ async def list_public_run_events(*, db: AsyncSession, run_id: UUID) -> list[dict
     return events
 
 
-async def serialize_thread_detail(*, db: AsyncSession, thread: AgentThread) -> dict[str, Any]:
+def serialize_thread_paging(page: ThreadTurnPage) -> dict[str, Any]:
+    return {
+        "has_more": bool(page.has_more),
+        "next_before_turn_index": page.next_before_turn_index,
+    }
+
+
+async def serialize_thread_detail(
+    *,
+    db: AsyncSession,
+    thread: AgentThread,
+    page: ThreadTurnPage | None = None,
+) -> dict[str, Any]:
+    turns = list(page.turns if page is not None else sorted(thread.turns or [], key=lambda item: int(item.turn_index or 0)))
     payload = serialize_thread_summary(thread)
     payload["turns"] = [
         {
             **_serialize_turn_base(turn),
             "run_events": await list_public_run_events(db=db, run_id=turn.run_id),
         }
-        for turn in sorted(thread.turns or [], key=lambda item: int(item.turn_index or 0))
+        for turn in turns
     ]
+    payload["paging"] = serialize_thread_paging(
+        page
+        if page is not None
+        else ThreadTurnPage(turns=turns, has_more=False, next_before_turn_index=None)
+    )
     return payload
 
 

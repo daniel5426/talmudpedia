@@ -52,7 +52,7 @@ describe("useAgentGraphAnalysis", () => {
           workflow_input: [{ key: "input_as_text", type: "string", namespace: "workflow_input" }],
           state: [],
           node_outputs: [],
-          template_variables: [],
+          template_suggestions: { global: [], by_node: {} },
         },
         operator_contracts: {},
         errors: [],

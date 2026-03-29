@@ -91,9 +91,12 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
   pendingApproval: boolean;
   historyLoading: boolean;
   history: AgentChatHistoryItem[];
+  hasOlderHistory: boolean;
+  isLoadingOlderHistory: boolean;
   startNewChat: () => void;
   loadHistoryChat: (item: AgentChatHistoryItem) => Promise<AgentChatHistoryItem | null>;
   loadHistoryChatById: (threadId: string) => Promise<AgentChatHistoryItem | null>;
+  loadOlderHistory: () => Promise<AgentChatHistoryItem | null>;
 } {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -137,6 +140,7 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
     refreshHistory,
     loadThreadMessages,
     loadThreadById,
+    loadOlderThreadMessages,
     upsertHistoryItem,
   } = useAgentThreadHistory(authUserId);
 
@@ -352,6 +356,15 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
     return resolved;
   }, [agentId, loadThreadById, resetExecutionState]);
 
+  const loadOlderHistory = useCallback(async (): Promise<AgentChatHistoryItem | null> => {
+    const threadId = currentThreadIdRef.current;
+    if (!threadId) return null;
+    const resolved = await loadOlderThreadMessages(threadId);
+    if (!resolved) return null;
+    setMessages(resolved.messages || []);
+    return resolved;
+  }, [loadOlderThreadMessages]);
+
   const serializeConversationMessages = useCallback((source: ChatMessage[]) => {
     return source
       .filter((msg) => (msg.role === "user" || msg.role === "assistant") && typeof msg.content === "string")
@@ -461,6 +474,10 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
               rawEvent.payload && typeof rawEvent.payload === "object"
                 ? (rawEvent.payload as Record<string, unknown>)
                 : {};
+            const eventData =
+              normalizedEvent.data && typeof normalizedEvent.data === "object"
+                ? normalizedEvent.data
+                : payload;
             if (typeof rawEvent.run_id === "string" && rawEvent.run_id.trim().length > 0) {
               latestRunId = rawEvent.run_id;
               setCurrentRunId(rawEvent.run_id);
@@ -480,7 +497,7 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
             setCurrentResponseBlocks(nextBlocks);
 
             if (eventName === "run.failed") {
-              terminalError = String(payload.error || (Array.isArray(rawEvent.diagnostics) ? (rawEvent.diagnostics[0] as Record<string, unknown> | undefined)?.message : "") || "Agent error");
+              terminalError = String(eventData.error || (Array.isArray(rawEvent.diagnostics) ? (rawEvent.diagnostics[0] as Record<string, unknown> | undefined)?.message : "") || "Agent error");
               setCurrentRunStatus("failed");
               break;
             }
@@ -533,10 +550,11 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
               const stepId = String(payload.span_id || rawEvent.run_id || nanoid());
               setLiveExecutionSteps(prev => [...prev, {
                 id: stepId,
-                name: String(payload.display_name || payload.summary || payload.tool || "Tool"),
+                spanId: stepId,
+                name: String(eventData.display_name || eventData.summary || eventData.tool || "Tool"),
                 type: "tool",
                 status: "running",
-                input: payload.input,
+                input: eventData.input,
                 timestamp: new Date(),
               }]);
             } else if (eventName === "tool.completed") {
@@ -544,13 +562,15 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
               setLiveExecutionSteps(prev => prev.map(s => s.id === stepId ? {
                 ...s,
                 status: "completed",
-                output: payload.output,
+                output: s.output !== undefined ? s.output : payload.output,
               } : s));
             } else if (eventName === "node_start" || eventName === "on_chain_start") {
               const data = normalizedEvent.data || {};
               const stepId = String(normalizedEvent.span_id || normalizedEvent.run_id || nanoid());
               setLiveExecutionSteps(prev => [...prev, {
                 id: stepId,
+                nodeId: stepId,
+                spanId: stepId,
                 name: String(normalizedEvent.name || "Node"),
                 type: "node",
                 status: "running",
@@ -563,8 +583,26 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
               setLiveExecutionSteps(prev => prev.map(s => s.id === stepId ? {
                 ...s,
                 status: "completed",
-                output: data.output,
+                output: s.output !== undefined ? s.output : data.output,
               } : s));
+            } else if (eventName === "workflow.node_output_published") {
+              const stepId = String(rawEvent.span_id || eventData.node_id || "");
+              const nodeName = String(eventData.node_name || "");
+              setLiveExecutionSteps(prev => prev.map((step) => step.id === stepId ? {
+                ...step,
+                nodeId: step.nodeId || stepId || undefined,
+                name: nodeName || step.name,
+                output: eventData.published_output !== undefined ? eventData.published_output : step.output,
+              } : step));
+            } else if (eventName === "workflow.end_materialized") {
+              const stepId = String(rawEvent.span_id || eventData.node_id || "");
+              const nodeName = String(eventData.node_name || "");
+              setLiveExecutionSteps(prev => prev.map((step) => step.id === stepId ? {
+                ...step,
+                nodeId: step.nodeId || stepId || undefined,
+                name: nodeName || step.name,
+                output: eventData.final_output !== undefined ? eventData.final_output : step.output,
+              } : step));
             }
           } catch (e) {
             console.error("Error parsing event:", e);
@@ -709,6 +747,8 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
   const executionSteps = inspectedTraceSteps ?? liveExecutionSteps;
   const effectiveCurrentThreadId =
     lastAgentIdRef.current === agentId ? currentThreadId : null;
+  const activeHistoryItem =
+    history.find((item) => item.threadId === effectiveCurrentThreadId) || null;
 
   return {
     messages,
@@ -732,9 +772,12 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
     pendingApproval,
     historyLoading,
     history,
+    hasOlderHistory: Boolean(activeHistoryItem?.hasMoreHistory),
+    isLoadingOlderHistory: Boolean(activeHistoryItem?.isLoadingOlderHistory),
     startNewChat,
     loadHistoryChat,
     loadHistoryChatById,
+    loadOlderHistory,
     handleSubmit,
     handleStop,
     handleCopy,

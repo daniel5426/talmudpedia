@@ -1,6 +1,6 @@
 # Architecture Tree (Curated)
 
-Last Updated: 2026-03-26
+Last Updated: 2026-03-29
 
 This file is a backend-only architecture map optimized for agent context efficiency.
 
@@ -155,6 +155,7 @@ backend/app/services/graph_mutation_service.py
 backend/app/services/agent_graph_mutation_service.py
 backend/app/services/rag_graph_mutation_service.py
 backend/app/services/tool_function_registry.py
+backend/app/services/ui_blocks.py
 backend/app/services/artifact_registry.py
 backend/app/services/artifact_runtime/
 backend/app/services/artifact_runtime/registry_service.py
