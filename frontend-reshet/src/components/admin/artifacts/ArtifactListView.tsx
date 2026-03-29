@@ -1,9 +1,11 @@
 "use client"
 
-import { Bot, Copy, Database, Edit, Loader2, MoreHorizontal, Package, Trash2, Upload, Wrench } from "lucide-react"
+import { useMemo, useState } from "react"
+import { Bot, Copy, Database, Edit, Loader2, MoreHorizontal, Package, PencilLine, Search, Trash2, Upload, Wrench } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
   DropdownMenu,
@@ -12,18 +14,24 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import type { Artifact, ArtifactKind } from "@/services/artifacts"
 import { kindLabel } from "@/components/admin/artifacts/artifactPageUtils"
+import { cn } from "@/lib/utils"
 
 type ArtifactListViewProps = {
   artifacts: Artifact[]
   loading?: boolean
   publishingId: string | null
+  bulkAction: "duplicate" | "publish" | "delete" | null
   onEditArtifact: (artifact: Artifact) => void
   onDeleteArtifact: (artifact: Artifact) => void
   onPublishArtifact: (artifact: Artifact) => void
   onDuplicateArtifact: (artifact: Artifact) => void
+  onBulkDeleteArtifacts: (artifacts: Artifact[]) => Promise<void>
+  onBulkPublishArtifacts: (artifacts: Artifact[]) => Promise<void>
+  onBulkDuplicateArtifacts: (artifacts: Artifact[]) => Promise<void>
 }
 
 function kindIcon(kind: ArtifactKind) {
@@ -36,21 +44,163 @@ export function ArtifactListView({
   artifacts,
   loading = false,
   publishingId,
+  bulkAction,
   onEditArtifact,
   onDeleteArtifact,
   onPublishArtifact,
   onDuplicateArtifact,
+  onBulkDeleteArtifacts,
+  onBulkPublishArtifacts,
+  onBulkDuplicateArtifacts,
 }: ArtifactListViewProps) {
+  const [searchQuery, setSearchQuery] = useState("")
+  const [selectionMode, setSelectionMode] = useState(false)
+  const [rawSelectedIds, setRawSelectedIds] = useState<string[]>([])
+
+  const filteredArtifacts = useMemo(() => {
+    const normalizedQuery = searchQuery.trim().toLowerCase()
+    if (!normalizedQuery) return artifacts
+    return artifacts.filter((artifact) => (
+      artifact.display_name.toLowerCase().includes(normalizedQuery)
+      || kindLabel(artifact.kind).toLowerCase().includes(normalizedQuery)
+      || artifact.owner_type.toLowerCase().includes(normalizedQuery)
+      || artifact.version.toLowerCase().includes(normalizedQuery)
+    ))
+  }, [artifacts, searchQuery])
+  const artifactIds = useMemo(() => new Set(artifacts.map((artifact) => artifact.id)), [artifacts])
+  const selectedIds = useMemo(
+    () => (selectionMode ? rawSelectedIds.filter((id) => artifactIds.has(id)) : []),
+    [artifactIds, rawSelectedIds, selectionMode],
+  )
+
+  const selectedVisibleArtifacts = useMemo(
+    () => filteredArtifacts.filter((artifact) => selectedIds.includes(artifact.id)),
+    [filteredArtifacts, selectedIds],
+  )
+  const publishableSelectedArtifacts = useMemo(
+    () => selectedVisibleArtifacts.filter((artifact) => artifact.type === "draft" && artifact.owner_type === "tenant"),
+    [selectedVisibleArtifacts],
+  )
+  const deletableSelectedArtifacts = useMemo(
+    () => selectedVisibleArtifacts.filter((artifact) => artifact.owner_type === "tenant"),
+    [selectedVisibleArtifacts],
+  )
+  const allVisibleSelected = filteredArtifacts.length > 0 && selectedVisibleArtifacts.length === filteredArtifacts.length
+  const someVisibleSelected = selectedVisibleArtifacts.length > 0 && !allVisibleSelected
+  const isMutating = bulkAction !== null
+
+  const toggleArtifactSelection = (artifactId: string, checked: boolean) => {
+    setRawSelectedIds((current) => (
+      checked
+        ? Array.from(new Set([...current, artifactId]))
+        : current.filter((id) => id !== artifactId)
+    ))
+  }
+
+  const toggleSelectAllVisible = (checked: boolean) => {
+    if (!checked) {
+      setRawSelectedIds((current) => current.filter((id) => !filteredArtifacts.some((artifact) => artifact.id === id)))
+      return
+    }
+
+    setRawSelectedIds((current) => Array.from(new Set([
+      ...current,
+      ...filteredArtifacts.map((artifact) => artifact.id),
+    ])))
+  }
+
+  const runBulkAction = async (action: () => Promise<void>) => {
+    await action()
+    setRawSelectedIds([])
+  }
+
   return (
     <div className="m-4 space-y-3">
-      <div>
-        <h2 className="text-lg font-semibold">Unified artifact runtime</h2>
-        <p className="text-sm text-muted-foreground">One execution substrate with explicit domain kinds.</p>
+      <div className="flex items-center justify-between gap-3">
+        <div className="relative max-w-md flex-1">
+          <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground/60" />
+          <Input
+            value={searchQuery}
+            onChange={(event) => setSearchQuery(event.target.value)}
+            placeholder="Search artifacts..."
+            className="h-8 border-border/50 pl-8 text-sm placeholder:text-muted-foreground/50"
+          />
+        </div>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className={cn("h-8 w-8 shrink-0 border-0 shadow-none", selectionMode && "bg-primary/5 text-primary")}
+            onClick={() => {
+              const nextSelectionMode = !selectionMode
+              setSelectionMode(nextSelectionMode)
+              if (!nextSelectionMode) {
+                setRawSelectedIds([])
+              }
+            }}
+            aria-label={selectionMode ? "Hide selection controls" : "Show selection controls"}
+          >
+            <PencilLine className="h-4 w-4" />
+          </Button>
+          {selectionMode && selectedVisibleArtifacts.length > 0 ? (
+            <>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="gap-1.5"
+                disabled={isMutating}
+                onClick={() => {
+                  void runBulkAction(() => onBulkDuplicateArtifacts(selectedVisibleArtifacts))
+                }}
+              >
+                {bulkAction === "duplicate" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Copy className="h-3.5 w-3.5" />}
+                Duplicate ({selectedVisibleArtifacts.length})
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="gap-1.5"
+                disabled={isMutating || publishableSelectedArtifacts.length === 0}
+                onClick={() => {
+                  void runBulkAction(() => onBulkPublishArtifacts(publishableSelectedArtifacts))
+                }}
+              >
+                {bulkAction === "publish" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+                Publish ({publishableSelectedArtifacts.length})
+              </Button>
+              <Button
+                type="button"
+                variant="destructive"
+                size="sm"
+                className="gap-1.5"
+                disabled={isMutating || deletableSelectedArtifacts.length === 0}
+                onClick={() => {
+                  void runBulkAction(() => onBulkDeleteArtifacts(deletableSelectedArtifacts))
+                }}
+              >
+                {bulkAction === "delete" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                Delete ({deletableSelectedArtifacts.length})
+              </Button>
+            </>
+          ) : null}
+        </div>
       </div>
       <div className="rounded-xl border">
         <Table>
           <TableHeader>
             <TableRow>
+              {selectionMode ? (
+                <TableHead className="w-12">
+                  <Checkbox
+                    checked={allVisibleSelected || (someVisibleSelected && "indeterminate")}
+                    onCheckedChange={(checked) => toggleSelectAllVisible(Boolean(checked))}
+                    aria-label="Select all visible artifacts"
+                  />
+                </TableHead>
+              ) : null}
               <TableHead>Artifact</TableHead>
               <TableHead>Kind</TableHead>
               <TableHead>Owner</TableHead>
@@ -62,6 +212,11 @@ export function ArtifactListView({
             {loading ? (
               Array.from({ length: 4 }).map((_, index) => (
                 <TableRow key={`skeleton-${index}`}>
+                  {selectionMode ? (
+                    <TableCell>
+                      <Skeleton className="h-4 w-4 rounded-sm" />
+                    </TableCell>
+                  ) : null}
                   <TableCell className="font-medium">
                     <div className="flex items-center gap-3">
                       <Skeleton className="h-8 w-8 rounded-lg" />
@@ -87,22 +242,31 @@ export function ArtifactListView({
                   </TableCell>
                 </TableRow>
               ))
-            ) : artifacts.length === 0 ? (
+            ) : filteredArtifacts.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={5} className="py-12 text-center text-muted-foreground">
+                <TableCell colSpan={selectionMode ? 6 : 5} className="py-12 text-center text-muted-foreground">
                   <div className="flex flex-col items-center gap-2">
                     <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted">
                       <Package className="h-6 w-6" />
                     </div>
-                    <span>No artifacts found.</span>
+                    <span>{searchQuery ? "No artifacts match your search." : "No artifacts found."}</span>
                   </div>
                 </TableCell>
               </TableRow>
             ) : (
-              artifacts.map((artifact) => {
+              filteredArtifacts.map((artifact) => {
                 const Icon = kindIcon(artifact.kind)
                 return (
-                  <TableRow key={artifact.id}>
+                  <TableRow key={artifact.id} data-state={selectedIds.includes(artifact.id) ? "selected" : undefined}>
+                    {selectionMode ? (
+                      <TableCell>
+                        <Checkbox
+                          checked={selectedIds.includes(artifact.id)}
+                          onCheckedChange={(checked) => toggleArtifactSelection(artifact.id, Boolean(checked))}
+                          aria-label={`Select ${artifact.display_name}`}
+                        />
+                      </TableCell>
+                    ) : null}
                     <TableCell className="font-medium">
                       <div className="flex items-center gap-3">
                         <div className="rounded-lg bg-muted p-2">
@@ -130,7 +294,12 @@ export function ArtifactListView({
                     <TableCell className="text-right">
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="icon" aria-label={`Actions for ${artifact.display_name}`}>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            aria-label={`Actions for ${artifact.display_name}`}
+                            disabled={isMutating}
+                          >
                             <MoreHorizontal className="h-4 w-4" />
                           </Button>
                         </DropdownMenuTrigger>
@@ -146,7 +315,7 @@ export function ArtifactListView({
                           {artifact.type === "draft" && artifact.owner_type === "tenant" ? (
                             <DropdownMenuItem
                               onClick={() => onPublishArtifact(artifact)}
-                              disabled={publishingId === artifact.id}
+                              disabled={publishingId === artifact.id || isMutating}
                             >
                               {publishingId === artifact.id ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}
                               Publish

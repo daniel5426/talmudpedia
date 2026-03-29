@@ -1,4 +1,4 @@
-Last Updated: 2026-03-26
+Last Updated: 2026-03-29
 
 # Test State
 
@@ -55,6 +55,7 @@ Artifact runtime revision, deploy, and dispatch-time credential lifecycle.
 - send worker-for-platforms dispatch payloads without raw source uploads and without persisted secrets
 - package Python dependencies through the official `pywrangler` deploy pipeline instead of custom vendoring
 - package JS artifacts as Wrangler bundles with pinned compatibility metadata
+- materialize Python runtime source trees per execution so uploaded JSON/text asset files can be read through normal filesystem calls
 - confirm current runtime reality: lightweight pywrangler-built workers run, but heavyweight SDK imports like `openai` are still an external deployed-runtime compatibility gap
 - return a persisted failed test run instead of bubbling an eager dispatch crash as the only caller-visible failure
 - promote nested dispatch-worker upstream detail into a visible root-cause payload for debugging
@@ -131,6 +132,9 @@ Artifact runtime revision, deploy, and dispatch-time credential lifecycle.
 - Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/artifact_runtime/test_revision_service.py backend/tests/artifact_runtime/test_execution_service.py`
 - Date: 2026-03-27 Asia/Hebron
 - Result: Pass (`30 passed, 5 warnings`)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/artifact_runtime/test_revision_service.py backend/tests/artifact_runtime/test_execution_service.py`
+- Date: 2026-03-29 Asia/Hebron
+- Result: Pass (`29 passed, 2 warnings`)
 
 ## Known Gaps
 

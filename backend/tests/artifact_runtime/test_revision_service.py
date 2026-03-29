@@ -398,6 +398,38 @@ def test_cloudflare_package_builder_allows_neutral_files_and_keeps_mismatched_co
     assert module_by_name["src/artifact/helper.py"]["type"] == "text"
 
 
+def test_cloudflare_python_package_builder_materializes_runtime_source_tree_for_assets():
+    class _Revision:
+        id = uuid.uuid4()
+        artifact_id = uuid.uuid4()
+        tenant_id = uuid.uuid4()
+        kind = "tool_impl"
+        language = "python"
+        entry_module_path = "main.py"
+        python_dependencies = []
+        manifest_json = {}
+        source_files = [
+            {
+                "path": "main.py",
+                "content": (
+                    "from pathlib import Path\n\n"
+                    "def execute(inputs, config, context):\n"
+                    "    return {'config': Path('config.json').read_text()}\n"
+                ),
+            },
+            {"path": "config.json", "content": '{"ok": true}'},
+        ]
+        runtime_target = "cloudflare_workers"
+
+    package = CloudflareArtifactPackageBuilder().build_revision_package(_Revision(), namespace="staging")
+    bootstrap = next(module for module in package.modules if module["name"] == "__artifact_bootstrap.py")["content"]
+
+    assert "_materialize_source_tree(source_files)" in bootstrap
+    assert 'payload.get("source_files")' in bootstrap
+    assert 'Path("config.json").read_text()' not in bootstrap
+    assert "shutil.rmtree(temp_root, ignore_errors=True)" in bootstrap
+
+
 def test_cloudflare_package_builder_rejects_entry_module_that_does_not_match_language_lane():
     class _Revision:
         id = uuid.uuid4()

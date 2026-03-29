@@ -22,6 +22,7 @@ export default function ArtifactsPage() {
 
   const [loading, setLoading] = useState(true)
   const [publishingId, setPublishingId] = useState<string | null>(null)
+  const [bulkAction, setBulkAction] = useState<"duplicate" | "publish" | "delete" | null>(null)
   const [artifacts, setArtifacts] = useState<Artifact[]>([])
 
   const legacyMode = searchParams.get("mode")
@@ -113,6 +114,56 @@ export default function ArtifactsPage() {
     }
   }, [currentTenant?.slug, fetchArtifacts])
 
+  const handleBulkDuplicate = useCallback(async (selectedArtifacts: Artifact[]) => {
+    if (selectedArtifacts.length === 0) return
+    setBulkAction("duplicate")
+    try {
+      for (const artifact of selectedArtifacts) {
+        await artifactsService.duplicate(artifact.id, currentTenant?.slug)
+      }
+      await fetchArtifacts()
+    } catch (error) {
+      console.error("Failed to duplicate selected artifacts", error)
+      alert(error instanceof Error ? error.message : "Failed to duplicate selected artifacts")
+    } finally {
+      setBulkAction(null)
+    }
+  }, [currentTenant?.slug, fetchArtifacts])
+
+  const handleBulkDelete = useCallback(async (selectedArtifacts: Artifact[]) => {
+    if (selectedArtifacts.length === 0) return
+    if (!confirm(`Delete ${selectedArtifacts.length} selected artifact${selectedArtifacts.length === 1 ? "" : "s"}?`)) return
+    setBulkAction("delete")
+    try {
+      for (const artifact of selectedArtifacts) {
+        await artifactsService.delete(artifact.id, currentTenant?.slug)
+      }
+      await fetchArtifacts()
+    } catch (error) {
+      console.error("Failed to delete selected artifacts", error)
+      alert(error instanceof Error ? error.message : "Failed to delete selected artifacts")
+    } finally {
+      setBulkAction(null)
+    }
+  }, [currentTenant?.slug, fetchArtifacts])
+
+  const handleBulkPublish = useCallback(async (selectedArtifacts: Artifact[]) => {
+    if (selectedArtifacts.length === 0) return
+    if (!confirm(`Publish ${selectedArtifacts.length} selected artifact${selectedArtifacts.length === 1 ? "" : "s"}?`)) return
+    setBulkAction("publish")
+    try {
+      for (const artifact of selectedArtifacts) {
+        await artifactsService.publish(artifact.id, currentTenant?.slug)
+      }
+      await fetchArtifacts()
+    } catch (error) {
+      console.error("Failed to publish selected artifacts", error)
+      alert(error instanceof Error ? error.message : "Failed to publish selected artifacts")
+    } finally {
+      setBulkAction(null)
+    }
+  }, [currentTenant?.slug, fetchArtifacts])
+
   if (shouldRedirectLegacyRoute) {
     return (
       <div className="flex h-full w-full min-w-0 flex-col overflow-hidden">
@@ -149,10 +200,14 @@ export default function ArtifactsPage() {
               loading
               artifacts={[]}
               publishingId={null}
+              bulkAction={null}
               onEditArtifact={() => {}}
               onDuplicateArtifact={() => {}}
               onDeleteArtifact={() => {}}
               onPublishArtifact={() => {}}
+              onBulkDuplicateArtifacts={() => Promise.resolve()}
+              onBulkDeleteArtifacts={() => Promise.resolve()}
+              onBulkPublishArtifacts={() => Promise.resolve()}
             />
           </div>
         </div>
@@ -197,6 +252,7 @@ export default function ArtifactsPage() {
             loading={loading}
             artifacts={artifacts}
             publishingId={publishingId}
+            bulkAction={bulkAction}
             onEditArtifact={(artifact) => {
               markNextEditorEntryShouldAutoCollapseSidebar()
               router.push(buildArtifactDetailHref(artifact.id))
@@ -210,6 +266,9 @@ export default function ArtifactsPage() {
             onPublishArtifact={(artifact) => {
               void handlePublish(artifact)
             }}
+            onBulkDuplicateArtifacts={(selectedArtifacts) => handleBulkDuplicate(selectedArtifacts)}
+            onBulkDeleteArtifacts={(selectedArtifacts) => handleBulkDelete(selectedArtifacts)}
+            onBulkPublishArtifacts={(selectedArtifacts) => handleBulkPublish(selectedArtifacts)}
           />
         </div>
       </div>

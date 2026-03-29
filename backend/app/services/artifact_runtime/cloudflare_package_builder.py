@@ -103,19 +103,66 @@ def _build_python_modules(source_files: list[dict[str, str]], entry_module_path:
 def _python_runtime_main_module(entry_module_path: str) -> str:
     module_name = _entry_module_name(entry_module_path)
     return f"""import importlib
+import importlib.util
 import inspect
 import json
+import os
+from pathlib import Path
+import shutil
+import sys
+import tempfile
 import traceback
 from workers import Response, WorkerEntrypoint
 
 
+def _module_names_from_source_files(source_files):
+    module_names = []
+    for item in source_files or []:
+        path = str((item or {{}}).get("path") or "").strip().replace("\\\\", "/")
+        if not path.endswith(".py"):
+            continue
+        if path.endswith("/__init__.py"):
+            path = path[: -len("/__init__.py")]
+        else:
+            path = path[:-3]
+        normalized = path.strip("/").replace("/", ".")
+        if normalized:
+            module_names.append(normalized)
+    return sorted(set(module_names), key=lambda value: value.count("."), reverse=True)
+
+
+def _materialize_source_tree(source_files):
+    root = tempfile.mkdtemp(prefix="artifact-run-")
+    root_path = Path(root)
+    for item in source_files or []:
+        relative_path = str((item or {{}}).get("path") or "").strip().replace("\\\\", "/").lstrip("/")
+        if not relative_path:
+            continue
+        target = root_path / relative_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(str((item or {{}}).get("content") or ""), encoding="utf-8")
+    return root
+
+
 class Default(WorkerEntrypoint):
     async def fetch(self, request):
+        temp_root = None
+        original_cwd = None
+        inserted_path = None
         try:
             payload = await request.json()
             inputs = payload.get("inputs")
             config = payload.get("config") or {{}}
             context = payload.get("context") or {{}}
+            source_files = list(payload.get("source_files") or [])
+            temp_root = _materialize_source_tree(source_files)
+            original_cwd = os.getcwd()
+            os.chdir(temp_root)
+            inserted_path = temp_root
+            sys.path.insert(0, inserted_path)
+            importlib.invalidate_caches()
+            for local_module_name in _module_names_from_source_files(source_files):
+                sys.modules.pop(local_module_name, None)
             module = importlib.import_module("{module_name}")
             artifact_execute = getattr(module, "execute", None)
             expected_message = "Artifact entry module {entry_module_path} must define execute(inputs, config, context)"
@@ -184,6 +231,19 @@ class Default(WorkerEntrypoint):
                 status=500,
                 headers={{"content-type": "application/json"}},
             )
+        finally:
+            if inserted_path is not None:
+                try:
+                    sys.path.remove(inserted_path)
+                except ValueError:
+                    pass
+            if original_cwd is not None:
+                try:
+                    os.chdir(original_cwd)
+                except Exception:
+                    pass
+            if temp_root is not None:
+                shutil.rmtree(temp_root, ignore_errors=True)
 """
 
 
