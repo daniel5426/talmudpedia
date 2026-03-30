@@ -188,6 +188,8 @@ export default function ArtifactsPage() {
           onCreateArtifact={() => {}}
           onToggleSidebar={() => {}}
           onToggleAgentPanel={() => {}}
+          onStartNewChat={() => {}}
+          onOpenChatHistory={() => {}}
           onVersionsOpenChange={() => {}}
           onSelectVersion={() => {}}
           onPublish={() => {}}
@@ -238,6 +240,8 @@ export default function ArtifactsPage() {
         onCreateArtifact={handleCreateArtifact}
         onToggleSidebar={() => {}}
         onToggleAgentPanel={() => {}}
+        onStartNewChat={() => {}}
+        onOpenChatHistory={() => {}}
         onVersionsOpenChange={() => {}}
         onSelectVersion={() => {}}
         onPublish={() => {}}

@@ -571,7 +571,6 @@ export function ArtifactEditorScreen({
         activeFilePath={activeFilePath}
         entryModulePath={formData.entry_module_path}
         onActiveFileChange={setActiveFilePath}
-        onEntryModulePathChange={(path) => updateFormData("entry_module_path", path)}
         onSourceFilesChange={(files) => updateFormData("source_files", files)}
         sidebarOpen={sidebarOpen}
         onSidebarOpenChange={setSidebarOpen}

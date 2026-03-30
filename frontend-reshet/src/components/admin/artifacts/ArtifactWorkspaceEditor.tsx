@@ -7,7 +7,6 @@ import { ArtifactWorkspaceSidebarHeader } from "@/components/admin/artifacts/Art
 import { ArtifactWorkspaceTabs } from "@/components/admin/artifacts/ArtifactWorkspaceTabs"
 import {
   ARTIFACT_CONFIG_FILE_PATH,
-  buildRenamedFilePath,
   buildTree,
   collectDirectoryPaths,
   DEFAULT_SIDEBAR_WIDTH,
@@ -48,7 +47,6 @@ interface ArtifactWorkspaceEditorProps {
   activeFilePath: string
   entryModulePath?: string
   onActiveFileChange: (path: string) => void
-  onEntryModulePathChange: (path: string) => void
   onSourceFilesChange: (files: ArtifactSourceFile[]) => void
   /** Controlled sidebar open state. */
   sidebarOpen?: boolean
@@ -72,7 +70,6 @@ export function ArtifactWorkspaceEditor({
   activeFilePath,
   entryModulePath,
   onActiveFileChange,
-  onEntryModulePathChange,
   onSourceFilesChange,
   sidebarOpen: controlledSidebarOpen,
   onSidebarOpenChange,
@@ -141,8 +138,6 @@ export function ArtifactWorkspaceEditor({
   const [draggingNode, setDraggingNode] = useState<string | null>(null)
   const [dropTargetDir, setDropTargetDir] = useState<string | null>(null)
   const importInputRef = useRef<HTMLInputElement | null>(null)
-  const [renamingPath, setRenamingPath] = useState<string | null>(null)
-  const [renameValue, setRenameValue] = useState("")
 
   // ---- scroll state for tab transition effect ----
   const [isScrolled, setIsScrolled] = useState(false)
@@ -261,62 +256,6 @@ export function ArtifactWorkspaceEditor({
       cur.includes(path) ? cur.filter((v) => v !== path) : [...cur, path]
     )
   }
-
-  const startRenamingPath = useCallback((path: string) => {
-    if (loading) return
-    setRenamingPath(path)
-    setRenameValue(path.split("/").pop() || path)
-    setOpenTabs((prev) => (prev.includes(path) ? prev : [...prev, path]))
-  }, [loading])
-
-  const cancelRenaming = useCallback(() => {
-    setRenamingPath(null)
-    setRenameValue("")
-  }, [])
-
-  const commitRename = useCallback((path: string) => {
-    if (loading || renamingPath !== path) return
-
-    let nextPath = path
-    try {
-      nextPath = buildRenamedFilePath(path, renameValue)
-    } catch (error) {
-      alert(error instanceof Error ? error.message : "Invalid file name")
-      return
-    }
-
-    if (nextPath !== path && sourceFiles.some((file) => file.path === nextPath)) {
-      alert(`A file named "${nextPath}" already exists`)
-      return
-    }
-
-    if (nextPath === path) {
-      cancelRenaming()
-      return
-    }
-
-    onSourceFilesChange(
-      sourceFiles.map((file) => (file.path === path ? { ...file, path: nextPath } : file)),
-    )
-    setOpenTabs((prev) => prev.map((tabPath) => (tabPath === path ? nextPath : tabPath)))
-    if (activeFilePath === path) {
-      activatePath(nextPath)
-    }
-    if (entryModulePath === path) {
-      onEntryModulePathChange(nextPath)
-    }
-    cancelRenaming()
-  }, [
-    activeFilePath,
-    cancelRenaming,
-    entryModulePath,
-    loading,
-    onEntryModulePathChange,
-    onSourceFilesChange,
-    renameValue,
-    renamingPath,
-    sourceFiles,
-  ])
 
   /* ---- sidebar resize via border ---- */
   const handleSidebarBorderPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -531,14 +470,13 @@ export function ArtifactWorkspaceEditor({
     const isActive = node.path === activeFile?.path
     const isEntry = node.path === entryModulePath
     const isGitkeep = node.name === ".gitkeep"
-    const isRenaming = renamingPath === node.path
 
     if (isGitkeep) return <span key={node.path} />
 
     return (
       <div
         key={node.path}
-        draggable={!isEntry && !isRenaming}
+        draggable={!isEntry}
         onDragStart={(e) => handleNodeDragStart(e, node.path)}
         onDragEnd={handleNodeDragEnd}
         className={cn(
@@ -555,37 +493,15 @@ export function ArtifactWorkspaceEditor({
             palette.text
           )}
           style={{ paddingLeft: `${10 + depth * 16}px` }}
-          onClick={(event) => {
+          onClick={() => {
             activatePath(node.path)
             setOpenTabs((prev) =>
               prev.includes(node.path) ? prev : [...prev, node.path]
             )
-            if (event.detail === 2) {
-              startRenamingPath(node.path)
-            }
           }}
         >
           <FileCode2 className="h-[14px] w-[14px] shrink-0 text-[#519aba]" />
-          {isRenaming ? (
-            <input
-              value={renameValue}
-              autoFocus
-              aria-label={`Rename ${node.name}`}
-              className="min-w-0 flex-1 rounded-sm border border-border bg-background px-1 py-0 text-[13px] outline-none"
-              onClick={(event) => event.stopPropagation()}
-              onChange={(event) => setRenameValue(event.target.value)}
-              onBlur={() => commitRename(node.path)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  event.preventDefault()
-                  commitRename(node.path)
-                } else if (event.key === "Escape") {
-                  event.preventDefault()
-                  cancelRenaming()
-                }
-              }}
-            />
-          ) : <span className="truncate pl-0.5">{node.name}</span>}
+          <span className="truncate pl-0.5">{node.name}</span>
           {isEntry && (
             <span
               className={cn(
@@ -597,7 +513,7 @@ export function ArtifactWorkspaceEditor({
             </span>
           )}
         </button>
-        {!isEntry && !isRenaming && sourceFiles.length > 1 && (
+        {!isEntry && sourceFiles.length > 1 && (
           <button
             type="button"
             className={cn(
@@ -726,8 +642,6 @@ export function ArtifactWorkspaceEditor({
           loading={loading}
           draggingTab={draggingTab}
           tabDropIndex={tabDropIndex}
-          renamingPath={renamingPath}
-          renameValue={renameValue}
           palette={palette}
           onActivatePath={activatePath}
           onCloseTab={handleCloseTab}
@@ -736,10 +650,6 @@ export function ArtifactWorkspaceEditor({
           onTabDrop={handleTabDrop}
           onTabDragEnd={handleTabDragEnd}
           onTabDropIndexChange={setTabDropIndex}
-          onStartRenaming={startRenamingPath}
-          onRenameValueChange={setRenameValue}
-          onCommitRename={commitRename}
-          onCancelRename={cancelRenaming}
         />
 
         {/* Scroll shadow effect */}

@@ -71,11 +71,11 @@ export function ChatContextStatus({
     <Context
       maxTokens={maxTokens}
       usedTokens={Math.min(contextUsedTokens, maxTokens)}
-      className={className}
     >
       <ContextTrigger
         className={cn(
           "h-6 px-2 text-[11px] text-muted-foreground hover:text-foreground",
+          className,
           triggerClassName,
         )}
       />

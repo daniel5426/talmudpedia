@@ -6,7 +6,7 @@ import { Search } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { cn } from "@/lib/utils"
 
-type SearchInputProps = Omit<React.ComponentProps<typeof Input>, "type"> & {
+type SearchInputProps = Omit<React.ComponentProps<typeof Input>, "type" | "size"> & {
   wrapperClassName?: string
   iconClassName?: string
   iconPosition?: "left" | "right"

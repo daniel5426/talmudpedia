@@ -2,9 +2,9 @@
 
 import { FileCode2, Settings2, X } from "lucide-react"
 
+import { ARTIFACT_CONFIG_FILE_PATH } from "@/components/admin/artifacts/artifactWorkspaceUtils"
 import { cn } from "@/lib/utils"
 import type { ArtifactSourceFile } from "@/services/artifacts"
-import { ARTIFACT_CONFIG_FILE_PATH } from "@/components/admin/artifacts/artifactWorkspaceUtils"
 
 type ArtifactWorkspaceTabsProps = {
   activeFilePath: string
@@ -14,8 +14,6 @@ type ArtifactWorkspaceTabsProps = {
   loading?: boolean
   draggingTab: string | null
   tabDropIndex: number | null
-  renamingPath: string | null
-  renameValue: string
   palette: {
     activeTab: string
     inactiveTab: string
@@ -32,10 +30,6 @@ type ArtifactWorkspaceTabsProps = {
   onTabDrop: (event: React.DragEvent, index: number) => void
   onTabDragEnd: () => void
   onTabDropIndexChange: (index: number) => void
-  onStartRenaming: (path: string) => void
-  onRenameValueChange: (value: string) => void
-  onCommitRename: (path: string) => void
-  onCancelRename: () => void
 }
 
 export function ArtifactWorkspaceTabs({
@@ -46,8 +40,6 @@ export function ArtifactWorkspaceTabs({
   loading = false,
   draggingTab,
   tabDropIndex,
-  renamingPath,
-  renameValue,
   palette,
   onActivatePath,
   onCloseTab,
@@ -56,10 +48,6 @@ export function ArtifactWorkspaceTabs({
   onTabDrop,
   onTabDragEnd,
   onTabDropIndexChange,
-  onStartRenaming,
-  onRenameValueChange,
-  onCommitRename,
-  onCancelRename,
 }: ArtifactWorkspaceTabsProps) {
   const sourcePaths = sourceFiles.map((file) => file.path)
   const sourcePathSet = new Set(sourcePaths)
@@ -68,18 +56,12 @@ export function ArtifactWorkspaceTabs({
     (activeFilePath === ARTIFACT_CONFIG_FILE_PATH || sourcePathSet.has(activeFilePath)) && !keptTabs.includes(activeFilePath)
       ? [...keptTabs, activeFilePath]
       : keptTabs
-
   const finalVisibleTabs =
     sourcePaths.length > 0 && !visibleTabs.some((path) => path !== ARTIFACT_CONFIG_FILE_PATH) ? sourcePaths : visibleTabs
 
   return (
     <div className="relative z-10 flex h-[35px] shrink-0 mr-3 items-stretch overflow-x-auto bg-background transition-colors duration-300 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
-      <div
-        className={cn(
-          "flex rounded-md shrink-0 items-stretch w-max transition-colors duration-300",
-          palette.topBarBg,
-        )}
-      >
+      <div className={cn("flex rounded-md shrink-0 items-stretch w-max transition-colors duration-300", palette.topBarBg)}>
         {finalVisibleTabs.map((filePath, index) => {
           if (filePath === ARTIFACT_CONFIG_FILE_PATH) {
             const isActive = activeFilePath === ARTIFACT_CONFIG_FILE_PATH
@@ -95,9 +77,7 @@ export function ArtifactWorkspaceTabs({
                 onDrop={(event) => onTabDrop(event, index)}
                 className={cn(
                   "group relative z-10 flex min-w-[100px] max-w-[180px] shrink-0 items-center gap-1.5 rounded-t-md px-3 text-[12px] transition-colors duration-75",
-                  isActive
-                    ? cn(palette.activeTab, "border-b-0 -mb-px z-[1]")
-                    : cn(palette.inactiveTab, palette.tabHover, "rounded-md"),
+                  isActive ? cn(palette.activeTab, "border-b-0 -mb-px z-[1]") : cn(palette.inactiveTab, palette.tabHover, "rounded-md"),
                   isDragging && "opacity-40",
                   isDropTarget && "border-l-2 border-l-[#3794ff]",
                   index === 0 && "rounded-tl-none",
@@ -145,22 +125,18 @@ export function ArtifactWorkspaceTabs({
           const isEntry = file.path === entryModulePath
           const isDragging = draggingTab === file.path
           const isDropTarget = tabDropIndex === index
-          const isRenaming = renamingPath === file.path
 
           return (
             <div
               key={file.path}
-              data-artifact-tab={file.path}
-              draggable={!isRenaming}
+              draggable
               onDragStart={(event) => onTabDragStart(event, file.path)}
               onDragEnd={onTabDragEnd}
               onDragOver={(event) => onTabDragOver(event, index)}
               onDrop={(event) => onTabDrop(event, index)}
               className={cn(
                 "group relative z-10 flex min-w-[100px] max-w-[180px] shrink-0 items-center gap-1.5 rounded-t-md px-3 text-[12px] transition-colors duration-75",
-                isActive
-                  ? cn(palette.activeTab, "border-b-0 -mb-px z-[1]")
-                  : cn(palette.inactiveTab, palette.tabHover, "rounded-md"),
+                isActive ? cn(palette.activeTab, "border-b-0 -mb-px z-[1]") : cn(palette.inactiveTab, palette.tabHover, "rounded-md"),
                 isDragging && "opacity-40",
                 isDropTarget && "border-l-2 border-l-[#3794ff]",
                 index === 0 && "rounded-tl-none",
@@ -175,41 +151,15 @@ export function ArtifactWorkspaceTabs({
                     }
                   : {}),
               }}
-              onClick={(event) => {
+              onClick={() => {
                 if (loading) return
                 onActivatePath(file.path)
-                if (event.detail === 2) {
-                  onStartRenaming(file.path)
-                }
               }}
             >
               <FileCode2 className="h-3.5 w-3.5 shrink-0 text-[#519aba]" />
-              {isRenaming ? (
-                <input
-                  value={renameValue}
-                  autoFocus
-                  aria-label={`Rename ${file.path.split("/").pop() || file.path}`}
-                  className="min-w-0 flex-1 rounded-sm border border-border bg-background px-1 py-0 text-[12px] outline-none"
-                  onClick={(event) => event.stopPropagation()}
-                  onChange={(event) => onRenameValueChange(event.target.value)}
-                  onBlur={() => onCommitRename(file.path)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") {
-                      event.preventDefault()
-                      onCommitRename(file.path)
-                    } else if (event.key === "Escape") {
-                      event.preventDefault()
-                      onCancelRename()
-                    }
-                  }}
-                />
-              ) : <span className="truncate">{file.path.split("/").pop()}</span>}
-              {isEntry && (
-                <span className={cn("text-[9px] font-medium uppercase tracking-[0.08em]", palette.accent)}>
-                  M
-                </span>
-              )}
-              {!isEntry && !isRenaming && (
+              <span className="truncate">{file.path.split("/").pop()}</span>
+              {isEntry && <span className={cn("text-[9px] font-medium uppercase tracking-[0.08em]", palette.accent)}>M</span>}
+              {!isEntry && (
                 <button
                   type="button"
                   className={cn(
