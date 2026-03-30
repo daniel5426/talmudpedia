@@ -1,6 +1,6 @@
 # Resource Policy Sets Test State
 
-Last Updated: 2026-03-27
+Last Updated: 2026-03-30
 
 ## Scope
 Validate the resource policy set domain across service resolution, admin API, runtime enforcement, quota accounting, and real-DB migration coverage.
@@ -17,6 +17,7 @@ Validate the resource policy set domain across service resolution, admin API, ru
 - Admin CRUD, include/rule/assignment/default routes enforce scopes, conflict behavior, and cross-tenant reference validation
 - Admin-facing app and agent list responses expose persisted default policy IDs for Defaults-tab reloads
 - Runtime agent start, tool/model/knowledge-store boundaries, malformed top-level snapshots, and nested child-run snapshot propagation are covered
+- Runtime quota enforcement now resolves graph-defined model IDs before reservation, so monthly model quotas apply even when the request omits `context.requested_model_id`
 - Model quota reservation and settlement follow canonical persisted accounting semantics and explicit monthly counter behavior
 - Real Postgres migration coverage locks schema objects, indexes, enum lifecycle, downgrade cleanup, and rerun safety
 
@@ -27,6 +28,9 @@ Validate the resource policy set domain across service resolution, admin API, ru
 - Command: `TEST_USE_REAL_DB=1 pytest backend/tests/resource_policy_sets/test_policy_set_migration_real_db.py -q`
 - Date/Time: 2026-03-26 23:01:01 EET
 - Result: pass
+- Command: `PYTHONPATH=. pytest -q tests/resource_policy_sets/test_policy_set_runtime_enforcement.py tests/resource_policy_sets/test_policy_set_quota_accounting.py`
+- Date/Time: 2026-03-30 20:24 EEST
+- Result: pass (`12 passed, 6 warnings`)
 
 ## Known Gaps
 - Live provider-backed runtime/quota executions are still not covered in this feature folder

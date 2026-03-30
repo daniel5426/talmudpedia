@@ -48,6 +48,7 @@ from app.services.published_app_bundle_storage import (
     PublishedAppBundleStorageNotConfigured,
 )
 from app.services.published_app_auth_service import PublishedAppAuthError, PublishedAppAuthService
+from app.services.resource_policy_quota_service import ResourcePolicyQuotaExceeded
 from app.services.usage_quota_service import QuotaExceededError
 
 
@@ -527,7 +528,7 @@ async def _stream_chat_for_app(
                 mode=ExecutionMode.PRODUCTION,
                 thread_id=payload.thread_id,
             )
-        except QuotaExceededError as exc:
+        except (QuotaExceededError, ResourcePolicyQuotaExceeded) as exc:
             return JSONResponse(status_code=429, content=exc.to_payload())
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))

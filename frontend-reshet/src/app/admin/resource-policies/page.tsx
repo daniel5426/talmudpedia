@@ -10,6 +10,7 @@ import type {
   ResourcePolicyRuleType,
   ResourcePolicyPrincipalType,
   CreatePolicyRuleRequest,
+  UpdatePolicyRuleRequest,
   UpsertAssignmentRequest,
 } from "@/services/resource-policies"
 import { agentService } from "@/services/agent"
@@ -624,7 +625,7 @@ function PolicySetsGrid({
 
 /* ── Policy Set Detail Dialog (multi-view: detail / add-rule / edit) ── */
 
-type DetailView = "detail" | "add-rule" | "edit"
+type DetailView = "detail" | "add-rule" | "edit" | "edit-rule"
 
 function PolicySetDetailDialog({
   policySet,
@@ -659,6 +660,7 @@ function PolicySetDetailDialog({
   const [resourceType, setResourceType] = useState<ResourcePolicyResourceType>("agent")
   const [resourceId, setResourceId] = useState("")
   const [quotaLimit, setQuotaLimit] = useState("")
+  const [editingRuleId, setEditingRuleId] = useState<string | null>(null)
 
   // Edit form state
   const [editName, setEditName] = useState("")
@@ -699,6 +701,7 @@ function PolicySetDetailDialog({
   /* ── View transitions ── */
 
   const handleGoToAddRule = () => {
+    setEditingRuleId(null)
     setRuleType("allow")
     setResourceType("agent")
     setResourceId("")
@@ -714,6 +717,16 @@ function PolicySetDetailDialog({
     setEditIsActive(policySet.is_active)
     setError(null)
     setView("edit")
+  }
+
+  const handleGoToEditRule = (rule: ResourcePolicyRule) => {
+    setEditingRuleId(rule.id)
+    setRuleType(rule.rule_type)
+    setResourceType(rule.resource_type)
+    setResourceId(rule.resource_id)
+    setQuotaLimit(rule.quota_limit != null ? String(rule.quota_limit) : "")
+    setError(null)
+    setView("edit-rule")
   }
 
   /* ── Mutations ── */
@@ -768,6 +781,30 @@ function PolicySetDetailDialog({
       }
       await resourcePoliciesService.createRule(policySet.id, req)
       await onRefresh(policySet.id)
+      setView("detail")
+    } catch (err: any) {
+      setError(String(err?.message || err))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleSaveRuleEdit = async () => {
+    if (!policySet || !editingRuleId || !resourceId) return
+    setSaving(true)
+    setError(null)
+    try {
+      const req: UpdatePolicyRuleRequest = {
+        resource_id: resourceId,
+      }
+      if (ruleType === "quota") {
+        req.quota_unit = "tokens"
+        req.quota_window = "monthly"
+        req.quota_limit = parseInt(quotaLimit) || 0
+      }
+      await resourcePoliciesService.updateRule(editingRuleId, req)
+      await onRefresh(policySet.id)
+      setEditingRuleId(null)
       setView("detail")
     } catch (err: any) {
       setError(String(err?.message || err))
@@ -859,14 +896,26 @@ function PolicySetDetailDialog({
                             </span>
                           )}
                         </div>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-6 w-6 opacity-0 group-hover/rule:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
-                          onClick={() => handleDeleteRule(rule.id)}
-                        >
-                          <X className="h-3 w-3" />
-                        </Button>
+                        <div className="flex items-center gap-1 opacity-0 group-hover/rule:opacity-100 transition-opacity">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6 text-muted-foreground hover:text-foreground"
+                            aria-label={`Edit rule ${resolveResourceName(rule.resource_type, rule.resource_id)}`}
+                            onClick={() => handleGoToEditRule(rule)}
+                          >
+                            <Edit2 className="h-3 w-3" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6 text-muted-foreground hover:text-destructive"
+                            aria-label={`Delete rule ${resolveResourceName(rule.resource_type, rule.resource_id)}`}
+                            onClick={() => handleDeleteRule(rule.id)}
+                          >
+                            <X className="h-3 w-3" />
+                          </Button>
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -1057,8 +1106,9 @@ function PolicySetDetailDialog({
 
                 {ruleType === "quota" && (
                   <div className="space-y-2">
-                    <Label>Token Limit (monthly)</Label>
+                    <Label htmlFor="add-rule-quota-limit">Token Limit (monthly)</Label>
                     <Input
+                      id="add-rule-quota-limit"
                       type="number"
                       value={quotaLimit}
                       onChange={(e) => setQuotaLimit(e.target.value)}
@@ -1091,6 +1141,121 @@ function PolicySetDetailDialog({
                 >
                   {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
                   Add Rule
+                </Button>
+              </div>
+            </>
+          )}
+
+          {/* ═══ Edit Rule View ═══ */}
+          {view === "edit-rule" && (
+            <>
+              <button
+                onClick={() => { setView("detail"); setError(null); setEditingRuleId(null) }}
+                className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors mb-4"
+              >
+                <ArrowLeft className="h-3 w-3" />
+                Back
+              </button>
+
+              <DialogHeader>
+                <DialogTitle>Edit Rule</DialogTitle>
+                <DialogDescription>
+                  Update the selected resource{ruleType === "quota" ? " and quota limit" : ""} for this rule.
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="space-y-4 pt-2">
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-2">
+                    <Label>Rule Type</Label>
+                    <Select value={ruleType} disabled>
+                      <SelectTrigger className="h-8 w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="allow">
+                          <span className="flex items-center gap-1.5">
+                            <Shield className="h-3 w-3 text-emerald-500" />
+                            Allow
+                          </span>
+                        </SelectItem>
+                        <SelectItem value="quota">
+                          <span className="flex items-center gap-1.5">
+                            <Gauge className="h-3 w-3 text-amber-500" />
+                            Quota
+                          </span>
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>Resource Type</Label>
+                    <Select value={resourceType} disabled>
+                      <SelectTrigger className="h-8 w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {(Object.entries(RESOURCE_TYPE_LABELS) as [ResourcePolicyResourceType, string][]).map(([val, label]) => (
+                          <SelectItem key={val} value={val}>
+                            {label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Resource</Label>
+                  <Select value={resourceId} onValueChange={setResourceId}>
+                    <SelectTrigger className="h-8 w-full">
+                      <SelectValue placeholder="Select a resource..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {resourceOptions.map((opt) => (
+                        <SelectItem key={opt.id} value={opt.id}>
+                          {opt.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {ruleType === "quota" && (
+                  <div className="space-y-2">
+                    <Label htmlFor="edit-rule-quota-limit">Token Limit (monthly)</Label>
+                    <Input
+                      id="edit-rule-quota-limit"
+                      type="number"
+                      value={quotaLimit}
+                      onChange={(e) => setQuotaLimit(e.target.value)}
+                      placeholder="e.g. 1000000"
+                      min={0}
+                    />
+                  </div>
+                )}
+              </div>
+
+              {error && (
+                <div className="flex items-start gap-2 text-xs text-destructive bg-destructive/10 rounded-md px-3 py-2 mt-4">
+                  <AlertCircle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                  {error}
+                </div>
+              )}
+
+              <div className="flex justify-end gap-2 pt-5">
+                <Button variant="outline" size="sm" onClick={() => { setView("detail"); setError(null); setEditingRuleId(null) }}>
+                  Cancel
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={handleSaveRuleEdit}
+                  disabled={saving || !resourceId || (ruleType === "quota" && !quotaLimit)}
+                  className="gap-1.5"
+                >
+                  {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                  Save Rule
                 </Button>
               </div>
             </>

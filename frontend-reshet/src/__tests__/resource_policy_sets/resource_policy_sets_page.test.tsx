@@ -5,6 +5,7 @@ import ResourcePoliciesPage from "@/app/admin/resource-policies/page"
 const listPolicySetsMock = jest.fn()
 const getPolicySetMock = jest.fn()
 const createPolicySetMock = jest.fn()
+const updateRuleMock = jest.fn()
 const upsertAssignmentMock = jest.fn()
 const listAssignmentsMock = jest.fn()
 const setPublishedAppDefaultPolicyMock = jest.fn()
@@ -39,7 +40,7 @@ jest.mock("@/services/resource-policies", () => ({
     addInclude: jest.fn(),
     removeInclude: jest.fn(),
     createRule: jest.fn(),
-    updateRule: jest.fn(),
+    updateRule: (...args: unknown[]) => updateRuleMock(...args),
     deleteRule: jest.fn(),
     listAssignments: (...args: unknown[]) => listAssignmentsMock(...args),
     upsertAssignment: (...args: unknown[]) => upsertAssignmentMock(...args),
@@ -175,6 +176,7 @@ describe("resource policy sets page", () => {
     listPolicySetsMock.mockResolvedValue([])
     getPolicySetMock.mockResolvedValue({ id: "set-1" })
     createPolicySetMock.mockResolvedValue({ id: "set-1", name: "Base Policy" })
+    updateRuleMock.mockResolvedValue({ id: "rule-1" })
     listAssignmentsMock.mockResolvedValue([])
     upsertAssignmentMock.mockResolvedValue({ id: "assignment-1" })
     setPublishedAppDefaultPolicyMock.mockResolvedValue(undefined)
@@ -285,5 +287,64 @@ describe("resource policy sets page", () => {
       expect(setPublishedAppDefaultPolicyMock).toHaveBeenCalledWith("app-1", "set-1")
       expect(setEmbeddedAgentDefaultPolicyMock).toHaveBeenCalledWith("agent-1", "set-1")
     })
+  })
+
+  it("edits a quota rule from the detail modal", async () => {
+    listPolicySetsMock.mockResolvedValue([
+      {
+        id: "set-1",
+        name: "Base Policy",
+        description: null,
+        is_active: true,
+        included_policy_set_ids: [],
+        rules: [
+          {
+            id: "rule-1",
+            resource_type: "model",
+            resource_id: "model-1",
+            rule_type: "quota",
+            quota_unit: "tokens",
+            quota_window: "monthly",
+            quota_limit: 123,
+          },
+        ],
+      },
+    ])
+    getPolicySetMock.mockResolvedValue({
+      id: "set-1",
+      name: "Base Policy",
+      description: null,
+      is_active: true,
+      included_policy_set_ids: [],
+      rules: [
+        {
+          id: "rule-1",
+          resource_type: "model",
+          resource_id: "model-1",
+          rule_type: "quota",
+          quota_unit: "tokens",
+          quota_window: "monthly",
+          quota_limit: 456,
+        },
+      ],
+    })
+
+    render(<ResourcePoliciesPage />)
+
+    await screen.findByText("Base Policy")
+    fireEvent.click(screen.getByText("Base Policy"))
+    fireEvent.click(screen.getByRole("button", { name: /edit rule gpt/i }))
+    fireEvent.change(screen.getByLabelText("Token Limit (monthly)"), { target: { value: "456" } })
+    fireEvent.click(screen.getByRole("button", { name: "Save Rule" }))
+
+    await waitFor(() => {
+      expect(updateRuleMock).toHaveBeenCalledWith("rule-1", {
+        resource_id: "model-1",
+        quota_unit: "tokens",
+        quota_window: "monthly",
+        quota_limit: 456,
+      })
+    })
+    await waitFor(() => expect(getPolicySetMock).toHaveBeenCalledWith("set-1"))
   })
 })

@@ -9,6 +9,7 @@ from app.agent.executors.tool import ToolNodeExecutor
 from app.db.postgres.models.agents import AgentRun, AgentStatus, RunStatus
 from app.db.postgres.models.resource_policies import ResourcePolicyPrincipalType, ResourcePolicyResourceType
 from app.services.model_resolver import ModelResolver, ModelResolverError
+from app.services.resource_policy_quota_service import ResourcePolicyQuotaExceeded
 from app.services.resource_policy_service import ResourcePolicyAccessDenied, ResourcePolicyPrincipalRef
 from app.services.retrieval_service import RetrievalService
 
@@ -207,6 +208,63 @@ async def test_model_tool_and_knowledge_store_boundaries_enforce_snapshot(
             store_id=knowledge_store.id,
             query="private",
             policy_snapshot=snapshot,
+        )
+
+
+@pytest.mark.asyncio
+async def test_start_run_enforces_graph_derived_model_quota_without_requested_model_context(
+    db_session,
+    tenant_context,
+    resource_factory,
+):
+    tenant = tenant_context["tenant"]
+    user = tenant_context["user"]
+    model = await resource_factory.model(tenant_id=tenant.id, name="Quota Guard Model")
+    agent = await resource_factory.agent(
+        tenant_id=tenant.id,
+        created_by=user.id,
+        name="Quota Guard Agent",
+        graph_definition={
+            "nodes": [
+                {"id": "start", "type": "start", "config": {}},
+                {"id": "agent-1", "type": "agent", "config": {"model_id": str(model.id), "instructions": "Answer briefly"}},
+                {"id": "end", "type": "end", "config": {}},
+            ],
+            "edges": [
+                {"id": "e1", "source": "start", "target": "agent-1", "type": "control"},
+                {"id": "e2", "source": "agent-1", "target": "end", "type": "control"},
+            ],
+        },
+    )
+    policy_set = await resource_factory.policy_set(tenant_id=tenant.id, created_by=user.id, name="quota-guard")
+    await resource_factory.allow_rule(
+        policy_set_id=policy_set.id,
+        resource_type=ResourcePolicyResourceType.AGENT,
+        resource_id=agent.id,
+    )
+    await resource_factory.quota_rule(
+        policy_set_id=policy_set.id,
+        model_id=model.id,
+        quota_limit=5,
+    )
+    await resource_factory.assignment(
+        tenant_id=tenant.id,
+        policy_set_id=policy_set.id,
+        created_by=user.id,
+        principal_type=ResourcePolicyPrincipalType.TENANT_USER,
+        user_id=user.id,
+    )
+    await db_session.commit()
+
+    with pytest.raises(ResourcePolicyQuotaExceeded):
+        await AgentExecutorService(db_session).start_run(
+            agent_id=agent.id,
+            input_params={
+                "input": "hello quota",
+                "context": {"max_output_tokens": 1},
+            },
+            user_id=user.id,
+            background=False,
         )
 
 

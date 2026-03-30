@@ -32,6 +32,7 @@ from app.services.agent_service import (
     AgentPublishedError,
     AgentNotPublishedError,
 )
+from app.services.resource_policy_quota_service import ResourcePolicyQuotaExceeded
 from app.services.usage_quota_service import QuotaExceededError
 from app.agent.graph.contracts import contract_fields_from_schema, schema_to_value_type
 from app.agent.execution.stream_contract_v2 import (
@@ -706,7 +707,7 @@ async def execute_agent(
             messages=serialized_messages,
             usage=result.usage,
         )
-    except QuotaExceededError as exc:
+    except (QuotaExceededError, ResourcePolicyQuotaExceeded) as exc:
         return JSONResponse(status_code=429, content=exc.to_payload())
     except AgentServiceError as e:
         handle_service_error(e)
@@ -791,7 +792,7 @@ async def stream_agent(
                 mode=execution_mode,
                 thread_id=request.thread_id,
             )
-        except QuotaExceededError as exc:
+        except (QuotaExceededError, ResourcePolicyQuotaExceeded) as exc:
             return JSONResponse(status_code=429, content=exc.to_payload())
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
@@ -926,7 +927,7 @@ async def start_run_v2(
             "run_id": str(run_id),
             "thread_id": str(run_row.thread_id) if run_row and run_row.thread_id else None,
         }
-    except QuotaExceededError as exc:
+    except (QuotaExceededError, ResourcePolicyQuotaExceeded) as exc:
         return JSONResponse(status_code=429, content=exc.to_payload())
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))

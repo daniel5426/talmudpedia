@@ -13,6 +13,7 @@ from pydantic import ValidationError as PydanticValidationError
 
 from ..db.postgres.models.agents import Agent, AgentVersion, AgentRun, AgentTrace, AgentStatus, RunStatus
 from app.db.postgres.models.registry import ModelRegistry, ToolRegistry
+from app.services.resource_policy_quota_service import ResourcePolicyQuotaExceeded
 from app.services.tool_binding_service import ToolBindingService
 from app.services.usage_quota_service import QuotaExceededError
 from app.services.prompt_reference_resolver import PromptReferenceError, PromptReferenceResolver
@@ -668,7 +669,7 @@ class AgentService:
                 usage={"tokens": run.usage_tokens if run else 0},
             )
 
-        except QuotaExceededError:
+        except (QuotaExceededError, ResourcePolicyQuotaExceeded):
             raise
         except Exception as e:
             logger.error(f"Agent execution failed: {e}")

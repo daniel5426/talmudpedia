@@ -4,6 +4,7 @@ import traceback
 from uuid import UUID, uuid4
 from datetime import datetime, timezone
 from typing import Dict, Any, Optional, AsyncGenerator
+from dataclasses import dataclass
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -51,6 +52,12 @@ from app.services.architect_mode_service import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class RequestedModelTarget:
+    logical_model_id: UUID | None
+    ref: str | None
 
 class AgentExecutorService:
     _checkpointer = DurableMemorySaver()
@@ -131,35 +138,33 @@ class AgentExecutorService:
         runtime_context: dict[str, Any],
         graph_definition: dict[str, Any],
     ) -> UUID | None:
-        raw_requested_model_id = runtime_context.get("requested_model_id")
-        try:
-            return UUID(str(raw_requested_model_id)) if raw_requested_model_id else None
-        except Exception:
-            pass
-
-        model_ids = AgentExecutorService._collect_graph_model_ids(graph_definition or {})
-        unique_model_ids = {model_id for model_id in model_ids if model_id}
-        if len(unique_model_ids) != 1:
-            return None
-        try:
-            return UUID(next(iter(unique_model_ids)))
-        except Exception:
-            return None
+        return AgentExecutorService._resolve_requested_model_target(runtime_context, graph_definition).logical_model_id
 
     @staticmethod
     def _resolve_requested_model_ref(
         runtime_context: dict[str, Any],
         graph_definition: dict[str, Any],
     ) -> str | None:
-        raw_requested_model_id = str(runtime_context.get("requested_model_id") or "").strip()
-        if raw_requested_model_id:
-            return raw_requested_model_id
+        return AgentExecutorService._resolve_requested_model_target(runtime_context, graph_definition).ref
 
-        model_ids = AgentExecutorService._collect_graph_model_ids(graph_definition or {})
-        unique_model_ids = [model_id for model_id in {model_id for model_id in model_ids if model_id}]
-        if len(unique_model_ids) != 1:
-            return None
-        return unique_model_ids[0]
+    @staticmethod
+    def _resolve_requested_model_target(
+        runtime_context: dict[str, Any],
+        graph_definition: dict[str, Any],
+    ) -> RequestedModelTarget:
+        raw_requested_model_id = str(runtime_context.get("requested_model_id") or "").strip()
+        model_ref = raw_requested_model_id or None
+        if not model_ref:
+            model_ids = sorted({model_id for model_id in AgentExecutorService._collect_graph_model_ids(graph_definition or {}) if model_id})
+            if len(model_ids) == 1:
+                model_ref = model_ids[0]
+        if not model_ref:
+            return RequestedModelTarget(logical_model_id=None, ref=None)
+        try:
+            logical_model_id = UUID(model_ref)
+        except Exception:
+            logical_model_id = None
+        return RequestedModelTarget(logical_model_id=logical_model_id, ref=model_ref)
 
     @staticmethod
     def _merge_quota_caps(*caps: Any) -> int | None:
@@ -615,8 +620,9 @@ class AgentExecutorService:
                 external_user_id=external_user_id,
             )
         await policy_service.assert_agent_access(snapshot=policy_snapshot, agent_id=agent.id)
-        requested_model_id = self._resolve_requested_model_id(runtime_context, agent.graph_definition or {})
-        requested_model_ref = self._resolve_requested_model_ref(runtime_context, agent.graph_definition or {})
+        requested_model_target = self._resolve_requested_model_target(runtime_context, agent.graph_definition or {})
+        requested_model_id = requested_model_target.logical_model_id
+        requested_model_ref = requested_model_target.ref
 
         if self._is_platform_architect(agent):
             architect_mode_service = ArchitectModeService(self.db)

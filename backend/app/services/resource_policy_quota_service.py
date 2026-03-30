@@ -20,7 +20,11 @@ from app.services.usage_quota_service import UsageQuotaService
 
 
 class ResourcePolicyQuotaExceeded(PermissionError):
-    pass
+    def to_payload(self) -> dict[str, str]:
+        return {
+            "code": "RESOURCE_POLICY_QUOTA_EXCEEDED",
+            "detail": str(self),
+        }
 
 
 @dataclass
