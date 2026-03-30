@@ -82,16 +82,9 @@ ACTION_REQUIRED_SCOPES: dict[str, list[str]] = {
     "knowledge_stores.create_or_update": ["knowledge_stores.write"],
     "knowledge_stores.delete": ["knowledge_stores.write"],
     "knowledge_stores.stats": ["knowledge_stores.read"],
-    "auth.create_delegation_grant": ["auth.write"],
-    "auth.mint_workload_token": ["auth.write"],
     "api_keys.list": ["api_keys.read"],
     "api_keys.create": ["api_keys.write"],
     "api_keys.revoke": ["api_keys.write"],
-    "workload_security.list_pending": ["workload_security.read"],
-    "workload_security.approve_policy": ["workload_security.write"],
-    "workload_security.reject_policy": ["workload_security.write"],
-    "workload_security.list_approvals": ["workload_security.read"],
-    "workload_security.decide_approval": ["workload_security.write"],
     "orchestration.spawn_run": ["agents.execute"],
     "orchestration.spawn_group": ["agents.execute"],
     "orchestration.join": ["agents.execute"],
@@ -166,35 +159,6 @@ TENANT_DEFAULT_ROLE_SCOPES: dict[str, list[str]] = {
     ),
 }
 
-# Workload scope profile for the built-in platform architect agent.
-PLATFORM_ARCHITECT_SCOPE_PROFILE_V1: list[str] = sorted(
-    {
-        "pipelines.catalog.read",
-        "pipelines.read",
-        "pipelines.write",
-        "agents.read",
-        "agents.write",
-        "agents.execute",
-        "agents.run_tests",
-        "tools.read",
-        "tools.write",
-        "artifacts.read",
-        "artifacts.write",
-        "models.read",
-        "models.write",
-        "credentials.read",
-        "credentials.write",
-        "knowledge_stores.read",
-        "knowledge_stores.write",
-        "workload_security.read",
-        "workload_security.write",
-        "auth.write",
-    }
-)
-
-DEFAULT_AGENT_RUN_SCOPES: list[str] = ["agents.execute"]
-
-
 # Legacy RBAC migration bridge: existing enum permissions -> canonical scope keys.
 LEGACY_PERMISSION_TO_SCOPE: dict[tuple[str, str], str] = {
     ("index", "read"): "pipelines.catalog.read",
@@ -251,10 +215,6 @@ def build_scope_catalog() -> dict[str, Any]:
         "groups": {k: sorted(v) for k, v in sorted(grouped.items())},
         "all_scopes": list(ALL_SCOPES),
         "default_roles": {k: list(v) for k, v in TENANT_DEFAULT_ROLE_SCOPES.items()},
-        "workload_profiles": {
-            "platform_architect_v1": list(PLATFORM_ARCHITECT_SCOPE_PROFILE_V1),
-            "default_agent_run": list(DEFAULT_AGENT_RUN_SCOPES),
-        },
     }
 
 

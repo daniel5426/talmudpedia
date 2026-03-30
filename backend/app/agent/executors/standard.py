@@ -32,9 +32,11 @@ from pydantic import BaseModel, Field, create_model
 from app.services.model_resolver import ModelResolver
 from app.agent.core.llm_adapter import LLMProviderAdapter, extract_usage_payload_from_message
 from app.agent.cel_engine import evaluate_template
-from app.services.context_window_service import ContextWindowService
+from app.services.model_limits_service import ModelLimitsService
+from app.services.prompt_snapshot_service import PromptSnapshotService
 from app.services.prompt_reference_resolver import PromptReferenceResolver
 from app.services.run_invocation_service import RunInvocationService
+from app.services.token_counter_service import TokenCounterService
 from app.services.resource_policy_service import ResourcePolicySnapshot
 
 logger = logging.getLogger(__name__)
@@ -525,9 +527,24 @@ class LLMNodeExecutor(BaseNodeExecutor):
             full_content = ""
             last_message: Optional[BaseMessage] = None
             streamed_usage_payload: dict[str, int] | None = None
-            estimated_input_tokens = ContextWindowService.estimate_prompt_input_tokens(
+            prompt_snapshot = PromptSnapshotService.build_from_langchain(
                 messages=[_serialize_message_for_accounting(message) for message in formatted_messages],
                 system_prompt=system_prompt,
+                tools=None,
+                extra_context=None,
+            )
+            context_input_tokens, context_source = await TokenCounterService().count_input_tokens(
+                provider=resolved_execution.resolved_provider,
+                provider_model_id=resolved_execution.binding.provider_model_id,
+                snapshot=prompt_snapshot,
+                api_key=getattr(adapter.provider, "api_key", None),
+            )
+            max_context_tokens, max_context_tokens_source = await ModelLimitsService(self.db).resolve_input_limit(
+                tenant_id=self.tenant_id,
+                model_id=str(getattr(resolved_execution.logical_model, "id", None) or model_id),
+                resolved_provider=resolved_execution.resolved_provider,
+                resolved_provider_model_id=resolved_execution.binding.provider_model_id,
+                api_key=getattr(adapter.provider, "api_key", None),
             )
             
             # Emit node start
@@ -545,7 +562,7 @@ class LLMNodeExecutor(BaseNodeExecutor):
                     last_message = chunk.message if hasattr(chunk, "message") else None
                     chunk_usage_payload = extract_usage_payload_from_message(last_message)
                     if chunk_usage_payload:
-                        streamed_usage_payload = chunk_usage_payload
+                        streamed_usage_payload = _merge_usage_payloads(streamed_usage_payload, chunk_usage_payload)
                     token_content = chunk.message.content if hasattr(chunk, 'message') else ""
                     
                     # Handle reasoning content if supported
@@ -594,9 +611,10 @@ class LLMNodeExecutor(BaseNodeExecutor):
                     node_id=node_id,
                     node_name=node_name,
                     node_type="llm",
-                    max_context_tokens=resolved_execution.context_window,
-                    max_context_tokens_source="resolved_execution" if resolved_execution.context_window else "unknown",
-                    estimated_input_tokens=estimated_input_tokens,
+                    max_context_tokens=max_context_tokens,
+                    max_context_tokens_source=max_context_tokens_source,
+                    context_input_tokens=context_input_tokens,
+                    context_source=context_source,
                     exact_usage_payload=streamed_usage_payload,
                     estimated_output_tokens=RunInvocationService.estimate_output_tokens(last_message or full_content),
                 )
@@ -1661,10 +1679,24 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
                 tool_call_order: List[str] = []
                 last_message: Optional[BaseMessage] = None
                 streamed_usage_payload: dict[str, int] | None = None
-                estimated_input_tokens = ContextWindowService.estimate_prompt_input_tokens(
+                prompt_snapshot = PromptSnapshotService.build_from_langchain(
                     messages=[_serialize_message_for_accounting(message) for message in conversation_messages],
                     system_prompt=instructions,
                     tools=tool_accounting_payloads,
+                    extra_context=None,
+                )
+                context_input_tokens, context_source = await TokenCounterService().count_input_tokens(
+                    provider=resolved_execution.resolved_provider,
+                    provider_model_id=resolved_execution.binding.provider_model_id,
+                    snapshot=prompt_snapshot,
+                    api_key=getattr(adapter.provider, "api_key", None),
+                )
+                max_context_tokens, max_context_tokens_source = await ModelLimitsService(self.db).resolve_input_limit(
+                    tenant_id=self.tenant_id,
+                    model_id=str(getattr(resolved_execution.logical_model, "id", None) or model_id),
+                    resolved_provider=resolved_execution.resolved_provider,
+                    resolved_provider_model_id=resolved_execution.binding.provider_model_id,
+                    api_key=getattr(adapter.provider, "api_key", None),
                 )
 
                 # Stream tokens and buffer tool call chunks
@@ -1679,7 +1711,7 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
                         last_message = chunk.message if hasattr(chunk, "message") else None
                         chunk_usage_payload = extract_usage_payload_from_message(last_message)
                         if chunk_usage_payload:
-                            streamed_usage_payload = chunk_usage_payload
+                            streamed_usage_payload = _merge_usage_payloads(streamed_usage_payload, chunk_usage_payload)
                         if last_message is not None:
                             self._buffer_tool_call_chunks(last_message, tool_call_buffers, tool_call_order)
                         token_content = chunk.message.content if hasattr(chunk, "message") else ""
@@ -1730,9 +1762,10 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
                     node_id=node_id,
                     node_name=node_name,
                     node_type="agent",
-                    max_context_tokens=resolved_execution.context_window,
-                    max_context_tokens_source="resolved_execution" if resolved_execution.context_window else "unknown",
-                    estimated_input_tokens=estimated_input_tokens,
+                    max_context_tokens=max_context_tokens,
+                    max_context_tokens_source=max_context_tokens_source,
+                    context_input_tokens=context_input_tokens,
+                    context_source=context_source,
                     exact_usage_payload=iteration_usage_payload,
                     estimated_output_tokens=RunInvocationService.estimate_output_tokens(last_message),
                 )

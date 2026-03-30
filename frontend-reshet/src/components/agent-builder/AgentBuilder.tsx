@@ -239,11 +239,16 @@ function AgentBuilderInner({
     const [nodes, setNodes, onNodesChange] = useNodesState<Node<AgentNodeData>>(normalizedInitialNodes)
     const [edges, setEdges, onEdgesChange] = useEdgesState(normalizedInitialEdges)
     const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
+    const [executeTraceNodeId, setExecuteTraceNodeId] = useState<string | null>(null)
     const [internalMode, setInternalMode] = useState<"build" | "execute">("build")
     const [interactionMode, setInteractionMode] = useState<InteractionMode>("pan")
     const [isCatalogVisible, setIsCatalogVisible] = useState(true)
     const mode = controlledMode ?? internalMode
     const setMode = useCallback((nextMode: "build" | "execute") => {
+        if (nextMode === "execute") {
+            setExecuteTraceNodeId(null)
+            setIsCatalogVisible(false)
+        }
         if (controlledMode === undefined) {
             setInternalMode(nextMode)
         }
@@ -447,26 +452,32 @@ function AgentBuilderInner({
     const selectedNode = renderNodes.find((n) => n.id === selectedNodeId) as
         | Node<AgentNodeData>
         | undefined
+    const executeTraceNode = renderNodes.find((n) => n.id === executeTraceNodeId) as
+        | Node<AgentNodeData>
+        | undefined
 
     const selectedNodeData: AgentNodeData | undefined = selectedNode?.data as AgentNodeData | undefined
     const safeSelectedNodeData: AgentNodeData | undefined = selectedNodeData ?? (selectedNode ? normalizeNode(selectedNode).data : undefined)
+    const executeTraceNodeData: AgentNodeData | undefined = executeTraceNode?.data as AgentNodeData | undefined
+    const safeExecuteTraceNodeData: AgentNodeData | undefined =
+        executeTraceNodeData ?? (executeTraceNode ? normalizeNode(executeTraceNode).data : undefined)
     const selectedNodeTraceSteps = useMemo(() => {
-        if (!selectedNode || !safeSelectedNodeData) {
+        if (!executeTraceNode || !safeExecuteTraceNodeData) {
             return [] as ExecutionStep[]
         }
 
         const baseSteps = executionSteps.filter((step) =>
-            matchesStepToNode(step, selectedNode as Node<AgentNodeData>, safeSelectedNodeData)
+            matchesStepToNode(step, executeTraceNode as Node<AgentNodeData>, safeExecuteTraceNodeData)
         )
         const orchestrationSteps = executionEvents
             .filter((event) => typeof event.event === "string" && event.event.startsWith("orchestration."))
-            .filter((event) => matchesEventToNode(event, selectedNode as Node<AgentNodeData>, safeSelectedNodeData))
+            .filter((event) => matchesEventToNode(event, executeTraceNode as Node<AgentNodeData>, safeExecuteTraceNodeData))
             .map((event, index) => mapOrchestrationEventToExecutionStep(event, index))
 
         const sortedSteps = [...baseSteps, ...orchestrationSteps].sort(
             (a, b) => a.timestamp.getTime() - b.timestamp.getTime()
         )
-        const nodeStatus = safeSelectedNodeData.executionStatus
+        const nodeStatus = safeExecuteTraceNodeData.executionStatus
         const terminalNodeStatus =
             nodeStatus === "completed" || nodeStatus === "failed"
                 ? nodeStatus
@@ -480,11 +491,11 @@ function AgentBuilderInner({
         if (lastStep && lastStep.status === expectedFinalStepStatus) {
             return sortedSteps
         }
-        const baseTime = lastStep?.timestamp?.getTime?.() || Date.now()
+        const baseTime = lastStep?.timestamp?.getTime?.() ?? 0
         return [
             ...sortedSteps,
             {
-                id: `runtime-status:${selectedNode.id}:${terminalNodeStatus}`,
+                id: `runtime-status:${executeTraceNode.id}:${terminalNodeStatus}`,
                 name: "Runtime Status",
                 type: "node",
                 status: expectedFinalStepStatus,
@@ -492,7 +503,7 @@ function AgentBuilderInner({
                 timestamp: new Date(baseTime + 1),
             },
         ]
-    }, [selectedNode, safeSelectedNodeData, executionSteps, executionEvents])
+    }, [executeTraceNode, safeExecuteTraceNodeData, executionSteps, executionEvents])
 
     const handleNodesChange = useCallback((changes: NodeChange<Node<AgentNodeData>>[]) => {
         if (mode !== "execute") {
@@ -617,11 +628,18 @@ function AgentBuilderInner({
 
     const handleNodeClick = useCallback((_: React.MouseEvent, node: Node) => {
         setSelectedNodeId(node.id)
-    }, [])
+        if (mode === "execute") {
+            setExecuteTraceNodeId(node.id)
+        }
+    }, [mode])
 
     const handlePaneClick = useCallback(() => {
+        if (mode === "execute") {
+            setExecuteTraceNodeId(null)
+            return
+        }
         setSelectedNodeId(null)
-    }, [])
+    }, [mode])
 
     const handleConfigChange = useCallback(
         (nodeId: string, config: Record<string, unknown>) => {
@@ -714,18 +732,12 @@ function AgentBuilderInner({
 
 
 
-    const handleCatalogToggle = useCallback(() => {
+    const handleCatalogToggle = () => {
         if (mode === "execute") {
             setMode("build")
         }
         setIsCatalogVisible(true)
-    }, [mode])
-
-    useEffect(() => {
-        if (mode === "execute") {
-            setIsCatalogVisible(false)
-        }
-    }, [mode])
+    }
 
     return (
         <div className="relative flex h-full w-full overflow-hidden bg-background">
@@ -740,7 +752,7 @@ function AgentBuilderInner({
             </FloatingPanel>
 
             {/* 2. Execute Mode: Node Trace (Floating on the left) */}
-            {mode === "execute" && selectedNode && safeSelectedNodeData && (
+            {mode === "execute" && executeTraceNode && safeExecuteTraceNodeData && (
                 <FloatingPanel
                     position="left"
                     visible={true}
@@ -748,11 +760,11 @@ function AgentBuilderInner({
                     className="w-[320px] z-60"
                 >
                     <NodeTracePanel
-                        nodeId={selectedNode.id}
-                        nodeName={safeSelectedNodeData.displayName}
+                        nodeId={executeTraceNode.id}
+                        nodeName={safeExecuteTraceNodeData.displayName}
                         steps={selectedNodeTraceSteps}
-                        nodeStatus={safeSelectedNodeData.executionStatus as "pending" | "running" | "completed" | "failed" | "skipped" | undefined}
-                        onClose={() => setSelectedNodeId(null)}
+                        nodeStatus={safeExecuteTraceNodeData.executionStatus as "pending" | "running" | "completed" | "failed" | "skipped" | undefined}
+                        onClose={() => setExecuteTraceNodeId(null)}
                     />
                 </FloatingPanel>
             )}

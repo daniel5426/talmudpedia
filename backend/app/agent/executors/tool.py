@@ -54,8 +54,6 @@ INTERNAL_TOOL_RUNTIME_INPUT_KEYS = {
     "thread_id",
     "tenant_id",
     "user_id",
-    "grant_id",
-    "principal_id",
     "initiator_user_id",
     "requested_scopes",
     "root_run_id",
@@ -76,6 +74,8 @@ INTERNAL_TOOL_RUNTIME_INPUT_KEYS = {
     "tenant_api_key_id",
     "resource_policy_snapshot",
     "resource_policy_principal",
+    "architect_mode",
+    "architect_effective_scopes",
 }
 STRICT_PLATFORM_TOOL_SLUGS = frozenset(
     {
@@ -351,15 +351,12 @@ class ToolNodeExecutor(BaseNodeExecutor):
         if not isinstance(child_context, dict):
             child_context = {}
 
-        # Propagate delegated auth/runtime context so child run can call secure tools.
+        # Propagate runtime auth/resource context to child runs.
         inherited_keys = (
             "token",
             "tenant_id",
             "user_id",
-            "grant_id",
-            "principal_id",
             "initiator_user_id",
-            "requested_scopes",
             "root_run_id",
             "parent_run_id",
             "parent_node_id",
@@ -371,6 +368,8 @@ class ToolNodeExecutor(BaseNodeExecutor):
             "tenant_api_key_id",
             "resource_policy_snapshot",
             "resource_policy_principal",
+            "architect_mode",
+            "architect_effective_scopes",
         )
         for key in inherited_keys:
             value = (node_context or {}).get(key)
@@ -456,27 +455,6 @@ class ToolNodeExecutor(BaseNodeExecutor):
             result["error"] = run.error_message
         return result
 
-    async def _mint_workload_token(
-        self,
-        grant_id: str | None,
-        scope_subset: list[str] | None = None,
-        audience: str = "talmudpedia-internal-api",
-    ) -> str | None:
-        if not grant_id:
-            return None
-        from app.db.postgres.engine import sessionmaker as async_sessionmaker
-        from app.services.token_broker_service import TokenBrokerService
-
-        async with async_sessionmaker() as token_db:
-            broker = TokenBrokerService(token_db)
-            token, _payload = await broker.mint_workload_token(
-                grant_id=UUID(str(grant_id)),
-                audience=audience,
-                scope_subset=scope_subset,
-            )
-            await token_db.commit()
-            return token
-
     async def _execute_http_tool(
         self,
         _tool: Any,
@@ -494,18 +472,11 @@ class ToolNodeExecutor(BaseNodeExecutor):
         if isinstance(request_headers, dict):
             headers.update(request_headers)
 
-        grant_id = (node_context or {}).get("grant_id")
-        scope_subset = implementation_config.get("scope_subset")
-        if implementation_config.get("use_workload_token") and not grant_id:
-            raise PermissionError("Tool requires workload token, but no delegation grant is available")
-        if grant_id and implementation_config.get("use_workload_token"):
-            workload_token = await self._mint_workload_token(
-                grant_id=str(grant_id),
-                scope_subset=scope_subset if isinstance(scope_subset, list) else None,
-                audience=implementation_config.get("audience", "talmudpedia-internal-api"),
-            )
-            if workload_token:
-                headers["Authorization"] = f"Bearer {workload_token}"
+        if implementation_config.get("use_workload_token"):
+            caller_token = (node_context or {}).get("token")
+            if not isinstance(caller_token, str) or not caller_token.strip():
+                raise PermissionError("Tool requires authenticated caller token, but no token is available")
+            headers["Authorization"] = f"Bearer {caller_token.strip()}"
 
         timeout_s = implementation_config.get("timeout_s")
         timeout = httpx.Timeout(timeout_s) if timeout_s else None
@@ -645,10 +616,7 @@ class ToolNodeExecutor(BaseNodeExecutor):
                 "thread_id",
                 "tenant_id",
                 "user_id",
-                "grant_id",
-                "principal_id",
                 "initiator_user_id",
-                "requested_scopes",
                 "root_run_id",
                 "parent_run_id",
                 "parent_node_id",
@@ -656,6 +624,8 @@ class ToolNodeExecutor(BaseNodeExecutor):
                 "agent_id",
                 "agent_slug",
                 "mode",
+                "architect_mode",
+                "architect_effective_scopes",
                 "surface",
             }
         }
@@ -1260,10 +1230,10 @@ class ToolNodeExecutor(BaseNodeExecutor):
                 "node_id": (context or {}).get("node_id"),
                 "run_id": (context or {}).get("run_id"),
                 "tenant_id": str(self.tenant_id) if self.tenant_id else None,
-                "principal_id": (context or {}).get("principal_id"),
                 "initiator_user_id": (context or {}).get("initiator_user_id"),
                 "agent_id": (context or {}).get("agent_id"),
                 "agent_slug": (context or {}).get("agent_slug"),
+                "architect_mode": (context or {}).get("architect_mode"),
                 "mode": (context or {}).get("mode"),
             },
             require_published=self._is_production_mode(context),

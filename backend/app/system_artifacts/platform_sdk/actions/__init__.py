@@ -3,7 +3,6 @@
 from . import (
     agents,
     artifacts,
-    auth,
     catalog,
     credentials,
     knowledge_stores,
@@ -11,13 +10,11 @@ from . import (
     orchestration,
     rag,
     tools,
-    workload_security,
 )
 
 __all__ = [
     "agents",
     "artifacts",
-    "auth",
     "catalog",
     "credentials",
     "knowledge_stores",
@@ -25,5 +22,4 @@ __all__ = [
     "orchestration",
     "rag",
     "tools",
-    "workload_security",
 ]

@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.requests import Request
 
 from app.api.dependencies import get_current_principal
-from app.api.routers import agent_graph_mutations, agents, artifacts, internal_auth, knowledge_stores, models, orchestration_internal, rag_graph_mutations, rag_operator_contracts, rag_pipelines, settings, tools, workload_security
+from app.api.routers import agent_graph_mutations, agents, artifacts, knowledge_stores, models, orchestration_internal, rag_graph_mutations, rag_operator_contracts, rag_pipelines, settings, tools
 from app.api.schemas.artifacts import ArtifactConvertKindRequest, ArtifactCreate, ArtifactTestRequest, ArtifactUpdate
 from app.api.routers.agents import CreateAgentRequest, ExecuteAgentRequest, NodeSchemaRequest, UpdateAgentRequest, get_node_schemas, list_node_catalog
 from app.api.routers.agent_graph_mutations import AddToolRequest, GraphPatchRequest as AgentGraphPatchRequest, RemoveToolRequest, SetInstructionsRequest, SetModelRequest
@@ -246,29 +246,29 @@ class NativePlatformToolRuntime:
     async def resolve_principal(self) -> dict[str, Any]:
         if self._principal is not None:
             return self._principal
+        architect_scopes = self.runtime_context.get("architect_effective_scopes")
+        architect_mode = self.runtime_context.get("architect_mode")
         token = self.runtime_context.get("token") or self.runtime_context.get("auth_token")
         if isinstance(token, str) and token.strip():
             try:
                 self._principal = await get_current_principal(token=token.strip(), db=self.db)
+                if isinstance(architect_scopes, list):
+                    self._principal = {
+                        **self._principal,
+                        "scopes": [str(scope) for scope in architect_scopes if str(scope).strip()],
+                        "architect_mode": architect_mode,
+                    }
                 return self._principal
             except Exception:
                 pass
 
         tenant_id = _resolve_runtime_tenant_id(self.runtime_context) or _resolve_explicit_tenant_id(self.inputs, self.payload)
-        scopes = list(self.runtime_context.get("requested_scopes") or ["*"])
-        principal_id = self.runtime_context.get("principal_id")
+        scopes = (
+            [str(scope) for scope in architect_scopes if str(scope).strip()]
+            if isinstance(architect_scopes, list)
+            else list(self.runtime_context.get("scopes") or ["*"])
+        )
         user_id = self.runtime_context.get("user_id") or self.runtime_context.get("initiator_user_id")
-        if principal_id:
-            self._principal = {
-                "type": "workload",
-                "principal_id": str(principal_id),
-                "tenant_id": str(tenant_id) if tenant_id else None,
-                "grant_id": self.runtime_context.get("grant_id"),
-                "initiator_user_id": str(self.runtime_context.get("initiator_user_id")) if self.runtime_context.get("initiator_user_id") else None,
-                "scopes": scopes,
-                "auth_token": token,
-            }
-            return self._principal
         self._principal = {
             "type": "user",
             "tenant_id": str(tenant_id) if tenant_id else None,
@@ -276,6 +276,7 @@ class NativePlatformToolRuntime:
             "user": None,
             "scopes": scopes,
             "auth_token": token,
+            "architect_mode": architect_mode,
         }
         return self._principal
 
@@ -285,11 +286,9 @@ class NativePlatformToolRuntime:
             "user": principal.get("user"),
             "tenant_id": principal.get("tenant_id"),
             "auth_token": principal.get("auth_token"),
-            "is_service": principal.get("type") == "workload",
-            "principal_id": principal.get("principal_id"),
-            "grant_id": principal.get("grant_id"),
             "initiator_user_id": principal.get("initiator_user_id"),
             "scopes": principal.get("scopes", []),
+            "architect_mode": principal.get("architect_mode"),
         }
 
     async def build_tools_context(self) -> dict[str, Any]:
@@ -299,7 +298,7 @@ class NativePlatformToolRuntime:
             "tenant_id": str(tenant_id) if tenant_id else None,
             "tenant": SimpleNamespace(id=UUID(str(tenant_id))) if tenant_id else None,
             "user": principal.get("user"),
-            "is_service": principal.get("type") == "workload",
+            "is_service": False,
         }
 
     async def build_tenant_context(self) -> dict[str, Any]:
@@ -615,13 +614,13 @@ async def _agents_create_or_update(rt: NativePlatformToolRuntime, *, create_only
             skipped["name"] = payload.get("name")
         return skipped
     if create_only or not (payload.get("agent_id") or payload.get("id")):
-        request = CreateAgentRequest(name=str(payload.get("name") or ""), slug=str(payload.get("slug") or ""), description=payload.get("description"), graph_definition=graph_definition, memory_config=payload.get("memory_config"), execution_constraints=payload.get("execution_constraints"), workload_scope_profile=payload.get("workload_scope_profile") or "default_agent_run", workload_scope_overrides=payload.get("workload_scope_overrides"))
+        request = CreateAgentRequest(name=str(payload.get("name") or ""), slug=str(payload.get("slug") or ""), description=payload.get("description"), graph_definition=graph_definition, memory_config=payload.get("memory_config"), execution_constraints=payload.get("execution_constraints"))
         return await agents.create_agent(request=request, _={}, context=context, db=rt.db)
     agent_id = _parse_uuid(payload.get("agent_id") or payload.get("id"))
     if agent_id is None:
         raise HTTPException(status_code=404, detail="Agent not found")
     patch = dict(payload.get("patch")) if isinstance(payload.get("patch"), dict) else dict(payload)
-    request = UpdateAgentRequest(name=patch.get("name"), description=patch.get("description"), graph_definition=patch.get("graph_definition"), memory_config=patch.get("memory_config"), execution_constraints=patch.get("execution_constraints"), workload_scope_profile=patch.get("workload_scope_profile"), workload_scope_overrides=patch.get("workload_scope_overrides"))
+    request = UpdateAgentRequest(name=patch.get("name"), description=patch.get("description"), graph_definition=patch.get("graph_definition"), memory_config=patch.get("memory_config"), execution_constraints=patch.get("execution_constraints"))
     return await agents.update_agent(agent_id=agent_id, request=request, _={}, context=context, db=rt.db)
 
 
@@ -923,53 +922,6 @@ async def _knowledge_stores_create_or_update(rt: NativePlatformToolRuntime) -> A
     return await knowledge_stores.create_knowledge_store(request=request, tenant_slug=rt.payload.get("tenant_slug"), db=rt.db, tenant_ctx=tenant_ctx, _={}, principal=principal)
 
 
-async def _auth_create_delegation_grant(rt: NativePlatformToolRuntime) -> Any:
-    principal = await rt.resolve_principal()
-    request = internal_auth.DelegationGrantCreateRequest(**{key: value for key, value in rt.payload.items() if key in internal_auth.DelegationGrantCreateRequest.model_fields})
-    return await internal_auth.create_delegation_grant(request=request, principal_ctx=principal, db=rt.db)
-
-
-async def _auth_mint_workload_token(rt: NativePlatformToolRuntime) -> Any:
-    principal = await rt.resolve_principal()
-    request = internal_auth.WorkloadTokenRequest(**{key: value for key, value in rt.payload.items() if key in internal_auth.WorkloadTokenRequest.model_fields})
-    return await internal_auth.mint_workload_token(request=request, principal_ctx=principal, db=rt.db)
-
-
-async def _workload_security_list_pending(rt: NativePlatformToolRuntime) -> Any:
-    principal = await rt.resolve_principal()
-    return await workload_security.list_pending_scope_policies(_={}, principal_ctx=principal, db=rt.db)
-
-
-async def _workload_security_approve_policy(rt: NativePlatformToolRuntime) -> Any:
-    principal = await rt.resolve_principal()
-    request = workload_security.PolicyApprovalRequest(approved_scopes=list(rt.payload.get("approved_scopes") or []))
-    principal_id = _parse_uuid(rt.payload.get("principal_id"))
-    return await workload_security.approve_scope_policy(principal_id=principal_id, request=request, _={}, principal_ctx=principal, db=rt.db)
-
-
-async def _workload_security_reject_policy(rt: NativePlatformToolRuntime) -> Any:
-    principal = await rt.resolve_principal()
-    principal_id = _parse_uuid(rt.payload.get("principal_id"))
-    return await workload_security.reject_scope_policy(principal_id=principal_id, _={}, principal_ctx=principal, db=rt.db)
-
-
-async def _workload_security_list_approvals(rt: NativePlatformToolRuntime) -> Any:
-    principal = await rt.resolve_principal()
-    return await workload_security.list_action_approvals(subject_type=rt.payload.get("subject_type"), subject_id=rt.payload.get("subject_id"), action_scope=rt.payload.get("action_scope"), _={}, principal_ctx=principal, db=rt.db)
-
-
-async def _workload_security_decide_approval(rt: NativePlatformToolRuntime) -> Any:
-    principal = await rt.resolve_principal()
-    request = workload_security.ActionApprovalDecisionRequest(
-        subject_type=str(rt.payload.get("subject_type") or ""),
-        subject_id=str(rt.payload.get("subject_id") or ""),
-        action_scope=str(rt.payload.get("action_scope") or ""),
-        status=rt.payload.get("decision"),
-        rationale=rt.payload.get("notes"),
-    )
-    return await workload_security.decide_action_approval(request=request, _={}, principal_ctx=principal, db=rt.db)
-
-
 async def _orchestration_join(rt: NativePlatformToolRuntime) -> Any:
     principal = await rt.resolve_principal()
     request = JoinRequest(
@@ -1060,13 +1012,6 @@ _ACTION_HANDLERS: dict[str, Callable[[NativePlatformToolRuntime], Awaitable[Any]
     "credentials.create_or_update": _credentials_create_or_update,
     "knowledge_stores.list": _knowledge_stores_list,
     "knowledge_stores.create_or_update": _knowledge_stores_create_or_update,
-    "auth.create_delegation_grant": _auth_create_delegation_grant,
-    "auth.mint_workload_token": _auth_mint_workload_token,
-    "workload_security.list_pending": _workload_security_list_pending,
-    "workload_security.approve_policy": _workload_security_approve_policy,
-    "workload_security.reject_policy": _workload_security_reject_policy,
-    "workload_security.list_approvals": _workload_security_list_approvals,
-    "workload_security.decide_approval": _workload_security_decide_approval,
     "orchestration.join": _orchestration_join,
     "orchestration.cancel_subtree": _orchestration_cancel_subtree,
     "orchestration.evaluate_and_replan": _orchestration_evaluate_and_replan,

@@ -4,6 +4,7 @@ import logging
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import BaseMessage, AIMessage, AIMessageChunk
+from langchain_core.messages.ai import add_usage
 from langchain_core.outputs import ChatGenerationChunk, ChatResult, ChatGeneration
 from langchain_core.callbacks import AsyncCallbackManagerForLLMRun
 
@@ -332,7 +333,11 @@ class LLMProviderAdapter(BaseChatModel):
             if normalized.response_metadata:
                 aggregated.response_metadata = normalized.response_metadata
             if normalized.usage_metadata:
-                aggregated.usage_metadata = normalized.usage_metadata
+                aggregated.usage_metadata = (
+                    dict(add_usage(aggregated.usage_metadata, normalized.usage_metadata))
+                    if aggregated.usage_metadata
+                    else dict(normalized.usage_metadata)
+                )
 
         additional_kwargs: dict[str, Any] = {}
         if aggregated.reasoning:

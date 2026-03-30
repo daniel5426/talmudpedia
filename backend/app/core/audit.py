@@ -55,8 +55,6 @@ class AuditContext:
         resource_id: Optional[str] = None,
         resource_name: Optional[str] = None,
         initiator_user_id: Union[UUID, str, None] = None,
-        workload_principal_id: Union[UUID, str, None] = None,
-        delegation_grant_id: Union[UUID, str, None] = None,
         token_jti: Optional[str] = None,
         scopes: Optional[list[str]] = None,
         request: Optional[Request] = None,
@@ -71,8 +69,6 @@ class AuditContext:
         self.resource_id = resource_id
         self.resource_name = resource_name
         self.initiator_user_id = _to_uuid(initiator_user_id)
-        self.workload_principal_id = _to_uuid(workload_principal_id)
-        self.delegation_grant_id = _to_uuid(delegation_grant_id)
         self.token_jti = token_jti
         self.scopes = scopes or []
         self.request = request
@@ -127,8 +123,6 @@ async def _save_audit_log_with_session(ctx: AuditContext, db: AsyncSession):
         resource_id=ctx.resource_id,
         resource_name=ctx.resource_name,
         initiator_user_id=ctx.initiator_user_id,
-        workload_principal_id=ctx.workload_principal_id,
-        delegation_grant_id=ctx.delegation_grant_id,
         token_jti=ctx.token_jti,
         scopes=ctx.scopes,
         result=ctx.result,
@@ -164,8 +158,6 @@ async def audit_action(
     resource_id: Optional[str] = None,
     resource_name: Optional[str] = None,
     initiator_user_id: Union[UUID, str, None] = None,
-    workload_principal_id: Union[UUID, str, None] = None,
-    delegation_grant_id: Union[UUID, str, None] = None,
     token_jti: Optional[str] = None,
     scopes: Optional[list[str]] = None,
     request: Optional[Request] = None,
@@ -182,8 +174,6 @@ async def audit_action(
         resource_id=resource_id,
         resource_name=resource_name,
         initiator_user_id=initiator_user_id,
-        workload_principal_id=workload_principal_id,
-        delegation_grant_id=delegation_grant_id,
         token_jti=token_jti,
         scopes=scopes,
         request=request,
@@ -255,8 +245,6 @@ async def log_simple_action(
     result: AuditResult = AuditResult.SUCCESS,
     details: Optional[Dict[str, Any]] = None,
     initiator_user_id: Union[UUID, str, None] = None,
-    workload_principal_id: Union[UUID, str, None] = None,
-    delegation_grant_id: Union[UUID, str, None] = None,
     token_jti: Optional[str] = None,
     scopes: Optional[list[str]] = None,
     request: Optional[Request] = None,
@@ -287,8 +275,6 @@ async def log_simple_action(
             resource_id=resource_id,
             resource_name=resource_name,
             initiator_user_id=_to_uuid(initiator_user_id),
-            workload_principal_id=_to_uuid(workload_principal_id),
-            delegation_grant_id=_to_uuid(delegation_grant_id),
             token_jti=token_jti,
             scopes=scopes or [],
             result=result,

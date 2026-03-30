@@ -37,7 +37,6 @@ export interface ScopeCatalog {
   groups: Record<string, string[]>
   all_scopes: string[]
   default_roles: Record<string, string[]>
-  workload_profiles: Record<string, string[]>
 }
 
 class RBACService {

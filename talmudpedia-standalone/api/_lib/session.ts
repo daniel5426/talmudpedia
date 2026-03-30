@@ -89,7 +89,10 @@ export function ensureSession(
   return {
     userId,
     displayName: formatDisplayName(userId),
-    selectedClientId: normalizeSelectedClient(cookies[SELECTED_CLIENT_COOKIE_NAME]),
+    selectedClientId:
+      normalizeSelectedClient(cookies[SELECTED_CLIENT_COOKIE_NAME]) ||
+      listDemoClients()[0]?.id ||
+      null,
     availableClients: listDemoClients(),
   };
 }

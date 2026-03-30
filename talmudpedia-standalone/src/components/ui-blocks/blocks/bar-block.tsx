@@ -13,24 +13,28 @@ import {
 import { useLocale } from "@/features/classic-chat/locale-context";
 
 import { BlockShell } from "../lib/block-shell";
+import { useWidgetDensity } from "../lib/widget-density";
 import { useWidgetTheme } from "../lib/widget-theme";
 
 export function BarBlock({ block }: { block: UIChartBlock }) {
   const theme = useWidgetTheme();
+  const density = useWidgetDensity();
   const { isRtl } = useLocale();
+  const rtlLabelWidth = Math.max(52, density.barLabelWidth - (density.id === "compact" ? 8 : 12));
+  const yAxisWidth = isRtl ? rtlLabelWidth : density.barLabelWidth;
 
   return (
     <BlockShell block={block}>
-      <div className="h-56 w-full" dir={isRtl ? "rtl" : "ltr"}>
+      <div className={`${density.chartHeightClass} w-full`} dir={isRtl ? "rtl" : "ltr"}>
         <ResponsiveContainer width="100%" height="100%">
           <BarChart
             data={block.data}
             layout="vertical"
             margin={{
-              left: isRtl ? 12 : 24,
-              right: isRtl ? 24 : 12,
-              top: 4,
-              bottom: 4,
+              left: isRtl ? density.barMarginTrailing : density.barMarginLeading,
+              right: isRtl ? density.barMarginLeading : density.barMarginTrailing,
+              top: density.barMarginTop,
+              bottom: density.barMarginBottom,
             }}
           >
             <CartesianGrid horizontal={false} strokeDasharray="3 3" stroke={theme.gridColor} />
@@ -39,7 +43,7 @@ export function BarBlock({ block }: { block: UIChartBlock }) {
               reversed={isRtl}
               tickLine={false}
               axisLine={false}
-              tick={{ fill: theme.axisTickColor, fontSize: 12 }}
+              tick={{ fill: theme.axisTickColor, fontSize: density.barAxisFontSize }}
             />
             <YAxis
               dataKey="label"
@@ -47,13 +51,13 @@ export function BarBlock({ block }: { block: UIChartBlock }) {
               orientation={isRtl ? "right" : "left"}
               mirror={false}
               interval={0}
-              tickMargin={12}
-              width={136}
+              tickMargin={density.id === "compact" ? 6 : 8}
+              width={yAxisWidth}
               tickLine={false}
               axisLine={false}
               tick={{
                 fill: theme.axisTickColor,
-                fontSize: 12,
+                fontSize: density.barAxisFontSize,
                 textAnchor: "end",
               }}
             />
@@ -63,7 +67,7 @@ export function BarBlock({ block }: { block: UIChartBlock }) {
                 color: theme.tooltipText,
                 border: `1px solid ${theme.tooltipBorder}`,
                 borderRadius: 8,
-                fontSize: 12,
+                fontSize: density.barTooltipFontSize,
               }}
             />
             <Bar dataKey="value" radius={4}>

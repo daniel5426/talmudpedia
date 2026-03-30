@@ -152,51 +152,15 @@ def test_knowledge_stores_routes_include_tenant_slug_and_patch_method() -> None:
     assert call["params"]["tenant_slug"] == "tenant-a"
 
 
-def test_auth_and_orchestration_routes() -> None:
+def test_orchestration_routes() -> None:
     session = _RecordingSession(_FakeResponse(payload={"ok": True}))
     client = _client_with_session(session)
 
-    client.auth.get_workload_jwks()
     client.orchestration.query_tree("run-1")
 
-    first = session.calls[0]
-    second = session.calls[1]
-    assert first["method"] == "GET"
-    assert first["url"].endswith("/.well-known/jwks.json")
-    assert second["method"] == "GET"
-    assert second["url"].endswith("/internal/orchestration/runs/run-1/tree")
-
-
-def test_workload_security_action_routes() -> None:
-    session = _RecordingSession(_FakeResponse(payload={"status": "approved"}))
-    client = _client_with_session(session)
-
-    client.workload_security.list_action_approvals(
-        subject_type="tool",
-        subject_id="tool-1",
-        action_scope="tools.delete",
-    )
-    client.workload_security.decide_action_approval(
-        {
-            "subject_type": "tool",
-            "subject_id": "tool-1",
-            "action_scope": "tools.delete",
-            "status": "approved",
-        }
-    )
-
-    list_call = session.calls[0]
-    decide_call = session.calls[1]
-    assert list_call["method"] == "GET"
-    assert list_call["url"].endswith("/admin/security/workloads/approvals")
-    assert list_call["params"] == {
-        "subject_type": "tool",
-        "subject_id": "tool-1",
-        "action_scope": "tools.delete",
-    }
-    assert decide_call["method"] == "POST"
-    assert decide_call["url"].endswith("/admin/security/workloads/approvals/decide")
-    assert "X-Idempotency-Key" in decide_call["headers"]
+    call = session.calls[0]
+    assert call["method"] == "GET"
+    assert call["url"].endswith("/internal/orchestration/runs/run-1/tree")
 
 
 def test_embedded_agent_routes_use_public_embed_contract() -> None:

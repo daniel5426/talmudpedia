@@ -10,8 +10,11 @@ const requiredEnvKeys = [
 type RequiredEnvKey = (typeof requiredEnvKeys)[number];
 
 export type StandaloneEnv = Record<RequiredEnvKey, string>;
+export type SessionEnv = {
+  SESSION_COOKIE_SECRET: string;
+};
 
-function requireEnv(key: RequiredEnvKey): string {
+function requireEnv(key: string): string {
   const value = String(process.env[key] || "").trim();
   if (!value) {
     throw new Error(`Missing required environment variable: ${key}`);
@@ -20,6 +23,7 @@ function requireEnv(key: RequiredEnvKey): string {
 }
 
 let cachedEnv: StandaloneEnv | null = null;
+let cachedSessionEnv: SessionEnv | null = null;
 
 export function loadEnv(): StandaloneEnv {
   if (cachedEnv) {
@@ -30,4 +34,16 @@ export function loadEnv(): StandaloneEnv {
     requiredEnvKeys.map((key) => [key, requireEnv(key)]),
   ) as StandaloneEnv;
   return cachedEnv;
+}
+
+export function loadSessionEnv(): SessionEnv {
+  if (cachedSessionEnv) {
+    return cachedSessionEnv;
+  }
+
+  cachedSessionEnv = {
+    SESSION_COOKIE_SECRET: requireEnv("SESSION_COOKIE_SECRET"),
+  };
+
+  return cachedSessionEnv;
 }

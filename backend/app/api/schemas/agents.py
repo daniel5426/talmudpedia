@@ -22,8 +22,6 @@ class CreateAgentRequest(BaseModel):
     )
     memory_config: Optional[dict[str, Any]] = None
     execution_constraints: Optional[dict[str, Any]] = None
-    workload_scope_profile: Optional[str] = "default_agent_run"
-    workload_scope_overrides: Optional[list[str]] = None
 
 
 class UpdateAgentRequest(BaseModel):
@@ -32,8 +30,6 @@ class UpdateAgentRequest(BaseModel):
     graph_definition: Optional[GraphDefinitionSchema] = None
     memory_config: Optional[dict[str, Any]] = None
     execution_constraints: Optional[dict[str, Any]] = None
-    workload_scope_profile: Optional[str] = None
-    workload_scope_overrides: Optional[list[str]] = None
     status: Optional[AgentStatus] = None
     is_active: Optional[bool] = None
 
@@ -53,8 +49,6 @@ class AgentResponse(BaseModel):
     is_public: bool = False
     show_in_playground: bool = True
     default_embed_policy_set_id: Optional[UUID] = None
-    workload_scope_profile: str = "default_agent_run"
-    workload_scope_overrides: list[str] = []
     created_at: datetime
     updated_at: datetime
     published_at: Optional[datetime] = None

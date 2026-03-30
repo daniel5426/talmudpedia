@@ -108,6 +108,32 @@ async def test_llm_provider_adapter_ainvoke_preserves_reasoning_and_tool_calls()
     assert response.tool_calls[0]["args"] == {"query": "gemini"}
 
 
+@pytest.mark.asyncio
+async def test_llm_provider_adapter_ainvoke_aggregates_stream_usage_metadata():
+    provider = _FakeProvider(
+        [
+            AIMessageChunk(
+                content_blocks=[{"type": "text", "text": "Hello"}],
+                usage_metadata={"input_tokens": 2, "output_tokens": 66, "total_tokens": 68},
+            ),
+            AIMessageChunk(
+                content_blocks=[{"type": "text", "text": " world"}],
+                usage_metadata={"input_tokens": 0, "output_tokens": 8, "total_tokens": 8},
+            ),
+        ]
+    )
+
+    adapter = LLMProviderAdapter(provider)
+    response = await adapter.ainvoke([])
+
+    assert response.content == "Hello world"
+    assert extract_usage_payload_from_message(response) == {
+        "input_tokens": 2,
+        "output_tokens": 74,
+        "total_tokens": 76,
+    }
+
+
 def test_extract_usage_payload_from_message_supports_gemini_usage_metadata():
     message = AIMessageChunk(
         content="done",

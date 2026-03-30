@@ -231,24 +231,6 @@ class _FakeKnowledgeStoresAPI:
         return {"data": [{"id": "store-1"}]}
 
 
-class _FakeAuthAPI:
-    def __init__(self):
-        self.calls = []
-
-    def mint_workload_token(self, payload):
-        self.calls.append({"method": "mint_workload_token", "payload": payload})
-        return {"data": {"access_token": "delegated-token"}}
-
-
-class _FakeWorkloadSecurityAPI:
-    def __init__(self):
-        self.calls = []
-
-    def decide_action_approval(self, payload):
-        self.calls.append({"method": "decide_action_approval", "payload": payload})
-        return {"data": {"status": "approved"}}
-
-
 class _FakeControlClient:
     def __init__(self):
         self.artifacts = _FakeArtifactsAPI()
@@ -260,8 +242,6 @@ class _FakeControlClient:
         self.models = _FakeModelsAPI()
         self.credentials = _FakeCredentialsAPI()
         self.knowledge_stores = _FakeKnowledgeStoresAPI()
-        self.auth = _FakeAuthAPI()
-        self.workload_security = _FakeWorkloadSecurityAPI()
 
 
 def _patch_auth(monkeypatch):
@@ -758,61 +738,3 @@ def test_knowledge_stores_list_contract_parity(monkeypatch):
     assert call["method"] == "list"
     assert call["tenant_slug"] == "tenant-a"
 
-
-def test_auth_mint_workload_token_contract_parity(monkeypatch):
-    _patch_auth(monkeypatch)
-    fake = _FakeControlClient()
-    monkeypatch.setattr(handler, "_control_client", lambda _client: fake)
-
-    out = handler.execute(
-        state={},
-        config={},
-        context={
-            "inputs": {
-                "action": "auth.mint_workload_token",
-                "tenant_id": "tenant-1",
-                "token": "token",
-                "payload": {
-                    "subject_type": "user",
-                    "subject_id": "user-1",
-                    "scope_subset": ["tools.write"],
-                },
-            }
-        },
-    )
-
-    assert out["context"]["errors"] == []
-    assert out["context"]["result"] == {"access_token": "delegated-token"}
-    call = fake.auth.calls[0]
-    assert call["method"] == "mint_workload_token"
-    assert call["payload"]["subject_id"] == "user-1"
-
-
-def test_workload_security_decide_approval_contract_parity(monkeypatch):
-    _patch_auth(monkeypatch)
-    fake = _FakeControlClient()
-    monkeypatch.setattr(handler, "_control_client", lambda _client: fake)
-
-    out = handler.execute(
-        state={},
-        config={},
-        context={
-            "inputs": {
-                "action": "workload_security.decide_approval",
-                "tenant_id": "tenant-1",
-                "token": "token",
-                "payload": {
-                    "subject_type": "tool",
-                    "subject_id": "tool-1",
-                    "action_scope": "tools.delete",
-                    "status": "approved",
-                },
-            }
-        },
-    )
-
-    assert out["context"]["errors"] == []
-    assert out["context"]["result"] == {"status": "approved"}
-    call = fake.workload_security.calls[0]
-    assert call["method"] == "decide_action_approval"
-    assert call["payload"]["action_scope"] == "tools.delete"

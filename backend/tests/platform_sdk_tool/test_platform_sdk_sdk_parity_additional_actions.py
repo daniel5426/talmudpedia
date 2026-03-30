@@ -67,7 +67,6 @@ def _build_fake_control_client() -> _FakeControlClient:
         credentials=_DynamicAPI("credentials"),
         knowledge_stores=_DynamicAPI("knowledge_stores"),
         auth=_DynamicAPI("auth"),
-        workload_security=_DynamicAPI("workload_security"),
         orchestration=_DynamicAPI("orchestration"),
     )
 
@@ -208,25 +207,6 @@ def _patch_auth(monkeypatch):
             "options",
         ),
         ("knowledge_stores.stats", {"store_id": "ks1"}, "knowledge_stores", "stats", "ks1", None),
-        ("auth.create_delegation_grant", {"subject_id": "u1"}, "auth", "create_delegation_grant", None, None),
-        ("workload_security.list_pending", {}, "workload_security", "list_pending_scope_policies", None, None),
-        (
-            "workload_security.approve_policy",
-            {"principal_id": "p1", "approved_scopes": ["tools.write"]},
-            "workload_security",
-            "approve_scope_policy",
-            "p1",
-            None,
-        ),
-        ("workload_security.reject_policy", {"principal_id": "p1"}, "workload_security", "reject_scope_policy", "p1", None),
-        (
-            "workload_security.list_approvals",
-            {"subject_type": "tool", "subject_id": "t1", "action_scope": "tools.delete"},
-            "workload_security",
-            "list_action_approvals",
-            None,
-            None,
-        ),
         (
             "orchestration.spawn_group",
             {
@@ -652,16 +632,17 @@ def test_rag_update_visual_pipeline_translates_graph_definition_patch(monkeypatc
 
 
 def test_dispatch_actions_have_parity_test_coverage():
-    handler_text = Path("backend/app/system_artifacts/platform_sdk/handler.py").read_text()
+    base_dir = Path(__file__).resolve().parent
+    handler_text = Path(__file__).resolve().parents[2].joinpath("app/system_artifacts/platform_sdk/handler.py").read_text()
     dispatched = set(re.findall(r'"([a-z_]+(?:\.[a-z_]+)+)": lambda:', handler_text))
 
     parity_text = "\n".join(
-        Path(p).read_text()
+        base_dir.joinpath(p).read_text()
         for p in [
-            "backend/tests/platform_sdk_tool/test_platform_sdk_sdk_parity.py",
-            "backend/tests/platform_sdk_tool/test_platform_sdk_sdk_parity_additional_actions.py",
-            "backend/tests/platform_sdk_tool/test_platform_sdk_actions.py",
-            "backend/tests/platform_sdk_tool/test_platform_sdk_orchestration_actions.py",
+            "test_platform_sdk_sdk_parity.py",
+            "test_platform_sdk_sdk_parity_additional_actions.py",
+            "test_platform_sdk_actions.py",
+            "test_platform_sdk_orchestration_actions.py",
         ]
     )
     covered = set(re.findall(r"([a-z_]+(?:\.[a-z_]+)+)", parity_text))

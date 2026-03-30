@@ -1,10 +1,10 @@
 # Control Plane SDK Tests
 
-Last Updated: 2026-03-16
+Last Updated: 2026-03-30
 
 Scope:
 - Python `talmudpedia_control_sdk` client transport contract.
-- Method serialization for control-plane modules (`catalog`, `agents`, `tools`, `artifacts`, `rag`, `models`, `credentials`, `knowledge_stores`, `auth`, `orchestration`, `workload_security`, `embedded_agents`).
+- Method serialization for control-plane modules (`catalog`, `agents`, `tools`, `artifacts`, `rag`, `models`, `credentials`, `knowledge_stores`, `orchestration`, `embedded_agents`).
 - Envelope normalization and structured error mapping.
 - Legacy route guardrails for control-plane SDK/tool code paths.
 
@@ -24,9 +24,9 @@ Key scenarios covered:
 - Canonical artifact SDK serialization for `artifacts.create`, `artifacts.convert_kind`, and `artifacts.publish`.
 - Agents node-intelligence SDK route serialization (`/agents/nodes/catalog`, `/agents/nodes/schema`, `/agents/{id}/validate` via `validate_nodes`).
 - RAG file upload request serialization (`/admin/pipelines/pipeline-inputs/upload`).
-- Orchestration/internal auth/workload security endpoint route coverage.
+- Orchestration endpoint route coverage.
 - Embedded-agent SDK route serialization for stream and thread-history helpers.
-- Env-gated HTTP smoke coverage for SDK read surfaces (`catalog`, `agents`, `tools`, `models`, `credentials`, `auth`) and tenant-slug surfaces (`artifacts`, `rag`, `knowledge_stores`).
+- Env-gated HTTP smoke coverage for SDK read surfaces (`catalog`, `agents`, `tools`, `models`, `credentials`) and tenant-slug surfaces (`artifacts`, `rag`, `knowledge_stores`).
 - Guardrail test blocks `/api/agents` references in control-plane SDK/tool Python code.
 
 Last run command: `cd backend && PYTHONPATH=. pytest -q tests/tenant_api_keys/test_api_keys_api.py tests/embedded_agent_runtime/test_embedded_agent_runtime_api.py tests/control_plane_sdk tests/published_apps_external_runtime/test_external_runtime_api.py tests/published_apps_host_runtime/test_host_runtime_same_url_auth.py tests/security_scope_registry/test_scope_registry.py`

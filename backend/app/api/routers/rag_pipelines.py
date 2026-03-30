@@ -830,7 +830,7 @@ async def compile_pipeline(
     
     try:
         compiler = PipelineCompiler()
-        compiled_by = str(user.id) if user else str(context.get("initiator_user_id") or context.get("principal_id") or "")
+        compiled_by = str(user.id) if user else str(context.get("initiator_user_id") or "")
         compile_result = compiler.compile(
             mock_pipeline,
             compiled_by=compiled_by,

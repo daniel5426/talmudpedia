@@ -8,6 +8,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { SidebarTrigger } from "@/components/ui/sidebar";
 import { useTheme } from "@/components/theme-provider";
 import { cn } from "@/lib/utils";
 import { useLocale } from "./locale-context";
@@ -47,46 +48,55 @@ export function ChatHeader({
           "bg-background/80 backdrop-blur-md supports-[backdrop-filter]:bg-background/65"
       )}
     >
-      <div className="flex h-12 items-center justify-end gap-1 px-3">
-        <Select
-          disabled={isLoadingClients || clients.length === 0}
-          onValueChange={onSelectedClientChange}
-          value={selectedClientId || undefined}
-        >
-          <SelectTrigger className="w-[220px] justify-between">
-            <SelectValue placeholder={isHebrew ? "בחר לקוח דמו" : "Select demo client"} />
-          </SelectTrigger>
-          <SelectContent align="end">
-            {clients.map((client) => (
-              <SelectItem key={client.id} value={client.id}>
-                {client.name} ({client.id})
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+      <div className="relative flex h-12 items-center justify-end gap-1 px-3">
+        <div className="absolute start-3 top-1/2 -translate-y-1/2 md:hidden">
+          <SidebarTrigger
+            aria-label={isHebrew ? "פתח סרגל צד" : "Open sidebar"}
+            className="h-8 w-8 rounded-md"
+          />
+        </div>
 
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-8 w-8 rounded-md"
-          onClick={toggleLocale}
-          aria-label={isHebrew ? "Switch to English" : "העבר לעברית"}
-        >
-          <Languages className="size-3.5" />
-          <span className="sr-only">{isHebrew ? "Switch to English" : "Switch to Hebrew"}</span>
-        </Button>
+        <div className="flex min-w-0 items-center justify-end gap-1">
+          <Select
+            disabled={isLoadingClients || clients.length === 0}
+            onValueChange={onSelectedClientChange}
+            value={selectedClientId || undefined}
+          >
+            <SelectTrigger className="h-8 w-[min(220px,calc(100vw-9rem))] justify-between sm:w-[220px]">
+              <SelectValue placeholder={isHebrew ? "בחר לקוח דמו" : "Select demo client"} />
+            </SelectTrigger>
+            <SelectContent align="end">
+              {clients.map((client) => (
+                <SelectItem key={client.id} value={client.id}>
+                  {client.name} ({client.id})
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
 
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-8 w-8 rounded-md"
-          onClick={toggleTheme}
-          aria-label="Toggle theme"
-        >
-          <Sun className="size-3.5 rotate-0 scale-100 transition-transform dark:-rotate-90 dark:scale-0" />
-          <Moon className="absolute size-3.5 rotate-90 scale-0 transition-transform dark:rotate-0 dark:scale-100" />
-          <span className="sr-only">Toggle theme</span>
-        </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 rounded-md"
+            onClick={toggleLocale}
+            aria-label={isHebrew ? "Switch to English" : "העבר לעברית"}
+          >
+            <Languages className="size-3.5" />
+            <span className="sr-only">{isHebrew ? "Switch to English" : "Switch to Hebrew"}</span>
+          </Button>
+
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 rounded-md"
+            onClick={toggleTheme}
+            aria-label="Toggle theme"
+          >
+            <Sun className="size-3.5 rotate-0 scale-100 transition-transform dark:-rotate-90 dark:scale-0" />
+            <Moon className="absolute size-3.5 rotate-90 scale-0 transition-transform dark:rotate-0 dark:scale-100" />
+            <span className="sr-only">Toggle theme</span>
+          </Button>
+        </div>
       </div>
 
       {/* Gradient fade below the header — matches AdminPageHeader exactly */}

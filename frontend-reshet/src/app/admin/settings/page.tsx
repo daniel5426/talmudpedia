@@ -582,7 +582,7 @@ export default function SettingsPage() {
             </div>
             <div className="flex-1 min-w-0">
               <span className="text-sm font-medium text-foreground">Security & Roles</span>
-              <p className="text-xs text-muted-foreground/60 mt-0.5">Roles, assignments, and workload security policies.</p>
+              <p className="text-xs text-muted-foreground/60 mt-0.5">Roles, assignments, API keys, and resource policy governance.</p>
             </div>
             <ChevronRight className="h-4 w-4 text-muted-foreground/40 group-hover:text-muted-foreground transition-colors" />
           </Link>

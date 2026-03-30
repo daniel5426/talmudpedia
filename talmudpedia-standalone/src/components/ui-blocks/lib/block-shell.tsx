@@ -3,6 +3,7 @@ import type { PropsWithChildren } from "react";
 import type { UIBlock } from "@agents24/ui-blocks-contract";
 
 import { cx, spanClass } from "./layout";
+import { useWidgetDensity } from "./widget-density";
 import { useWidgetTheme } from "./widget-theme";
 
 export function BlockShell({
@@ -10,24 +11,32 @@ export function BlockShell({
   children,
 }: PropsWithChildren<{ block: UIBlock }>) {
   const theme = useWidgetTheme();
+  const density = useWidgetDensity();
+  const mobileSpanClass =
+    density.id === "compact"
+      ? block.kind === "kpi"
+        ? "col-span-1"
+        : "col-span-2"
+      : "col-span-1";
 
   return (
     <section
       className={cx(
-        "col-span-1 overflow-hidden",
+        mobileSpanClass,
+        "overflow-hidden",
         theme.card,
         spanClass(block.span),
       )}
     >
-      <div className="px-4 pt-4 pb-2">
-        <div className={theme.title}>{block.title}</div>
-        <div className={cx(theme.subtitle, !block.subtitle && "invisible")} aria-hidden={!block.subtitle}>
+      <div className={density.shellHeaderPadding}>
+        <div className={cx(theme.title, density.blockTitle)}>{block.title}</div>
+        <div className={cx(theme.subtitle, density.blockSubtitle, !block.subtitle && "invisible")} aria-hidden={!block.subtitle}>
           {block.subtitle ?? "placeholder"}
         </div>
       </div>
-      <div className="px-4 pb-4">{children}</div>
+      <div className={density.shellBodyPadding}>{children}</div>
       {block.footnote ? (
-        <div className={cx("px-4 py-2", theme.footnoteBorder, theme.footnote)}>
+        <div className={cx(density.shellFootnotePadding, theme.footnoteBorder, theme.footnote, density.footnote)}>
           {block.footnote}
         </div>
       ) : null}

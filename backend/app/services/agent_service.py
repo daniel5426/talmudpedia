@@ -15,7 +15,6 @@ from ..db.postgres.models.agents import Agent, AgentVersion, AgentRun, AgentTrac
 from app.db.postgres.models.registry import ModelRegistry, ToolRegistry
 from app.services.tool_binding_service import ToolBindingService
 from app.services.usage_quota_service import QuotaExceededError
-from app.services.workload_provisioning_service import WorkloadProvisioningService
 from app.services.prompt_reference_resolver import PromptReferenceError, PromptReferenceResolver
 from app.agent.graph.compiler import AgentCompiler
 from app.agent.graph.schema import AgentGraph
@@ -33,8 +32,6 @@ class CreateAgentData:
     graph_definition: dict = field(default_factory=dict)
     memory_config: Optional[dict] = None
     execution_constraints: Optional[dict] = None
-    workload_scope_profile: Optional[str] = "default_agent_run"
-    workload_scope_overrides: Optional[List[str]] = None
     show_in_playground: bool = True
 
 @dataclass
@@ -44,8 +41,6 @@ class UpdateAgentData:
     graph_definition: Optional[dict] = None
     memory_config: Optional[dict] = None
     execution_constraints: Optional[dict] = None
-    workload_scope_profile: Optional[str] = None
-    workload_scope_overrides: Optional[List[str]] = None
     show_in_playground: Optional[bool] = None
 
 @dataclass
@@ -373,8 +368,6 @@ class AgentService:
                     Agent.is_public,
                     Agent.show_in_playground,
                     Agent.default_embed_policy_set_id,
-                    Agent.workload_scope_profile,
-                    Agent.workload_scope_overrides,
                 )
             )
         result = await self.db.execute(query)
@@ -425,17 +418,11 @@ class AgentService:
             graph_definition=validated_graph,
             memory_config=data.memory_config or {},
             execution_constraints=data.execution_constraints or {},
-            workload_scope_profile=(data.workload_scope_profile or "default_agent_run"),
-            workload_scope_overrides=list(data.workload_scope_overrides or []),
             show_in_playground=bool(data.show_in_playground),
             created_by=user_id,
         )
         self.db.add(agent)
         await self.db.flush()
-        await WorkloadProvisioningService(self.db).provision_agent_policy(
-            agent=agent,
-            actor_user_id=user_id,
-        )
         await self.db.commit()
         await self.db.refresh(agent)
         return agent
@@ -461,17 +448,8 @@ class AgentService:
             agent.memory_config = data.memory_config
         if data.execution_constraints is not None:
             agent.execution_constraints = data.execution_constraints
-        if data.workload_scope_profile is not None:
-            agent.workload_scope_profile = data.workload_scope_profile
-        if data.workload_scope_overrides is not None:
-            agent.workload_scope_overrides = list(data.workload_scope_overrides)
         if data.show_in_playground is not None:
             agent.show_in_playground = bool(data.show_in_playground)
-
-        await WorkloadProvisioningService(self.db).provision_agent_policy(
-            agent=agent,
-            actor_user_id=user_id,
-        )
         await ToolBindingService(self.db).sync_exported_agent_tool_binding(
             agent=agent,
             created_by=user_id,
@@ -615,10 +593,6 @@ class AgentService:
         agent.status = AgentStatus.published
         agent.version += 1
         agent.published_at = datetime.now(timezone.utc)
-        await WorkloadProvisioningService(self.db).provision_agent_policy(
-            agent=agent,
-            actor_user_id=user_id,
-        )
         await ToolBindingService(self.db).sync_exported_agent_tool_binding(
             agent=agent,
             created_by=user_id,

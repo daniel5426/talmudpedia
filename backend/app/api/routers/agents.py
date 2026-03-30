@@ -99,21 +99,6 @@ async def get_agent_context(
     Users can manage agents if they are System Admins OR have an Org role.
     """
     token = context.get("auth_token")
-    if context.get("type") == "workload":
-        tenant_id = context.get("tenant_id")
-        if not tenant_id:
-            raise HTTPException(status_code=403, detail="Tenant context required")
-        return {
-            "user": None,
-            "tenant_id": tenant_id,
-            "auth_token": token,
-            "is_service": True,
-            "principal_id": context.get("principal_id"),
-            "grant_id": context.get("grant_id"),
-            "initiator_user_id": context.get("initiator_user_id"),
-            "scopes": context.get("scopes", []),
-        }
-
     current_user = context.get("user")
     if current_user is None:
         raise HTTPException(status_code=403, detail="Not authorized to manage agents")
@@ -157,9 +142,6 @@ async def get_agent_context(
 
 def agent_to_response(agent, compact: bool = False) -> AgentResponse:
     """Convert Agent model to response."""
-    workload_scope_profile = "default_agent_run" if compact else (getattr(agent, "workload_scope_profile", "default_agent_run") or "default_agent_run")
-    workload_scope_overrides = [] if compact else list(getattr(agent, "workload_scope_overrides", []) or [])
-
     return AgentResponse(
         id=agent.id,
         tenant_id=agent.tenant_id,
@@ -176,8 +158,6 @@ def agent_to_response(agent, compact: bool = False) -> AgentResponse:
         is_public=agent.is_public,
         show_in_playground=bool(getattr(agent, "show_in_playground", True)),
         default_embed_policy_set_id=getattr(agent, "default_embed_policy_set_id", None),
-        workload_scope_profile=workload_scope_profile,
-        workload_scope_overrides=workload_scope_overrides,
         created_at=agent.created_at,
         updated_at=agent.updated_at,
         published_at=agent.published_at,
@@ -496,8 +476,6 @@ async def create_agent(
                 graph_definition=request.graph_definition.model_dump() if request.graph_definition else {},
                 memory_config=request.memory_config,
                 execution_constraints=request.execution_constraints,
-                workload_scope_profile=request.workload_scope_profile,
-                workload_scope_overrides=request.workload_scope_overrides,
             ),
             user_id=context["user"].id if context.get("user") else None
         )
@@ -543,8 +521,6 @@ async def update_agent(
             graph_definition=request.graph_definition.model_dump() if request.graph_definition else None,
             memory_config=request.memory_config,
             execution_constraints=request.execution_constraints,
-            workload_scope_profile=request.workload_scope_profile,
-            workload_scope_overrides=request.workload_scope_overrides,
         ), user_id=context["user"].id if context.get("user") else None)
         return agent_to_response(agent)
     except AgentServiceError as e:
@@ -703,11 +679,6 @@ async def execute_agent(
         request_context = dict(request.context or {}) if isinstance(request.context, dict) else {}
         request_context.setdefault("tenant_id", str(tenant_id) if tenant_id is not None else None)
         request_context.setdefault("user_id", str(context["user"].id) if context.get("user") else context.get("initiator_user_id"))
-        request_context.setdefault("requested_scopes", context.get("scopes", []))
-        if context.get("grant_id"):
-            request_context.setdefault("grant_id", context.get("grant_id"))
-        if context.get("principal_id"):
-            request_context.setdefault("principal_id", context.get("principal_id"))
         if context.get("initiator_user_id"):
             request_context.setdefault("initiator_user_id", context.get("initiator_user_id"))
 
@@ -801,17 +772,6 @@ async def stream_agent(
         # Do not inject caller scope inventory by default.
         # Delegation grants should request either explicit caller-provided scopes
         # or workload-context scopes in delegated chains.
-        explicit_requested_scopes = None
-        if isinstance(request.context, dict):
-            maybe_explicit_scopes = request.context.get("requested_scopes")
-            if isinstance(maybe_explicit_scopes, list):
-                explicit_requested_scopes = maybe_explicit_scopes
-        if explicit_requested_scopes is not None:
-            request_context["requested_scopes"] = explicit_requested_scopes
-        elif context.get("grant_id"):
-            request_context["requested_scopes"] = context.get("scopes", [])
-        request_context.setdefault("grant_id", context.get("grant_id"))
-        request_context.setdefault("principal_id", context.get("principal_id"))
         request_context.setdefault("initiator_user_id", context.get("initiator_user_id"))
         input_params = {
             "messages": current_messages,
@@ -821,7 +781,6 @@ async def stream_agent(
             "context": request_context,
         }
         # Start run with explicit mode metadata
-        requested_scopes = request_context.get("requested_scopes") if isinstance(request_context.get("requested_scopes"), list) else None
         initiating_user_id = context["user"].id if context.get("user") else None
         try:
             run_id = await executor.start_run(
@@ -830,7 +789,6 @@ async def stream_agent(
                 user_id=initiating_user_id,
                 background=False,
                 mode=execution_mode,
-                requested_scopes=requested_scopes,
                 thread_id=request.thread_id,
             )
         except QuotaExceededError as exc:
@@ -946,17 +904,6 @@ async def start_run_v2(
     request_context.setdefault("token", context.get("auth_token"))
     request_context.setdefault("tenant_id", str(tenant_id) if tenant_id is not None else None)
     request_context.setdefault("user_id", str(context["user"].id) if context.get("user") else context.get("initiator_user_id"))
-    explicit_requested_scopes = None
-    if isinstance(request.context, dict):
-        maybe_explicit_scopes = request.context.get("requested_scopes")
-        if isinstance(maybe_explicit_scopes, list):
-            explicit_requested_scopes = maybe_explicit_scopes
-    if explicit_requested_scopes is not None:
-        request_context["requested_scopes"] = explicit_requested_scopes
-    elif context.get("grant_id"):
-        request_context["requested_scopes"] = context.get("scopes", [])
-    request_context.setdefault("grant_id", context.get("grant_id"))
-    request_context.setdefault("principal_id", context.get("principal_id"))
     request_context.setdefault("initiator_user_id", context.get("initiator_user_id"))
     input_params = {
         "messages": current_messages,
@@ -967,13 +914,11 @@ async def start_run_v2(
     }
     
     try:
-        requested_scopes = request_context.get("requested_scopes") if isinstance(request_context.get("requested_scopes"), list) else None
         initiating_user_id = context["user"].id if context.get("user") else None
         run_id = await executor.start_run(
             agent_id,
             input_params,
             user_id=initiating_user_id,
-            requested_scopes=requested_scopes,
             thread_id=request.thread_id,
         )
         run_row = await db.get(AgentRun, run_id)
@@ -1050,23 +995,15 @@ async def resume_run_v2(
     if str(run.tenant_id) != str(context.get("tenant_id")):
         raise HTTPException(status_code=403, detail="Tenant mismatch")
 
-    # User principals can only resume their own runs (unless system admin).
-    if not context.get("is_service"):
-        user = context.get("user")
-        if user is not None and not is_platform_admin_role(getattr(user, "role", None)):
-            allowed_user_ids = {
-                str(uid)
-                for uid in (run.user_id, run.initiator_user_id)
-                if uid is not None
-            }
-            if allowed_user_ids and str(user.id) not in allowed_user_ids:
-                raise HTTPException(status_code=403, detail="Run ownership mismatch")
-    else:
-        # Workload principals must match if the run is tied to a principal.
-        principal_id = context.get("principal_id")
-        if run.workload_principal_id is not None and principal_id is not None:
-            if str(run.workload_principal_id) != str(principal_id):
-                raise HTTPException(status_code=403, detail="Run principal mismatch")
+    user = context.get("user")
+    if user is not None and not is_platform_admin_role(getattr(user, "role", None)):
+        allowed_user_ids = {
+            str(uid)
+            for uid in (run.user_id, run.initiator_user_id)
+            if uid is not None
+        }
+        if allowed_user_ids and str(user.id) not in allowed_user_ids:
+            raise HTTPException(status_code=403, detail="Run ownership mismatch")
     
     await executor.resume_run(run_id, request)
     return {"status": "resumed"}

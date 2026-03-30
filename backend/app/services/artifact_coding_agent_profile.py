@@ -7,7 +7,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.postgres.models.agents import Agent, AgentStatus
 from app.services.artifact_coding_agent_tools import ARTIFACT_CODING_AGENT_SURFACE, ensure_artifact_coding_tools
-from app.services.workload_provisioning_service import WorkloadProvisioningService
 
 ARTIFACT_CODING_AGENT_PROFILE_SLUG = "artifact-coding-agent"
 ARTIFACT_CODING_AGENT_PROFILE_NAME = "Artifact Coding Agent"
@@ -177,8 +176,4 @@ async def ensure_artifact_coding_agent_profile(
         agent.show_in_playground = False
         await db.flush()
 
-    await WorkloadProvisioningService(db).provision_agent_policy(
-        agent=agent,
-        actor_user_id=actor_user_id,
-    )
     return agent

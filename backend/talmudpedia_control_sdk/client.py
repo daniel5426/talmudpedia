@@ -42,7 +42,6 @@ class ControlPlaneClient:
         self.session = session or requests.Session()
 
         from .agents import AgentsAPI
-        from .auth import AuthAPI
         from .artifacts import ArtifactsAPI
         from .catalog import CatalogAPI
         from .credentials import CredentialsAPI
@@ -52,7 +51,6 @@ class ControlPlaneClient:
         from .orchestration import OrchestrationAPI
         from .rag import RagAPI
         from .tools import ToolsAPI
-        from .workload_security import WorkloadSecurityAPI
 
         self.catalog = CatalogAPI(self)
         self.agents = AgentsAPI(self)
@@ -63,8 +61,6 @@ class ControlPlaneClient:
         self.credentials = CredentialsAPI(self)
         self.embedded_agents = EmbeddedAgentsAPI(self)
         self.knowledge_stores = KnowledgeStoresAPI(self)
-        self.workload_security = WorkloadSecurityAPI(self)
-        self.auth = AuthAPI(self)
         self.orchestration = OrchestrationAPI(self)
 
     @classmethod

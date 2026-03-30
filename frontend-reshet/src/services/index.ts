@@ -46,8 +46,6 @@ export type { Role, RoleAssignment, UserPermissions, ScopeCatalog } from "./rbac
 
 export { auditService } from "./audit";
 export type { AuditLog, AuditLogDetail, AuditFilters, ActionStats, ActorStats } from "./audit";
-export { workloadSecurityService } from "./workload-security";
-export type { ApprovalStatus, PendingScopePolicy, ActionApprovalDecision } from "./workload-security";
 export { tenantAPIKeysService } from "./tenant-api-keys";
 export type {
   TenantAPIKey,

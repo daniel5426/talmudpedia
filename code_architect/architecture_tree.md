@@ -1,6 +1,6 @@
 # Architecture Tree (Curated)
 
-Last Updated: 2026-03-29
+Last Updated: 2026-03-30
 
 This file is a backend-only architecture map optimized for agent context efficiency.
 
@@ -49,7 +49,6 @@ backend/app/core/audit.py
 backend/app/core/env_loader.py
 backend/app/core/internal_token.py
 backend/app/core/jwt_keys.py
-backend/app/core/workload_jwt.py
 backend/app/core/runtime_urls.py
 
 backend/app/agent/
@@ -182,10 +181,7 @@ backend/app/services/artifact_runtime/deployment_service.py
 backend/app/services/artifact_runtime/policy_service.py
 backend/app/services/artifact_runtime/handler_runner.py
 backend/app/services/builtin_tools.py
-backend/app/services/delegation_service.py
-backend/app/services/workload_provisioning_service.py
-backend/app/services/workload_identity_service.py
-backend/app/services/token_broker_service.py
+backend/app/services/architect_mode_service.py
 backend/app/services/tenant_api_key_service.py
 backend/app/services/embedded_agent_runtime_service.py
 backend/app/services/runtime_attachment_service.py
@@ -282,7 +278,6 @@ backend/artifacts/builtin/platform_sdk/actions/models.py
 backend/artifacts/builtin/platform_sdk/actions/credentials.py
 backend/artifacts/builtin/platform_sdk/actions/knowledge_stores.py
 backend/artifacts/builtin/platform_sdk/actions/auth.py
-backend/artifacts/builtin/platform_sdk/actions/workload_security.py
 backend/artifacts/builtin/platform_sdk/actions/shared.py
 backend/ingestion/
 backend/sdk/
@@ -296,8 +291,6 @@ backend/talmudpedia_control_sdk/rag.py
 backend/talmudpedia_control_sdk/models.py
 backend/talmudpedia_control_sdk/credentials.py
 backend/talmudpedia_control_sdk/knowledge_stores.py
-backend/talmudpedia_control_sdk/workload_security.py
-backend/talmudpedia_control_sdk/auth.py
 backend/talmudpedia_control_sdk/orchestration.py
 backend/talmudpedia_control_sdk/errors.py
 backend/talmudpedia_control_sdk/types.py

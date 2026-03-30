@@ -2,6 +2,7 @@ import pytest
 
 from app.agent.execution.adapter import StreamAdapter
 from app.agent.execution.service import AgentExecutorService
+from app.agent.executors.standard import _merge_usage_payloads
 from app.agent.execution.stream_contract_v2 import normalize_filtered_event_to_v2
 from app.agent.execution.types import ExecutionMode
 from app.agent.execution.tool_event_metadata import resolve_tool_event_metadata
@@ -148,7 +149,7 @@ def test_context_window_service_estimates_prompt_input_from_model_visible_materi
     )
 
     assert tokens > 1000
-    assert tokens < 1100
+    assert tokens < 2500
 
 
 def test_normalize_filtered_event_to_v2_preserves_context_window_events():
@@ -219,6 +220,19 @@ def test_extract_usage_candidate_reads_nested_node_end_usage_payload():
     assert usage_source == "exact"
 
 
+def test_merge_usage_payloads_accumulates_stream_chunk_usage():
+    payload = _merge_usage_payloads(
+        {"input_tokens": 2, "output_tokens": 66, "total_tokens": 68},
+        {"input_tokens": 0, "output_tokens": 8, "total_tokens": 8},
+    )
+
+    assert payload == {
+        "input_tokens": 2,
+        "output_tokens": 74,
+        "total_tokens": 76,
+    }
+
+
 def test_invocation_payload_prefers_prompt_estimate_for_context_window_over_exact_usage():
     payload = RunInvocationService.build_invocation_payload(
         model_id="openai/gpt-5",
@@ -229,7 +243,8 @@ def test_invocation_payload_prefers_prompt_estimate_for_context_window_over_exac
         node_type="agent",
         max_context_tokens=1_000_000,
         max_context_tokens_source="resolved_execution",
-        estimated_input_tokens=11_973,
+        context_input_tokens=11_973,
+        context_source="provider_count_api",
         exact_usage_payload={
             "input_tokens": 870,
             "output_tokens": 27,
@@ -240,7 +255,7 @@ def test_invocation_payload_prefers_prompt_estimate_for_context_window_over_exac
 
     assert payload["usage"]["source"] == "exact"
     assert payload["usage"]["input_tokens"] == 870
-    assert payload["context_window"]["source"] == "estimated"
+    assert payload["context_window"]["source"] == "provider_count_api"
     assert payload["context_window"]["input_tokens"] == 11_973
 
 

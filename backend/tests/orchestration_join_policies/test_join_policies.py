@@ -6,10 +6,7 @@ import pytest
 from app.db.postgres.models.agents import Agent, AgentRun, AgentStatus, RunStatus
 from app.db.postgres.models.identity import Tenant, User
 from app.db.postgres.models.orchestration import OrchestratorPolicy, OrchestratorTargetAllowlist
-from app.db.postgres.models.security import WorkloadPrincipalType
-from app.services.delegation_service import DelegationService
 from app.services.orchestration_kernel_service import OrchestrationKernelService
-from app.services.workload_identity_service import WorkloadIdentityService
 
 
 async def _setup_fixture(db_session):
@@ -35,34 +32,13 @@ async def _setup_fixture(db_session):
     db_session.add_all([orchestrator, target])
     await db_session.flush()
 
-    identity = WorkloadIdentityService(db_session)
-    principal = await identity.ensure_principal(
-        tenant_id=tenant.id,
-        slug=f"agent:{orchestrator.slug}",
-        name="Join Policy Principal",
-        principal_type=WorkloadPrincipalType.SYSTEM,
-        created_by=user.id,
-        requested_scopes=["agents.execute"],
-        auto_approve_system=True,
-    )
-
-    delegation = DelegationService(db_session)
-    grant, _ = await delegation.create_delegation_grant(
-        tenant_id=tenant.id,
-        principal_id=principal.id,
-        initiator_user_id=user.id,
-        requested_scopes=["agents.execute"],
-    )
-
     root_run = AgentRun(
         tenant_id=tenant.id,
         agent_id=orchestrator.id,
         user_id=user.id,
         initiator_user_id=user.id,
-        workload_principal_id=principal.id,
-        delegation_grant_id=grant.id,
         status=RunStatus.running,
-        input_params={"messages": [], "context": {"grant_id": str(grant.id), "principal_id": str(principal.id)}},
+        input_params={"messages": [], "context": {"scopes": ["agents.execute"]}},
         depth=0,
     )
     db_session.add(root_run)

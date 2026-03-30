@@ -19,7 +19,6 @@ import {
 import {
   applyRuntimeEvent,
   createId,
-  formatRelativeTimestamp,
   isWidgetToolEvent,
   mapThreadDetail,
   mapRuntimeAttachment,
@@ -50,20 +49,6 @@ function writeThreadIdToUrl(threadId: string): void {
     url.searchParams.delete("thread");
   }
   window.history.replaceState({}, "", url);
-}
-
-function createHydratingThreadPlaceholder(threadId: string): TemplateThread {
-  return {
-    id: threadId,
-    title: "Loading chat...",
-    preview: "Loading chat...",
-    updatedAt: formatRelativeTimestamp(null),
-    messages: [],
-    isLoaded: false,
-    hasMoreHistory: false,
-    nextBeforeTurnIndex: null,
-    isLoadingOlderHistory: false,
-  };
 }
 
 export function useClassicChatState() {
@@ -118,14 +103,8 @@ export function useClassicChatState() {
         if (cancelled) return;
         const requestedThreadId = requestedThreadIdRef.current;
         const mappedThreads = history.items.map(mapThreadSummary);
-        const initialThreads =
-          requestedThreadId &&
-          !requestedThreadId.startsWith("local-") &&
-          !mappedThreads.some((thread) => thread.id === requestedThreadId)
-            ? [createHydratingThreadPlaceholder(requestedThreadId), ...mappedThreads]
-            : mappedThreads;
-        setThreads(initialThreads);
-        setActiveThreadId((current) => current || requestedThreadId || initialThreads[0]?.id || "");
+        setThreads(mappedThreads);
+        setActiveThreadId((current) => current || requestedThreadId || "");
       } catch (error) {
         if (!cancelled) {
           console.error("Failed to load thread history", error);
@@ -164,13 +143,14 @@ export function useClassicChatState() {
     };
   }, [activeThreadId, threads]);
 
-  const activeThread =
-    threads.find((thread) => thread.id === activeThreadId) || threads[0] || null;
+  const activeThread = activeThreadId
+    ? threads.find((thread) => thread.id === activeThreadId) || null
+    : null;
 
   const visibleThreads = threads
     .filter((t) => !(t.isLoaded && t.messages.length === 0))
     .slice(0, visibleHistoryCount);
-  const hasMoreHistory = visibleHistoryCount < threads.length;
+  const hasMoreHistory = visibleHistoryCount < threads.filter((t) => !(t.isLoaded && t.messages.length === 0)).length;
 
   const newChat = () => {
     // If any initialized thread is empty, switch to the first (newest) empty one

@@ -16,15 +16,7 @@ from sqlalchemy import select
 from talmudpedia_control_sdk import ControlPlaneClient
 
 from app.core.scope_registry import get_required_scopes_for_action
-from app.db.postgres.engine import sessionmaker as async_sessionmaker
-from app.db.postgres.models.agents import Agent
-from app.db.postgres.models.security import (
-    WorkloadPolicyStatus,
-    WorkloadPrincipalBinding,
-    WorkloadResourceType,
-    WorkloadScopePolicy,
-)
-from app.services.delegation_service import DelegationService
+from app.services.architect_mode_service import ArchitectMode, ArchitectModeService
 from tests.platform_architect_e2e.db_checks import check_agent_run_exists, resolve_tenant_slug
 from tests.platform_architect_e2e.reporting import E2EReport
 from tests.platform_architect_e2e.scenario_matrix import SCENARIOS, ScenarioDefinition
@@ -98,80 +90,27 @@ async def _compute_scope_preflight(
     initiator_user_id: str | None,
     required_scopes: set[str],
 ) -> dict[str, Any]:
-    async with async_sessionmaker() as db:
-        agent = await db.get(Agent, UUID(str(architect_agent_id)))
-        if agent is None:
-            return {"ok": False, "reason": "platform-architect agent not found by id"}
-
-        binding_res = await db.execute(
-            select(WorkloadPrincipalBinding).where(
-                WorkloadPrincipalBinding.tenant_id == UUID(str(tenant_id)),
-                WorkloadPrincipalBinding.resource_type == WorkloadResourceType.AGENT,
-                WorkloadPrincipalBinding.resource_id == str(agent.id),
-            )
-        )
-        binding = binding_res.scalars().first()
-        if binding is None:
-            return {
-                "ok": False,
-                "reason": "No workload principal binding found for platform-architect agent",
-            }
-
-        policy_res = await db.execute(
-            select(WorkloadScopePolicy)
-            .where(WorkloadScopePolicy.principal_id == binding.principal_id)
-            .order_by(WorkloadScopePolicy.version.desc())
-            .limit(1)
-        )
-        policy = policy_res.scalars().first()
-        if policy is None:
-            return {
-                "ok": False,
-                "reason": "No workload scope policy found for platform-architect principal",
-            }
-
-        approved_scopes = set(policy.approved_scopes or [])
-        if policy.status != WorkloadPolicyStatus.APPROVED:
-            return {
-                "ok": False,
-                "reason": f"Workload policy is not approved (status={policy.status.value})",
-                "approved_scopes": sorted(approved_scopes),
-                "required_scopes": sorted(required_scopes),
-            }
-
-        delegation = DelegationService(db)
-        user_scopes: set[str] = set()
-        user_scope_mode = "unresolved"
-        parsed_initiator: UUID | None = None
-        if initiator_user_id:
-            try:
-                parsed_initiator = UUID(str(initiator_user_id))
-            except ValueError:
-                parsed_initiator = None
-        if parsed_initiator is not None:
-            user_scopes = await delegation._resolve_user_scopes(UUID(str(tenant_id)), parsed_initiator)
-            user_scope_mode = "wildcard" if "*" in user_scopes else "explicit"
-        else:
-            user_scopes = {"*"}
-
-        effective_scopes = DelegationService._intersect_scopes(user_scopes, approved_scopes, required_scopes)
-        missing_effective_scopes = sorted(required_scopes - set(effective_scopes))
-        missing_policy_scopes = sorted(required_scopes - approved_scopes)
-
-        missing_user_scopes: list[str] = []
-        if "*" not in user_scopes:
-            missing_user_scopes = sorted(required_scopes - user_scopes)
-
+    del tenant_id, architect_agent_id
+    if not initiator_user_id:
         return {
-            "ok": len(missing_effective_scopes) == 0,
+            "ok": True,
             "required_scopes": sorted(required_scopes),
-            "approved_scopes": sorted(approved_scopes),
-            "user_scopes": sorted(user_scopes),
-            "user_scope_mode": user_scope_mode,
-            "missing_effective_scopes": missing_effective_scopes,
-            "missing_policy_scopes": missing_policy_scopes,
-            "missing_user_scopes": missing_user_scopes,
+            "effective_scopes": ["*"],
+            "requested_architect_mode": ArchitectMode.FULL_ACCESS.value,
+            "effective_architect_mode": ArchitectMode.FULL_ACCESS.value,
+            "missing_effective_scopes": [],
         }
+    effective_mode = ArchitectMode.FULL_ACCESS
+    effective_scopes = set(ArchitectModeService.scopes_for_mode(effective_mode))
+    missing_effective_scopes = sorted(scope for scope in required_scopes if "*" not in effective_scopes and scope not in effective_scopes)
+    return {
+        "ok": len(missing_effective_scopes) == 0,
+        "required_scopes": sorted(required_scopes),
+        "effective_scopes": sorted(effective_scopes),
+        "requested_architect_mode": ArchitectMode.FULL_ACCESS.value,
+        "effective_architect_mode": effective_mode.value,
+        "missing_effective_scopes": missing_effective_scopes,
+    }
 
 
 def _unwrap_data(payload: Any) -> Dict[str, Any]:
@@ -246,6 +185,7 @@ def _start_run(
     runtime_context: dict[str, Any] | None = None,
 ) -> str:
     context_payload = dict(runtime_context or {})
+    context_payload.setdefault("architect_mode", ArchitectMode.FULL_ACCESS.value)
     response = requests.post(
         f"{base_url}/agents/{architect_id}/run",
         headers=headers,
@@ -427,9 +367,9 @@ def e2e_runtime() -> dict[str, Any]:
             f"initiator_user_id={initiator_user_id or 'unresolved'}",
             f"reason={preflight.get('reason') or 'missing effective scopes'}",
             f"missing_effective_scopes={sorted(missing_effective)}",
-            f"missing_policy_scopes={sorted(preflight.get('missing_policy_scopes') or [])}",
-            f"missing_user_scopes={sorted(preflight.get('missing_user_scopes') or [])}",
-            f"user_scope_mode={preflight.get('user_scope_mode')}",
+            f"requested_architect_mode={preflight.get('requested_architect_mode')}",
+            f"effective_architect_mode={preflight.get('effective_architect_mode')}",
+            f"effective_scopes={sorted(preflight.get('effective_scopes') or [])}",
             f"impacted_actions={impacted_actions}",
         ]
         pytest.exit("\n".join(lines), returncode=1)

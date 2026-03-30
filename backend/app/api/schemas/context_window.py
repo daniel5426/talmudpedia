@@ -6,7 +6,14 @@ from pydantic import BaseModel
 
 
 class ContextWindowResponse(BaseModel):
-    source: Literal["exact", "estimated", "unknown"] = "unknown"
+    source: Literal[
+        "exact",
+        "estimated",
+        "provider_count_api",
+        "tokenizer_estimate",
+        "heuristic_estimate",
+        "unknown",
+    ] = "unknown"
     model_id: Optional[str] = None
     max_tokens: Optional[int] = None
     max_tokens_source: Optional[str] = None

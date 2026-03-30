@@ -6,7 +6,6 @@ from pydantic import BaseModel
 from .routers.auth import get_current_user
 from app.db.postgres.models.identity import Tenant, User, OrgUnit, OrgMembership
 from app.db.postgres.models.rbac import RoleAssignment, RolePermission
-from app.db.postgres.models.security import ApprovalDecision, ApprovalStatus
 from app.services.tenant_api_key_service import TenantAPIKeyAuthError, TenantAPIKeyService
 from app.db.postgres.models.published_apps import (
     PublishedApp,
@@ -21,9 +20,7 @@ from uuid import UUID
 import jwt
 from app.core.security import SECRET_KEY, ALGORITHM
 from app.core.scope_registry import legacy_permission_to_scope, is_platform_admin_role
-from app.core.workload_jwt import decode_workload_token
 from app.core.security import decode_published_app_preview_token, decode_published_app_session_token
-from app.services.token_broker_service import TokenBrokerService
 
 class AuthContext(BaseModel):
     user: User
@@ -34,7 +31,6 @@ class AuthContext(BaseModel):
         arbitrary_types_allowed = True
 
 
-WORKLOAD_JWT_AUDIENCE = "talmudpedia-internal-api"
 bearer_scheme = HTTPBearer(auto_error=False)
 
 async def get_tenant_context(
@@ -179,9 +175,7 @@ async def get_current_principal(
 ) -> Dict[str, Any]:
     """
     Unified principal resolver for migrated secure endpoints.
-    Supports:
-    - user principals (existing JWT)
-    - delegated workload principals (workload JWT with jti validation)
+    Supports authenticated user principals.
     """
     try:
         user = await get_current_user(token=token, db=db)
@@ -205,25 +199,7 @@ async def get_current_principal(
     except Exception:
         pass
 
-    try:
-        payload = decode_workload_token(token, audience=WORKLOAD_JWT_AUDIENCE)
-        broker = TokenBrokerService(db)
-        if not await broker.is_jti_active(payload.get("jti")):
-            raise HTTPException(status_code=401, detail="Revoked or expired workload token")
-        return {
-            "type": "workload",
-            "principal_id": str(payload["sub"]).replace("wp:", "", 1),
-            "tenant_id": str(payload["tenant_id"]),
-            "grant_id": str(payload["grant_id"]),
-            "initiator_user_id": str(payload.get("act", "")).replace("user:", "", 1) if payload.get("act") else None,
-            "run_id": str(payload.get("run_id")) if payload.get("run_id") else None,
-            "scopes": sorted(set(payload.get("scope", []))),
-            "auth_token": token,
-        }
-    except HTTPException:
-        raise
-    except Exception:
-        raise HTTPException(status_code=401, detail="Could not validate principal token")
+    raise HTTPException(status_code=401, detail="Could not validate principal token")
 
 
 async def get_current_tenant_api_key_principal(
@@ -285,39 +261,8 @@ async def ensure_sensitive_action_approved(
     action_scope: str,
     db: AsyncSession,
 ) -> None:
-    """
-    Sensitive mutation guard:
-    workload principals must have an explicit APPROVED decision record
-    for (tenant, subject, action_scope). User principals are allowed directly.
-    """
-    if principal.get("type") != "workload":
-        return
-
-    if tenant_id is None:
-        raise HTTPException(status_code=403, detail="Tenant context required for sensitive action")
-
-    try:
-        tenant_uuid = UUID(str(tenant_id))
-    except Exception:
-        raise HTTPException(status_code=403, detail="Invalid tenant context for sensitive action")
-
-    result = await db.execute(
-        select(ApprovalDecision)
-        .where(
-            ApprovalDecision.tenant_id == tenant_uuid,
-            ApprovalDecision.subject_type == subject_type,
-            ApprovalDecision.subject_id == str(subject_id),
-            ApprovalDecision.action_scope == action_scope,
-        )
-        .order_by(ApprovalDecision.created_at.desc())
-        .limit(1)
-    )
-    decision = result.scalar_one_or_none()
-    if decision is None or decision.status != ApprovalStatus.APPROVED:
-        raise HTTPException(
-            status_code=403,
-            detail=f"Sensitive action '{action_scope}' requires explicit approval",
-        )
+    del principal, tenant_id, subject_type, subject_id, action_scope, db
+    return None
 
 
 async def get_optional_published_app_principal(

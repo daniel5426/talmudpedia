@@ -33,8 +33,6 @@ class AuditLog(Base):
     resource_id = Column(String, nullable=True)
     resource_name = Column(String, nullable=True)
     initiator_user_id = Column(UUID(as_uuid=True), nullable=True, index=True)
-    workload_principal_id = Column(UUID(as_uuid=True), nullable=True, index=True)
-    delegation_grant_id = Column(UUID(as_uuid=True), nullable=True, index=True)
     token_jti = Column(String, nullable=True, index=True)
     scopes = Column(JSONB, nullable=True)
 

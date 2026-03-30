@@ -45,6 +45,10 @@ from app.services.model_accounting import (
 from app.services.context_window_service import ContextWindowService
 from app.services.model_resolver import ModelResolver, ModelResolverError, ResolvedModelExecution
 from app.services.run_invocation_service import RunInvocationService
+from app.services.architect_mode_service import (
+    ArchitectModeError,
+    ArchitectModeService,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -171,24 +175,8 @@ class AgentExecutorService:
         return min(parsed_caps) if parsed_caps else None
 
     @staticmethod
-    def _requires_workload_delegation(
-        *,
-        agent: Agent,
-        runtime_surface: str | None,
-        requested_scopes: list[str] | None = None,
-        runtime_context: dict[str, Any] | None = None,
-    ) -> bool:
-        profile = str(getattr(agent, "workload_scope_profile", "") or "").strip().lower()
-        if profile and profile != "default_agent_run":
-            return True
-        if str(getattr(agent, "slug", "") or "").strip() == "platform-architect":
-            return True
-        if str(runtime_surface or "").strip().lower() in {"published_app_coding_agent", "artifact_coding_agent"}:
-            return True
-        if requested_scopes:
-            return True
-        context = runtime_context if isinstance(runtime_context, dict) else {}
-        return bool(context.get("grant_id") or context.get("principal_id"))
+    def _is_platform_architect(agent: Agent) -> bool:
+        return str(getattr(agent, "slug", "") or "").strip() == "platform-architect"
 
     @staticmethod
     def _extract_usage_candidate(event: ExecutionEvent) -> tuple[NormalizedUsage | None, str | None]:
@@ -512,21 +500,8 @@ class AgentExecutorService:
         if isinstance(input_params, dict):
             runtime_context = dict(input_params.get("context") or {})
 
-        delegation_grant_id = runtime_context.get("grant_id")
-        workload_principal_id = runtime_context.get("principal_id")
         initiator_user_id = runtime_context.get("initiator_user_id")
-
-        parsed_grant_id = None
-        parsed_principal_id = None
         parsed_initiator_id = None
-        try:
-            parsed_grant_id = UUID(str(delegation_grant_id)) if delegation_grant_id else None
-        except Exception:
-            parsed_grant_id = None
-        try:
-            parsed_principal_id = UUID(str(workload_principal_id)) if workload_principal_id else None
-        except Exception:
-            parsed_principal_id = None
         try:
             parsed_initiator_id = UUID(str(initiator_user_id)) if initiator_user_id else None
         except Exception:
@@ -534,16 +509,6 @@ class AgentExecutorService:
 
         run_id = uuid4()
         effective_initiator_id = user_id or parsed_initiator_id
-
-        # Strict workload delegation: runtime cannot create principal/policy intent.
-        # Runs must mint grants only from pre-provisioned, approved policies.
-        resolved_principal_id = parsed_principal_id
-        resolved_grant_id = parsed_grant_id
-        maybe_context = input_params.get("context") if isinstance(input_params, dict) else {}
-        explicit_requested_scopes = (
-            requested_scopes
-            or ((maybe_context or {}).get("requested_scopes") if isinstance(maybe_context, dict) else None)
-        )
 
         # Resolve/create thread before creating the run record.
         input_params = dict(input_params or {})
@@ -653,12 +618,20 @@ class AgentExecutorService:
         requested_model_id = self._resolve_requested_model_id(runtime_context, agent.graph_definition or {})
         requested_model_ref = self._resolve_requested_model_ref(runtime_context, agent.graph_definition or {})
 
-        require_workload_delegation = self._requires_workload_delegation(
-            agent=agent,
-            runtime_surface=runtime_surface,
-            requested_scopes=explicit_requested_scopes if isinstance(explicit_requested_scopes, list) else None,
-            runtime_context=runtime_context,
-        )
+        if self._is_platform_architect(agent):
+            architect_mode_service = ArchitectModeService(self.db)
+            try:
+                effective_mode = await architect_mode_service.resolve_effective_mode(
+                    tenant_id=agent.tenant_id,
+                    user_id=effective_initiator_id,
+                    requested_mode=runtime_context.get("architect_mode"),
+                )
+            except ArchitectModeError as exc:
+                raise ValueError(str(exc)) from exc
+            context_payload_mode = runtime_context.get("architect_mode")
+            runtime_context["requested_architect_mode"] = str(context_payload_mode or "").strip() or None
+            runtime_context["architect_mode"] = effective_mode.value
+            runtime_context["architect_effective_scopes"] = architect_mode_service.scopes_for_mode(effective_mode)
 
         # Reserve quota (if enabled) before creating the run record.
         quota_metadata = {"max_output_cap": None}
@@ -699,9 +672,25 @@ class AgentExecutorService:
                 context_payload["resource_policy_principal"] = policy_snapshot.principal.to_payload()
         if quota_metadata.get("max_output_cap"):
             context_payload["quota_max_output_tokens"] = int(quota_metadata["max_output_cap"])
+        pre_run_execution: ResolvedModelExecution | None = None
+        if requested_model_ref:
+            try:
+                pre_run_execution = await ModelResolver(self.db, agent.tenant_id).resolve_for_execution(
+                    requested_model_ref,
+                    policy_snapshot=policy_snapshot,
+                )
+            except ModelResolverError:
+                logger.warning("Failed to resolve pre-run context receipt for run %s", run_id, exc_info=True)
         context_window = await ContextWindowService(self.db).build_pre_run_window(
             tenant_id=agent.tenant_id,
-            model_id=requested_model_ref or (str(requested_model_id) if requested_model_id else None),
+            model_id=(
+                str(pre_run_execution.logical_model.id)
+                if pre_run_execution is not None
+                else requested_model_ref or (str(requested_model_id) if requested_model_id else None)
+            ),
+            resolved_provider=pre_run_execution.resolved_provider if pre_run_execution is not None else None,
+            resolved_provider_model_id=pre_run_execution.binding.provider_model_id if pre_run_execution is not None else None,
+            api_key=getattr(getattr(pre_run_execution, "provider_instance", None), "api_key", None),
             input_params=input_params,
             runtime_context=context_payload,
         )
@@ -715,15 +704,17 @@ class AgentExecutorService:
             user_id=effective_initiator_id,
             thread_id=thread_result.thread.id,
             initiator_user_id=effective_initiator_id,
-            workload_principal_id=resolved_principal_id,
-            delegation_grant_id=resolved_grant_id,
             published_app_id=published_app_id,
             published_app_account_id=published_app_account_id,
             external_user_id=external_user_id,
             surface=runtime_surface or None,
             input_params=input_params,
             context_window_json=context_window,
-            requested_model_id=requested_model_id,
+            requested_model_id=pre_run_execution.logical_model.id if pre_run_execution is not None else requested_model_id,
+            resolved_model_id=pre_run_execution.logical_model.id if pre_run_execution is not None else None,
+            resolved_binding_id=pre_run_execution.binding.id if pre_run_execution is not None else None,
+            resolved_provider=pre_run_execution.resolved_provider if pre_run_execution is not None else None,
+            resolved_provider_model_id=pre_run_execution.binding.provider_model_id if pre_run_execution is not None else None,
             status=RunStatus.queued,
             root_run_id=root_run_id,
             parent_run_id=parent_run_id,
@@ -736,23 +727,6 @@ class AgentExecutorService:
         )
         self.db.add(run)
         await self.db.flush()
-
-        if require_workload_delegation and effective_initiator_id is not None and resolved_grant_id is None:
-            from app.services.delegation_service import DelegationService, DelegationPolicyError
-
-            delegation = DelegationService(self.db)
-            try:
-                principal, grant, _approval_required = await delegation.create_agent_run_grant(
-                    agent=agent,
-                    initiator_user_id=effective_initiator_id,
-                    run_id=run_id,
-                    requested_scopes=explicit_requested_scopes,
-                )
-            except DelegationPolicyError as exc:
-                raise ValueError(f"{exc.code}: {exc.message}") from exc
-
-            run.workload_principal_id = principal.id
-            run.delegation_grant_id = grant.id
 
         await self.db.commit()
         await self.db.refresh(run)
@@ -833,13 +807,6 @@ class AgentExecutorService:
         if not agent:
             raise ValueError(f"Agent {run.agent_id} not found")
 
-        if self._requires_workload_delegation(
-            agent=agent,
-            runtime_surface=run.surface,
-            runtime_context=run.input_params.get("context") if isinstance(run.input_params, dict) else None,
-        ) and (run.user_id is not None or run.initiator_user_id is not None) and run.delegation_grant_id is None:
-            raise ValueError("WORKLOAD_PRINCIPAL_MISSING: Run is missing delegation grant context")
-
         # Capture input params before commit to avoid async lazy-loads
         run_input_params = run.input_params
 
@@ -847,10 +814,6 @@ class AgentExecutorService:
         runtime_context = {}
         if isinstance(run_input_params, dict):
             runtime_context = dict(run_input_params.get("context") or {})
-        if run.delegation_grant_id:
-            runtime_context["grant_id"] = str(run.delegation_grant_id)
-        if run.workload_principal_id:
-            runtime_context["principal_id"] = str(run.workload_principal_id)
         if run.initiator_user_id:
             runtime_context["initiator_user_id"] = str(run.initiator_user_id)
         runtime_context["run_id"] = str(run.id)
@@ -1033,8 +996,7 @@ class AgentExecutorService:
                 "run_id": str(run_id),
                 "mode": mode.value,
                 "resume_payload": resume_payload,
-                "grant_id": str(run.delegation_grant_id) if run.delegation_grant_id else None,
-                "principal_id": str(run.workload_principal_id) if run.workload_principal_id else None,
+                "architect_mode": runtime_context.get("architect_mode"),
                 "initiator_user_id": str(run.initiator_user_id) if run.initiator_user_id else None,
                 "tenant_id": str(run.tenant_id) if run.tenant_id else None,
                 "user_id": str(run.user_id) if run.user_id else None,

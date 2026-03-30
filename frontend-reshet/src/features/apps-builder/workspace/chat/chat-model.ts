@@ -70,7 +70,6 @@ function inferPlatformActionSubject(action: string): string | null {
     "credentials": "credentials",
     "knowledge_stores": "knowledge stores",
     "auth": "auth settings",
-    "workload_security": "workload security",
     "orchestration": "orchestration settings",
   };
 

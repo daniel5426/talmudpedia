@@ -185,10 +185,9 @@ class ArtifactNodeExecutor(BaseNodeExecutor):
                 "agent_id": (context or {}).get("agent_id"),
                 "agent_slug": (context or {}).get("agent_slug"),
                 "auth": {
-                    "grant_id": (context or {}).get("grant_id"),
-                    "principal_id": (context or {}).get("principal_id"),
                     "initiator_user_id": (context or {}).get("initiator_user_id"),
                     "run_id": (context or {}).get("run_id"),
+                    "architect_mode": (context or {}).get("architect_mode"),
                 },
             }
 

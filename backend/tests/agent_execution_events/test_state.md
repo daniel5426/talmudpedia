@@ -1,6 +1,6 @@
 # Test State: Agent Execution Events
 
-Last Updated: 2026-03-29
+Last Updated: 2026-03-30
 
 **Scope**
 Execution event emission coverage for core nodes in debug streaming runs.
@@ -24,8 +24,18 @@ Execution event emission coverage for core nodes in debug streaming runs.
 - Invocation accounting now prefers prompt-estimated input for `context_window` even when exact provider usage exists for `run_usage`
 - Dedicated `artifact.draft.updated` client events still survive normalization unchanged
 - Executor accounting now reads nested exact usage payloads emitted from shared node-end metadata
+- Streamed usage payloads are merged cumulatively instead of letting the last non-null chunk overwrite the total
 
 **Last Run**
+- Command: `PYTHONPATH=. pytest -q tests/agent_execution_events/test_tool_event_metadata.py tests/tool_execution/test_llm_provider_content_blocks.py`
+- Date: 2026-03-30 19:49 EEST
+- Result: PASS (`19 passed, 2 warnings`)
+- Command: `PYTHONPATH=. pytest -q tests/agent_execution_events/test_tool_event_metadata.py tests/tool_execution/test_llm_provider_content_blocks.py tests/context_window/test_token_counter_service.py`
+- Date: 2026-03-30 19:49 EEST
+- Result: PASS (`24 passed, 2 warnings`)
+- Command: `PYTHONPATH=. pytest -q tests/agent_execution_events/test_tool_event_metadata.py`
+- Date: 2026-03-30 Asia/Hebron
+- Result: PASS (`12 passed, 2 warnings`)
 - Command: `PYTHONPATH=. pytest -q tests/agent_execution_events/test_tool_event_metadata.py tests/artifact_coding_agent/test_runtime_service.py`
 - Date: 2026-03-30 Asia/Hebron
 - Result: PASS (`46 passed, 5 warnings`)

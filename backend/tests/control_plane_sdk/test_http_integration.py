@@ -47,10 +47,6 @@ def test_control_sdk_read_surface_smoke() -> None:
     credentials = _call_or_skip("credentials.status", lambda: client.credentials.status())
     assert "data" in credentials
 
-    jwks = _call_or_skip("auth.get_workload_jwks", lambda: client.auth.get_workload_jwks())
-    assert "data" in jwks
-
-
 @pytest.mark.real_db
 def test_control_sdk_tenant_slug_surfaces_when_available() -> None:
     client, tenant_slug = _require_env()

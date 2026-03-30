@@ -21,7 +21,6 @@ from app.services.orchestration_policy_service import (
 
 from .actions import agents as agent_actions
 from .actions import artifacts as artifact_actions
-from .actions import auth as auth_actions
 from .actions import catalog as catalog_actions
 from .actions import credentials as credential_actions
 from .actions import knowledge_stores as knowledge_store_actions
@@ -30,7 +29,6 @@ from .actions import orchestration as orchestration_actions
 from .actions import rag as rag_actions
 from .actions import shared as shared_actions
 from .actions import tools as tool_actions
-from .actions import workload_security as workload_security_actions
 
 
 ACTION_ALIASES = {
@@ -70,7 +68,7 @@ DOMAIN_TOOL_ALLOWED_PREFIXES = {
     "platform-rag": ("rag.",),
     "platform-agents": ("agents.",),
     "platform-assets": ("tools.", "artifacts.", "models.", "credentials.", "knowledge_stores."),
-    "platform-governance": ("auth.", "workload_security.", "orchestration."),
+    "platform-governance": ("orchestration.",),
 }
 
 PUBLISH_ACTIONS = {
@@ -929,13 +927,6 @@ def _dispatch_action(
         "knowledge_stores.create_or_update": lambda: knowledge_store_actions.create_or_update(client, payload, dry_run, control_client_factory=_control_client, request_options_builder=_request_options),
         "knowledge_stores.delete": lambda: knowledge_store_actions.delete(client, payload, dry_run, control_client_factory=_control_client, request_options_builder=_request_options),
         "knowledge_stores.stats": lambda: knowledge_store_actions.stats(client, payload, control_client_factory=_control_client),
-        "auth.create_delegation_grant": lambda: auth_actions.create_delegation_grant(client, payload, control_client_factory=_control_client),
-        "auth.mint_workload_token": lambda: auth_actions.mint_workload_token(client, payload, control_client_factory=_control_client),
-        "workload_security.list_pending": lambda: workload_security_actions.list_pending(client, payload, control_client_factory=_control_client),
-        "workload_security.approve_policy": lambda: workload_security_actions.approve_policy(client, payload, control_client_factory=_control_client),
-        "workload_security.reject_policy": lambda: workload_security_actions.reject_policy(client, payload, control_client_factory=_control_client),
-        "workload_security.list_approvals": lambda: workload_security_actions.list_approvals(client, payload, control_client_factory=_control_client),
-        "workload_security.decide_approval": lambda: workload_security_actions.decide_approval(client, payload, control_client_factory=_control_client),
         "orchestration.spawn_run": lambda: _orchestration_spawn_run(client, inputs, payload, dry_run),
         "orchestration.spawn_group": lambda: _orchestration_spawn_group(client, inputs, payload, dry_run),
         "orchestration.join": lambda: _orchestration_join(client, inputs, payload, dry_run),

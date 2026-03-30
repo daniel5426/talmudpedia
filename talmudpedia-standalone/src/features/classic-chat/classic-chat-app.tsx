@@ -24,7 +24,6 @@ export function ClassicChatApp() {
     dislikedMessageIds,
     hasMoreHistory,
     inputValue,
-    isLoadingHistory,
     isResponding,
     likedMessageIds,
     loadMoreHistory,
@@ -43,15 +42,12 @@ export function ClassicChatApp() {
   } = useClassicChatState();
 
   const hasMessages = Boolean(activeThread?.messages.length);
-  const isActiveThreadLoading =
-    isLoadingHistory || Boolean(activeThreadId && (!activeThread || !activeThread.isLoaded));
+  const isActiveThreadLoading = Boolean(
+    activeThreadId && (!activeThread || !activeThread.isLoaded),
+  );
 
   return (
-    <SidebarProvider
-    
-      defaultOpen
-      className="h-svh bg-background overflow-hidden [&_button]:shadow-none"
-    >
+    <SidebarProvider defaultOpen className="h-svh bg-background overflow-hidden [&_button]:shadow-none">
       <ChatSidebar
         activeThreadId={activeThreadId}
         hasMoreHistory={hasMoreHistory}
@@ -62,7 +58,7 @@ export function ClassicChatApp() {
         threads={threads}
       />
 
-      <SidebarInset   className="min-h-0 bg-transparent overflow-hidden">
+      <SidebarInset className="min-h-0 bg-transparent overflow-hidden">
         <div className="flex h-full flex-col overflow-hidden">
           <ChatHeader
             clients={(session?.availableClients || []).map((client) => ({

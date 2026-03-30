@@ -1,6 +1,6 @@
 # Platform SDK Tool Tests
 
-Last Updated: 2026-03-17
+Last Updated: 2026-03-30
 
 Scope:
 - Platform SDK contract/parity behavior, explicit-action behavior, and strict canonical input enforcement.
@@ -33,10 +33,8 @@ Key scenarios covered:
   - `models.update_provider`
   - `credentials.delete`
   - `knowledge_stores.list`
-  - `auth.mint_workload_token`
-  - `workload_security.decide_approval`
 - Additional matrix parity coverage now includes most remaining canonical dispatched actions across:
-  - `catalog.*`, `rag.*`, `artifacts.*`, `tools.*`, `agents.*`, `models.*`, `credentials.*`, `knowledge_stores.*`, `auth.*`, `workload_security.*`, and `orchestration.*`.
+  - `catalog.*`, `rag.*`, `artifacts.*`, `tools.*`, `agents.*`, `models.*`, `credentials.*`, `knowledge_stores.*`, and `orchestration.*`.
 - Canonical `agents.run_tests` action parity is covered explicitly (not only legacy alias path).
 - Coverage markers include newly dispatched canonical architect/domain actions:
   - `rag.operators.catalog`

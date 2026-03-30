@@ -7,7 +7,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.postgres.models.agents import Agent, AgentStatus
 from app.services.published_app_coding_agent_tools import ensure_coding_agent_tools
-from app.services.workload_provisioning_service import WorkloadProvisioningService
 
 CODING_AGENT_PROFILE_SLUG = "published-app-coding-agent"
 CODING_AGENT_PROFILE_NAME = "Published App Coding Agent"
@@ -130,10 +129,6 @@ async def ensure_coding_agent_profile(db: AsyncSession, tenant_id, *, actor_user
         )
         db.add(agent)
         await db.flush()
-        await WorkloadProvisioningService(db).provision_agent_policy(
-            agent=agent,
-            actor_user_id=actor_user_id,
-        )
         return agent
 
     graph_definition = _build_coding_agent_graph(model_id, tool_ids)
@@ -147,8 +142,4 @@ async def ensure_coding_agent_profile(db: AsyncSession, tenant_id, *, actor_user
     agent.is_active = True
     agent.is_public = False
     await db.flush()
-    await WorkloadProvisioningService(db).provision_agent_policy(
-        agent=agent,
-        actor_user_id=actor_user_id,
-    )
     return agent

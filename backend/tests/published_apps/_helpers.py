@@ -13,7 +13,6 @@ from app.db.postgres.models.identity import (
 )
 from app.db.postgres.models.published_apps import PublishedApp, PublishedAppStatus, PublishedAppVisibility
 from app.services.security_bootstrap_service import SecurityBootstrapService
-from app.services.workload_provisioning_service import WorkloadProvisioningService
 
 
 async def seed_admin_tenant_and_agent(db_session):
@@ -57,10 +56,6 @@ async def seed_admin_tenant_and_agent(db_session):
     )
     db_session.add(agent)
     await db_session.flush()
-    await WorkloadProvisioningService(db_session).provision_agent_policy(
-        agent=agent,
-        actor_user_id=user.id,
-    )
     await db_session.commit()
     return tenant, user, org_unit, agent
 

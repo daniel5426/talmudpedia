@@ -153,12 +153,12 @@ class LangGraphAdapter(RuntimeAdapter):
             "depth": config.get("depth"),
             "spawn_key": config.get("spawn_key"),
             "orchestration_group_id": config.get("orchestration_group_id"),
-            "grant_id": config.get("grant_id"),
-            "principal_id": config.get("principal_id"),
             "initiator_user_id": config.get("initiator_user_id"),
             "tenant_id": config.get("tenant_id"),
             "user_id": config.get("user_id"),
             "auth_token": config.get("auth_token"),
+            "architect_mode": config.get("architect_mode"),
+            "architect_effective_scopes": config.get("architect_effective_scopes"),
             "orchestration_surface": config.get("orchestration_surface"),
         }
         if emitter:

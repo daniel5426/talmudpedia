@@ -1,10 +1,12 @@
-import { env } from "./_lib/embed.js";
+import { loadSessionEnv } from "./_lib/env.js";
 import { json, noContent } from "./_lib/http.js";
 import { clearSession, ensureSession } from "./_lib/session.js";
 
+const sessionEnv = loadSessionEnv();
+
 export async function GET(request: Request): Promise<Response> {
   const headers = new Headers();
-  const session = ensureSession(request, headers, env.SESSION_COOKIE_SECRET);
+  const session = ensureSession(request, headers, sessionEnv.SESSION_COOKIE_SECRET);
   return json(session, { headers });
 }
 

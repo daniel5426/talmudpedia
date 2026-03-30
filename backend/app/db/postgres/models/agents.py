@@ -57,10 +57,6 @@ class Agent(Base):
         "allow_parallel_tools": True
     }, nullable=False)
 
-    # Workload provisioning metadata (security control plane).
-    workload_scope_profile = Column(String, nullable=False, default="default_agent_run")
-    workload_scope_overrides = Column(JSONB, default=[], nullable=False)
-    
     # Versioning & Status
     version = Column(Integer, default=1, nullable=False)
     status = Column(SQLEnum(AgentStatus), default=AgentStatus.draft, nullable=False)
@@ -135,8 +131,6 @@ class AgentRun(Base):
     cost = Column(String, nullable=True)
     
     trace_id = Column(String, nullable=True)
-    workload_principal_id = Column(UUID(as_uuid=True), ForeignKey("workload_principals.id", ondelete="SET NULL"), nullable=True, index=True)
-    delegation_grant_id = Column(UUID(as_uuid=True), ForeignKey("delegation_grants.id", ondelete="SET NULL"), nullable=True, index=True)
     initiator_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     surface = Column(String, nullable=True, index=True)
     published_app_id = Column(UUID(as_uuid=True), ForeignKey("published_apps.id", ondelete="SET NULL"), nullable=True, index=True)

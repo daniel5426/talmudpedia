@@ -108,16 +108,3 @@ export function normalizeImportedPath(file: File): string {
   const rawPath = String((file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name || "").trim()
   return rawPath.replaceAll("\\", "/").replace(/^\/+/, "").split("/").filter(Boolean).join("/")
 }
-
-export function buildRenamedFilePath(path: string, nextFileName: string): string {
-  const trimmedName = nextFileName.trim()
-  if (!trimmedName) {
-    throw new Error("File name cannot be empty")
-  }
-  if (trimmedName.includes("/")) {
-    throw new Error("File name cannot contain '/'")
-  }
-  const segments = path.split("/")
-  segments[segments.length - 1] = trimmedName
-  return segments.join("/")
-}

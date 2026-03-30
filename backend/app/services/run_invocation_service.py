@@ -67,44 +67,37 @@ class RunInvocationService:
         node_type: str | None,
         max_context_tokens: int | None,
         max_context_tokens_source: str,
-        estimated_input_tokens: int | None,
+        context_input_tokens: int | None,
+        context_source: str | None,
         exact_usage_payload: dict[str, Any] | None,
         estimated_output_tokens: int | None,
     ) -> dict[str, Any]:
         exact_usage = cls.usage_from_payload(exact_usage_payload)
         has_exact_usage = bool(exact_usage.to_json())
         usage_source = USAGE_SOURCE_EXACT if has_exact_usage else (
-            USAGE_SOURCE_ESTIMATED if estimated_input_tokens is not None or estimated_output_tokens is not None else USAGE_SOURCE_UNKNOWN
+            USAGE_SOURCE_ESTIMATED if context_input_tokens is not None or estimated_output_tokens is not None else USAGE_SOURCE_UNKNOWN
         )
 
         if has_exact_usage:
             usage = exact_usage
         else:
             usage = NormalizedUsage(
-                input_tokens=cls._safe_int(estimated_input_tokens),
+                input_tokens=cls._safe_int(context_input_tokens),
                 output_tokens=cls._safe_int(estimated_output_tokens),
             ).finalize()
 
-        # Context window tracks prompt occupancy for the next model call, not
-        # billable/provider-reported input usage. Prefer the prompt snapshot
-        # estimate whenever we have it, and only fall back to exact input usage
-        # when no prompt estimate was computed.
-        context_input_tokens = cls._safe_int(estimated_input_tokens)
-        if context_input_tokens is None and usage.input_tokens is not None and has_exact_usage:
-            context_input_tokens = usage.input_tokens
-        context_source = (
-            USAGE_SOURCE_ESTIMATED
-            if context_input_tokens is not None
-            else USAGE_SOURCE_EXACT
-            if usage.input_tokens is not None and has_exact_usage
-            else USAGE_SOURCE_UNKNOWN
-        )
+        normalized_context_input = cls._safe_int(context_input_tokens)
+        normalized_context_source = str(context_source or "").strip() or USAGE_SOURCE_UNKNOWN
+        if normalized_context_input is None and usage.input_tokens is not None and has_exact_usage:
+            normalized_context_input = usage.input_tokens
+            if normalized_context_source == USAGE_SOURCE_UNKNOWN:
+                normalized_context_source = USAGE_SOURCE_EXACT
         context_window = ContextWindowService.build_window(
-            source=context_source,
+            source=normalized_context_source,
             model_id=model_id,
             max_tokens=max_context_tokens,
             max_tokens_source=max_context_tokens_source,
-            input_tokens=context_input_tokens,
+            input_tokens=normalized_context_input,
         )
         return {
             "model_id": str(model_id or "").strip() or None,
@@ -118,7 +111,7 @@ class RunInvocationService:
                 **usage.to_json(),
             },
             "context_window": context_window,
-            "estimated_input_tokens": cls._safe_int(estimated_input_tokens),
+            "estimated_input_tokens": normalized_context_input,
             "estimated_output_tokens": cls._safe_int(estimated_output_tokens),
         }
 
@@ -147,7 +140,7 @@ class RunInvocationService:
             resolved_provider=str(payload.get("resolved_provider") or "").strip() or None,
             resolved_provider_model_id=str(payload.get("resolved_provider_model_id") or "").strip() or None,
             usage_source=self._normalize_source((payload.get("usage") or {}).get("source")),
-            context_source=self._normalize_source(context_window.get("source")),
+            context_source=str(context_window.get("source") or "").strip() or None,
             input_tokens=usage.input_tokens,
             output_tokens=usage.output_tokens,
             total_tokens=usage.total_tokens,
@@ -227,7 +220,7 @@ class RunInvocationService:
 
         latest = invocations[-1]
         context_window = ContextWindowService.build_window(
-            source=self._normalize_source(latest.context_source),
+            source=str(latest.context_source or "").strip() or USAGE_SOURCE_UNKNOWN,
             model_id=latest.model_id,
             max_tokens=latest.max_context_tokens,
             max_tokens_source=str(latest.max_context_tokens_source or "unknown").strip() or "unknown",

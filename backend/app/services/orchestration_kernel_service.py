@@ -9,18 +9,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.execution.service import AgentExecutorService
 from app.db.postgres.models.agents import Agent, AgentRun, RunStatus
-from app.db.postgres.models.security import DelegationGrant
 from app.db.postgres.models.orchestration import OrchestrationGroup, OrchestrationGroupMember
-from app.services.delegation_service import DelegationService
-from app.services.token_broker_service import TokenBrokerService
 from app.services.orchestration_lineage_service import OrchestrationLineageService
 from app.services.orchestration_policy_service import (
     OrchestrationPolicyError,
     OrchestrationPolicyService,
 )
-
-
-WORKLOAD_AUDIENCE = "talmudpedia-internal-api"
 
 
 class OrchestrationKernelService:
@@ -73,11 +67,10 @@ class OrchestrationKernelService:
             requested_children=1,
         )
 
-        caller_grant = await self._require_delegation_grant(caller_run)
         self.policy.assert_scope_subset(
             scope_subset=scope_subset,
             policy=policy,
-            effective_scopes=list(caller_grant.effective_scopes or []),
+            effective_scopes=self._caller_effective_scopes(caller_run),
         )
 
         normalized_key = str(idempotency_key or "").strip()
@@ -100,16 +93,8 @@ class OrchestrationKernelService:
                 "idempotent": True,
             }
 
-        child_grant = await self._mint_child_grant(
-            caller_run=caller_run,
-            requested_scopes=scope_subset,
-        )
-        child_token = await self._mint_child_token(child_grant=child_grant, scope_subset=scope_subset)
-
         child_input = self._build_child_input_payload(
             caller_run=caller_run,
-            child_grant=child_grant,
-            child_token=child_token,
             mapped_input_payload=mapped_input_payload,
             parent_node_id=parent_node_id,
             scope_subset=scope_subset,
@@ -123,7 +108,6 @@ class OrchestrationKernelService:
             input_params=child_input,
             user_id=caller_run.initiator_user_id or caller_run.user_id,
             background=start_background,
-            requested_scopes=scope_subset,
             root_run_id=caller_run.root_run_id or caller_run.id,
             parent_run_id=caller_run.id,
             parent_node_id=parent_node_id,
@@ -133,7 +117,6 @@ class OrchestrationKernelService:
             thread_id=thread_id,
         )
 
-        child_grant.run_id = child_run_id
         await self.db.commit()
 
         child_run = await self._require_run(child_run_id)
@@ -182,11 +165,10 @@ class OrchestrationKernelService:
             requested_children=len(targets),
         )
 
-        caller_grant = await self._require_delegation_grant(caller_run)
         self.policy.assert_scope_subset(
             scope_subset=scope_subset,
             policy=policy,
-            effective_scopes=list(caller_grant.effective_scopes or []),
+            effective_scopes=self._caller_effective_scopes(caller_run),
         )
 
         group = OrchestrationGroup(
@@ -522,48 +504,22 @@ class OrchestrationKernelService:
 
         raise ValueError("target_agent_id or target_agent_slug is required")
 
-    async def _require_delegation_grant(self, run: AgentRun) -> DelegationGrant:
-        if run.delegation_grant_id is None:
-            raise OrchestrationPolicyError("Caller run has no delegation grant context")
-
-        grant = await self.db.get(DelegationGrant, run.delegation_grant_id)
-        if grant is None:
-            raise OrchestrationPolicyError("Caller delegation grant not found")
-        return grant
-
-    async def _mint_child_grant(self, *, caller_run: AgentRun, requested_scopes: list[str]) -> DelegationGrant:
-        if caller_run.workload_principal_id is None:
-            raise OrchestrationPolicyError("Caller run has no workload principal context")
-
-        delegation = DelegationService(self.db)
-        child_grant, approval_required = await delegation.create_delegation_grant(
-            tenant_id=caller_run.tenant_id,
-            principal_id=caller_run.workload_principal_id,
-            initiator_user_id=caller_run.initiator_user_id or caller_run.user_id,
-            requested_scopes=requested_scopes,
-            run_id=None,
-        )
-        if approval_required:
-            raise OrchestrationPolicyError("Delegation policy approval required for child scope minting")
-        await self.db.flush()
-        return child_grant
-
-    async def _mint_child_token(self, *, child_grant: DelegationGrant, scope_subset: list[str]) -> str:
-        broker = TokenBrokerService(self.db)
-        token, _payload = await broker.mint_workload_token(
-            grant_id=child_grant.id,
-            audience=WORKLOAD_AUDIENCE,
-            scope_subset=scope_subset,
-        )
-        await self.db.flush()
-        return token
+    @staticmethod
+    def _caller_effective_scopes(run: AgentRun) -> list[str]:
+        input_params = run.input_params if isinstance(run.input_params, dict) else {}
+        context = input_params.get("context") if isinstance(input_params.get("context"), dict) else {}
+        scopes = context.get("architect_effective_scopes")
+        if isinstance(scopes, list) and scopes:
+            return [str(scope) for scope in scopes if str(scope).strip()]
+        scopes = context.get("scopes")
+        if isinstance(scopes, list) and scopes:
+            return [str(scope) for scope in scopes if str(scope).strip()]
+        return ["*"]
 
     def _build_child_input_payload(
         self,
         *,
         caller_run: AgentRun,
-        child_grant: DelegationGrant,
-        child_token: str,
         mapped_input_payload: dict[str, Any] | None,
         parent_node_id: str | None,
         scope_subset: list[str],
@@ -573,14 +529,24 @@ class OrchestrationKernelService:
         payload = dict(mapped_input_payload or {})
         context = payload.get("context") if isinstance(payload.get("context"), dict) else {}
         context = dict(context)
+        caller_input = caller_run.input_params if isinstance(caller_run.input_params, dict) else {}
+        caller_context = caller_input.get("context") if isinstance(caller_input.get("context"), dict) else {}
 
         context["tenant_id"] = str(caller_run.tenant_id)
         context["user_id"] = str(caller_run.initiator_user_id or caller_run.user_id) if (caller_run.initiator_user_id or caller_run.user_id) else None
-        context["grant_id"] = str(child_grant.id)
-        context["principal_id"] = str(caller_run.workload_principal_id) if caller_run.workload_principal_id else None
         context["initiator_user_id"] = str(caller_run.initiator_user_id) if caller_run.initiator_user_id else None
-        context["requested_scopes"] = list(scope_subset)
-        context["token"] = child_token
+        if caller_context.get("token") is not None:
+            context["token"] = caller_context.get("token")
+        if caller_context.get("resource_policy_snapshot") is not None:
+            context["resource_policy_snapshot"] = caller_context.get("resource_policy_snapshot")
+        if caller_context.get("resource_policy_principal") is not None:
+            context["resource_policy_principal"] = caller_context.get("resource_policy_principal")
+        if caller_context.get("architect_mode") is not None:
+            context["architect_mode"] = caller_context.get("architect_mode")
+        if caller_context.get("architect_effective_scopes") is not None:
+            context["architect_effective_scopes"] = caller_context.get("architect_effective_scopes")
+        elif scope_subset:
+            context["scopes"] = list(scope_subset)
         context["root_run_id"] = str(caller_run.root_run_id or caller_run.id)
         context["parent_run_id"] = str(caller_run.id)
         context["parent_node_id"] = parent_node_id

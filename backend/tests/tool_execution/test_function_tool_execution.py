@@ -251,7 +251,7 @@ async def test_function_tool_merges_input_wrapper_with_context(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_function_tool_propagates_delegation_context(monkeypatch):
+async def test_function_tool_propagates_architect_context(monkeypatch):
     captured = {}
 
     @register_tool_function("unit_test_capture_delegation_context")
@@ -277,20 +277,19 @@ async def test_function_tool_propagates_delegation_context(monkeypatch):
         {
             "node_id": "tool-node",
             "tenant_id": "tenant-123",
-            "grant_id": "grant-123",
-            "principal_id": "principal-123",
             "requested_scopes": ["agents.read"],
             "agent_slug": "platform-architect",
             "mode": "debug",
+            "architect_mode": "default",
+            "architect_effective_scopes": ["agents.read", "tools.write"],
         },
     )
 
     assert captured["context"]["tenant_id"] == "tenant-123"
-    assert captured["context"]["grant_id"] == "grant-123"
-    assert captured["context"]["principal_id"] == "principal-123"
-    assert captured["context"]["requested_scopes"] == ["agents.read"]
     assert captured["context"]["agent_slug"] == "platform-architect"
     assert captured["context"]["mode"] == "debug"
+    assert captured["context"]["architect_mode"] == "default"
+    assert captured["context"]["architect_effective_scopes"] == ["agents.read", "tools.write"]
 
 
 @pytest.mark.asyncio

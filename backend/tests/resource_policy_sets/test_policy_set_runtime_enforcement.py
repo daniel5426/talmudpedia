@@ -14,7 +14,7 @@ from app.services.retrieval_service import RetrievalService
 
 
 @pytest.mark.asyncio
-async def test_default_internal_run_skips_workload_delegation_and_attaches_snapshot(
+async def test_default_internal_run_attaches_resource_policy_snapshot(
     db_session,
     tenant_context,
     resource_factory,
@@ -47,8 +47,6 @@ async def test_default_internal_run_skips_workload_delegation_and_attaches_snaps
 
     assert run is not None
     assert run.status == RunStatus.queued
-    assert run.delegation_grant_id is None
-    assert run.workload_principal_id is None
     assert run.input_params["context"]["resource_policy_snapshot"]["direct_policy_set_id"] == str(policy_set.id)
     assert run.input_params["context"]["resource_policy_principal"]["principal_type"] == "tenant_user"
 

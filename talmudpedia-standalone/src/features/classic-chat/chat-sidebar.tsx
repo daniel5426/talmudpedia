@@ -62,7 +62,7 @@ export function ChatSidebar({
   const { isRtl, locale } = useLocale();
   const { isLoading, resetSession, session } = useSession();
 
-  const { open, openMobile, isMobile } = useSidebar();
+  const { open, openMobile, isMobile, setOpenMobile } = useSidebar();
   const isExpanded = open || openMobile;
   const chatListRef = React.useRef<HTMLDivElement | null>(null);
 
@@ -70,8 +70,19 @@ export function ChatSidebar({
     ? session.displayName.slice(0, 2).toUpperCase()
     : "LU";
 
+  const handleNewChat = () => {
+    onNewChat();
+    if (isMobile) {
+      setOpenMobile(false);
+    }
+  };
 
-
+  const handleSelectThread = (threadId: string) => {
+    onSelectThread(threadId);
+    if (isMobile) {
+      setOpenMobile(false);
+    }
+  };
 
   return (
     <Sidebar
@@ -90,7 +101,11 @@ export function ChatSidebar({
         >
           {isExpanded ? (
             <div className="flex-1 overflow-hidden flex items-center">
-              <img src="/pricoLogo.png" alt="Prico AI Logo" className="h-6 w-auto object-contain" />
+              <img
+                src="/pricoLogo.png"
+                alt="Prico AI Logo"
+                className="h-6 w-auto object-contain dark:brightness-[1.78] dark:contrast-[0.90] dark:saturate-[0.9]"
+              />
             </div>
           ) : null}
           <SidebarTrigger aria-label="Toggle sidebar" className="!size-8 cursor-pointer" />
@@ -102,7 +117,7 @@ export function ChatSidebar({
           <SidebarMenu>
             <SidebarMenuItem>
               <SidebarMenuButton
-                onClick={onNewChat}
+                onClick={handleNewChat}
                 className={cn(
                   "cursor-pointer bg-[#E6C97A] hover:bg-[#C9A34D] text-[#0B2A5B] hover:text-[#0B2A5B] transition-colors",
                   locale === "he" ? "text-[0.90rem] font-medium leading-6" : "text-sm",
@@ -139,7 +154,7 @@ export function ChatSidebar({
                     {threads.map((thread) => (
                       <SidebarMenuItem key={thread.id}>
                         <SidebarMenuButton
-                          onClick={() => onSelectThread(thread.id)}
+                          onClick={() => handleSelectThread(thread.id)}
                           isActive={activeThreadId === thread.id}
                           className="group justify-between gap-2 cursor-pointer data-active:bg-muted data-active:text-sidebar-foreground hover:bg-muted/50 active:bg-muted active:text-sidebar-foreground"
                         >

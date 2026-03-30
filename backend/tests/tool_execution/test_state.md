@@ -1,6 +1,6 @@
 # Tool Execution Tests
 
-Last Updated: 2026-03-29
+Last Updated: 2026-03-30
 
 ## Scope
 Validate MCP/function/agent-call execution paths in the `ToolNodeExecutor`.
@@ -21,6 +21,7 @@ Validate MCP/function/agent-call execution paths in the `ToolNodeExecutor`.
 - MCP error handling on missing result
 - Function tool execution via registry allowlist
 - Function-tool execution now bootstraps runtime-owned callable modules explicitly instead of relying on test/module import side effects
+- Function-tool execution propagates architect runtime context (`tenant_id`, `requested_scopes`, `architect_mode`, `architect_effective_scopes`) into nested function payloads.
 - Missing function tool name raises a clear error
 - Reasoning-node tool input coercion maps file/path aliases (`file_path`, `filePath`, `fromPath`, `toPath`) to canonical tool schema keys.
 - Reasoning-node input coercion also maps aliases inside wrapper payloads (`parameters`, `payload`, `args`) for path-bearing tools.
@@ -29,6 +30,7 @@ Validate MCP/function/agent-call execution paths in the `ToolNodeExecutor`.
 - Reasoning-node tool-call finalization prefers provider fallback tool-calls when chunked args cannot be parsed as JSON.
 - LangChain adapter normalizes `content_blocks` into runtime-compatible text, reasoning, tool-call chunks, citations, and built-in/server-tool result metadata.
 - LangChain/Gemini `response_metadata.usage_metadata` is normalized into exact shared token-usage payloads for executor accounting.
+- LangChain adapter now aggregates streamed `usage_metadata` across chunks instead of keeping only the last chunk.
 - Pre-bind tool schema validation rejects null/malformed property schema nodes before provider invocation and preserves nested object/array shapes in generated LangChain args schemas.
 - Function tool execution merges `args` payload with top-level execution context (preserves runtime metadata like `run_id`).
 - Function tool execution also decodes JSON-string `args` payloads before merge.
@@ -59,6 +61,9 @@ Validate MCP/function/agent-call execution paths in the `ToolNodeExecutor`.
 - non-UUID artifact bindings are rejected; artifact-backed tools must resolve to UUID-backed tenant or system artifacts
 
 ## Last Run
+- Command: `PYTHONPATH=. pytest -q tests/tool_execution/test_llm_provider_content_blocks.py`
+- Date/Time: 2026-03-30 Asia/Hebron
+- Result: PASS (`7 passed, 2 warnings`)
 - Command: `PYTHONPATH=. pytest -q backend/tests/tool_execution/test_llm_provider_content_blocks.py`
 - Date/Time: 2026-03-29 Asia/Hebron
 - Result: PASS (`6 passed, 2 warnings`)
