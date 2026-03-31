@@ -1,6 +1,6 @@
 # RAG Pipeline Spec
 
-Last Updated: 2026-03-23
+Last Updated: 2026-03-31
 
 This document is the canonical product contract for the RAG pipeline builder/runtime surface.
 
@@ -13,12 +13,15 @@ The RAG pipeline spec defines the contract shared by:
 
 ## Current Direction
 
-RAG pipelines are not being redesigned around agent `Start` / `End` nodes.
+RAG remains a separate pipeline product.
+
+It is not being redesigned around agent `Start` / `End` nodes, and it is not being unified with Agent through a shared node registry or shared node-definition library.
 
 The current direction is:
 - keep the RAG operator/pipeline model
-- harden it with the same contract discipline introduced in the agent workflow refactor
-- make operator registry metadata the authoritative source for builder/runtime contracts
+- harden it with explicit product contracts
+- simplify and polish the RAG node catalog
+- allow Agent to consume RAG pipelines as a product surface, not raw RAG internals
 
 ## Canonical Contract Principles
 
@@ -35,9 +38,61 @@ These contracts must be shared across:
 - builder pickers/forms
 - compiler/runtime execution
 
-## Operator Registry Authority
+## Node Catalog
 
-The backend operator registry is the source of truth for:
+The canonical RAG pipeline node catalog is:
+
+### Sources
+- `local_loader`
+- `s3_loader`
+- `web_crawler`
+- `api_loader`
+
+### Normalization
+- `format_normalizer`
+- `pii_redactor`
+
+### Enrichment
+- `metadata_extractor`
+- `entity_recognizer`
+- `classifier`
+- `llm`
+
+### Chunking
+- `chunker`
+
+### Embedding
+- `model_embedder`
+
+### Storage
+- `knowledge_store_sink`
+
+### Retrieval
+- `query_input`
+- `vector_search`
+- `hybrid_search`
+- `reranker`
+
+### Output
+- `retrieval_result`
+
+### Utility
+- `transform`
+
+Total: 19 nodes.
+
+## Catalog Direction
+
+The catalog direction is opinionated:
+- collapse multiple chunking variants into one `chunker` node with strategy config
+- collapse multiple reranking variants into one `reranker` node with strategy/model config
+- replace specialized enrichment transforms like `summarizer` with a general-purpose `llm` node
+- keep RAG-specific retrieval/storage/source nodes explicit
+- keep utility operations explicit through `transform`
+
+## Registry Authority
+
+The backend RAG operator registry is the source of truth for:
 - operator config/input surface
 - operator output contract
 - type metadata used by validation and builder UX
@@ -104,6 +159,13 @@ The agent workflow refactor introduced:
 - authoritative final output semantics
 
 RAG parity means applying the same discipline to pipeline operators and terminal outputs without forcing the agent-node model onto RAG.
+
+RAG and Agent stay separate at the node-architecture level:
+- no shared registry
+- no shared node-definition package
+- no projection layer between Agent and RAG specs
+
+Small name overlap between products is acceptable.
 
 ## Canonical Implementation References
 

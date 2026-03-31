@@ -43,18 +43,17 @@ import {
     canConnect,
     getNodeSpec,
 } from "./types"
-import { normalizeBuilderNode, normalizeBuilderEdges } from "./graphspec"
+import { normalizeBuilderNode, normalizeBuilderEdges, normalizeGraphDefinition, normalizeGraphSpecForSave } from "./graphspec"
 import { getRenderGraphForMode } from "./runtime-merge"
 import { useAgentGraphAnalysis } from "./useAgentGraphAnalysis"
 import { getTemplateSuggestionsForNode } from "./template-suggestions"
-import { AgentExecutionEvent } from "@/services"
+import { AgentExecutionEvent, AgentGraphDefinition } from "@/services"
 import { AlertTriangle, LayoutGrid, Trash2 } from "lucide-react"
 
 interface AgentBuilderProps {
     agentId?: string
-    initialNodes?: Node<AgentNodeData>[]
-    initialEdges?: Edge[]
-    onSave?: (nodes: Node<AgentNodeData>[], edges: Edge[]) => void
+    initialGraphDefinition?: AgentGraphDefinition
+    onSave?: (graphDefinition: AgentGraphDefinition) => void
     onCompile?: () => void
     onRun?: () => void
     isSaving?: boolean
@@ -64,10 +63,10 @@ interface AgentBuilderProps {
 }
 
 function matchesStepToNode(step: ExecutionStep, node: Node<AgentNodeData>, data: AgentNodeData): boolean {
+    if (step.nodeId) {
+        return step.nodeId === node.id
+    }
     return (
-        step.nodeId === node.id ||
-        step.name === data.displayName ||
-        step.name.toLowerCase() === data.nodeType.toLowerCase() ||
         step.id.includes(node.id) ||
         step.name === node.id
     )
@@ -216,8 +215,7 @@ function matchesEventToNode(event: AgentExecutionEvent, node: Node<AgentNodeData
 
 function AgentBuilderInner({
     agentId,
-    initialNodes = [],
-    initialEdges = [],
+    initialGraphDefinition,
     onSave,
     onCompile,
     onRun,
@@ -231,13 +229,27 @@ function AgentBuilderInner({
 
     const normalizeNode = useCallback((node: Node) => normalizeBuilderNode(node), [])
 
+    const normalizedInitialGraph = useMemo(
+        () => normalizeGraphDefinition(initialGraphDefinition),
+        [initialGraphDefinition],
+    )
     const normalizedInitialNodes = useMemo(() => {
-        return (initialNodes || []).map((node) => normalizeNode(node))
-    }, [initialNodes, normalizeNode])
+        return (normalizedInitialGraph.nodes || []).map((node) => normalizeNode(node as Node))
+    }, [normalizedInitialGraph.nodes, normalizeNode])
 
-    const normalizedInitialEdges = useMemo(() => normalizeBuilderEdges(initialEdges || []), [initialEdges])
+    const normalizedInitialEdges = useMemo(
+        () => normalizeBuilderEdges(normalizedInitialGraph.edges || []),
+        [normalizedInitialGraph.edges],
+    )
     const [nodes, setNodes, onNodesChange] = useNodesState<Node<AgentNodeData>>(normalizedInitialNodes)
     const [edges, setEdges, onEdgesChange] = useEdgesState(normalizedInitialEdges)
+    const [graphDefinitionMeta, setGraphDefinitionMeta] = useState<AgentGraphDefinition>({
+        spec_version: normalizedInitialGraph.spec_version,
+        workflow_contract: normalizedInitialGraph.workflow_contract,
+        state_contract: normalizedInitialGraph.state_contract,
+        nodes: normalizedInitialGraph.nodes,
+        edges: normalizedInitialGraph.edges,
+    })
     const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
     const [executeTraceNodeId, setExecuteTraceNodeId] = useState<string | null>(null)
     const [internalMode, setInternalMode] = useState<"build" | "execute">("build")
@@ -269,8 +281,25 @@ function AgentBuilderInner({
         })
     }, [setNodes, normalizeNode])
 
+    useEffect(() => {
+        setGraphDefinitionMeta({
+            spec_version: normalizedInitialGraph.spec_version,
+            workflow_contract: normalizedInitialGraph.workflow_contract,
+            state_contract: normalizedInitialGraph.state_contract,
+            nodes: normalizedInitialGraph.nodes,
+            edges: normalizedInitialGraph.edges,
+        })
+    }, [normalizedInitialGraph])
+
+    const analysisGraphDefinition = useMemo(() => ({
+        spec_version: graphDefinitionMeta.spec_version,
+        workflow_contract: graphDefinitionMeta.workflow_contract,
+        state_contract: graphDefinitionMeta.state_contract,
+        nodes: nodes as Node<AgentNodeData>[],
+        edges,
+    }), [graphDefinitionMeta.spec_version, graphDefinitionMeta.workflow_contract, graphDefinitionMeta.state_contract, nodes, edges])
     // Dedicated controller for execution (chat) mode
-    const controller = useAgentRunController(agentId)
+    const controller = useAgentRunController(agentId, analysisGraphDefinition)
     const { executionSteps, executionEvents, currentRunId, currentRunStatus } = controller
     const runtimeOverlay = useAgentRuntimeGraph({
         staticNodes: nodes as Node<AgentNodeData>[],
@@ -279,7 +308,7 @@ function AgentBuilderInner({
         executionEvents,
         runStatus: currentRunStatus,
     })
-    const { analysis: graphAnalysis } = useAgentGraphAnalysis(agentId, nodes as Node<AgentNodeData>[], edges)
+    const { analysis: graphAnalysis } = useAgentGraphAnalysis(agentId, analysisGraphDefinition)
     const selectedNodeTemplateSuggestions = useMemo(
         () => getTemplateSuggestionsForNode(graphAnalysis, selectedNodeId),
         [graphAnalysis, selectedNodeId],
@@ -346,9 +375,15 @@ function AgentBuilderInner({
     // Auto-save on changes
     useEffect(() => {
         if (onSave && mode === "build") {
-            onSave(nodes as Node<AgentNodeData>[], edges)
+            onSave(
+                normalizeGraphSpecForSave(nodes as Node<AgentNodeData>[], edges, {
+                    specVersion: graphDefinitionMeta.spec_version,
+                    workflowContract: graphDefinitionMeta.workflow_contract,
+                    stateContract: graphDefinitionMeta.state_contract,
+                }),
+            )
         }
-    }, [nodes, edges, onSave, mode])
+    }, [nodes, edges, onSave, mode, graphDefinitionMeta])
 
     // Update nodes with execution status
     useEffect(() => {
@@ -841,7 +876,18 @@ function AgentBuilderInner({
                             canRedo={canRedo}
                             onUndo={handleUndo}
                             onRedo={handleRedo}
-                            onSave={onSave ? () => onSave(nodes as Node<AgentNodeData>[], edges) : undefined}
+                            onSave={
+                                onSave
+                                    ? () =>
+                                        onSave(
+                                            normalizeGraphSpecForSave(nodes as Node<AgentNodeData>[], edges, {
+                                                specVersion: graphDefinitionMeta.spec_version,
+                                                workflowContract: graphDefinitionMeta.workflow_contract,
+                                                stateContract: graphDefinitionMeta.state_contract,
+                                            }),
+                                        )
+                                    : undefined
+                            }
                             onCompile={onCompile}
                             onRun={onRun}
                             onAutoLayout={handleAutoLayout}
@@ -894,6 +940,8 @@ function AgentBuilderInner({
                             nodeId={selectedNode.id}
                             data={safeSelectedNodeData}
                             onConfigChange={handleConfigChange}
+                            graphDefinition={graphDefinitionMeta}
+                            onGraphDefinitionChange={setGraphDefinitionMeta}
                             onClose={() => setSelectedNodeId(null)}
                             availableVariables={selectedNodeTemplateSuggestions}
                             graphAnalysis={graphAnalysis}

@@ -129,7 +129,7 @@ export interface ChatController {
   copiedMessageId: string | null;
   lastThinkingDurationMs: number | null;
   activeStreamingId: string | null;
-  handleSubmit: (message: { text: string; files: FileUIPart[] }) => Promise<void>;
+  handleSubmit: (message: { text: string; files: FileUIPart[]; state?: Record<string, unknown> }) => Promise<void>;
   handleStop: () => void;
   handleCopy: (content: string, messageId: string) => void;
   handleLike: (msg: ChatMessage) => Promise<void>;
@@ -471,6 +471,7 @@ export function useChatController(): ChatController {
   const handleSubmit = async (message: {
     text: string;
     files: FileUIPart[];
+    state?: Record<string, unknown>;
   }) => {
     if (!message.text.trim() && message.files.length === 0) return;
 

@@ -12,6 +12,7 @@ from app.rag.interfaces.vector_store import (
 
 
 class PgvectorVectorStore(VectorStoreProvider):
+    MAX_IVFFLAT_DIMENSION = 2000
     
     def __init__(
         self,
@@ -78,12 +79,15 @@ class PgvectorVectorStore(VectorStoreProvider):
                         created_at TIMESTAMP DEFAULT NOW()
                     )
                 """)
-                
-                await conn.execute(f"""
-                    CREATE INDEX IF NOT EXISTS {table}_embedding_idx 
-                    ON {table} USING ivfflat (embedding {distance_op})
-                    WITH (lists = 100)
-                """)
+
+                # ivfflat rejects dimensions above 2000; keep the table usable and
+                # fall back to exact search when embeddings exceed that threshold.
+                if dimension <= self.MAX_IVFFLAT_DIMENSION:
+                    await conn.execute(f"""
+                        CREATE INDEX IF NOT EXISTS {table}_embedding_idx 
+                        ON {table} USING ivfflat (embedding {distance_op})
+                        WITH (lists = 100)
+                    """)
                 
                 await conn.execute(f"""
                     CREATE INDEX IF NOT EXISTS {table}_namespace_idx 

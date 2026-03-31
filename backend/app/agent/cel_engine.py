@@ -308,8 +308,10 @@ class RestrictedCELEvaluator:
                     break
         elif 'input' not in namespace:
             namespace['input'] = state.get('input', '') if state else ''
+        if "text" not in namespace:
+            namespace["text"] = namespace.get("workflow_input", {}).get("text", namespace.get("input", ""))
         if "input_as_text" not in namespace:
-            namespace["input_as_text"] = namespace.get("workflow_input", {}).get("input_as_text", namespace.get("input", ""))
+            namespace["input_as_text"] = namespace.get("workflow_input", {}).get("input_as_text", namespace.get("text", namespace.get("input", "")))
         
         return namespace
     
@@ -382,6 +384,7 @@ class TemplateStringEvaluator:
     """
     
     TEMPLATE_PATTERN = re.compile(r'\{\{\s*(.+?)\s*\}\}')
+    ALIAS_PATTERN = re.compile(r'(?<![\w{])@([A-Za-z_][A-Za-z0-9_.\[\]]*)')
     
     def __init__(self):
         self._cel = RestrictedCELEvaluator()
@@ -408,15 +411,21 @@ class TemplateStringEvaluator:
         
         errors = []
         
-        def replace_match(match):
-            expr = match.group(1)
+        def replace_expr(expr: str, fallback: str):
             result = self._cel.evaluate(expr, state, context)
             if not result.success:
                 errors.append(f"Expression '{expr}': {result.error}")
-                return match.group(0)  # Keep original on error
+                return fallback
             return str(result.value) if result.value is not None else ""
-        
-        interpolated = self.TEMPLATE_PATTERN.sub(replace_match, template)
+
+        interpolated = self.TEMPLATE_PATTERN.sub(
+            lambda match: replace_expr(match.group(1), match.group(0)),
+            template,
+        )
+        interpolated = self.ALIAS_PATTERN.sub(
+            lambda match: replace_expr(match.group(1), match.group(0)),
+            interpolated,
+        )
         
         if errors:
             return CELEvaluationResult(
@@ -432,8 +441,9 @@ class TemplateStringEvaluator:
         Extract all variable expressions from a template string.
         Useful for validation and autocomplete.
         """
-        matches = self.TEMPLATE_PATTERN.findall(template)
-        return [m.strip() for m in matches]
+        template_matches = [m.strip() for m in self.TEMPLATE_PATTERN.findall(template)]
+        alias_matches = [m.strip() for m in self.ALIAS_PATTERN.findall(template)]
+        return template_matches + alias_matches
 
 
 # =============================================================================

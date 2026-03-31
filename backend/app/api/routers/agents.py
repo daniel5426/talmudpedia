@@ -50,6 +50,7 @@ from app.api.schemas.agents import (
     CancelRunRequest,
 )
 from app.db.postgres.models.agents import Agent, AgentRun
+from app.db.postgres.models.registry import ToolRegistry
 from sqlalchemy import select
 from typing import Optional
 from datetime import datetime
@@ -141,7 +142,7 @@ async def get_agent_context(
     }
 
 
-def agent_to_response(agent, compact: bool = False) -> AgentResponse:
+def agent_to_response(agent, compact: bool = False, *, tool_binding: ToolRegistry | None = None) -> AgentResponse:
     """Convert Agent model to response."""
     return AgentResponse(
         id=agent.id,
@@ -159,6 +160,10 @@ def agent_to_response(agent, compact: bool = False) -> AgentResponse:
         is_public=agent.is_public,
         show_in_playground=bool(getattr(agent, "show_in_playground", True)),
         default_embed_policy_set_id=getattr(agent, "default_embed_policy_set_id", None),
+        tool_binding_status=(
+            str(getattr(getattr(tool_binding, "status", None), "value", getattr(tool_binding, "status", ""))).lower() or None
+        ) if tool_binding is not None else None,
+        is_tool_enabled=tool_binding is not None and bool(getattr(tool_binding, "is_active", False)),
         created_at=agent.created_at,
         updated_at=agent.updated_at,
         published_at=agent.published_at,
@@ -450,9 +455,31 @@ async def list_agents(
     service = AgentService(db=db, tenant_id=tenant_id)
     
     agents, total = await service.list_agents(status=status, skip=skip, limit=limit, compact=compact)
-    
+    tool_binding_by_agent_id: dict[str, ToolRegistry] = {}
+    if agents:
+        tool_rows = (
+            await db.execute(
+                select(ToolRegistry).where(
+                    ToolRegistry.tenant_id == tenant_id,
+                    ToolRegistry.source_object_type == "agent",
+                    ToolRegistry.source_object_id.in_([str(agent.id) for agent in agents]),
+                )
+            )
+        ).scalars().all()
+        tool_binding_by_agent_id = {
+            str(tool.source_object_id): tool
+            for tool in tool_rows
+            if getattr(tool, "source_object_id", None)
+        }
     return AgentListResponse(
-        agents=[agent_to_response(a, compact=compact) for a in agents],
+        agents=[
+            agent_to_response(
+                a,
+                compact=compact,
+                tool_binding=tool_binding_by_agent_id.get(str(a.id)),
+            )
+            for a in agents
+        ],
         total=total
     )
 
@@ -686,6 +713,7 @@ async def execute_agent(
         result = await service.execute_agent(agent_id, ExecuteAgentData(
             input=request.input,
             messages=request.messages,
+            state=request.state,
             context=request_context,
         ), user_id=context["user"].id if context.get("user") else None)
         # Convert LangChain messages to dicts for Pydantic validation
@@ -778,6 +806,7 @@ async def stream_agent(
             "messages": current_messages,
             "input": request.input,
             "attachment_ids": [str(item) for item in request.attachment_ids],
+            "state": dict(request.state or {}) if isinstance(request.state, dict) else {},
             "thread_id": str(request.thread_id) if request.thread_id else None,
             "context": request_context,
         }

@@ -243,6 +243,28 @@
         ]
     },
     {
+        "name": "Google Chirp 3",
+        "system_key": "google-chirp-3",
+        "capability_type": "speech_to_text",
+        "description": "Google Cloud Speech-to-Text Chirp 3 model for platform-native audio transcription.",
+        "is_default": true,
+        "metadata": {
+            "supports_segments": true,
+            "supports_language_hints": true
+        },
+        "providers": [
+            {
+                "provider": "GOOGLE",
+                "provider_model_id": "chirp_3",
+                "priority": 0,
+                "pricing_config": {
+                    "currency": "USD",
+                    "billing_mode": "unknown"
+                }
+            }
+        ]
+    },
+    {
         "name": "Text Embedding 3 Large",
         "system_key": "text-embedding-3-large",
         "capability_type": "embedding",

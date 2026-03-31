@@ -856,7 +856,7 @@ export default function ToolsPage() {
         }
         if (intent === "agent") {
             setCreateEntryOpen(false)
-            router.push("/admin/agents?mode=export-tool")
+            router.push("/admin/agents")
         }
     }, [router])
 

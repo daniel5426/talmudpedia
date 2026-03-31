@@ -81,15 +81,31 @@ def _retrieval_pipeline_shell_graph() -> Dict[str, Any]:
                 "config": {},
             },
             {
+                "id": "model_embedder_1",
+                "category": "embedding",
+                "operator": "model_embedder",
+                "position": {"x": 220, "y": 0},
+                "config": {},
+            },
+            {
+                "id": "vector_search_1",
+                "category": "retrieval",
+                "operator": "vector_search",
+                "position": {"x": 440, "y": 0},
+                "config": {},
+            },
+            {
                 "id": "retrieval_result_1",
                 "category": "output",
                 "operator": "retrieval_result",
-                "position": {"x": 280, "y": 0},
+                "position": {"x": 660, "y": 0},
                 "config": {},
             },
         ],
         "edges": [
-            {"id": "edge_query_to_result", "source": "query_input_1", "target": "retrieval_result_1"},
+            {"id": "edge_query_to_embed", "source": "query_input_1", "target": "model_embedder_1"},
+            {"id": "edge_embed_to_search", "source": "model_embedder_1", "target": "vector_search_1"},
+            {"id": "edge_search_to_result", "source": "vector_search_1", "target": "retrieval_result_1"},
         ],
     }
 

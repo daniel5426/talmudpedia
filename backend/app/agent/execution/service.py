@@ -22,6 +22,8 @@ from app.agent.execution.trace_recorder import ExecutionTraceRecorder
 from app.db.postgres.models.agent_threads import AgentThreadSurface, AgentThreadTurnStatus
 from app.services.prompt_reference_resolver import PromptReferenceResolver
 from app.services.runtime_attachment_service import RuntimeAttachmentOwner, RuntimeAttachmentService
+from app.services.runtime_input_preparation_service import RuntimeInputPreparationService
+from app.services.speech_to_text_service import SpeechToTextService
 from app.services.thread_service import ThreadAccessError, ThreadService
 from app.services.usage_quota_service import UsageQuotaService
 from app.services.resource_policy_quota_service import ResourcePolicyQuotaExceeded, ResourcePolicyQuotaService
@@ -89,7 +91,7 @@ class AgentExecutorService:
             node = dict(raw_node)
             node_type = str(node.get("type") or "").strip().lower()
             config = node.get("config")
-            if node_type in {"agent", "llm", "llm_call", "classify"} and isinstance(config, dict):
+            if node_type in {"agent", "classify"} and isinstance(config, dict):
                 config = dict(config)
                 if "model_id" in config:
                     config["model_id"] = resolved_model_id
@@ -123,7 +125,7 @@ class AgentExecutorService:
             if not isinstance(raw_node, dict):
                 continue
             node_type = str(raw_node.get("type") or "").strip().lower()
-            if node_type not in {"agent", "llm", "llm_call", "classify"}:
+            if node_type not in {"agent", "classify"}:
                 continue
             config = raw_node.get("config")
             if not isinstance(config, dict):
@@ -132,6 +134,47 @@ class AgentExecutorService:
             if model_id:
                 model_ids.append(model_id)
         return model_ids
+
+    @staticmethod
+    def _workflow_modality_flags(graph_definition: dict[str, Any]) -> dict[str, bool]:
+        try:
+            graph = AgentGraph.model_validate(graph_definition or {"nodes": [], "edges": []})
+        except Exception:
+            return {"text": True, "files": True, "audio": True, "images": True}
+
+        flags = {"text": True, "files": True, "audio": True, "images": True}
+        workflow_contract = getattr(graph, "workflow_contract", None)
+        items = getattr(workflow_contract, "inputs", []) if workflow_contract is not None else []
+        for item in items or []:
+            key = str(getattr(item, "key", "") or "").strip()
+            if key in flags:
+                flags[key] = bool(getattr(item, "enabled", True))
+        return flags
+
+    @classmethod
+    def _assert_workflow_inputs_allowed(
+        cls,
+        *,
+        graph_definition: dict[str, Any],
+        workflow_input: dict[str, Any],
+    ) -> None:
+        flags = cls._workflow_modality_flags(graph_definition)
+        normalized_text = str(workflow_input.get("text") or workflow_input.get("input_as_text") or "").strip()
+        if normalized_text and not flags["text"]:
+            raise ValueError("This workflow does not allow text input")
+
+        modality_values = {
+            "files": workflow_input.get("files"),
+            "audio": workflow_input.get("audio"),
+            "images": workflow_input.get("images"),
+        }
+        for key, value in modality_values.items():
+            if flags[key]:
+                continue
+            if isinstance(value, list) and value:
+                raise ValueError(f"This workflow does not allow {key} input")
+            if isinstance(value, dict) and value:
+                raise ValueError(f"This workflow does not allow {key} input")
 
     @staticmethod
     def _resolve_requested_model_id(
@@ -591,7 +634,11 @@ class AgentExecutorService:
             thread_id=thread_result.thread.id,
         )
         attachment_ids = input_params.get("attachment_ids") if isinstance(input_params.get("attachment_ids"), list) else []
-        prepared_message = await attachment_service.prepare_for_run(
+        input_preparation_service = RuntimeInputPreparationService(
+            attachment_service,
+            stt_service=SpeechToTextService(self.db, agent.tenant_id),
+        )
+        prepared_message = await input_preparation_service.prepare_for_run(
             owner=attachment_owner,
             attachment_ids=[str(item) for item in attachment_ids],
             input_text=input_params.get("input") if isinstance(input_params.get("input"), str) else None,
@@ -607,6 +654,18 @@ class AgentExecutorService:
         input_params["attachments"] = [
             attachment_service.serialize_attachment(attachment) for attachment in prepared_message.attachments
         ]
+        workflow_input = input_params.get("workflow_input") if isinstance(input_params.get("workflow_input"), dict) else {}
+        input_params["workflow_input"] = {
+            **workflow_input,
+            **RuntimeInputPreparationService.build_workflow_input_payload(
+                input_text=input_params.get("input") if isinstance(input_params.get("input"), str) else None,
+                attachments=input_params["attachments"],
+            ),
+        }
+        self._assert_workflow_inputs_allowed(
+            graph_definition=agent.graph_definition or {},
+            workflow_input=input_params["workflow_input"],
+        )
 
         policy_service = ResourcePolicyService(self.db)
         policy_snapshot = self._safe_policy_snapshot_from_context(runtime_context)
@@ -670,6 +729,7 @@ class AgentExecutorService:
         context_payload = input_params.get("context") if isinstance(input_params.get("context"), dict) else {}
         context_payload = dict(context_payload)
         context_payload["thread_id"] = str(thread_result.thread.id)
+        context_payload["surface"] = surface.value if hasattr(surface, "value") else str(surface)
         if requested_model_ref:
             context_payload["requested_model_id"] = requested_model_ref
         if policy_snapshot is not None:
@@ -851,7 +911,8 @@ class AgentExecutorService:
             if not isinstance(workflow_input, dict):
                 workflow_input = {}
             workflow_input = {
-                "input_as_text": str(run_input_params.get("input") or workflow_input.get("input_as_text") or ""),
+                "text": str(run_input_params.get("input") or workflow_input.get("text") or workflow_input.get("input_as_text") or ""),
+                "input_as_text": str(run_input_params.get("input") or workflow_input.get("text") or workflow_input.get("input_as_text") or ""),
                 **workflow_input,
             }
             run_input_params["workflow_input"] = workflow_input
@@ -866,7 +927,7 @@ class AgentExecutorService:
         else:
             run_input_params = {
                 "context": runtime_context,
-                "workflow_input": {"input_as_text": ""},
+                "workflow_input": {"text": "", "input_as_text": ""},
                 "state": {"context": dict(runtime_context)},
             }
 

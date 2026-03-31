@@ -58,6 +58,26 @@ async def _seed_agent(db_session, *, tenant_id, user_id, status: AgentStatus = A
         slug=f"delegated-helper-{uuid.uuid4().hex[:8]}",
         description="Agent export target",
         graph_definition={
+            "workflow_contract": {
+                "inputs": [
+                    {"key": "text", "type": "string", "semantic_type": "text"},
+                    {"key": "files", "type": "list", "semantic_type": "files"},
+                ],
+            },
+            "state_contract": {
+                "variables": [
+                    {"key": "customer_id", "type": "string", "description": "Customer identifier"},
+                    {
+                        "key": "filters",
+                        "type": "object",
+                        "schema": {
+                            "type": "object",
+                            "properties": {"status": {"type": "string"}},
+                            "additionalProperties": False,
+                        },
+                    },
+                ],
+            },
             "nodes": [
                 {"id": "start", "type": "start", "position": {"x": 0, "y": 0}},
                 {"id": "end", "type": "end", "position": {"x": 240, "y": 0}},
@@ -97,11 +117,6 @@ async def test_export_agent_tool_creates_agent_bound_registry_row(client, db_ses
             json={
                 "name": "Delegated Helper Tool",
                 "description": "Agent-owned export",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {"text": {"type": "string"}},
-                    "additionalProperties": False,
-                },
             },
         )
         assert response.status_code == 200, response.text
@@ -117,6 +132,10 @@ async def test_export_agent_tool_creates_agent_bound_registry_row(client, db_ses
         assert tool.managed_by == "agents"
         assert tool.source_object_type == "agent"
         assert tool.source_object_id == str(agent.id)
+        assert tool.schema["input"]["properties"]["text"]["type"] == "string"
+        assert tool.schema["input"]["properties"]["files"]["type"] == "array"
+        assert tool.schema["input"]["properties"]["customer_id"]["type"] == "string"
+        assert tool.schema["input"]["properties"]["filters"]["type"] == "object"
 
         tool_response = await client.get(f"/tools/{tool.id}")
         assert tool_response.status_code == 200, tool_response.text

@@ -51,6 +51,7 @@ class ClassifyNodeExecutor(BaseNodeExecutor):
             if not isinstance(category, dict):
                 continue
             name = str(category.get("name") or "").strip() or f"category_{idx}"
+            category_id = str(category.get("id") or "").strip() or name or f"category_{idx}"
             description = str(category.get("description", ""))
             if description:
                 try:
@@ -59,6 +60,7 @@ class ClassifyNodeExecutor(BaseNodeExecutor):
                     logger.warning(f"Failed to interpolate classify category description: {exc}")
             normalized_categories.append(
                 {
+                    "id": category_id,
                     "name": name,
                     "description": description,
                 }
@@ -76,6 +78,25 @@ class ClassifyNodeExecutor(BaseNodeExecutor):
             source_value = resolve_runtime_value_ref(state=state, value_ref=normalize_value_ref(config.get("input_source")))
             if source_value is not None:
                 source_text = source_value if isinstance(source_value, str) else str(source_value)
+        if not source_text:
+            workflow_input = state.get("workflow_input") if isinstance(state.get("workflow_input"), dict) else {}
+            if workflow_input:
+                for key in ("text", "input_as_text"):
+                    raw = workflow_input.get(key)
+                    if raw not in (None, ""):
+                        source_text = raw if isinstance(raw, str) else str(raw)
+                        break
+        if not source_text:
+            messages = state.get("messages", [])
+            for message in reversed(messages if isinstance(messages, list) else []):
+                if isinstance(message, dict) and str(message.get("role") or "").lower() == "user":
+                    content = message.get("content")
+                    if content not in (None, ""):
+                        source_text = content if isinstance(content, str) else str(content)
+                        break
+        source_text = str(source_text or "").strip()
+        if not source_text:
+            raise ValueError("Classify node requires an input value to classify")
         
         # 1. Construct Classification Prompt
         category_lines = []
@@ -89,16 +110,14 @@ class ClassifyNodeExecutor(BaseNodeExecutor):
 Available Categories:
 {chr(10).join(category_lines)}
 
-Input To Classify:
-{source_text or ""}
-
 Based on the context, determine the most appropriate category.
 Respond ONLY with the category name. Do not include any other text."""
 
-        # 2. Add System Prompt to messages
-        messages = state.get("messages", [])
-        formatted_messages = self._format_messages(messages)
-        formatted_messages.append(SystemMessage(content=prompt))
+        # 2. Build a narrow classify-only prompt to avoid generic assistant replies.
+        formatted_messages = [
+            SystemMessage(content=prompt),
+            HumanMessage(content=source_text),
+        ]
         
         # 3. Call LLM (using resolver + adapter)
         resolver = ModelResolver(self.db, self.tenant_id)
@@ -109,7 +128,12 @@ Respond ONLY with the category name. Do not include any other text."""
         from app.agent.execution.emitter import active_emitter
         emitter = active_emitter.get()
         if emitter:
-            emitter.emit_node_start(node_id, config.get("name", "Classify"), "classify", {"categories": len(normalized_categories)})
+            emitter.emit_node_start(
+                node_id,
+                config.get("name", "Classify"),
+                "classify",
+                {"categories": len(normalized_categories), "input_length": len(source_text)},
+            )
 
         response_content = ""
         try:
@@ -126,23 +150,45 @@ Respond ONLY with the category name. Do not include any other text."""
                 emitter.emit_error(str(e), node_id)
             raise e
 
-        if emitter:
-            emitter.emit_node_end(node_id, config.get("name", "Classify"), "classify", {"selected": response_content})
-
         # 4. Match result to category
         selected_category = "else" # Default
+        selected_handle = "else"
         normalized_response = response_content.strip().lower()
         for cat in normalized_categories:
             if cat["name"].lower() == normalized_response:
                 selected_category = cat["name"]
+                selected_handle = cat["id"]
                 break
+        if selected_handle == "else":
+            for cat in normalized_categories:
+                if cat["name"].lower() in normalized_response:
+                    selected_category = cat["name"]
+                    selected_handle = cat["id"]
+                    break
+
+        if emitter:
+            emitter.emit_node_end(
+                node_id,
+                config.get("name", "Classify"),
+                "classify",
+                {
+                    "selected": selected_category,
+                    "branch_label": selected_category,
+                    "branch_id": selected_handle,
+                    "branch_taken": selected_handle,
+                    "classification_result": response_content,
+                },
+            )
         
-        logger.info(f"Classify node '{node_id}' selected: {selected_category}")
+        logger.info(f"Classify node '{node_id}' selected: {selected_category} ({selected_handle})")
         
         return {
-            "next": selected_category,
-            "branch_taken": selected_category,
-            "classification_result": response_content
+            "next": selected_handle,
+            "branch_id": selected_handle,
+            "branch_label": selected_category,
+            "branch_taken": selected_handle,
+            "classification_result": response_content,
+            "category": selected_category,
         }
 
     def get_output_handles(self, config: Dict[str, Any]) -> List[str]:
@@ -151,7 +197,9 @@ Respond ONLY with the category name. Do not include any other text."""
         for idx, category in enumerate(categories):
             if not isinstance(category, dict):
                 continue
-            handles.append(str(category.get("name") or "").strip() or f"category_{idx}")
+            name = str(category.get("name") or "").strip()
+            handles.append(str(category.get("id") or "").strip() or name or f"category_{idx}")
+        handles.append("else")
         return handles
 
     def _format_messages(self, messages: List[Any]) -> List[BaseMessage]:

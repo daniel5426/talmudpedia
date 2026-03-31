@@ -1,6 +1,6 @@
 # Active Execution Plans
 
-Last Updated: 2026-03-26
+Last Updated: 2026-03-31
 
 This section holds work that is planned or currently in progress.
 
@@ -23,5 +23,7 @@ This section holds work that is planned or currently in progress.
 - `agent_builder_rag_production_readiness_refactor_plan.md`
 - `autonomous_node_test_env_plan.md`
 - `model_registry_production_readiness_refactor_plan.md`
+- `rag_node_catalog_refactor_plan.md`
+- `rag_extreme_test_campaign_plan.md`
 - `resource_policy_sets_full_test_plan.md`
 - `tools_update_v1_plan.md`

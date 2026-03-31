@@ -55,7 +55,6 @@ def _normalize_surface_list(value: Any) -> list[str]:
 class PromptReferenceResolver:
     GRAPH_FIELD_SURFACES: dict[str, dict[str, str]] = {
         "agent": {"instructions": "agent.instructions"},
-        "llm": {"system_prompt": "llm.system_prompt"},
         "rag": {"query": "rag.query"},
         "vector_search": {"query": "vector_search.query"},
         "end": {"output_message": "end.output_message"},

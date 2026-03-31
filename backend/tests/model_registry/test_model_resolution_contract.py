@@ -1,6 +1,7 @@
 import pytest
 from uuid import uuid4
 
+from app.db.postgres.models.identity import Tenant
 from app.db.postgres.models.registry import (
     IntegrationCredential,
     IntegrationCredentialCategory,
@@ -17,7 +18,10 @@ from app.services.model_resolver import ModelResolver, ModelResolverError
 async def test_resolver_ignores_disabled_tenant_binding_when_global_binding_is_enabled(
     db_session,
 ):
-    tenant_id = uuid4()
+    tenant = Tenant(name=f"Tenant {uuid4().hex[:8]}", slug=f"tenant-{uuid4().hex[:8]}")
+    db_session.add(tenant)
+    await db_session.flush()
+
     model = ModelRegistry(
         tenant_id=None,
         name="Shared Chat",
@@ -31,7 +35,7 @@ async def test_resolver_ignores_disabled_tenant_binding_when_global_binding_is_e
 
     db_session.add(
         IntegrationCredential(
-            tenant_id=tenant_id,
+            tenant_id=tenant.id,
             category=IntegrationCredentialCategory.LLM_PROVIDER,
             provider_key="openai",
             provider_variant=None,
@@ -44,12 +48,12 @@ async def test_resolver_ignores_disabled_tenant_binding_when_global_binding_is_e
     await db_session.flush()
 
     db_session.add_all(
-        [
-            ModelProviderBinding(
-                model_id=model.id,
-                tenant_id=tenant_id,
-                provider=ModelProviderType.XAI,
-                provider_model_id="grok-4",
+            [
+                ModelProviderBinding(
+                    model_id=model.id,
+                    tenant_id=tenant.id,
+                    provider=ModelProviderType.XAI,
+                    provider_model_id="grok-4",
                 priority=0,
                 config={},
                 is_enabled=False,
@@ -67,7 +71,7 @@ async def test_resolver_ignores_disabled_tenant_binding_when_global_binding_is_e
     )
     await db_session.commit()
 
-    resolver = ModelResolver(db_session, tenant_id)
+    resolver = ModelResolver(db_session, tenant.id)
     provider = await resolver.resolve(str(model.id))
 
     assert provider.model_name == "gpt-4o-mini"
@@ -75,8 +79,11 @@ async def test_resolver_ignores_disabled_tenant_binding_when_global_binding_is_e
 
 @pytest.mark.asyncio
 async def test_resolver_rejects_legacy_slug_identity(db_session):
-    tenant_id = uuid4()
-    resolver = ModelResolver(db_session, tenant_id)
+    tenant = Tenant(name=f"Tenant {uuid4().hex[:8]}", slug=f"tenant-{uuid4().hex[:8]}")
+    db_session.add(tenant)
+    await db_session.commit()
+
+    resolver = ModelResolver(db_session, tenant.id)
 
     with pytest.raises(ModelResolverError, match="Model not found"):
         await resolver.resolve("legacy-slug")

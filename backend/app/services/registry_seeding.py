@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from datetime import datetime
 import uuid
-from sqlalchemy import select, or_, text
+from sqlalchemy import select, or_, text, update
 from sqlalchemy.exc import ProgrammingError
 from app.db.postgres.models.registry import (
     ModelRegistry,
@@ -81,6 +81,7 @@ async def seed_global_models(db):
                 capability_type=capability,
                 description=m_def["description"],
                 metadata_=m_def.get("metadata", {}),
+                is_default=bool(m_def.get("is_default", False)),
                 is_active=True,
             )
             db.add(model)
@@ -90,6 +91,19 @@ async def seed_global_models(db):
             model.name = m_def["name"]
             model.description = m_def["description"]
             model.metadata_ = m_def.get("metadata", {})
+            if "is_default" in m_def:
+                model.is_default = bool(m_def["is_default"])
+
+        if bool(m_def.get("is_default", False)):
+            await db.execute(
+                update(ModelRegistry)
+                .where(
+                    ModelRegistry.tenant_id == None,
+                    ModelRegistry.capability_type == capability,
+                    ModelRegistry.id != model.id,
+                )
+                .values(is_default=False)
+            )
         
         # Upsert global bindings
         for p_def in m_def.get("providers", []):

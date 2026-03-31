@@ -1,32 +1,11 @@
 import { BaseNode } from "./BaseNode"
+import { AGENT_NODE_SPECS } from "../types"
 
-// All agent node types use the same BaseNode component
-// The visual differences are handled by the data.nodeType and data.category
-const staticNodeTypes: Record<string, any> = {
-  start: BaseNode,
-  end: BaseNode,
-  agent: BaseNode,
-  llm: BaseNode,
-  tool: BaseNode,
-  rag: BaseNode,
-  if_else: BaseNode,
-  while: BaseNode,
-  conditional: BaseNode,
-  parallel: BaseNode,
-  spawn_run: BaseNode,
-  spawn_group: BaseNode,
-  join: BaseNode,
-  router: BaseNode,
-  judge: BaseNode,
-  replan: BaseNode,
-  cancel_subtree: BaseNode,
-  user_approval: BaseNode,
-  human_input: BaseNode,
-  transform: BaseNode,
-  set_state: BaseNode,
-  classify: BaseNode,
-  vector_search: BaseNode,
-}
+// All built-in agent node types use the same BaseNode component.
+// Derive the registry from the canonical specs so renderer coverage can't drift.
+const staticNodeTypes: Record<string, typeof BaseNode> = Object.fromEntries(
+  AGENT_NODE_SPECS.map((spec) => [spec.nodeType, BaseNode])
+)
 
 // Use a Proxy to handle dynamic artifact types (e.g. "artifact:my_id")
 // ReactFlow accesses properties on this object to find the component.

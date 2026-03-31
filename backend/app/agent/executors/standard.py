@@ -331,11 +331,14 @@ class StartNodeExecutor(BaseNodeExecutor):
         workflow_input = state.get("workflow_input", {})
         if not isinstance(workflow_input, dict):
             workflow_input = {}
-        input_as_text = workflow_input.get("input_as_text")
-        if input_as_text is None:
-            input_as_text = state.get("input")
+        input_text = workflow_input.get("text")
+        if input_text is None:
+            input_text = workflow_input.get("input_as_text")
+        if input_text is None:
+            input_text = state.get("input")
         workflow_input = {
-            "input_as_text": str(input_as_text or ""),
+            "text": str(input_text or ""),
+            "input_as_text": str(input_text or ""),
             **workflow_input,
         }
 
@@ -351,7 +354,10 @@ class StartNodeExecutor(BaseNodeExecutor):
                 {"state_variables": len(state_vars), "workflow_inputs": len(workflow_input)},
             )
         
-        initial_state = {}
+        seeded_state = state.get("state", {})
+        if not isinstance(seeded_state, dict):
+            seeded_state = {}
+        initial_state = dict(seeded_state)
         state_types: Dict[str, str] = {}
         
         # Set up state variables with defaults
@@ -365,6 +371,8 @@ class StartNodeExecutor(BaseNodeExecutor):
             if "default_value" not in var:
                 continue
             default = var.get("default_value")
+            if key in initial_state:
+                continue
             if default is None or value_types_compatible(value_type, infer_runtime_value_type(default)):
                 initial_state[key] = default
 
@@ -2101,7 +2109,12 @@ def register_standard_operators():
                 {"name": "state_variables", "label": "State Variables", "fieldType": "variable_list", "required": False,
                  "description": "Initialize persistent state variables with defaults"}
             ],
-            "workflowInputs": [{"key": "input_as_text", "type": "string", "label": "Input as text", "readonly": True}],
+            "workflowInputs": [
+                {"key": "text", "type": "string", "label": "Text", "readonly": True},
+                {"key": "files", "type": "list", "label": "Files", "readonly": True},
+                {"key": "audio", "type": "list", "label": "Audio", "readonly": True},
+                {"key": "images", "type": "list", "label": "Images", "readonly": True},
+            ],
         }
     ))
     AgentExecutorRegistry.register("start", StartNodeExecutor)
@@ -2179,7 +2192,7 @@ def register_standard_operators():
             "configFields": [
                 {"name": "name", "label": "Name", "fieldType": "string", "required": False, "description": "Agent display name"},
                 {"name": "model_id", "label": "Model", "fieldType": "model", "required": True, "description": "Select a chat model"},
-                {"name": "instructions", "label": "Instructions", "fieldType": "text", "required": False, "description": "System prompt with {{ variable }} support", "prompt_capable": True, "prompt_surface": "agent.instructions"},
+                {"name": "instructions", "label": "Instructions", "fieldType": "text", "required": False, "description": "System prompt with @variable support", "prompt_capable": True, "prompt_surface": "agent.instructions"},
                 {"name": "include_chat_history", "label": "Include Chat History", "fieldType": "boolean", "required": False, "default": True},
                 {"name": "reasoning_effort", "label": "Reasoning Effort", "fieldType": "select", "required": False, "default": "medium",
                  "options": [
@@ -2295,6 +2308,7 @@ def register_standard_operators():
     # =========================================================================
     
     from app.agent.executors.data import TransformNodeExecutor, SetStateNodeExecutor
+    from app.agent.executors.speech import SpeechToTextNodeExecutor
     
     # Transform Node
     AgentOperatorRegistry.register(AgentOperatorSpec(
@@ -2376,6 +2390,60 @@ def register_standard_operators():
         }
     ))
     AgentExecutorRegistry.register("set_state", SetStateNodeExecutor)
+
+    AgentOperatorRegistry.register(AgentOperatorSpec(
+        type="speech_to_text",
+        category="data",
+        display_name="Speech to Text",
+        description="Transcribe audio attachments through a speech-to-text model.",
+        reads=[AgentStateField.STATE_VARIABLES, AgentStateField.CONTEXT],
+        writes=[AgentStateField.CONTEXT],
+        config_schema={
+            "type": "object",
+            "properties": {
+                "model_id": {"type": "string"},
+                "source": {"type": "object", "additionalProperties": True},
+                "language_hints": {
+                    "anyOf": [
+                        {"type": "array", "items": {"type": "string"}},
+                        {"type": "string"},
+                    ]
+                },
+                "prompt": {"type": "string"},
+            },
+            "required": ["source"],
+            "additionalProperties": True,
+        },
+        field_contracts={
+            "source": {
+                "type": "value_ref",
+                "allowed_types": ["list", "object", "unknown"],
+                "allowed_semantic_types": ["audio", "audio_attachments", "audio_attachment"],
+            },
+        },
+        output_contract={
+            "fields": [
+                {"key": "text", "type": "string", "label": "Text"},
+                {"key": "segments", "type": "list", "label": "Segments"},
+                {"key": "language", "type": "string", "label": "Language"},
+                {"key": "attachments", "type": "list", "label": "Attachments"},
+                {"key": "provider_metadata", "type": "object", "label": "Provider Metadata"},
+            ]
+        },
+        ui={
+            "icon": "Mic",
+            "color": "#0f766e",
+            "inputType": "any",
+            "outputType": "context",
+            "configFields": [
+                {"name": "model_id", "label": "STT Model", "fieldType": "model", "required": False, "description": "Defaults to the tenant/global speech-to-text model"},
+                {"name": "source", "label": "Audio Source", "fieldType": "value_ref", "required": True, "description": "Select workflow_input.audio or another audio attachment value"},
+                {"name": "language_hints", "label": "Language Hints", "fieldType": "text", "required": False, "description": "Optional comma-separated language codes"},
+                {"name": "prompt", "label": "Prompt", "fieldType": "text", "required": False, "description": "Optional provider hint text"},
+            ],
+        }
+    ))
+    AgentExecutorRegistry.register("speech_to_text", SpeechToTextNodeExecutor)
 
     # =========================================================================
     # Logic Operators
@@ -2803,7 +2871,7 @@ def register_standard_operators():
             "configFields": [
                 {"name": "pipeline_id", "label": "Retrieval Pipeline", "fieldType": "retrieval_pipeline_select", "required": True, "description": "Select a Retrieval Pipeline"},
                 {"name": "query", "label": "Query Template", "fieldType": "template_string", "required": False, 
-                 "description": "Query with {{ variable }} interpolation. Leave empty to use last message.", "prompt_capable": True, "prompt_surface": "rag.query"},
+                 "description": "Query with @variable interpolation. Leave empty to use last message.", "prompt_capable": True, "prompt_surface": "rag.query"},
                 {"name": "top_k", "label": "Max Results", "fieldType": "number", "required": False, "default": 10, "description": "Number of results to retrieve"}
             ]
         }
@@ -2832,7 +2900,7 @@ def register_standard_operators():
             "configFields": [
                 {"name": "knowledge_store_id", "label": "Knowledge Store", "fieldType": "knowledge_store_select", "required": True, "description": "Select a Knowledge Store"},
                 {"name": "query", "label": "Query Template", "fieldType": "template_string", "required": False, 
-                 "description": "Query with {{ variable }} interpolation. Leave empty to use last message.", "prompt_capable": True, "prompt_surface": "vector_search.query"},
+                 "description": "Query with @variable interpolation. Leave empty to use last message.", "prompt_capable": True, "prompt_surface": "vector_search.query"},
                 {"name": "top_k", "label": "Max Results", "fieldType": "number", "required": False, "default": 10, "description": "Number of results to retrieve"}
             ]
         }
@@ -2868,7 +2936,7 @@ def register_standard_operators():
             "configFields": [
                 {"name": "name", "label": "Name", "fieldType": "string", "required": False},
                 {"name": "message", "label": "Message", "fieldType": "template_string", "required": False, 
-                 "description": "Message shown to user with {{ variable }} support", "prompt_capable": True, "prompt_surface": "user_approval.message"},
+                 "description": "Message shown to user with @variable support", "prompt_capable": True, "prompt_surface": "user_approval.message"},
                 {"name": "timeout_seconds", "label": "Timeout (seconds)", "fieldType": "number", "required": False, "default": 300},
                 {"name": "require_comment", "label": "Require Comment", "fieldType": "boolean", "required": False, "default": False}
             ]

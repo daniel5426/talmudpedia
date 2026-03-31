@@ -1,6 +1,6 @@
 # Model Registry Tests
 
-Last Updated: 2026-03-26
+Last Updated: 2026-03-30
 
 ## Scope
 Model Registry credentials resolution, provider binding updates, and vector store credential merging.
@@ -30,6 +30,9 @@ Model Registry credentials resolution, provider binding updates, and vector stor
 - Vector store backend config merges credentials and rejects disabled secrets.
 
 ## Last Run
+- Command: `PYTHONPATH=/Users/danielbenassaya/Code/personal/talmudpedia python3 -m pytest -q backend/tests/model_registry/test_model_resolution_contract.py`
+- Date/Time: 2026-03-30 Asia/Hebron
+- Result: PASS (`2 passed`)
 - Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/model_registry/test_models_api_contract.py backend/tests/model_registry/test_provider_binding_update.py backend/tests/model_accounting/test_model_accounting_service.py`
 - Date/Time: 2026-03-26 Asia/Hebron
 - Result: PASS (`15 passed`)

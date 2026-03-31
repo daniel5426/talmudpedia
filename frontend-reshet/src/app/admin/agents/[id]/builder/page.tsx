@@ -17,7 +17,7 @@ import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { agentService, Agent, AgentGraphDefinition } from "@/services"
 import { AgentBuilder, AgentNodeData } from "@/components/agent-builder"
-import { normalizeGraphSpecForSave } from "@/components/agent-builder/graphspec"
+import { normalizeGraphDefinition } from "@/components/agent-builder/graphspec"
 import { HeaderConfigEditor } from "@/components/builder"
 
 export default function AgentBuilderPage() {
@@ -33,7 +33,7 @@ export default function AgentBuilderPage() {
     const [builderMode, setBuilderMode] = useState<"build" | "execute">("build")
 
     // Store current graph state for saving
-    const graphRef = useRef<AgentGraphDefinition>({ spec_version: "3.0", nodes: [], edges: [] })
+    const graphRef = useRef<AgentGraphDefinition>(normalizeGraphDefinition({ spec_version: "4.0", nodes: [], edges: [] }))
 
     const loadAgent = useCallback(async () => {
         try {
@@ -44,11 +44,7 @@ export default function AgentBuilderPage() {
             setAgentDescription(data.description || "")
             // Initialize graph ref with loaded data
             if (data.graph_definition) {
-                graphRef.current = {
-                    spec_version: data.graph_definition.spec_version || "3.0",
-                    nodes: data.graph_definition.nodes || [],
-                    edges: data.graph_definition.edges || [],
-                }
+                graphRef.current = normalizeGraphDefinition(data.graph_definition)
             }
         } catch (err) {
             console.error("Failed to load agent:", err)
@@ -64,8 +60,8 @@ export default function AgentBuilderPage() {
         }
     }, [id, loadAgent])
 
-    const handleGraphChange = useCallback((nodes: Node<AgentNodeData>[], edges: Edge[]) => {
-        graphRef.current = normalizeGraphSpecForSave(nodes, edges, { specVersion: graphRef.current.spec_version })
+    const handleGraphChange = useCallback((graphDefinition: AgentGraphDefinition) => {
+        graphRef.current = normalizeGraphDefinition(graphDefinition)
         // Mark as unsaved when changes are made
         if (saveStatus === "saved") {
             setSaveStatus("idle")
@@ -242,8 +238,7 @@ export default function AgentBuilderPage() {
                 ) : (
                     <AgentBuilder
                         agentId={id as string}
-                        initialNodes={agent.graph_definition?.nodes || []}
-                        initialEdges={agent.graph_definition?.edges || []}
+                        initialGraphDefinition={graphRef.current}
                         onSave={handleGraphChange}
                         mode={builderMode}
                         onModeChange={setBuilderMode}

@@ -17,6 +17,7 @@ const staticNodes: Node<AgentNodeData>[] = [
       outputType: "decision",
       isConfigured: true,
       hasErrors: false,
+      executionStatus: "completed",
     },
   },
 ]
@@ -79,5 +80,18 @@ describe("execute mode graph merging", () => {
     expect(result.edges[0].animated).toBe(true)
     expect((result.edges[0].style as Record<string, any>).stroke).toBe("#16a34a")
     expect((result.edges[0].style as Record<string, any>).strokeWidth).toBe(3)
+    expect(result.edges[1].animated).toBe(true)
+    expect((result.edges[1].style as Record<string, any>).stroke).toBe("#16a34a")
+    expect((result.edges[1].style as Record<string, any>).strokeWidth).toBe(3)
+  })
+
+  it("clears stale static node execution status when the overlay has no runtime status", () => {
+    const result = getRenderGraphForMode("execute", staticNodes, staticEdges, {
+      ...overlay,
+      runtimeStatusByNodeId: {},
+      runtimeNotesByNodeId: {},
+    })
+
+    expect((result.nodes[0].data as AgentNodeData).executionStatus).toBeUndefined()
   })
 })

@@ -36,13 +36,14 @@ async def _create_agent(
     user_id: UUID,
     slug: str,
     status: AgentStatus,
+    graph_definition: dict | None = None,
 ) -> Agent:
     agent = Agent(
         tenant_id=tenant_id,
         name=f"Agent {slug}",
         slug=slug,
         description="agent_call target",
-        graph_definition={"spec_version": "1.0", "nodes": [], "edges": []},
+        graph_definition=graph_definition or {"spec_version": "1.0", "nodes": [], "edges": []},
         status=status,
         created_by=user_id,
         is_active=True,
@@ -220,3 +221,51 @@ async def test_agent_call_tool_denies_cross_tenant_target(db_session):
             config={"tool_id": str(tool.id)},
             context={"node_id": "tool-node", "mode": "debug"},
         )
+
+
+@pytest.mark.asyncio
+async def test_agent_call_tool_maps_payload_into_child_state_and_modalities(db_session):
+    tenant, user = await _seed_tenant_and_user(db_session)
+    target = await _create_agent(
+        db_session,
+        tenant_id=tenant.id,
+        user_id=user.id,
+        slug=f"structured-child-{uuid4().hex[:8]}",
+        status=AgentStatus.published,
+        graph_definition={
+                "workflow_contract": {
+                    "inputs": [
+                        {"key": "text", "type": "string", "semantic_type": "text"},
+                        {"key": "files", "type": "list", "semantic_type": "files"},
+                    ],
+                },
+            "state_contract": {
+                "variables": [
+                    {"key": "customer_id", "type": "string"},
+                    {"key": "flag", "type": "boolean", "default_value": False},
+                ],
+            },
+            "nodes": [],
+            "edges": [],
+        },
+    )
+    tool = await _create_agent_call_tool(db_session, tenant_id=tenant.id, target_agent_slug=target.slug)
+
+    executor = ToolNodeExecutor(tenant_id=tenant.id, db=db_session)
+    input_params = executor._map_agent_contract_input(
+        target=target,
+        input_data={
+            "text": "hello child",
+            "files": [{"id": "att-1"}],
+            "customer_id": "cust-123",
+            "flag": True,
+            "context": {"source": "parent"},
+        },
+    )
+
+    assert tool is not None
+    assert input_params["input"] == "hello child"
+    assert input_params["workflow_input"]["files"] == [{"id": "att-1"}]
+    assert input_params["state"]["customer_id"] == "cust-123"
+    assert input_params["state"]["flag"] is True
+    assert input_params["context"] == {"source": "parent"}

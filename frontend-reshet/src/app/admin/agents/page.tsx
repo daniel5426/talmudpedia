@@ -1,9 +1,8 @@
 "use client"
 
 import { useState, useEffect, useMemo } from "react"
-import dynamic from "next/dynamic"
 import { useRouter, useSearchParams } from "next/navigation"
-import { Bot, Plus, Wrench } from "lucide-react"
+import { Bot, Plus } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { AdminPageHeader } from "@/components/admin/AdminPageHeader"
@@ -13,11 +12,6 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { agentService, adminService, Agent } from "@/services"
 import { AgentCard } from "@/components/agent-card"
 import { CreateAgentDialog } from "@/components/agents/CreateAgentDialog"
-
-const ExportAgentToolDialog = dynamic(
-    () => import("@/components/agents/ExportAgentToolDialog").then((mod) => mod.ExportAgentToolDialog),
-    { ssr: false }
-)
 
 function AgentCardSkeleton() {
     return (
@@ -49,9 +43,9 @@ export default function AgentsPage() {
     const [isLoading, setIsLoading] = useState(true)
     const [error, setError] = useState<string | null>(null)
     const [searchQuery, setSearchQuery] = useState("")
+    const [makingToolAgentId, setMakingToolAgentId] = useState<string | null>(null)
     const [agentMetrics, setAgentMetrics] = useState<Record<string, { threads: number; runs: number; failureRate: number; threadTrend: { date: string; value: number }[] }>>({})
     const isCreateDialogOpen = searchParams.get("create") === "1"
-    const isExportDialogOpen = searchParams.get("mode") === "export-tool"
 
     useEffect(() => {
         loadAgents()
@@ -112,12 +106,17 @@ export default function AgentsPage() {
         router.replace("/admin/agents")
     }
 
-    const setExportDialogOpen = (open: boolean) => {
-        if (open) {
-            router.push("/admin/agents?mode=export-tool")
-            return
+    const handleMakeTool = async (agent: Agent) => {
+        try {
+            setMakingToolAgentId(agent.id)
+            await agentService.exportAgentTool(agent.id)
+            await loadAgents()
+        } catch (err) {
+            console.error("Failed to make tool:", err)
+            setError(`Failed to make "${agent.name}" a tool. Please try again.`)
+        } finally {
+            setMakingToolAgentId(null)
         }
-        router.replace("/admin/agents")
     }
 
     return (
@@ -143,16 +142,6 @@ export default function AgentsPage() {
                     >
                         <Plus className="h-3.5 w-3.5" />
                         New Agent
-                    </Button>
-                    <Button
-                        size="sm"
-                        variant="outline"
-                        className="h-8 gap-1.5"
-                        onClick={() => setExportDialogOpen(true)}
-                        disabled={isLoading}
-                    >
-                        <Wrench className="h-3.5 w-3.5" />
-                        Export As Tool
                     </Button>
                 </div>
             </AdminPageHeader>
@@ -208,6 +197,8 @@ export default function AgentsPage() {
                                 metrics={agentMetrics[agent.id]}
                                 onOpen={(a) => router.push(`/admin/agents/${a.id}/builder`)}
                                 onPlayground={(a) => router.push(`/admin/agents/playground?agentId=${a.id}`)}
+                                onMakeTool={handleMakeTool}
+                                makeToolBusy={makingToolAgentId === agent.id}
                                 onDelete={handleDelete}
                             />
                         ))}
@@ -216,7 +207,6 @@ export default function AgentsPage() {
             </main>
 
             <CreateAgentDialog open={isCreateDialogOpen} onOpenChange={setCreateDialogOpen} />
-            <ExportAgentToolDialog open={isExportDialogOpen} onOpenChange={setExportDialogOpen} agents={agents} />
         </div>
     )
 }

@@ -410,8 +410,7 @@ class PipelineCompiler:
 
             # Check for chunking nodes
             chunking_nodes = nodes_by_category.get("chunking", [])
-            transform_nodes = nodes_by_category.get("transform", [])
-            if len(chunking_nodes) == 0 and len(transform_nodes) == 0:
+            if len(chunking_nodes) == 0:
                 errors.append(CompilationError(
                     code="NO_CHUNKING",
                     message="Ingestion pipeline must have at least one chunking node",

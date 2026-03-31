@@ -19,11 +19,12 @@ class _AnalyzeAgentService:
             "agent_id": str(agent_id),
             "graph_definition": graph_definition,
             "analysis": {
-                "spec_version": "3.0",
+                "spec_version": "4.0",
                 "inventory": {
-                    "workflow_input": [{"key": "input_as_text", "type": "string"}],
+                    "workflow_input": [{"key": "text", "type": "string"}],
                     "state": [],
                     "node_outputs": [],
+                    "accessible_node_outputs_by_node": {},
                     "template_suggestions": {"global": [], "by_node": {}},
                 },
                 "operator_contracts": {},
@@ -47,7 +48,7 @@ class _AnalyzeValidationAgentService:
 async def test_analyze_agent_graph_returns_analysis_payload(monkeypatch):
     monkeypatch.setattr(router, "AgentGraphMutationService", _AnalyzeAgentService)
     agent_id = uuid4()
-    payload = router.GraphAnalysisRequest(graph_definition={"spec_version": "3.0", "nodes": [], "edges": []})
+    payload = router.GraphAnalysisRequest(graph_definition={"spec_version": "4.0", "nodes": [], "edges": []})
 
     response = await router.analyze_agent_graph(
         SimpleNamespace(headers={"X-Request-ID": "req-agent-analyze"}),
@@ -59,9 +60,9 @@ async def test_analyze_agent_graph_returns_analysis_payload(monkeypatch):
     )
 
     assert response["agent_id"] == str(agent_id)
-    assert response["graph_definition"]["spec_version"] == "3.0"
-    assert response["analysis"]["spec_version"] == "3.0"
-    assert response["analysis"]["inventory"]["workflow_input"][0]["key"] == "input_as_text"
+    assert response["graph_definition"]["spec_version"] == "4.0"
+    assert response["analysis"]["spec_version"] == "4.0"
+    assert response["analysis"]["inventory"]["workflow_input"][0]["key"] == "text"
 
 
 @pytest.mark.asyncio
@@ -72,7 +73,7 @@ async def test_analyze_agent_graph_returns_structured_validation_error(monkeypat
         await router.analyze_agent_graph(
             SimpleNamespace(headers={"X-Request-ID": "req-agent-analyze-422"}),
             uuid4(),
-            router.GraphAnalysisRequest(graph_definition={"spec_version": "3.0", "nodes": [], "edges": []}),
+            router.GraphAnalysisRequest(graph_definition={"spec_version": "4.0", "nodes": [], "edges": []}),
             {},
             {"tenant_id": uuid4(), "user": None},
             None,

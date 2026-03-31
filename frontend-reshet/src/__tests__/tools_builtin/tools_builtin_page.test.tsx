@@ -175,7 +175,7 @@ describe("Tools built-in UI", () => {
     fireEvent.click(screen.getByRole("button", { name: "Create Tool" }))
     fireEvent.click(screen.getByRole("button", { name: /Artifact Tool/i }))
 
-    expect(push).toHaveBeenCalledWith("/admin/artifacts?mode=create&kind=tool_impl")
+    expect(push).toHaveBeenCalledWith("/admin/artifacts/new?kind=tool_impl")
   })
 
   it("routes pipeline tool creation to the pipelines surface", async () => {
@@ -188,14 +188,14 @@ describe("Tools built-in UI", () => {
     expect(push).toHaveBeenCalledWith("/admin/pipelines")
   })
 
-  it("routes agent tool creation to the agents export flow", async () => {
+  it("routes agent tool creation to the agents page", async () => {
     render(<ToolsPage />)
 
     await waitFor(() => expect(toolsService.listTools).toHaveBeenCalled())
     fireEvent.click(screen.getByRole("button", { name: "Create Tool" }))
     fireEvent.click(screen.getByRole("button", { name: /Agent \/ Workflow Tool/i }))
 
-    expect(push).toHaveBeenCalledWith("/admin/agents?mode=export-tool")
+    expect(push).toHaveBeenCalledWith("/admin/agents")
   })
 
   it("opens artifact editor from the tool detail sheet", async () => {
@@ -206,7 +206,7 @@ describe("Tools built-in UI", () => {
     expect(screen.getByText("Artifacts")).toBeInTheDocument()
     fireEvent.click(await screen.findByRole("button", { name: "Open Editor" }))
 
-    expect(push).toHaveBeenCalledWith("/admin/artifacts?mode=edit&id=artifact-123")
+    expect(push).toHaveBeenCalledWith("/admin/artifacts/artifact-123")
   })
 
   it("opens pipeline editor from the tool detail sheet", async () => {

@@ -12,6 +12,7 @@ interface RuntimeGraphIndexes {
   spawnDecisionNodeBySourceNodeId: Record<string, string>
   joinDecisionNodeByGroupId: Record<string, string>
   authoritativeRunStatusByRunId: Record<string, string>
+  lastCompletedStaticNodeId?: string
 }
 
 export interface RuntimeGraphState {
@@ -45,6 +46,7 @@ const emptyIndexes = (): RuntimeGraphIndexes => ({
   spawnDecisionNodeBySourceNodeId: {},
   joinDecisionNodeByGroupId: {},
   authoritativeRunStatusByRunId: {},
+  lastCompletedStaticNodeId: undefined,
 })
 
 export const createEmptyRuntimeGraphState = (): RuntimeGraphState => ({
@@ -230,6 +232,24 @@ const markTakenStaticEdgeIds = (
   staticEdges.forEach((edge) => {
     const edgeSourceHandle = String((edge as any).sourceHandle || (edge as any).source_handle || "")
     if (edge.source === sourceNodeId && edgeSourceHandle === sourceHandle) {
+      taken.add(edge.id)
+    }
+  })
+  return {
+    ...state,
+    takenStaticEdgeIds: Array.from(taken),
+  }
+}
+
+const markTakenStaticEdgeBetweenNodes = (
+  state: RuntimeGraphState,
+  staticEdges: Edge[],
+  sourceNodeId: string,
+  targetNodeId: string,
+): RuntimeGraphState => {
+  const taken = new Set(state.takenStaticEdgeIds)
+  staticEdges.forEach((edge) => {
+    if (edge.source === sourceNodeId && edge.target === targetNodeId) {
       taken.add(edge.id)
     }
   })
@@ -468,11 +488,72 @@ export const applyRuntimeEvent = (
     }
   }
 
-  if (eventName === "node_end") {
+  if (eventName === "node_start" || eventName === "on_chain_start") {
     const sourceNodeId = String(event.span_id || "")
-    const nextHandle = String((event.data?.output as Record<string, unknown> | undefined)?.next || "")
-    if (!sourceNodeId || !nextHandle) return state
-    return markTakenStaticEdgeIds(state, staticEdges, sourceNodeId, nextHandle)
+    if (!sourceNodeId || !getStaticNode(staticNodes, sourceNodeId)) return state
+    let nextState: RuntimeGraphState = {
+      ...state,
+      runtimeStatusByNodeId: {
+        ...state.runtimeStatusByNodeId,
+        [sourceNodeId]: "running",
+      },
+    }
+    const previousNodeId = state.indexes.lastCompletedStaticNodeId
+    if (previousNodeId && previousNodeId !== sourceNodeId) {
+      nextState = markTakenStaticEdgeBetweenNodes(nextState, staticEdges, previousNodeId, sourceNodeId)
+    }
+    return nextState
+  }
+
+  if (eventName === "node_end" || eventName === "on_chain_end") {
+    const sourceNodeId = String(event.span_id || "")
+    if (!sourceNodeId || !getStaticNode(staticNodes, sourceNodeId)) return state
+    const output = (event.data?.output as Record<string, unknown> | undefined) || {}
+    const nextHandle = String(output.next || output.branch_taken || "")
+    const previousStatus = state.runtimeStatusByNodeId[sourceNodeId]
+    let nextState: RuntimeGraphState = {
+      ...state,
+      runtimeStatusByNodeId: {
+        ...state.runtimeStatusByNodeId,
+        [sourceNodeId]: previousStatus === "failed" ? "failed" : "completed",
+      },
+      indexes: {
+        ...state.indexes,
+        lastCompletedStaticNodeId: sourceNodeId,
+      },
+    }
+    if (!nextHandle) return nextState
+    return markTakenStaticEdgeIds(nextState, staticEdges, sourceNodeId, nextHandle)
+  }
+
+  if (eventName === "run.failed" || eventName === "run.cancelled") {
+    const nextStatuses = { ...state.runtimeStatusByNodeId }
+    let mutated = false
+    Object.entries(nextStatuses).forEach(([nodeId, status]) => {
+      if (status !== "running" || !getStaticNode(staticNodes, nodeId)) return
+      nextStatuses[nodeId] = eventName === "run.failed" ? "failed" : "pending"
+      mutated = true
+    })
+    if (!mutated) return state
+
+    const errorMessage =
+      eventName === "run.failed"
+        ? String(event.data?.error || "Run failed")
+        : undefined
+
+    return {
+      ...state,
+      runtimeStatusByNodeId: nextStatuses,
+      runtimeNotesByNodeId:
+        errorMessage
+          ? Object.fromEntries(
+              Object.entries(nextStatuses).map(([nodeId, status]) => [
+                nodeId,
+                status === "failed" ? errorMessage : state.runtimeNotesByNodeId[nodeId],
+              ]),
+            )
+          : state.runtimeNotesByNodeId,
+    }
   }
 
   if (process.env.NODE_ENV !== "production") {

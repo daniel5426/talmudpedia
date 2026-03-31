@@ -15,6 +15,7 @@ from app.agent.graph.ir import (
     GRAPH_SPEC_V1,
     GRAPH_SPEC_V2,
     GRAPH_SPEC_V3,
+    GRAPH_SPEC_V4,
     ORCHESTRATION_V2_NODE_TYPES,
     GraphIR,
     GraphIRNode,
@@ -35,7 +36,7 @@ from app.services.orchestration_policy_service import (
 
 logger = logging.getLogger(__name__)
 
-SUPPORTED_GRAPH_SPEC_VERSIONS = {GRAPH_SPEC_V1, GRAPH_SPEC_V2, GRAPH_SPEC_V3}
+SUPPORTED_GRAPH_SPEC_VERSIONS = {GRAPH_SPEC_V1, GRAPH_SPEC_V2, GRAPH_SPEC_V3, GRAPH_SPEC_V4}
 
 class ValidationError(BaseModel):
     """Validation error for agent graph."""
@@ -175,8 +176,6 @@ class AgentCompiler:
             "start": "start",
             "output": "end",
             "end": "end",
-            "llm_call": "llm",
-            "llm": "llm",
             "tool_call": "tool",
             "rag_retrieval": "rag",
             "rag_pipeline": "rag",
@@ -320,10 +319,10 @@ class AgentCompiler:
             for node in graph.nodes
         )
         effective_spec = graph.spec_version or GRAPH_SPEC_V1
-        if has_v2_orchestration_nodes and effective_spec not in {GRAPH_SPEC_V2, GRAPH_SPEC_V3}:
+        if has_v2_orchestration_nodes and effective_spec not in {GRAPH_SPEC_V2, GRAPH_SPEC_V3, GRAPH_SPEC_V4}:
             errors.append(
                 ValidationError(
-                    message="GraphSpec v2 orchestration nodes require spec_version='2.0' or '3.0'"
+                    message="GraphSpec v2 orchestration nodes require spec_version='2.0', '3.0', or '4.0'"
                 )
             )
         if has_v2_orchestration_nodes and not is_orchestration_surface_enabled(
@@ -341,24 +340,26 @@ class AgentCompiler:
         node_type = self._normalize_node_type(node.type)
         if node_type == "if_else":
             conditions = node.config.get("conditions", []) if isinstance(node.config, dict) else []
-            condition_names: List[Any] = []
+            condition_handles: List[Any] = []
             for condition in conditions:
                 if isinstance(condition, dict):
-                    condition_names.append(condition.get("name"))
+                    condition_handles.append(condition.get("id") or condition.get("name"))
                 else:
-                    condition_names.append(condition)
-            handles = self._dedupe_handles(condition_names, "condition")
+                    condition_handles.append(condition)
+            handles = self._dedupe_handles(condition_handles, "condition")
             handles.append("else")
             return handles
         if node_type == "classify":
             categories = node.config.get("categories", []) if isinstance(node.config, dict) else []
-            category_names: List[Any] = []
+            category_handles: List[Any] = []
             for category in categories:
                 if isinstance(category, dict):
-                    category_names.append(category.get("name"))
+                    category_handles.append(category.get("id") or category.get("name"))
                 else:
-                    category_names.append(category)
-            return self._dedupe_handles(category_names, "category")
+                    category_handles.append(category)
+            handles = self._dedupe_handles(category_handles, "category")
+            handles.append("else")
+            return handles
         if node_type == "while":
             return ["loop", "exit"]
         if node_type == "user_approval":

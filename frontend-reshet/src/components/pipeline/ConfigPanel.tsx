@@ -110,7 +110,7 @@ export function ConfigPanel({
   const Icon = CATEGORY_ICONS[data.category] || Hash
 
   return (
-    <div className="flex flex-col ">
+    <div className="flex max-h-[calc(100dvh-96px)] min-h-0 flex-col">
       <div className="p-3.5 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-2.5">
           <div
@@ -136,7 +136,7 @@ export function ConfigPanel({
         </Button>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-3.5 pb-6 space-y-4 scrollbar-none">
+      <div className="min-h-0 flex-1 overflow-y-auto px-3.5 pb-6 space-y-4 scrollbar-none">
         {allFields.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-8 text-center bg-muted/20 rounded-xl border border-dashed border-border/50">
             <p className="text-[11px] text-muted-foreground font-medium">No parameters to configure</p>

@@ -40,6 +40,8 @@ def test_core_contract_rows_stay_addressable_by_identifier():
     rag_rows = rows_by_key(rag_operator_contract_rows(), "operator_id")
 
     assert agent_rows["agent"]["required_config_fields"] == ["model_id"]
+    assert agent_rows["speech_to_text"]["required_config_fields"] == ["source"]
+    assert agent_rows["speech_to_text"]["category"] == "data"
     assert agent_rows["tool"]["has_executor"] is True
     assert "knowledge_store_id" in rag_rows["vector_search"]["required_config_fields"]
     assert rag_rows["query_input"]["input_type"] == "none"

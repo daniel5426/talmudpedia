@@ -3,7 +3,7 @@ Operator Registry - Defines all available operators for RAG pipelines.
 
 This module provides:
 - DataType: Enum of data types flowing through the pipeline
-- OperatorCategory: Enum of operator categories (source, normalization, enrichment, chunking, embedding, storage, retrieval, reranking)
+- OperatorCategory: Enum of operator categories (source, normalization, enrichment, chunking, utility, embedding, storage, retrieval, reranking)
 - ConfigFieldSpec: Configuration field specification with JSON Schema support
 - OperatorSpec: Full operator specification with versioning and contracts
 - OperatorRegistry: Singleton registry for all available operators
@@ -16,6 +16,7 @@ from datetime import datetime
 
 class DataType(str, Enum):
     """Data types that flow through pipeline edges."""
+    ANY = "any"
     NONE = "none"
     RAW_DOCUMENTS = "raw_documents"
     NORMALIZED_DOCUMENTS = "normalized_documents"  # After normalization (OCR, HTML cleaning)
@@ -35,6 +36,7 @@ class OperatorCategory(str, Enum):
     NORMALIZATION = "normalization"   # OCR, HTML cleaning, PII redaction
     ENRICHMENT = "enrichment"         # Metadata extraction, entity recognition, summarization
     CHUNKING = "chunking"             # Text chunking strategies
+    UTILITY = "utility"               # Filtering, dedupe, and field-level transforms
     EMBEDDING = "embedding"           # Embedding models
     STORAGE = "storage"               # Vector stores
     RETRIEVAL = "retrieval"           # Search operators (vector, hybrid, BM25)
@@ -84,6 +86,8 @@ class ConfigFieldSpec(BaseModel):
 def data_type_contract_schema(data_type: DataType) -> Optional[Dict[str, Any]]:
     if data_type == DataType.NONE:
         return None
+    if data_type == DataType.ANY:
+        return {"type": ["object", "array", "string", "number", "boolean"]}
     if data_type == DataType.QUERY:
         return {
             "type": "object",
@@ -253,6 +257,7 @@ class OperatorSpec(BaseModel):
             OperatorCategory.NORMALIZATION: "data",
             OperatorCategory.ENRICHMENT: "action",
             OperatorCategory.CHUNKING: "data",
+            OperatorCategory.UTILITY: "data",
             OperatorCategory.EMBEDDING: "action",
             OperatorCategory.STORAGE: "action",
             OperatorCategory.RETRIEVAL: "action",
@@ -460,6 +465,73 @@ SOURCE_OPERATORS: Dict[str, OperatorSpec] = {
         ],
         tags=["web", "crawler", "scraper"],
     ),
+    "api_loader": OperatorSpec(
+        operator_id="api_loader",
+        display_name="API Loader",
+        category=OperatorCategory.SOURCE,
+        version="1.0.0",
+        description="Load records from HTTP APIs and SaaS-style JSON endpoints",
+        input_type=DataType.NONE,
+        output_type=DataType.RAW_DOCUMENTS,
+        required_config=[
+            ConfigFieldSpec(
+                name="endpoint_url",
+                field_type=ConfigFieldType.STRING,
+                required=True,
+                description="HTTP endpoint to fetch data from",
+            ),
+        ],
+        optional_config=[
+            ConfigFieldSpec(
+                name="method",
+                field_type=ConfigFieldType.SELECT,
+                default="GET",
+                options=["GET", "POST"],
+                description="HTTP method",
+            ),
+            ConfigFieldSpec(
+                name="headers",
+                field_type=ConfigFieldType.JSON,
+                description="Optional request headers as JSON object",
+            ),
+            ConfigFieldSpec(
+                name="query_params",
+                field_type=ConfigFieldType.JSON,
+                description="Optional query parameters as JSON object",
+            ),
+            ConfigFieldSpec(
+                name="body",
+                field_type=ConfigFieldType.JSON,
+                description="Optional JSON request body for POST calls",
+            ),
+            ConfigFieldSpec(
+                name="response_path",
+                field_type=ConfigFieldType.STRING,
+                description="Optional dot-path to the records payload inside the response JSON",
+            ),
+            ConfigFieldSpec(
+                name="item_text_field",
+                field_type=ConfigFieldType.STRING,
+                default="text",
+                description="Field to treat as the document text when records are objects",
+            ),
+            ConfigFieldSpec(
+                name="item_id_field",
+                field_type=ConfigFieldType.STRING,
+                default="id",
+                description="Field to treat as the document identifier when records are objects",
+            ),
+            ConfigFieldSpec(
+                name="request_timeout_ms",
+                field_type=ConfigFieldType.INTEGER,
+                default=30000,
+                description="HTTP request timeout in milliseconds",
+                min_value=1,
+                max_value=300000,
+            ),
+        ],
+        tags=["api", "http", "saas"],
+    ),
 }
 
 # =============================================================================
@@ -508,23 +580,6 @@ NORMALIZATION_OPERATORS: Dict[str, OperatorSpec] = {
             ),
         ],
         tags=["pii", "privacy", "compliance", "gdpr"],
-    ),
-    "language_detector": OperatorSpec(
-        operator_id="language_detector",
-        display_name="Language Detector",
-        category=OperatorCategory.NORMALIZATION,
-        version="1.0.0",
-        description="Detect document language and add to metadata",
-        input_type=DataType.RAW_DOCUMENTS,
-        output_type=DataType.NORMALIZED_DOCUMENTS,
-        optional_config=[
-            ConfigFieldSpec(
-                name="filter_languages",
-                field_type=ConfigFieldType.STRING,
-                description="Comma-separated list of languages to keep (e.g., en,es,fr)",
-            ),
-        ],
-        tags=["language", "detection", "i18n"],
     ),
     "format_normalizer": OperatorSpec(
         operator_id="format_normalizer",
@@ -624,12 +679,12 @@ ENRICHMENT_OPERATORS: Dict[str, OperatorSpec] = {
         supports_batching=True,
         tags=["ner", "entities", "nlp"],
     ),
-    "summarizer": OperatorSpec(
-        operator_id="summarizer",
-        display_name="Document Summarizer",
+    "llm": OperatorSpec(
+        operator_id="llm",
+        display_name="LLM Transform",
         category=OperatorCategory.ENRICHMENT,
         version="1.0.0",
-        description="Generate summaries of documents",
+        description="Apply prompt-defined LLM transforms such as summarization, rewriting, augmentation, or translation",
         input_type=DataType.NORMALIZED_DOCUMENTS,
         output_type=DataType.ENRICHED_DOCUMENTS,
         required_config=[
@@ -640,27 +695,48 @@ ENRICHMENT_OPERATORS: Dict[str, OperatorSpec] = {
                 description="LLM model for summarization",
                 required_capability="completion",
             ),
+            ConfigFieldSpec(
+                name="prompt_template",
+                field_type=ConfigFieldType.STRING,
+                required=True,
+                description="Prompt template. Use `{text}` to inject the current item text.",
+            ),
         ],
         optional_config=[
             ConfigFieldSpec(
-                name="max_summary_length",
-                field_type=ConfigFieldType.INTEGER,
-                default=200,
-                description="Maximum summary length in tokens",
-                min_value=50,
-                max_value=1000,
+                name="system_prompt",
+                field_type=ConfigFieldType.STRING,
+                description="Optional system prompt applied to every model call",
             ),
             ConfigFieldSpec(
-                name="summary_style",
+                name="input_field",
+                field_type=ConfigFieldType.STRING,
+                default="text",
+                description="Field to read from each input document",
+            ),
+            ConfigFieldSpec(
+                name="output_field",
+                field_type=ConfigFieldType.STRING,
+                default="llm_output",
+                description="Field to write the model result into",
+            ),
+            ConfigFieldSpec(
+                name="mode",
                 field_type=ConfigFieldType.SELECT,
-                default="concise",
-                options=["concise", "detailed", "bullet_points"],
-                description="Style of summary",
+                default="per_item",
+                options=["per_item", "join_all"],
+                description="Run once per document or once over the joined corpus",
+            ),
+            ConfigFieldSpec(
+                name="preserve_input",
+                field_type=ConfigFieldType.BOOLEAN,
+                default=True,
+                description="Keep original document fields when writing the model output",
             ),
         ],
         supports_parallelism=True,
         required_capability="completion",
-        tags=["summarization", "llm", "nlp"],
+        tags=["llm", "transform", "prompt"],
     ),
     "classifier": OperatorSpec(
         operator_id="classifier",
@@ -701,56 +777,35 @@ ENRICHMENT_OPERATORS: Dict[str, OperatorSpec] = {
 # =============================================================================
 
 CHUNKING_OPERATORS: Dict[str, OperatorSpec] = {
-    "token_based_chunker": OperatorSpec(
-        operator_id="token_based_chunker",
-        display_name="Token-Based Chunker",
+    "chunker": OperatorSpec(
+        operator_id="chunker",
+        display_name="Chunker",
         category=OperatorCategory.CHUNKING,
         version="1.0.0",
-        description="Split documents by token count",
+        description="Chunk documents using configurable recursive, token-based, semantic, or hierarchical strategies",
         input_type=DataType.ENRICHED_DOCUMENTS,
         output_type=DataType.CHUNKS,
         optional_config=[
             ConfigFieldSpec(
-                name="chunk_size",
-                field_type=ConfigFieldType.INTEGER,
-                default=650,
-                description="Target token count per chunk",
-                min_value=50,
-                max_value=8000,
+                name="strategy",
+                field_type=ConfigFieldType.SELECT,
+                default="recursive",
+                options=["recursive", "token_based", "semantic", "hierarchical"],
+                description="Chunking strategy",
             ),
-            ConfigFieldSpec(
-                name="chunk_overlap",
-                field_type=ConfigFieldType.INTEGER,
-                default=50,
-                description="Overlap tokens between chunks",
-                min_value=0,
-                max_value=500,
-            ),
-        ],
-        tags=["chunking", "token"],
-    ),
-    "recursive_chunker": OperatorSpec(
-        operator_id="recursive_chunker",
-        display_name="Recursive Character Chunker",
-        category=OperatorCategory.CHUNKING,
-        version="1.0.0",
-        description="Recursively split by characters with separators",
-        input_type=DataType.ENRICHED_DOCUMENTS,
-        output_type=DataType.CHUNKS,
-        optional_config=[
             ConfigFieldSpec(
                 name="chunk_size",
                 field_type=ConfigFieldType.INTEGER,
                 default=1000,
-                description="Max characters per chunk",
-                min_value=100,
+                description="Primary chunk size for recursive or token-based chunking",
+                min_value=50,
                 max_value=10000,
             ),
             ConfigFieldSpec(
                 name="chunk_overlap",
                 field_type=ConfigFieldType.INTEGER,
-                default=200,
-                description="Overlap characters between chunks",
+                default=100,
+                description="Chunk overlap for recursive or token-based chunking",
                 min_value=0,
                 max_value=1000,
             ),
@@ -758,34 +813,19 @@ CHUNKING_OPERATORS: Dict[str, OperatorSpec] = {
                 name="separators",
                 field_type=ConfigFieldType.STRING,
                 default="\\n\\n,\\n, ",
-                description="Comma-separated list of split separators",
+                description="Comma-separated separators used by recursive chunking",
             ),
-        ],
-        tags=["chunking", "recursive", "character"],
-    ),
-    "semantic_chunker": OperatorSpec(
-        operator_id="semantic_chunker",
-        display_name="Semantic Chunker",
-        category=OperatorCategory.CHUNKING,
-        version="1.0.0",
-        description="Split documents based on semantic similarity",
-        input_type=DataType.ENRICHED_DOCUMENTS,
-        output_type=DataType.CHUNKS,
-        required_config=[
             ConfigFieldSpec(
                 name="model_id",
                 field_type=ConfigFieldType.MODEL_SELECT,
-                required=True,
-                description="Embedding model for semantic similarity",
+                description="Embedding model used by semantic chunking",
                 required_capability="embedding",
             ),
-        ],
-        optional_config=[
             ConfigFieldSpec(
                 name="similarity_threshold",
                 field_type=ConfigFieldType.FLOAT,
                 default=0.8,
-                description="Threshold for semantic similarity",
+                description="Similarity threshold used by semantic chunking",
                 min_value=0.1,
                 max_value=0.99,
             ),
@@ -793,28 +833,15 @@ CHUNKING_OPERATORS: Dict[str, OperatorSpec] = {
                 name="min_chunk_size",
                 field_type=ConfigFieldType.INTEGER,
                 default=100,
-                description="Minimum chunk size in characters",
+                description="Minimum chunk size for semantic chunking",
                 min_value=50,
                 max_value=1000,
             ),
-        ],
-        required_capability="embedding",
-        tags=["chunking", "semantic", "embeddings"],
-    ),
-    "hierarchical_chunker": OperatorSpec(
-        operator_id="hierarchical_chunker",
-        display_name="Hierarchical Chunker",
-        category=OperatorCategory.CHUNKING,
-        version="1.0.0",
-        description="Create hierarchical chunks (parent-child relationships)",
-        input_type=DataType.ENRICHED_DOCUMENTS,
-        output_type=DataType.CHUNKS,
-        optional_config=[
             ConfigFieldSpec(
                 name="parent_chunk_size",
                 field_type=ConfigFieldType.INTEGER,
                 default=2000,
-                description="Size of parent chunks",
+                description="Parent chunk size for hierarchical chunking",
                 min_value=500,
                 max_value=10000,
             ),
@@ -822,12 +849,66 @@ CHUNKING_OPERATORS: Dict[str, OperatorSpec] = {
                 name="child_chunk_size",
                 field_type=ConfigFieldType.INTEGER,
                 default=500,
-                description="Size of child chunks",
+                description="Child chunk size for hierarchical chunking",
                 min_value=100,
                 max_value=2000,
             ),
         ],
-        tags=["chunking", "hierarchical", "parent-child"],
+        tags=["chunking", "strategy"],
+    ),
+}
+
+# =============================================================================
+# UTILITY OPERATORS
+# =============================================================================
+
+UTILITY_OPERATORS: Dict[str, OperatorSpec] = {
+    "transform": OperatorSpec(
+        operator_id="transform",
+        display_name="Transform",
+        category=OperatorCategory.UTILITY,
+        version="1.0.0",
+        description="Filter, deduplicate, and reshape list-like pipeline payloads between stages",
+        input_type=DataType.ANY,
+        output_type=DataType.ANY,
+        optional_config=[
+            ConfigFieldSpec(
+                name="dedupe_by",
+                field_type=ConfigFieldType.STRING,
+                description="Optional field name used to deduplicate list items",
+            ),
+            ConfigFieldSpec(
+                name="keep_fields",
+                field_type=ConfigFieldType.STRING,
+                description="Comma-separated field names to keep on object items",
+            ),
+            ConfigFieldSpec(
+                name="drop_fields",
+                field_type=ConfigFieldType.STRING,
+                description="Comma-separated field names to remove from object items",
+            ),
+            ConfigFieldSpec(
+                name="rename_fields",
+                field_type=ConfigFieldType.JSON,
+                description="JSON object mapping old field names to new field names",
+            ),
+            ConfigFieldSpec(
+                name="filter_field",
+                field_type=ConfigFieldType.STRING,
+                description="Optional field name used for filtering object items",
+            ),
+            ConfigFieldSpec(
+                name="filter_equals",
+                field_type=ConfigFieldType.STRING,
+                description="Keep items whose filter field equals this value",
+            ),
+            ConfigFieldSpec(
+                name="filter_contains",
+                field_type=ConfigFieldType.STRING,
+                description="Keep items whose filter field contains this value",
+            ),
+        ],
+        tags=["utility", "transform", "dedupe"],
     ),
 }
 
@@ -844,6 +925,7 @@ EMBEDDING_OPERATORS: Dict[str, OperatorSpec] = {
         description="Generate embeddings using Model Registry",
         input_type=DataType.CHUNKS, # Also supports DataType.QUERY via logic
         output_type=DataType.EMBEDDINGS, # Also supports DataType.QUERY_EMBEDDINGS via logic
+        input_schema={"type": ["array", "object"]},
         supports_parallelism=True,
         supports_batching=True,
         max_batch_size=100,
@@ -939,6 +1021,14 @@ INPUT_OPERATORS: Dict[str, OperatorSpec] = {
                 name="filters",
                 field_type=ConfigFieldType.JSON,
                 description="Optional metadata filters in JSON format",
+            ),
+            ConfigFieldSpec(
+                name="top_k",
+                field_type=ConfigFieldType.INTEGER,
+                runtime=True,
+                description="Optional runtime result limit override",
+                min_value=1,
+                max_value=100,
             ),
         ],
         tags=["input", "query"],
@@ -1053,45 +1143,28 @@ RETRIEVAL_OPERATORS: Dict[str, OperatorSpec] = {
 # =============================================================================
 
 RERANKING_OPERATORS: Dict[str, OperatorSpec] = {
-    "model_reranker": OperatorSpec(
-        operator_id="model_reranker",
-        display_name="Model Reranker",
+    "reranker": OperatorSpec(
+        operator_id="reranker",
+        display_name="Reranker",
         category=OperatorCategory.RERANKING,
         version="1.0.0",
-        description="Rerank search results using a reranker model",
+        description="Rerank retrieval results using a configurable strategy",
         input_type=DataType.SEARCH_RESULTS,
         output_type=DataType.RERANKED_RESULTS,
-        required_config=[
+        optional_config=[
+            ConfigFieldSpec(
+                name="strategy",
+                field_type=ConfigFieldType.SELECT,
+                default="model",
+                options=["model", "cross_encoder", "lexical"],
+                description="Reranking strategy",
+            ),
             ConfigFieldSpec(
                 name="model_id",
                 field_type=ConfigFieldType.MODEL_SELECT,
-                required=True,
-                description="Reranker model from Model Registry",
+                description="Optional logical reranker model identifier",
                 required_capability="rerank",
             ),
-        ],
-        optional_config=[
-            ConfigFieldSpec(
-                name="top_k",
-                field_type=ConfigFieldType.INTEGER,
-                default=5,
-                description="Number of results to keep after reranking",
-                min_value=1,
-                max_value=50,
-            ),
-        ],
-        required_capability="rerank",
-        tags=["reranking", "quality"],
-    ),
-    "cross_encoder_reranker": OperatorSpec(
-        operator_id="cross_encoder_reranker",
-        display_name="Cross-Encoder Reranker",
-        category=OperatorCategory.RERANKING,
-        version="1.0.0",
-        description="Rerank using local cross-encoder model",
-        input_type=DataType.SEARCH_RESULTS,
-        output_type=DataType.RERANKED_RESULTS,
-        optional_config=[
             ConfigFieldSpec(
                 name="model_name",
                 field_type=ConfigFieldType.SELECT,
@@ -1102,18 +1175,18 @@ RERANKING_OPERATORS: Dict[str, OperatorSpec] = {
                     "BAAI/bge-reranker-base",
                     "BAAI/bge-reranker-large",
                 ],
-                description="HuggingFace cross-encoder model",
+                description="Optional named cross-encoder reranker model",
             ),
             ConfigFieldSpec(
                 name="top_k",
                 field_type=ConfigFieldType.INTEGER,
                 default=5,
-                description="Number of results to keep",
+                description="Number of results to keep after reranking",
                 min_value=1,
                 max_value=50,
             ),
         ],
-        tags=["reranking", "cross-encoder", "local"],
+        tags=["reranking", "quality", "strategy"],
     ),
 }
 
@@ -1159,6 +1232,8 @@ class OperatorRegistry:
         for op in ENRICHMENT_OPERATORS.values():
             self._operators[op.operator_id] = op
         for op in CHUNKING_OPERATORS.values():
+            self._operators[op.operator_id] = op
+        for op in UTILITY_OPERATORS.values():
             self._operators[op.operator_id] = op
         for op in EMBEDDING_OPERATORS.values():
             self._operators[op.operator_id] = op
@@ -1225,6 +1300,7 @@ class OperatorRegistry:
             "normalization": [],
             "enrichment": [],
             "chunking": [],
+            "utility": [],
             "embedding": [],
             "storage": [],
             "retrieval": [],
@@ -1251,6 +1327,8 @@ class OperatorRegistry:
             return False, f"Unknown operator: {target_op_id}"
 
         # Check data type compatibility
+        if source_spec.output_type == DataType.ANY or target_spec.input_type == DataType.ANY:
+            return True, None
         if source_spec.output_type == target_spec.input_type:
             return True, None
         

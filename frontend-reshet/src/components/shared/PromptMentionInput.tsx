@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
+import { createPortal } from "react-dom"
 import { cva } from "class-variance-authority"
 import { cn } from "@/lib/utils"
 import { promptsService } from "@/services/prompts"
@@ -330,23 +331,20 @@ export function PromptMentionInput({
     const range = sel.getRangeAt(0)
     const rect = range.getBoundingClientRect()
     anchorRectRef.current = rect
-    const root = rootRef.current
     const menu = menuRef.current
-    if (!root || !menu) {
+    if (!menu) {
       setMenuPosition({
-        top: 0,
-        left: 0,
+        top: Math.min(window.innerHeight - 48, rect.bottom + 8),
+        left: Math.max(8, rect.left),
       })
       return
     }
-    setMenuPosition(positionMenu(rect, menu, root))
+    setMenuPosition(positionMenu(rect, menu))
   }, [])
 
   useEffect(() => {
     if (!showMentionMenu || !anchorRectRef.current || !menuRef.current) return
-    const root = rootRef.current
-    if (!root) return
-    setMenuPosition(positionMenu(anchorRectRef.current, menuRef.current, root))
+    setMenuPosition(positionMenu(anchorRectRef.current, menuRef.current))
   }, [showMentionMenu, mentionResults, mentionLoading])
 
   useEffect(() => {
@@ -354,9 +352,8 @@ export function PromptMentionInput({
     const reposition = () => {
       const rect = anchorRectRef.current
       const menu = menuRef.current
-      const root = rootRef.current
-      if (!rect || !menu || !root) return
-      setMenuPosition(positionMenu(rect, menu, root))
+      if (!rect || !menu) return
+      setMenuPosition(positionMenu(rect, menu))
     }
     window.addEventListener("resize", reposition)
     window.addEventListener("scroll", reposition, true)
@@ -448,7 +445,7 @@ export function PromptMentionInput({
       const serializedValue = extractValueFromDOM()
       const serializedFrom = mapPlainOffsetToSerializedOffset(editor, queryStart)
       const serializedTo = mapPlainOffsetToSerializedOffset(editor, plainCursorOffset)
-      const variableToken = `{{ ${insertText} }}`
+      const variableToken = `@${insertText}`
       const nextValue =
         serializedValue.slice(0, serializedFrom) +
         variableToken +
@@ -549,10 +546,11 @@ export function PromptMentionInput({
       />
 
       {/* Mention search dropdown */}
-      {showMentionMenu && (
+      {showMentionMenu && typeof document !== "undefined"
+        ? createPortal(
         <div
           ref={menuRef}
-          className="absolute z-[120] bg-popover text-popover-foreground shadow-lg rounded-lg border border-border p-1 max-h-[240px] overflow-auto min-w-[240px]"
+          className="fixed z-[180] bg-popover text-popover-foreground shadow-lg rounded-lg border border-border p-1 max-h-[240px] overflow-auto min-w-[240px]"
           style={{ top: menuPosition.top, left: menuPosition.left }}
         >
           {mentionLoading ? (
@@ -608,7 +606,9 @@ export function PromptMentionInput({
             </div>
           ))}
         </div>
-      )}
+        ,
+        document.body,
+      ) : null}
     </div>
   )
 }
@@ -619,26 +619,21 @@ export function PromptMentionInput({
 
 export { fillMention as fillMentionSegment }
 
-function positionMenu(anchorRect: DOMRect, menu: HTMLDivElement, root: HTMLDivElement) {
+function positionMenu(anchorRect: DOMRect, menu: HTMLDivElement) {
   const gap = 8
   const viewportPadding = 8
-  const rootRect = root.getBoundingClientRect()
   const menuRect = menu.getBoundingClientRect()
   const menuWidth = menuRect.width || 240
   const menuHeight = menuRect.height || 120
-  const anchorTop = anchorRect.top - rootRect.top
-  const anchorBottom = anchorRect.bottom - rootRect.top
-  const anchorLeft = anchorRect.left - rootRect.left
-  const availableHeight = Math.max(rootRect.height, window.innerHeight - rootRect.top)
-  const preferredTop = anchorTop - menuHeight - gap
-  const fallbackTop = anchorBottom + gap
+  const preferredTop = anchorRect.top - menuHeight - gap
+  const fallbackTop = anchorRect.bottom + gap
   const top = preferredTop >= viewportPadding
     ? preferredTop
-    : Math.min(fallbackTop, availableHeight - menuHeight - viewportPadding)
-  const centeredLeft = anchorLeft
+    : Math.min(fallbackTop, window.innerHeight - menuHeight - viewportPadding)
+  const centeredLeft = anchorRect.left
   const left = Math.min(
     Math.max(viewportPadding, centeredLeft),
-    Math.max(viewportPadding, rootRect.width - menuWidth - viewportPadding)
+    Math.max(viewportPadding, window.innerWidth - menuWidth - viewportPadding)
   )
   return { top, left }
 }

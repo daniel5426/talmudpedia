@@ -48,6 +48,7 @@ class UpdateAgentData:
 class ExecuteAgentData:
     input: Optional[str] = None
     messages: List[Dict[str, Any]] = field(default_factory=list)
+    state: Optional[Dict[str, Any]] = None
     context: Optional[Dict[str, Any]] = None
 
 
@@ -127,8 +128,6 @@ class AgentService:
             "start": "start",
             "output": "end",
             "end": "end",
-            "llm_call": "llm",
-            "llm": "llm",
             "tool_call": "tool",
             "rag_retrieval": "rag",
             "rag_pipeline": "rag",
@@ -227,7 +226,7 @@ class AgentService:
         if not isinstance(nodes, list):
             return issues
 
-        model_required_node_types = {"agent", "llm", "classify"}
+        model_required_node_types = {"agent", "classify"}
 
         for idx, node in enumerate(nodes):
             if not isinstance(node, dict):
@@ -628,8 +627,9 @@ class AgentService:
             input_state = {
                 "messages": data.messages or [],
                 "input": data.input,
+                "state": data.state or {},
                 "context": data.context or {},
-                "workflow_input": {"input_as_text": data.input or ""},
+                "workflow_input": {"text": data.input or "", "input_as_text": data.input or ""},
             }
             if data.input:
                 input_state["messages"].append({"role": "user", "content": data.input})

@@ -136,6 +136,50 @@ async def test_crawl4ai_provider_applies_top_level_crawl_controls(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_crawl4ai_provider_rewrites_loopback_urls_for_local_runtime(monkeypatch):
+    requests_seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests_seen.append(request)
+        if request.url.path == "/crawl/job":
+            return httpx.Response(200, json={"results": []})
+        raise AssertionError(f"Unexpected path: {request.url.path}")
+
+    _mock_async_client(monkeypatch, handler)
+
+    provider = Crawl4AIProvider(base_url="http://127.0.0.1:11235")
+    await provider.crawl(WebCrawlerRequest(start_urls=["http://127.0.0.1:8080/test"], max_pages=1))
+
+    sent_payload = requests_seen[0].content.decode("utf-8")
+    assert '"urls":["http://host.docker.internal:8080/test"]' in sent_payload
+
+
+@pytest.mark.asyncio
+async def test_crawl4ai_provider_surfaces_failed_result_payloads(monkeypatch):
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/crawl/job":
+            return httpx.Response(
+                200,
+                json={
+                    "results": [
+                        {
+                            "url": "http://host.docker.internal:8080/test",
+                            "success": False,
+                            "error_message": "ERR_CONNECTION_REFUSED",
+                        }
+                    ]
+                },
+            )
+        raise AssertionError(f"Unexpected path: {request.url.path}")
+
+    _mock_async_client(monkeypatch, handler)
+
+    provider = Crawl4AIProvider(base_url="http://127.0.0.1:11235")
+    with pytest.raises(RuntimeError, match="ERR_CONNECTION_REFUSED"):
+        await provider.crawl(WebCrawlerRequest(start_urls=["http://127.0.0.1:8080/test"], max_pages=1))
+
+
+@pytest.mark.asyncio
 async def test_crawl4ai_provider_raises_timeout_when_task_never_completes(monkeypatch):
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/crawl/job":

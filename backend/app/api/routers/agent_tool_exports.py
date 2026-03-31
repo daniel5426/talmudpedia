@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends
@@ -20,7 +19,6 @@ router = APIRouter(prefix="/agents", tags=["agents"])
 class ExportAgentToolRequest(BaseModel):
     name: str | None = Field(default=None)
     description: str | None = Field(default=None)
-    input_schema: dict[str, Any] | None = Field(default=None)
 
 
 class ExportAgentToolResponse(BaseModel):
@@ -45,7 +43,6 @@ async def export_agent_tool(
         agent=agent,
         name=request.name,
         description=request.description,
-        input_schema=request.input_schema,
         created_by=getattr(actor, "id", None),
     )
     await db.commit()

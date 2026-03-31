@@ -25,6 +25,8 @@ interface AgentCardProps {
     onOpen?: (agent: Agent) => void // Should navigate to builder
     onRun?: (agent: Agent) => void  // Should navigate to playground
     onPlayground?: (agent: Agent) => void // Alternative to onRun
+    onMakeTool?: (agent: Agent) => void
+    makeToolBusy?: boolean
     className?: string
 }
 
@@ -50,7 +52,7 @@ function renderMetrics(metrics: NonNullable<AgentCardProps["metrics"]>) {
     )
 }
 
-export function AgentCard({ agent, metrics, onOpen, onRun, onDelete, onPlayground, className }: AgentCardProps) {
+export function AgentCard({ agent, metrics, onOpen, onRun, onDelete, onPlayground, onMakeTool, makeToolBusy = false, className }: AgentCardProps) {
     const [idCopied, setIdCopied] = useState(false)
     const copyResetTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -108,13 +110,18 @@ export function AgentCard({ agent, metrics, onOpen, onRun, onDelete, onPlaygroun
                 <div className="opacity-0 group-hover:opacity-100 transition-opacity" onClick={(e) => e.stopPropagation()}>
                     <DropdownMenu>
                         <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon" className="h-6 w-6 -mr-1">
+                            <Button variant="ghost" size="icon" className="h-6 w-6 -mr-1" aria-label={`Agent actions for ${agent.name}`}>
                                 <MoreHorizontal className="h-3.5 w-3.5 lg:h-4 lg:w-4" />
                             </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
                             <DropdownMenuItem onClick={() => onOpen?.(agent)}>Edit Agent</DropdownMenuItem>
                             <DropdownMenuItem onClick={() => (onPlayground || onRun)?.(agent)}>Run Playground</DropdownMenuItem>
+                            {onMakeTool ? (
+                                <DropdownMenuItem onClick={() => onMakeTool(agent)} disabled={makeToolBusy}>
+                                    {agent.is_tool_enabled ? "Sync tool" : "Make tool"}
+                                </DropdownMenuItem>
+                            ) : null}
                             <DropdownMenuItem onClick={handleCopyId}>
                                 {idCopied ? (
                                     <>
@@ -159,6 +166,14 @@ export function AgentCard({ agent, metrics, onOpen, onRun, onDelete, onPlaygroun
                     <span>v{agent.version}</span>
                     <span>•</span>
                     <span>{new Date(agent.updated_at).toLocaleDateString()}</span>
+                    {agent.is_tool_enabled ? (
+                        <>
+                            <span>•</span>
+                            <span className="font-medium text-foreground/70">
+                                Tool {agent.tool_binding_status || "enabled"}
+                            </span>
+                        </>
+                    ) : null}
                 </div>
                 <Button variant="ghost" size="icon" className="h-6 w-6 rounded-full bg-muted/50 hover:bg-primary hover:text-primary-foreground transition-colors group-hover:scale-105">
                     <ArrowUpRight className="h-3 w-3" />

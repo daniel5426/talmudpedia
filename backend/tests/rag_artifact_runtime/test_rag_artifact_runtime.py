@@ -186,9 +186,10 @@ async def test_pipeline_executor_routes_artifact_steps_to_background_queue(db_se
         tenant_id=str(tenant.id),
         require_published_artifacts=True,
     )
+    visual_pipeline = _build_pipeline(tenant.id, operator.name)
     executable = ExecutablePipeline(
         id=uuid.uuid4(),
-        visual_pipeline_id=compiled.executable_pipeline.visual_pipeline_id or uuid.uuid4(),
+        visual_pipeline_id=visual_pipeline.id,
         tenant_id=tenant.id,
         version=1,
         compiled_graph=compiled.executable_pipeline.model_dump(mode="json"),
@@ -204,7 +205,7 @@ async def test_pipeline_executor_routes_artifact_steps_to_background_queue(db_se
         input_params={"query": "hello", "text": "hello"},
         triggered_by=user.id,
     )
-    db_session.add_all([executable, job])
+    db_session.add_all([visual_pipeline, executable, job])
     await db_session.commit()
 
     captured = {}
@@ -232,9 +233,21 @@ async def test_pipeline_executor_routes_artifact_steps_to_background_queue(db_se
 @pytest.mark.asyncio
 async def test_retrieval_runtime_uses_interactive_artifact_queue(db_session, monkeypatch):
     tenant, user = await _seed_tenant_context(db_session)
+    visual_pipeline = VisualPipeline(
+        id=uuid.uuid4(),
+        tenant_id=tenant.id,
+        name="Runtime Queue Pipeline",
+        description=None,
+        nodes=[],
+        edges=[],
+        pipeline_type=PipelineType.RETRIEVAL,
+        version=1,
+        is_published=False,
+        created_by=user.id,
+    )
     executable = ExecutablePipeline(
         id=uuid.uuid4(),
-        visual_pipeline_id=uuid.uuid4(),
+        visual_pipeline_id=visual_pipeline.id,
         tenant_id=tenant.id,
         version=1,
         compiled_graph={"dag": []},
@@ -242,7 +255,7 @@ async def test_retrieval_runtime_uses_interactive_artifact_queue(db_session, mon
         is_valid=True,
         compiled_by=user.id,
     )
-    db_session.add(executable)
+    db_session.add_all([visual_pipeline, executable])
     await db_session.commit()
 
     captured = {}

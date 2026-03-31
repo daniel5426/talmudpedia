@@ -3,7 +3,7 @@
 import { useMemo, useEffect, useState } from "react"
 import {
     Play, Square, Brain, Wrench, Search, GitBranch, GitFork, UserCheck, Circle,
-    GripVertical, PanelLeftClose, Database, Bot, Sparkles, RefreshCw, ListFilter, GitMerge, Link, Route, Scale, Ban,
+    GripVertical, PanelLeftClose, Database, Bot, Sparkles, RefreshCw, ListFilter, GitMerge, Link, Route, Scale, Ban, Mic,
     PanelLeft
 } from "lucide-react"
 import { cn } from "@/lib/utils"
@@ -21,7 +21,7 @@ import { agentService, AgentOperatorSpec } from "@/services/agent"
 
 const ICON_MAP: Record<string, React.ElementType> = {
     Play, Square, Brain, Wrench, Search, GitBranch, GitFork, UserCheck, Circle,
-    Database, Bot, Sparkles, RefreshCw, ListFilter, GitMerge, Link, Route, Scale, Ban,
+    Database, Bot, Sparkles, RefreshCw, ListFilter, GitMerge, Link, Route, Scale, Ban, Mic,
     // Lowercase mappings for types
     start: Play,
     end: Square,
@@ -42,6 +42,7 @@ const ICON_MAP: Record<string, React.ElementType> = {
     cancel_subtree: Ban,
     human_input: UserCheck,
     user_approval: UserCheck,
+    speech_to_text: Mic,
     transform: Sparkles,
     set_state: Database,
     classify: ListFilter,

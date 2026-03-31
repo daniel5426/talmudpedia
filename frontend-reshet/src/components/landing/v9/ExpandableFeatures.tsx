@@ -44,7 +44,7 @@ export function ExpandableFeaturesLarge() {
 
   return (
     <section className="py-20 md:py-28 px-6">
-      <div className="max-w-5xl mx-auto">
+      <div className="max-w-6xl mx-auto">
         <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-6 mb-12">
           <h2 className="text-3xl md:text-[40px] font-semibold tracking-tight text-gray-900 leading-[1.15] max-w-md">
             Ship with confidence
@@ -57,12 +57,12 @@ export function ExpandableFeaturesLarge() {
           </p>
         </div>
 
-        <div className="rounded-3xl bg-gradient-to-br from-stone-100 via-stone-50 to-amber-50/30 border border-gray-200/50 p-3 md:p-4">
+        <div className="rounded-3xl bg-gradient-to-br from-stone-100 via-stone-50 to-amber-50/30 border border-gray-200/50 p-3 md:p-5">
           <div className="rounded-2xl bg-white shadow-sm border border-gray-200/40 overflow-hidden">
             <img
               src={active.screenshot}
               alt={active.label}
-              className="w-full block"
+              className="w-full block min-h-[260px] md:min-h-[420px] object-cover object-top"
               loading="lazy"
             />
           </div>
@@ -125,7 +125,7 @@ export function ExpandableFeaturesVertical() {
 
   return (
     <section className="py-20 md:py-28 px-6">
-      <div className="max-w-5xl mx-auto">
+      <div className="max-w-6xl mx-auto">
         <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-6 mb-12">
           <h2 className="text-3xl md:text-[40px] font-semibold tracking-tight text-gray-900 leading-[1.15] max-w-md">
             Deploy anywhere,
@@ -165,12 +165,12 @@ export function ExpandableFeaturesVertical() {
             </div>
 
             {/* Screenshot — with left padding on desktop for tab panel */}
-            <div className="p-6 pb-24 md:p-12 md:pb-12 md:pl-52">
-              <div className="rounded-2xl overflow-hidden shadow-[0_25px_60px_-15px_rgba(0,0,0,0.4)]">
+            <div className="p-6 pb-24 md:p-10 md:pb-10 md:pl-44 lg:pl-48">
+              <div className="rounded-2xl overflow-hidden shadow-[0_25px_60px_-15px_rgba(0,0,0,0.4)] min-h-[260px] md:min-h-[460px]">
                 <img
                   src={active.screenshot}
                   alt={active.label}
-                  className="w-full block"
+                  className="w-full h-full block object-cover object-top"
                   loading="lazy"
                 />
               </div>

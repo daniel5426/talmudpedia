@@ -7,113 +7,25 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectLabel,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import type { AgentGraphAnalysis } from "@/services/agent"
 import {
   buildDefaultEndOutputSchema,
   EndOutputBinding,
   EndOutputSchemaConfig,
-  getValueRefGroups,
-  isValueRefTypeCompatible,
+  endSchemaToStructuredProperties,
   normalizeEndConfig,
   normalizeSetStateAssignments,
   normalizeStateVariables,
   SetStateAssignment,
   StateVariableDefinition,
-  ValueRef,
+  structuredPropertiesToEndConfig,
+  type StructuredPropertyDefinition,
 } from "./graph-contract"
+import { StructuredPropertyTreeEditor } from "./StructuredPropertyTreeEditor"
+import { ValueRefPicker } from "./ValueRefPicker"
 
 const STATE_TYPE_OPTIONS = ["string", "number", "boolean", "object", "list"] as const
-
-function encodeValueRef(valueRef?: ValueRef) {
-  if (!valueRef) return ""
-  return JSON.stringify({
-    namespace: valueRef.namespace,
-    node_id: valueRef.node_id || undefined,
-    key: valueRef.key,
-  })
-}
-
-function decodeValueRef(raw: string): ValueRef | null {
-  if (!raw) return null
-  try {
-    return JSON.parse(raw) as ValueRef
-  } catch {
-    return null
-  }
-}
-
-export function ValueRefPicker({
-  analysis,
-  value,
-  onChange,
-  expectedTypes,
-}: {
-  analysis?: AgentGraphAnalysis | null
-  value?: ValueRef | null
-  onChange: (value: ValueRef | null) => void
-  expectedTypes?: string[]
-}) {
-  const groups = useMemo(() => getValueRefGroups(analysis), [analysis])
-  const selected = encodeValueRef(value || undefined)
-  const optionsByEncodedValue = useMemo(() => {
-    const entries = groups.flatMap((group) =>
-      group.options.map((option) => [encodeValueRef(option.value_ref), option] as const),
-    )
-    return new Map(entries)
-  }, [groups])
-
-  const filteredGroups = useMemo(
-    () =>
-      groups
-        .map((group) => ({
-          ...group,
-          options: group.options.filter((option) => isValueRefTypeCompatible(option.type, expectedTypes)),
-        }))
-        .filter((group) => group.options.length > 0),
-    [expectedTypes, groups],
-  )
-
-  return (
-    <Select
-      value={selected}
-      onValueChange={(next) => {
-        onChange(optionsByEncodedValue.get(next)?.value_ref || decodeValueRef(next))
-      }}
-    >
-      <SelectTrigger
-        aria-label="Select value"
-        className="h-9 w-[220px] max-w-full min-w-0 rounded-lg border-none bg-muted/40 text-[13px] shadow-none focus:ring-1 focus:ring-offset-0 [&>span]:truncate"
-      >
-        <SelectValue placeholder="Select value..." />
-      </SelectTrigger>
-      <SelectContent className="rounded-xl border-border/50" data-value-ref-picker-portal="true">
-        {filteredGroups.map((group) => (
-          <SelectGroup key={group.label}>
-            <SelectLabel>{group.label}</SelectLabel>
-            {group.options.map((option) => {
-              const encoded = encodeValueRef(option.value_ref)
-              return (
-                <SelectItem key={`${group.label}:${option.node_id || "global"}:${option.key}`} value={encoded}>
-                  {(option.label || option.key) + (option.type ? ` (${option.type})` : "")}
-                </SelectItem>
-              )
-            })}
-          </SelectGroup>
-        ))}
-      </SelectContent>
-    </Select>
-  )
-}
 
 export function StartContractEditor({
   value,
@@ -136,8 +48,8 @@ export function StartContractEditor({
         <Label className="text-[11px] font-bold uppercase tracking-tight text-foreground/50">Workflow Input</Label>
         <div className="flex items-center justify-between rounded-lg bg-background/60 px-3 py-2">
           <div className="space-y-1">
-            <div className="text-[13px] font-medium">input_as_text</div>
-            <div className="text-[11px] text-muted-foreground">Built-in chat workflow input</div>
+            <div className="text-[13px] font-medium">text</div>
+            <div className="text-[11px] text-muted-foreground">Primary text input for the workflow</div>
           </div>
           <Badge variant="secondary">string</Badge>
         </div>
@@ -215,44 +127,14 @@ export function StartContractEditor({
   )
 }
 
-type SimpleSchemaProperty = {
-  key: string
-  type: string
-  binding?: ValueRef | null
-}
-
-function schemaToSimpleRows(schema: Record<string, unknown>, bindings: EndOutputBinding[]): SimpleSchemaProperty[] {
-  const properties = (schema.properties as Record<string, Record<string, unknown>>) || {}
-  return Object.entries(properties).map(([key, propertySchema]) => ({
-    key,
-    type: String(propertySchema?.type || "string"),
-    binding: bindings.find((binding) => binding.json_pointer === `/${key}`)?.value_ref || null,
-  }))
-}
-
-function simpleRowsToSchema(rows: SimpleSchemaProperty[], schemaName?: string): EndOutputSchemaConfig {
-  return {
-    name: schemaName || "workflow_result",
-    mode: "simple",
-    schema: {
-      type: "object",
-      additionalProperties: false,
-      properties: Object.fromEntries(
-        rows
-          .filter((row) => row.key.trim())
-          .map((row) => [row.key.trim(), { type: row.type }]),
-      ),
-      required: rows.filter((row) => row.key.trim()).map((row) => row.key.trim()),
-    },
-  }
-}
-
 export function EndContractEditor({
   value,
+  nodeId,
   analysis,
   onChange,
 }: {
   value: unknown
+  nodeId?: string | null
   analysis?: AgentGraphAnalysis | null
   onChange: (value: { output_schema: EndOutputSchemaConfig; output_bindings: EndOutputBinding[] }) => void
 }) {
@@ -269,29 +151,22 @@ export function EndContractEditor({
     () => JSON.stringify(normalized.output_schema.schema || buildDefaultEndOutputSchema().schema, null, 2),
     [normalized.output_schema.schema],
   )
-  const [simpleRows, setSimpleRows] = useState<SimpleSchemaProperty[]>(() =>
-    schemaToSimpleRows(normalized.output_schema.schema, normalized.output_bindings),
+  const [simpleRows, setSimpleRows] = useState<StructuredPropertyDefinition[]>(() =>
+    endSchemaToStructuredProperties(normalized.output_schema.schema, normalized.output_bindings),
   )
   const [advancedDraft, setAdvancedDraft] = useState(advancedSchemaSignature)
 
   useEffect(() => {
-    setSimpleRows(schemaToSimpleRows(normalized.output_schema.schema, normalized.output_bindings))
+    setSimpleRows(endSchemaToStructuredProperties(normalized.output_schema.schema, normalized.output_bindings))
   }, [simpleRowsSignature])
 
   useEffect(() => {
     setAdvancedDraft(advancedSchemaSignature)
   }, [advancedSchemaSignature])
 
-  const updateSimpleRows = (rows: SimpleSchemaProperty[]) => {
+  const updateSimpleRows = (rows: StructuredPropertyDefinition[]) => {
     setSimpleRows(rows)
-    const outputSchema = simpleRowsToSchema(rows, normalized.output_schema.name)
-    const outputBindings = rows
-      .filter((row) => row.key.trim() && row.binding)
-      .map((row) => ({
-        json_pointer: `/${row.key.trim()}`,
-        value_ref: row.binding as ValueRef,
-      }))
-    onChange({ output_schema: outputSchema, output_bindings: outputBindings })
+    onChange(structuredPropertiesToEndConfig(rows, normalized.output_schema.name))
   }
 
   const setAdvancedSchema = (rawSchema: string) => {
@@ -373,87 +248,13 @@ export function EndContractEditor({
 
           <div className="space-y-2">
             <Label className="text-[11px] font-bold uppercase tracking-tight text-foreground/50 px-0.5">Properties</Label>
-            <div>
-              <div className="grid grid-cols-[minmax(0,1fr)_104px_220px_36px] gap-2 px-1 pb-2 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/50">
-                <div>Name</div>
-                <div>Type</div>
-                <div>Value</div>
-                <div />
-              </div>
-
-              <div className="space-y-1.5">
-                {simpleRows.map((row, index) => (
-                  <div
-                    key={`end-row-${index}`}
-                    className="grid grid-cols-[minmax(0,1fr)_104px_220px_36px] gap-2 rounded-lg bg-muted/40 p-2"
-                  >
-                    <div className="flex min-w-0 items-center gap-2">
-                      <Input
-                        value={row.key}
-                        onChange={(event) => {
-                          const next = [...simpleRows]
-                          next[index] = { ...next[index], key: event.target.value }
-                          updateSimpleRows(next)
-                        }}
-                        placeholder="property name"
-                        className="h-9 bg-background/60 border-none rounded-lg text-[13px] focus-visible:ring-1 focus-visible:ring-offset-0 placeholder:text-muted-foreground/40"
-                      />
-                    </div>
-                    <Select
-                      value={row.type}
-                      onValueChange={(nextType) => {
-                        const next = [...simpleRows]
-                        next[index] = { ...next[index], type: nextType }
-                        updateSimpleRows(next)
-                      }}
-                    >
-                      <SelectTrigger className="h-9 w-[104px] max-w-full min-w-0 rounded-lg border-none bg-background/60 px-3 text-[13px] shadow-none focus:ring-1 focus:ring-offset-0 [&>span]:truncate">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent className="rounded-xl border-border/50">
-                        {STATE_TYPE_OPTIONS.map((option) => {
-                          const value = option === "list" ? "array" : option
-                          return (
-                            <SelectItem key={option} value={value}>
-                              {option === "list" ? "list" : option}
-                            </SelectItem>
-                          )
-                        })}
-                      </SelectContent>
-                    </Select>
-                    <ValueRefPicker
-                      analysis={analysis}
-                      value={row.binding || undefined}
-                      expectedTypes={[row.type === "array" ? "list" : row.type]}
-                      onChange={(binding) => {
-                        const next = [...simpleRows]
-                        next[index] = { ...next[index], binding }
-                        updateSimpleRows(next)
-                      }}
-                    />
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      className="h-9 w-9 rounded-lg text-muted-foreground/50 hover:text-foreground"
-                      onClick={() => updateSimpleRows(simpleRows.filter((_, rowIndex) => rowIndex !== index))}
-                    >
-                      <Trash2 className="h-3 w-3" />
-                    </Button>
-                  </div>
-                ))}
-
-                <Button
-                  type="button"
-                  variant="ghost"
-                  onClick={() => updateSimpleRows([...simpleRows, { key: "", type: "string", binding: null }])}
-                  className="h-7 rounded-lg px-2.5 text-[11px] text-muted-foreground hover:text-foreground"
-                >
-                  <Plus className="mr-1 h-3 w-3" />
-                  Add property
-                </Button>
-              </div>
-            </div>
+            <StructuredPropertyTreeEditor
+              properties={simpleRows}
+              mode="value"
+              nodeId={nodeId}
+              analysis={analysis}
+              onChange={updateSimpleRows}
+            />
           </div>
         </div>
       )}
@@ -463,10 +264,12 @@ export function EndContractEditor({
 
 export function SetStateAssignmentsEditor({
   value,
+  nodeId,
   analysis,
   onChange,
 }: {
   value: unknown
+  nodeId?: string | null
   analysis?: AgentGraphAnalysis | null
   onChange: (assignments: SetStateAssignment[]) => void
 }) {
@@ -549,6 +352,7 @@ export function SetStateAssignmentsEditor({
                 {sourceMode === "value_ref" ? (
                   <ValueRefPicker
                     analysis={analysis}
+                    nodeId={nodeId}
                     value={assignment.value_ref || undefined}
                     expectedTypes={assignment.type ? [assignment.type] : undefined}
                     onChange={(valueRef) => updateRow(index, { value_ref: valueRef || undefined, value: undefined })}

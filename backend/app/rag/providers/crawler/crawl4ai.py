@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import os
 from typing import Any, Iterable, List, Optional
+from urllib.parse import urlparse, urlunparse
 
 import httpx
 
@@ -122,9 +123,21 @@ class Crawl4AIProvider(WebCrawlerProvider):
             crawler_config["scan_full_page"] = request.scan_full_page
 
         return {
-            "urls": request.start_urls,
+            "urls": [self._normalize_start_url(url) for url in request.start_urls],
             "crawler_config": crawler_config,
         }
+
+    def _normalize_start_url(self, url: str) -> str:
+        parsed = urlparse(url)
+        crawler_host = (urlparse(self._base_url).hostname or "").strip().lower()
+        target_host = (parsed.hostname or "").strip().lower()
+        if crawler_host in {"127.0.0.1", "localhost"} and target_host in {"127.0.0.1", "localhost"}:
+            host = "host.docker.internal"
+            netloc = host
+            if parsed.port:
+                netloc = f"{host}:{parsed.port}"
+            return urlunparse(parsed._replace(netloc=netloc))
+        return url
 
     def _extract_task_id(self, payload: Any) -> Optional[str]:
         if not isinstance(payload, dict):
@@ -169,7 +182,22 @@ class Crawl4AIProvider(WebCrawlerProvider):
             document = self._normalize_document(item, request)
             if document is not None:
                 documents.append(document)
+        if not documents:
+            failures = self._collect_failures(items)
+            if failures:
+                raise RuntimeError("; ".join(failures))
         return documents
+
+    def _collect_failures(self, items: List[Any]) -> List[str]:
+        failures: List[str] = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            success = item.get("success")
+            error_message = item.get("error_message") or item.get("error") or item.get("message")
+            if success is False and error_message:
+                failures.append(str(error_message).strip())
+        return failures
 
     def _coerce_items(self, payload: Any) -> List[Any]:
         if payload is None:

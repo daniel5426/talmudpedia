@@ -9,6 +9,7 @@ from uuid import UUID
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agent.graph.schema import AgentGraph
 from app.agent.execution.tool_input_contracts import sanitize_schema_dict
 from app.db.postgres.models.agents import Agent, AgentStatus
 from app.db.postgres.models.artifact_runtime import Artifact, ArtifactKind, ArtifactRevision
@@ -32,22 +33,30 @@ _GENERIC_AGENT_OUTPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": True,
 }
-_DEFAULT_AGENT_INPUT_SCHEMA: dict[str, Any] = {
+_GENERIC_JSON_SCHEMA: dict[str, Any] = {}
+_ATTACHMENT_REF_SCHEMA: dict[str, Any] = {
     "type": "object",
-    "properties": {
-        "input": {
-            "description": "String input or structured agent payload.",
-            "anyOf": [
-                {"type": "string"},
-                {"type": "object", "additionalProperties": True},
-            ],
-        },
-        "text": {"type": "string"},
-        "input_text": {"type": "string"},
-        "messages": {"type": "array", "items": {"type": "object"}},
-        "context": {"type": "object", "additionalProperties": True},
-    },
-    "additionalProperties": False,
+    "additionalProperties": True,
+}
+_WORKFLOW_INPUT_TOOL_FIELD_ALIASES: dict[str, str] = {
+    "text": "text",
+    "files": "files",
+    "audio": "audio",
+    "images": "images",
+    "input_as_text": "text",
+    "attachments": "files",
+    "audio_attachments": "audio",
+    "primary_audio_attachment": "audio",
+}
+_WORKFLOW_INPUT_SEMANTIC_TOOL_FIELD_ALIASES: dict[str, str] = {
+    "text": "text",
+    "files": "files",
+    "audio": "audio",
+    "attachments": "files",
+    "audio_attachments": "audio",
+    "audio_attachment": "audio",
+    "images": "images",
+    "image": "images",
 }
 
 
@@ -63,6 +72,43 @@ def _slugify(value: str, *, fallback: str) -> str:
 def _tool_semver(version_number: int | None) -> str:
     patch = max(int(version_number or 1) - 1, 0)
     return f"1.0.{patch}"
+
+
+def _attachment_list_schema() -> dict[str, Any]:
+    return {
+        "type": "array",
+        "items": deepcopy(_ATTACHMENT_REF_SCHEMA),
+    }
+
+
+def _attachment_single_or_list_schema() -> dict[str, Any]:
+    return {
+        "anyOf": [
+            deepcopy(_ATTACHMENT_REF_SCHEMA),
+            _attachment_list_schema(),
+        ]
+    }
+
+
+def _state_variable_to_json_schema(raw_var: dict[str, Any]) -> dict[str, Any]:
+    value_type = str(raw_var.get("type") or "string").strip().lower()
+    description = str(raw_var.get("description") or "").strip() or None
+    schema: dict[str, Any]
+    if value_type == "number":
+        schema = {"type": "number"}
+    elif value_type == "boolean":
+        schema = {"type": "boolean"}
+    elif value_type == "object":
+        object_schema = raw_var.get("schema")
+        schema = deepcopy(object_schema) if isinstance(object_schema, dict) else {"type": "object", "additionalProperties": True}
+        schema.setdefault("type", "object")
+    elif value_type == "list":
+        schema = {"type": "array", "items": deepcopy(_GENERIC_JSON_SCHEMA)}
+    else:
+        schema = {"type": "string"}
+    if description:
+        schema["description"] = description
+    return schema
 
 
 class ToolBindingService:
@@ -121,6 +167,9 @@ class ToolBindingService:
         revision: ArtifactRevision,
         created_by: UUID | None,
     ) -> ToolRegistry | None:
+        if artifact.kind != ArtifactKind.TOOL_IMPL:
+            await self.delete_artifact_tool_binding(artifact.id)
+            return None
         return await self._upsert_artifact_tool_binding(
             artifact=artifact,
             revision=revision,
@@ -347,19 +396,16 @@ class ToolBindingService:
         agent: Agent,
         name: str | None = None,
         description: str | None = None,
-        input_schema: dict[str, Any] | None = None,
         created_by: UUID | None = None,
     ) -> ToolRegistry:
         tool = await self.get_agent_tool(agent.id)
         config_schema = self._agent_tool_config_schema(agent=agent, existing_tool=tool)
         desired_status = self._agent_tool_status(agent)
         desired_version = _tool_semver(agent.version)
-        schema = dict(tool.schema or {}) if tool is not None and isinstance(tool.schema, dict) else {}
-        if input_schema is not None:
-            schema["input"] = _normalized_tool_io_schema(input_schema)
-        else:
-            schema.setdefault("input", _normalized_tool_io_schema(_DEFAULT_AGENT_INPUT_SCHEMA))
-        schema["output"] = _normalized_tool_io_schema(_GENERIC_AGENT_OUTPUT_SCHEMA)
+        schema = {
+            "input": _normalized_tool_io_schema(self._build_agent_input_schema(agent)),
+            "output": _normalized_tool_io_schema(_GENERIC_AGENT_OUTPUT_SCHEMA),
+        }
 
         if tool is None:
             tool = ToolRegistry(
@@ -609,6 +655,44 @@ class ToolBindingService:
     def _pipeline_tool_slug(self, pipeline: VisualPipeline) -> str:
         base = _slugify(pipeline.name, fallback="pipeline-tool")
         return f"{base}-pipeline-{str(pipeline.id).replace('-', '')[:8]}"
+
+    def _build_agent_input_schema(self, agent: Agent) -> dict[str, Any]:
+        graph = AgentGraph.model_validate(agent.graph_definition or {"nodes": [], "edges": []})
+        properties: dict[str, Any] = {}
+
+        workflow_contract = getattr(graph, "workflow_contract", None)
+        workflow_inputs = getattr(workflow_contract, "inputs", []) if workflow_contract is not None else []
+        for item in workflow_inputs:
+            key = str(getattr(item, "key", "") or "").strip()
+            semantic_type = str(getattr(item, "semantic_type", "") or "").strip().lower()
+            external_field = _WORKFLOW_INPUT_SEMANTIC_TOOL_FIELD_ALIASES.get(semantic_type) or _WORKFLOW_INPUT_TOOL_FIELD_ALIASES.get(key)
+            if not external_field or external_field in properties:
+                continue
+            if external_field == "text":
+                properties[external_field] = {
+                    "type": "string",
+                    "description": "Primary text input for the workflow.",
+                }
+            elif external_field in {"files", "images"}:
+                properties[external_field] = _attachment_list_schema()
+            elif external_field == "audio":
+                properties[external_field] = _attachment_single_or_list_schema()
+
+        state_contract = getattr(graph, "state_contract", None)
+        state_variables = getattr(state_contract, "variables", []) if state_contract is not None else []
+        for raw_var in state_variables:
+            key = str(getattr(raw_var, "key", "") or "").strip()
+            if not key or key in properties:
+                continue
+            properties[key] = _state_variable_to_json_schema(
+                raw_var.model_dump() if hasattr(raw_var, "model_dump") else dict(raw_var)
+            )
+
+        return {
+            "type": "object",
+            "properties": properties,
+            "additionalProperties": False,
+        }
 
     def _agent_tool_slug(self, agent_id: UUID) -> str:
         return f"agent-tool-{str(agent_id).replace('-', '')[:12]}"

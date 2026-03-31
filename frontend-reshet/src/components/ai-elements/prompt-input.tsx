@@ -1061,15 +1061,20 @@ export type PromptInputSpeechButtonProps = ComponentProps<
 > & {
   textareaRef?: RefObject<HTMLTextAreaElement | null>;
   onTranscriptionChange?: (text: string) => void;
+  mode?: "transcribe" | "attachment";
+  attachmentFilename?: string;
 };
 
 export const PromptInputSpeechButton = ({
   className,
   textareaRef,
   onTranscriptionChange,
+  mode = "transcribe",
+  attachmentFilename = "recording.webm",
   ...props
 }: PromptInputSpeechButtonProps) => {
   const recordingState = useRecordingState();
+  const attachments = usePromptInputAttachments();
   const [isListening, setIsListening] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -1110,24 +1115,30 @@ export const PromptInputSpeechButton = ({
       mediaRecorder.onstop = async () => {
         setIsProcessing(true);
         const audioBlob = new Blob(chunksRef.current, { type: "audio/webm" });
-        const formData = new FormData();
-        formData.append("file", audioBlob, "recording.webm");
 
         try {
-          const { text: transcript } = await sttService.transcribe(formData);
+          if (mode === "attachment") {
+            attachments.add([
+              new File([audioBlob], attachmentFilename, { type: "audio/webm" }),
+            ]);
+          } else {
+            const formData = new FormData();
+            formData.append("file", audioBlob, attachmentFilename);
+            const { text: transcript } = await sttService.transcribe(formData);
 
-          if (transcript && textareaRef?.current) {
-            const textarea = textareaRef.current;
-            const currentValue = textarea.value;
-            const newValue =
-              currentValue + (currentValue ? " " : "") + transcript;
+            if (transcript && textareaRef?.current) {
+              const textarea = textareaRef.current;
+              const currentValue = textarea.value;
+              const newValue =
+                currentValue + (currentValue ? " " : "") + transcript;
 
-            textarea.value = newValue;
-            textarea.dispatchEvent(new Event("input", { bubbles: true }));
-            onTranscriptionChange?.(newValue);
+              textarea.value = newValue;
+              textarea.dispatchEvent(new Event("input", { bubbles: true }));
+              onTranscriptionChange?.(newValue);
+            }
           }
         } catch (error) {
-          console.error("Transcription error:", error);
+          console.error(mode === "attachment" ? "Audio capture error:" : "Transcription error:", error);
         } finally {
           setIsProcessing(false);
           setIsListening(false);
@@ -1169,6 +1180,7 @@ export const PromptInputSpeechButton = ({
 
   return (
     <PromptInputButton
+      aria-label={mode === "attachment" ? "Record audio input" : "Transcribe speech"}
       className={cn(
         "relative transition-all duration-200",
         isListening && "animate-pulse bg-accent text-accent-foreground",

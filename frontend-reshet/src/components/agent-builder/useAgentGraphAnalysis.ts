@@ -1,17 +1,14 @@
 "use client"
 
 import { startTransition, useEffect, useState } from "react"
-import { Edge, Node } from "@xyflow/react"
 
 import { agentService } from "@/services"
-import type { AgentGraphAnalysis } from "@/services/agent"
-import { AgentNodeData } from "./types"
-import { normalizeGraphSpecForSave } from "./graphspec"
+import type { AgentGraphAnalysis, AgentGraphDefinition } from "@/services/agent"
+import { normalizeGraphDefinition } from "./graphspec"
 
 export function useAgentGraphAnalysis(
   agentId: string | undefined,
-  nodes: Node<AgentNodeData>[],
-  edges: Edge[],
+  graphDefinition: AgentGraphDefinition,
 ) {
   const [analysis, setAnalysis] = useState<AgentGraphAnalysis | null>(null)
   const [isLoading, setIsLoading] = useState(false)
@@ -22,11 +19,11 @@ export function useAgentGraphAnalysis(
       return
     }
 
-    const graphDefinition = normalizeGraphSpecForSave(nodes, edges, { specVersion: "3.0" })
+    const normalizedGraphDefinition = normalizeGraphDefinition(graphDefinition)
     const handle = window.setTimeout(() => {
       setIsLoading(true)
       agentService
-        .analyzeGraph(agentId, graphDefinition)
+        .analyzeGraph(agentId, normalizedGraphDefinition)
         .then((response) => {
           startTransition(() => {
             setAnalysis(response.analysis)
@@ -39,7 +36,7 @@ export function useAgentGraphAnalysis(
     }, 180)
 
     return () => window.clearTimeout(handle)
-  }, [agentId, edges, nodes])
+  }, [agentId, graphDefinition])
 
   return { analysis, isLoading }
 }

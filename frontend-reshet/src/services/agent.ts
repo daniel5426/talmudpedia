@@ -15,6 +15,8 @@ export interface Agent {
   version: number;
   show_in_playground: boolean;
   default_embed_policy_set_id?: string | null;
+  tool_binding_status?: string | null;
+  is_tool_enabled?: boolean;
   graph_definition?: AgentGraphDefinition;
   created_at: string;
   updated_at: string;
@@ -23,6 +25,28 @@ export interface Agent {
 
 export interface AgentGraphDefinition {
   spec_version?: string;
+  workflow_contract?: {
+    inputs: Array<{
+      key: string;
+      type: string;
+      enabled?: boolean;
+      required?: boolean;
+      label?: string;
+      description?: string;
+      semantic_type?: string | null;
+      readonly?: boolean;
+      derived?: boolean;
+    }>;
+  };
+  state_contract?: {
+    variables: Array<{
+      key: string;
+      type: string;
+      description?: string;
+      schema?: Record<string, unknown>;
+      default_value?: unknown;
+    }>;
+  };
   nodes: any[];
   edges: any[];
 }
@@ -32,9 +56,14 @@ export interface AgentGraphInventoryItem {
   key: string;
   type: string;
   label?: string;
+  description?: string | null;
   node_id?: string;
+  enabled?: boolean;
   readonly?: boolean;
   default_value?: unknown;
+  required?: boolean;
+  derived?: boolean;
+  semantic_type?: string | null;
 }
 
 export interface AgentGraphNodeOutputGroup {
@@ -60,6 +89,7 @@ export interface AgentGraphAnalysis {
     workflow_input: AgentGraphInventoryItem[];
     state: AgentGraphInventoryItem[];
     node_outputs: AgentGraphNodeOutputGroup[];
+    accessible_node_outputs_by_node: Record<string, AgentGraphNodeOutputGroup[]>;
     template_suggestions: {
       global: AgentGraphTemplateSuggestion[];
       by_node: Record<string, AgentGraphTemplateSuggestion[]>;
@@ -246,7 +276,6 @@ export interface ToolsListResponse {
 export interface ExportAgentToolRequest {
   name?: string;
   description?: string;
-  input_schema?: Record<string, unknown>;
 }
 
 export interface ExportAgentToolResponse {
@@ -432,7 +461,7 @@ export const agentService = {
     return httpClient.delete<{ success?: boolean }>(`/agents/${id}`);
   },
 
-  async exportAgentTool(id: string, data: ExportAgentToolRequest) {
+  async exportAgentTool(id: string, data: ExportAgentToolRequest = {}) {
     return httpClient.post<ExportAgentToolResponse>(`/agents/${id}/export-tool`, data);
   },
 
@@ -483,6 +512,7 @@ export const agentService = {
       messages?: any[];
       runId?: string;
       threadId?: string;
+      state?: Record<string, any>;
       context?: Record<string, any>;
       attachmentIds?: string[];
     },
@@ -523,6 +553,7 @@ export const agentService = {
         input: input.text, 
         messages: input.messages || [], 
         attachment_ids: input.attachmentIds || [],
+        state: input.state || {},
         context: input.context || {},
         run_id: input.runId,
         thread_id: input.threadId,

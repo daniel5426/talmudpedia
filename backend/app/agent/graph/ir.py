@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field, ConfigDict
 GRAPH_SPEC_V1 = "1.0"
 GRAPH_SPEC_V2 = "2.0"
 GRAPH_SPEC_V3 = "3.0"
+GRAPH_SPEC_V4 = "4.0"
 
 ORCHESTRATION_V2_NODE_TYPES = {
     "spawn_run",

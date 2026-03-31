@@ -17,7 +17,9 @@ from app.db.postgres.models.registry import (
     ModelRegistry,
 )
 from app.db.postgres.models.runtime_attachments import RuntimeAttachmentStatus
+from app.services.model_runtime.interfaces import SpeechToTextResult
 from app.services.runtime_attachment_service import RuntimeAttachmentOwner, RuntimeAttachmentService
+from app.services.runtime_input_preparation_service import RuntimeInputPreparationService
 from app.services.runtime_attachment_storage import RuntimeAttachmentStorage
 
 
@@ -142,16 +144,9 @@ async def test_pdf_attachment_uses_document_extractor_path(db_session, tmp_path,
 
 
 @pytest.mark.asyncio
-async def test_audio_attachments_are_transcribed_provider_agnostically(db_session, tmp_path, monkeypatch):
+async def test_runtime_attachment_service_keeps_audio_storage_prep_transcription_free(db_session, tmp_path):
     owner = await _seed_owner(db_session)
     service = RuntimeAttachmentService(db_session, storage=RuntimeAttachmentStorage(str(tmp_path)))
-
-    class _FakeSttProvider:
-        async def transcribe(self, payload: bytes) -> str:
-            assert payload == b"audio-bytes"
-            return "Transcript text"
-
-    monkeypatch.setattr("app.services.runtime_attachment_service.get_stt_provider", lambda: _FakeSttProvider())
 
     uploaded = await service.upload_files(
         owner=owner,
@@ -166,9 +161,45 @@ async def test_audio_attachments_are_transcribed_provider_agnostically(db_sessio
 
     await db_session.refresh(uploaded[0])
     assert uploaded[0].status == RuntimeAttachmentStatus.processed
-    assert uploaded[0].metadata_["processor"] == "stt"
-    assert uploaded[0].extracted_text == "Transcript text"
+    assert uploaded[0].metadata_ == {}
+    assert uploaded[0].extracted_text is None
+    assert prepared.content == "Use the memo"
+    assert prepared.display_text == "Use the memo\n\nAttachments: memo.mp3"
+
+
+@pytest.mark.asyncio
+async def test_runtime_input_preparation_transcribes_audio_through_shared_stt_runtime(db_session, tmp_path):
+    owner = await _seed_owner(db_session)
+    attachment_service = RuntimeAttachmentService(db_session, storage=RuntimeAttachmentStorage(str(tmp_path)))
+
+    class _FakeSpeechToTextService:
+        async def transcribe_bytes(self, audio_content: bytes, **kwargs):
+            assert audio_content == b"audio-bytes"
+            assert kwargs["mime_type"] == "audio/mpeg"
+            assert kwargs["filename"] == "memo.mp3"
+            return SpeechToTextResult(text="Transcript text"), {"provider": "fake"}
+
+    input_preparation_service = RuntimeInputPreparationService(
+        attachment_service,
+        stt_service=_FakeSpeechToTextService(),
+    )
+
+    uploaded = await attachment_service.upload_files(
+        owner=owner,
+        files=[_make_upload("memo.mp3", b"audio-bytes", "audio/mpeg")],
+    )
+    prepared = await input_preparation_service.prepare_for_run(
+        owner=owner,
+        attachment_ids=[str(uploaded[0].id)],
+        input_text="Use the memo",
+        model_ids=[],
+    )
+
+    await db_session.refresh(uploaded[0])
+    assert uploaded[0].status == RuntimeAttachmentStatus.processed
+    assert uploaded[0].extracted_text is None
     assert prepared.content == "Use the memo\n\nAudio transcript (memo.mp3):\nTranscript text"
+    assert prepared.display_text == "Use the memo\n\nAttachments: memo.mp3"
 
 
 @pytest.mark.asyncio

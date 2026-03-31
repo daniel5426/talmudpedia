@@ -1,9 +1,9 @@
 import { act, renderHook, waitFor } from "@testing-library/react"
-import type { Edge, Node } from "@xyflow/react"
+import type { Node } from "@xyflow/react"
 
 import { useAgentGraphAnalysis } from "@/components/agent-builder/useAgentGraphAnalysis"
 import type { AgentNodeData } from "@/components/agent-builder/types"
-import { agentService } from "@/services"
+import { agentService, type AgentGraphDefinition } from "@/services"
 
 jest.mock("@/services", () => ({
   agentService: {
@@ -42,16 +42,17 @@ describe("useAgentGraphAnalysis", () => {
     jest.useRealTimers()
   })
 
-  it("debounces analysis requests and sends a normalized v3 graph", async () => {
+  it("debounces analysis requests and sends a normalized v4 graph", async () => {
     mockedAgentService.analyzeGraph.mockResolvedValue({
       agent_id: "agent-1",
-      graph_definition: { spec_version: "3.0", nodes: [], edges: [] },
+      graph_definition: { spec_version: "4.0", workflow_contract: { inputs: [] }, state_contract: { variables: [] }, nodes: [], edges: [] },
       analysis: {
-        spec_version: "3.0",
+        spec_version: "4.0",
         inventory: {
-          workflow_input: [{ key: "input_as_text", type: "string", namespace: "workflow_input" }],
+          workflow_input: [{ key: "text", type: "string", namespace: "workflow_input" }],
           state: [],
           node_outputs: [],
+          accessible_node_outputs_by_node: {},
           template_suggestions: { global: [], by_node: {} },
         },
         operator_contracts: {},
@@ -61,9 +62,9 @@ describe("useAgentGraphAnalysis", () => {
     } as any)
 
     const nodes = [buildNode("start", "start"), buildNode("end", "end")]
-    const edges: Edge[] = []
+    const graphDefinition: AgentGraphDefinition = { spec_version: "4.0", nodes, edges: [] }
 
-    const { result } = renderHook(() => useAgentGraphAnalysis("agent-1", nodes, edges))
+    const { result } = renderHook(() => useAgentGraphAnalysis("agent-1", graphDefinition))
 
     expect(result.current.analysis).toBeNull()
     expect(mockedAgentService.analyzeGraph).not.toHaveBeenCalled()
@@ -76,7 +77,7 @@ describe("useAgentGraphAnalysis", () => {
       expect(mockedAgentService.analyzeGraph).toHaveBeenCalledWith(
         "agent-1",
         expect.objectContaining({
-          spec_version: "3.0",
+          spec_version: "4.0",
           nodes: expect.any(Array),
           edges: [],
         }),
@@ -84,7 +85,7 @@ describe("useAgentGraphAnalysis", () => {
     })
 
     await waitFor(() => {
-      expect(result.current.analysis?.spec_version).toBe("3.0")
+      expect(result.current.analysis?.spec_version).toBe("4.0")
     })
   })
 })

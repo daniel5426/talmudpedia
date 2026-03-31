@@ -1,6 +1,6 @@
 # Tool Execution Tests
 
-Last Updated: 2026-03-30
+Last Updated: 2026-03-31
 
 ## Scope
 Validate MCP/function/agent-call execution paths in the `ToolNodeExecutor`.
@@ -55,6 +55,7 @@ Validate MCP/function/agent-call execution paths in the `ToolNodeExecutor`.
 - `agent_call` rejects draft/unpublished targets
 - `agent_call` enforces cross-tenant target isolation
 - `agent_call` timeout returns failed payload and marks child run failed
+- `agent_call` now maps agent-contract modality fields into child `workflow_input` and declared state-var fields into seeded child `state`
 - tool publish pins `artifact_revision_id` for tenant artifact-backed tools
 - tenant artifact-backed tools execute via `ArtifactExecutionService` on `artifact_prod_interactive`
 - tenant artifact-backed tool publish ensures the pinned revision has a production deployment
@@ -139,6 +140,9 @@ Validate MCP/function/agent-call execution paths in the `ToolNodeExecutor`.
 - Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/tool_execution/test_llm_provider_content_blocks.py backend/tests/tool_execution/test_reasoning_tool_call_chunk_buffering.py`
 - Date/Time: 2026-03-22 Asia/Hebron
 - Result: PASS (`9 passed`)
+- Command: `PYTHONPATH=/Users/danielbenassaya/Code/personal/talmudpedia python3 -m pytest -q backend/tests/tool_execution/test_agent_call_tool_execution.py`
+- Date/Time: 2026-03-31 Asia/Hebron
+- Result: PASS (`5 passed`)
 
 ## Known Gaps / Follow-ups
 - Add coverage for `agent_call` payload mode variants beyond sync (`spawn`/future orchestration modes).

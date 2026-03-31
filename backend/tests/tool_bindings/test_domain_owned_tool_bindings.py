@@ -309,6 +309,65 @@ async def test_tool_impl_artifact_routes_own_bound_tool_lifecycle(client, db_ses
 
 
 @pytest.mark.asyncio
+async def test_publishing_agent_node_artifact_does_not_create_bound_tool(client, db_session, monkeypatch):
+    tenant, user = await _seed_tenant_context(db_session)
+    app.dependency_overrides[get_current_principal] = _override_principal(
+        tenant.id,
+        user,
+        ["artifacts.read", "artifacts.write"],
+    )
+
+    async def fake_ensure_deployment(self, *, revision, namespace, tenant_id=None):
+        return SimpleNamespace(
+            worker_name="prod-worker",
+            deployment_id="dep-agent-1",
+            version_id="ver-agent-1",
+            build_hash=revision.build_hash,
+        )
+
+    monkeypatch.setattr(
+        "app.services.artifact_runtime.deployment_service.ArtifactDeploymentService.ensure_deployment",
+        fake_ensure_deployment,
+    )
+
+    try:
+        create_response = await client.post(
+            f"/admin/artifacts?tenant_slug={tenant.slug}",
+            json={
+                "display_name": "Summarizer Node",
+                "description": "Agent node artifact",
+                "kind": "agent_node",
+                "runtime": {
+                    "source_files": [{"path": "main.py", "content": "def execute(inputs, config, context):\n    return {'ok': True}\n"}],
+                    "entry_module_path": "main.py",
+                    "python_dependencies": [],
+                    "runtime_target": "cloudflare_workers",
+                },
+                "capabilities": {},
+                "config_schema": {},
+                "agent_contract": {
+                    "state_reads": [],
+                    "state_writes": [],
+                    "input_schema": {"type": "object"},
+                    "output_schema": {"type": "object"},
+                    "node_ui": {},
+                },
+            },
+        )
+        assert create_response.status_code == 200, create_response.text
+        artifact = create_response.json()
+
+        assert await _get_tool_for_artifact(db_session, artifact["id"]) is None
+
+        publish_response = await client.post(f"/admin/artifacts/{artifact['id']}/publish?tenant_slug={tenant.slug}")
+        assert publish_response.status_code == 200, publish_response.text
+
+        assert await _get_tool_for_artifact(db_session, artifact["id"]) is None
+    finally:
+        app.dependency_overrides.pop(get_current_principal, None)
+
+
+@pytest.mark.asyncio
 async def test_pipeline_owned_tool_binding_enable_publish_disable_and_demote(client, db_session, monkeypatch):
     tenant, user = await _seed_tenant_context(db_session)
     app.dependency_overrides[get_current_principal] = _override_principal(

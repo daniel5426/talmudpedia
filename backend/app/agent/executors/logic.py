@@ -80,6 +80,7 @@ class IfElseNodeExecutor(BaseNodeExecutor):
         for i, condition in enumerate(conditions):
             expression = condition.get("expression", "")
             name = condition.get("name") or f"condition_{i}"
+            handle_id = condition.get("id") or name or f"condition_{i}"
             
             try:
                 result = evaluate_cel(expression, state, context)
@@ -92,12 +93,19 @@ class IfElseNodeExecutor(BaseNodeExecutor):
                 if result:
                     logger.debug(f"If/Else: Branch '{name}' matched (expression: {expression})")
                     result = {
-                        "next": name,
-                        "branch_taken": name,
+                        "next": handle_id,
+                        "branch_id": handle_id,
+                        "branch_taken": handle_id,
+                        "branch_label": name,
                         "condition_results": condition_results
                     }
                     if emitter:
-                        emitter.emit_node_end(node_id, node_name, "if_else", {"branch_taken": name})
+                        emitter.emit_node_end(
+                            node_id,
+                            node_name,
+                            "if_else",
+                            {"branch_taken": handle_id, "branch_id": handle_id, "branch_label": name},
+                        )
                     return result
                     
             except Exception as e:
@@ -113,11 +121,13 @@ class IfElseNodeExecutor(BaseNodeExecutor):
         logger.debug("If/Else: No conditions matched, taking 'else' branch")
         result = {
             "next": "else",
+            "branch_id": "else",
             "branch_taken": "else",
+            "branch_label": "else",
             "condition_results": condition_results
         }
         if emitter:
-            emitter.emit_node_end(node_id, node_name, "if_else", {"branch_taken": "else"})
+            emitter.emit_node_end(node_id, node_name, "if_else", {"branch_taken": "else", "branch_id": "else", "branch_label": "else"})
         return result
     
     def get_output_handles(self, config: Dict[str, Any]) -> List[str]:
@@ -130,7 +140,7 @@ class IfElseNodeExecutor(BaseNodeExecutor):
         
         for i, condition in enumerate(conditions):
             name = condition.get("name") or f"condition_{i}"
-            handles.append(name)
+            handles.append(condition.get("id") or name or f"condition_{i}")
         
         handles.append("else")  # Always have else
         return handles

@@ -5,6 +5,7 @@ import { flushSync } from "react-dom";
 import { nanoid } from "nanoid";
 import { agentService } from "@/services";
 import type { AgentExecutionEvent, AgentRunStatus } from "@/services";
+import type { AgentGraphDefinition } from "@/services/agent";
 import { ChatController, ChatMessage, Citation } from "@/components/layout/useChatController";
 import type { ChatRenderBlock } from "@/services/chat-presentation";
 import type { FileUIPart } from "ai";
@@ -79,7 +80,10 @@ const normalizeExecutionEvent = (rawEvent: Record<string, unknown>): AgentExecut
   };
 };
 
-export function useAgentRunController(agentId: string | undefined): ChatController & {
+export function useAgentRunController(
+  agentId: string | undefined,
+  graphDefinition?: AgentGraphDefinition | null,
+): ChatController & {
   executionSteps: ExecutionStep[];
   executionEvents: AgentExecutionEvent[];
   currentResponseBlocks: ChatRenderBlock[];
@@ -97,6 +101,8 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
   loadHistoryChat: (item: AgentChatHistoryItem) => Promise<AgentChatHistoryItem | null>;
   loadHistoryChatById: (threadId: string) => Promise<AgentChatHistoryItem | null>;
   loadOlderHistory: () => Promise<AgentChatHistoryItem | null>;
+  workflowInputs: NonNullable<AgentGraphDefinition["workflow_contract"]>["inputs"];
+  stateVariables: NonNullable<AgentGraphDefinition["state_contract"]>["variables"];
 } {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -118,6 +124,12 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
   const [pendingApproval, setPendingApproval] = useState(false);
   const [executionEvents, setExecutionEvents] = useState<AgentExecutionEvent[]>([]);
   const [traceLoadingByMessageId, setTraceLoadingByMessageId] = useState<Record<string, boolean>>({});
+  const workflowInputs = Array.isArray(graphDefinition?.workflow_contract?.inputs)
+    ? graphDefinition.workflow_contract.inputs
+    : [];
+  const stateVariables = Array.isArray(graphDefinition?.state_contract?.variables)
+    ? graphDefinition.state_contract.variables
+    : [];
 
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -374,8 +386,9 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
       }));
   }, []);
 
-  const handleSubmit = async (message: { text: string; files: FileUIPart[] }) => {
-    if ((!message.text.trim() && message.files.length === 0) || !agentId) return;
+  const handleSubmit = async (message: { text: string; files: FileUIPart[]; state?: Record<string, unknown> }) => {
+    const seededState = message.state && typeof message.state === "object" ? message.state : {};
+    if ((!message.text.trim() && message.files.length === 0 && Object.keys(seededState).length === 0) || !agentId) return;
 
     const isApprovalResume = isPaused && pendingApproval;
     const approvalDecision = isApprovalResume ? message.text.trim().toLowerCase() : null;
@@ -429,6 +442,7 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
           text: message.text,
           messages: priorMessages,
           attachmentIds,
+          state: Object.keys(seededState).length > 0 ? seededState : undefined,
           runId: isPaused ? currentRunId || undefined : undefined,
           threadId: currentThreadIdRef.current || undefined,
           context: isPaused && pendingApproval ? { approval: message.text } : undefined,
@@ -483,7 +497,15 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
               setCurrentRunId(rawEvent.run_id);
             }
 
-            if (eventName.startsWith("orchestration.") || eventName === "node_end") {
+            if (
+              eventName.startsWith("orchestration.") ||
+              eventName === "run.failed" ||
+              eventName === "run.cancelled" ||
+              eventName === "node_start" ||
+              eventName === "node_end" ||
+              eventName === "on_chain_start" ||
+              eventName === "on_chain_end"
+            ) {
               setExecutionEvents((prev) => [...prev, { ...normalizedEvent, received_at: Date.now() }]);
             }
 
@@ -778,6 +800,8 @@ export function useAgentRunController(agentId: string | undefined): ChatControll
     loadHistoryChat,
     loadHistoryChatById,
     loadOlderHistory,
+    workflowInputs,
+    stateVariables,
     handleSubmit,
     handleStop,
     handleCopy,

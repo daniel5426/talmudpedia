@@ -72,17 +72,22 @@ async def test_graph_v3_analysis_exposes_inventory_and_metadata():
     graph_ir = await compiler.compile(agent_id=uuid4(), version=1, graph=graph)
     analysis = graph_ir.metadata.get("analysis") or {}
 
-    assert analysis["spec_version"] == "3.0"
-    assert analysis["inventory"]["workflow_input"][0]["key"] == "input_as_text"
+    assert analysis["spec_version"] == "4.0"
+    assert analysis["inventory"]["workflow_input"][0]["key"] == "text"
     assert any(item["key"] == "customer_name" for item in analysis["inventory"]["state"])
     agent_outputs = next(item for item in analysis["inventory"]["node_outputs"] if item["node_id"] == "agent_1")
     assert agent_outputs["node_label"] == "Reply Agent"
     assert [field["key"] for field in agent_outputs["fields"]] == ["output_text"]
+    accessible_outputs = analysis["inventory"]["accessible_node_outputs_by_node"]["end"]
+    assert [item["node_id"] for item in accessible_outputs] == ["agent_1"]
     global_suggestions = analysis["inventory"]["template_suggestions"]["global"]
     end_suggestions = analysis["inventory"]["template_suggestions"]["by_node"]["end"]
     agent_suggestions = analysis["inventory"]["template_suggestions"]["by_node"]["agent_1"]
     assert [item["insert_text"] for item in global_suggestions] == [
-        "workflow_input.input_as_text",
+        "workflow_input.text",
+        "workflow_input.files",
+        "workflow_input.audio",
+        "workflow_input.images",
         "state.customer_name",
     ]
     assert [item["display_label"] for item in end_suggestions] == ["Reply Agent / Output Text"]
@@ -131,6 +136,39 @@ def test_materialize_end_output_uses_schema_bindings():
     assert payload == {"reply": "Shalom", "name": "Ada"}
 
 
+def test_graph_v4_normalizes_branch_configs_to_opaque_ids():
+    graph = AgentGraph(
+        spec_version="4.0",
+        nodes=[
+            {
+                "id": "classify_1",
+                "type": "classify",
+                "position": {"x": 0, "y": 0},
+                "config": {
+                    "model_id": "model-1",
+                    "categories": [{"name": "support"}, {"name": "sales"}],
+                },
+            },
+            {
+                "id": "if_1",
+                "type": "if_else",
+                "position": {"x": 120, "y": 0},
+                "config": {
+                    "conditions": [{"name": "has_profile", "expression": "true"}],
+                },
+            },
+        ],
+        edges=[],
+    )
+
+    categories = graph.nodes[0].config["categories"]
+    conditions = graph.nodes[1].config["conditions"]
+
+    assert categories[0]["id"].startswith("branch_")
+    assert categories[1]["id"].startswith("branch_")
+    assert conditions[0]["id"].startswith("branch_")
+
+
 @pytest.mark.asyncio
 async def test_set_state_executor_writes_typed_value_ref_assignment():
     executor = SetStateNodeExecutor(tenant_id=uuid4(), db=None)
@@ -175,7 +213,7 @@ async def test_graph_v3_rejects_set_state_value_ref_type_mismatch():
                         {
                             "key": "score",
                             "type": "number",
-                            "value_ref": {"namespace": "workflow_input", "key": "input_as_text"},
+                            "value_ref": {"namespace": "workflow_input", "key": "text"},
                         }
                     ]
                 },
@@ -191,6 +229,86 @@ async def test_graph_v3_rejects_set_state_value_ref_type_mismatch():
 
     errors = await compiler.validate(graph)
     assert any("type mismatch" in error.message for error in errors)
+
+
+@pytest.mark.asyncio
+async def test_graph_v4_rejects_non_upstream_node_output_value_ref():
+    register_standard_operators()
+    compiler = AgentCompiler()
+    graph = AgentGraph(
+        spec_version="4.0",
+        state_contract={"variables": []},
+        nodes=[
+            {"id": "start", "type": "start", "position": {"x": 0, "y": 0}, "config": {}},
+            {"id": "agent_1", "type": "agent", "position": {"x": 120, "y": 0}, "config": {"model_id": "model-1", "output_format": "text"}},
+            {
+                "id": "transform_1",
+                "type": "transform",
+                "position": {"x": 120, "y": 120},
+                "config": {"mode": "object", "mappings": [{"key": "output", "value": "sibling"}]},
+            },
+            {
+                "id": "classify_1",
+                "type": "classify",
+                "position": {"x": 240, "y": 0},
+                "config": {
+                    "model_id": "model-1",
+                    "categories": [{"name": "support", "description": "Support"}],
+                    "input_source": {"namespace": "node_output", "node_id": "transform_1", "key": "output"},
+                },
+            },
+            {"id": "end", "type": "end", "position": {"x": 360, "y": 0}, "config": {}},
+        ],
+        edges=[
+            {"id": "e1", "source": "start", "target": "agent_1"},
+            {"id": "e2", "source": "agent_1", "target": "classify_1"},
+            {"id": "e3", "source": "classify_1", "target": "end"},
+            {"id": "e4", "source": "start", "target": "transform_1"},
+            {"id": "e5", "source": "transform_1", "target": "end"},
+        ],
+    )
+
+    errors = await compiler.validate(graph)
+    assert any("references unavailable value" in error.message for error in errors)
+
+
+@pytest.mark.asyncio
+async def test_graph_v4_rejects_disabled_workflow_input_value_ref():
+    register_standard_operators()
+    compiler = AgentCompiler()
+    graph = AgentGraph(
+        spec_version="4.0",
+        workflow_contract={
+            "inputs": [
+                {"key": "text", "type": "string", "enabled": False},
+                {"key": "files", "type": "list", "enabled": True},
+                {"key": "audio", "type": "list", "enabled": True},
+                {"key": "images", "type": "list", "enabled": True},
+            ],
+        },
+        state_contract={"variables": []},
+        nodes=[
+            {"id": "start", "type": "start", "position": {"x": 0, "y": 0}, "config": {}},
+            {
+                "id": "classify_1",
+                "type": "classify",
+                "position": {"x": 240, "y": 0},
+                "config": {
+                    "model_id": "model-1",
+                    "categories": [{"name": "support", "description": "Support"}],
+                    "input_source": {"namespace": "workflow_input", "key": "text"},
+                },
+            },
+            {"id": "end", "type": "end", "position": {"x": 360, "y": 0}, "config": {}},
+        ],
+        edges=[
+            {"id": "e1", "source": "start", "target": "classify_1"},
+            {"id": "e2", "source": "classify_1", "target": "end"},
+        ],
+    )
+
+    errors = await compiler.validate(graph)
+    assert any("references unavailable value" in error.message for error in errors)
 
 
 def test_assistant_output_prefers_latest_assistant_message_over_final_output():

@@ -2,7 +2,7 @@
 
 import { memo } from "react"
 import { NodeProps, Position, Handle } from "@xyflow/react"
-import { Play, Square, Brain, Wrench, Search, GitBranch, GitFork, UserCheck, RefreshCw, Sparkles, Database, Bot, ListFilter, GitMerge, Link, Route, Scale, Ban } from "lucide-react"
+import { Play, Square, Brain, Wrench, Search, GitBranch, GitFork, UserCheck, RefreshCw, Sparkles, Database, Bot, ListFilter, GitMerge, Link, Route, Scale, Ban, Mic } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { BaseNode as SharedBaseNode, SharedNodeData, SharedNodeHandle } from "../../builder/nodes/BaseNode"
 import { AgentNodeData, CATEGORY_COLORS, getClassifyHandleIds, getHandleColor, AgentNodeType, getNodeOutputHandles } from "../types"
@@ -28,6 +28,7 @@ const NODE_ICONS: Record<AgentNodeType, React.ElementType> = {
     cancel_subtree: Ban,
     human_input: UserCheck,
     user_approval: UserCheck,
+    speech_to_text: Mic,
     transform: Sparkles,
     set_state: Database,
     classify: ListFilter,
@@ -174,9 +175,16 @@ function BaseNodeComponent(props: NodeProps) {
                         handleId={handleIds[idx]}
                         handleColor="#8b5cf6"
                         isConnectable={isHandleConnectable}
-                        isLast={idx === categories.length - 1}
+                        isLast={false}
                     />
                 ))}
+                <NodeBranchRow
+                    label="Else"
+                    handleId="else"
+                    handleColor="#6b7280"
+                    isConnectable={isHandleConnectable}
+                    isLast={true}
+                />
             </div>
         )
     } else if (["join", "router", "judge", "replan"].includes(data.nodeType)) {

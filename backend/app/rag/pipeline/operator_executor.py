@@ -581,6 +581,50 @@ class PIIRedactorExecutor(OperatorExecutor):
         )
 
 
+class FormatNormalizerExecutor(OperatorExecutor):
+    """Normalize text formatting for raw documents."""
+
+    async def execute(
+        self,
+        input_data: OperatorInput,
+        context: ExecutionContext
+    ) -> OperatorOutput:
+        import re
+        import unicodedata
+
+        config = context.config
+        normalize_whitespace = config.get("normalize_whitespace", True)
+        normalize_unicode = config.get("normalize_unicode", True)
+        lowercase = config.get("lowercase", False)
+
+        documents = input_data.data if isinstance(input_data.data, list) else [input_data.data]
+        result = []
+
+        for raw_doc in documents:
+            doc = dict(raw_doc) if isinstance(raw_doc, dict) else {"text": str(raw_doc)}
+            text = str(doc.get("text") or doc.get("content") or "")
+
+            if normalize_unicode:
+                text = unicodedata.normalize("NFC", text)
+            if normalize_whitespace:
+                text = re.sub(r"\s+", " ", text).strip()
+            if lowercase:
+                text = text.lower()
+
+            doc["text"] = text
+            metadata = dict(doc.get("metadata") or {})
+            metadata["format_normalized"] = True
+            doc["metadata"] = metadata
+            result.append(doc)
+
+        return OperatorOutput(
+            data=result,
+            metadata=input_data.metadata,
+            operator_id=self.operator_id,
+            success=True,
+        )
+
+
 class MetadataExtractorExecutor(OperatorExecutor):
     """Extract metadata from documents."""
     
@@ -645,6 +689,112 @@ class MetadataExtractorExecutor(OperatorExecutor):
         )
 
 
+class EntityRecognizerExecutor(OperatorExecutor):
+    """Extract lightweight entity annotations into document metadata."""
+
+    async def execute(
+        self,
+        input_data: OperatorInput,
+        context: ExecutionContext
+    ) -> OperatorOutput:
+        import re
+
+        requested_types = {
+            part.strip().upper()
+            for part in str(context.config.get("entity_types") or "PERSON,ORG,GPE,DATE").split(",")
+            if part.strip()
+        }
+        documents = input_data.data if isinstance(input_data.data, list) else [input_data.data]
+        result = []
+
+        for raw_doc in documents:
+            doc = dict(raw_doc) if isinstance(raw_doc, dict) else {"text": str(raw_doc)}
+            text = str(doc.get("text") or doc.get("content") or "")
+            entities: list[dict[str, Any]] = []
+
+            if "DATE" in requested_types:
+                for match in re.findall(r"\b\d{4}-\d{2}-\d{2}\b|\b\d{1,2}/\d{1,2}/\d{2,4}\b", text):
+                    entities.append({"type": "DATE", "value": match})
+            if "PERSON" in requested_types:
+                for match in re.findall(r"\b[A-Z][a-z]+ [A-Z][a-z]+\b", text):
+                    entities.append({"type": "PERSON", "value": match})
+            if "ORG" in requested_types:
+                for match in re.findall(r"\b[A-Z][A-Za-z0-9&]+(?:\s+[A-Z][A-Za-z0-9&]+)*\s+(?:Inc|LLC|Ltd|Corp|Company|University)\b", text):
+                    entities.append({"type": "ORG", "value": match})
+            if "GPE" in requested_types:
+                for match in re.findall(r"\b(?:New York|London|Paris|Jerusalem|Tel Aviv|San Francisco)\b", text):
+                    entities.append({"type": "GPE", "value": match})
+
+            metadata = dict(doc.get("metadata") or {})
+            metadata["entities"] = entities
+            doc["metadata"] = metadata
+            result.append(doc)
+
+        return OperatorOutput(
+            data=result,
+            metadata=input_data.metadata,
+            operator_id=self.operator_id,
+            success=True,
+        )
+
+
+class ClassifierExecutor(OperatorExecutor):
+    """Classify documents using lightweight taxonomy matching."""
+
+    async def execute(
+        self,
+        input_data: OperatorInput,
+        context: ExecutionContext
+    ) -> OperatorOutput:
+        categories = context.config.get("categories")
+        if isinstance(categories, str):
+            normalized_categories = [item.strip() for item in categories.split(",") if item.strip()]
+        elif isinstance(categories, list):
+            normalized_categories = [str(item).strip() for item in categories if str(item).strip()]
+        else:
+            normalized_categories = []
+
+        if not normalized_categories:
+            raise ValueError("classifier requires categories")
+
+        multi_label = bool(context.config.get("multi_label", False))
+        documents = input_data.data if isinstance(input_data.data, list) else [input_data.data]
+        result = []
+
+        for raw_doc in documents:
+            doc = dict(raw_doc) if isinstance(raw_doc, dict) else {"text": str(raw_doc)}
+            text = str(doc.get("text") or doc.get("content") or "")
+            lower_text = text.lower()
+            scores: list[tuple[str, int]] = []
+
+            for category in normalized_categories:
+                score = 0
+                category_tokens = [token for token in category.lower().replace("-", " ").split() if token]
+                for token in category_tokens:
+                    if token in lower_text:
+                        score += 1
+                scores.append((category, score))
+
+            scores.sort(key=lambda item: (-item[1], item[0]))
+            if multi_label:
+                assigned = [category for category, score in scores if score > 0] or [scores[0][0]]
+            else:
+                assigned = scores[0][0]
+
+            metadata = dict(doc.get("metadata") or {})
+            metadata["classification"] = assigned
+            metadata["classification_scores"] = {category: score for category, score in scores}
+            doc["metadata"] = metadata
+            result.append(doc)
+
+        return OperatorOutput(
+            data=result,
+            metadata=input_data.metadata,
+            operator_id=self.operator_id,
+            success=True,
+        )
+
+
 class LoaderExecutor(OperatorExecutor):
     """Execute document loading."""
     
@@ -696,6 +846,81 @@ class LoaderExecutor(OperatorExecutor):
             metadata=input_data.metadata,
             operator_id=self.operator_id,
             success=True
+        )
+
+
+class APILoaderExecutor(OperatorExecutor):
+    """Load records from a JSON API and normalize them as raw documents."""
+
+    async def execute(
+        self,
+        input_data: OperatorInput,
+        context: ExecutionContext
+    ) -> OperatorOutput:
+        import json
+        import httpx
+
+        config_dict = {**context.config}
+        if isinstance(input_data.data, dict) and input_data.source_operator_id is None:
+            config_dict.update(input_data.data)
+
+        endpoint_url = str(config_dict.get("endpoint_url") or "").strip()
+        if not endpoint_url:
+            raise ValueError("endpoint_url is required for api_loader")
+
+        method = str(config_dict.get("method") or "GET").strip().upper()
+        if method not in {"GET", "POST"}:
+            raise ValueError("method must be GET or POST")
+
+        headers = dict(config_dict.get("headers") or {})
+        params = dict(config_dict.get("query_params") or {})
+        json_body = config_dict.get("body") if method == "POST" else None
+        timeout_seconds = max(0.001, int(config_dict.get("request_timeout_ms") or 30000) / 1000)
+
+        async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+            response = await client.request(method, endpoint_url, headers=headers, params=params, json=json_body)
+            response.raise_for_status()
+
+            content_type = str(response.headers.get("content-type") or "").lower()
+            if "application/json" in content_type:
+                payload = response.json()
+            else:
+                payload = response.text
+
+        response_path = str(config_dict.get("response_path") or "").strip()
+        if response_path and isinstance(payload, dict):
+            cursor: Any = payload
+            for part in [segment for segment in response_path.split(".") if segment]:
+                if isinstance(cursor, dict):
+                    cursor = cursor.get(part)
+                else:
+                    cursor = None
+                    break
+            payload = cursor
+
+        item_text_field = str(config_dict.get("item_text_field") or "text").strip() or "text"
+        item_id_field = str(config_dict.get("item_id_field") or "id").strip() or "id"
+
+        items = payload if isinstance(payload, list) else [payload]
+        documents: list[dict[str, Any]] = []
+        for index, item in enumerate(items):
+            if item is None:
+                continue
+            if isinstance(item, dict):
+                text = item.get(item_text_field)
+                if text is None:
+                    text = json.dumps(item, sort_keys=True, ensure_ascii=False)
+                doc_id = item.get(item_id_field) or f"api-{index}"
+                metadata = {"source": endpoint_url, "payload": item}
+                documents.append({"id": str(doc_id), "text": str(text), "metadata": metadata})
+            else:
+                documents.append({"id": f"api-{index}", "text": str(item), "metadata": {"source": endpoint_url}})
+
+        return OperatorOutput(
+            data=documents,
+            metadata=input_data.metadata,
+            operator_id=self.operator_id,
+            success=True,
         )
 
 
@@ -841,10 +1066,10 @@ class ChunkerExecutor(OperatorExecutor):
         # Determine strategy from operator_id
         strategy = config_dict.get("strategy")
         if not strategy:
-            if self.operator_id == "recursive_chunker":
-                strategy = "recursive"
-            elif self.operator_id == "token_based_chunker":
-                strategy = "token_based"
+            strategy = "recursive"
+
+        if strategy == "semantic" and not config_dict.get("model_id"):
+            raise ValueError("chunker strategy 'semantic' requires model_id")
         
         chunker_config = ChunkerConfig(
             strategy=strategy,
@@ -917,9 +1142,12 @@ class QueryInputExecutor(OperatorExecutor):
         if not isinstance(query_data, dict) or not isinstance(query_data.get("text"), str) or not query_data["text"].strip():
             raise ValueError("Query input requires `text` (or `query`) to run retrieval")
         
+        metadata = dict(input_data.metadata or {})
+        metadata["query_text"] = query_data["text"].strip()
+
         return OperatorOutput(
             data=query_data,
-            metadata=input_data.metadata,
+            metadata=metadata,
             operator_id=self.operator_id,
             success=True
         )
@@ -940,6 +1168,151 @@ class RetrievalResultExecutor(OperatorExecutor):
             metadata=input_data.metadata,
             operator_id=self.operator_id,
             success=True
+        )
+
+
+class LLMTransformExecutor(OperatorExecutor):
+    """Apply prompt-defined LLM transformations to document-like payloads."""
+
+    @staticmethod
+    def _message_text(value: Any) -> str:
+        content = getattr(value, "content", value)
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts = []
+            for item in content:
+                if isinstance(item, str):
+                    parts.append(item)
+                elif isinstance(item, dict):
+                    text = item.get("text")
+                    if isinstance(text, str):
+                        parts.append(text)
+            return "\n".join(part for part in parts if part)
+        return str(content or "")
+
+    async def execute(
+        self,
+        input_data: OperatorInput,
+        context: ExecutionContext
+    ) -> OperatorOutput:
+        from langchain_core.messages import HumanMessage
+        from app.services.model_resolver import ModelResolver
+
+        model_id = context.config.get("model_id")
+        prompt_template = str(context.config.get("prompt_template") or "").strip()
+        if not model_id:
+            raise ValueError("model_id is required for llm")
+        if not prompt_template:
+            raise ValueError("prompt_template is required for llm")
+
+        db = getattr(context, "db", None)
+        tenant_id = context.tenant_id
+        if not db:
+            raise ValueError("Database session is required in execution context for llm")
+
+        resolver = ModelResolver(db, uuid.UUID(str(tenant_id)) if tenant_id else None)
+        runtime = (await resolver.resolve_for_execution(model_id)).provider_instance
+
+        input_field = str(context.config.get("input_field") or "text").strip() or "text"
+        output_field = str(context.config.get("output_field") or "llm_output").strip() or "llm_output"
+        mode = str(context.config.get("mode") or "per_item").strip()
+        preserve_input = bool(context.config.get("preserve_input", True))
+        system_prompt = context.config.get("system_prompt")
+
+        documents = input_data.data if isinstance(input_data.data, list) else [input_data.data]
+        normalized_docs = [dict(doc) if isinstance(doc, dict) else {"text": str(doc)} for doc in documents]
+
+        if mode == "join_all":
+            joined_text = "\n\n".join(str(doc.get(input_field) or doc.get("text") or doc.get("content") or "") for doc in normalized_docs)
+            prompt = prompt_template.replace("{text}", joined_text)
+            response = await runtime.generate([HumanMessage(content=prompt)], system_prompt=system_prompt)
+            message_text = self._message_text(response)
+            return OperatorOutput(
+                data=[{"text": joined_text, output_field: message_text, "metadata": {"llm_mode": "join_all"}}],
+                metadata=input_data.metadata,
+                operator_id=self.operator_id,
+                success=True,
+            )
+
+        result = []
+        for doc in normalized_docs:
+            source_text = str(doc.get(input_field) or doc.get("text") or doc.get("content") or "")
+            prompt = prompt_template.replace("{text}", source_text)
+            response = await runtime.generate([HumanMessage(content=prompt)], system_prompt=system_prompt)
+            message_text = self._message_text(response)
+
+            if preserve_input:
+                next_doc = dict(doc)
+                next_doc[output_field] = message_text
+            else:
+                next_doc = {output_field: message_text, "metadata": dict(doc.get("metadata") or {})}
+            result.append(next_doc)
+
+        return OperatorOutput(
+            data=result,
+            metadata=input_data.metadata,
+            operator_id=self.operator_id,
+            success=True,
+        )
+
+
+class TransformExecutor(OperatorExecutor):
+    """Apply lightweight filtering, dedupe, and field-mapping transforms."""
+
+    async def execute(
+        self,
+        input_data: OperatorInput,
+        context: ExecutionContext
+    ) -> OperatorOutput:
+        payload = input_data.data
+        if not isinstance(payload, list):
+            payload = [payload]
+
+        dedupe_by = str(context.config.get("dedupe_by") or "").strip()
+        keep_fields = {field.strip() for field in str(context.config.get("keep_fields") or "").split(",") if field.strip()}
+        drop_fields = {field.strip() for field in str(context.config.get("drop_fields") or "").split(",") if field.strip()}
+        rename_fields = dict(context.config.get("rename_fields") or {})
+        filter_field = str(context.config.get("filter_field") or "").strip()
+        filter_equals = context.config.get("filter_equals")
+        filter_contains = context.config.get("filter_contains")
+
+        seen: set[Any] = set()
+        result: list[Any] = []
+        for item in payload:
+            current = dict(item) if isinstance(item, dict) else item
+
+            if isinstance(current, dict) and filter_field:
+                filter_value = current.get(filter_field)
+                if filter_equals is not None and str(filter_value) != str(filter_equals):
+                    continue
+                if filter_contains is not None and str(filter_contains) not in str(filter_value):
+                    continue
+
+            if isinstance(current, dict) and rename_fields:
+                for old_key, new_key in rename_fields.items():
+                    if old_key in current and new_key:
+                        current[str(new_key)] = current.pop(old_key)
+
+            if isinstance(current, dict) and keep_fields:
+                current = {key: value for key, value in current.items() if key in keep_fields}
+            if isinstance(current, dict) and drop_fields:
+                for key in drop_fields:
+                    current.pop(key, None)
+
+            if dedupe_by and isinstance(current, dict):
+                marker = current.get(dedupe_by)
+                if marker in seen:
+                    continue
+                seen.add(marker)
+
+            result.append(current)
+
+        return OperatorOutput(
+            data=result,
+            metadata=input_data.metadata,
+            operator_id=self.operator_id,
+            success=True,
         )
 
 
@@ -1397,6 +1770,47 @@ class HybridSearchExecutor(OperatorExecutor):
         )
 
 
+class RerankerExecutor(OperatorExecutor):
+    """Rerank retrieval results using a lightweight lexical fallback strategy."""
+
+    async def execute(
+        self,
+        input_data: OperatorInput,
+        context: ExecutionContext
+    ) -> OperatorOutput:
+        top_k = int(context.config.get("top_k") or 5)
+        query_text = str((input_data.metadata or {}).get("query_text") or context.config.get("query_text") or "").strip()
+        results = input_data.data if isinstance(input_data.data, list) else [input_data.data]
+
+        if not query_text:
+            return OperatorOutput(
+                data=results[:top_k],
+                metadata=input_data.metadata,
+                operator_id=self.operator_id,
+                success=True,
+            )
+
+        query_tokens = {token for token in query_text.lower().split() if token}
+        scored: list[tuple[float, dict[str, Any]]] = []
+        for item in results:
+            record = dict(item) if isinstance(item, dict) else {"text": str(item)}
+            text = str(record.get("text") or "")
+            text_tokens = {token for token in text.lower().split() if token}
+            overlap = len(query_tokens & text_tokens)
+            base_score = float(record.get("score") or 0.0)
+            record["score"] = base_score + overlap
+            scored.append((float(record["score"]), record))
+
+        scored.sort(key=lambda pair: pair[0], reverse=True)
+        reranked = [record for _, record in scored[:top_k]]
+        return OperatorOutput(
+            data=reranked,
+            metadata=input_data.metadata,
+            operator_id=self.operator_id,
+            success=True,
+        )
+
+
 # =============================================================================
 # EXECUTOR REGISTRY
 # =============================================================================
@@ -1405,17 +1819,23 @@ class ExecutorRegistry:
     """Registry mapping operator IDs to their executor classes."""
     
     _executors: Dict[str, type] = {
+        "api_loader": APILoaderExecutor,
         "pii_redactor": PIIRedactorExecutor,
+        "format_normalizer": FormatNormalizerExecutor,
         "metadata_extractor": MetadataExtractorExecutor,
+        "entity_recognizer": EntityRecognizerExecutor,
+        "classifier": ClassifierExecutor,
+        "llm": LLMTransformExecutor,
         "local_loader": LoaderExecutor,
         "s3_loader": LoaderExecutor,
         "web_crawler": WebCrawlerExecutor,
-        "recursive_chunker": ChunkerExecutor,
-        "token_based_chunker": ChunkerExecutor,
+        "chunker": ChunkerExecutor,
+        "transform": TransformExecutor,
         "model_embedder": EmbedderExecutor,
         "knowledge_store_sink": KnowledgeStoreSinkExecutor,
         "vector_search": VectorSearchExecutor,
         "hybrid_search": HybridSearchExecutor,
+        "reranker": RerankerExecutor,
         "query_input": QueryInputExecutor,
         "retrieval_result": RetrievalResultExecutor,
         "passthrough": PassthroughExecutor,

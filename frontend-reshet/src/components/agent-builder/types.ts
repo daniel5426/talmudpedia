@@ -47,6 +47,7 @@ export type AgentNodeType =
   | "human_input"
   // Data
   | "transform"
+  | "speech_to_text"
   | "set_state"
   | "classify"
   | "vector_search"
@@ -68,7 +69,7 @@ export interface AgentNodeData {
   // Static handles that are always present (While: loop/exit, User Approval: approve/reject)
   staticHandles?: string[]
   // Field mappings for artifact nodes: maps input field names to expressions
-  // Example: { "documents": "{{ upstream.ingest_node.output }}", "query": "{{ messages[-1].content }}" }
+  // Example: { "documents": "@upstream.ingest_node.output", "query": "@messages[-1].content" }
   inputMappings?: Record<string, string>
   // Index signature for ReactFlow compatibility
   [key: string]: unknown
@@ -132,7 +133,7 @@ export interface ConfigFieldSpec {
     // New field types for enhanced operators
     | "variable_list"      // List of variable definitions (name, type, default)
     | "variable_selector"  // Dropdown to select from defined state variables
-    | "template_string"    // Text with {{ variable }} interpolation
+    | "template_string"    // Text with @variable interpolation
     | "expression"         // CEL expression input
     | "condition_list"     // List of conditions for If/Else
     | "mapping_list"       // Key-value mappings for Transform
@@ -239,7 +240,7 @@ export const AGENT_NODE_SPECS: AgentNodeSpec[] = [
     configFields: [
       { name: "name", label: "Name", fieldType: "string", required: false, description: "Agent display name" },
       { name: "model_id", label: "Model", fieldType: "model", required: true, description: "Select a chat model" },
-      { name: "instructions", label: "Instructions", fieldType: "text", required: false, description: "System prompt with {{ variable }} support", prompt_capable: true, prompt_surface: "agent.instructions" },
+      { name: "instructions", label: "Instructions", fieldType: "text", required: false, description: "System prompt with @variable support", prompt_capable: true, prompt_surface: "agent.instructions" },
       { name: "include_chat_history", label: "Include Chat History", fieldType: "boolean", required: false, default: true },
       { name: "reasoning_effort", label: "Reasoning Effort", fieldType: "select", required: false, default: "medium",
         options: [
@@ -320,7 +321,7 @@ export const AGENT_NODE_SPECS: AgentNodeSpec[] = [
     icon: "Search",
     configFields: [
       { name: "pipeline_id", label: "Retrieval Pipeline", fieldType: "retrieval_pipeline_select", required: true, description: "Select a Retrieval Pipeline" },
-      { name: "query", label: "Query Template", fieldType: "template_string", required: false, description: "Query with {{ variable }} interpolation" },
+      { name: "query", label: "Query Template", fieldType: "template_string", required: false, description: "Query with @variable interpolation" },
       { name: "top_k", label: "Max Results", fieldType: "number", required: false, default: 10, description: "Number of results to retrieve" },
     ],
   },
@@ -334,7 +335,7 @@ export const AGENT_NODE_SPECS: AgentNodeSpec[] = [
     icon: "Database", // Using Database icon
     configFields: [
       { name: "knowledge_store_id", label: "Knowledge Store", fieldType: "knowledge_store_select", required: true, description: "Select the Knowledge Store to search." },
-      { name: "query", label: "Query Template", fieldType: "template_string", required: false, description: "Query with {{ variable }} interpolation" },
+      { name: "query", label: "Query Template", fieldType: "template_string", required: false, description: "Query with @variable interpolation" },
       { name: "top_k", label: "Max Results", fieldType: "number", required: false, default: 10, description: "Number of results to retrieve" },
     ],
   },
@@ -363,6 +364,21 @@ export const AGENT_NODE_SPECS: AgentNodeSpec[] = [
   // ==========================================================================
   // Data
   // ==========================================================================
+  {
+    nodeType: "speech_to_text",
+    displayName: "Speech to Text",
+    description: "Transcribe audio inputs with a speech-to-text model.",
+    category: "data",
+    inputType: "any",
+    outputType: "context",
+    icon: "Mic",
+    configFields: [
+      { name: "model_id", label: "STT Model", fieldType: "model", required: false, description: "Defaults to the tenant/global speech-to-text model" },
+      { name: "source", label: "Audio Source", fieldType: "value_ref", required: true, description: "Select workflow_input.audio or another audio attachment value" },
+      { name: "language_hints", label: "Language Hints", fieldType: "text", required: false, description: "Optional comma-separated language codes" },
+      { name: "prompt", label: "Prompt", fieldType: "text", required: false, description: "Optional provider hint text" },
+    ],
+  },
   {
     nodeType: "transform",
     displayName: "Transform",
@@ -641,7 +657,7 @@ export const AGENT_NODE_SPECS: AgentNodeSpec[] = [
     staticHandles: ["approve", "reject"],
     configFields: [
       { name: "name", label: "Name", fieldType: "string", required: false },
-      { name: "message", label: "Message", fieldType: "template_string", required: false, description: "Message with {{ variable }} support" },
+      { name: "message", label: "Message", fieldType: "template_string", required: false, description: "Message with @variable support" },
       { name: "timeout_seconds", label: "Timeout (seconds)", fieldType: "number", required: false, default: 300 },
       { name: "require_comment", label: "Require Comment", fieldType: "boolean", required: false, default: false },
     ],
@@ -690,8 +706,26 @@ export function getNodeSpec(nodeType: AgentNodeType): AgentNodeSpec | undefined 
   return AGENT_NODE_SPECS.find(spec => spec.nodeType === nodeType)
 }
 
-export function getClassifyHandleIds(categories: Array<{ name?: string }>): string[] {
-  return dedupeNamedHandles(categories, "category")
+function getStableBranchHandles(items: Array<{ id?: string; name?: string }>, fallbackPrefix: string): string[] {
+  const used = new Set<string>()
+  return (items || []).map((item, index) => {
+    const explicitId = String(item?.id || "").trim()
+    const base = explicitId || (item?.name ?? "").trim() || `${fallbackPrefix}_${index}`
+    let unique = base
+    let suffix = 1
+    while (used.has(unique)) {
+      unique = `${base}_${suffix}`
+      suffix += 1
+    }
+    used.add(unique)
+    return unique
+  })
+}
+
+export function getClassifyHandleIds(categories: Array<{ id?: string; name?: string }>): string[] {
+  const handles = getStableBranchHandles(categories, "category")
+  handles.push("else")
+  return handles
 }
 
 type RouteTableRow = {
@@ -797,14 +831,14 @@ export function getNodeOutputHandles(nodeType: AgentNodeType, config: Record<str
   
   // Dynamic handles from config (If/Else)
   if (spec?.dynamicHandles && nodeType === "if_else") {
-    const conditions = (config.conditions as Array<{ name?: string }>) || []
-    const handles = dedupeNamedHandles(conditions, "condition")
+    const conditions = (config.conditions as Array<{ id?: string; name?: string }>) || []
+    const handles = getStableBranchHandles(conditions, "condition")
     handles.push("else") // Always have else
     return handles
   }
 
   if (spec?.dynamicHandles && nodeType === "classify") {
-    const categories = (config.categories as Array<{ name?: string }>) || []
+    const categories = (config.categories as Array<{ id?: string; name?: string }>) || []
     return getClassifyHandleIds(categories)
   }
 

@@ -61,16 +61,17 @@ jest.mock("@/components/shared/usePromptMentionModal", () => ({
 }))
 
 const analysis: AgentGraphAnalysis = {
-  spec_version: "3.0",
+  spec_version: "4.0",
   inventory: {
     workflow_input: [
-      { namespace: "workflow_input", key: "input_as_text", type: "string", label: "Input as text" },
+      { namespace: "workflow_input", key: "text", type: "string", label: "Text" },
       { namespace: "workflow_input", key: "attempt_count", type: "number", label: "attempt_count" },
     ],
     state: [
       { namespace: "state", key: "customer_name", type: "string", label: "customer_name" },
     ],
     node_outputs: [],
+    accessible_node_outputs_by_node: {},
     template_suggestions: { global: [], by_node: {} },
   },
   operator_contracts: {},
@@ -83,6 +84,52 @@ function renderWithDirection(ui: ReactElement) {
 }
 
 describe("ConfigPanel value_ref contracts", () => {
+  it("renders canonical workflow modality toggles on the Start node", async () => {
+    renderWithDirection(
+      <ConfigPanel
+        nodeId="start"
+        data={{
+          nodeType: "start",
+          category: "control",
+          displayName: "Start",
+          config: {},
+          inputType: "any",
+          outputType: "message",
+          isConfigured: true,
+          hasErrors: false,
+        }}
+        graphDefinition={{
+          spec_version: "4.0",
+          workflow_contract: {
+            inputs: [
+              { key: "text", type: "string", enabled: true, label: "Text" },
+              { key: "files", type: "list", enabled: true, label: "Files" },
+              { key: "audio", type: "list", enabled: false, label: "Audio" },
+              { key: "images", type: "list", enabled: true, label: "Images" },
+            ],
+          },
+          state_contract: { variables: [] },
+          nodes: [],
+          edges: [],
+        }}
+        onGraphDefinitionChange={jest.fn()}
+        onConfigChange={jest.fn()}
+        onClose={jest.fn()}
+        availableVariables={[]}
+        graphAnalysis={analysis}
+      />,
+    )
+
+    await waitFor(() => expect(screen.queryByText("Loading resources...")).not.toBeInTheDocument())
+
+    expect(screen.getByLabelText("Toggle Text")).toBeInTheDocument()
+    expect(screen.getByLabelText("Toggle Files")).toBeInTheDocument()
+    expect(screen.getByLabelText("Toggle Audio")).toBeInTheDocument()
+    expect(screen.getByLabelText("Toggle Images")).toBeInTheDocument()
+    expect(screen.queryByText("Input as text")).not.toBeInTheDocument()
+    expect(screen.queryByText("Audio attachments")).not.toBeInTheDocument()
+  })
+
   it("filters value-ref options using backend field contracts", async () => {
     renderWithDirection(
       <ConfigPanel
@@ -108,7 +155,7 @@ describe("ConfigPanel value_ref contracts", () => {
 
     fireEvent.click(screen.getByRole("combobox", { name: /select value/i }))
 
-    expect(screen.getByText("Input as text (string)")).toBeInTheDocument()
+    expect(screen.getByText("Text (string)")).toBeInTheDocument()
     expect(screen.queryByText("attempt_count")).not.toBeInTheDocument()
   })
 
@@ -118,11 +165,11 @@ describe("ConfigPanel value_ref contracts", () => {
         nodeId="end_1"
         data={{
           nodeType: "end",
-          category: "end",
+          category: "control",
           displayName: "End",
           config: {},
           inputType: "message",
-          outputType: "final",
+          outputType: "any",
           isConfigured: true,
           hasErrors: false,
         }}
@@ -148,11 +195,11 @@ describe("ConfigPanel value_ref contracts", () => {
         nodeId="end_1"
         data={{
           nodeType: "end",
-          category: "end",
+          category: "control",
           displayName: "End",
           config: {},
           inputType: "message",
-          outputType: "final",
+          outputType: "any",
           isConfigured: true,
           hasErrors: false,
         }}

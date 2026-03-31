@@ -1,18 +1,22 @@
-Last Updated: 2026-03-29
+Last Updated: 2026-03-31
 
 ## Scope
-Playground-specific trace inspection behavior for assistant responses, including persisted trace replay into the execution sidebar and reset behavior across playground state changes.
+Playground-specific trace inspection behavior for assistant responses, execute-pane seeded-state submission, and persisted trace replay into the execution sidebar across playground state changes.
 
 ## Test Files Present
 - `frontend-reshet/src/__tests__/agent_playground/trace_steps.test.ts`
 - `frontend-reshet/src/__tests__/agent_playground/useAgentRunController.test.tsx`
 - `frontend-reshet/src/__tests__/agent_playground/playground_page_trace.test.tsx`
+- `frontend-reshet/src/__tests__/agent_playground/bot_input_area_audio_mode.test.tsx`
 
 ## Key Scenarios Covered
 - Persisted recorder-style run events replay into sidebar execution steps.
 - Persisted v2 tool lifecycle envelopes remain compatible with sidebar replay.
 - Persisted workflow publication events replace summary node/end payloads with the actual published node output and materialized final output.
 - Live streamed builder/playground execution uses the same trace reducer, preserving published node output and End `final_output`.
+- Playground submissions can include per-run seeded workflow state alongside text/files payloads.
+- Execute chat input only shows the mic when workflow `audio` is enabled, so mic capture follows the workflow audio modality instead of implicit STT text insertion.
+- The playground forwards terminal run-failure events into the execute overlay path, so stuck loading badges can clear when a run aborts mid-workflow.
 - The playground controller can load and swap inspected traces by assistant-response `runId`.
 - New thread, thread load, and agent switch clear inspected trace state.
 - Clicking `Trace` on a playground assistant response opens the sidebar without changing message content.
@@ -25,9 +29,15 @@ Playground-specific trace inspection behavior for assistant responses, including
 - Deep-linking to a hidden playground agent redirects to the first visible agent when available.
 
 ## Last Run
+- Command: `pnpm -C frontend-reshet test -- --runTestsByPath src/__tests__/agent_playground/bot_input_area_audio_mode.test.tsx src/__tests__/agent_playground/useAgentRunController.test.tsx --watch=false`
+- Date: 2026-03-31 Asia/Hebron
+- Result: Pass (2 suites, 5 tests)
 - Command: `cd frontend-reshet && pnpm test -- --runTestsByPath src/__tests__/agent_playground/trace_steps.test.ts src/__tests__/agent_playground/useAgentRunController.test.tsx --watch=false`
 - Date: 2026-03-29 Asia/Hebron
 - Result: Pass
+- Command: `pnpm -C frontend-reshet test -- --runTestsByPath src/__tests__/agent_builder_v3/config_panel_value_ref_contracts.test.tsx src/__tests__/agent_builder_v3/graphspec_v3_serialization.test.ts src/__tests__/agent_builder_v3/use_agent_graph_analysis.test.tsx src/__tests__/agent_playground/useAgentRunController.test.tsx --watch=false`
+- Date: 2026-03-31 Asia/Hebron
+- Result: Pass (4 suites, 13 tests)
 - Command: `cd frontend-reshet && pnpm test -- --runTestsByPath src/__tests__/agent_playground/trace_steps.test.ts --watch=false`
 - Date: 2026-03-29 Asia/Hebron
 - Result: Pass

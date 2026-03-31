@@ -17,6 +17,7 @@ jest.mock("@/services/agent", () => ({
   agentService: {
     getRunEvents: jest.fn(),
     streamAgent: jest.fn(),
+    uploadAgentAttachments: jest.fn(),
   },
 }));
 
@@ -226,7 +227,7 @@ describe("useAgentRunController trace inspection", () => {
           };
         },
       },
-    } as Response);
+    } as unknown as Response);
 
     const { result } = renderHook(({ agentId }) => useAgentRunController(agentId), {
       initialProps: { agentId: "agent-1" as string | undefined },
@@ -251,6 +252,52 @@ describe("useAgentRunController trace inspection", () => {
       nodeId: "end",
       name: "End",
       output: { response: "hello world" },
+    });
+  });
+
+  it("passes seeded state through streamAgent submissions", async () => {
+    const encoder = new TextEncoder();
+    mockedAgentService.streamAgent.mockResolvedValue({
+      headers: {
+        get: () => null,
+      },
+      body: {
+        getReader: () => {
+          let consumed = false;
+          return {
+            read: async () => {
+              if (consumed) return { done: true, value: undefined };
+              consumed = true;
+              return {
+                done: false,
+                value: encoder.encode('data: {"event":"run.completed","run_id":"run-state","payload":{"status":"completed"}}\n\ndata: [DONE]\n\n'),
+              };
+            },
+          };
+        },
+      },
+    } as unknown as Response);
+
+    const { result } = renderHook(({ agentId }) => useAgentRunController(agentId), {
+      initialProps: { agentId: "agent-1" as string | undefined },
+    });
+
+    await act(async () => {
+      await result.current.handleSubmit({
+        text: "",
+        files: [],
+        state: { customer_id: "cust-1", flag: true },
+      });
+    });
+
+    await waitFor(() => {
+      expect(mockedAgentService.streamAgent).toHaveBeenCalledWith(
+        "agent-1",
+        expect.objectContaining({
+          state: { customer_id: "cust-1", flag: true },
+        }),
+        "debug",
+      );
     });
   });
 });

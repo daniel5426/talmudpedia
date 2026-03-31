@@ -1,6 +1,6 @@
 # Design Docs Index
 
-Last Updated: 2026-03-19
+Last Updated: 2026-03-31
 
 This section is for architecture and design documents that explain system shape, constraints, and tradeoffs.
 
@@ -54,3 +54,5 @@ This section is for architecture and design documents that explain system shape,
   - Current voice websocket/provider runtime shape and security reality.
 - `prompt_library_shared_resource_design.md`
   - Shared-resource design for a platform-wide prompt library and cross-surface prompt references.
+- `rag_agent_node_architecture_decision.md`
+  - Decision record for keeping Agent and RAG node registries/contracts separate and avoiding premature shared-node abstraction.

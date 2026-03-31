@@ -1092,7 +1092,7 @@ def build_architect_graph_definition(model_id: str, tool_ids: list[str] | None =
         "and report the target resource, attempted action, normalized failure code, last validation details, whether any "
         "mutation succeeded, and the recommended next repair action. "
         "If a Platform SDK call fails due to non-canonical input or unsupported action, do not keep retrying the same malformed branch. "
-        "If a node you are creating/updating requires model_id (for example agent/llm/classify) and model_id is "
+        "If a node you are creating/updating requires model_id (for example agent/classify) and model_id is "
         "missing or rejected, call platform-assets with action models.list first, select a valid active chat-capable "
         "model id from the response, and retry the mutation. Do not ask the user for model_id unless models.list "
         "returns no usable models. "

@@ -1,6 +1,6 @@
 # Agent Graph Spec
 
-Last Updated: 2026-03-29
+Last Updated: 2026-03-31
 
 This document is the canonical graph-definition contract for the agent builder and backend compiler.
 
@@ -17,7 +17,13 @@ Persisted graph shape:
 
 ```json
 {
-  "spec_version": "1.0",
+  "spec_version": "4.0",
+  "workflow_contract": {
+    "inputs": []
+  },
+  "state_contract": {
+    "variables": []
+  },
   "nodes": [],
   "edges": []
 }
@@ -30,13 +36,15 @@ Persisted graph shape:
 - `1.0`
 - `2.0`
 - `3.0`
+- `4.0`
 
 Important current rule verified in code:
 - if the graph contains GraphSpec v2 orchestration node types, the effective version must be `2.0`
 - GraphSpec v2 orchestration is also feature-gated by tenant/surface checks in the backend compiler
 
 Current builder/runtime direction:
-- `3.0` is the active workflow-contract format for the Start/End refactor
+- `4.0` is the active workflow/state contract format
+- `3.0` is read-and-normalize legacy compatibility
 - `1.0` and `2.0` remain legacy compatibility shapes
 
 ## Node Contract
@@ -57,35 +65,49 @@ Current normalization behavior:
 - persisted functional config must live in `config`
 - builder-only metadata can live in `data`, but `data.config` is not the source of truth
 
-## Spec 3.0 Contract Additions
+## Spec 4.0 Contract Additions
 
-GraphSpec `3.0` adds:
+GraphSpec `4.0` adds:
+- top-level `workflow_contract`
+- top-level `state_contract`
 - typed workflow/state inventory
 - explicit node output contracts
 - node-scoped template suggestion inventory for builder text/prompt inputs
+- node-scoped value-ref source inventory for upstream-only binding
 - structured value references for data-binding fields
 - schema-driven `End`
 
 ## Start Node Contract
 
-`Start` is the workflow contract owner in GraphSpec `3.0`.
+`Start` is no longer the canonical storage owner of workflow/state contracts in GraphSpec `4.0`.
 
 For current chat workflows:
 - `workflow_input.input_as_text: string` always exists as a built-in runtime variable
+- `workflow_input.attachments: attachment[]` exposes serialized runtime attachment refs
+- `workflow_input.audio_attachments: attachment[]` exposes the audio-only attachment subset
+- `workflow_input.primary_audio_attachment: attachment` is exposed when at least one audio attachment exists
 - `input_as_text` is compiler-generated and read-only
-- persisted `Start` config stores state definitions, not editable workflow input variables
+- persisted graph metadata stores workflow inputs and state definitions canonically
+- `Start` remains the execution entry node and the UX projection point for editing those contracts
 
-Persisted `Start.config` shape:
-- `state_variables`
-
-`state_variables` entries:
+Persisted `state_contract.variables` entries:
 - `key`
 - `type`
 - `default_value` optional
 
+Persisted `workflow_contract.inputs` entries:
+- `key`
+- `type`
+- `required`
+- `label` optional
+- `description` optional
+- `semantic_type` optional
+- `readonly` optional
+- `derived` optional
+
 ## Runtime Namespaces
 
-GraphSpec `3.0` standardizes runtime value lookup into:
+GraphSpec `4.0` standardizes runtime value lookup into:
 - `workflow_input`
 - `state`
 - `node_outputs`
@@ -106,7 +128,7 @@ Data-binding fields use a typed reference model instead of string interpolation 
 - `expected_type` optional
 - `label` optional, builder-facing only
 
-Canonical GraphSpec `3.0` uses `ValueRef` for fields whose meaning is “select a runtime value source”.
+Canonical GraphSpec `4.0` uses `ValueRef` for fields whose meaning is “select a runtime value source”.
 
 ## Node Output Contracts
 
@@ -137,6 +159,12 @@ Current baseline output contracts:
 - `classify`
   - `category`
   - `confidence` when available
+- `speech_to_text`
+  - `text`
+  - `segments`
+  - `language`
+  - `attachments`
+  - `provider_metadata`
 - `transform`
   - `output`
 - `human_input`
@@ -149,6 +177,11 @@ Current baseline output contracts:
 
 `set_state` is state-writing, not output-primary.
 
+Current STT node rules:
+- `speech_to_text.config.source` is a required `ValueRef`
+- `speech_to_text.config.model_id` is optional and falls back to the tenant/global default `speech_to_text` model
+- multi-attachment STT joins transcript text with blank-line separators and publishes flattened segments with `attachment_id`
+
 ## Builder Suggestion Inventory
 
 Graph analysis now exposes two different downstream contracts:
@@ -156,12 +189,15 @@ Graph analysis now exposes two different downstream contracts:
   - `workflow_input`
   - `state`
   - `node_outputs`
+  - `accessible_node_outputs_by_node`
 - builder text/prompt suggestion inventory
   - `template_suggestions.global`
   - `template_suggestions.by_node`
 
 Rules:
-- the typed inventory remains graph-wide and is used by ValueRef pickers and validation
+- `workflow_input` and `state` remain global
+- `node_output` ValueRefs are valid only for reachable upstream nodes, never for self or unrelated nodes
+- `accessible_node_outputs_by_node[nodeId]` is the canonical picker source for typed ValueRef UIs
 - template suggestions are deduplicated and builder-facing
 - global suggestions include workflow input and state
 - `template_suggestions.by_node[nodeId]` includes only direct incoming node outputs for that node
@@ -169,7 +205,7 @@ Rules:
 
 ## End Node Contract
 
-GraphSpec `3.0` replaces legacy `End.output_variable` / `End.output_message` behavior with:
+GraphSpec `4.0` replaces legacy `End.output_variable` / `End.output_message` behavior with:
 - `output_schema`
 - `output_bindings`
 

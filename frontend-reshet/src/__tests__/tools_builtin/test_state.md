@@ -1,6 +1,6 @@
 # Tools Built-in Frontend Tests
 
-Last Updated: 2026-03-19
+Last Updated: 2026-03-31
 
 ## Scope
 Covers built-in tools UX under the single-list architecture, plus bucket/subtype classification behavior.
@@ -16,7 +16,7 @@ Covers built-in tools UX under the single-list architecture, plus bucket/subtype
 - Manual tool creation still opens the registry-native create dialog.
 - Artifact tool creation routes to artifact-native `tool_impl` create mode.
 - Pipeline tool creation routes to the pipeline authoring surface.
-- Agent/workflow tool creation now routes to the agents export flow.
+- Agent/workflow tool creation now routes to the agents page, where binding happens from the agent card.
 - Bucket/subtype filtering remains coherent with built-in metadata.
 - Artifact-backed, pipeline-backed, and agent-backed rows now expose redirect/open-editor actions instead of registry-side editing or publish flows.
 - The tools detail sheet consumes canonical DTO fields (`implementation_config`, `execution_config`) instead of reconstructing from `config_schema`.
@@ -26,6 +26,9 @@ Covers built-in tools UX under the single-list architecture, plus bucket/subtype
 - Command: `npm test -- --runInBand src/__tests__/tools_builtin/tool_bucket_filtering.test.ts src/__tests__/tools_builtin/tools_builtin_page.test.tsx`
 - Date/Time: 2026-03-18 (Asia/Hebron local)
 - Result: pass (`2 suites, 11 passed`)
+- Command: `pnpm -C frontend-reshet test -- --runTestsByPath src/__tests__/tools_builtin/tools_builtin_page.test.tsx --watch=false`
+- Date/Time: 2026-03-31 Asia/Hebron
+- Result: pass (`1 suite, 9 tests`)
 - Command: `npm test -- --runInBand src/__tests__/tools_builtin/tools_builtin_page.test.tsx`
 - Date/Time: 2026-03-15 (Asia/Hebron local)
 - Result: pass (`1 suite, 4 passed`)

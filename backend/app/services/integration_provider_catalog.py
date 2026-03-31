@@ -7,6 +7,7 @@ from app.db.postgres.models.registry import (
     ModelCapabilityType,
     ModelProviderType,
 )
+from app.services.model_runtime import ModelRuntimeAdapterRegistry, register_default_model_runtime_adapters
 
 
 @dataclass(frozen=True)
@@ -64,6 +65,15 @@ MODEL_PROVIDER_CATALOG: dict[ModelProviderType, ModelProviderCatalogEntry] = {
 }
 
 
+def _runtime_supported_capabilities(provider: ModelProviderType) -> frozenset[ModelCapabilityType]:
+    register_default_model_runtime_adapters()
+    return frozenset(
+        capability
+        for capability in ModelCapabilityType
+        if ModelRuntimeAdapterRegistry.supports(capability=capability, provider=provider)
+    )
+
+
 def allowed_provider_keys(category: IntegrationCredentialCategory) -> set[str] | None:
     if category == IntegrationCredentialCategory.LLM_PROVIDER:
         return {provider.value for provider in MODEL_PROVIDER_CATALOG}
@@ -95,6 +105,9 @@ def is_model_provider_supported(
     provider: ModelProviderType,
     capability: ModelCapabilityType,
 ) -> bool:
+    runtime_capabilities = _runtime_supported_capabilities(provider)
+    if capability in runtime_capabilities:
+        return True
     entry = MODEL_PROVIDER_CATALOG.get(provider)
     if entry is None:
         return False
@@ -114,5 +127,5 @@ def supported_model_providers_for_capability(
     return tuple(
         entry
         for entry in MODEL_PROVIDER_CATALOG.values()
-        if capability in entry.supported_capabilities
+        if is_model_provider_supported(provider=entry.provider, capability=capability)
     )

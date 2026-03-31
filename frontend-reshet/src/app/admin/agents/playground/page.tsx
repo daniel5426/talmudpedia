@@ -63,7 +63,7 @@ function PlaygroundContent() {
     const pendingUrlThreadIdRef = useRef<string | null>(null)
     const clearingThreadRef = useRef(false)
 
-    const controller = useAgentRunController(agentId || undefined)
+    const controller = useAgentRunController(agentId || undefined, agent?.graph_definition)
     const { executionSteps, currentThreadId, inspectedTraceCopyText } = controller
     const { direction } = useDirection()
     const { currentTenant } = useTenant()

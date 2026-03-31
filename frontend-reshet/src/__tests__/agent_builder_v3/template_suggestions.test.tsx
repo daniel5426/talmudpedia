@@ -29,9 +29,9 @@ beforeAll(() => {
 })
 
 const analysis: AgentGraphAnalysis = {
-  spec_version: "3.0",
+  spec_version: "4.0",
   inventory: {
-    workflow_input: [{ namespace: "workflow_input", key: "input_as_text", type: "string", label: "Input as text" }],
+    workflow_input: [{ namespace: "workflow_input", key: "text", type: "string", label: "Text" }],
     state: [{ namespace: "state", key: "customer_name", type: "string", label: "customer_name" }],
     node_outputs: [
       {
@@ -47,15 +47,16 @@ const analysis: AgentGraphAnalysis = {
         fields: [{ namespace: "node_output", key: "category", type: "string", label: "category", node_id: "classify_1" }],
       },
     ],
+    accessible_node_outputs_by_node: {},
     template_suggestions: {
       global: [
         {
-          id: "workflow_input:input_as_text",
-          display_label: "Input as text",
-          insert_text: "workflow_input.input_as_text",
+          id: "workflow_input:text",
+          display_label: "Text",
+          insert_text: "workflow_input.text",
           type: "string",
           namespace: "workflow_input",
-          key: "input_as_text",
+          key: "text",
         },
         {
           id: "state:customer_name",
@@ -114,12 +115,12 @@ describe("builder template suggestions", () => {
     const suggestions = getTemplateSuggestionsForNode(analysis, "end_1")
 
     expect(suggestions.map((item) => item.displayLabel)).toEqual([
-      "Input as text",
+      "Text",
       "customer_name",
       "Reply Agent / Output Text",
     ])
     expect(suggestions.map((item) => item.insertText)).toEqual([
-      "workflow_input.input_as_text",
+      "workflow_input.text",
       "state.customer_name",
       "upstream.agent_1.output_text",
     ])
@@ -144,15 +145,15 @@ describe("builder template suggestions", () => {
     fireEvent.input(editor)
 
     await waitFor(() => {
-      expect(screen.getByText("Input as text")).toBeInTheDocument()
+      expect(screen.getByText("Text")).toBeInTheDocument()
       expect(screen.getByText("Reply Agent / Output Text")).toBeInTheDocument()
     })
 
-    expect(screen.queryByText("workflow_input.input_as_text")).not.toBeInTheDocument()
+    expect(screen.queryByText("workflow_input.text")).not.toBeInTheDocument()
     expect(screen.queryByText("upstream.agent_1.output_text")).not.toBeInTheDocument()
 
     fireEvent.mouseDown(screen.getByText("Reply Agent / Output Text"))
 
-    expect(onChange).toHaveBeenLastCalledWith("Use {{ upstream.agent_1.output_text }}")
+    expect(onChange).toHaveBeenLastCalledWith("Use @upstream.agent_1.output_text")
   })
 })

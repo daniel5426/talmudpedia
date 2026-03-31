@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { createPortal } from "react-dom"
 import {
     X,
     FolderInput,
@@ -26,6 +27,7 @@ import {
     Route,
     Scale,
     Ban,
+    Mic,
     AlertTriangle,
     ChevronDown,
     ChevronUp,
@@ -54,7 +56,7 @@ import {
     SelectValue,
 } from "@/components/ui/select"
 import { modelsService, toolsService, ragAdminService, agentService, AgentOperatorSpec, LogicalModel, ToolDefinition } from "@/services"
-import type { AgentGraphAnalysis } from "@/services/agent"
+import type { AgentGraphAnalysis, AgentGraphDefinition, ModelCapabilityType } from "@/services/agent"
 import { ToolPicker } from "./ToolPicker"
 import { useTenant } from "@/contexts/TenantContext"
 import { KnowledgeStoreSelect } from "../shared/KnowledgeStoreSelect"
@@ -65,7 +67,8 @@ import { filterVariableSuggestions, type VariableSuggestionOption } from "../sha
 import { PromptModal } from "../shared/PromptModal"
 import { usePromptMentionModal } from "../shared/usePromptMentionModal"
 import { fillMentionInValue } from "@/lib/prompt-mentions"
-import { SetStateAssignmentsEditor, ValueRefPicker } from "./GraphContractEditors"
+import { SetStateAssignmentsEditor } from "./GraphContractEditors"
+import { ValueRefPicker } from "./ValueRefPicker"
 import { ClassifyNodeSettings, EndNodeSettings, StartNodeSettings } from "./ConfigPanelSpecialized"
 import { normalizeNodeContractConfig } from "./graph-contract"
 
@@ -97,6 +100,7 @@ const CATEGORY_ICONS: Record<string, React.ElementType> = {
     cancel_subtree: Ban,
     human_input: UserCheck,
     user_approval: UserCheck,
+    speech_to_text: Mic,
     transform: Sparkles,
     set_state: Database,
     classify: ListFilter,
@@ -106,6 +110,8 @@ interface ConfigPanelProps {
     nodeId: string
     data: AgentNodeData
     onConfigChange: (nodeId: string, config: Record<string, unknown>) => void
+    graphDefinition?: AgentGraphDefinition
+    onGraphDefinitionChange?: (graphDefinition: AgentGraphDefinition) => void
     onClose: () => void
     availableVariables?: VariableSuggestionOption[]
     graphAnalysis?: AgentGraphAnalysis | null
@@ -125,6 +131,11 @@ type ValidationIssue = {
 
 function isOrchestrationNode(nodeType: string): boolean {
     return ["spawn_run", "spawn_group", "join", "router", "judge", "replan", "cancel_subtree"].includes(nodeType)
+}
+
+function modelCapabilityForNode(nodeType: string): ModelCapabilityType {
+    if (nodeType === "speech_to_text") return "speech_to_text"
+    return "chat"
 }
 
 function toStringList(value: unknown): string[] {
@@ -358,6 +369,15 @@ function SmartInput({
     }, [availableVariables, cursorPosition, multiline, normalizedSearchTerm, showSuggestions, suggestionType, value])
 
     const detectExpressionContext = (textBeforeCursor: string) => {
+        const aliasMatch = textBeforeCursor.match(/@([^\s@]*)$/)
+        if (aliasMatch) {
+            return {
+                type: "variables" as const,
+                term: aliasMatch[1],
+                replaceFrom: aliasMatch.index ?? 0,
+            }
+        }
+
         const hasTrailingSpace = /\s$/.test(textBeforeCursor)
         const trimmed = textBeforeCursor.trimEnd()
         const tokens = trimmed.split(/\s+/).filter(Boolean)
@@ -372,9 +392,9 @@ function SmartInput({
             return { type: "variables" as const, term: "" }
         }
         if (variableMatch) {
-            return { type: "operators" as const, term: "" }
+            return { type: "operators" as const, term: "", replaceFrom: null }
         }
-        return { type: "variables" as const, term: "" }
+        return { type: "variables" as const, term: "", replaceFrom: null }
     }
 
     const detectTemplateContext = (textBeforeCursor: string) => {
@@ -383,6 +403,7 @@ function SmartInput({
             return {
                 term: aliasMatch[1],
                 replaceFrom: (aliasMatch.index ?? 0),
+                kind: "alias" as const,
             }
         }
 
@@ -391,6 +412,7 @@ function SmartInput({
             return {
                 term: legacyMatch[1].trim(),
                 replaceFrom: (legacyMatch.index ?? 0),
+                kind: "legacy" as const,
             }
         }
 
@@ -451,13 +473,26 @@ function SmartInput({
             const templateContext = detectTemplateContext(textBeforeCursor)
             if (templateContext) {
                 const prefix = textBeforeCursor.slice(0, templateContext.replaceFrom)
-                const templateToken = `{{ ${insertText} }}`
+                const templateToken = `@${insertText}`
                 const newText = prefix + templateToken + textAfterCursor
                 pendingSelectionRef.current = prefix.length + templateToken.length
                 onChange(newText)
                 setShowSuggestions(false)
             }
             return
+        }
+
+        if (mode === "expression") {
+            const aliasMatch = textBeforeCursor.match(/@([^\s@]*)$/)
+            if (aliasMatch) {
+                const replaceFrom = aliasMatch.index ?? 0
+                const prefix = textBeforeCursor.slice(0, replaceFrom)
+                const newText = prefix + insertText + textAfterCursor
+                pendingSelectionRef.current = prefix.length + insertText.length
+                onChange(newText)
+                setShowSuggestions(false)
+                return
+            }
         }
 
         const tokenMatch = textBeforeCursor.match(/[A-Za-z_][A-Za-z0-9_.\[\]]*$/)
@@ -602,9 +637,9 @@ function SmartInput({
                     {...sharedInputProps}
                 />
             )}
-            {hasSuggestions && (
+            {hasSuggestions && typeof document !== "undefined" && createPortal(
                 <div
-                    className="fixed z-[120] bg-popover text-popover-foreground shadow-md rounded-md border border-border p-1 max-h-[200px] overflow-auto"
+                    className="fixed z-[180] bg-popover text-popover-foreground shadow-md rounded-md border border-border p-1 max-h-[200px] overflow-auto"
                     style={{
                         top: suggestionPosition.top,
                         left: suggestionPosition.left,
@@ -639,7 +674,7 @@ function SmartInput({
                         </div>
                     ))}
                 </div>
-            )}
+            , document.body)}
         </div>
     )
 }
@@ -681,7 +716,7 @@ function ListEditor({
     return (
         <div className="space-y-2">
             {(items || []).map((item, idx) => (
-                <div key={idx} className="flex gap-2 items-start group">
+                <div key={idx} className="flex gap-2 items-start rounded-xl border border-border/40 bg-muted/15 p-2.5 group">
                     <div
                         className={cn(
                             "flex-1 gap-2",
@@ -692,20 +727,24 @@ function ListEditor({
                         {fields.map(field => (
                             <div key={field.key} className="min-w-0">
                                 {field.type === "select" ? (
-                                    <select
-                                        className="w-full h-8 px-2 rounded-md border border-input bg-background/50 text-[11px] focus:outline-none focus:ring-1 focus:ring-ring"
-                                        value={item[field.key] || ""}
-                                        onChange={(e) => handleChange(idx, field.key, e.target.value)}
+                                    <Select
+                                        value={item[field.key] || "__unset__"}
+                                        onValueChange={(next) => handleChange(idx, field.key, next === "__unset__" ? "" : next)}
                                     >
-                                        <option value="">{field.placeholder || "Select..."}</option>
-                                        {field.options?.map(opt => (
-                                            <option key={opt} value={opt}>{opt}</option>
-                                        ))}
-                                    </select>
+                                        <SelectTrigger className="h-9 w-full rounded-lg border-none bg-background/70 px-2.5 text-[12px] shadow-none focus:ring-1 focus:ring-offset-0">
+                                            <SelectValue placeholder={field.placeholder || "Select..."} />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="__unset__">{field.placeholder || "Select..."}</SelectItem>
+                                            {field.options?.map(opt => (
+                                                <SelectItem key={opt} value={opt}>{opt}</SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
                                 ) : (
                                     <SmartInput
                                         className={cn(
-                                            "h-8 px-2 text-[11px] bg-background/50",
+                                            "h-9 px-2.5 text-[12px] rounded-lg border-none bg-background/70",
                                             field.type === "expression" && "font-mono text-blue-600"
                                         )}
                                         placeholder={field.placeholder || field.label}
@@ -722,7 +761,7 @@ function ListEditor({
                     <Button
                         variant="ghost"
                         size="icon"
-                        className="h-8 w-8 text-muted-foreground hover:text-destructive shrink-0"
+                        className="h-9 w-9 rounded-lg text-muted-foreground hover:text-destructive shrink-0"
                         onClick={() => handleRemove(idx)}
                     >
                         <Trash2 className="h-3.5 w-3.5" />
@@ -733,7 +772,7 @@ function ListEditor({
                 variant="outline"
                 size="sm"
                 onClick={handleAdd}
-                className="w-full h-8 text-xs border-dashed text-muted-foreground hover:text-foreground"
+                className="w-full h-9 rounded-lg text-xs border-dashed text-muted-foreground hover:text-foreground"
             >
                 <Plus className="h-3 w-3 mr-1.5" />
                 {addItemLabel}
@@ -1049,6 +1088,7 @@ function RouteTableField({
 }
 
 function ConfigField({
+    nodeId,
     field,
     value,
     onChange,
@@ -1064,6 +1104,7 @@ function ConfigField({
     fieldError,
     onPromptMentionClick,
 }: {
+    nodeId: string
     field: ConfigFieldSpec
     value: unknown
     onChange: (value: unknown) => void
@@ -1105,6 +1146,9 @@ function ConfigField({
     const isValueRef = field.fieldType === "value_ref"
     const expectedValueRefTypes = Array.isArray(fieldContract?.allowed_types)
         ? fieldContract.allowed_types.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+        : undefined
+    const expectedValueRefSemanticTypes = Array.isArray(fieldContract?.allowed_semantic_types)
+        ? fieldContract.allowed_semantic_types.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
         : undefined
 
     const renderInput = () => {
@@ -1449,8 +1493,10 @@ function ConfigField({
             return (
                 <ValueRefPicker
                     analysis={graphAnalysis}
+                    nodeId={nodeId}
                     value={(value as any) || null}
                     expectedTypes={expectedValueRefTypes}
+                    expectedSemanticTypes={expectedValueRefSemanticTypes}
                     onChange={(next) => onChange(next)}
                 />
             )
@@ -1519,7 +1565,7 @@ function ConfigField({
                                         const newMappings = { ...mappings, [input.name]: val }
                                         onChange(newMappings)
                                     }}
-                                    placeholder={input.description || `{{ state.field }} or {{ upstream.node.field }}`}
+                                    placeholder={input.description || `@state.field or @upstream.node.field`}
                                     className="h-8 px-2 text-[11px] bg-background/50 font-mono text-blue-600"
                                     availableVariables={availableVariables}
                                     mode="expression"
@@ -1587,6 +1633,8 @@ export function ConfigPanel({
     nodeId,
     data,
     onConfigChange,
+    graphDefinition,
+    onGraphDefinitionChange,
     onClose,
     availableVariables,
     graphAnalysis,
@@ -1607,6 +1655,7 @@ export function ConfigPanel({
     )
 
     const promptMentionModal = usePromptMentionModal<{ fieldName: string; mentionIndex: number }>()
+    const resolvedGraphDefinition = graphDefinition || { spec_version: "4.0", nodes: [], edges: [] }
 
     const { currentTenant } = useTenant()
 
@@ -1634,8 +1683,9 @@ export function ConfigPanel({
         async function loadResources() {
             setLoading(true)
             try {
+                const modelCapability = modelCapabilityForNode(data.nodeType)
                 const [modelsRes, toolsRes, pipelinesRes, agentsRes] = await Promise.all([
-                    modelsService.listModels("chat", "active", 0, 100),
+                    modelsService.listModels(modelCapability, "active", 0, 100),
                     toolsService.listTools(undefined, "published", undefined, 0, 100),
                     ragAdminService.listVisualPipelines(currentTenant?.slug),
                     agentService.listAgents({ skip: 0, limit: 500 }),
@@ -1669,7 +1719,7 @@ export function ConfigPanel({
             }
         }
         loadResources()
-    }, [currentTenant?.slug])
+    }, [currentTenant?.slug, data.nodeType])
 
     useEffect(() => {
         agentService.listOperators()
@@ -1712,8 +1762,9 @@ export function ConfigPanel({
         if (fieldName === "scope_subset") {
             newConfig.scope_subset = toStringList(value)
         }
-        setLocalConfig(newConfig)
-        onConfigChange(nodeId, newConfig)
+        const normalizedConfig = normalizeNodeContractConfig(data.nodeType, newConfig)
+        setLocalConfig(normalizedConfig)
+        onConfigChange(nodeId, normalizedConfig)
     }
 
     const handlePromptMentionClick = useCallback(
@@ -1916,12 +1967,22 @@ export function ConfigPanel({
                     <>
                         {data.nodeType === "start" && (
                             <StartNodeSettings
-                                value={localConfig.state_variables}
-                                onChange={(stateVariables) => handleFieldChange("state_variables", stateVariables)}
+                                workflowContract={resolvedGraphDefinition.workflow_contract}
+                                stateContract={resolvedGraphDefinition.state_contract}
+                                onChange={({ workflowContract, stateContract }) =>
+                                    onGraphDefinitionChange?.({
+                                        ...resolvedGraphDefinition,
+                                        workflow_contract: workflowContract,
+                                        state_contract: stateContract,
+                                        nodes: resolvedGraphDefinition.nodes,
+                                        edges: resolvedGraphDefinition.edges,
+                                    })
+                                }
                             />
                         )}
                         {data.nodeType === "end" && (
                             <EndNodeSettings
+                                nodeId={nodeId}
                                 value={localConfig}
                                 analysis={graphAnalysis}
                                 isConfigured={endSchemaConfigured}
@@ -1946,14 +2007,16 @@ export function ConfigPanel({
                                     ? fieldContracts.input_source.allowed_types as string[]
                                     : undefined}
                                 onChange={(next) => {
-                                    setLocalConfig(next)
-                                    onConfigChange(nodeId, next)
+                                    const normalizedNext = normalizeNodeContractConfig(data.nodeType, next)
+                                    setLocalConfig(normalizedNext)
+                                    onConfigChange(nodeId, normalizedNext)
                                 }}
                             />
                         )}
                         {data.nodeType === "set_state" && (
                             <SetStateAssignmentsEditor
                                 value={localConfig.assignments}
+                                nodeId={nodeId}
                                 analysis={graphAnalysis}
                                 onChange={(assignments) => handleFieldChange("assignments", assignments)}
                             />
@@ -1973,6 +2036,7 @@ export function ConfigPanel({
                                     {groupedFields[section.key].map((field) => (
                                         <ConfigField
                                             key={field.name}
+                                            nodeId={nodeId}
                                             field={field}
                                             value={
                                                 field.fieldType === "route_table" && data.nodeType === "router" && field.name === "routes"

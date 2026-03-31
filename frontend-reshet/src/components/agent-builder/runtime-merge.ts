@@ -23,7 +23,7 @@ export function mergeExecuteRenderGraph(
       draggable: true,
       data: {
         ...(node.data as AgentNodeData),
-        executionStatus: runtimeStatus || (node.data as AgentNodeData).executionStatus,
+        executionStatus: runtimeStatus,
         hasErrors: Boolean((node.data as AgentNodeData).hasErrors || runtimeNote),
       } as AgentNodeData,
     }
@@ -45,9 +45,19 @@ export function mergeExecuteRenderGraph(
     }
   })
 
+  const highlightedRuntimeEdges = overlay.runtimeEdges.map((edge) => ({
+    ...edge,
+    animated: true,
+    style: {
+      ...(edge.style || {}),
+      stroke: "#16a34a",
+      strokeWidth: 3,
+    },
+  }))
+
   return {
     nodes: [...staticWithRuntime, ...overlay.runtimeNodes],
-    edges: [...highlightedStaticEdges, ...overlay.runtimeEdges],
+    edges: [...highlightedStaticEdges, ...highlightedRuntimeEdges],
   }
 }
 

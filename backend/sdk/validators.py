@@ -60,8 +60,6 @@ class GraphSpecValidator:
             "start": "start",
             "output": "end",
             "end": "end",
-            "llm_call": "llm",
-            "llm": "llm",
             "tool_call": "tool",
             "rag_retrieval": "rag",
         }

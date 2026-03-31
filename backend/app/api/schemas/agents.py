@@ -8,6 +8,8 @@ from .common import PaginationParams
 
 class GraphDefinitionSchema(BaseModel):
     spec_version: Optional[str] = None
+    workflow_contract: Optional[dict[str, Any]] = None
+    state_contract: Optional[dict[str, Any]] = None
     nodes: list[dict[str, Any]]
     edges: list[dict[str, Any]]
 
@@ -49,6 +51,8 @@ class AgentResponse(BaseModel):
     is_public: bool = False
     show_in_playground: bool = True
     default_embed_policy_set_id: Optional[UUID] = None
+    tool_binding_status: Optional[str] = None
+    is_tool_enabled: bool = False
     created_at: datetime
     updated_at: datetime
     published_at: Optional[datetime] = None
@@ -78,6 +82,7 @@ class ExecuteAgentRequest(BaseModel):
     input: Optional[str] = None
     messages: list[dict[str, Any]] = []
     attachment_ids: list[UUID] = []
+    state: Optional[dict[str, Any]] = None
     context: Optional[dict[str, Any]] = None
     run_id: Optional[UUID] = None
     thread_id: Optional[UUID] = None

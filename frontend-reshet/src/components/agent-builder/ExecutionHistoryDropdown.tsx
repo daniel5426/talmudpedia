@@ -48,7 +48,7 @@ export function ExecutionHistoryDropdown({
           {showChevron ? <ChevronDown className="h-3 w-3 opacity-70" /> : null}
         </button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align={align} className={contentClassName || "min-w-[220px]"}>
+      <DropdownMenuContent align={align} className={contentClassName || "w-[320px] max-w-[min(90vw,320px)] max-h-[320px] overflow-y-auto"}>
         {loading ? (
           <DropdownMenuItem disabled className="text-muted-foreground">
             Loading...
@@ -64,8 +64,8 @@ export function ExecutionHistoryDropdown({
               onClick={() => onSelectHistory(item)}
               className="flex flex-col items-start gap-1"
             >
-              <span className="text-xs font-medium text-foreground">{item.title || "Thread"}</span>
-              <span className="text-[11px] text-muted-foreground">
+              <span className="w-full truncate text-xs font-medium text-foreground">{item.title || "Thread"}</span>
+              <span className="w-full truncate text-[11px] text-muted-foreground">
                 {item.timestamp ? new Date(item.timestamp).toLocaleString() : "Recent"}
               </span>
             </DropdownMenuItem>

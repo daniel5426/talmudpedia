@@ -50,6 +50,27 @@ describe("agent builder branch handles", () => {
       "support",
       "support_1",
       "category_3",
+      "else",
+    ])
+  })
+
+  it("prefers stable classify ids over names", () => {
+    const { container } = renderNode(
+      buildNodeData({
+        nodeType: "classify",
+        config: {
+          categories: [
+            { id: "cat_support", name: "support" },
+            { id: "cat_sales", name: "sales" },
+          ],
+        },
+      })
+    )
+
+    expect(collectHandleIds(container)).toEqual([
+      "cat_support",
+      "cat_sales",
+      "else",
     ])
   })
 

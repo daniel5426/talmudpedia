@@ -1,21 +1,27 @@
-from fastapi import APIRouter, UploadFile, File, HTTPException, Depends
-from app.services.stt.base import STTProvider
-from app.services.stt.factory import get_stt_provider
+from __future__ import annotations
+
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.db.postgres.session import get_db
+from app.services.speech_to_text_service import SpeechToTextService
+
 
 router = APIRouter()
+
 
 @router.post("/transcribe")
 async def transcribe_audio(
     file: UploadFile = File(...),
-    stt_provider: STTProvider = Depends(get_stt_provider)
+    db: AsyncSession = Depends(get_db),
 ):
-    """
-    Transcribes an uploaded audio file using the configured STT provider.
-    """
     try:
         audio_content = await file.read()
-        transcript = await stt_provider.transcribe(audio_content)
-        return {"text": transcript}
-    except Exception as e:
-        print(f"Transcription error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        result, _execution = await SpeechToTextService(db, None).transcribe_bytes(
+            audio_content,
+            mime_type=file.content_type,
+            filename=file.filename,
+        )
+        return {"text": result.text}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc

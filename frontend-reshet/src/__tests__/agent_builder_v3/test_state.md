@@ -1,9 +1,9 @@
 # Test State: Agent Builder v3
 
-Last Updated: 2026-03-29
+Last Updated: 2026-03-31
 
 **Scope**
-Graph Spec 3.0 frontend serialization defaults, Start/End/Set State contract editor behavior, graph-analysis hook behavior, and ConfigPanel contract-driven ValueRef filtering for the agent builder.
+Graph Spec 4.0 frontend serialization defaults, Start-as-projection contract editing, canonical workflow modality toggles, graph-analysis hook behavior, scoped ValueRef picker behavior, and ConfigPanel contract-driven filtering for the agent builder.
 
 **Test Files**
 - `graphspec_v3_serialization.test.ts`
@@ -12,22 +12,53 @@ Graph Spec 3.0 frontend serialization defaults, Start/End/Set State contract edi
 - `template_suggestions.test.tsx`
 - `config_panel_value_ref_contracts.test.tsx`
 - `config_panel_artifact_contracts.test.tsx`
+- `node_types_registry.test.ts`
+- `state_variable_modal.test.tsx`
 
 **Scenarios Covered**
-- Builder save always persists `spec_version: "3.0"`
+- Builder save always persists `spec_version: "4.0"` plus top-level `workflow_contract` and `state_contract`
+- Branching node configs normalize to opaque `branch_*` ids during graph hydration/save
 - Legacy End nodes hydrate the new schema + binding config when loaded into the builder
-- Saved Graph Spec 3.0 Start/Classify/Set State/End contract nodes roundtrip through save + rehydrate without serialization drift
-- Start editor preserves the built-in workflow input and appends typed state variables
+- Saved Graph Spec 4.0 contract nodes roundtrip through save + rehydrate without serialization drift
+- Legacy Start-owned state normalizes into top-level `state_contract`
+- Start editor reads workflow/state contract data from the graph-level contract projection
+- Start editor renders the 4 canonical workflow modalities (`text`, `files`, `audio`, `images`) with toggles instead of legacy helper inputs
 - End editor filters binding options by compatible types and emits structured `ValueRef` bindings through the new searchable picker UI
+- End and generic ValueRef pickers use node-scoped upstream output inventory instead of global node outputs
 - Set State editor supports typed assignments and `ValueRef` sources
-- Graph analysis hook debounces requests and submits normalized v3 graphs
+- Graph analysis hook debounces requests and submits normalized v4 graphs
 - Builder prompt/template suggestions use scoped graph-analysis inventory, show friendly labels, and insert one stable token per value
+- Prompt mention/template inputs insert `@path` variable aliases instead of legacy `{{ ... }}` tokens
 - ConfigPanel filters `value_ref` options using backend operator field contracts in the specialized Classify surface
 - ConfigPanel opens End structured output in a modal from the output row
 - ConfigPanel persists the selected End property binding when saving the structured-output modal
+- Start state-variable modal uses typed default-value controls for booleans and lists instead of a generic JSON textarea
+- Start state-variable modal blocks duplicate state-variable keys before save and shows an inline validation error
 - ConfigPanel renders artifact field-mapping inputs from backend-provided artifact operator contracts
+- The frontend node registry is derived from the canonical built-in node specs, so renderer coverage cannot drift for built-in nodes like `speech_to_text`
 
 **Last Run**
+- Command: `pnpm -C frontend-reshet test -- --runTestsByPath src/__tests__/agent_builder_v3/graphspec_v3_serialization.test.ts --watch=false`
+- Date: 2026-03-31 Asia/Hebron
+- Result: Pass (1 suite, 5 tests)
+- Command: `pnpm -C frontend-reshet test -- --runTestsByPath src/__tests__/agent_builder_v3/use_agent_graph_analysis.test.tsx src/__tests__/agent_builder_v3/graphspec_v3_serialization.test.ts src/__tests__/agent_builder_v3/config_panel_value_ref_contracts.test.tsx src/__tests__/agent_builder_v3/graph_contract_editors.test.tsx src/__tests__/agent_builder_v3/node_types_registry.test.ts src/__tests__/agent_builder_v3/template_suggestions.test.tsx --watch=false`
+- Date: 2026-03-31 Asia/Hebron
+- Result: Pass (6 suites, 16 tests)
+- Command: `pnpm -C frontend-reshet test -- --runTestsByPath src/__tests__/agent_builder_v3/config_panel_value_ref_contracts.test.tsx src/__tests__/agent_builder_v3/graphspec_v3_serialization.test.ts src/__tests__/agent_builder_v3/use_agent_graph_analysis.test.tsx src/__tests__/agent_builder_v3/template_suggestions.test.tsx src/__tests__/agent_builder_v3/graph_contract_editors.test.tsx src/__tests__/agent_playground/useAgentRunController.test.tsx --watch=false`
+- Date: 2026-03-31 Asia/Hebron
+- Result: Pass (6 suites, 20 tests)
+- Command: `pnpm -C frontend-reshet test -- --runTestsByPath src/__tests__/agent_builder_v3/graph_contract_editors.test.tsx src/__tests__/agent_builder_v3/config_panel_value_ref_contracts.test.tsx src/__tests__/agent_builder_v3/state_variable_modal.test.tsx --watch=false`
+- Date: 2026-03-31 13:07:06 EEST
+- Result: Pass (3 suites, 10 tests)
+- Command: `pnpm -C frontend-reshet test -- --runTestsByPath src/__tests__/agent_builder_v3/state_variable_modal.test.tsx --watch=false`
+- Date: 2026-03-31 Asia/Hebron
+- Result: Pass (1 suite, 4 tests)
+- Command: `pnpm -C frontend-reshet test -- --runTestsByPath src/__tests__/agent_builder_v3/template_suggestions.test.tsx src/__tests__/agent_builder_v3/state_variable_modal.test.tsx --watch=false`
+- Date: 2026-03-31 Asia/Hebron
+- Result: Pass (2 suites, 6 tests)
+- Command: `pnpm -C frontend-reshet test -- --runTestsByPath src/__tests__/agent_builder_v3/node_types_registry.test.ts --watch=false`
+- Date: 2026-03-30 Asia/Hebron
+- Result: Pass (1 suite, 1 test)
 - Command: `pnpm test -- --runTestsByPath src/__tests__/agent_builder_v3/graph_contract_editors.test.tsx src/__tests__/agent_builder_v3/config_panel_value_ref_contracts.test.tsx src/__tests__/agent_builder_v3/use_agent_graph_analysis.test.tsx src/__tests__/agent_builder_v3/template_suggestions.test.tsx --watch=false`
 - Date: 2026-03-29 Asia/Hebron
 - Result: Pass (4 suites, 13 tests)

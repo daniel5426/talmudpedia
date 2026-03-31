@@ -50,8 +50,7 @@ const MODEL_PROVIDER_OPTIONS_BY_CAPABILITY: Record<ModelCapabilityType, LLMProvi
     { key: "custom", label: "Custom" },
   ],
   speech_to_text: [
-    { key: "local", label: "Local" },
-    { key: "custom", label: "Custom" },
+    { key: "google", label: "Google AI" },
   ],
   text_to_speech: [
     { key: "local", label: "Local" },

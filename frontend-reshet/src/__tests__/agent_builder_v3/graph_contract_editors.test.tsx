@@ -4,9 +4,9 @@ import { EndContractEditor, SetStateAssignmentsEditor, StartContractEditor } fro
 import type { AgentGraphAnalysis } from "@/services/agent"
 
 const analysis: AgentGraphAnalysis = {
-  spec_version: "3.0",
+  spec_version: "4.0",
   inventory: {
-    workflow_input: [{ namespace: "workflow_input", key: "input_as_text", type: "string", label: "Input as text" }],
+    workflow_input: [{ namespace: "workflow_input", key: "text", type: "string", label: "Text" }],
     state: [{ namespace: "state", key: "customer_name", type: "string", label: "customer_name" }],
     node_outputs: [
       {
@@ -19,6 +19,20 @@ const analysis: AgentGraphAnalysis = {
         ],
       },
     ],
+    accessible_node_outputs_by_node: {
+      end: [
+        {
+          node_id: "classify_1",
+          node_type: "classify",
+          node_label: "Classifier",
+          fields: [
+            { namespace: "node_output", key: "category", type: "string", label: "category", node_id: "classify_1" },
+            { namespace: "node_output", key: "confidence", type: "number", label: "confidence", node_id: "classify_1" },
+          ],
+        },
+      ],
+      set_state_1: [],
+    },
     template_suggestions: { global: [], by_node: {} },
   },
   operator_contracts: {},
@@ -32,8 +46,8 @@ describe("graph contract editors", () => {
 
     render(<StartContractEditor value={[{ key: "customer_name", type: "string" }]} onChange={onChange} />)
 
-    expect(screen.getByText("input_as_text")).toBeInTheDocument()
-    expect(screen.getByText("Built-in chat workflow input")).toBeInTheDocument()
+    expect(screen.getByText("text")).toBeInTheDocument()
+    expect(screen.getByText("Primary text input for the workflow")).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole("button", { name: /add/i }))
 
@@ -47,6 +61,7 @@ describe("graph contract editors", () => {
     const onChange = jest.fn()
     render(
       <EndContractEditor
+        nodeId="end"
         value={{
           output_schema: {
             name: "result",
@@ -68,7 +83,7 @@ describe("graph contract editors", () => {
     fireEvent.click(screen.getByRole("combobox", { name: /select value/i }))
 
     expect(screen.getByText("Workflow Input")).toBeInTheDocument()
-    expect(screen.getByText("Input as text (string)")).toBeInTheDocument()
+    expect(screen.getByText("Text (string)")).toBeInTheDocument()
     expect(screen.getByText("customer_name (string)")).toBeInTheDocument()
     expect(screen.getByText("Classifier / category (string)")).toBeInTheDocument()
     expect(screen.queryByText("Classifier / confidence (number)")).not.toBeInTheDocument()
@@ -103,6 +118,7 @@ describe("graph contract editors", () => {
   it("shows the saved node-output binding label in the End picker trigger", () => {
     render(
       <EndContractEditor
+        nodeId="end"
         value={{
           output_schema: {
             name: "result",
@@ -140,6 +156,7 @@ describe("graph contract editors", () => {
 
     render(
       <EndContractEditor
+        nodeId="end"
         value={{
           output_schema: {
             name: "result",
@@ -179,13 +196,14 @@ describe("graph contract editors", () => {
 
   it("supports typed set-state assignments with ValueRef sources", () => {
     const onChange = jest.fn()
-    const { rerender, container } = render(<SetStateAssignmentsEditor value={[]} analysis={analysis} onChange={onChange} />)
+    const { rerender, container } = render(<SetStateAssignmentsEditor nodeId="set_state_1" value={[]} analysis={analysis} onChange={onChange} />)
 
     fireEvent.click(screen.getByRole("button", { name: /add/i }))
     expect(onChange).toHaveBeenLastCalledWith([{ key: "", type: "string" }])
 
     rerender(
       <SetStateAssignmentsEditor
+        nodeId="set_state_1"
         value={[{ key: "selected_name", type: "string" }]}
         analysis={analysis}
         onChange={onChange}

@@ -46,6 +46,18 @@ class RunInvocationService:
     @classmethod
     def usage_from_payload(cls, payload: dict[str, Any] | None) -> NormalizedUsage:
         payload = dict(payload or {})
+        known_keys = {
+            "input_tokens",
+            "output_tokens",
+            "total_tokens",
+            "cached_input_tokens",
+            "cached_output_tokens",
+            "reasoning_tokens",
+            "audio_input_tokens",
+            "audio_output_tokens",
+            "image_input_units",
+            "image_output_units",
+        }
         return NormalizedUsage(
             input_tokens=cls._safe_int(payload.get("input_tokens")),
             output_tokens=cls._safe_int(payload.get("output_tokens")),
@@ -53,6 +65,11 @@ class RunInvocationService:
             cached_input_tokens=cls._safe_int(payload.get("cached_input_tokens")),
             cached_output_tokens=cls._safe_int(payload.get("cached_output_tokens")),
             reasoning_tokens=cls._safe_int(payload.get("reasoning_tokens")),
+            audio_input_tokens=cls._safe_int(payload.get("audio_input_tokens")),
+            audio_output_tokens=cls._safe_int(payload.get("audio_output_tokens")),
+            image_input_units=cls._safe_int(payload.get("image_input_units")),
+            image_output_units=cls._safe_int(payload.get("image_output_units")),
+            extra={key: value for key, value in payload.items() if key not in known_keys and value not in (None, "", [], {})},
         ).finalize()
 
     @classmethod
@@ -114,6 +131,19 @@ class RunInvocationService:
             "estimated_input_tokens": normalized_context_input,
             "estimated_output_tokens": cls._safe_int(estimated_output_tokens),
         }
+
+    @classmethod
+    def _has_meaningful_context_window(cls, invocation: AgentRunInvocation) -> bool:
+        context_source = str(invocation.context_source or "").strip().lower()
+        max_context_tokens_source = str(invocation.max_context_tokens_source or "").strip().lower()
+        return any(
+            (
+                invocation.context_input_tokens is not None,
+                invocation.max_context_tokens is not None,
+                context_source not in {"", USAGE_SOURCE_UNKNOWN},
+                max_context_tokens_source not in {"", USAGE_SOURCE_UNKNOWN, "not_applicable"},
+            )
+        )
 
     async def reset_run_invocations(self, run_id: UUID) -> None:
         await self.db.execute(delete(AgentRunInvocation).where(AgentRunInvocation.run_id == run_id))
@@ -218,7 +248,10 @@ class RunInvocationService:
         run.usage_breakdown_json = totals.to_json() or None
         run.usage_tokens = int(totals.total_tokens or 0)
 
-        latest = invocations[-1]
+        latest = next(
+            (invocation for invocation in reversed(invocations) if self._has_meaningful_context_window(invocation)),
+            invocations[-1],
+        )
         context_window = ContextWindowService.build_window(
             source=str(latest.context_source or "").strip() or USAGE_SOURCE_UNKNOWN,
             model_id=latest.model_id,

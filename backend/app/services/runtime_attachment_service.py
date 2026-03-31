@@ -25,7 +25,6 @@ from app.db.postgres.models.runtime_attachments import (
     RuntimeAttachmentStatus,
 )
 from app.services.runtime_attachment_storage import RuntimeAttachmentStorage, RuntimeAttachmentStorageError
-from app.services.stt.factory import get_stt_provider
 from app.services.thread_service import ThreadService
 
 
@@ -167,9 +166,9 @@ class RuntimeAttachmentService:
         normalized_ids = [str(item).strip() for item in (attachment_ids or []) if str(item).strip()]
         attachments: list[RuntimeAttachment] = []
         if normalized_ids:
-            attachments = await self._load_attachments(owner=owner, attachment_ids=normalized_ids)
-            await self._bind_unbound_attachments(owner=owner, attachments=attachments)
-            await self._ensure_processed(attachments=attachments)
+            attachments = await self.load_attachments(owner=owner, attachment_ids=normalized_ids)
+            await self.bind_unbound_attachments(owner=owner, attachments=attachments)
+            await self.ensure_processed(attachments=attachments)
 
         if not attachments:
             display_text = str(input_text or "").strip() or None
@@ -177,7 +176,7 @@ class RuntimeAttachmentService:
             return PreparedAttachmentMessage(content=content, display_text=display_text, attachments=[])
 
         if any(attachment.kind == RuntimeAttachmentKind.image for attachment in attachments):
-            await self._assert_image_models_supported(model_ids=model_ids or [])
+            await self.assert_image_models_supported(model_ids=model_ids or [])
 
         content = self._build_user_message_content(input_text=input_text, attachments=attachments)
         display_text = self._build_display_text(input_text=input_text, attachments=attachments)
@@ -244,7 +243,7 @@ class RuntimeAttachmentService:
             return RuntimeAttachmentKind.document
         raise HTTPException(status_code=400, detail=f"Unsupported attachment type for '{filename}'")
 
-    async def _load_attachments(
+    async def load_attachments(
         self,
         *,
         owner: RuntimeAttachmentOwner,
@@ -293,7 +292,7 @@ class RuntimeAttachmentService:
             return False
         return True
 
-    async def _bind_unbound_attachments(
+    async def bind_unbound_attachments(
         self,
         *,
         owner: RuntimeAttachmentOwner,
@@ -318,7 +317,7 @@ class RuntimeAttachmentService:
                 attachment.external_session_id = owner.external_session_id
         await self.db.flush()
 
-    async def _ensure_processed(self, *, attachments: Sequence[RuntimeAttachment]) -> None:
+    async def ensure_processed(self, *, attachments: Sequence[RuntimeAttachment]) -> None:
         for attachment in attachments:
             if attachment.status == RuntimeAttachmentStatus.failed:
                 raise HTTPException(status_code=400, detail=f"Attachment '{attachment.filename}' is unavailable: {attachment.processing_error or 'processing failed'}")
@@ -326,20 +325,14 @@ class RuntimeAttachmentService:
                 if attachment.status != RuntimeAttachmentStatus.processed:
                     attachment.status = RuntimeAttachmentStatus.processed
                 continue
+            if attachment.kind == RuntimeAttachmentKind.audio:
+                if attachment.status != RuntimeAttachmentStatus.processed:
+                    attachment.status = RuntimeAttachmentStatus.processed
+                continue
 
-            payload = self._read_bytes(attachment)
+            payload = self.read_bytes(attachment)
             try:
-                if attachment.kind == RuntimeAttachmentKind.audio:
-                    if not str(attachment.extracted_text or "").strip():
-                        transcript = await get_stt_provider().transcribe(payload)
-                        attachment.extracted_text = transcript.strip()
-                        attachment.metadata_ = {
-                            **dict(attachment.metadata_ or {}),
-                            "processor": "stt",
-                        }
-                    if not str(attachment.extracted_text or "").strip():
-                        raise ValueError("Audio transcription returned no text")
-                elif attachment.kind == RuntimeAttachmentKind.document:
+                if attachment.kind == RuntimeAttachmentKind.document:
                     if not str(attachment.extracted_text or "").strip():
                         attachment.extracted_text = self._extract_document_text(
                             payload=payload,
@@ -361,7 +354,7 @@ class RuntimeAttachmentService:
                 raise HTTPException(status_code=400, detail=f"Failed to process attachment '{attachment.filename}': {exc}") from exc
         await self.db.flush()
 
-    def _read_bytes(self, attachment: RuntimeAttachment) -> bytes:
+    def read_bytes(self, attachment: RuntimeAttachment) -> bytes:
         try:
             return self.storage.read_bytes(storage_key=attachment.storage_key)
         except RuntimeAttachmentStorageError as exc:
@@ -397,7 +390,7 @@ class RuntimeAttachmentService:
 
         return decoded[:MAX_DOCUMENT_TEXT_CHARS].strip()
 
-    async def _assert_image_models_supported(self, *, model_ids: Iterable[str]) -> None:
+    async def assert_image_models_supported(self, *, model_ids: Iterable[str]) -> None:
         normalized = [str(item).strip() for item in model_ids if str(item).strip()]
         if not normalized:
             raise HTTPException(status_code=400, detail="Image attachments require a vision-capable model")
@@ -449,7 +442,7 @@ class RuntimeAttachmentService:
                 if extracted:
                     text_sections.append(f"Attached document ({attachment.filename}):\n{extracted}")
             elif attachment.kind == RuntimeAttachmentKind.image:
-                payload = self._read_bytes(attachment)
+                payload = self.read_bytes(attachment)
                 data_uri = f"data:{attachment.mime_type};base64,{base64.b64encode(payload).decode('ascii')}"
                 image_parts.append(
                     {

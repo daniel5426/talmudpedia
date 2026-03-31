@@ -27,6 +27,7 @@ backend/app/api/routers/published_apps_admin_routes_export.py
 backend/app/api/routers/published_apps_host_runtime.py
 backend/app/api/routers/published_apps_external_runtime.py
 backend/app/api/routers/embedded_agents_public.py
+backend/app/api/routers/stt.py
 backend/app/api/routers/tenant_api_keys.py
 backend/app/api/routers/agent_graph_mutations.py
 backend/app/api/routers/agent_tool_exports.py
@@ -86,6 +87,7 @@ backend/app/agent/execution/tool_input_contracts.py
 backend/app/agent/execution/types.py
 
 backend/app/agent/executors/
+backend/app/agent/executors/speech.py
 backend/app/agent/runtime/
 backend/app/agent/components/
 backend/app/agent/workflows/
@@ -134,6 +136,11 @@ backend/app/services/rag_admin_service.py
 backend/app/services/model_accounting.py
 backend/app/services/context_window_service.py
 backend/app/services/model_resolver.py
+backend/app/services/model_runtime/
+backend/app/services/model_runtime/interfaces.py
+backend/app/services/model_runtime/registry.py
+backend/app/services/model_runtime/adapters.py
+backend/app/services/model_runtime/types.py
 backend/app/services/run_invocation_service.py
 backend/app/services/resource_policy_service.py
 backend/app/services/resource_policy_quota_service.py
@@ -185,7 +192,9 @@ backend/app/services/architect_mode_service.py
 backend/app/services/tenant_api_key_service.py
 backend/app/services/embedded_agent_runtime_service.py
 backend/app/services/runtime_attachment_service.py
+backend/app/services/runtime_input_preparation_service.py
 backend/app/services/runtime_attachment_storage.py
+backend/app/services/speech_to_text_service.py
 backend/app/services/orchestration_kernel_service.py
 backend/app/services/orchestration_policy_service.py
 backend/app/services/orchestration_lineage_service.py

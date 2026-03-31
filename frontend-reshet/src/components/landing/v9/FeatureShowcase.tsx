@@ -147,7 +147,7 @@ export function ExpandableFeaturesCards() {
         </h2>
 
         {/* Expandable cards */}
-        <div className="flex gap-4">
+        <div className="flex gap-4 items-stretch">
           {featureCards.map((card, i) => {
             const isActive = i === activeIndex;
             const Overlay = overlays[card.id];
@@ -159,7 +159,7 @@ export function ExpandableFeaturesCards() {
                   isActive ? "flex-[2]" : "flex-[1]"
                 }`}
               >
-                <div className="relative rounded-2xl bg-gradient-to-br from-stone-100 via-stone-50 to-amber-50/20 border border-gray-200/50 overflow-hidden aspect-[4/3]">
+                <div className="relative h-[260px] md:h-[320px] rounded-2xl bg-gradient-to-br from-stone-100 via-stone-50 to-amber-50/20 border border-gray-200/50 overflow-hidden">
                   <Overlay />
                 </div>
               </div>

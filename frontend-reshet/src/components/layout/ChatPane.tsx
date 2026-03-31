@@ -428,6 +428,8 @@ export function ChatWorkspace({
   const isLoadingOlderHistory = Boolean((controller as any).isLoadingOlderHistory);
   const loadOlderHistory =
     ((controller as any).loadOlderHistory as (() => Promise<unknown>) | undefined) || null;
+  const workflowInputs = ((controller as any).workflowInputs as any[]) || [];
+  const stateVariables = ((controller as any).stateVariables as any[]) || [];
   // Auto (Agent Router) - Get direction for RTL/LTR layout
   const { direction } = useDirection();
   // Auto (Agent Router) - Refs for container management
@@ -653,6 +655,8 @@ export function ChatWorkspace({
                 onToggleVoiceMode={handleToggleVoiceMode}
                 analyser={analyser}
                 animate={false}
+                workflowInputs={workflowInputs}
+                stateVariables={stateVariables}
               />
             )}
           </div>
@@ -1040,6 +1044,8 @@ export function ChatWorkspace({
             isVoiceModeActive={isVoiceModeActive}
             onToggleVoiceMode={handleToggleVoiceMode}
             analyser={analyser}
+            workflowInputs={workflowInputs}
+            stateVariables={stateVariables}
           />
         </div>
       )}

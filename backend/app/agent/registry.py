@@ -53,7 +53,7 @@ class AgentOperatorSpec(BaseModel):
     """
     model_config = {"use_enum_values": True}
     
-    type: str = Field(..., description="Unique identifier for the node type (e.g., 'llm', 'tool')")
+    type: str = Field(..., description="Unique identifier for the node type (e.g., 'agent', 'tool')")
     category: str = Field(..., description="Visual category for the builder palette")
     display_name: str = Field(..., description="Human-readable name")
     description: str = Field(..., description="Brief description of what the node does")

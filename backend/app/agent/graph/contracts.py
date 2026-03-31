@@ -6,7 +6,7 @@ from typing import Any, Callable
 
 import jsonschema
 
-from app.agent.graph.ir import GRAPH_SPEC_V1, GRAPH_SPEC_V3
+from app.agent.graph.ir import GRAPH_SPEC_V1, GRAPH_SPEC_V3, GRAPH_SPEC_V4
 
 
 STATE_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -107,6 +107,19 @@ def value_types_compatible(expected: Any, actual: Any) -> bool:
     return expected_type == actual_type
 
 
+def normalize_semantic_type(value: Any) -> str | None:
+    normalized = str(value or "").strip().lower()
+    return normalized or None
+
+
+def semantic_types_compatible(expected: Any, actual: Any) -> bool:
+    expected_semantic = normalize_semantic_type(expected)
+    actual_semantic = normalize_semantic_type(actual)
+    if not expected_semantic or not actual_semantic:
+        return True
+    return expected_semantic == actual_semantic
+
+
 def normalize_value_ref_namespace(value: Any) -> str:
     namespace = str(value or "").strip().lower()
     if namespace in {"node_output", "node_outputs", "upstream"}:
@@ -139,8 +152,8 @@ def build_default_end_output_bindings() -> list[dict[str, Any]]:
             "json_pointer": "/response",
             "value_ref": {
                 "namespace": "workflow_input",
-                "key": "input_as_text",
-                "label": "Workflow input / input_as_text",
+                "key": "text",
+                "label": "Workflow input / text",
             },
         }
     ]
@@ -303,7 +316,7 @@ def get_node_output_contract(
 
     # Agent/LLM outputs are config-dependent. Do not trust a static registry
     # contract here because the builder should only see the active output mode.
-    if node_type in {"agent", "llm"}:
+    if node_type == "agent":
         fields = None
 
     if fields is None:
@@ -328,19 +341,26 @@ def get_node_output_contract(
                 fields = [{"key": "output_json", "type": "unknown", "label": "Output JSON"}]
             else:
                 fields = [{"key": "output_text", "type": "string", "label": "Output Text"}]
-        elif node_type == "llm":
-            if str(config.get("output_format") or "").strip().lower() == "json" or isinstance(config.get("output_schema"), dict):
-                fields = [{"key": "output_json", "type": "unknown", "label": "Output JSON"}]
-            else:
-                fields = [{"key": "output_text", "type": "string", "label": "Output Text"}]
         elif node_type == "tool":
             fields = [{"key": "result", "type": "unknown"}]
         elif node_type in {"rag", "vector_search"}:
             fields = [{"key": "results", "type": "list"}, {"key": "documents", "type": "list"}]
         elif node_type == "classify":
-            fields = [{"key": "category", "type": "string"}, {"key": "confidence", "type": "number"}]
+            fields = [
+                {"key": "category", "type": "string"},
+                {"key": "branch_id", "type": "string", "label": "Branch ID"},
+                {"key": "classification_result", "type": "string", "label": "Classification Result"},
+            ]
         elif node_type == "transform":
             fields = [{"key": "output", "type": "unknown"}]
+        elif node_type == "speech_to_text":
+            fields = [
+                {"key": "text", "type": "string"},
+                {"key": "segments", "type": "list"},
+                {"key": "language", "type": "string"},
+                {"key": "attachments", "type": "list", "semantic_type": "audio"},
+                {"key": "provider_metadata", "type": "object"},
+            ]
         elif node_type == "human_input":
             fields = [{"key": "input_text", "type": "string"}]
         elif node_type == "user_approval":
@@ -368,6 +388,7 @@ def get_node_output_contract(
                 "key": key,
                 "type": normalize_value_type(item.get("type")),
                 "label": str(item.get("label") or key).strip(),
+                "semantic_type": normalize_semantic_type(item.get("semantic_type")),
             }
         )
 
@@ -379,47 +400,43 @@ def get_node_output_contract(
     }
 
 
-def build_graph_analysis(
-    *,
-    graph: Any,
-    operator_lookup: Callable[[str], Any | None],
-    normalize_node_type: Callable[[str], str] | None = None,
-) -> dict[str, Any]:
-    errors: list[dict[str, Any]] = []
-    warnings: list[dict[str, Any]] = []
+def _build_workflow_input_inventory(graph: Any) -> list[dict[str, Any]]:
+    workflow_contract = getattr(graph, "workflow_contract", None)
+    inputs = getattr(workflow_contract, "inputs", None) if workflow_contract is not None else None
+    inventory: list[dict[str, Any]] = []
+    for item in inputs or []:
+        key = str(getattr(item, "key", "") or "").strip()
+        if not key:
+            continue
+        if getattr(item, "enabled", True) is False:
+            continue
+        inventory.append(
+            {
+                "namespace": "workflow_input",
+                "key": key,
+                "type": normalize_value_type(getattr(item, "type", None)),
+                "label": str(getattr(item, "label", None) or key).strip() or key,
+                "description": str(getattr(item, "description", None) or "").strip() or None,
+                "enabled": bool(getattr(item, "enabled", True)),
+                "readonly": bool(getattr(item, "readonly", True)),
+                "required": bool(getattr(item, "required", False)),
+                "derived": bool(getattr(item, "derived", False)),
+                "semantic_type": normalize_semantic_type(getattr(item, "semantic_type", None)),
+            }
+        )
+    return inventory
+
+
+def _build_state_inventory(graph: Any, *, errors: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
     state_inventory: list[dict[str, Any]] = []
     state_by_key: dict[str, dict[str, Any]] = {}
-    node_output_inventory: list[dict[str, Any]] = []
-    operator_contracts: dict[str, Any] = {}
-    effective_spec_version = str(getattr(graph, "spec_version", None) or GRAPH_SPEC_V1)
-    incoming_sources_by_target: dict[str, list[str]] = {}
-
-    for edge in getattr(graph, "edges", []) or []:
-        source = str(getattr(edge, "source", None) or (edge.get("source") if isinstance(edge, dict) else "") or "").strip()
-        target = str(getattr(edge, "target", None) or (edge.get("target") if isinstance(edge, dict) else "") or "").strip()
-        if not source or not target:
-            continue
-        incoming_sources_by_target.setdefault(target, [])
-        if source not in incoming_sources_by_target[target]:
-            incoming_sources_by_target[target].append(source)
-
-    workflow_input_inventory = [
-        {
-            "namespace": "workflow_input",
-            "key": "input_as_text",
-            "type": "string",
-            "label": "Input as text",
-            "readonly": True,
-        }
-    ]
-
+    state_contract = getattr(graph, "state_contract", None)
+    variables = getattr(state_contract, "variables", None) if state_contract is not None else None
     start_nodes = graph.get_input_nodes() if hasattr(graph, "get_input_nodes") else []
     start_node = start_nodes[0] if start_nodes else None
-    start_config = dict(getattr(start_node, "config", {}) or {})
-    state_variables = start_config.get("state_variables") if isinstance(start_config.get("state_variables"), list) else []
 
-    for raw_var in state_variables:
-        item = normalize_state_variable_definition(raw_var)
+    for raw_var in variables or []:
+        item = normalize_state_variable_definition(raw_var.model_dump() if hasattr(raw_var, "model_dump") else raw_var)
         key = item["key"]
         if not key:
             errors.append({"node_id": getattr(start_node, "id", None), "message": "State variable key is required", "severity": "error"})
@@ -451,6 +468,81 @@ def build_graph_analysis(
         }
         state_by_key[key] = inventory_item
         state_inventory.append(inventory_item)
+    return state_inventory, state_by_key
+
+
+def _compute_upstream_node_ids(graph: Any) -> dict[str, set[str]]:
+    direct_sources_by_target: dict[str, list[str]] = {}
+    for edge in getattr(graph, "edges", []) or []:
+        source = str(getattr(edge, "source", None) or (edge.get("source") if isinstance(edge, dict) else "") or "").strip()
+        target = str(getattr(edge, "target", None) or (edge.get("target") if isinstance(edge, dict) else "") or "").strip()
+        if not source or not target:
+            continue
+        direct_sources_by_target.setdefault(target, [])
+        if source not in direct_sources_by_target[target]:
+            direct_sources_by_target[target].append(source)
+
+    upstream_by_target: dict[str, set[str]] = {}
+
+    def collect(node_id: str, visiting: set[str] | None = None) -> set[str]:
+        if node_id in upstream_by_target:
+            return set(upstream_by_target[node_id])
+        visiting = set(visiting or set())
+        if node_id in visiting:
+            return set()
+        visiting.add(node_id)
+        resolved: set[str] = set()
+        for source in direct_sources_by_target.get(node_id, []):
+            resolved.add(source)
+            resolved.update(collect(source, visiting))
+        upstream_by_target[node_id] = set(resolved)
+        return set(resolved)
+
+    for node in getattr(graph, "nodes", []) or []:
+        node_id = str(getattr(node, "id", "") or "").strip()
+        if node_id:
+            collect(node_id)
+    return upstream_by_target
+
+
+def _scoped_node_output_inventory(
+    node_output_inventory: list[dict[str, Any]],
+    *,
+    allowed_node_ids: set[str],
+) -> list[dict[str, Any]]:
+    scoped: list[dict[str, Any]] = []
+    for group in node_output_inventory:
+        group_node_id = str(group.get("node_id") or "").strip()
+        if group_node_id and group_node_id in allowed_node_ids:
+            scoped.append(copy.deepcopy(group))
+    return scoped
+
+
+def build_graph_analysis(
+    *,
+    graph: Any,
+    operator_lookup: Callable[[str], Any | None],
+    normalize_node_type: Callable[[str], str] | None = None,
+) -> dict[str, Any]:
+    errors: list[dict[str, Any]] = []
+    warnings: list[dict[str, Any]] = []
+    workflow_input_inventory = _build_workflow_input_inventory(graph)
+    state_inventory, state_by_key = _build_state_inventory(graph, errors=errors)
+    node_output_inventory: list[dict[str, Any]] = []
+    operator_contracts: dict[str, Any] = {}
+    effective_spec_version = str(getattr(graph, "spec_version", None) or GRAPH_SPEC_V1)
+    direct_incoming_sources_by_target: dict[str, list[str]] = {}
+
+    for edge in getattr(graph, "edges", []) or []:
+        source = str(getattr(edge, "source", None) or (edge.get("source") if isinstance(edge, dict) else "") or "").strip()
+        target = str(getattr(edge, "target", None) or (edge.get("target") if isinstance(edge, dict) else "") or "").strip()
+        if not source or not target:
+            continue
+        direct_incoming_sources_by_target.setdefault(target, [])
+        if source not in direct_incoming_sources_by_target[target]:
+            direct_incoming_sources_by_target[target].append(source)
+
+    upstream_node_ids_by_target = _compute_upstream_node_ids(graph)
 
     node_output_lookup: dict[str, dict[str, Any]] = {}
     for node in getattr(graph, "nodes", []):
@@ -460,8 +552,58 @@ def build_graph_analysis(
             "field_contracts": dict(getattr(operator_spec, "field_contracts", {}) or {}) if operator_spec else {},
             "output_contract": dict(getattr(operator_spec, "output_contract", {}) or {}) if operator_spec else {},
         }
+        allowed_upstream_node_ids = upstream_node_ids_by_target.get(str(node.id), set())
+        field_contracts = operator_contracts[normalized_type]["field_contracts"]
+        config = node.config if isinstance(node.config, dict) else {}
+
+        for field_name, contract in field_contracts.items():
+            if not isinstance(contract, dict) or str(contract.get("type") or "").strip() != "value_ref":
+                continue
+            raw_value = config.get(field_name)
+            if raw_value in (None, ""):
+                continue
+            value_ref = normalize_value_ref(raw_value)
+            ref_type, ref_item = resolve_value_ref_type(
+                inventory={
+                    "workflow_input": workflow_input_inventory,
+                    "state": state_inventory,
+                    "node_outputs": node_output_inventory,
+                },
+                value_ref=value_ref,
+                allowed_node_ids=allowed_upstream_node_ids,
+                return_item=True,
+            )
+            if ref_type is None:
+                errors.append(
+                    {
+                        "node_id": node.id,
+                        "message": f"Field '{field_name}' references unavailable value: {value_ref}",
+                        "severity": "error",
+                    }
+                )
+                continue
+            allowed_types = contract.get("allowed_types") if isinstance(contract.get("allowed_types"), list) else []
+            if allowed_types and not any(value_types_compatible(expected, ref_type) for expected in allowed_types):
+                errors.append(
+                    {
+                        "node_id": node.id,
+                        "message": f"Field '{field_name}' type mismatch: expected {allowed_types}, got {ref_type}",
+                        "severity": "error",
+                    }
+                )
+            allowed_semantic_types = contract.get("allowed_semantic_types") if isinstance(contract.get("allowed_semantic_types"), list) else []
+            if allowed_semantic_types and ref_item is not None:
+                actual_semantic_type = ref_item.get("semantic_type")
+                if not any(semantic_types_compatible(expected, actual_semantic_type) for expected in allowed_semantic_types):
+                    errors.append(
+                        {
+                            "node_id": node.id,
+                            "message": f"Field '{field_name}' semantic type mismatch: expected {allowed_semantic_types}, got {actual_semantic_type or 'unknown'}",
+                            "severity": "error",
+                        }
+                    )
         if normalized_type == "set_state":
-            assignments = node.config.get("assignments") if isinstance(node.config, dict) and isinstance(node.config.get("assignments"), list) else []
+            assignments = config.get("assignments") if isinstance(config.get("assignments"), list) else []
             for raw_assignment in assignments:
                 assignment = normalize_set_state_assignment(raw_assignment)
                 key = assignment["key"]
@@ -473,7 +615,7 @@ def build_graph_analysis(
                     continue
                 declared_type = normalize_value_type(assignment.get("type"))
                 if key not in state_by_key:
-                    if effective_spec_version == GRAPH_SPEC_V3 and declared_type == "unknown":
+                    if effective_spec_version in {GRAPH_SPEC_V3, GRAPH_SPEC_V4} and declared_type == "unknown":
                         errors.append(
                             {
                                 "node_id": node.id,
@@ -510,6 +652,7 @@ def build_graph_analysis(
                             "node_outputs": node_output_inventory,
                         },
                         value_ref=normalize_value_ref(value_ref),
+                        allowed_node_ids=allowed_upstream_node_ids,
                     )
                     if ref_type is None:
                         errors.append(
@@ -580,13 +723,18 @@ def build_graph_analysis(
         )
 
     template_suggestions_by_node: dict[str, list[dict[str, Any]]] = {}
+    accessible_node_outputs_by_node: dict[str, list[dict[str, Any]]] = {}
     for node in getattr(graph, "nodes", []) or []:
         node_id = str(getattr(node, "id", "") or "").strip()
         if not node_id:
             continue
+        accessible_node_outputs_by_node[node_id] = _scoped_node_output_inventory(
+            node_output_inventory,
+            allowed_node_ids=upstream_node_ids_by_target.get(node_id, set()),
+        )
         scoped: list[dict[str, Any]] = []
         seen_suggestion_ids: set[str] = set()
-        for source_node_id in incoming_sources_by_target.get(node_id, []):
+        for source_node_id in direct_incoming_sources_by_target.get(node_id, []):
             output_group = next((group for group in node_output_inventory if str(group.get("node_id")) == source_node_id), None)
             if not output_group:
                 continue
@@ -614,7 +762,7 @@ def build_graph_analysis(
 
     end_nodes = graph.get_output_nodes() if hasattr(graph, "get_output_nodes") else []
     for end_node in end_nodes:
-        if effective_spec_version != GRAPH_SPEC_V3:
+        if effective_spec_version not in {GRAPH_SPEC_V3, GRAPH_SPEC_V4}:
             continue
         end_config = normalize_end_output_config(end_node.config if isinstance(end_node.config, dict) else {})
         output_schema = end_config.get("output_schema") if isinstance(end_config.get("output_schema"), dict) else {}
@@ -648,6 +796,7 @@ def build_graph_analysis(
                     "node_outputs": node_output_inventory,
                 },
                 value_ref=value_ref,
+                allowed_node_ids=upstream_node_ids_by_target.get(str(end_node.id), set()),
             )
             if ref_type is None:
                 errors.append({"node_id": end_node.id, "message": f"End output binding references unknown value: {value_ref}", "severity": "error"})
@@ -680,6 +829,7 @@ def build_graph_analysis(
             "workflow_input": workflow_input_inventory,
             "state": state_inventory,
             "node_outputs": node_output_inventory,
+            "accessible_node_outputs_by_node": accessible_node_outputs_by_node,
             "template_suggestions": {
                 "global": template_global_suggestions,
                 "by_node": template_suggestions_by_node,
@@ -691,33 +841,47 @@ def build_graph_analysis(
     }
 
 
-def resolve_value_ref_type(*, inventory: dict[str, Any], value_ref: dict[str, Any]) -> str | None:
+def resolve_value_ref_type(
+    *,
+    inventory: dict[str, Any],
+    value_ref: dict[str, Any],
+    allowed_node_ids: set[str] | None = None,
+    return_item: bool = False,
+) -> str | tuple[str | None, dict[str, Any] | None] | None:
     namespace = normalize_value_ref_namespace(value_ref.get("namespace"))
     key = str(value_ref.get("key") or "").strip()
     node_id = str(value_ref.get("node_id") or "").strip()
+
+    def _result(value_type: str | None, item: dict[str, Any] | None = None):
+        if return_item:
+            return value_type, item
+        return value_type
+
     if not key:
-        return None
+        return _result(None)
     if namespace == "workflow_input":
         for item in inventory.get("workflow_input", []):
             if str(item.get("key")) == key:
-                return normalize_value_type(item.get("type"))
-        return None
+                return _result(normalize_value_type(item.get("type")), item)
+        return _result(None)
     if namespace == "state":
         for item in inventory.get("state", []):
             if str(item.get("key")) == key:
-                return normalize_value_type(item.get("type"))
-        return None
+                return _result(normalize_value_type(item.get("type")), item)
+        return _result(None)
     if namespace == "node_output":
         if not node_id:
-            return None
+            return _result(None)
+        if allowed_node_ids is not None and node_id not in allowed_node_ids:
+            return _result(None)
         for group in inventory.get("node_outputs", []):
             if str(group.get("node_id")) != node_id:
                 continue
             for item in group.get("fields", []):
                 if str(item.get("key")) == key:
-                    return normalize_value_type(item.get("type"))
-        return None
-    return None
+                    return _result(normalize_value_type(item.get("type")), item)
+        return _result(None)
+    return _result(None)
 
 
 def resolve_runtime_value_ref(*, state: dict[str, Any], value_ref: dict[str, Any]) -> Any:
@@ -859,7 +1023,7 @@ def extract_runtime_node_output(
     previous_state = dict(previous_state or {})
     raw_output: dict[str, Any] = {}
 
-    if node_type in {"agent", "llm"}:
+    if node_type == "agent":
         state_payload = state_update.get("state") if isinstance(state_update.get("state"), dict) else {}
         last_output = state_payload.get("last_agent_output")
         if isinstance(last_output, (dict, list)):
@@ -892,15 +1056,24 @@ def extract_runtime_node_output(
 
     elif node_type == "classify":
         payload = {
-            "category": state_update.get("branch_taken") or state_update.get("classification_result"),
+            "category": state_update.get("category") or state_update.get("branch_label") or state_update.get("classification_result"),
         }
-        if state_update.get("confidence") is not None:
-            payload["confidence"] = state_update.get("confidence")
+        if state_update.get("branch_id") is not None:
+            payload["branch_id"] = state_update.get("branch_id")
+        if state_update.get("classification_result") is not None:
+            payload["classification_result"] = state_update.get("classification_result")
         raw_output = payload
 
     elif node_type == "transform":
         if "transform_output" in state_update:
             raw_output = {"output": state_update.get("transform_output")}
+        else:
+            raw_output = {}
+
+    elif node_type == "speech_to_text":
+        stt_output = state_update.get("stt_output")
+        if isinstance(stt_output, dict):
+            raw_output = dict(stt_output)
         else:
             raw_output = {}
 

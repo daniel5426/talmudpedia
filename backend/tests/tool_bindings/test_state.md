@@ -1,4 +1,4 @@
-Last Updated: 2026-03-26
+Last Updated: 2026-03-31
 
 # Tool Bindings Test State
 
@@ -18,6 +18,7 @@ Domain-owned tool bindings for `tool_impl` artifacts, visual pipelines, and expo
 - artifact, pipeline, and agent export flows now persist ownership/source metadata directly on the bound `tool_registry` rows
 - updating a `tool_impl` artifact resynchronizes the bound tool schema/config
 - publishing a `tool_impl` artifact auto-publishes the bound tool and pins `artifact_revision_id`
+- publishing a non-`tool_impl` artifact does not create or publish an artifact-bound tool row
 - draft edits to a published `tool_impl` artifact leave the bound tool pinned to the last published revision until the next artifact publish
 - deleting a `tool_impl` artifact deletes the bound tool row
 - enabling a pipeline tool binding creates a draft `rag_pipeline` tool row
@@ -28,6 +29,7 @@ Domain-owned tool bindings for `tool_impl` artifacts, visual pipelines, and expo
 - updating a published pipeline demotes the bound tool back to draft and clears the executable pin
 - compiling an ingestion pipeline can also publish a `rag_pipeline` tool
 - exporting an agent now creates an owner-managed `agent_call` tool row exposed through `/tools` as `agent_bound`
+- exported agent-tool input schemas are now generated from built-in workflow modalities plus declared state vars instead of an export-time custom schema
 - publishing an exported agent syncs the bound tool to `PUBLISHED` and snapshots a tool version
 - deleting an agent removes the exported bound tool row
 
@@ -39,6 +41,12 @@ Domain-owned tool bindings for `tool_impl` artifacts, visual pipelines, and expo
 - Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/tool_bindings/test_domain_owned_tool_bindings.py backend/tests/tool_bindings/test_agent_tool_bindings.py`
 - Date: 2026-03-26 Asia/Hebron
 - Result: pass (`6 passed`)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/tool_bindings/test_domain_owned_tool_bindings.py`
+- Date: 2026-03-30 Asia/Hebron
+- Result: pass (`4 passed`)
+- Command: `PYTHONPATH=/Users/danielbenassaya/Code/personal/talmudpedia python3 -m pytest -q backend/tests/tool_bindings/test_agent_tool_bindings.py`
+- Date: 2026-03-31 Asia/Hebron
+- Result: pass (`3 passed`)
 
 ## Known Gaps / Follow-ups
 

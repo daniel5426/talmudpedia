@@ -22,6 +22,7 @@ from app.agent.execution.tool_input_contracts import (
     summarize_validation_errors,
     validate_tool_input_schema,
 )
+from app.agent.graph.schema import AgentGraph
 from app.agent.executors.base import BaseNodeExecutor, ValidationResult
 from app.agent.execution.tool_event_metadata import resolve_tool_event_metadata
 from app.agent.execution.types import EventVisibility
@@ -77,6 +78,7 @@ INTERNAL_TOOL_RUNTIME_INPUT_KEYS = {
     "architect_mode",
     "architect_effective_scopes",
 }
+AGENT_TOOL_MODALITY_FIELDS = {"text", "files", "audio", "images"}
 STRICT_PLATFORM_TOOL_SLUGS = frozenset(
     {
         "platform-assets",
@@ -327,6 +329,89 @@ class ToolNodeExecutor(BaseNodeExecutor):
 
         return input_text, messages, context
 
+    @staticmethod
+    def _graph_workflow_input_keys(graph: AgentGraph) -> set[str]:
+        workflow_contract = getattr(graph, "workflow_contract", None)
+        items = getattr(workflow_contract, "inputs", []) if workflow_contract is not None else []
+        return {
+            str(getattr(item, "key", "") or "").strip()
+            for item in items
+            if str(getattr(item, "key", "") or "").strip()
+        }
+
+    @staticmethod
+    def _graph_state_variable_keys(graph: AgentGraph) -> set[str]:
+        state_contract = getattr(graph, "state_contract", None)
+        items = getattr(state_contract, "variables", []) if state_contract is not None else []
+        return {
+            str(getattr(item, "key", "") or "").strip()
+            for item in items
+            if str(getattr(item, "key", "") or "").strip()
+        }
+
+    @staticmethod
+    def _normalize_attachment_list(value: Any) -> list[Any]:
+        if value is None:
+            return []
+        if isinstance(value, list):
+            return [item for item in value if item is not None]
+        return [value]
+
+    def _map_agent_contract_input(
+        self,
+        *,
+        target: Any,
+        input_data: dict[str, Any],
+    ) -> dict[str, Any]:
+        graph = AgentGraph.model_validate(getattr(target, "graph_definition", None) or {"nodes": [], "edges": []})
+        workflow_input_keys = self._graph_workflow_input_keys(graph)
+        state_keys = self._graph_state_variable_keys(graph)
+
+        input_text, messages, context = self._resolve_agent_call_input(input_data)
+        if isinstance(input_data.get("text"), (str, int, float, bool)):
+            input_text = self._coerce_scalar_text(input_data.get("text"))
+
+        workflow_input: dict[str, Any] = {}
+        all_attachments: list[Any] = []
+
+        if "files" in workflow_input_keys and "files" in input_data:
+            file_items = self._normalize_attachment_list(input_data.get("files"))
+            workflow_input["files"] = file_items
+            all_attachments.extend(file_items)
+
+        if "audio" in workflow_input_keys and "audio" in input_data:
+            audio_items = self._normalize_attachment_list(input_data.get("audio"))
+            workflow_input["audio"] = audio_items
+            workflow_input["audio_attachments"] = audio_items
+            workflow_input["primary_audio_attachment"] = audio_items[0] if audio_items else None
+            all_attachments.extend(audio_items)
+
+        if "images" in input_data:
+            image_items = self._normalize_attachment_list(input_data.get("images"))
+            if "images" in workflow_input_keys:
+                workflow_input["images"] = image_items
+            all_attachments.extend(image_items)
+
+        if "attachments" in workflow_input_keys and all_attachments:
+            workflow_input["attachments"] = all_attachments
+
+        seeded_state = {
+            key: value
+            for key, value in input_data.items()
+            if key in state_keys
+        }
+
+        resolved: dict[str, Any] = {
+            "input": input_text,
+            "messages": messages,
+            "context": context,
+        }
+        if workflow_input:
+            resolved["workflow_input"] = workflow_input
+        if seeded_state:
+            resolved["state"] = seeded_state
+        return resolved
+
     async def _execute_agent_call_tool(
         self,
         _tool: Any,
@@ -346,7 +431,10 @@ class ToolNodeExecutor(BaseNodeExecutor):
             or 60
         )
         mode = self._resolve_execution_mode(node_context)
-        input_text, messages, child_context = self._resolve_agent_call_input(input_data)
+        child_input = self._map_agent_contract_input(target=target, input_data=input_data)
+        input_text = child_input.get("input")
+        messages = child_input.get("messages") if isinstance(child_input.get("messages"), list) else []
+        child_context = child_input.get("context") if isinstance(child_input.get("context"), dict) else {}
 
         if not isinstance(child_context, dict):
             child_context = {}
@@ -388,11 +476,10 @@ class ToolNodeExecutor(BaseNodeExecutor):
         if not isinstance(requested_scopes, list):
             requested_scopes = None
 
-        input_params = {
-            "input": input_text,
-            "messages": messages,
-            "context": child_context,
-        }
+        input_params = dict(child_input)
+        input_params["input"] = input_text
+        input_params["messages"] = messages
+        input_params["context"] = child_context
 
         from app.agent.execution.service import AgentExecutorService
         from app.db.postgres.models.agents import AgentRun, RunStatus
