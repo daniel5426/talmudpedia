@@ -25,7 +25,6 @@ const ICON_MAP: Record<string, React.ElementType> = {
     // Lowercase mappings for types
     start: Play,
     end: Square,
-    llm: Brain,
     agent: Bot,
     tool: Wrench,
     rag: Search,
@@ -52,7 +51,7 @@ const ICON_MAP: Record<string, React.ElementType> = {
 const getIcon = (iconName: string) => {
     // Try exact match (e.g. Brain)
     if (ICON_MAP[iconName]) return ICON_MAP[iconName]
-    // Try lowercase match (e.g. brain or llm)
+    // Try lowercase match (e.g. brain or agent)
     const lower = iconName.toLowerCase()
     if (ICON_MAP[lower]) return ICON_MAP[lower]
     return Circle
@@ -171,13 +170,6 @@ export function NodeCatalog({ onDragStart, onClose }: NodeCatalogProps) {
                         description = "Wait for human text input."
                     }
                 }
-                if (op.type === "llm") {
-                    displayName = "LLM"
-                    if (description.toLowerCase().includes("simple")) {
-                        description = "Simple LLM completion for basic text generation."
-                    }
-                }
-
                 return {
                     nodeType: op.type as AgentNodeType,
                     displayName,

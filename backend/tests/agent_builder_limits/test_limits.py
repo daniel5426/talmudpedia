@@ -96,12 +96,12 @@ async def test_invalid_model_fails(db_session, test_tenant_id, test_user_id, run
     graph = graph_def(
         [
             node_def("start", "start"),
-            node_def("llm", "llm", {"model_id": "invalid-model-id"}),
+            node_def("agent", "agent", {"model_id": "invalid-model-id"}),
             node_def("end", "end", minimal_config_for("end")),
         ],
         [
-            edge_def("e1", "start", "llm"),
-            edge_def("e2", "llm", "end"),
+            edge_def("e1", "start", "agent"),
+            edge_def("e2", "agent", "end"),
         ],
     )
 
@@ -128,7 +128,6 @@ async def test_fuzzed_graph_compile(db_session, test_tenant_id):
             "start",
             "end",
             "agent",
-            "llm",
             "classify",
             "if_else",
             "while",

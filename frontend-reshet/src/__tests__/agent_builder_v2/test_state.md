@@ -1,6 +1,6 @@
 # Test State: Agent Builder v2 (Orchestration + Runtime Overlay)
 
-Last Updated: 2026-03-31
+Last Updated: 2026-04-01
 
 **Scope**
 Orchestration node rendering, Graph Spec 3.0 save guardrails, execute-mode runtime overlay reduction, and run-tree reconciliation behavior.
@@ -27,6 +27,9 @@ Orchestration node rendering, Graph Spec 3.0 save guardrails, execute-mode runti
 - Save-time orchestration config normalization (idempotency defaults + route/outcome normalization)
 
 **Last Run**
+- Command: `pnpm -C frontend-reshet test -- --runTestsByPath src/__tests__/agent_builder_v2/runtime_overlay_reducer.test.ts src/__tests__/agent_playground/trace_steps.test.ts --watch=false`
+- Date: 2026-04-01 00:24 EEST
+- Result: Pass (2 suites, 8 tests)
 - Command: `pnpm -C frontend-reshet test -- --runTestsByPath src/__tests__/agent_builder_v2/runtime_overlay_reducer.test.ts src/__tests__/agent_playground/useAgentRunController.test.tsx --watch=false`
 - Date: 2026-03-31 Asia/Hebron
 - Result: Pass (2 suites, 9 tests)

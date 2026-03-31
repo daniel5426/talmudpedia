@@ -24,7 +24,7 @@ def test_inventory_exposes_schema_registry_drift_explicitly():
     schema_only = set(inventory["agent_nodes"]["schema_only_types"])
     registered_only = set(inventory["agent_nodes"]["registered_only_types"])
 
-    assert {"llm_call", "tool_call", "rag_pipeline"}.issubset(schema_only)
+    assert {"tool_call", "rag_pipeline"}.issubset(schema_only)
     assert {"agent", "tool", "classify", "rag", "vector_search"}.issubset(registered_only)
 
 

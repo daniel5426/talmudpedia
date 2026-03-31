@@ -1,6 +1,6 @@
 # Test State: Agent Builder Limits
 
-Last Updated: 2026-02-04
+Last Updated: 2026-04-01
 
 **Scope**
 Scale, stress, and fuzz testing for large graphs and concurrent executions.
@@ -21,3 +21,8 @@ Scale, stress, and fuzz testing for large graphs and concurrent executions.
 
 **Known Gaps / Follow-ups**
 - Add explicit timeout enforcement assertions if runtime exposes them
+
+**Latest Relevant Run**
+- Command: `PYTHONPATH=/Users/danielbenassaya/Code/personal/talmudpedia python3 -m pytest -q backend/tests/agent_builder_limits/test_limits.py backend/tests/agent_builder_sdk/test_sdk_http.py backend/tests/agent_builder_nodes/test_nodes_execute.py backend/tests/node_inventory/test_node_surface_inventory.py`
+- Date: 2026-04-01 00:24 EEST
+- Result: Pass (`15 passed, 5 skipped`)

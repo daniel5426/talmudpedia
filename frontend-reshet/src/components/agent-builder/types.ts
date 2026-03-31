@@ -3,7 +3,7 @@ import { Node, Edge } from "@xyflow/react"
 // Node categories for the agent builder
 export type AgentNodeCategory = 
   | "control"     // Start, End
-  | "reasoning"   // Agent, LLM
+  | "reasoning"   // Agent, Classify
   | "action"      // Tool, RAG
   | "logic"       // If/Else, While, Parallel
   | "orchestration" // GraphSpec v2 orchestration nodes
@@ -25,7 +25,6 @@ export type AgentNodeType =
   | "end"
   // Reasoning
   | "agent"
-  | "llm"
   // Actions  
   | "tool"
   | "rag"
@@ -281,21 +280,6 @@ export const AGENT_NODE_SPECS: AgentNodeSpec[] = [
       { name: "temperature", label: "Temperature", fieldType: "number", required: false, description: "Override reasoning effort temperature" },
     ],
   },
-  {
-    nodeType: "llm",
-    displayName: "LLM",
-    description: "Simple LLM completion for basic text generation.",
-    category: "reasoning",
-    inputType: "message",
-    outputType: "message",
-    icon: "Brain",
-    configFields: [
-      { name: "model_id", label: "Model", fieldType: "model", required: true, description: "Select a chat model" },
-      { name: "system_prompt", label: "System Prompt", fieldType: "text", required: false, description: "Instructions for the LLM", prompt_capable: true, prompt_surface: "llm.system_prompt" },
-      { name: "temperature", label: "Temperature", fieldType: "number", required: false, default: 0.7, description: "Creativity (0-1)" },
-    ],
-  },
-  
   // ==========================================================================
   // Actions
   // ==========================================================================

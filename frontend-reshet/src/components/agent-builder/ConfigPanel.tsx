@@ -83,7 +83,6 @@ const CATEGORY_ICONS: Record<string, React.ElementType> = {
     data: Database,
     start: Play,
     end: Circle,
-    llm: Brain,
     agent: Bot,
     tool: Wrench,
     rag: Search,

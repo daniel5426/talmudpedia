@@ -5,7 +5,7 @@ import uuid
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import pytest
-from sqlalchemy import select, case, or_
+from sqlalchemy import select, case, or_, delete
 
 from app.agent.executors.standard import register_standard_operators
 from app.agent.registry import AgentOperatorRegistry
@@ -84,12 +84,12 @@ def graph_def(nodes: List[Dict[str, Any]], edges: List[Dict[str, Any]]) -> Dict[
 def routing_handles(node_type: str, config: Dict[str, Any]) -> List[str]:
     if node_type == "if_else":
         conditions = config.get("conditions", [])
-        handles = [c.get("name") or f"condition_{i}" for i, c in enumerate(conditions)]
+        handles = [c.get("id") or c.get("name") or f"condition_{i}" for i, c in enumerate(conditions)]
         handles.append("else")
         return handles
     if node_type == "classify":
         categories = config.get("categories", [])
-        return [c.get("name") or f"category_{i}" for i, c in enumerate(categories)]
+        return [c.get("id") or c.get("name") or f"category_{i}" for i, c in enumerate(categories)]
     if node_type == "while":
         return ["loop", "exit"]
     if node_type == "user_approval":
@@ -105,20 +105,20 @@ def minimal_config_for(
     pipeline_id: Optional[str] = None,
     knowledge_store_id: Optional[str] = None,
 ) -> Dict[str, Any]:
-    if node_type in {"agent", "llm"}:
+    if node_type == "agent":
         if not chat_model_id:
-            raise RuntimeError("chat_model_id required for LLM/Agent nodes")
+            raise RuntimeError("chat_model_id required for agent nodes")
         return {"model_id": chat_model_id}
     if node_type == "classify":
         if not chat_model_id:
             raise RuntimeError("chat_model_id required for classify node")
         return {
             "model_id": chat_model_id,
-            "categories": [{"name": "alpha"}, {"name": "else"}],
+            "categories": [{"id": "branch_alpha", "name": "alpha"}],
         }
     if node_type == "if_else":
         return {
-            "conditions": [{"name": "yes", "expression": "true"}],
+            "conditions": [{"id": "branch_yes", "name": "yes", "expression": "true"}],
         }
     if node_type == "while":
         return {
@@ -133,7 +133,10 @@ def minimal_config_for(
     if node_type == "transform":
         return {"mode": "object", "mappings": [{"key": "status", "value": "ok"}]}
     if node_type == "set_state":
-        return {"assignments": [{"variable": "flag", "value": "true"}], "is_expression": False}
+        return {
+            "assignments": [{"key": "flag", "type": "boolean", "value": True}],
+            "is_expression": False,
+        }
     if node_type == "rag":
         if not pipeline_id:
             raise RuntimeError("pipeline_id required for rag node")
@@ -165,14 +168,6 @@ def full_config_for(
             "output_format": "text",
             "tools": [],
             "temperature": 0.2,
-        }
-    if node_type == "llm":
-        if not chat_model_id:
-            raise RuntimeError("chat_model_id required for llm node")
-        return {
-            "model_id": chat_model_id,
-            "system_prompt": "You are a helpful assistant.",
-            "temperature": 0.1,
         }
     return minimal_config_for(
         node_type,
@@ -383,6 +378,10 @@ async def cleanup_retrieval_setup(db_session, pipeline_id: str, store_id: str, c
     if not os.getenv("PGVECTOR_CONNECTION_STRING"):
         return
     try:
+        await db_session.rollback()
+    except Exception:
+        pass
+    try:
         vector_store = PgvectorVectorStore()
         await vector_store.delete_index(collection_name)
     except Exception:
@@ -390,17 +389,13 @@ async def cleanup_retrieval_setup(db_session, pipeline_id: str, store_id: str, c
 
     try:
         from uuid import UUID
-        pipeline = await db_session.get(VisualPipeline, UUID(pipeline_id))
-        if pipeline:
-            await db_session.delete(pipeline)
+        await db_session.execute(delete(VisualPipeline).where(VisualPipeline.id == UUID(pipeline_id)))
     except Exception:
         pass
 
     try:
         from uuid import UUID
-        store = await db_session.get(KnowledgeStore, UUID(store_id))
-        if store:
-            await db_session.delete(store)
+        await db_session.execute(delete(KnowledgeStore).where(KnowledgeStore.id == UUID(store_id)))
     except Exception:
         pass
 

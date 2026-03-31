@@ -10,7 +10,6 @@ import { AgentNodeData, CATEGORY_COLORS, getClassifyHandleIds, getHandleColor, A
 const NODE_ICONS: Record<AgentNodeType, React.ElementType> = {
     start: Play,
     end: Square,
-    llm: Brain,
     agent: Bot,
     tool: Wrench,
     rag: Search,

@@ -1,6 +1,6 @@
 # Test State: Node Surface Inventory
 
-Last Updated: 2026-03-30
+Last Updated: 2026-04-01
 
 ## Scope
 - Generated inventory of the current agent-node and RAG-operator surfaces.
@@ -20,6 +20,9 @@ Last Updated: 2026-03-30
 - Generated Markdown includes the drift sections required for planning and coverage work.
 
 ## Last run command + date/time + result
+- Command: `PYTHONPATH=/Users/danielbenassaya/Code/personal/talmudpedia python3 -m pytest -q backend/tests/agent_builder_limits/test_limits.py backend/tests/agent_builder_sdk/test_sdk_http.py backend/tests/agent_builder_nodes/test_nodes_execute.py backend/tests/node_inventory/test_node_surface_inventory.py`
+- Date/Time: 2026-04-01 00:24 EEST
+- Result: passed (`15 passed, 5 skipped`)
 - Command: `PYTHONPATH=/Users/danielbenassaya/Code/personal/talmudpedia python3 -m pytest -q backend/tests/node_inventory/test_node_contract_matrix.py`
 - Date/Time: 2026-03-30 Asia/Hebron
 - Result: passed (`4 passed`)

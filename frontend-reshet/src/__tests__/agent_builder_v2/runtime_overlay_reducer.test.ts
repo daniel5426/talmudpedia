@@ -151,13 +151,13 @@ describe("runtime overlay reducer", () => {
         },
       },
       {
-        id: "llm_1",
-        type: "llm",
+        id: "agent_1",
+        type: "agent",
         position: { x: 200, y: 0 },
         data: {
-          nodeType: "llm",
+          nodeType: "agent",
           category: "reasoning",
-          displayName: "LLM",
+          displayName: "Agent",
           config: {},
           inputType: "message",
           outputType: "message",
@@ -183,36 +183,36 @@ describe("runtime overlay reducer", () => {
     ]
 
     const edges: Edge[] = [
-      { id: "e-start-llm", source: "start", target: "llm_1" },
-      { id: "e-llm-end", source: "llm_1", target: "end" },
+      { id: "e-start-agent", source: "start", target: "agent_1" },
+      { id: "e-agent-end", source: "agent_1", target: "end" },
     ]
 
     const events: AgentExecutionEvent[] = [
       { event: "node_start", run_id: "run-root", span_id: "start", data: {} },
       { event: "node_end", run_id: "run-root", span_id: "start", data: { output: {} } },
-      { event: "node_start", run_id: "run-root", span_id: "llm_1", data: {} },
-      { event: "node_end", run_id: "run-root", span_id: "llm_1", data: { output: {} } },
+      { event: "node_start", run_id: "run-root", span_id: "agent_1", data: {} },
+      { event: "node_end", run_id: "run-root", span_id: "agent_1", data: { output: {} } },
       { event: "node_start", run_id: "run-root", span_id: "end", data: {} },
     ]
 
     const state = applyRuntimeEvents(createEmptyRuntimeGraphState(), events, nodes, edges)
 
     expect(state.runtimeStatusByNodeId.start).toBe("completed")
-    expect(state.runtimeStatusByNodeId.llm_1).toBe("completed")
+    expect(state.runtimeStatusByNodeId.agent_1).toBe("completed")
     expect(state.runtimeStatusByNodeId.end).toBe("running")
-    expect(state.takenStaticEdgeIds).toEqual(["e-start-llm", "e-llm-end"])
+    expect(state.takenStaticEdgeIds).toEqual(["e-start-agent", "e-agent-end"])
   })
 
   it("treats on_chain events as live node execution events", () => {
     const nodes: Node<AgentNodeData>[] = [
       {
-        id: "llm_1",
-        type: "llm",
+        id: "agent_1",
+        type: "agent",
         position: { x: 0, y: 0 },
         data: {
-          nodeType: "llm",
+          nodeType: "agent",
           category: "reasoning",
-          displayName: "LLM",
+          displayName: "Agent",
           config: {},
           inputType: "message",
           outputType: "message",
@@ -225,14 +225,14 @@ describe("runtime overlay reducer", () => {
     const state = applyRuntimeEvents(
       createEmptyRuntimeGraphState(),
       [
-        { event: "on_chain_start", run_id: "run-root", span_id: "llm_1", data: {} },
-        { event: "on_chain_end", run_id: "run-root", span_id: "llm_1", data: { output: {} } },
+        { event: "on_chain_start", run_id: "run-root", span_id: "agent_1", data: {} },
+        { event: "on_chain_end", run_id: "run-root", span_id: "agent_1", data: { output: {} } },
       ],
       nodes,
       [],
     )
 
-    expect(state.runtimeStatusByNodeId.llm_1).toBe("completed")
+    expect(state.runtimeStatusByNodeId.agent_1).toBe("completed")
   })
 
   it("clears stuck running nodes when the run fails", () => {

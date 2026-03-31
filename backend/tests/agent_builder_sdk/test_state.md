@@ -1,6 +1,6 @@
 # Test State: Agent Builder SDK
 
-Last Updated: 2026-02-04
+Last Updated: 2026-04-01
 
 **Scope**
 SDK + HTTP integration for catalog parity, agent creation, execution, and validation helpers.
@@ -20,3 +20,8 @@ SDK + HTTP integration for catalog parity, agent creation, execution, and valida
 
 **Known Gaps / Follow-ups**
 - Add SDK fuzzed-graph creation test once runtime limits are tuned
+
+**Latest Relevant Run**
+- Command: `PYTHONPATH=/Users/danielbenassaya/Code/personal/talmudpedia python3 -m pytest -q backend/tests/agent_builder_limits/test_limits.py backend/tests/agent_builder_sdk/test_sdk_http.py backend/tests/agent_builder_nodes/test_nodes_execute.py backend/tests/node_inventory/test_node_surface_inventory.py`
+- Date: 2026-04-01 00:24 EEST
+- Result: Pass (`15 passed, 5 skipped`; SDK HTTP cases skipped because local HTTP API was not running)

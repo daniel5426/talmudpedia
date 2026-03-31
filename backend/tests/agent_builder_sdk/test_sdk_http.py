@@ -39,11 +39,11 @@ def test_sdk_create_and_execute_agent():
     client.connect()
     builder = AgentGraphBuilder("sdk-test")
     start = client.agent_nodes.control.Start()
-    llm = client.agent_nodes.reasoning.Llm(model_id=chat_model)
+    agent_node = client.agent_nodes.reasoning.Agent(model_id=chat_model)
     end = client.agent_nodes.control.End(output_message="done")
-    builder.add(start, llm, end)
-    builder.connect(start, llm)
-    builder.connect(llm, end)
+    builder.add(start, agent_node, end)
+    builder.connect(start, agent_node)
+    builder.connect(agent_node, end)
 
     slug = f"sdk-{uuid.uuid4().hex[:8]}"
     agent_id = builder.create(client, slug=slug)
@@ -64,7 +64,7 @@ def test_graph_spec_validator_catches_schema_errors():
     validator = GraphSpecValidator(catalog)
     graph = {
         "nodes": [
-            {"id": "llm", "type": "llm", "position": {"x": 0, "y": 0}, "config": {}},
+            {"id": "agent", "type": "agent", "position": {"x": 0, "y": 0}, "config": {}},
         ],
         "edges": [],
     }

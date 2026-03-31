@@ -83,10 +83,10 @@ class AgentNotPublishedError(AgentServiceError):
 
 
 class AgentGraphValidationError(AgentServiceError):
-    """Raised when graph_definition fails compile-time validation."""
+    """Raised when graph_definition cannot be persisted safely."""
 
     def __init__(self, errors: List[Dict[str, Any]]):
-        super().__init__("Graph validation failed")
+        super().__init__("Graph write rejected")
         self.errors = errors
 
 
@@ -304,7 +304,6 @@ class AgentService:
                 ]
             ) from exc
 
-        compiler = AgentCompiler(db=self.db, tenant_id=self.tenant_id)
         try:
             await PromptReferenceResolver(self.db, self.tenant_id).validate_graph_definition(graph.model_dump())
         except PromptReferenceError as exc:
@@ -318,12 +317,101 @@ class AgentService:
                     }
                 ]
             ) from exc
-        errors = await compiler.validate(graph, agent_id=agent_id)
-        normalized_errors = self._normalize_graph_errors(errors)
-        critical_errors = [item for item in normalized_errors if item.get("severity") == "error"]
+
+        # Persistence rejects only illegal graph documents and explicit bad references.
+        reference_issues = await self._collect_runtime_reference_issues(graph.model_dump())
+        critical_errors = [item for item in reference_issues if item.get("severity") == "error"]
         if critical_errors:
             raise AgentGraphValidationError(critical_errors)
         return graph.model_dump()
+
+    async def _build_validation_result_for_graph(
+        self,
+        graph_definition: Any,
+        *,
+        agent_id: Optional[UUID] = None,
+    ) -> AgentValidationResult:
+        if not isinstance(graph_definition, dict):
+            issue = self._build_rich_validation_issue(
+                code="INVALID_GRAPH_DEFINITION",
+                message="graph_definition must be an object",
+                severity="error",
+                expected="object",
+                actual=type(graph_definition).__name__,
+            )
+            return AgentValidationResult(valid=False, errors=[issue], warnings=[])
+
+        nodes = graph_definition.get("nodes") if isinstance(graph_definition.get("nodes"), list) else []
+        node_index_by_id: Dict[str, int] = {}
+        for idx, node in enumerate(nodes):
+            if isinstance(node, dict) and node.get("id") is not None:
+                node_index_by_id[str(node.get("id"))] = idx
+
+        from app.agent.executors.standard import register_standard_operators
+        register_standard_operators()
+        operator_types = [spec.type for spec in AgentOperatorRegistry.list_operators()]
+
+        issues: List[Dict[str, Any]] = []
+        try:
+            graph = AgentGraph(**graph_definition)
+        except PydanticValidationError as exc:
+            issues.append(
+                self._build_rich_validation_issue(
+                    code="INVALID_GRAPH_SCHEMA",
+                    message=f"Invalid graph schema: {exc}",
+                    severity="error",
+                    expected="AgentGraph schema compliant object",
+                    actual="schema_validation_failed",
+                )
+            )
+            return AgentValidationResult(valid=False, errors=issues, warnings=[])
+
+        compiler = AgentCompiler(db=self.db, tenant_id=self.tenant_id)
+        raw_errors = await compiler.validate(graph, agent_id=agent_id)
+        for raw in raw_errors:
+            payload = raw.model_dump() if hasattr(raw, "model_dump") else (dict(raw) if isinstance(raw, dict) else {"message": str(raw)})
+            node_id = str(payload.get("node_id")) if payload.get("node_id") is not None else None
+            message = str(payload.get("message") or "Graph validation failed")
+            severity = str(payload.get("severity") or "error")
+            code = self._derive_error_code(message)
+
+            path: Optional[str] = None
+            expected: Any = None
+            actual: Any = None
+            suggestions: Optional[List[str]] = None
+
+            if node_id is not None and node_id in node_index_by_id:
+                path = f"/nodes/{node_index_by_id[node_id]}"
+
+            if code == "UNKNOWN_NODE_TYPE" and node_id and node_id in node_index_by_id:
+                node_idx = node_index_by_id[node_id]
+                candidate = None
+                if 0 <= node_idx < len(nodes) and isinstance(nodes[node_idx], dict):
+                    candidate = str(nodes[node_idx].get("type") or "")
+                    path = f"/nodes/{node_idx}/type"
+                    actual = candidate
+                expected = "Registered node type"
+                suggestions = get_close_matches(candidate or "", operator_types, n=5, cutoff=0.35) or None
+
+            issues.append(
+                self._build_rich_validation_issue(
+                    code=code,
+                    message=message,
+                    severity=severity,
+                    node_id=node_id,
+                    edge_id=str(payload.get("edge_id")) if payload.get("edge_id") is not None else None,
+                    path=path,
+                    expected=expected,
+                    actual=actual,
+                    suggestions=suggestions,
+                )
+            )
+
+        issues.extend(await self._collect_runtime_reference_issues(graph_definition))
+
+        errors = [item for item in issues if str(item.get("severity") or "").lower() == "error"]
+        warnings = [item for item in issues if str(item.get("severity") or "").lower() != "error"]
+        return AgentValidationResult(valid=len(errors) == 0, errors=errors, warnings=warnings)
 
     async def list_agents(
         self, 
@@ -494,87 +582,10 @@ class AgentService:
         """Validate persisted agent graph using compiler + tenant resource checks."""
         agent = await self.get_agent(agent_id)
         graph_definition = agent.graph_definition if isinstance(agent.graph_definition, dict) else {}
-        if not isinstance(graph_definition, dict):
-            issue = self._build_rich_validation_issue(
-                code="INVALID_GRAPH_DEFINITION",
-                message="graph_definition must be an object",
-                severity="error",
-                expected="object",
-                actual=type(graph_definition).__name__,
-            )
-            return AgentValidationResult(valid=False, errors=[issue], warnings=[])
-
-        nodes = graph_definition.get("nodes") if isinstance(graph_definition.get("nodes"), list) else []
-        node_index_by_id: Dict[str, int] = {}
-        for idx, node in enumerate(nodes):
-            if isinstance(node, dict) and node.get("id") is not None:
-                node_index_by_id[str(node.get("id"))] = idx
-
-        from app.agent.executors.standard import register_standard_operators
-        register_standard_operators()
-        operator_types = [spec.type for spec in AgentOperatorRegistry.list_operators()]
-
-        issues: List[Dict[str, Any]] = []
-        try:
-            graph = AgentGraph(**graph_definition)
-        except PydanticValidationError as exc:
-            issues.append(
-                self._build_rich_validation_issue(
-                    code="INVALID_GRAPH_SCHEMA",
-                    message=f"Invalid graph schema: {exc}",
-                    severity="error",
-                    expected="AgentGraph schema compliant object",
-                    actual="schema_validation_failed",
-                )
-            )
-            return AgentValidationResult(valid=False, errors=issues, warnings=[])
-
-        compiler = AgentCompiler(db=self.db, tenant_id=self.tenant_id)
-        raw_errors = await compiler.validate(graph, agent_id=agent.id)
-        for raw in raw_errors:
-            payload = raw.model_dump() if hasattr(raw, "model_dump") else (dict(raw) if isinstance(raw, dict) else {"message": str(raw)})
-            node_id = str(payload.get("node_id")) if payload.get("node_id") is not None else None
-            message = str(payload.get("message") or "Graph validation failed")
-            severity = str(payload.get("severity") or "error")
-            code = self._derive_error_code(message)
-
-            path: Optional[str] = None
-            expected: Any = None
-            actual: Any = None
-            suggestions: Optional[List[str]] = None
-
-            if node_id is not None and node_id in node_index_by_id:
-                path = f"/nodes/{node_index_by_id[node_id]}"
-
-            if code == "UNKNOWN_NODE_TYPE" and node_id and node_id in node_index_by_id:
-                node_idx = node_index_by_id[node_id]
-                candidate = None
-                if 0 <= node_idx < len(nodes) and isinstance(nodes[node_idx], dict):
-                    candidate = str(nodes[node_idx].get("type") or "")
-                    path = f"/nodes/{node_idx}/type"
-                    actual = candidate
-                expected = "Registered node type"
-                suggestions = get_close_matches(candidate or "", operator_types, n=5, cutoff=0.35) or None
-
-            issues.append(
-                self._build_rich_validation_issue(
-                    code=code,
-                    message=message,
-                    severity=severity,
-                    node_id=node_id,
-                    edge_id=str(payload.get("edge_id")) if payload.get("edge_id") is not None else None,
-                    path=path,
-                    expected=expected,
-                    actual=actual,
-                    suggestions=suggestions,
-                )
-            )
-
-        issues.extend(await self._collect_runtime_reference_issues(graph_definition))
-
-        errors = [item for item in issues if str(item.get("severity") or "").lower() == "error"]
-        warnings = [item for item in issues if str(item.get("severity") or "").lower() != "error"]
-        return AgentValidationResult(valid=len(errors) == 0, errors=errors, warnings=warnings)
+        return await self._build_validation_result_for_graph(
+            graph_definition,
+            agent_id=agent.id,
+        )
 
     async def publish_agent(self, agent_id: UUID, user_id: Optional[UUID] = None) -> Agent:
         """Publishes the current draft of an agent, creating a version snapshot."""

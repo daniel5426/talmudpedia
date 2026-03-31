@@ -40,7 +40,7 @@ async def test_control_and_data_nodes_execute(db_session, test_tenant_id, test_u
         result = await execute_agent_via_service(db_session, test_tenant_id, agent.id, test_user_id, input_text="hello")
         run = await db_session.get(AgentRun, result.run_id)
         assert run.status == RunStatus.completed
-        assert run.output_result.get("_node_outputs", {}).get("transform", {}).get("transform_output", {}).get("status") == "ok"
+        assert run.output_result.get("_node_outputs", {}).get("transform", {}).get("output", {}).get("status") == "ok"
         assert run.output_result.get("_node_outputs", {}).get("end", {}).get("final_output") == "done"
     finally:
         await delete_agent(db_session, test_tenant_id, agent.id)
@@ -48,32 +48,32 @@ async def test_control_and_data_nodes_execute(db_session, test_tenant_id, test_u
 
 @pytest.mark.asyncio
 @pytest.mark.real_db
-async def test_agent_and_llm_nodes_execute(db_session, test_tenant_id, test_user_id, run_prefix):
+async def test_agent_nodes_execute(db_session, test_tenant_id, test_user_id, run_prefix):
     chat_model = await get_chat_model_slug(db_session, test_tenant_id)
     if not chat_model:
-        pytest.skip("No chat model available for LLM/Agent tests.")
+        pytest.skip("No chat model available for agent tests.")
 
     graph = graph_def(
         [
             node_def("start", "start"),
-            node_def("agent", "agent", full_config_for("agent", chat_model_id=chat_model)),
-            node_def("llm", "llm", full_config_for("llm", chat_model_id=chat_model)),
+            node_def("agent_primary", "agent", full_config_for("agent", chat_model_id=chat_model)),
+            node_def("agent_secondary", "agent", full_config_for("agent", chat_model_id=chat_model)),
             node_def("end", "end", minimal_config_for("end")),
         ],
         [
-            edge_def("e1", "start", "agent"),
-            edge_def("e2", "agent", "llm"),
-            edge_def("e3", "llm", "end"),
+            edge_def("e1", "start", "agent_primary"),
+            edge_def("e2", "agent_primary", "agent_secondary"),
+            edge_def("e3", "agent_secondary", "end"),
         ],
     )
 
-    agent = await create_agent(db_session, test_tenant_id, test_user_id, f"{run_prefix}-llm", f"{run_prefix}-llm", graph)
+    agent = await create_agent(db_session, test_tenant_id, test_user_id, f"{run_prefix}-agent", f"{run_prefix}-agent", graph)
     try:
         result = await execute_agent_via_service(db_session, test_tenant_id, agent.id, test_user_id, input_text="hello")
         run = await db_session.get(AgentRun, result.run_id)
         assert run.status == RunStatus.completed
-        assert "agent" in run.output_result.get("_node_outputs", {})
-        assert "llm" in run.output_result.get("_node_outputs", {})
+        assert "agent_primary" in run.output_result.get("_node_outputs", {})
+        assert "agent_secondary" in run.output_result.get("_node_outputs", {})
     finally:
         await delete_agent(db_session, test_tenant_id, agent.id)
 
@@ -87,7 +87,7 @@ async def test_classify_and_if_else_execute(db_session, test_tenant_id, test_use
 
     classify_config = minimal_config_for("classify", chat_model_id=chat_model)
     if_else_config = {
-        "conditions": [{"name": "yes", "expression": "contains(input, \"yes\")"}],
+        "conditions": [{"id": "branch_yes", "name": "yes", "expression": "contains(input, \"yes\")"}],
     }
 
     graph = graph_def(
@@ -99,9 +99,9 @@ async def test_classify_and_if_else_execute(db_session, test_tenant_id, test_use
         ],
         [
             edge_def("e1", "start", "classify"),
-            edge_def("e2", "classify", "if_else", source_handle="alpha"),
+            edge_def("e2", "classify", "if_else", source_handle="branch_alpha"),
             edge_def("e3", "classify", "if_else", source_handle="else"),
-            edge_def("e4", "if_else", "end", source_handle="yes"),
+            edge_def("e4", "if_else", "end", source_handle="branch_yes"),
             edge_def("e5", "if_else", "end", source_handle="else"),
         ],
     )
@@ -111,7 +111,7 @@ async def test_classify_and_if_else_execute(db_session, test_tenant_id, test_use
         result = await execute_agent_via_service(db_session, test_tenant_id, agent.id, test_user_id, input_text="yes")
         run = await db_session.get(AgentRun, result.run_id)
         assert run.status == RunStatus.completed
-        assert run.output_result.get("_node_outputs", {}).get("if_else", {}).get("branch_taken") in {"yes", "else"}
+        assert run.output_result.get("branch_taken") in {"branch_yes", "else"}
     finally:
         await delete_agent(db_session, test_tenant_id, agent.id)
 
@@ -211,7 +211,7 @@ async def test_user_approval_and_human_input_execute(db_session, test_tenant_id,
             {"approval": "approve", "input": "hello"},
         )
         assert run.status == RunStatus.completed
-        assert run.output_result.get("_node_outputs", {}).get("approval", {}).get("approval_status") == "approved"
+        assert run.output_result.get("approval_status") == "approved"
     finally:
         await delete_agent(db_session, test_tenant_id, agent_id)
 

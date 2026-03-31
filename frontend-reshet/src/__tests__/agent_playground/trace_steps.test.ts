@@ -35,7 +35,7 @@ describe("playground persisted trace replay", () => {
         span_id: "node-1",
         data: {
           input: { question: "Summarize the daf" },
-          type: "llm",
+          type: "agent",
         },
       },
       {
