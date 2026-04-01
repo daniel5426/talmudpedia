@@ -43,6 +43,7 @@ from app.rag.pipeline.executor import PipelineExecutor
 from app.rag.pipeline.input_storage import PipelineInputStorage
 from fastapi import BackgroundTasks
 from app.services.tool_binding_service import ToolBindingService
+from app.services.rag_executable_state import StaleExecutablePipelineError, ensure_executable_pipeline_is_current
 
 router = APIRouter()
 
@@ -1286,6 +1287,21 @@ async def create_pipeline_job(
 
     if not exec_pipeline:
         raise HTTPException(status_code=404, detail="Executable pipeline not found")
+
+    visual_pipeline = (
+        await db.execute(
+            select(VisualPipeline).where(
+                VisualPipeline.id == exec_pipeline.visual_pipeline_id,
+                VisualPipeline.tenant_id == tenant.id,
+            )
+        )
+    ).scalar_one_or_none()
+    if visual_pipeline is None:
+        raise HTTPException(status_code=404, detail="Visual pipeline not found")
+    try:
+        ensure_executable_pipeline_is_current(visual_pipeline, exec_pipeline)
+    except StaleExecutablePipelineError as exc:
+        raise HTTPException(status_code=409, detail=exc.to_detail()) from exc
 
     await sync_custom_operators(db, tenant.id)
 

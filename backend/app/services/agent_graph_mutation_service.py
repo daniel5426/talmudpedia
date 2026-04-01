@@ -55,7 +55,10 @@ class AgentGraphMutationService:
             validate_node_config_path=self._validate_node_config_path,
         )
         validated_graph = await self.agent_service._validate_graph_for_write(mutation.graph, agent_id=agent.id)
-        validation_result = await self.agent_service.validate_agent(agent.id)
+        validation_result = await self.agent_service._build_validation_result_for_graph(
+            validated_graph,
+            agent_id=agent.id,
+        )
         return self._build_result(
             agent_id=agent.id,
             graph_definition=validated_graph,
@@ -73,8 +76,6 @@ class AgentGraphMutationService:
         phase = "preview_validation"
         try:
             preview = await self.validate_patch(agent_id, operations)
-            if not preview["validation"]["valid"]:
-                raise AgentGraphValidationError(preview["validation"]["errors"])
 
             phase = "persist_graph"
             agent = await self.agent_service.update_agent(
@@ -228,14 +229,15 @@ class AgentGraphMutationService:
         mutation: Any,
         validation_result: Any,
     ) -> dict[str, Any]:
+        mutation_payload = mutation if isinstance(mutation, dict) else None
         return {
             "agent_id": str(agent_id),
             "graph_definition": graph_definition,
             "mutation": {
-                "applied_operations": list(mutation.applied_operations or []),
-                "changed_node_ids": list(mutation.changed_node_ids or []),
-                "changed_edge_ids": list(mutation.changed_edge_ids or []),
-                "warnings": list(mutation.warnings or []),
+                "applied_operations": list((mutation_payload or {}).get("applied_operations") or getattr(mutation, "applied_operations", []) or []),
+                "changed_node_ids": list((mutation_payload or {}).get("changed_node_ids") or getattr(mutation, "changed_node_ids", []) or []),
+                "changed_edge_ids": list((mutation_payload or {}).get("changed_edge_ids") or getattr(mutation, "changed_edge_ids", []) or []),
+                "warnings": list((mutation_payload or {}).get("warnings") or getattr(mutation, "warnings", []) or []),
             },
             "validation": {
                 "valid": bool(getattr(validation_result, "valid", False)),

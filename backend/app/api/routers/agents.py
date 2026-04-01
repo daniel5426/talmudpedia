@@ -179,7 +179,7 @@ def handle_service_error(e: AgentServiceError):
             status_code=422,
             detail={
                 "code": "VALIDATION_ERROR",
-                "message": "Graph validation failed",
+                "message": "Graph write rejected",
                 "errors": e.errors,
             },
         )

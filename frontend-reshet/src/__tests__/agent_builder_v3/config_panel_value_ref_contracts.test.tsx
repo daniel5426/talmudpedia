@@ -187,6 +187,90 @@ describe("ConfigPanel value_ref contracts", () => {
     expect(screen.getByText("Structured output (JSON)")).toBeInTheDocument()
   })
 
+  it("blocks disabling a workflow input while it still has consumers", async () => {
+    const onGraphDefinitionChange = jest.fn()
+
+    renderWithDirection(
+      <ConfigPanel
+        nodeId="start"
+        data={{
+          nodeType: "start",
+          category: "control",
+          displayName: "Start",
+          config: {},
+          inputType: "any",
+          outputType: "message",
+          isConfigured: true,
+          hasErrors: false,
+        }}
+        graphDefinition={{
+          spec_version: "4.0",
+          workflow_contract: {
+            inputs: [
+              { key: "text", type: "string", enabled: true, label: "Text" },
+              { key: "files", type: "list", enabled: true, label: "Files" },
+              { key: "audio", type: "list", enabled: false, label: "Audio" },
+              { key: "images", type: "list", enabled: true, label: "Images" },
+            ],
+          },
+          state_contract: { variables: [] },
+          nodes: [
+            {
+              id: "end_1",
+              type: "end",
+              position: { x: 0, y: 0 },
+              data: {
+                nodeType: "end",
+                category: "control",
+                displayName: "End",
+                config: {
+                  output_schema: {
+                    name: "workflow_result",
+                    mode: "simple",
+                    schema: {
+                      type: "object",
+                      additionalProperties: false,
+                      properties: { response: { type: "string" } },
+                      required: ["response"],
+                    },
+                  },
+                  output_bindings: [
+                    {
+                      json_pointer: "/response",
+                      value_ref: {
+                        namespace: "workflow_input",
+                        key: "text",
+                        expected_type: "string",
+                      },
+                    },
+                  ],
+                },
+                inputType: "message",
+                outputType: "any",
+                isConfigured: true,
+                hasErrors: false,
+              },
+            },
+          ],
+          edges: [],
+        }}
+        onGraphDefinitionChange={onGraphDefinitionChange}
+        onConfigChange={jest.fn()}
+        onClose={jest.fn()}
+        availableVariables={[]}
+        graphAnalysis={analysis}
+      />,
+    )
+
+    await waitFor(() => expect(screen.queryByText("Loading resources...")).not.toBeInTheDocument())
+
+    fireEvent.click(screen.getByLabelText("Toggle Text"))
+
+    expect(onGraphDefinitionChange).not.toHaveBeenCalled()
+    expect(screen.getByText('Cannot disable "Text" because it is still referenced.')).toBeInTheDocument()
+    expect(screen.getByText("End -> /response")).toBeInTheDocument()
+  })
+
   it("saves the selected End property binding from the modal", async () => {
     const onConfigChange = jest.fn()
 

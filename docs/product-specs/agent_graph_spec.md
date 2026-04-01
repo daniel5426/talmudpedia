@@ -1,15 +1,38 @@
 # Agent Graph Spec
 
-Last Updated: 2026-03-31
+Last Updated: 2026-04-01
 
-This document is the canonical graph-definition contract for the agent builder and backend compiler.
+This document is the canonical graph-definition contract for the agent builder, persistence layer, and backend compiler.
 
 ## Purpose
 
 The agent graph spec is the persisted graph format shared by:
 - agent builder frontend
-- backend graph validation and compilation
+- backend graph analysis and compilation
 - agent save/update flows
+
+## Draft-Legal Persistence
+
+Agent graph persistence is draft-legal.
+
+Rules:
+- save/update must persist incomplete drafts
+- publish does not certify runnability
+- write-time rejection is reserved for illegal graph documents or illegal mutations
+- compiler/runtime diagnostics remain explicit and advisory until execution
+
+Examples of allowed draft state:
+- disconnected nodes
+- missing edges
+- missing start/end nodes
+- unreachable branches
+- partially configured runnable nodes
+
+Examples of rejected writes:
+- graph payload is not an object
+- graph payload fails schema parsing
+- runtime config is stored in `data.config` instead of canonical `config`
+- picker-backed references point to non-existent tenant/global resources
 
 ## Top-Level Contract
 
@@ -64,6 +87,7 @@ Current normalization behavior:
 - `inputMappings` is normalized to `input_mappings`
 - persisted functional config must live in `config`
 - builder-only metadata can live in `data`, but `data.config` is not the source of truth
+- node config legality is enforced at edit/mutation time; incomplete config is allowed to persist
 
 ## Spec 4.0 Contract Additions
 

@@ -1,10 +1,10 @@
 # Agent Graph Mutation Tests
 
-Last Updated: 2026-03-07
+Last Updated: 2026-04-01
 
 ## Scope
 - Safe graph mutation primitives and agent-specific config-path validation.
-- Apply-path validation gating before persistence.
+- Apply-path legality checks with advisory diagnostics after persistence.
 
 ## Test files present
 - test_agent_graph_mutation_service.py
@@ -13,13 +13,13 @@ Last Updated: 2026-03-07
 ## Key scenarios covered
 - Generic graph operations patch agent-node config without rebuilding edges.
 - Unknown agent config fields are rejected by schema-aware path validation.
-- Invalid preview validation blocks persistence in `AgentGraphMutationService.apply_patch`.
+- Incomplete agent drafts still persist through `AgentGraphMutationService.apply_patch`.
 - Route-level failures return structured HTTP errors with `request_id`, operation name, and mutation phase.
 
 ## Last run command + date/time + result
-- Command: `pytest -q backend/tests/graph_mutation_agents`
-- Date/Time: 2026-03-07
-- Result: pass (`3 passed`)
+- Command: `pytest -q backend/tests/graph_mutation_agents/test_agent_graph_mutation_service.py backend/tests/graph_mutation_rag/test_rag_graph_mutation_service.py backend/tests/agent_graph_validation/test_agent_graph_validation.py backend/tests/rag_execution_state/test_stale_executable_state.py`
+- Date/Time: 2026-04-01
+- Result: pass (`22 passed` across the targeted draft-legal backend suites)
 
 ## Known gaps or follow-ups
 - Add DB-backed API tests for the new `/agents/{agent_id}/graph/*` routes.

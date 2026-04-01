@@ -1968,6 +1968,7 @@ export function ConfigPanel({
                             <StartNodeSettings
                                 workflowContract={resolvedGraphDefinition.workflow_contract}
                                 stateContract={resolvedGraphDefinition.state_contract}
+                                graphDefinition={resolvedGraphDefinition}
                                 onChange={({ workflowContract, stateContract }) =>
                                     onGraphDefinitionChange?.({
                                         ...resolvedGraphDefinition,

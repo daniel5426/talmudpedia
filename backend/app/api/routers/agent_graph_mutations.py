@@ -80,7 +80,7 @@ def _raise_agent_graph_http_error(
             status_code=422,
             detail={
                 "code": "VALIDATION_ERROR",
-                "message": "Graph validation failed",
+                "message": "Graph write rejected",
                 "errors": exc.errors,
                 "request_id": request_id,
                 "operation": operation,

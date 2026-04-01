@@ -23,6 +23,7 @@ import {
   endSchemaToStructuredProperties,
   EndOutputBinding,
   EndOutputSchemaConfig,
+  getGraphValueRefConsumers,
   normalizeEndConfig,
   normalizeStateVariables,
   stateVariableObjectSchemaToStructuredProperties,
@@ -114,10 +115,12 @@ function normalizeListDefaultValue(value: unknown): string[] {
 export function StartNodeSettings({
   workflowContract,
   stateContract,
+  graphDefinition,
   onChange,
 }: {
   workflowContract?: AgentGraphDefinition["workflow_contract"]
   stateContract?: AgentGraphDefinition["state_contract"]
+  graphDefinition?: AgentGraphDefinition
   onChange: (value: {
     workflowContract: NonNullable<AgentGraphDefinition["workflow_contract"]>
     stateContract: NonNullable<AgentGraphDefinition["state_contract"]>
@@ -144,6 +147,10 @@ export function StartNodeSettings({
   const [objectSchemaDraft, setObjectSchemaDraft] = useState("[]")
   const [objectSchemaProperties, setObjectSchemaProperties] = useState<StructuredPropertyDefinition[]>([])
   const [objectSchemaOpen, setObjectSchemaOpen] = useState(false)
+  const [blockedWorkflowInput, setBlockedWorkflowInput] = useState<{
+    label: string
+    consumers: string[]
+  } | null>(null)
   const [objectSchemaSnapshot, setObjectSchemaSnapshot] = useState<{
     schema?: Record<string, unknown>
     raw: string
@@ -184,6 +191,28 @@ export function StartNodeSettings({
     setOpen(false)
   }
 
+  const handleWorkflowInputToggle = (key: string, checked: boolean | "indeterminate", label: string) => {
+    if (checked !== true) {
+      const consumers = getGraphValueRefConsumers(graphDefinition, { namespace: "workflow_input", key })
+      if (consumers.length > 0) {
+        setBlockedWorkflowInput({
+          label,
+          consumers: consumers.map((consumer) => consumer.label),
+        })
+        return
+      }
+    }
+    setBlockedWorkflowInput(null)
+    onChange({
+      workflowContract: {
+        inputs: workflowInputs.map((input) =>
+          input.key === key ? { ...input, enabled: checked === true } : input,
+        ),
+      },
+      stateContract: { variables: stateVariables },
+    })
+  }
+
   return (
     <>
       <div className="space-y-4">
@@ -203,14 +232,7 @@ export function StartNodeSettings({
                   <Checkbox
                     checked={item.enabled !== false}
                     onCheckedChange={(checked: boolean | "indeterminate") =>
-                      onChange({
-                        workflowContract: {
-                          inputs: workflowInputs.map((input) =>
-                            input.key === item.key ? { ...input, enabled: checked === true } : input,
-                          ),
-                        },
-                        stateContract: { variables: stateVariables },
-                      })
+                      handleWorkflowInputToggle(item.key, checked, item.label || item.key)
                     }
                     aria-label={`Toggle ${item.label || item.key}`}
                   />
@@ -277,6 +299,27 @@ export function StartNodeSettings({
           )}
         </EditorSection>
       </div>
+
+      <Dialog open={!!blockedWorkflowInput} onOpenChange={(open) => !open && setBlockedWorkflowInput(null)}>
+        <DialogContent className="max-w-md">
+          <DialogTitle>Input still in use</DialogTitle>
+          <DialogDescription>
+            {blockedWorkflowInput
+              ? `Cannot disable "${blockedWorkflowInput.label}" because it is still referenced.`
+              : ""}
+          </DialogDescription>
+          {blockedWorkflowInput ? (
+            <div className="space-y-2">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Consumers</p>
+              <ul className="space-y-1 text-sm text-foreground">
+                {blockedWorkflowInput.consumers.map((consumer) => (
+                  <li key={consumer}>{consumer}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent

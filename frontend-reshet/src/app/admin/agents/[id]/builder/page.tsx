@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { agentService, Agent, AgentGraphDefinition } from "@/services"
+import { formatHttpErrorMessage } from "@/services/http"
 import { AgentBuilder, AgentNodeData } from "@/components/agent-builder"
 import { normalizeGraphDefinition } from "@/components/agent-builder/graphspec"
 import { HeaderConfigEditor } from "@/components/builder"
@@ -30,6 +31,7 @@ export default function AgentBuilderPage() {
     const [isSaving, setIsSaving] = useState(false)
     const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle")
     const [error, setError] = useState<string | null>(null)
+    const [actionError, setActionError] = useState<string | null>(null)
     const [builderMode, setBuilderMode] = useState<"build" | "execute">("build")
 
     // Store current graph state for saving
@@ -46,6 +48,7 @@ export default function AgentBuilderPage() {
             if (data.graph_definition) {
                 graphRef.current = normalizeGraphDefinition(data.graph_definition)
             }
+            setActionError(null)
         } catch (err) {
             console.error("Failed to load agent:", err)
             setError("Failed to load agent configuration.")
@@ -62,8 +65,9 @@ export default function AgentBuilderPage() {
 
     const handleGraphChange = useCallback((graphDefinition: AgentGraphDefinition) => {
         graphRef.current = normalizeGraphDefinition(graphDefinition)
+        setActionError(null)
         // Mark as unsaved when changes are made
-        if (saveStatus === "saved") {
+        if (saveStatus === "saved" || saveStatus === "error") {
             setSaveStatus("idle")
         }
     }, [saveStatus])
@@ -74,6 +78,7 @@ export default function AgentBuilderPage() {
         try {
             setIsSaving(true)
             setSaveStatus("saving")
+            setActionError(null)
 
             await agentService.updateAgent(agent.id, {
                 name: agentName.trim(),
@@ -87,10 +92,12 @@ export default function AgentBuilderPage() {
                 description: agentDescription.trim() || undefined,
             } : current)
             setSaveStatus("saved")
+            setActionError(null)
             setTimeout(() => setSaveStatus("idle"), 2000)
         } catch (err) {
             console.error("Failed to save agent:", err)
             setSaveStatus("error")
+            setActionError(formatHttpErrorMessage(err, "Failed to save draft."))
         } finally {
             setIsSaving(false)
         }
@@ -101,6 +108,7 @@ export default function AgentBuilderPage() {
 
         try {
             setIsSaving(true)
+            setActionError(null)
             // Save first, then publish
             await agentService.updateAgent(agent.id, {
                 name: agentName.trim(),
@@ -113,7 +121,7 @@ export default function AgentBuilderPage() {
             await loadAgent()
         } catch (err) {
             console.error("Failed to publish agent:", err)
-            setError("Failed to publish agent.")
+            setActionError(formatHttpErrorMessage(err, "Failed to publish agent."))
         } finally {
             setIsSaving(false)
         }
@@ -165,13 +173,15 @@ export default function AgentBuilderPage() {
                             description={agentDescription}
                             onNameChange={(value) => {
                                 setAgentName(value)
-                                if (saveStatus === "saved") {
+                                setActionError(null)
+                                if (saveStatus === "saved" || saveStatus === "error") {
                                     setSaveStatus("idle")
                                 }
                             }}
                             onDescriptionChange={(value) => {
                                 setAgentDescription(value)
-                                if (saveStatus === "saved") {
+                                setActionError(null)
+                                if (saveStatus === "saved" || saveStatus === "error") {
                                     setSaveStatus("idle")
                                 }
                             }}
@@ -194,6 +204,11 @@ export default function AgentBuilderPage() {
                             <span className="flex h-8 items-center gap-1 text-xs text-destructive">
                                 <AlertCircle className="h-3 w-3" />
                                 Save failed
+                            </span>
+                        )}
+                        {actionError && (
+                            <span className="max-w-[320px] truncate text-xs text-destructive" title={actionError}>
+                                {actionError}
                             </span>
                         )}
                         <Button variant="outline" size="sm" onClick={handleSave} disabled={isSaving || isLoading} className="h-8 rounded-md text-xs shadow-none">

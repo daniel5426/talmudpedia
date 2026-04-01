@@ -7,7 +7,6 @@ import pytest
 
 from app.agent.registry import AgentOperatorRegistry
 from app.services.agent_graph_mutation_service import AgentGraphMutationService
-from app.services.agent_service import AgentGraphValidationError
 from app.services.graph_mutation_service import GraphMutationError, apply_graph_operations
 
 
@@ -80,7 +79,7 @@ def test_agent_graph_mutation_rejects_unknown_config_field(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_agent_apply_patch_blocks_invalid_preview_before_persist(monkeypatch):
+async def test_agent_apply_patch_persists_incomplete_graph_and_returns_advisory_diagnostics(monkeypatch):
     agent_id = uuid4()
     service = _service()
     calls = {"updated": False}
@@ -95,6 +94,9 @@ async def test_agent_apply_patch_blocks_invalid_preview_before_persist(monkeypat
         async def validate_agent(self, _agent_id):
             return SimpleNamespace(valid=False, errors=[{"code": "VALIDATION_ERROR", "message": "invalid"}], warnings=[])
 
+        async def _build_validation_result_for_graph(self, *_args, **_kwargs):
+            return SimpleNamespace(valid=False, errors=[{"code": "VALIDATION_ERROR", "message": "invalid"}], warnings=[])
+
         async def update_agent(self, *_args, **_kwargs):
             calls["updated"] = True
             return SimpleNamespace(id=agent_id, graph_definition=_agent_graph())
@@ -106,10 +108,11 @@ async def test_agent_apply_patch_blocks_invalid_preview_before_persist(monkeypat
         lambda _node_type: SimpleNamespace(config_schema={"properties": {"instructions": {}, "tools": {}, "model_id": {}}}),
     )
 
-    with pytest.raises(AgentGraphValidationError):
-        await service.apply_patch(
-            agent_id,
-            [{"op": "set_node_config_value", "node_id": "assistant", "path": "instructions", "value": "Retry"}],
-        )
+    result = await service.apply_patch(
+        agent_id,
+        [{"op": "set_node_config_value", "node_id": "assistant", "path": "instructions", "value": "Retry"}],
+    )
 
-    assert calls["updated"] is False
+    assert calls["updated"] is True
+    assert result["validation"]["valid"] is False
+    assert result["validation"]["errors"][0]["code"] == "VALIDATION_ERROR"

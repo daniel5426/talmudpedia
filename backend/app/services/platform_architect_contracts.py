@@ -179,14 +179,14 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
                     additional_properties=False,
                 ),
                 "contract": {
-                    "summary": "Validate schema-aware graph mutation operations for a visual pipeline without persisting.",
+                    "summary": "Preview schema-aware graph mutation legality for a visual pipeline without persisting; runnability diagnostics are advisory.",
                     "required_fields": ["pipeline_id|id", "operations"],
                     "example_payload": {
                         "pipeline_id": "pipe-123",
                         "tenant_slug": "acme",
                         "operations": [{"op": "set_node_config_value", "node_id": "lookup_1", "path": "top_k", "value": 8}],
                     },
-                    "failure_codes": ["NOT_FOUND", "VALIDATION_ERROR"],
+                    "failure_codes": ["NOT_FOUND", "GRAPH_MUTATION_ERROR"],
                 },
             },
             "rag.graph.apply_patch": {
@@ -202,14 +202,14 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
                     additional_properties=False,
                 ),
                 "contract": {
-                    "summary": "Apply validated graph mutation operations to a visual pipeline and return persisted validation state.",
+                    "summary": "Apply legal graph mutation operations to a visual pipeline and return advisory diagnostics with the persisted draft graph.",
                     "required_fields": ["pipeline_id|id", "operations"],
                     "example_payload": {
                         "pipeline_id": "pipe-123",
                         "tenant_slug": "acme",
                         "operations": [{"op": "rewire_edge", "edge_id": "e1", "target": "answer_1"}],
                     },
-                    "failure_codes": ["NOT_FOUND", "VALIDATION_ERROR"],
+                    "failure_codes": ["NOT_FOUND", "GRAPH_MUTATION_ERROR"],
                 },
             },
             "rag.graph.attach_knowledge_store_to_node": {
@@ -229,7 +229,7 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
                     "summary": "Attach a knowledge store to an existing pipeline node without rebuilding the whole graph.",
                     "required_fields": ["pipeline_id|id", "node_id", "knowledge_store_id"],
                     "example_payload": {"pipeline_id": "pipe-123", "node_id": "lookup_1", "knowledge_store_id": "ks-123", "tenant_slug": "acme"},
-                    "failure_codes": ["NOT_FOUND", "VALIDATION_ERROR"],
+                    "failure_codes": ["NOT_FOUND", "GRAPH_MUTATION_ERROR"],
                 },
             },
             "rag.graph.set_pipeline_node_config": {
@@ -250,7 +250,7 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
                     "summary": "Set one config field on an existing pipeline node through the graph mutation layer.",
                     "required_fields": ["pipeline_id|id", "node_id", "path", "value"],
                     "example_payload": {"pipeline_id": "pipe-123", "node_id": "lookup_1", "path": "top_k", "value": 8, "tenant_slug": "acme"},
-                    "failure_codes": ["NOT_FOUND", "VALIDATION_ERROR"],
+                    "failure_codes": ["NOT_FOUND", "GRAPH_MUTATION_ERROR"],
                 },
             },
             "rag.compile_visual_pipeline": {
@@ -478,13 +478,13 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
                     additional_properties=False,
                 ),
                 "contract": {
-                    "summary": "Validate schema-aware graph mutation operations for an agent without persisting.",
+                    "summary": "Preview schema-aware graph mutation legality for an agent without persisting; runnability diagnostics are advisory.",
                     "required_fields": ["agent_id|id", "operations"],
                     "example_payload": {
                         "agent_id": "agent-123",
                         "operations": [{"op": "append_unique_node_config_list_item", "node_id": "assistant", "path": "tools", "value": "tool-123"}],
                     },
-                    "failure_codes": ["NOT_FOUND", "VALIDATION_ERROR"],
+                    "failure_codes": ["NOT_FOUND", "GRAPH_MUTATION_ERROR", "GRAPH_WRITE_REJECTED"],
                 },
             },
             "agents.graph.apply_patch": {
@@ -499,13 +499,13 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
                     additional_properties=False,
                 ),
                 "contract": {
-                    "summary": "Apply validated graph mutation operations to an agent and return persisted validation state.",
+                    "summary": "Apply legal graph mutation operations to an agent and return advisory diagnostics with the persisted draft graph.",
                     "required_fields": ["agent_id|id", "operations"],
                     "example_payload": {
                         "agent_id": "agent-123",
                         "operations": [{"op": "set_node_config_value", "node_id": "assistant", "path": "instructions", "value": "Use web search when needed."}],
                     },
-                    "failure_codes": ["NOT_FOUND", "VALIDATION_ERROR"],
+                    "failure_codes": ["NOT_FOUND", "GRAPH_MUTATION_ERROR", "GRAPH_WRITE_REJECTED"],
                 },
             },
             "agents.graph.add_tool_to_agent_node": {
@@ -524,7 +524,7 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
                     "summary": "Add a tool reference to an existing agent node without rebuilding the full graph.",
                     "required_fields": ["agent_id|id", "node_id", "tool_id"],
                     "example_payload": {"agent_id": "agent-123", "node_id": "assistant", "tool_id": "tool-123"},
-                    "failure_codes": ["NOT_FOUND", "VALIDATION_ERROR"],
+                    "failure_codes": ["NOT_FOUND", "GRAPH_MUTATION_ERROR", "GRAPH_WRITE_REJECTED"],
                 },
             },
             "agents.graph.remove_tool_from_agent_node": {
@@ -543,7 +543,7 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
                     "summary": "Remove a tool reference from an existing agent node through the graph mutation layer.",
                     "required_fields": ["agent_id|id", "node_id", "tool_id"],
                     "example_payload": {"agent_id": "agent-123", "node_id": "assistant", "tool_id": "tool-123"},
-                    "failure_codes": ["NOT_FOUND", "VALIDATION_ERROR"],
+                    "failure_codes": ["NOT_FOUND", "GRAPH_MUTATION_ERROR", "GRAPH_WRITE_REJECTED"],
                 },
             },
             "agents.graph.set_agent_model": {
@@ -562,7 +562,7 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
                     "summary": "Set model_id on an agent node through the graph mutation layer.",
                     "required_fields": ["agent_id|id", "node_id", "model_id"],
                     "example_payload": {"agent_id": "agent-123", "node_id": "assistant", "model_id": "model-123"},
-                    "failure_codes": ["NOT_FOUND", "VALIDATION_ERROR"],
+                    "failure_codes": ["NOT_FOUND", "GRAPH_MUTATION_ERROR", "GRAPH_WRITE_REJECTED"],
                 },
             },
             "agents.graph.set_agent_instructions": {
@@ -581,7 +581,7 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
                     "summary": "Set instructions on an agent node through the graph mutation layer.",
                     "required_fields": ["agent_id|id", "node_id", "instructions"],
                     "example_payload": {"agent_id": "agent-123", "node_id": "assistant", "instructions": "Use web search when needed."},
-                    "failure_codes": ["NOT_FOUND", "VALIDATION_ERROR"],
+                    "failure_codes": ["NOT_FOUND", "GRAPH_MUTATION_ERROR", "GRAPH_WRITE_REJECTED"],
                 },
             },
             "agents.publish": {
@@ -608,7 +608,7 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
                     additional_properties=True,
                 ),
                 "contract": {
-                    "summary": "Validate an agent definition.",
+                    "summary": "Analyze an agent definition and return advisory compiler/runtime diagnostics.",
                     "required_fields": ["agent_id|id"],
                     "example_payload": {"agent_id": "agent-123", "validation": {"strict": True}},
                     "failure_codes": ["VALIDATION_ERROR"],
@@ -645,7 +645,7 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
                     additional_properties=False,
                 ),
                 "contract": {
-                    "summary": "Validate persisted agent graph by id with compiler and runtime reference checks.",
+                    "summary": "Analyze the persisted agent graph by id with compiler and runtime reference checks.",
                     "required_fields": ["agent_id|id"],
                     "example_payload": {"agent_id": "agent-123"},
                     "failure_codes": ["VALIDATION_ERROR", "NOT_FOUND"],

@@ -9,6 +9,7 @@ import { CompileResult, ragAdminService } from "@/services"
 import { useTenant } from "@/contexts/TenantContext"
 import { DynamicOperatorForm } from "@/components/rag/DynamicOperatorForm"
 import { ExecutablePipelineInputSchema } from "@/components/pipeline/types"
+import { formatHttpErrorMessage } from "@/services/http"
 
 interface RunPipelineDialogProps {
     open: boolean
@@ -23,6 +24,7 @@ export function RunPipelineDialog({ open, onOpenChange, onRun, compileResult }: 
     const [schema, setSchema] = useState<ExecutablePipelineInputSchema | null>(null)
     const [showAdvanced, setShowAdvanced] = useState(false)
     const [schemaError, setSchemaError] = useState<string | null>(null)
+    const [runError, setRunError] = useState<string | null>(null)
     const [loading, setLoading] = useState(false)
     const [loadingSchema, setLoadingSchema] = useState(false)
 
@@ -32,6 +34,7 @@ export function RunPipelineDialog({ open, onOpenChange, onRun, compileResult }: 
             setInputData({})
             setSchema(null)
             setSchemaError(null)
+            setRunError(null)
             setShowAdvanced(false)
             return
         }
@@ -60,10 +63,12 @@ export function RunPipelineDialog({ open, onOpenChange, onRun, compileResult }: 
     const handleRun = async () => {
         try {
             setLoading(true)
+            setRunError(null)
             await onRun(inputData)
             onOpenChange(false)
         } catch (error) {
             console.error("Failed to run pipeline", error)
+            setRunError(formatHttpErrorMessage(error, "Failed to run pipeline."))
         } finally {
             setLoading(false)
         }
@@ -90,6 +95,9 @@ export function RunPipelineDialog({ open, onOpenChange, onRun, compileResult }: 
                     )}
                     {schemaError && (
                         <div className="text-sm text-destructive">{schemaError}</div>
+                    )}
+                    {runError && (
+                        <div className="text-sm text-destructive">{runError}</div>
                     )}
                     {!loadingSchema && !schemaError && (
                         <DynamicOperatorForm

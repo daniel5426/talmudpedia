@@ -1,6 +1,6 @@
 # RAG Pipeline Spec
 
-Last Updated: 2026-03-31
+Last Updated: 2026-04-01
 
 This document is the canonical product contract for the RAG pipeline builder/runtime surface.
 
@@ -8,8 +8,7 @@ This document is the canonical product contract for the RAG pipeline builder/run
 
 The RAG pipeline spec defines the contract shared by:
 - RAG pipeline builder UI
-- backend analysis and validation
-- backend compilation and runtime execution
+- backend analysis, compile materialization, and runtime execution
 
 ## Current Direction
 
@@ -37,6 +36,27 @@ These contracts must be shared across:
 - validation responses
 - builder pickers/forms
 - compiler/runtime execution
+
+## Draft-Legal Persistence
+
+RAG visual pipeline drafts are draft-legal.
+
+Rules:
+- save/update persists incomplete drafts
+- graph mutation writes reject only illegal mutations
+- compile is an explicit executable-materialization step
+- run requires a current executable and must not silently recompile
+
+Examples of allowed draft state:
+- disconnected nodes
+- missing edges
+- incomplete retrieval or ingestion branches
+- partially configured operators
+
+Examples of write-time rejection:
+- unknown config field for an operator
+- invalid config-path/container descent
+- illegal picker-backed resource selection
 
 ## Node Catalog
 
@@ -131,7 +151,7 @@ Validation and analysis surfaces must report:
 - type compatibility issues
 - contract mismatches between connected operators
 
-Validation should fail on contract drift rather than relying on permissive fallback behavior.
+Validation is advisory during editing and becomes a hard failure only when the user explicitly compiles or runs.
 
 ## Runtime Contract
 
@@ -141,6 +161,7 @@ Implications:
 - runtime input handling must align with required input declarations
 - produced operator outputs must match declared output fields
 - terminal output materialization must follow the declared pipeline output contract
+- a stale executable must return compile-required feedback instead of silently rebuilding on run
 
 ## Compatibility Rules
 

@@ -1,5 +1,56 @@
 import { useAuthStore } from "@/lib/store/useAuthStore";
 
+export class HttpRequestError extends Error {
+  constructor(
+    message: string,
+    public readonly status: number,
+    public readonly detail: unknown,
+  ) {
+    super(message);
+    this.name = "HttpRequestError";
+  }
+}
+
+export function getHttpErrorDetail(error: unknown): any | null {
+  if (error instanceof HttpRequestError) {
+    return error.detail;
+  }
+  if (!(error instanceof Error)) {
+    return null;
+  }
+  try {
+    return JSON.parse(error.message);
+  } catch {
+    return null;
+  }
+}
+
+export function formatHttpErrorMessage(error: unknown, fallback = "Request failed"): string {
+  const detail = getHttpErrorDetail(error);
+  if (detail && typeof detail === "object") {
+    const typedDetail = detail as { message?: unknown; errors?: unknown[] };
+    if (Array.isArray(typedDetail.errors) && typedDetail.errors.length > 0) {
+      const messages = typedDetail.errors
+        .map((item) =>
+          item && typeof item === "object" && typeof (item as { message?: unknown }).message === "string"
+            ? String((item as { message: string }).message)
+            : null
+        )
+        .filter((value): value is string => Boolean(value));
+      if (messages.length > 0) {
+        return messages.join(" ");
+      }
+    }
+    if (typeof typedDetail.message === "string" && typedDetail.message.trim()) {
+      return typedDetail.message;
+    }
+  }
+  if (error instanceof Error && error.message.trim()) {
+    return error.message;
+  }
+  return fallback;
+}
+
 class HttpClient {
   constructor(public readonly baseUrl: string) {}
 
@@ -66,8 +117,18 @@ class HttpClient {
         let parsedErrorPayload: unknown = null;
         try {
           const data = await response.json();
-          parsedErrorPayload = data;
-          message = data.detail || data.message || message;
+          parsedErrorPayload = data?.detail ?? data;
+          if (typeof parsedErrorPayload === "string") {
+            message = parsedErrorPayload;
+          } else if (parsedErrorPayload && typeof parsedErrorPayload === "object") {
+            message =
+              (parsedErrorPayload as { message?: unknown; detail?: unknown }).message ||
+              (parsedErrorPayload as { detail?: unknown }).detail ||
+              data?.message ||
+              message;
+          } else {
+            message = data?.message || message;
+          }
         } catch {
           message = response.statusText || message;
         }
@@ -79,7 +140,11 @@ class HttpClient {
             console.error(`[HttpClient] Error Response for ${url}:`, errorMsg);
           }
         }
-        throw new Error(errorMsg);
+        throw new HttpRequestError(
+          errorMsg,
+          response.status,
+          parsedErrorPayload ?? { message: errorMsg },
+        );
       }
 
       if (response.status === 204) {

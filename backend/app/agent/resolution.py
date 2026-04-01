@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.postgres.models.artifact_runtime import ArtifactKind
 from app.db.postgres.models.registry import ToolRegistry
 from app.db.postgres.models.rag import ExecutablePipeline, VisualPipeline, PipelineType
+from app.services.rag_executable_state import ensure_executable_pipeline_is_current
 from app.services.artifact_runtime.registry_service import ArtifactRegistryService
 
 logger = logging.getLogger(__name__)
@@ -235,6 +236,10 @@ class RAGPipelineResolver(ComponentResolver):
         latest_exec = (await self.db.execute(latest_exec_stmt)).scalar_one_or_none()
         if not latest_exec:
             raise ResolutionError(f"No executable pipeline found for visual pipeline {pipeline_id}")
+        try:
+            ensure_executable_pipeline_is_current(visual_pipeline, latest_exec)
+        except RuntimeError as exc:
+            raise ResolutionError(str(exc)) from exc
 
         return {
             "id": str(visual_pipeline.id),

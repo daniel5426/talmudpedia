@@ -367,7 +367,16 @@ class AgentService:
             return AgentValidationResult(valid=False, errors=issues, warnings=[])
 
         compiler = AgentCompiler(db=self.db, tenant_id=self.tenant_id)
-        raw_errors = await compiler.validate(graph, agent_id=agent_id)
+        try:
+            raw_errors = await compiler.validate(graph, agent_id=agent_id)
+        except Exception as exc:
+            raw_errors = [
+                self._build_rich_validation_issue(
+                    code="GRAPH_ANALYSIS_FAILED",
+                    message=str(exc),
+                    severity="error",
+                )
+            ]
         for raw in raw_errors:
             payload = raw.model_dump() if hasattr(raw, "model_dump") else (dict(raw) if isinstance(raw, dict) else {"message": str(raw)})
             node_id = str(payload.get("node_id")) if payload.get("node_id") is not None else None

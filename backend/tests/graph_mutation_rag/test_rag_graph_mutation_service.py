@@ -66,7 +66,7 @@ def test_rag_graph_mutation_rejects_unknown_config_field():
 
 
 @pytest.mark.asyncio
-async def test_rag_apply_patch_blocks_invalid_preview_before_persist():
+async def test_rag_apply_patch_persists_incomplete_graph_and_returns_advisory_diagnostics():
     pipeline_id = uuid4()
     service = _service()
     calls = {"committed": False}
@@ -98,10 +98,11 @@ async def test_rag_apply_patch_blocks_invalid_preview_before_persist():
     service._compile_preview = lambda _pipeline, _graph: SimpleNamespace(success=False, errors=[{"code": "VALIDATION_ERROR", "message": "bad graph"}], warnings=[])
     service.db = SimpleNamespace(commit=_commit, refresh=_refresh)
 
-    with pytest.raises(GraphMutationError):
-        await service.apply_patch(
-            pipeline_id,
-            [{"op": "set_node_config_value", "node_id": "lookup_1", "path": "top_k", "value": 9}],
-        )
+    result = await service.apply_patch(
+        pipeline_id,
+        [{"op": "set_node_config_value", "node_id": "lookup_1", "path": "top_k", "value": 9}],
+    )
 
-    assert calls["committed"] is False
+    assert calls["committed"] is True
+    assert result["validation"]["valid"] is False
+    assert result["validation"]["errors"][0]["code"] == "VALIDATION_ERROR"

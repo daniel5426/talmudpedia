@@ -57,11 +57,6 @@ class RagGraphMutationService:
         phase = "preview_validation"
         try:
             preview = await self.validate_patch(pipeline_id, operations)
-            if not preview["validation"]["valid"]:
-                raise GraphMutationError(
-                    preview["validation"]["errors"]
-                    or [{"code": "RAG_GRAPH_VALIDATION_FAILED", "message": "Pipeline graph validation failed"}]
-                )
 
             phase = "persist_graph"
             pipeline = await self._get_pipeline(pipeline_id)

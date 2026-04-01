@@ -54,6 +54,13 @@ export interface SetStateAssignment {
   value_ref?: ValueRef
 }
 
+export interface GraphValueRefConsumer {
+  node_id: string
+  node_label: string
+  location: string
+  label: string
+}
+
 export function normalizeValueRef(value: unknown): ValueRef | undefined {
   if (!value || typeof value !== "object") return undefined
   const raw = value as Record<string, unknown>
@@ -415,6 +422,95 @@ export function normalizeStructuredProperties(raw: unknown): StructuredPropertyD
   return raw
     .map((item) => normalizeStructuredProperty(item))
     .filter((item): item is StructuredPropertyDefinition => !!item)
+}
+
+type ValueRefPathSegment = string | number
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value)
+}
+
+function collectMatchingValueRefPaths(
+  value: unknown,
+  target: Pick<ValueRef, "namespace" | "key">,
+  path: ValueRefPathSegment[] = [],
+): ValueRefPathSegment[][] {
+  const normalized = normalizeValueRef(value)
+  if (normalized && normalized.namespace === target.namespace && normalized.key === target.key) {
+    return [path]
+  }
+  if (Array.isArray(value)) {
+    return value.flatMap((item, index) => collectMatchingValueRefPaths(item, target, [...path, index]))
+  }
+  if (!isRecord(value)) return []
+  return Object.entries(value).flatMap(([key, child]) => collectMatchingValueRefPaths(child, target, [...path, key]))
+}
+
+function describeValueRefConsumerLocation(
+  nodeType: string,
+  config: Record<string, unknown>,
+  path: ValueRefPathSegment[],
+): string {
+  if (nodeType === "end" && path[0] === "output_bindings" && typeof path[1] === "number") {
+    const binding = normalizeEndConfig(config).output_bindings[path[1]]
+    return binding?.json_pointer || `output binding ${path[1] + 1}`
+  }
+  if (nodeType === "set_state" && path[0] === "assignments" && typeof path[1] === "number") {
+    const assignment = normalizeSetStateAssignments(config.assignments)[path[1]]
+    return assignment?.key ? `state:${assignment.key}` : `assignment ${path[1] + 1}`
+  }
+  return path
+    .map((segment) => (typeof segment === "number" ? `[${segment + 1}]` : segment))
+    .join(".")
+}
+
+function getNodeType(rawNode: unknown): string {
+  if (!isRecord(rawNode)) return ""
+  if (typeof rawNode.type === "string" && rawNode.type.trim()) return rawNode.type
+  if (isRecord(rawNode.data) && typeof rawNode.data.nodeType === "string") return rawNode.data.nodeType
+  return ""
+}
+
+function getNodeLabel(rawNode: unknown, nodeType: string): string {
+  if (!isRecord(rawNode)) return nodeType || "Node"
+  if (isRecord(rawNode.data)) {
+    if (typeof rawNode.data.displayName === "string" && rawNode.data.displayName.trim()) return rawNode.data.displayName
+    if (typeof rawNode.data.label === "string" && rawNode.data.label.trim()) return rawNode.data.label
+  }
+  if (typeof rawNode.id === "string" && rawNode.id.trim()) return rawNode.id
+  return nodeType || "Node"
+}
+
+function getNodeConfig(rawNode: unknown): Record<string, unknown> {
+  if (!isRecord(rawNode)) return {}
+  if (isRecord(rawNode.config)) return rawNode.config
+  if (isRecord(rawNode.data) && isRecord(rawNode.data.config)) return rawNode.data.config
+  return {}
+}
+
+export function getGraphValueRefConsumers(
+  graphDefinition: { nodes?: unknown[] } | undefined,
+  target: Pick<ValueRef, "namespace" | "key">,
+): GraphValueRefConsumer[] {
+  const nodes = Array.isArray(graphDefinition?.nodes) ? graphDefinition.nodes : []
+  return nodes.flatMap((node) => {
+    const nodeType = getNodeType(node)
+    if (!nodeType) return []
+    const config = normalizeNodeContractConfig(nodeType, getNodeConfig(node))
+    const paths = collectMatchingValueRefPaths(config, target)
+    if (paths.length === 0) return []
+    const nodeId = isRecord(node) && typeof node.id === "string" ? node.id : nodeType
+    const nodeLabel = getNodeLabel(node, nodeType)
+    return paths.map((path) => {
+      const location = describeValueRefConsumerLocation(nodeType, config, path)
+      return {
+        node_id: nodeId,
+        node_label: nodeLabel,
+        location,
+        label: `${nodeLabel} -> ${location}`,
+      }
+    })
+  })
 }
 
 function getSchemaType(raw: unknown): StructuredPropertyDefinition["type"] {

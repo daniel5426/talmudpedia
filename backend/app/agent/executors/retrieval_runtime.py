@@ -14,6 +14,7 @@ from app.db.postgres.models.rag import (
     VisualPipeline,
 )
 from app.rag.pipeline.executor import PipelineExecutor as RAGPipelineExecutor
+from app.services.rag_executable_state import ensure_executable_pipeline_is_current
 
 
 class PipelineToolRuntime:
@@ -35,6 +36,17 @@ class PipelineToolRuntime:
             ).scalar_one_or_none()
             if executable is None:
                 raise ValueError(f"Executable pipeline {executable_pipeline_id} not found")
+            visual = (
+                await self._db.execute(
+                    select(VisualPipeline).where(
+                        VisualPipeline.id == executable.visual_pipeline_id,
+                        VisualPipeline.tenant_id == self._tenant_id,
+                    )
+                )
+            ).scalar_one_or_none()
+            if visual is None:
+                raise ValueError(f"Pipeline {executable.visual_pipeline_id} not found")
+            ensure_executable_pipeline_is_current(visual, executable)
             return executable
 
         if visual_pipeline_id is None:
@@ -65,6 +77,7 @@ class PipelineToolRuntime:
         ).scalar_one_or_none()
         if executable is None:
             raise ValueError(f"No executable pipeline found for {visual_pipeline_id}")
+        ensure_executable_pipeline_is_current(visual, executable)
         return executable
 
     async def execute(self, *, executable_pipeline_id: UUID, input_params: dict[str, Any]) -> tuple[dict[str, Any], PipelineJob]:

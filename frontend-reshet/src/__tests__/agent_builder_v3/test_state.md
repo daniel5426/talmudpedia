@@ -1,6 +1,6 @@
 # Test State: Agent Builder v3
 
-Last Updated: 2026-03-31
+Last Updated: 2026-04-01
 
 **Scope**
 Graph Spec 4.0 frontend serialization defaults, Start-as-projection contract editing, canonical workflow modality toggles, graph-analysis hook behavior, scoped ValueRef picker behavior, and ConfigPanel contract-driven filtering for the agent builder.
@@ -32,6 +32,7 @@ Graph Spec 4.0 frontend serialization defaults, Start-as-projection contract edi
 - ConfigPanel filters `value_ref` options using backend operator field contracts in the specialized Classify surface
 - ConfigPanel opens End structured output in a modal from the output row
 - ConfigPanel persists the selected End property binding when saving the structured-output modal
+- Start editor blocks disabling a workflow input when live bindings still reference it and shows the consumer list
 - Start state-variable modal uses typed default-value controls for booleans and lists instead of a generic JSON textarea
 - Start state-variable modal blocks duplicate state-variable keys before save and shows an inline validation error
 - ConfigPanel renders artifact field-mapping inputs from backend-provided artifact operator contracts
@@ -53,6 +54,9 @@ Graph Spec 4.0 frontend serialization defaults, Start-as-projection contract edi
 - Command: `pnpm -C frontend-reshet test -- --runTestsByPath src/__tests__/agent_builder_v3/state_variable_modal.test.tsx --watch=false`
 - Date: 2026-03-31 Asia/Hebron
 - Result: Pass (1 suite, 4 tests)
+- Command: `pnpm -C frontend-reshet test -- --runTestsByPath src/__tests__/agent_builder_v3/config_panel_value_ref_contracts.test.tsx src/__tests__/agent_builder_v3/graph_contract_editors.test.tsx --watch=false`
+- Date: 2026-04-01 09:54:48 EEST
+- Result: Pass (2 suites, 10 tests)
 - Command: `pnpm -C frontend-reshet test -- --runTestsByPath src/__tests__/agent_builder_v3/template_suggestions.test.tsx src/__tests__/agent_builder_v3/state_variable_modal.test.tsx --watch=false`
 - Date: 2026-03-31 Asia/Hebron
 - Result: Pass (2 suites, 6 tests)

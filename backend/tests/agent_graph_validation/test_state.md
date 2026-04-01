@@ -1,26 +1,26 @@
 # Agent Graph Validation Test State
 
-Last Updated: 2026-03-06
+Last Updated: 2026-04-01
 
 ## Scope of the feature
-Hard-cut graph validation on agent write paths (`create_agent`, `update_agent`, `update_graph`) and API mapping to `422 VALIDATION_ERROR`.
+Draft-legal agent graph persistence on write paths (`create_agent`, `update_agent`, `update_graph`) with compiler validation moved to explicit analysis/execution flows.
 
 ## Test files present
 - `test_agent_graph_validation.py`
 
 ## Key scenarios covered
 - Service rejects missing `graph_definition`.
-- Service rejects empty or structurally invalid graphs.
+- Service accepts incomplete draft graphs that are still legal graph documents.
 - Service allows non-graph updates when graph is unchanged.
-- API returns canonical `VALIDATION_ERROR` payload on create/update validation failures.
+- API persists incomplete drafts on create/update and only rejects illegal graph documents.
 - Service validation (`validate_agent`) now runs real compiler + runtime reference checks and returns structured errors/warnings.
 - Node intelligence endpoints are covered: `/agents/nodes/catalog` and bulk `/agents/nodes/schema`.
 - Runtime config inside `node.data.config` is rejected; top-level `node.config` is the only accepted source of truth.
 
 ## Last run command + date/time + result
 - Command: `pytest -q backend/tests/agent_graph_validation/test_agent_graph_validation.py`
-- Date/Time: 2026-03-06 (local run during this change set)
-- Result: pass (`13 passed`)
+- Date/Time: 2026-04-01
+- Result: pass (`14 passed`)
 
 ## Known gaps or follow-ups
 - No dedicated frontend unit test yet for new-agent starter graph payload wiring.

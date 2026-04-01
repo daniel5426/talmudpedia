@@ -46,13 +46,13 @@ def _graph_with_missing_runtime_refs() -> dict:
                 "id": "assistant",
                 "type": "agent",
                 "position": {"x": 150, "y": 0},
-                "config": {"model_id": "missing-chat-model", "instructions": "help"},
+                "config": {"model_id": "11111111-1111-1111-1111-111111111111", "instructions": "help"},
             },
             {
                 "id": "tool_call",
                 "type": "tool",
                 "position": {"x": 300, "y": 0},
-                "config": {"tool_id": "missing-tool"},
+                "config": {"tool_id": "22222222-2222-2222-2222-222222222222"},
             },
             {"id": "end", "type": "end", "position": {"x": 450, "y": 0}, "config": {"output_message": "done"}},
         ],
@@ -123,23 +123,21 @@ async def test_service_create_rejects_missing_graph(db_session):
 
 
 @pytest.mark.asyncio
-async def test_service_create_rejects_empty_graph(db_session):
+async def test_service_create_accepts_incomplete_graph(db_session):
     tenant, user = await _seed_tenant_admin(db_session)
     service = AgentService(db=db_session, tenant_id=tenant.id)
 
-    with pytest.raises(AgentGraphValidationError) as exc_info:
-        await service.create_agent(
-            CreateAgentData(
-                name="Empty Graph",
-                slug=f"empty-graph-{uuid4().hex[:8]}",
-                graph_definition={"spec_version": "1.0", "nodes": [], "edges": []},
-            ),
-            user_id=user.id,
+    agent = await service.create_agent(
+        CreateAgentData(
+            name="Empty Graph",
+            slug=f"empty-graph-{uuid4().hex[:8]}",
+            graph_definition={"spec_version": "1.0", "nodes": [], "edges": []},
         )
+    )
 
-    messages = [entry["message"] for entry in exc_info.value.errors]
-    assert any("exactly one Start node" in message for message in messages)
-    assert any("at least one End node" in message for message in messages)
+    assert isinstance(agent.graph_definition, dict)
+    assert agent.graph_definition["nodes"] == []
+    assert agent.graph_definition["edges"] == []
 
 
 @pytest.mark.asyncio
@@ -160,7 +158,7 @@ async def test_service_update_without_graph_still_succeeds(db_session):
 
 
 @pytest.mark.asyncio
-async def test_service_update_rejects_invalid_graph(db_session):
+async def test_service_update_accepts_incomplete_graph(db_session):
     tenant, user = await _seed_tenant_admin(db_session)
     service = AgentService(db=db_session, tenant_id=tenant.id)
     agent = await service.create_agent(
@@ -172,17 +170,18 @@ async def test_service_update_rejects_invalid_graph(db_session):
         user_id=user.id,
     )
 
-    with pytest.raises(AgentGraphValidationError) as exc_info:
-        await service.update_agent(
-            agent.id,
-            UpdateAgentData(graph_definition=_invalid_graph_missing_end()),
-        )
+    updated = await service.update_agent(
+        agent.id,
+        UpdateAgentData(graph_definition=_invalid_graph_missing_end()),
+    )
 
-    assert any("at least one End node" in entry["message"] for entry in exc_info.value.errors)
+    assert isinstance(updated.graph_definition, dict)
+    assert len(updated.graph_definition["nodes"]) == 1
+    assert updated.graph_definition["edges"] == []
 
 
 @pytest.mark.asyncio
-async def test_service_update_graph_rejects_invalid_graph(db_session):
+async def test_service_update_graph_accepts_incomplete_graph(db_session):
     tenant, user = await _seed_tenant_admin(db_session)
     service = AgentService(db=db_session, tenant_id=tenant.id)
     agent = await service.create_agent(
@@ -194,8 +193,10 @@ async def test_service_update_graph_rejects_invalid_graph(db_session):
         user_id=user.id,
     )
 
-    with pytest.raises(AgentGraphValidationError):
-        await service.update_graph(agent.id, _invalid_graph_missing_end())
+    updated = await service.update_graph(agent.id, _invalid_graph_missing_end())
+    assert isinstance(updated.graph_definition, dict)
+    assert len(updated.graph_definition["nodes"]) == 1
+    assert updated.graph_definition["edges"] == []
 
     updated = await service.update_graph(agent.id, _valid_graph())
     assert isinstance(updated.graph_definition, dict)
@@ -203,21 +204,21 @@ async def test_service_update_graph_rejects_invalid_graph(db_session):
 
 
 @pytest.mark.asyncio
-async def test_service_create_does_not_accept_runtime_config_inside_data_payload(db_session):
+async def test_service_create_ignores_runtime_config_inside_data_payload(db_session):
     tenant, user = await _seed_tenant_admin(db_session)
     service = AgentService(db=db_session, tenant_id=tenant.id)
 
-    with pytest.raises(AgentGraphValidationError) as exc_info:
-        await service.create_agent(
-            CreateAgentData(
-                name="Legacy Data Config",
-                slug=f"legacy-data-config-{uuid4().hex[:8]}",
-                graph_definition=_graph_with_agent_model_only_in_data_config(),
-            ),
-            user_id=user.id,
-        )
+    agent = await service.create_agent(
+        CreateAgentData(
+            name="Legacy Data Config",
+            slug=f"legacy-data-config-{uuid4().hex[:8]}",
+            graph_definition=_graph_with_agent_model_only_in_data_config(),
+        ),
+        user_id=user.id,
+    )
 
-    assert any("model_id" in entry["message"] for entry in exc_info.value.errors)
+    assistant = next(node for node in agent.graph_definition["nodes"] if node["id"] == "assistant")
+    assert assistant["config"].get("model_id") is None
 
 
 @pytest.mark.asyncio
@@ -239,7 +240,7 @@ async def test_create_endpoint_missing_graph_returns_validation_error(client, db
 
 
 @pytest.mark.asyncio
-async def test_update_endpoint_invalid_graph_returns_validation_error(client, db_session):
+async def test_update_endpoint_accepts_incomplete_graph(client, db_session):
     tenant, user = await _seed_tenant_admin(db_session)
     service = AgentService(db=db_session, tenant_id=tenant.id)
     agent = await service.create_agent(
@@ -257,14 +258,14 @@ async def test_update_endpoint_invalid_graph_returns_validation_error(client, db
         headers=_headers(user, tenant),
     )
 
-    assert response.status_code == 422
-    detail = response.json()["detail"]
-    assert detail["code"] == "VALIDATION_ERROR"
-    assert any("at least one End node" in entry["message"] for entry in detail["errors"])
+    assert response.status_code == 200
+    payload = response.json()
+    assert isinstance(payload["graph_definition"], dict)
+    assert len(payload["graph_definition"]["nodes"]) == 1
 
 
 @pytest.mark.asyncio
-async def test_update_graph_endpoint_invalid_graph_returns_validation_error(client, db_session):
+async def test_update_graph_endpoint_accepts_incomplete_graph(client, db_session):
     tenant, user = await _seed_tenant_admin(db_session)
     service = AgentService(db=db_session, tenant_id=tenant.id)
     agent = await service.create_agent(
@@ -282,26 +283,21 @@ async def test_update_graph_endpoint_invalid_graph_returns_validation_error(clie
         headers=_headers(user, tenant),
     )
 
-    assert response.status_code == 422
-    detail = response.json()["detail"]
-    assert detail["code"] == "VALIDATION_ERROR"
-    assert any("at least one End node" in entry["message"] for entry in detail["errors"])
+    assert response.status_code == 200
+    payload = response.json()
+    assert isinstance(payload["graph_definition"], dict)
+    assert len(payload["graph_definition"]["nodes"]) == 1
 
 
 @pytest.mark.asyncio
-async def test_service_validate_agent_reports_runtime_reference_errors(db_session):
+async def test_service_validate_graph_reports_runtime_reference_errors(db_session):
     tenant, user = await _seed_tenant_admin(db_session)
     service = AgentService(db=db_session, tenant_id=tenant.id)
-    agent = await service.create_agent(
-        CreateAgentData(
-            name="Runtime Ref Validation",
-            slug=f"runtime-ref-validation-{uuid4().hex[:8]}",
-            graph_definition=_graph_with_missing_runtime_refs(),
-        ),
-        user_id=user.id,
-    )
 
-    result = await service.validate_agent(agent.id)
+    result = await service._build_validation_result_for_graph(
+        _graph_with_missing_runtime_refs(),
+        agent_id=uuid4(),
+    )
 
     assert result.valid is False
     codes = {entry["code"] for entry in result.errors}
@@ -317,7 +313,7 @@ async def test_validate_endpoint_returns_structured_errors_and_warnings(client, 
         CreateAgentData(
             name="Validate Endpoint Shape",
             slug=f"validate-endpoint-shape-{uuid4().hex[:8]}",
-            graph_definition=_graph_with_missing_runtime_refs(),
+            graph_definition=_invalid_graph_missing_end(),
         ),
         user_id=user.id,
     )

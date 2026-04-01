@@ -1,6 +1,6 @@
 # Architecture Tree (Curated)
 
-Last Updated: 2026-03-30
+Last Updated: 2026-04-01
 
 This file is a backend-only architecture map optimized for agent context efficiency.
 
@@ -87,6 +87,7 @@ backend/app/agent/execution/tool_input_contracts.py
 backend/app/agent/execution/types.py
 
 backend/app/agent/executors/
+backend/app/agent/executors/retrieval_runtime.py
 backend/app/agent/executors/speech.py
 backend/app/agent/runtime/
 backend/app/agent/components/
@@ -165,6 +166,7 @@ backend/app/services/platform_architect_guardrails.py
 backend/app/services/graph_mutation_service.py
 backend/app/services/agent_graph_mutation_service.py
 backend/app/services/rag_graph_mutation_service.py
+backend/app/services/rag_executable_state.py
 backend/app/services/tool_function_registry.py
 backend/app/services/ui_blocks.py
 backend/app/services/artifact_registry.py

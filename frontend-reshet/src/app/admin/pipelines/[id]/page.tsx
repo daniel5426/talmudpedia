@@ -32,6 +32,7 @@ import { PipelineBuilder } from "@/components/pipeline"
 import { RunPipelineDialog } from "@/components/pipeline/RunPipelineDialog"
 import { Node, Edge } from "@xyflow/react"
 import { HeaderConfigEditor } from "@/components/builder"
+import { formatHttpErrorMessage } from "@/services/http"
 import { PromptMentionInput } from "@/components/shared/PromptMentionInput"
 import { PromptMentionJsonEditor, fillPromptMentionJsonToken } from "@/components/shared/PromptMentionJsonEditor"
 import { PromptModal } from "@/components/shared/PromptModal"
@@ -83,6 +84,7 @@ export default function PipelineEditorPage() {
     const [toolBinding, setToolBinding] = useState<PipelineToolBinding | null>(null)
     const [toolBindingLoading, setToolBindingLoading] = useState(false)
     const [toolBindingSaving, setToolBindingSaving] = useState(false)
+    const [actionError, setActionError] = useState<string | null>(null)
     const [toolName, setToolName] = useState("")
     const [toolDescription, setToolDescription] = useState("")
     const [toolInputSchemaText, setToolInputSchemaText] = useState('{\n  "type": "object",\n  "properties": {},\n  "additionalProperties": false\n}')
@@ -192,6 +194,7 @@ export default function PipelineEditorPage() {
                 }
             } catch (error) {
                 console.error("Failed to fetch data", error)
+                setActionError("Failed to load pipeline data.")
             } finally {
                 setLoading(false)
             }
@@ -244,6 +247,7 @@ export default function PipelineEditorPage() {
                 executable_pipeline_id: compileResult.executable_pipeline_id,
                 input_params: inputParams
             }, currentTenant?.slug)
+            setActionError(null)
 
             // Update URL with jobId for persistence
             const newUrl = `${window.location.pathname}?jobId=${res.job_id}`
@@ -275,7 +279,8 @@ export default function PipelineEditorPage() {
             // alert("Pipeline job started!") // Remove alert to be less intrusive
         } catch (e) {
             console.error("Failed to start job", e)
-            alert("Failed to start job")
+            setActionError(formatHttpErrorMessage(e, "Failed to start job."))
+            throw e
         }
     }
 
@@ -301,6 +306,7 @@ export default function PipelineEditorPage() {
         }
 
         setSaving(true)
+        setActionError(null)
         try {
             const nodesPayload = editorNodes.map((n) => ({
                 id: n.id,
@@ -346,12 +352,13 @@ export default function PipelineEditorPage() {
                 const updatedPipeline = pipelinesRes.pipelines.find(p => p.id === pipeline.id)
                 if (updatedPipeline) {
                     setPipeline(updatedPipeline)
+                    setCompileResult(null)
                     await loadToolBinding(updatedPipeline.id)
                 }
             }
         } catch (error) {
             console.error("Failed to save pipeline", error)
-            alert("Failed to save pipeline")
+            setActionError(formatHttpErrorMessage(error, "Failed to save pipeline."))
         } finally {
             setSaving(false)
         }
@@ -362,6 +369,7 @@ export default function PipelineEditorPage() {
 
         setCompiling(true)
         setCompileResult(null)
+        setActionError(null)
         try {
             const result = await ragAdminService.compilePipeline(
                 pipeline.id,
@@ -427,6 +435,11 @@ export default function PipelineEditorPage() {
             const versions = versionsRes.versions || []
             const latest = versions.find((v) => v.is_valid) || versions[0]
             if (!latest) {
+                setActionError("No executable pipeline found. Compile the pipeline first.")
+                return null
+            }
+            if (pipeline.updated_at && latest.created_at && new Date(pipeline.updated_at).getTime() > new Date(latest.created_at).getTime()) {
+                setActionError("Pipeline draft changed since the latest executable was created. Compile the pipeline again before running it.")
                 return null
             }
             const resolved: CompileResult = {
@@ -437,9 +450,11 @@ export default function PipelineEditorPage() {
                 warnings: [],
             }
             setCompileResult(resolved)
+            setActionError(null)
             return resolved
         } catch (error) {
             console.error("Failed to resolve latest compiled pipeline version", error)
+            setActionError(formatHttpErrorMessage(error, "Failed to resolve the latest executable pipeline."))
             return null
         }
     }, [compileResult, pipeline, currentTenant?.slug])
@@ -447,7 +462,6 @@ export default function PipelineEditorPage() {
     const handleOpenRunDialog = useCallback(async () => {
         const resolved = await ensureExecutableForRun()
         if (!resolved?.executable_pipeline_id) {
-            alert("No compiled version found. Please compile the pipeline first.")
             return
         }
         setIsRunDialogOpen(true)
@@ -625,6 +639,11 @@ export default function PipelineEditorPage() {
                             </div>
                         )}
                         <div className="mx-1 h-6 w-px bg-border" />
+                        {actionError && (
+                            <span className="max-w-[360px] truncate text-xs text-destructive" title={actionError}>
+                                {actionError}
+                            </span>
+                        )}
                         {!isNew && pipeline && (
                             <Button
                                 variant="outline"
