@@ -6,7 +6,6 @@ import {
   useContext,
   useEffect,
   useMemo,
-  useState,
   type ReactNode,
 } from "react";
 
@@ -20,40 +19,31 @@ type DirectionContextValue = {
 
 const DirectionContext = createContext<DirectionContextValue | null>(null);
 
-type DirectionProviderProps = {
-  children: ReactNode;
-  initialDirection: DirectionMode;
-};
+const LOCKED_DIRECTION: DirectionMode = "ltr";
 
-export function DirectionProvider({
-  children,
-  initialDirection,
-}: DirectionProviderProps) {
-  const [direction, setDirection] = useState<DirectionMode>(initialDirection);
-
-  const toggleDirection = useCallback(() => {
-    setDirection((prev) => (prev === "rtl" ? "ltr" : "rtl"));
-  }, []);
+export function DirectionProvider({ children }: { children: ReactNode }) {
+  const setDirection = useCallback(() => {}, []);
+  const toggleDirection = useCallback(() => {}, []);
 
   useEffect(() => {
     const root = document.documentElement;
     const body = document.body;
-    root.setAttribute("dir", direction);
-    body?.setAttribute("dir", direction);
-    body?.setAttribute("data-direction", direction);
-    document.cookie = `talmudpedia-direction=${direction}; path=/; max-age=31536000; SameSite=Lax`;
+    root.setAttribute("dir", LOCKED_DIRECTION);
+    body?.setAttribute("dir", LOCKED_DIRECTION);
+    body?.setAttribute("data-direction", LOCKED_DIRECTION);
+    document.cookie = `talmudpedia-direction=${LOCKED_DIRECTION}; path=/; max-age=31536000; SameSite=Lax`;
     try {
-      window.localStorage.setItem("talmudpedia-direction", direction);
+      window.localStorage.setItem("talmudpedia-direction", LOCKED_DIRECTION);
     } catch {}
-  }, [direction]);
+  }, []);
 
   const value = useMemo(
     () => ({
-      direction,
+      direction: LOCKED_DIRECTION,
       setDirection,
       toggleDirection,
     }),
-    [direction, toggleDirection]
+    [setDirection, toggleDirection],
   );
 
   return (
@@ -70,4 +60,3 @@ export function useDirection() {
   }
   return context;
 }
-

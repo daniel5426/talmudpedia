@@ -32,7 +32,6 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { ThemeCustomizer } from "../theme-customizer";
 import { useDirection } from "@/components/direction-provider";
-import { DirectionToggle } from "../direction-toggle";
 import { TenantSwitcher } from "./tenant-switcher";
 import { useAuthStore } from "@/lib/store/useAuthStore";
 import { usePathname, useRouter } from "next/navigation";
@@ -431,7 +430,6 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       </SidebarContent>
       <SidebarFooter dir={direction}>
         <div className={`flex items-center gap-2 ${isRTL ? "justify-start" : "justify-start"}`}>
-          {isSidebarOpen ? <DirectionToggle /> : null}
           {<ThemeCustomizer />}
         </div>
         {user ? (

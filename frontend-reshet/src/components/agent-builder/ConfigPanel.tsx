@@ -71,6 +71,7 @@ import { SetStateAssignmentsEditor } from "./GraphContractEditors"
 import { ValueRefPicker } from "./ValueRefPicker"
 import { ClassifyNodeSettings, EndNodeSettings, StartNodeSettings } from "./ConfigPanelSpecialized"
 import { normalizeNodeContractConfig } from "./graph-contract"
+import { useAgentBuilderUi } from "./agent-builder-ui-context"
 
 
 const CATEGORY_ICONS: Record<string, React.ElementType> = {
@@ -783,42 +784,49 @@ function ListEditor({
 function ToolListField({
     value,
     onChange,
-    toolCatalog
+    toolCatalog,
 }: {
     value: string[]
     onChange: (value: string[]) => void
     toolCatalog: ToolDefinition[]
 }) {
     const [open, setOpen] = useState(false)
-    const selectedTools = toolCatalog.filter(tool => value.includes(tool.id))
+    const builderUi = useAgentBuilderUi()
+    const selectedTools = toolCatalog.filter((tool) => value.includes(tool.id))
 
     return (
         <div className="space-y-2">
-            {/* Selected tools list */}
             {selectedTools.length > 0 && (
                 <div className="flex flex-wrap gap-1.5">
-                    {selectedTools.map(tool => (
-                        <Badge
+                    {selectedTools.map((tool) => (
+                        <div
                             key={tool.id}
-                            variant="secondary"
-                            className="text-xs flex items-center gap-1 pr-1"
+                            className={cn(
+                                "inline-flex items-center gap-0.5 rounded-md border border-transparent",
+                                "bg-secondary text-secondary-foreground text-xs pl-1 pr-0.5 py-0.5"
+                            )}
                         >
-                            <Wrench className="h-3 w-3 text-muted-foreground shrink-0" />
-                            {tool.name}
                             <button
                                 type="button"
-                                className="ml-0.5 rounded-sm p-0.5 text-muted-foreground/70 hover:text-foreground hover:bg-muted transition-colors"
-                                onClick={() => onChange(value.filter(id => id !== tool.id))}
+                                className="inline-flex items-center gap-1 min-w-0 max-w-[220px] rounded px-1 py-0.5 hover:bg-muted/50 transition-colors"
+                                onClick={() => builderUi?.openToolDetailFromSettings(tool.id)}
+                            >
+                                <Wrench className="h-3 w-3 text-muted-foreground shrink-0" />
+                                <span className="truncate font-medium">{tool.name}</span>
+                            </button>
+                            <button
+                                type="button"
+                                className="rounded-sm p-0.5 text-muted-foreground/70 hover:text-foreground hover:bg-muted transition-colors shrink-0"
+                                onClick={() => onChange(value.filter((id) => id !== tool.id))}
                                 aria-label={`Remove ${tool.name}`}
                             >
                                 <X className="h-3 w-3" />
                             </button>
-                        </Badge>
+                        </div>
                     ))}
                 </div>
             )}
 
-            {/* Add tools button */}
             <Button
                 variant="outline"
                 size="sm"

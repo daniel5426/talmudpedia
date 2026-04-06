@@ -131,6 +131,10 @@ async def get_embedded_agent_thread(
     external_session_id: str | None = Query(default=None, max_length=255),
     before_turn_index: int | None = Query(default=None, ge=0),
     limit: int = Query(default=20, ge=1, le=100),
+    include_subthreads: bool = Query(default=False),
+    subthread_depth: int = Query(default=1, ge=1, le=5),
+    subthread_turn_limit: int | None = Query(default=None, ge=1, le=100),
+    subthread_child_limit: int = Query(default=20, ge=1, le=50),
     principal: dict[str, Any] = Depends(require_tenant_api_key_scopes("agents.embed")),
     db: AsyncSession = Depends(get_db),
 ):
@@ -154,7 +158,16 @@ async def get_embedded_agent_thread(
     if page_result is None:
         raise HTTPException(status_code=404, detail="Thread not found")
     await db.commit()
-    return await serialize_thread_detail(db=db, thread=page_result.thread, page=page_result.page)
+    subtree = None
+    if include_subthreads:
+        subtree = await service.build_subthread_tree(
+            root_thread=page_result.thread,
+            root_page=page_result.page,
+            depth=subthread_depth,
+            turn_limit=subthread_turn_limit or limit,
+            child_limit=subthread_child_limit,
+        )
+    return await serialize_thread_detail(db=db, thread=page_result.thread, page=page_result.page, subthread_tree=subtree)
 
 
 @router.delete("/{agent_id}/threads/{thread_id}")

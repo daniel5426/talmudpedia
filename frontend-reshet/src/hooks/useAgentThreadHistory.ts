@@ -197,7 +197,7 @@ export const mapTurnsToMessages = async (threadId: string, turns: ThreadTurn[]):
 const mapListItem = (thread: Thread): AgentChatHistoryItem => ({
   id: thread.id,
   threadId: thread.id,
-  agentId: undefined,
+  agentId: thread.agent_id ? String(thread.agent_id) : undefined,
   title: String(thread.title || "Untitled thread"),
   timestamp: parseTimestamp(thread.updated_at),
   messages: [],
@@ -225,7 +225,7 @@ const mapDetailsItem = (
   isLoadingOlderHistory: fallback?.isLoadingOlderHistory ?? false,
 });
 
-export function useAgentThreadHistory(userId: string | undefined) {
+export function useAgentThreadHistory(userId: string | undefined, agentId?: string) {
   const [history, setHistory] = useState<AgentChatHistoryItem[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
 
@@ -236,7 +236,9 @@ export function useAgentThreadHistory(userId: string | undefined) {
     }
     setHistoryLoading(true);
     try {
-      const response = await adminService.getUserThreads(userId, 1, 50);
+      const response = await adminService.getUserThreads(userId, 1, 50, "", {
+        agentId,
+      });
       const next = (response.items || []).map(mapListItem);
       setHistory((prev) => {
         const cachedById = new Map(prev.map((entry) => [entry.threadId, entry]));
@@ -252,7 +254,7 @@ export function useAgentThreadHistory(userId: string | undefined) {
     } finally {
       setHistoryLoading(false);
     }
-  }, [userId]);
+  }, [agentId, userId]);
 
   useEffect(() => {
     void refreshHistory();

@@ -1,10 +1,11 @@
-Last Updated: 2026-03-29
+Last Updated: 2026-04-06
 
 ## Scope
 Admin thread detail page rendering in its read-only playground-style shell, including the header toggles for saved trace inspection and thread metadata.
 
 ## Test Files Present
 - `frontend-reshet/src/__tests__/admin_threads/admin_thread_page.test.tsx`
+- `frontend-reshet/src/__tests__/admin_threads/threads_table.test.ts`
 
 ## Key Scenarios Covered
 - The admin thread page reuses the chat workspace in read-only mode with the composer hidden.
@@ -12,10 +13,18 @@ Admin thread detail page rendering in its read-only playground-style shell, incl
 - Agent and actor metadata values link to their respective detail pages.
 - Clicking `Trace` on a saved assistant response loads the persisted run trace into the floating sidebar.
 - The floating sidebar exposes `Copy full trace` when a saved run trace is loaded.
+- The page no longer renders a dedicated `Subagent Threads` footer section.
+- The threads table groups root and child rows into one inline tree order.
 
 ## Last Run
 - Command: `cd frontend-reshet && npm test -- --runInBand src/__tests__/admin_threads/admin_thread_page.test.tsx src/__tests__/agent_thread_history/useAgentThreadHistory.test.tsx`
 - Date: 2026-03-27 Asia/Hebron
+- Result: Pass (`2 passed`)
+- Command: `cd frontend-reshet && npm test -- --runInBand src/__tests__/admin_threads/admin_thread_page.test.tsx src/__tests__/admin_threads/threads_table.test.ts`
+- Date: 2026-04-06 Asia/Hebron
+- Result: Pass (`3 passed`)
+- Command: `cd frontend-reshet && npm test -- --runInBand src/__tests__/admin_threads/admin_thread_page.test.tsx`
+- Date: 2026-04-05 Asia/Hebron
 - Result: Pass (`2 passed`)
 - Command: `pnpm --dir frontend-reshet test -- --runInBand src/__tests__/admin_threads/admin_thread_page.test.tsx`
 - Date: 2026-03-29 Asia/Hebron
@@ -31,4 +40,4 @@ Admin thread detail page rendering in its read-only playground-style shell, incl
 - Result: Pass
 
 ## Known Gaps / Follow-ups
-- Add a broader integration test against the real message renderer once this page shares more of the playground chrome directly.
+- Add a broader integration test that exercises thread-table grouping against the real fetched admin payload.

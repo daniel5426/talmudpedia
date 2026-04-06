@@ -428,4 +428,6 @@ async def test_agent_reasoning_loop_invokes_agent_call_tool_and_consumes_compact
     assert compact_payload["mode"] == "sync"
     assert compact_payload["target_agent_slug"] == child_agent.slug
     assert compact_payload["status"] == "completed"
+
+
     assert compact_payload.get("output") is not None

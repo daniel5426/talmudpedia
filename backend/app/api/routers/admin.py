@@ -14,6 +14,7 @@ from app.db.postgres.models.agent_threads import AgentThread, AgentThreadTurn
 from app.db.postgres.models.agents import AgentRun
 from app.core.scope_registry import is_platform_admin_role
 from app.services.admin_monitoring_service import AdminMonitoringService
+from app.services.thread_detail_service import serialize_thread_tree
 from app.services.runtime_attachment_service import RuntimeAttachmentService
 from app.services.model_accounting import usage_payload_from_run, usage_total_expr
 from app.services.thread_service import ThreadService
@@ -34,6 +35,27 @@ def _current_month_bounds_utc() -> tuple[datetime, datetime]:
 
 def _serialize_run_usage(run: AgentRun | None) -> dict[str, Any] | None:
     return usage_payload_from_run(run)
+
+
+async def _serialize_admin_turn(turn: AgentThreadTurn) -> dict[str, Any]:
+    return {
+        "id": str(turn.id),
+        "run_id": str(turn.run_id),
+        "turn_index": int(turn.turn_index or 0),
+        "status": turn.status.value if hasattr(turn.status, "value") else str(turn.status),
+        "user_input_text": turn.user_input_text,
+        "assistant_output_text": turn.assistant_output_text,
+        "run_usage": _serialize_run_usage(getattr(turn, "run", None)),
+        "context_window": getattr(getattr(turn, "run", None), "context_window_json", None),
+        "created_at": turn.created_at,
+        "completed_at": turn.completed_at,
+        "attachments": [
+            RuntimeAttachmentService.serialize_attachment(link.attachment)
+            for link in (turn.attachment_links or [])
+            if getattr(link, "attachment", None) is not None
+        ],
+        "metadata": turn.metadata_,
+    }
 
 # --- Dependencies & Helpers ---
 
@@ -390,6 +412,14 @@ async def get_threads(
                 "actor_display": row.actor_display,
                 "actor_email": row.actor_email,
                 "user_id": row.user_id,
+                "lineage": {
+                    "root_thread_id": row.root_thread_id,
+                    "parent_thread_id": row.parent_thread_id,
+                    "parent_thread_turn_id": row.parent_thread_turn_id,
+                    "spawned_by_run_id": row.spawned_by_run_id,
+                    "depth": row.lineage_depth,
+                    "is_root": row.parent_thread_id is None and row.lineage_depth == 0,
+                },
             }
             for row in rows
         ],
@@ -404,6 +434,10 @@ async def get_thread_details(
     thread_id: str,
     before_turn_index: int | None = Query(default=None, ge=0),
     limit: int = Query(default=20, ge=1, le=100),
+    include_subthreads: bool = Query(default=False),
+    subthread_depth: int = Query(default=1, ge=1, le=5),
+    subthread_turn_limit: int | None = Query(default=None, ge=1, le=100),
+    subthread_child_limit: int = Query(default=20, ge=1, le=50),
     _: Dict[str, Any] = Depends(require_scopes("threads.read")),
     context: Dict[str, Any] = Depends(get_admin_context),
     db: AsyncSession = Depends(get_db),
@@ -448,7 +482,7 @@ async def get_thread_details(
             elif source == "estimated":
                 has_estimated_usage = True
                 total_estimated_tokens += int(run_usage.get("total_tokens") or 0)
-    return {
+    payload = {
         "id": str(thread.id),
         "title": thread.title,
         "status": thread.status.value if hasattr(thread.status, "value") else str(thread.status),
@@ -469,32 +503,27 @@ async def get_thread_details(
             "exact_total_tokens": total_exact_tokens if has_exact_usage else None,
             "estimated_total_tokens": total_estimated_tokens if has_estimated_usage else None,
         },
-        "turns": [
-            {
-                "id": str(turn.id),
-                "run_id": str(turn.run_id),
-                "turn_index": int(turn.turn_index or 0),
-                "status": turn.status.value if hasattr(turn.status, "value") else str(turn.status),
-                "user_input_text": turn.user_input_text,
-                "assistant_output_text": turn.assistant_output_text,
-                "run_usage": _serialize_run_usage(getattr(turn, "run", None)),
-                "context_window": getattr(getattr(turn, "run", None), "context_window_json", None),
-                "created_at": turn.created_at,
-                "completed_at": turn.completed_at,
-                "attachments": [
-                    RuntimeAttachmentService.serialize_attachment(link.attachment)
-                    for link in (turn.attachment_links or [])
-                    if getattr(link, "attachment", None) is not None
-                ],
-                "metadata": turn.metadata_,
-            }
-            for turn in turns
-        ],
+        "turns": [await _serialize_admin_turn(turn) for turn in turns],
         "paging": {
             "has_more": bool(page_result.page.has_more),
             "next_before_turn_index": page_result.page.next_before_turn_index,
         },
     }
+    if include_subthreads:
+        subtree = await service.build_subthread_tree(
+            root_thread=thread,
+            root_page=page_result.page,
+            depth=subthread_depth,
+            turn_limit=subthread_turn_limit or limit,
+            child_limit=subthread_child_limit,
+        )
+        payload["lineage"] = ThreadService.serialize_thread_lineage(thread)
+        payload["subthread_tree"] = await serialize_thread_tree(
+            subtree,
+            serialize_turn=_serialize_admin_turn,
+        )
+    return payload
+
 
 @router.get("/users/{user_id}")
 async def get_user_details(

@@ -49,9 +49,14 @@ import { useAgentGraphAnalysis } from "./useAgentGraphAnalysis"
 import { getTemplateSuggestionsForNode } from "./template-suggestions"
 import { AgentExecutionEvent, AgentGraphDefinition } from "@/services"
 import { AlertTriangle, LayoutGrid, Trash2 } from "lucide-react"
+import { AgentBuilderUiContext } from "./agent-builder-ui-context"
+import { useAgentBuilderCanvasResources } from "./hooks/useAgentBuilderCanvasResources"
+import { AgentToolDetailPanel } from "./AgentToolDetailPanel"
+import { getCenteredViewportXForPanels } from "./canvas-centering"
 
 interface AgentBuilderProps {
     agentId?: string
+    agentSlug?: string | null
     initialGraphDefinition?: AgentGraphDefinition
     onSave?: (graphDefinition: AgentGraphDefinition) => void
     onCompile?: () => void
@@ -215,6 +220,7 @@ function matchesEventToNode(event: AgentExecutionEvent, node: Node<AgentNodeData
 
 function AgentBuilderInner({
     agentId,
+    agentSlug,
     initialGraphDefinition,
     onSave,
     onCompile,
@@ -226,6 +232,8 @@ function AgentBuilderInner({
 }: AgentBuilderProps) {
     const reactFlowWrapper = useRef<HTMLDivElement>(null)
     const { screenToFlowPosition, getViewport, setViewport, getNodes, fitView } = useReactFlow()
+    const BUILD_CATALOG_WIDTH = 256
+    const EXECUTION_PANEL_WIDTH = 400
 
     const normalizeNode = useCallback((node: Node) => normalizeBuilderNode(node), [])
 
@@ -251,6 +259,7 @@ function AgentBuilderInner({
         edges: normalizedInitialGraph.edges,
     })
     const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
+    const [highlightedToolId, setHighlightedToolId] = useState<string | null>(null)
     const [executeTraceNodeId, setExecuteTraceNodeId] = useState<string | null>(null)
     const [internalMode, setInternalMode] = useState<"build" | "execute">("build")
     const [interactionMode, setInteractionMode] = useState<InteractionMode>("pan")
@@ -260,12 +269,32 @@ function AgentBuilderInner({
         if (nextMode === "execute") {
             setExecuteTraceNodeId(null)
             setIsCatalogVisible(false)
+            setHighlightedToolId(null)
         }
         if (controlledMode === undefined) {
             setInternalMode(nextMode)
         }
         onModeChange?.(nextMode)
     }, [controlledMode, onModeChange])
+
+    const focusAgentTool = useCallback(
+        (_nodeId: string, toolId: string) => {
+            setMode("build")
+            setSelectedNodeId(null)
+            setHighlightedToolId(toolId)
+            setNodes((nds) => nds.map((n) => ({ ...n, selected: false })))
+        },
+        [setMode, setNodes]
+    )
+
+    const openToolDetailFromSettings = useCallback((toolId: string) => {
+        setHighlightedToolId(toolId)
+    }, [])
+
+    const agentBuilderUiValue = useMemo(
+        () => ({ focusAgentTool, openToolDetailFromSettings }),
+        [focusAgentTool, openToolDetailFromSettings]
+    )
 
     useEffect(() => {
         setNodes((nds) => {
@@ -299,7 +328,7 @@ function AgentBuilderInner({
         edges,
     }), [graphDefinitionMeta.spec_version, graphDefinitionMeta.workflow_contract, graphDefinitionMeta.state_contract, nodes, edges])
     // Dedicated controller for execution (chat) mode
-    const controller = useAgentRunController(agentId, analysisGraphDefinition)
+    const controller = useAgentRunController(agentId, analysisGraphDefinition, agentSlug)
     const { executionSteps, executionEvents, currentRunId, currentRunStatus } = controller
     const runtimeOverlay = useAgentRuntimeGraph({
         staticNodes: nodes as Node<AgentNodeData>[],
@@ -341,36 +370,23 @@ function AgentBuilderInner({
         }
     }, [redo, setNodes, setEdges])
 
-    // Handle "push" animation when entering execute mode
+    // Keep the graph centered within the visible canvas area when mode/panels change.
     useEffect(() => {
-        if (mode === "execute" && reactFlowWrapper.current) {
-            const { x, y, zoom } = getViewport()
-            const currentNodes = getNodes()
-            if (currentNodes.length === 0) return
+        if (!reactFlowWrapper.current) return
 
-            const containerWidth = reactFlowWrapper.current.clientWidth
-            const panelWidth = 400
-            const availableWidth = containerWidth - panelWidth
-            const targetScreenCenterX = availableWidth / 2
+        const { x, y, zoom } = getViewport()
+        const targetX = getCenteredViewportXForPanels({
+            containerWidth: reactFlowWrapper.current.clientWidth,
+            currentViewportX: x,
+            zoom,
+            nodes: getNodes(),
+            occludedLeftWidth: mode === "build" && isCatalogVisible ? BUILD_CATALOG_WIDTH : 0,
+            occludedRightWidth: mode === "execute" ? EXECUTION_PANEL_WIDTH : 0,
+        })
 
-            // Calculate the bounding box of nodes in flow coordinates
-            let minX = Infinity
-            let maxX = -Infinity
-            currentNodes.forEach(node => {
-                const nodeWidth = node.measured?.width ?? 200
-                minX = Math.min(minX, node.position.x)
-                maxX = Math.max(maxX, node.position.x + nodeWidth)
-            })
-
-            const contentCenterFlowX = (minX + maxX) / 2
-            const currentScreenCenterX = contentCenterFlowX * zoom + x
-            const shift = targetScreenCenterX - currentScreenCenterX
-
-            // Only shift if it's currently covered or too close to the panel
-            // or if we want to ensure it's always centered for a premium feel
-            setViewport({ x: x + shift, y, zoom }, { duration: 500 })
-        }
-    }, [mode, getViewport, setViewport, getNodes])
+        if (Math.abs(targetX - x) < 1) return
+        setViewport({ x: targetX, y, zoom }, { duration: 500 })
+    }, [mode, isCatalogVisible, getViewport, setViewport, getNodes])
 
     // Auto-save on changes
     useEffect(() => {
@@ -493,6 +509,11 @@ function AgentBuilderInner({
 
     const selectedNodeData: AgentNodeData | undefined = selectedNode?.data as AgentNodeData | undefined
     const safeSelectedNodeData: AgentNodeData | undefined = selectedNodeData ?? (selectedNode ? normalizeNode(selectedNode).data : undefined)
+    const { getToolById, loading: canvasResourcesLoading } = useAgentBuilderCanvasResources()
+    const highlightedToolRecord = useMemo(() => {
+        if (!highlightedToolId) return null
+        return getToolById(highlightedToolId) ?? null
+    }, [highlightedToolId, getToolById])
     const executeTraceNodeData: AgentNodeData | undefined = executeTraceNode?.data as AgentNodeData | undefined
     const safeExecuteTraceNodeData: AgentNodeData | undefined =
         executeTraceNodeData ?? (executeTraceNode ? normalizeNode(executeTraceNode).data : undefined)
@@ -509,36 +530,15 @@ function AgentBuilderInner({
             .filter((event) => matchesEventToNode(event, executeTraceNode as Node<AgentNodeData>, safeExecuteTraceNodeData))
             .map((event, index) => mapOrchestrationEventToExecutionStep(event, index))
 
-        const sortedSteps = [...baseSteps, ...orchestrationSteps].sort(
+        return [...baseSteps, ...orchestrationSteps].sort(
             (a, b) => a.timestamp.getTime() - b.timestamp.getTime()
         )
-        const nodeStatus = safeExecuteTraceNodeData.executionStatus
-        const terminalNodeStatus =
-            nodeStatus === "completed" || nodeStatus === "failed"
-                ? nodeStatus
-                : null
-        if (!terminalNodeStatus) {
-            return sortedSteps
-        }
-        const expectedFinalStepStatus: ExecutionStep["status"] =
-            terminalNodeStatus === "completed" ? "completed" : "error"
-        const lastStep = sortedSteps[sortedSteps.length - 1]
-        if (lastStep && lastStep.status === expectedFinalStepStatus) {
-            return sortedSteps
-        }
-        const baseTime = lastStep?.timestamp?.getTime?.() ?? 0
-        return [
-            ...sortedSteps,
-            {
-                id: `runtime-status:${executeTraceNode.id}:${terminalNodeStatus}`,
-                name: "Runtime Status",
-                type: "node",
-                status: expectedFinalStepStatus,
-                output: { status: terminalNodeStatus },
-                timestamp: new Date(baseTime + 1),
-            },
-        ]
     }, [executeTraceNode, safeExecuteTraceNodeData, executionSteps, executionEvents])
+
+    const showExecuteNodeTracePanel =
+        mode === "execute" &&
+        Boolean(executeTraceNode && safeExecuteTraceNodeData) &&
+        selectedNodeTraceSteps.length > 0
 
     const handleNodesChange = useCallback((changes: NodeChange<Node<AgentNodeData>>[]) => {
         if (mode !== "execute") {
@@ -662,6 +662,7 @@ function AgentBuilderInner({
     )
 
     const handleNodeClick = useCallback((_: React.MouseEvent, node: Node) => {
+        setHighlightedToolId(null)
         setSelectedNodeId(node.id)
         if (mode === "execute") {
             setExecuteTraceNodeId(node.id)
@@ -673,6 +674,7 @@ function AgentBuilderInner({
             setExecuteTraceNodeId(null)
             return
         }
+        setHighlightedToolId(null)
         setSelectedNodeId(null)
     }, [mode])
 
@@ -775,6 +777,7 @@ function AgentBuilderInner({
     }
 
     return (
+        <AgentBuilderUiContext.Provider value={agentBuilderUiValue}>
         <div className="relative flex h-full w-full overflow-hidden bg-background">
             {/* Left Side Panels */}
 
@@ -787,7 +790,7 @@ function AgentBuilderInner({
             </FloatingPanel>
 
             {/* 2. Execute Mode: Node Trace (Floating on the left) */}
-            {mode === "execute" && executeTraceNode && safeExecuteTraceNodeData && (
+            {showExecuteNodeTracePanel && executeTraceNode && safeExecuteTraceNodeData && (
                 <FloatingPanel
                     position="left"
                     visible={true}
@@ -824,7 +827,10 @@ function AgentBuilderInner({
                                 <button
                                     key={`preflight-${node.id}`}
                                     className="w-full text-left text-[11px] text-amber-900 hover:bg-amber-100 rounded px-1.5 py-1"
-                                    onClick={() => setSelectedNodeId(node.id)}
+                                    onClick={() => {
+                                        setHighlightedToolId(null)
+                                        setSelectedNodeId(node.id)
+                                    }}
                                 >
                                     <span className="font-semibold mr-1">{node.data?.displayName || node.id}:</span>
                                     {issues.join(", ")}
@@ -932,24 +938,39 @@ function AgentBuilderInner({
                 </FloatingPanel>
             )}
 
-            {/* 3. Build Mode: Show Config Panel if node is selected */}
             {mode === "build" && (
-                <FloatingPanel position="right" visible={!!selectedNode} className="w-[400px]" autoHeight={true}>
-                    {selectedNode && safeSelectedNodeData && (
+                <FloatingPanel
+                    position="right"
+                    visible={Boolean(selectedNode || highlightedToolId)}
+                    className="w-[400px]"
+                    autoHeight={true}
+                >
+                    {highlightedToolId ? (
+                        <AgentToolDetailPanel
+                            tool={highlightedToolRecord}
+                            toolIdFallback={highlightedToolId}
+                            resourcesLoading={canvasResourcesLoading}
+                            onClose={() => setHighlightedToolId(null)}
+                        />
+                    ) : selectedNode && safeSelectedNodeData ? (
                         <ConfigPanel
                             nodeId={selectedNode.id}
                             data={safeSelectedNodeData}
                             onConfigChange={handleConfigChange}
                             graphDefinition={graphDefinitionMeta}
                             onGraphDefinitionChange={setGraphDefinitionMeta}
-                            onClose={() => setSelectedNodeId(null)}
+                            onClose={() => {
+                                setHighlightedToolId(null)
+                                setSelectedNodeId(null)
+                            }}
                             availableVariables={selectedNodeTemplateSuggestions}
                             graphAnalysis={graphAnalysis}
                         />
-                    )}
+                    ) : null}
                 </FloatingPanel>
             )}
         </div>
+        </AgentBuilderUiContext.Provider>
     )
 }
 

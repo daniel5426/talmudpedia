@@ -260,6 +260,10 @@ async def external_get_thread(
     thread_id: UUID,
     before_turn_index: int | None = Query(default=None, ge=0),
     limit: int = Query(default=20, ge=1, le=100),
+    include_subthreads: bool = Query(default=False),
+    subthread_depth: int = Query(default=1, ge=1, le=5),
+    subthread_turn_limit: int | None = Query(default=None, ge=1, le=100),
+    subthread_child_limit: int = Query(default=20, ge=1, le=50),
     db: AsyncSession = Depends(get_db),
     principal: Dict[str, Any] = Depends(get_current_published_app_principal),
 ):
@@ -279,10 +283,20 @@ async def external_get_thread(
     )
     if page_result is None:
         raise HTTPException(status_code=404, detail="Thread not found")
+    subtree = None
+    if include_subthreads:
+        subtree = await service.build_subthread_tree(
+            root_thread=page_result.thread,
+            root_page=page_result.page,
+            depth=subthread_depth,
+            turn_limit=subthread_turn_limit or limit,
+            child_limit=subthread_child_limit,
+        )
     return await _serialize_thread_detail(
         db=db,
         thread=page_result.thread,
         page=page_result.page,
+        subthread_tree=subtree,
     )
 
 

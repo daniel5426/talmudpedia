@@ -19,7 +19,7 @@ def test_resolve_tool_event_metadata_uses_platform_action_summary():
 
     assert metadata["tool_slug"] == "platform-agents"
     assert metadata["action"] == "agents.nodes.validate"
-    assert metadata["summary"] == "Validate persisted agent graph by id with compiler and runtime reference checks."
+    assert metadata["summary"] == "Analyze the persisted agent graph by id with compiler and runtime reference checks."
     assert metadata["display_name"] == metadata["summary"]
 
 
@@ -30,6 +30,7 @@ def test_normalize_filtered_event_to_v2_preserves_tool_display_metadata():
             "name": "platform sdk",
             "span_id": "call-1",
             "data": {
+                "source_node_id": "agent_1",
                 "input": {"action": "agents.nodes.validate"},
                 "tool_slug": "platform-agents",
                 "action": "agents.nodes.validate",
@@ -43,6 +44,8 @@ def test_normalize_filtered_event_to_v2_preserves_tool_display_metadata():
     assert stage == "tool"
     assert diagnostics == []
     assert payload["tool"] == "platform sdk"
+    assert payload["span_id"] == "call-1"
+    assert payload["source_node_id"] == "agent_1"
     assert payload["tool_slug"] == "platform-agents"
     assert payload["action"] == "agents.nodes.validate"
     assert payload["display_name"] == "Validate agent graph"
@@ -64,6 +67,7 @@ def test_ui_blocks_tool_metadata_and_completed_output_kind_are_preserved():
             "name": "UI Blocks",
             "span_id": "call-ui-1",
             "data": {
+                "source_node_id": "agent_ui",
                 "tool_slug": "builtin-ui-blocks",
                 "renderer_kind": "ui_blocks",
                 "display_name": "UI Blocks",
@@ -87,6 +91,8 @@ def test_ui_blocks_tool_metadata_and_completed_output_kind_are_preserved():
     assert event_name == "tool.completed"
     assert stage == "tool"
     assert diagnostics == []
+    assert payload["span_id"] == "call-ui-1"
+    assert payload["source_node_id"] == "agent_ui"
     assert payload["renderer_kind"] == "ui_blocks"
     assert payload["output_kind"] == "ui_blocks_bundle"
 
@@ -116,6 +122,7 @@ def test_normalize_filtered_event_to_v2_maps_tool_failed_to_terminal_tool_event(
             "name": "Architect Worker Spawn",
             "span_id": "call-err-1",
             "data": {
+                "source_node_id": "agent_spawn",
                 "tool_slug": "architect-worker-spawn",
                 "display_name": "Architect Worker Spawn",
                 "error": "task.objective is required",
@@ -127,6 +134,8 @@ def test_normalize_filtered_event_to_v2_maps_tool_failed_to_terminal_tool_event(
     assert event_name == "tool.failed"
     assert stage == "tool"
     assert payload["tool"] == "Architect Worker Spawn"
+    assert payload["span_id"] == "call-err-1"
+    assert payload["source_node_id"] == "agent_spawn"
     assert payload["tool_slug"] == "architect-worker-spawn"
     assert payload["error"] == "task.objective is required"
     assert diagnostics == [{"message": "task.objective is required"}]

@@ -9,6 +9,7 @@ import type { AgentExecutionEvent, AgentRunStatus } from "@/services"
 import {
   applyRuntimeEvents,
   createEmptyRuntimeGraphState,
+  isRunTreeTerminal,
   reconcileRuntimeTree,
   RuntimeGraphState,
 } from "@/services/agent-runtime-graph"
@@ -47,13 +48,11 @@ export function useAgentRuntimeGraph({
   const [isReconciling, setIsReconciling] = useState(false)
   const [reconcileError, setReconcileError] = useState<string | null>(null)
   const processedEventsRef = useRef(0)
-  const reconciledTerminalRunRef = useRef<string | null>(null)
 
   const clearRuntimeOverlay = useCallback(() => {
     setState(createEmptyRuntimeGraphState())
     setReconcileError(null)
     processedEventsRef.current = executionEvents.length
-    reconciledTerminalRunRef.current = null
   }, [executionEvents.length])
 
   const applyRuntimeNodeChanges = useCallback((changes: NodeChange<Node<AgentNodeData>>[]) => {
@@ -85,7 +84,6 @@ export function useAgentRuntimeGraph({
     setState(createEmptyRuntimeGraphState())
     setReconcileError(null)
     processedEventsRef.current = 0
-    reconciledTerminalRunRef.current = null
   }, [runId])
 
   useEffect(() => {
@@ -96,20 +94,22 @@ export function useAgentRuntimeGraph({
     setState((prev) => applyRuntimeEvents(prev, nextEvents, staticNodes, staticEdges))
   }, [executionEvents, runId, staticNodes, staticEdges])
 
-  const runTreeReconcile = useCallback(async () => {
-    if (!runId) return
+  const runTreeReconcile = useCallback(async (): Promise<boolean> => {
+    if (!runId) return false
     setIsReconciling(true)
     try {
       const tree = await agentService.getRunTree(runId)
-      setState((prev) => reconcileRuntimeTree(prev, tree))
+      setState((prev) => reconcileRuntimeTree(prev, tree, staticNodes))
       setReconcileError(null)
+      return isRunTreeTerminal(tree)
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to reconcile run tree"
       setReconcileError(message)
+      return false
     } finally {
       setIsReconciling(false)
     }
-  }, [runId])
+  }, [runId, staticNodes])
 
   useEffect(() => {
     if (!runId) return
@@ -123,9 +123,33 @@ export function useAgentRuntimeGraph({
 
   useEffect(() => {
     if (!runId || !runStatus || !TERMINAL_STATUSES.has(runStatus)) return
-    if (reconciledTerminalRunRef.current === runId) return
-    reconciledTerminalRunRef.current = runId
-    void runTreeReconcile()
+    let cancelled = false
+    let attempts = 0
+    let intervalId: number | null = null
+
+    const pollUntilTerminal = async () => {
+      attempts += 1
+      const treeIsTerminal = await runTreeReconcile()
+      if (cancelled) return
+      if (treeIsTerminal || attempts >= 12) {
+        if (intervalId !== null) {
+          window.clearInterval(intervalId)
+          intervalId = null
+        }
+      }
+    }
+
+    void pollUntilTerminal()
+    intervalId = window.setInterval(() => {
+      void pollUntilTerminal()
+    }, 500)
+
+    return () => {
+      cancelled = true
+      if (intervalId !== null) {
+        window.clearInterval(intervalId)
+      }
+    }
   }, [runId, runStatus, runTreeReconcile])
 
   return useMemo(() => ({

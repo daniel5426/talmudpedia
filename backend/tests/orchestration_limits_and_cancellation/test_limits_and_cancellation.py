@@ -244,3 +244,25 @@ async def test_cancel_subtree_is_idempotent_on_repeated_calls(db_session):
 
     assert first["cancelled_count"] >= len(group["spawned_run_ids"])
     assert second["cancelled_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_spawn_run_rejects_cancelled_caller(db_session):
+    fx = await _setup_fixture(db_session)
+    kernel = OrchestrationKernelService(db_session)
+    fx["root_run"].status = RunStatus.cancelled
+    await db_session.commit()
+
+    with pytest.raises(RuntimeError, match="cancelled"):
+        await kernel.spawn_run(
+            caller_run_id=fx["root_run"].id,
+            parent_node_id="cancelled_parent",
+            target_agent_id=fx["target"].id,
+            target_agent_slug=None,
+            mapped_input_payload={"input": "should not spawn"},
+            failure_policy="best_effort",
+            timeout_s=10,
+            scope_subset=["agents.execute"],
+            idempotency_key="cancelled-parent",
+            start_background=False,
+        )

@@ -80,7 +80,7 @@ const analysis: AgentGraphAnalysis = {
 }
 
 function renderWithDirection(ui: ReactElement) {
-  return render(<DirectionProvider initialDirection="ltr">{ui}</DirectionProvider>)
+  return render(<DirectionProvider>{ui}</DirectionProvider>)
 }
 
 describe("ConfigPanel value_ref contracts", () => {

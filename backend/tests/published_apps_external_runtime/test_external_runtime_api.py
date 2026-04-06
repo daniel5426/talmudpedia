@@ -1,7 +1,9 @@
 import pytest
+from uuid import UUID
 from sqlalchemy import func, select
 
-from app.db.postgres.models.agent_threads import AgentThread
+from app.db.postgres.models.agent_threads import AgentThread, AgentThreadTurn
+from app.db.postgres.models.agents import AgentRun
 from app.db.postgres.models.identity import User
 from app.db.postgres.models.published_apps import PublishedAppAccount, PublishedAppRevision, PublishedAppRevisionBuildStatus, PublishedAppRevisionKind
 from app.services.published_app_auth_service import AuthResult
@@ -257,6 +259,109 @@ async def test_external_stream_persists_thread_and_history_is_scoped(client, db_
         headers=_external_headers(token_two),
     )
     assert other_detail.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_external_thread_detail_returns_subthread_tree_when_requested(client, db_session, monkeypatch):
+    tenant, owner, _, agent = await seed_admin_tenant_and_agent(db_session)
+    app = await seed_published_app(
+        db_session,
+        tenant.id,
+        agent.id,
+        owner.id,
+        slug="external-subthreads-app",
+        allowed_origins=[ALLOWED_ORIGIN],
+    )
+
+    signup_resp = await client.post(
+        f"/public/external/apps/{app.slug}/auth/signup",
+        headers=_external_headers(),
+        json={"email": "subthreads@example.com", "password": "secret123"},
+    )
+    token = signup_resp.json()["token"]
+    await _grant_member_role(
+        db_session,
+        tenant_id=tenant.id,
+        owner_id=owner.id,
+        email="subthreads@example.com",
+    )
+
+    async def fake_run_and_stream(self, *args, **kwargs):
+        yield {"event": "token", "data": {"content": "Hello from external runtime"}, "visibility": "client_safe"}
+
+    monkeypatch.setattr("app.api.routers.published_apps_public.AgentExecutorService.run_and_stream", fake_run_and_stream)
+
+    stream_resp = await client.post(
+        f"/public/external/apps/{app.slug}/chat/stream",
+        headers=_external_headers(token),
+        json={"input": "hello"},
+    )
+    thread_id = UUID(str(stream_resp.headers["X-Thread-ID"]))
+    root_thread = await db_session.get(AgentThread, thread_id)
+    assert root_thread is not None
+    root_run = await db_session.scalar(select(AgentRun).where(AgentRun.thread_id == root_thread.id).limit(1))
+    root_turn = await db_session.scalar(select(AgentThreadTurn).where(AgentThreadTurn.run_id == root_run.id).limit(1))
+    assert root_run is not None
+    if root_turn is None:
+        root_turn = AgentThreadTurn(
+            thread_id=root_thread.id,
+            run_id=root_run.id,
+            turn_index=0,
+            user_input_text="hello",
+            assistant_output_text="Hello from external runtime",
+        )
+        db_session.add(root_turn)
+        await db_session.flush()
+
+    child_thread = AgentThread(
+        tenant_id=tenant.id,
+        app_account_id=root_thread.app_account_id,
+        agent_id=agent.id,
+        published_app_id=app.id,
+        surface=root_thread.surface,
+        title="External child thread",
+        root_thread_id=root_thread.id,
+        parent_thread_id=root_thread.id,
+        parent_thread_turn_id=root_turn.id,
+        spawned_by_run_id=root_run.id,
+        lineage_depth=1,
+    )
+    db_session.add(child_thread)
+    await db_session.flush()
+    child_run = AgentRun(
+        tenant_id=tenant.id,
+        agent_id=agent.id,
+        initiator_user_id=owner.id,
+        published_app_id=app.id,
+        published_app_account_id=root_thread.app_account_id,
+        thread_id=child_thread.id,
+        input_params={"input": "child hello"},
+        parent_run_id=root_run.id,
+        root_run_id=root_run.id,
+        depth=1,
+    )
+    db_session.add(child_run)
+    await db_session.flush()
+    db_session.add(
+        AgentThreadTurn(
+            thread_id=child_thread.id,
+            run_id=child_run.id,
+            turn_index=0,
+            user_input_text="child hello",
+            assistant_output_text="child response",
+        )
+    )
+    await db_session.commit()
+
+    detail_resp = await client.get(
+        f"/public/external/apps/{app.slug}/threads/{thread_id}",
+        headers=_external_headers(token),
+        params={"include_subthreads": "true"},
+    )
+    assert detail_resp.status_code == 200
+    payload = detail_resp.json()
+    assert payload["lineage"]["root_thread_id"] == str(root_thread.id)
+    assert payload["subthread_tree"]["children"][0]["thread"]["id"] == str(child_thread.id)
 
 
 @pytest.mark.asyncio

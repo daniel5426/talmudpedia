@@ -1,11 +1,10 @@
 import type { Metadata } from "next";
-import { cookies } from "next/headers";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { ThemeProvider } from "@/components/theme-provider";
 import { PaletteInitializer } from "@/components/palette-initializer";
 import { PaletteScript } from "@/components/palette-script";
-import { DirectionProvider, type DirectionMode } from "@/components/direction-provider";
+import { DirectionProvider } from "@/components/direction-provider";
 import { GoogleOAuthProvider } from "@react-oauth/google";
 import { TenantProvider } from "@/contexts/TenantContext";
 import { AuthRefresher } from "@/components/auth-refresher";
@@ -32,24 +31,20 @@ export const viewport = {
   interactiveWidget: "resizes-content",
 };
 
-export default async function RootLayout({
+export default function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  const cookieStore = await cookies();
-  const storedDirection = cookieStore.get("talmudpedia-direction")?.value as DirectionMode | undefined;
-  const initialDirection: DirectionMode = storedDirection === "ltr" ? "ltr" : "rtl";
-
   return (
-    <html lang="en" dir={initialDirection} data-direction={initialDirection} suppressHydrationWarning>
+    <html lang="en" dir="ltr" data-direction="ltr" suppressHydrationWarning>
       <head>
         <PaletteScript />
       </head>
       <body
         suppressHydrationWarning
-        dir={initialDirection}
-        data-direction={initialDirection}
+        dir="ltr"
+        data-direction="ltr"
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
         <ThemeProvider
@@ -60,7 +55,7 @@ export default async function RootLayout({
         >
           <PaletteInitializer />
           <GoogleOAuthProvider clientId={process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID || ""}>
-            <DirectionProvider initialDirection={initialDirection}>
+            <DirectionProvider>
               <TenantProvider>
                 <AuthRefresher />
                 {children}

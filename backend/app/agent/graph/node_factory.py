@@ -3,7 +3,9 @@ from typing import Any, Dict, Optional
 from uuid import UUID
 
 from langchain_core.messages import AIMessage
+from sqlalchemy import select
 
+from app.agent.execution.run_task_registry import is_run_cancel_requested
 from app.agent.registry import AgentExecutorRegistry, AgentOperatorRegistry
 from app.agent.graph.contracts import (
     extract_runtime_node_output,
@@ -11,6 +13,7 @@ from app.agent.graph.contracts import (
     resolve_node_display_name,
 )
 from app.agent.graph.ir import GraphIRNode
+from app.db.postgres.models.agents import AgentRun, RunStatus
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +70,26 @@ def build_node_fn(node: GraphIRNode, tenant_id: Optional[UUID], db: Any):
             "token": configurable.get("auth_token") or state_context.get("token"),
             "state_context": state_context,
         }
+
+        current_run_id = context.get("run_id")
+        if is_run_cancel_requested(
+            run_id=current_run_id,
+            root_run_id=context.get("root_run_id"),
+            parent_run_id=context.get("parent_run_id"),
+        ):
+            return {}
+        if db is not None and current_run_id:
+            try:
+                current_status = (
+                    await db.execute(
+                        select(AgentRun.status).where(AgentRun.id == UUID(str(current_run_id)))
+                    )
+                ).scalar_one_or_none()
+            except Exception:
+                current_status = None
+            current_status = str(getattr(current_status, "value", current_status) or "").strip().lower()
+            if current_status == RunStatus.cancelled.value:
+                return {}
 
         if not await executor.can_execute(state, node.config, context):
             return {}

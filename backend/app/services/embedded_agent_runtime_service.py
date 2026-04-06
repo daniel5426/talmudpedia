@@ -23,7 +23,12 @@ from app.db.postgres.models.agent_threads import AgentThread, AgentThreadTurn
 from app.services.runtime_attachment_service import RuntimeAttachmentService
 from app.services.context_window_service import ContextWindowService
 from app.services.model_accounting import usage_payload_from_run
-from app.services.thread_service import ThreadService, ThreadTurnPage
+from app.services.thread_detail_service import (
+    serialize_thread_paging,
+    serialize_thread_summary,
+    serialize_thread_tree,
+)
+from app.services.thread_service import ThreadService, ThreadSubtreeNode, ThreadTurnPage
 from app.services.usage_quota_service import QuotaExceededError
 
 
@@ -49,22 +54,6 @@ def _serialize_run_usage(run: AgentRun | None) -> dict[str, Any] | None:
 def _turn_final_output(turn: AgentThreadTurn) -> Any:
     metadata = turn.metadata_ if isinstance(turn.metadata_, dict) else {}
     return metadata.get("final_output")
-
-
-def serialize_thread_summary(thread: AgentThread) -> dict[str, Any]:
-    return {
-        "id": str(thread.id),
-        "agent_id": str(thread.agent_id) if thread.agent_id else None,
-        "external_user_id": thread.external_user_id,
-        "external_session_id": thread.external_session_id,
-        "title": thread.title,
-        "status": thread.status.value if hasattr(thread.status, "value") else str(thread.status),
-        "surface": thread.surface.value if hasattr(thread.surface, "value") else str(thread.surface),
-        "last_run_id": str(thread.last_run_id) if thread.last_run_id else None,
-        "last_activity_at": thread.last_activity_at,
-        "created_at": thread.created_at,
-        "updated_at": thread.updated_at,
-    }
 
 
 def _serialize_turn_base(turn: AgentThreadTurn) -> dict[str, Any]:
@@ -189,18 +178,12 @@ async def list_public_run_events(*, db: AsyncSession, run_id: UUID) -> list[dict
     return events
 
 
-def serialize_thread_paging(page: ThreadTurnPage) -> dict[str, Any]:
-    return {
-        "has_more": bool(page.has_more),
-        "next_before_turn_index": page.next_before_turn_index,
-    }
-
-
 async def serialize_thread_detail(
     *,
     db: AsyncSession,
     thread: AgentThread,
     page: ThreadTurnPage | None = None,
+    subthread_tree: ThreadSubtreeNode | None = None,
 ) -> dict[str, Any]:
     turns = list(page.turns if page is not None else sorted(thread.turns or [], key=lambda item: int(item.turn_index or 0)))
     payload = serialize_thread_summary(thread)
@@ -216,7 +199,20 @@ async def serialize_thread_detail(
         if page is not None
         else ThreadTurnPage(turns=turns, has_more=False, next_before_turn_index=None)
     )
+    if subthread_tree is not None:
+        payload["lineage"] = ThreadService.serialize_thread_lineage(thread)
+        payload["subthread_tree"] = await serialize_thread_tree(
+            subthread_tree,
+            serialize_turn=lambda turn: _serialize_public_turn(db=db, turn=turn),
+        )
     return payload
+
+
+async def _serialize_public_turn(*, db: AsyncSession, turn: AgentThreadTurn) -> dict[str, Any]:
+    return {
+        **_serialize_turn_base(turn),
+        "run_events": await list_public_run_events(db=db, run_id=turn.run_id),
+    }
 
 
 async def ensure_published_embed_agent(*, db: AsyncSession, agent_id: UUID) -> Agent:

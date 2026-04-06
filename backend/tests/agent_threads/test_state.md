@@ -1,9 +1,9 @@
 # Agent Threads Tests State
 
-Last Updated: 2026-03-29
+Last Updated: 2026-04-05
 
 ## Scope of the feature
-Thread turn sequencing, repair, retrieval behavior, and separation of persisted chat reply text from workflow-facing `final_output`.
+Thread turn sequencing, lineage stamping/validation, retrieval behavior, and separation of persisted chat reply text from workflow-facing `final_output`.
 
 ## Test files present
 - `test_thread_service.py`
@@ -14,11 +14,18 @@ Thread turn sequencing, repair, retrieval behavior, and separation of persisted 
 - Thread reads return repaired turns in deterministic order for replay consumers.
 - Completing a turn preserves structured `final_output` metadata separately from `assistant_output_text`.
 - Completing a turn preserves chat-facing `assistant_output_text` even when string `final_output` differs.
+- New root threads self-stamp immutable thread lineage.
+- Child threads inherit root/parent lineage from the spawning run.
+- Manual continuation of an existing child thread keeps original lineage.
+- Reusing a child thread from a different root thread is rejected.
 
 ## Last run command + date/time + result
 - Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/agent_threads/test_thread_service.py backend/tests/admin_monitoring/test_admin_monitoring_api.py backend/tests/published_apps_host_runtime/test_host_runtime_same_url_auth.py`
 - Date/Time: 2026-03-27 Asia/Hebron
 - Result: PASS (`17 passed`)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/agent_threads/test_thread_service.py backend/tests/admin_monitoring/test_admin_monitoring_api.py backend/tests/embedded_agent_runtime/test_embedded_agent_runtime_api.py`
+- Date/Time: 2026-04-05 Asia/Hebron
+- Result: PASS (`23 passed`)
 
 ## Known gaps or follow-ups
-- Does not yet cover embedded-runtime thread detail serialization.
+- Does not yet cover deletion semantics for large multi-level thread trees beyond route-level smoke coverage.

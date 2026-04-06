@@ -36,6 +36,7 @@ export interface ChatMessage {
   createdAt: Date;
   runId?: string;
   responseBlocks?: ChatRenderBlock[];
+  animateResponseBlocks?: boolean;
   isFinal?: boolean;
   approvalRequest?: boolean;
   attachments?: FileUIPart[];

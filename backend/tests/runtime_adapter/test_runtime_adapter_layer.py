@@ -1,3 +1,4 @@
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -78,7 +79,13 @@ async def test_langgraph_adapter_compile_run_and_stream():
     events = []
     async for event in adapter.stream(executable, {"messages": []}, config={"run_id": "run-1", "mode": "debug"}):
         events.append(event)
-    assert [event.event for event in events] == ["node_start", "node_end", "node_start", "node_end"]
+    assert [event.event for event in events] == [
+        "node_start",
+        "workflow.start_seeded",
+        "node_end",
+        "node_start",
+        "node_end",
+    ]
 
 
 @pytest.mark.asyncio
@@ -109,6 +116,42 @@ async def test_langgraph_adapter_stream_emits_platform_events():
 
     assert "node_start" in events
     assert "node_end" in events
+
+
+@pytest.mark.asyncio
+async def test_langgraph_adapter_cancels_graph_task_when_consumer_is_cancelled():
+    class HangingCompiled:
+        def __init__(self) -> None:
+            self.started = asyncio.Event()
+            self.cancelled = asyncio.Event()
+
+        async def astream_events(self, *_args, **_kwargs):
+            self.started.set()
+            try:
+                while True:
+                    await asyncio.sleep(1)
+                    if False:
+                        yield None
+            except asyncio.CancelledError:
+                self.cancelled.set()
+                raise
+
+    compiled = HangingCompiled()
+    adapter = LangGraphAdapter()
+    executable = RuntimeExecutable(graph_ir=None, workflow=None, compiled=compiled)
+
+    async def _consume() -> None:
+        async for _ in adapter.stream(executable, {"messages": []}, config={"run_id": "run-3", "mode": "debug"}):
+            pass
+
+    consumer_task = asyncio.create_task(_consume())
+    await asyncio.wait_for(compiled.started.wait(), timeout=2.0)
+
+    consumer_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await consumer_task
+
+    await asyncio.wait_for(compiled.cancelled.wait(), timeout=2.0)
 
 
 @pytest.mark.asyncio

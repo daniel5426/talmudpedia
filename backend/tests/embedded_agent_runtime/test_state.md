@@ -1,6 +1,6 @@
 # Embedded Agent Runtime Tests
 
-Last Updated: 2026-03-29
+Last Updated: 2026-04-05
 
 Scope:
 - Public embedded-agent runtime routes authenticated by tenant API keys.
@@ -15,6 +15,7 @@ Key scenarios covered:
 - Embedded runtime persists thread ownership and exposes scoped thread history.
 - Thread detail returns per-turn historical `run_events` for replaying old tool/reasoning activity.
 - Thread detail preserves separate `assistant_output_text` and `final_output` values on persisted turns.
+- Thread detail can return nested `lineage` and `subthread_tree` payloads when `include_subthreads=true`.
 - Embedded runtime supports scoped thread deletion through the public embed surface.
 - Attachment upload works through the public embed surface and attachment metadata is returned on thread turns.
 - Document attachments are processed before execution and thread deletion removes stored attachment bytes.
@@ -23,9 +24,9 @@ Key scenarios covered:
 - Wrong-scope and revoked API keys are rejected.
 - Draft agents cannot be embedded.
 
-Last run command: `PYTHONPATH=/Users/danielbenassaya/Code/personal/talmudpedia/backend python3 -m pytest -q /Users/danielbenassaya/Code/personal/talmudpedia/backend/tests/embedded_agent_runtime/test_embedded_agent_runtime_api.py`
-Last run date/time: 2026-03-20 13:45 EET
-Last run result: pass (8 passed)
+Last run command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/agent_threads/test_thread_service.py backend/tests/admin_monitoring/test_admin_monitoring_api.py backend/tests/embedded_agent_runtime/test_embedded_agent_runtime_api.py`
+Last run date/time: 2026-04-05 Asia/Hebron
+Last run result: pass (`23 passed`)
 
 Known gaps / follow-ups:
 - Add cross-agent thread read/delete coverage once multi-agent embed examples land.

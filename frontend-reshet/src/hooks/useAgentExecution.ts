@@ -12,8 +12,9 @@ const adaptStreamEvent = (event: any): any => {
     if (eventName === "run.paused") return { event: "run_status", run_id: event.run_id, data: { status: "paused" } };
     if (eventName === "run.cancelled") return { event: "run_status", run_id: event.run_id, data: { status: "cancelled" } };
     if (eventName === "run.failed") return { event: "error", run_id: event.run_id, data: { error: payload.error || "Run failed" } };
-    if (eventName === "tool.started") return { event: "on_tool_start", run_id: event.run_id, span_id: payload.span_id, name: payload.tool, data: { input: payload.input } };
-    if (eventName === "tool.completed") return { event: "on_tool_end", run_id: event.run_id, span_id: payload.span_id, name: payload.tool, data: { output: payload.output } };
+    if (eventName === "tool.started") return { event: "on_tool_start", run_id: event.run_id, span_id: payload.span_id, name: payload.tool, data: { input: payload.input, source_node_id: payload.source_node_id } };
+    if (eventName === "tool.completed") return { event: "on_tool_end", run_id: event.run_id, span_id: payload.span_id, name: payload.tool, data: { output: payload.output, source_node_id: payload.source_node_id } };
+    if (eventName === "tool.failed") return { event: "tool.failed", run_id: event.run_id, span_id: payload.span_id, name: payload.tool, data: { input: payload.input, error: payload.error, source_node_id: payload.source_node_id } };
     if (eventName === "reasoning.update") return { type: "reasoning", run_id: event.run_id, data: payload };
     return { event: eventName || "event", run_id: event.run_id, data: payload.data || payload, span_id: payload.span_id, name: payload.name };
 };

@@ -1,6 +1,6 @@
 # Platform Architect Spec
 
-Last Updated: 2026-03-25
+Last Updated: 2026-04-05
 
 ## Purpose
 This file is the focused current-state reference for the seeded `platform-architect` runtime.
@@ -9,6 +9,9 @@ This file is the focused current-state reference for the seeded `platform-archit
 - Active runtime is still a single `platform-architect` agent.
 - It is a tool-using backend runtime, not the removed staged GraphSpec orchestrator.
 - The architect can now supervise async worker runs through dedicated architect worker tools.
+- New architect chat runs must include `context.architect_mode`.
+- Internal playground/builder callers should explicitly send `architect_mode=default` unless they intentionally request another allowed mode.
+- Missing `context.architect_mode` is a startup contract error and currently returns HTTP 400 from `/agents/{id}/stream`.
 
 ## Seeded Tool Surface
 

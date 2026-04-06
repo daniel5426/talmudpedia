@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from contextlib import suppress
 from typing import Any, AsyncGenerator, Dict, Optional
 
 from langgraph.graph import END, StateGraph
@@ -120,12 +121,16 @@ class LangGraphAdapter(RuntimeAdapter):
                     if execution_done.is_set() and event_queue.empty():
                         break
         finally:
-            await graph_task
+            if not execution_done.is_set() and not graph_task.done():
+                graph_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await graph_task
             try:
                 active_emitter.reset(token)
             except ValueError:
                 logger.debug("Skipping active_emitter reset after context change", exc_info=True)
-            if execution_error:
+            current_task = asyncio.current_task()
+            if execution_error and not (current_task and current_task.cancelling()):
                 raise execution_error
 
     def get_state(self, executable: RuntimeExecutable, config: Dict[str, Any]) -> RuntimeState:

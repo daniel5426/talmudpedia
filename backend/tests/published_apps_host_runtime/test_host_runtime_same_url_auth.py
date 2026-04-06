@@ -366,6 +366,126 @@ async def test_host_thread_detail_includes_public_run_events(client, db_session,
 
 
 @pytest.mark.asyncio
+async def test_host_thread_detail_returns_subthread_tree_when_requested(client, db_session):
+    tenant, owner, _, agent = await seed_admin_tenant_and_agent(db_session)
+    app = await seed_published_app(
+        db_session,
+        tenant.id,
+        agent.id,
+        owner.id,
+        slug="host-subthreads-app",
+        auth_enabled=True,
+        auth_providers=["password"],
+    )
+
+    signup_resp = await client.post(
+        "/_talmudpedia/auth/signup",
+        headers=_host_headers(app.slug),
+        json={"email": "subthreads-host@example.com", "password": "secret123"},
+    )
+    assert signup_resp.status_code == 200
+    signup_user = (
+        await db_session.execute(select(User).where(User.email == "subthreads-host@example.com"))
+    ).scalar_one()
+    bootstrap = SecurityBootstrapService(db_session)
+    await bootstrap.ensure_default_roles(tenant.id)
+    await bootstrap.ensure_member_assignment(
+        tenant_id=tenant.id,
+        user_id=signup_user.id,
+        assigned_by=owner.id,
+    )
+    await db_session.commit()
+
+    app_account = (
+        await db_session.execute(
+            select(PublishedAppAccount).where(
+                PublishedAppAccount.published_app_id == app.id,
+                PublishedAppAccount.email == "subthreads-host@example.com",
+            )
+        )
+    ).scalar_one()
+
+    thread_service = ThreadService(db_session)
+    resolved = await thread_service.resolve_or_create_thread(
+        tenant_id=tenant.id,
+        user_id=None,
+        app_account_id=app_account.id,
+        agent_id=agent.id,
+        published_app_id=app.id,
+        surface=AgentThreadSurface.published_host_runtime,
+        thread_id=None,
+        input_text="root thread",
+    )
+    run = AgentRun(
+        tenant_id=tenant.id,
+        agent_id=agent.id,
+        initiator_user_id=owner.id,
+        published_app_id=app.id,
+        published_app_account_id=app_account.id,
+        thread_id=resolved.thread.id,
+        input_params={"input": "root thread"},
+    )
+    db_session.add(run)
+    await db_session.flush()
+    root_turn = await thread_service.start_turn(
+        thread_id=resolved.thread.id,
+        run_id=run.id,
+        user_input_text="root thread",
+    )
+
+    child_thread = AgentThread(
+        tenant_id=tenant.id,
+        app_account_id=app_account.id,
+        agent_id=agent.id,
+        published_app_id=app.id,
+        surface=AgentThreadSurface.published_host_runtime,
+        title="Host child thread",
+        root_thread_id=resolved.thread.id,
+        parent_thread_id=resolved.thread.id,
+        parent_thread_turn_id=root_turn.id,
+        spawned_by_run_id=run.id,
+        lineage_depth=1,
+    )
+    db_session.add(child_thread)
+    await db_session.flush()
+    child_run = AgentRun(
+        tenant_id=tenant.id,
+        agent_id=agent.id,
+        initiator_user_id=owner.id,
+        published_app_id=app.id,
+        published_app_account_id=app_account.id,
+        thread_id=child_thread.id,
+        input_params={"input": "child thread"},
+        parent_run_id=run.id,
+        root_run_id=run.id,
+        depth=1,
+    )
+    db_session.add(child_run)
+    await db_session.flush()
+    await thread_service.start_turn(
+        thread_id=child_thread.id,
+        run_id=child_run.id,
+        user_input_text="child thread",
+    )
+    await thread_service.complete_turn(
+        run_id=child_run.id,
+        status=AgentThreadTurnStatus.completed,
+        assistant_output_text="child response",
+        metadata={"final_output": "child response"},
+    )
+    await db_session.commit()
+
+    thread_resp = await client.get(
+        f"/_talmudpedia/threads/{resolved.thread.id}?include_subthreads=true",
+        headers=_host_headers(app.slug),
+    )
+    assert thread_resp.status_code == 200
+    payload = thread_resp.json()
+    assert payload["lineage"]["root_thread_id"] == str(resolved.thread.id)
+    assert payload["subthread_tree"]["children"][0]["thread"]["id"] == str(child_thread.id)
+
+
+@pytest.mark.asyncio
 async def test_legacy_public_published_path_endpoints_return_410(client, db_session):
     tenant, owner, _, agent = await seed_admin_tenant_and_agent(db_session)
     app = await seed_published_app(

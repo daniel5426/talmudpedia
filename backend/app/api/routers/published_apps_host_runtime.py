@@ -2,8 +2,7 @@ from __future__ import annotations
 
 import os
 from datetime import datetime, timezone
-from typing import Any, Optional
-from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
+from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
@@ -42,12 +41,19 @@ from app.db.postgres.session import get_db
 from app.services.published_app_auth_service import PublishedAppAuthError, PublishedAppAuthService
 from app.services.published_app_analytics_service import PublishedAppAnalyticsService
 from app.db.postgres.models.published_app_analytics import PublishedAppAnalyticsSurface
+from app.services.published_app_host_runtime_support import (
+    _append_query,
+    _normalize_return_to_for_host,
+    _request_origin_from_base_url,
+    _request_relative_url,
+    _serialize_thread_detail as _serialize_thread_detail_impl,
+    _serialize_thread_summary,
+    _slug_from_host,
+)
+from app.services.embedded_agent_runtime_service import list_public_run_events
 from app.services.published_app_auth_shell_renderer import render_published_app_auth_shell
 from app.services.thread_service import ThreadService
 from app.services.runtime_attachment_service import RuntimeAttachmentOwner, RuntimeAttachmentService
-from app.services.embedded_agent_runtime_service import list_public_run_events
-from app.services.model_accounting import usage_payload_from_run
-from app.services.thread_service import ThreadTurnPage
 from app.services.published_app_bundle_storage import (
     PublishedAppBundleAssetNotFound,
     PublishedAppBundleStorage,
@@ -62,134 +68,18 @@ INTERNAL_PREFIX = "/_talmudpedia"
 SESSION_COOKIE_NAME = os.getenv("PUBLISHED_APP_SESSION_COOKIE_NAME", "published_app_session").strip() or "published_app_session"
 
 
-def _serialize_run_usage(run: Any) -> dict[str, Any] | None:
-    return usage_payload_from_run(run)
-
-
-def _serialize_thread_summary(thread: Any) -> dict[str, Any]:
-    return {
-        "id": str(thread.id),
-        "title": thread.title,
-        "status": thread.status.value if hasattr(thread.status, "value") else str(thread.status),
-        "surface": thread.surface.value if hasattr(thread.surface, "value") else str(thread.surface),
-        "last_run_id": str(thread.last_run_id) if thread.last_run_id else None,
-        "created_at": thread.created_at,
-        "updated_at": thread.updated_at,
-        "last_activity_at": thread.last_activity_at,
-    }
-
-
-def _turn_final_output(turn: Any) -> Any:
-    metadata = turn.metadata_ if isinstance(getattr(turn, "metadata_", None), dict) else {}
-    return metadata.get("final_output")
-
-
-def _serialize_thread_paging(page: ThreadTurnPage) -> dict[str, Any]:
-    return {
-        "has_more": bool(page.has_more),
-        "next_before_turn_index": page.next_before_turn_index,
-    }
-
-
-async def _serialize_thread_detail(
-    *,
-    db: AsyncSession,
-    thread: Any,
-    page: ThreadTurnPage | None = None,
-) -> dict[str, Any]:
-    turns = list(page.turns if page is not None else sorted(list(thread.turns or []), key=lambda item: int(item.turn_index or 0)))
-    serialized_turns: list[dict[str, Any]] = []
-    for turn in turns:
-        serialized_turns.append(
-            {
-                "id": str(turn.id),
-                "run_id": str(turn.run_id),
-                "turn_index": int(turn.turn_index or 0),
-                "status": turn.status.value if hasattr(turn.status, "value") else str(turn.status),
-                "user_input_text": turn.user_input_text,
-                "assistant_output_text": turn.assistant_output_text,
-                "final_output": _turn_final_output(turn),
-                "run_usage": _serialize_run_usage(getattr(turn, "run", None)),
-                "created_at": turn.created_at,
-                "completed_at": turn.completed_at,
-                "metadata": turn.metadata_,
-                "attachments": [
-                    RuntimeAttachmentService.serialize_attachment(link.attachment)
-                    for link in sorted(turn.attachment_links or [], key=lambda item: str(item.id))
-                    if getattr(link, "attachment", None) is not None
-                ],
-                "run_events": await list_public_run_events(db=db, run_id=turn.run_id),
-            }
-        )
-    return {
-        **_serialize_thread_summary(thread),
-        "turns": serialized_turns,
-        "paging": _serialize_thread_paging(
-            page if page is not None else ThreadTurnPage(turns=turns, has_more=False, next_before_turn_index=None)
-        ),
-    }
-
-
-def _apps_base_domain() -> str:
-    return os.getenv("APPS_BASE_DOMAIN", "apps.localhost").strip().lower()
-
-
-def _host_without_port(host_header: str | None) -> str:
-    return (host_header or "").split(":", 1)[0].strip().lower()
-
-
-def _slug_from_host(host_header: str | None) -> Optional[str]:
-    host = _host_without_port(host_header)
-    base_domain = _apps_base_domain()
-    suffix = f".{base_domain}"
-    if not host or host == base_domain or not host.endswith(suffix):
-        return None
-    slug = host[: -len(suffix)].strip().lower()
-    return slug or None
-
-
 def _is_app_host_request(request: Request) -> bool:
     return _slug_from_host(request.headers.get("host")) is not None
 
 
-def _request_origin(request: Request) -> str:
-    parsed = urlparse(str(request.base_url))
-    return f"{parsed.scheme}://{parsed.netloc}".rstrip("/")
-
-
-def _request_relative_url(request: Request) -> str:
-    path = request.url.path or "/"
-    query = request.url.query or ""
-    return f"{path}?{query}" if query else path
-
-
-def _normalize_return_to_for_host(request: Request, raw: str | None) -> str:
-    value = (raw or "").strip()
-    if not value:
-        return "/"
-    if value.startswith("/"):
-        return value
-    try:
-        parsed = urlparse(value)
-        current = urlparse(str(request.base_url))
-        if parsed.scheme in {"http", "https"} and parsed.netloc and parsed.netloc == current.netloc:
-            path = parsed.path or "/"
-            if parsed.query:
-                path = f"{path}?{parsed.query}"
-            if parsed.fragment:
-                path = f"{path}#{parsed.fragment}"
-            return path
-    except Exception:
-        pass
-    return "/"
-
-
-def _append_query(url: str, params: dict[str, str]) -> str:
-    parsed = urlparse(url)
-    current = dict(parse_qsl(parsed.query, keep_blank_values=True))
-    current.update(params)
-    updated = parsed._replace(query=urlencode(current))
-    return urlunparse(updated)
+async def _serialize_thread_detail(*, db: AsyncSession, thread, page=None, subthread_tree=None):
+    return await _serialize_thread_detail_impl(
+        db=db,
+        thread=thread,
+        page=page,
+        subthread_tree=subthread_tree,
+        run_events_loader=list_public_run_events,
+    )
 
 
 def _set_session_cookie(*, response: Response, request: Request, token: str) -> None:
@@ -223,7 +113,7 @@ def _entry_html_from_revision(revision: PublishedAppRevision) -> str:
 
 
 def _build_host_runtime_bootstrap(*, request: Request, app: PublishedApp, revision: PublishedAppRevision) -> RuntimeBootstrapResponse:
-    origin = _request_origin(request)
+    origin = _request_origin_from_base_url(str(request.base_url))
     stream_path = f"{INTERNAL_PREFIX}/chat/stream"
     return RuntimeBootstrapResponse(
         app_id=str(app.id),
@@ -378,7 +268,7 @@ async def _serve_auth_shell_response(
     action = "signup" if request.query_params.get("auth_mode") == "signup" else "login"
     html_payload = render_published_app_auth_shell(
         app=app,
-        return_to=_request_relative_url(request),
+        return_to=_request_relative_url(request.url.path or "/", request.url.query or ""),
         action=action,
         error_message="Your session expired. Please sign in again." if stale_cookie else None,
     )
@@ -633,8 +523,8 @@ async def host_google_start(
     if not client_id or not redirect_uri:
         raise HTTPException(status_code=400, detail="Google OAuth credentials are incomplete")
 
-    normalized_return = _normalize_return_to_for_host(request, return_to) or "/"
-    target_abs = f"{_request_origin(request)}{normalized_return}"
+    normalized_return = _normalize_return_to_for_host(str(request.base_url), return_to) or "/"
+    target_abs = f"{_request_origin_from_base_url(str(request.base_url))}{normalized_return}"
     auth_url = auth_service.build_google_auth_url(
         client_id=client_id,
         redirect_uri=redirect_uri,
@@ -694,7 +584,7 @@ async def host_google_callback(
     except PublishedAppAuthError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
-    return_to = _normalize_return_to_for_host(request, state_payload.get("return_to"))  # type: ignore[name-defined]
+    return_to = _normalize_return_to_for_host(str(request.base_url), state_payload.get("return_to"))  # type: ignore[name-defined]
     redirect = RedirectResponse(url=return_to or "/", status_code=302)
     _set_session_cookie(response=redirect, request=request, token=result.token)
     return redirect
@@ -836,6 +726,10 @@ async def host_get_thread(
     request: Request,
     before_turn_index: int | None = Query(default=None, ge=0),
     limit: int = Query(default=20, ge=1, le=100),
+    include_subthreads: bool = Query(default=False),
+    subthread_depth: int = Query(default=1, ge=1, le=5),
+    subthread_turn_limit: int | None = Query(default=None, ge=1, le=100),
+    subthread_child_limit: int = Query(default=20, ge=1, le=50),
     db: AsyncSession = Depends(get_db),
 ):
     app = await _resolve_host_app_or_404(db, request)
@@ -861,8 +755,18 @@ async def host_get_thread(
     if page_result is None:
         raise HTTPException(status_code=404, detail="Thread not found")
 
+    subtree = None
+    if include_subthreads:
+        subtree = await service.build_subthread_tree(
+            root_thread=page_result.thread,
+            root_page=page_result.page,
+            depth=subthread_depth,
+            turn_limit=subthread_turn_limit or limit,
+            child_limit=subthread_child_limit,
+        )
+
     response = JSONResponse(
-        jsonable_encoder(await _serialize_thread_detail(db=db, thread=page_result.thread, page=page_result.page))
+        jsonable_encoder(await _serialize_thread_detail(db=db, thread=page_result.thread, page=page_result.page, subthread_tree=subtree))
     )
     if stale_cookie:
         _clear_session_cookie(response=response, request=request)

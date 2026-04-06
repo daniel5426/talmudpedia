@@ -164,7 +164,7 @@ export function BotInputArea({
   }
 
   return (
-    <div className={cn("w-full", animate && "animate-in fade-in slide-in-from-bottom-4 duration-500")}>
+    <div className={cn("w-[calc(100%-2rem)]", animate && "animate-in fade-in slide-in-from-bottom-4 duration-500")}>
       <PromptInputProvider>
         <PromptInputAttachments>
           {(attachment) => <NewPromptInputAttachment data={attachment} />}
@@ -186,7 +186,7 @@ export function BotInputArea({
           className={cn(
             "relative",
             className,
-            "bg-primary-soft border-[0.4px] rounded-lg",
+            "bg-primary-soft shadow-lg rounded-2xl",
             "[&_[data-slot=input-group]]:has-[[data-slot=input-group-control]:focus-visible]:ring-0",
             "[&_[data-slot=input-group]]:has-[[data-slot=input-group-control]:focus-visible]:border-input"
           )}

@@ -264,4 +264,79 @@ describe("runtime overlay reducer", () => {
     expect(state.runtimeStatusByNodeId.end).toBe("failed")
     expect(state.runtimeNotesByNodeId.end).toBe("Speech-to-text source resolved to no attachments")
   })
+
+  it("marks active runtime child nodes failed when the root run is cancelled", () => {
+    const nodes: Node<AgentNodeData>[] = [
+      {
+        id: "agent_1",
+        type: "agent",
+        position: { x: 0, y: 0 },
+        data: {
+          nodeType: "agent",
+          category: "reasoning",
+          displayName: "Agent",
+          config: {},
+          inputType: "message",
+          outputType: "message",
+          isConfigured: true,
+          hasErrors: false,
+        },
+      },
+    ]
+
+    const events: AgentExecutionEvent[] = [
+      { event: "node_start", run_id: "run-root", span_id: "agent_1", data: {} },
+      {
+        event: "orchestration.child_lifecycle",
+        run_id: "run-root",
+        span_id: "agent_1",
+        data: { child_run_id: "child-a", status: "running" },
+      },
+      { event: "run.cancelled", run_id: "run-root", data: { status: "cancelled" } },
+    ]
+
+    const state = applyRuntimeEvents(createEmptyRuntimeGraphState(), events, nodes, [])
+
+    expect(state.runtimeStatusByNodeId.agent_1).toBe("failed")
+    const childNode = state.runtimeNodes.find((node) => node.id === "runtime-run:child-a")
+    expect(childNode?.data.executionStatus).toBe("failed")
+    expect((childNode?.data.config as Record<string, unknown>)?.run_status).toBe("cancelled")
+  })
+
+  it("keeps a parent node running while a linked child run is still active", () => {
+    const nodes: Node<AgentNodeData>[] = [
+      {
+        id: "agent_1",
+        type: "agent",
+        position: { x: 0, y: 0 },
+        data: {
+          nodeType: "agent",
+          category: "reasoning",
+          displayName: "Agent",
+          config: {},
+          inputType: "message",
+          outputType: "message",
+          isConfigured: true,
+          hasErrors: false,
+        },
+      },
+    ]
+
+    const events: AgentExecutionEvent[] = [
+      { event: "node_start", run_id: "run-root", span_id: "agent_1", data: {} },
+      { event: "node_end", run_id: "run-root", span_id: "agent_1", data: { output: {} } },
+      {
+        event: "orchestration.child_lifecycle",
+        run_id: "run-root",
+        span_id: "agent_1",
+        data: { child_run_id: "child-a", status: "running" },
+      },
+    ]
+
+    const state = applyRuntimeEvents(createEmptyRuntimeGraphState(), events, nodes, [])
+
+    expect(state.runtimeStatusByNodeId.agent_1).toBe("running")
+    const childNode = state.runtimeNodes.find((node) => node.id === "runtime-run:child-a")
+    expect((childNode?.data.config as Record<string, unknown>)?.parent_node_id).toBe("agent_1")
+  })
 })

@@ -1,6 +1,6 @@
 # Embedded Agent Runtime Spec
 
-Last Updated: 2026-03-29
+Last Updated: 2026-04-05
 
 This document defines the canonical v1 external embed/plugin contract for published agents used inside customer-owned applications.
 
@@ -202,6 +202,13 @@ Important boundary:
 - this is intended for replaying tool and reasoning history on old chats without bypassing the embed contract
 - final assistant text still comes from `assistant_output_text`, not token replay
 - `final_output` is the workflow-facing return value and may differ from `assistant_output_text`
+
+Optional nested-thread detail:
+
+- `include_subthreads=true` adds `lineage` and `subthread_tree`
+- `subthread_depth`, `subthread_turn_limit`, and `subthread_child_limit` control subtree expansion
+- `lineage` exposes `root_thread_id`, `parent_thread_id`, `parent_thread_turn_id`, `spawned_by_run_id`, `depth`, and `is_root`
+- `subthread_tree` is recursive and returns `thread`, `lineage`, `turns`, `paging`, `has_children`, and `children`
 
 ## Canonical Implementation References
 

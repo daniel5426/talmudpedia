@@ -181,6 +181,22 @@ function updateExistingStepOutput(
   }
 }
 
+function finalizeActiveSteps(
+  steps: ExecutionStep[],
+  activeStepIndexById: Map<string, number>,
+  status: "completed" | "error",
+  output: unknown,
+) {
+  for (const index of activeStepIndexById.values()) {
+    steps[index] = {
+      ...steps[index],
+      status,
+      output: steps[index].output !== undefined ? steps[index].output : output,
+    };
+  }
+  activeStepIndexById.clear();
+}
+
 function buildCompletedStep(
   rawEvent: Record<string, unknown>,
   payload: Record<string, unknown>,
@@ -191,7 +207,7 @@ function buildCompletedStep(
 ): ExecutionStep {
   return {
     id: resolveStepId(rawEvent, payload, fallbackId),
-    nodeId: stepType === "node" ? resolveNodeId(rawEvent, payload, eventName) : undefined,
+    nodeId: resolveNodeId(rawEvent, payload, eventName),
     spanId: resolveSpanId(rawEvent, payload),
     name:
       stepType === "tool"
@@ -342,13 +358,27 @@ export function buildExecutionStepsFromRunEvents(
       const fallbackIndex =
         existingIndex ??
         [...activeStepIndexById.values()].sort((left, right) => right - left)[0];
-      if (fallbackIndex === undefined) return;
+      if (fallbackIndex === undefined) {
+        finalizeActiveSteps(steps, activeStepIndexById, "error", resolveErrorOutput(rawEvent, payload));
+        return;
+      }
       steps[fallbackIndex] = {
         ...steps[fallbackIndex],
         status: "error",
         output: resolveErrorOutput(rawEvent, payload),
       };
       activeStepIndexById.delete(steps[fallbackIndex].id);
+      return;
+    }
+
+    if (eventName === "run.cancelled") {
+      finalizeActiveSteps(steps, activeStepIndexById, "error", { error: "Run cancelled" });
+      return;
+    }
+
+    if (eventName === "run.completed") {
+      finalizeActiveSteps(steps, activeStepIndexById, "completed", undefined);
+      return;
     }
   });
 
@@ -370,6 +400,8 @@ export function isExecutionTraceEvent(eventName: string): boolean {
     "workflow.end_materialized",
     "error",
     "run.failed",
+    "run.completed",
+    "run.cancelled",
   ]).has(String(eventName || "").trim());
 }
 

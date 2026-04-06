@@ -81,6 +81,8 @@ class EventEmitter:
             data["message"] = input_data["message"]
         if isinstance(tool_metadata, dict):
             data.update(tool_metadata)
+        if "source_node_id" not in data and node_id is not None:
+            data["source_node_id"] = node_id
 
         span_id = node_id
         if isinstance(tool_metadata, dict) and tool_metadata.get("tool_call_id"):
@@ -107,6 +109,8 @@ class EventEmitter:
         data = {"output": output_data} if output_data else {}
         if isinstance(tool_metadata, dict):
             data.update(tool_metadata)
+        if "source_node_id" not in data and node_id is not None:
+            data["source_node_id"] = node_id
         span_id = node_id
         if isinstance(tool_metadata, dict) and tool_metadata.get("tool_call_id"):
             span_id = str(tool_metadata["tool_call_id"])
@@ -135,6 +139,8 @@ class EventEmitter:
             data["input"] = input_data
         if isinstance(tool_metadata, dict):
             data.update(tool_metadata)
+        if "source_node_id" not in data and node_id is not None:
+            data["source_node_id"] = node_id
         span_id = node_id
         if isinstance(tool_metadata, dict) and tool_metadata.get("tool_call_id"):
             span_id = str(tool_metadata["tool_call_id"])

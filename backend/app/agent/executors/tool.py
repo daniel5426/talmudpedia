@@ -31,6 +31,8 @@ from app.agent.execution.tool_error_details import (
     build_tool_exception_details,
 )
 from app.agent.executors.retrieval_runtime import PipelineToolRuntime, RetrievalPipelineRuntime
+from app.agent.execution.run_task_registry import is_run_cancel_requested
+from app.db.postgres.models.agents import AgentRun, RunStatus
 from app.db.postgres.models.artifact_runtime import ArtifactKind, ArtifactRunDomain
 from app.db.postgres.models.registry import IntegrationCredentialCategory, ToolRegistry
 from app.services.artifact_runtime.execution_service import ArtifactExecutionService
@@ -261,6 +263,34 @@ class ToolNodeExecutor(BaseNodeExecutor):
         except Exception:
             return None
 
+    @staticmethod
+    def _resolve_source_node_id(node_context: dict[str, Any] | None) -> str:
+        source_node_id = str((node_context or {}).get("source_node_id") or "").strip()
+        if source_node_id:
+            return source_node_id
+        return str((node_context or {}).get("node_id") or "tool_node").strip() or "tool_node"
+
+    async def _assert_current_run_accepting_work(self, node_context: dict[str, Any] | None) -> None:
+        if not self.db:
+            return
+        current_run_id = self._parse_uuid((node_context or {}).get("run_id"))
+        current_root_run_id = self._parse_uuid((node_context or {}).get("root_run_id"))
+        current_parent_run_id = self._parse_uuid((node_context or {}).get("parent_run_id"))
+        if is_run_cancel_requested(
+            run_id=current_run_id,
+            root_run_id=current_root_run_id,
+            parent_run_id=current_parent_run_id,
+        ):
+            raise RuntimeError(f"Run {current_run_id or current_root_run_id or current_parent_run_id} is cancelled")
+        if current_run_id is None:
+            return
+        current_status = (
+            await self.db.execute(select(AgentRun.status).where(AgentRun.id == current_run_id))
+        ).scalar_one_or_none()
+        status_text = str(getattr(current_status, "value", current_status) or "").strip().lower()
+        if status_text == RunStatus.cancelled.value:
+            raise RuntimeError(f"Run {current_run_id} is cancelled")
+
     async def _resolve_agent_target(
         self,
         *,
@@ -420,6 +450,7 @@ class ToolNodeExecutor(BaseNodeExecutor):
         execution_config: dict[str, Any],
         node_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        await self._assert_current_run_accepting_work(node_context)
         target = await self._resolve_agent_target(
             target_agent_id_raw=implementation_config.get("target_agent_id") or input_data.get("target_agent_id"),
             target_agent_slug_raw=implementation_config.get("target_agent_slug") or input_data.get("target_agent_slug"),
@@ -476,70 +507,61 @@ class ToolNodeExecutor(BaseNodeExecutor):
         if not isinstance(requested_scopes, list):
             requested_scopes = None
 
+        current_run_id = self._parse_uuid((node_context or {}).get("run_id"))
+        current_root_run_id = self._parse_uuid((node_context or {}).get("root_run_id")) or current_run_id
+        current_depth = int((node_context or {}).get("depth") or 0)
+        source_node_id = self._resolve_source_node_id(node_context)
+        if current_root_run_id is not None:
+            child_context["root_run_id"] = str(current_root_run_id)
+        if current_run_id is not None:
+            child_context["parent_run_id"] = str(current_run_id)
+        child_context["parent_node_id"] = source_node_id
+        child_context["depth"] = current_depth + 1
+
         input_params = dict(child_input)
         input_params["input"] = input_text
         input_params["messages"] = messages
         input_params["context"] = child_context
 
         from app.agent.execution.service import AgentExecutorService
-        from app.db.postgres.models.agents import AgentRun, RunStatus
 
         user_id = self._parse_uuid((node_context or {}).get("user_id"))
-        executor = AgentExecutorService(db=self.db)
-        run_id = await executor.start_run(
+        await self._assert_current_run_accepting_work(node_context)
+        execution = await AgentExecutorService.execute_sync_with_new_session(
             agent_id=target.id,
             input_params=input_params,
             user_id=user_id,
-            background=False,
             mode=mode,
             requested_scopes=requested_scopes,
+            root_run_id=current_root_run_id,
+            parent_run_id=current_run_id,
+            parent_node_id=source_node_id,
+            depth=current_depth + 1,
+            spawn_key=str(child_context.get("spawn_key") or "").strip() or None,
+            orchestration_group_id=self._parse_uuid(child_context.get("orchestration_group_id")),
+            thread_id=self._parse_uuid(child_context.get("thread_id")),
+            timeout_s=float(timeout_s),
         )
 
-        try:
-            async def _run_sync() -> None:
-                async for _ in executor.run_and_stream(run_id, self.db, None, mode):
-                    pass
-
-            await asyncio.wait_for(_run_sync(), timeout=timeout_s)
-        except asyncio.TimeoutError:
-            run = await self.db.get(AgentRun, run_id)
-            if run is not None:
-                run.status = RunStatus.failed
-                run.error_message = f"agent_call timed out after {timeout_s}s"
-                run.completed_at = datetime.now(timezone.utc)
-                await self.db.commit()
-            return {
-                "mode": "sync",
-                "target_agent_id": str(target.id),
-                "target_agent_slug": str(getattr(target, "slug", "")),
-                "run_id": str(run_id),
-                "status": RunStatus.failed.value,
-                "error": f"agent_call timed out after {timeout_s}s",
-            }
-
-        run = await self.db.get(AgentRun, run_id)
-        if run is None:
-            raise RuntimeError("agent_call child run missing after execution")
-
-        output_result = run.output_result if isinstance(run.output_result, dict) else {}
+        output_result = execution.output_result
         state = output_result.get("state") if isinstance(output_result.get("state"), dict) else {}
         compact_output = state.get("last_agent_output")
         compact_context = output_result.get("context")
-        status_text = str(getattr(run.status, "value", run.status))
+        status_text = execution.status
 
         result = {
             "mode": "sync",
             "target_agent_id": str(target.id),
             "target_agent_slug": str(getattr(target, "slug", "")),
-            "run_id": str(run.id),
+            "run_id": str(execution.run_id),
             "status": status_text,
         }
         if compact_output is not None:
             result["output"] = compact_output
         if compact_context is not None:
             result["context"] = compact_context
-        if run.error_message:
-            result["error"] = run.error_message
+        if execution.error_message:
+            result["error"] = execution.error_message
         return result
 
     async def _execute_http_tool(
@@ -1476,6 +1498,8 @@ class ToolNodeExecutor(BaseNodeExecutor):
         if not tool_id_str:
             raise ValueError("Missing tool_id")
 
+        await self._assert_current_run_accepting_work(context)
+
         tool_id = UUID(tool_id_str)
         tool = await self._load_tool(tool_id)
         self._assert_runtime_policy(tool, context)
@@ -1486,12 +1510,14 @@ class ToolNodeExecutor(BaseNodeExecutor):
 
         emitter = active_emitter.get()
         node_id = context.get("node_id", "tool_node") if context else "tool_node"
+        source_node_id = self._resolve_source_node_id(context)
         tool_event_metadata = resolve_tool_event_metadata(
             tool_slug=getattr(tool, "slug", None),
             tool_name=tool.name,
             input_data=input_data,
         )
-        tool_event_metadata["tool_call_id"] = uuid4().hex
+        tool_event_metadata["tool_call_id"] = str((context or {}).get("tool_call_id") or uuid4().hex)
+        tool_event_metadata["source_node_id"] = source_node_id
         if emitter:
             emitter.emit_tool_start(tool.name, input_data, node_id, tool_event_metadata)
 

@@ -1,6 +1,6 @@
 "use client"
 
-import { memo } from "react"
+import { memo, type ReactNode } from "react"
 import { Handle, Position, NodeProps } from "@xyflow/react"
 import { cn } from "@/lib/utils"
 import {
@@ -39,6 +39,8 @@ interface BaseNodeProps extends NodeProps {
     getHandleColor: (type: string) => string
     className?: string
     children?: React.ReactNode
+    headerTrailing?: React.ReactNode
+    leadingBadge?: ReactNode
 }
 
 function BaseNodeComponent({
@@ -49,7 +51,9 @@ function BaseNodeComponent({
     categoryColor,
     getHandleColor,
     className,
-    children
+    children,
+    headerTrailing,
+    leadingBadge
 }: BaseNodeProps) {
     const handlesConnectable = isConnectable ?? true
     const inputHandleColor = data.inputType ? getHandleColor(data.inputType) : "#6b7280"
@@ -101,20 +105,26 @@ function BaseNodeComponent({
             )}
 
             <div className="flex items-center p-2.5 gap-2.5">
-                <div
-                    className="w-7 h-7 rounded-lg shrink-0 flex items-center justify-center relative shadow-sm"
-                    style={{ backgroundColor: categoryColor }}
-                >
-                    {/* Status Overlay Icon */}
-                    {data.executionStatus && data.executionStatus !== 'pending' && (
-                        <div className={cn(
-                            "absolute -top-1 -right-1 w-4 h-4 rounded-full bg-background flex items-center justify-center shadow-sm",
-                            statusColors[data.executionStatus]
-                        )}>
+                <div className="relative h-7 w-7 shrink-0">
+                    <div
+                        className={cn(
+                            "absolute inset-0 flex items-center justify-center overflow-hidden rounded-lg shadow-sm",
+                            leadingBadge && "group"
+                        )}
+                        style={{ backgroundColor: categoryColor }}
+                    >
+                        {leadingBadge ?? <Icon className="h-4 w-4 text-foreground/80" />}
+                    </div>
+                    {data.executionStatus && data.executionStatus !== "pending" && (
+                        <div
+                            className={cn(
+                                "pointer-events-none absolute -right-1 -top-1 z-30 flex h-4 w-4 items-center justify-center rounded-full bg-background shadow-sm ring-1 ring-background",
+                                statusColors[data.executionStatus]
+                            )}
+                        >
                             {statusIcons[data.executionStatus]}
                         </div>
                     )}
-                    <Icon className="h-4 w-4 text-foreground/80" />
                 </div>
 
                 <div className="flex-1 min-w-0">
@@ -126,8 +136,10 @@ function BaseNodeComponent({
                     </h4>
                 </div>
 
+                {headerTrailing}
+
                 {/* Status Indicators */}
-                <div className="flex items-center gap-1.5 ml-1">
+                <div className="flex items-center gap-1.5 ml-1 shrink-0">
                     {data.hasErrors ? (
                         <AlertCircle className="h-3.5 w-3.5 text-destructive" />
                     ) : !data.isConfigured && !data.executionStatus ? (

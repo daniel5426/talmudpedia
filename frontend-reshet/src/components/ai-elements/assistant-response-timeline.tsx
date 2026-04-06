@@ -1,6 +1,7 @@
 "use client";
 
-import { Fragment, useMemo } from "react";
+import Link from "next/link";
+import { Fragment, useMemo, useState } from "react";
 import {
   formatToolPathLabel,
   formatToolReadPath,
@@ -16,68 +17,139 @@ import type {
 } from "@/services/chat-presentation";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { ArrowUpRight, ChevronDown, ChevronRight } from "lucide-react";
 import { MessageResponse } from "./message";
+import { SmoothedMessageResponse } from "./smoothed-message-response";
 import { Shimmer } from "./shimmer";
 import { Task, TaskContent, TaskItem, TaskItemFile, TaskTrigger } from "./task";
 
 type AssistantResponseTimelineProps = {
+  animateOnMount?: boolean;
   blocks: ChatRenderBlock[];
+  getToolChildCount?: (block: ChatToolCallBlock) => number;
+  getToolHref?: (block: ChatToolCallBlock) => string | null;
+  renderToolSubthread?: (block: ChatToolCallBlock) => React.ReactNode;
   onApprovalAction?: (decision: "approve" | "reject") => void;
   isLoading?: boolean;
 };
 
-function renderToolRow(block: ChatToolCallBlock, isActive = false) {
+function renderToolLink(toolHref: string | null | undefined, label: string) {
+  if (!toolHref) return null;
+  return (
+    <Link
+      href={toolHref}
+      className="ml-1 inline-flex h-5 w-5 items-center justify-center rounded-sm text-muted-foreground/80 transition-colors hover:bg-muted hover:text-foreground focus-visible:bg-muted focus-visible:text-foreground"
+      aria-label={`Open thread for ${label}`}
+      title="Open thread"
+    >
+      <ArrowUpRight className="h-3.5 w-3.5" />
+    </Link>
+  );
+}
+
+function renderToolRow(
+  block: ChatToolCallBlock,
+  isActive = false,
+  toolHref?: string | null,
+  options?: {
+    childCount?: number;
+    isSubthreadExpanded?: boolean;
+    onToggleSubthread?: () => void;
+    subthreadContent?: React.ReactNode;
+  },
+) {
   const status = block.status;
   const showPathBadge = block.tool.path && !isEditToolName(String(block.tool.toolName || ""));
   const label = block.tool.title || block.tool.displayName || block.tool.summary || block.tool.toolName;
   const summary = String(block.tool.summary || "").trim();
   const hasSummary = Boolean(summary) && summary.toLowerCase() !== String(label || "").trim().toLowerCase();
-  const rowContent = isActive ? (
+  const childCount = Math.max(0, options?.childCount || 0);
+  const hasSubthreads = childCount > 0 && Boolean(options?.onToggleSubthread);
+  const labelContent = isActive ? (
     <Shimmer className="flex items-center gap-2 text-sm">
       <span>{label}</span>
-      {showPathBadge ? <TaskItemFile>{formatToolPathLabel(String(block.tool.path || ""))}</TaskItemFile> : null}
-      {block.tool.detail ? <TaskItemFile>{block.tool.detail}</TaskItemFile> : null}
     </Shimmer>
   ) : (
+    <span>{label}</span>
+  );
+  const metaContent = (
     <>
-      <span>{label}</span>
       {showPathBadge ? <TaskItemFile>{formatToolPathLabel(String(block.tool.path || ""))}</TaskItemFile> : null}
       {block.tool.detail ? <TaskItemFile>{block.tool.detail}</TaskItemFile> : null}
     </>
   );
+  const subthreadToggle = hasSubthreads ? (
+    <button
+      type="button"
+      onClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        options?.onToggleSubthread?.();
+      }}
+      className="inline-flex items-center gap-0.5 rounded-md text-xs font-medium text-muted-foreground transition-colors hover:text-foreground focus-visible:text-foreground"
+      aria-expanded={Boolean(options?.isSubthreadExpanded)}
+      aria-label={`Toggle ${childCount} subthread${childCount === 1 ? "" : "s"}`}
+    >
+      <span>{`+${childCount}`}</span>
+      {options?.isSubthreadExpanded ? (
+        <ChevronDown className="h-3 w-3 opacity-100" />
+      ) : (
+        <ChevronRight className="h-3 w-3 opacity-0 transition-opacity group-hover/tool-row:opacity-100 group-focus-within/tool-row:opacity-100" />
+      )}
+    </button>
+  ) : null;
+  const subthreadContent = options?.isSubthreadExpanded && options?.subthreadContent ? (
+    <div className="mt-3">{options.subthreadContent}</div>
+  ) : null;
 
   if (!hasSummary) {
     return (
-      <Task defaultOpen key={block.id} className="w-full">
+      <div key={block.id} className="w-full">
+        <Task defaultOpen className="w-full">
         <TaskItem
           className={cn(
-            "flex items-center gap-2 text-sm",
+            "group flex items-center gap-1.5 text-sm",
             status === "error" ? "text-destructive" : "text-muted-foreground",
           )}
         >
-          {rowContent}
-        </TaskItem>
-      </Task>
+            {labelContent}
+            {subthreadToggle}
+            {renderToolLink(toolHref, String(label))}
+            {metaContent}
+          </TaskItem>
+        </Task>
+        {subthreadContent}
+      </div>
     );
   }
 
   return (
-    <Task defaultOpen={false} key={block.id} className="w-full">
-      <TaskTrigger asChild title={label}>
-        <button
-          type="button"
+    <div key={block.id} className="w-full">
+      <Task defaultOpen={false} className="w-full">
+        <div
           className={cn(
-            "flex w-full items-center gap-2 rounded-md px-0 py-0.5 text-left text-sm transition-colors hover:text-foreground",
+            "group flex items-center gap-1.5",
             status === "error" ? "text-destructive" : "text-muted-foreground",
           )}
         >
-          {rowContent}
-        </button>
-      </TaskTrigger>
-      <TaskContent className="mt-1">
-        <div className="text-sm text-muted-foreground">{summary}</div>
-      </TaskContent>
-    </Task>
+          <TaskTrigger asChild title={label}>
+            <button
+              type="button"
+              className="flex min-w-0 items-center rounded-md px-0 py-0.5 text-left text-sm transition-colors hover:text-foreground"
+            >
+              {labelContent}
+            </button>
+          </TaskTrigger>
+          {subthreadToggle}
+          {renderToolLink(toolHref, String(label))}
+          {metaContent}
+        </div>
+        <TaskContent className="mt-1">
+          <div className="text-sm text-muted-foreground">{summary}</div>
+        </TaskContent>
+      </Task>
+      {subthreadContent}
+    </div>
   );
 }
 
@@ -113,13 +185,22 @@ function renderApprovalBlock(
 }
 
 export function AssistantResponseTimeline({
+  animateOnMount = false,
   blocks,
+  getToolChildCount,
+  getToolHref,
+  renderToolSubthread,
   onApprovalAction,
   isLoading = false,
 }: AssistantResponseTimelineProps) {
+  const [expandedToolSubthreads, setExpandedToolSubthreads] = useState<Record<string, boolean>>({});
   const renderedBlocks = useMemo(() => {
     const items: React.ReactNode[] = [];
     let index = 0;
+    const lastAssistantTextBlockId = [...blocks]
+      .reverse()
+      .find((entry) => entry.kind === "assistant_text")
+      ?.id;
     const lastToolCallId = [...blocks]
       .reverse()
       .find((entry): entry is ChatToolCallBlock => entry.kind === "tool_call")
@@ -205,13 +286,37 @@ export function AssistantResponseTimeline({
       }
 
       if (block.kind === "tool_call") {
-        items.push(renderToolRow(block, block.id === activeToolCallId));
+        const childCount = Math.max(0, getToolChildCount?.(block) || 0);
+        const isSubthreadExpanded = Boolean(expandedToolSubthreads[block.id]);
+        items.push(
+          renderToolRow(block, block.id === activeToolCallId, getToolHref?.(block) || null, {
+            childCount,
+            isSubthreadExpanded,
+            onToggleSubthread:
+              childCount > 0
+                ? () =>
+                    setExpandedToolSubthreads((current) => ({
+                      ...current,
+                      [block.id]: !current[block.id],
+                    }))
+                : undefined,
+            subthreadContent: isSubthreadExpanded ? renderToolSubthread?.(block) : null,
+          }),
+        );
         index += 1;
         continue;
       }
 
       if (block.kind === "assistant_text") {
-        items.push(<MessageResponse key={block.id}>{block.text}</MessageResponse>);
+        items.push(
+          <SmoothedMessageResponse
+            key={block.id}
+            animateOnMount={animateOnMount && block.id === lastAssistantTextBlockId}
+            blockId={block.id}
+            isStreaming={block.status === "streaming"}
+            text={block.text}
+          />,
+        );
         index += 1;
         continue;
       }
@@ -260,7 +365,7 @@ export function AssistantResponseTimeline({
     }
 
     return items;
-  }, [blocks, isLoading, onApprovalAction]);
+  }, [animateOnMount, blocks, expandedToolSubthreads, getToolChildCount, getToolHref, isLoading, onApprovalAction, renderToolSubthread]);
 
   return (
     <div className="space-y-3">

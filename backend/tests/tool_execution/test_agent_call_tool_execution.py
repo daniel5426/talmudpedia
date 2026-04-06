@@ -1,13 +1,20 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 import pytest
+from langchain_core.messages import AIMessageChunk
 
+from app.agent.executors.standard import ReasoningNodeExecutor
 from app.agent.executors.tool import ToolNodeExecutor
+from app.agent.execution.run_task_registry import mark_run_cancel_requested
 from app.agent.execution.service import AgentExecutorService
+from app.agent.execution.types import ExecutionMode
+from app.db.postgres.engine import sessionmaker
 from app.db.postgres.models.agents import Agent, AgentRun, AgentStatus, RunStatus
 from app.db.postgres.models.identity import Tenant, User
 from app.db.postgres.models.registry import (
@@ -16,6 +23,7 @@ from app.db.postgres.models.registry import (
     ToolRegistry,
     ToolStatus,
 )
+from app.services.model_resolver import ModelResolver
 
 
 async def _seed_tenant_and_user(db_session):
@@ -95,7 +103,7 @@ async def _create_agent_call_tool(
 
 
 @pytest.mark.asyncio
-async def test_agent_call_tool_success_returns_compact_output(db_session, monkeypatch):
+async def test_agent_call_tool_success_uses_fresh_child_session_and_returns_compact_output(db_session, monkeypatch):
     tenant, user = await _seed_tenant_and_user(db_session)
     target = await _create_agent(
         db_session,
@@ -106,7 +114,18 @@ async def test_agent_call_tool_success_returns_compact_output(db_session, monkey
     )
     tool = await _create_agent_call_tool(db_session, tenant_id=tenant.id, target_agent_slug=target.slug)
 
+    original_start_run = AgentExecutorService.start_run
+    start_session_ids: set[int] = set()
+    stream_session_ids: set[int] = set()
+
+    async def wrapped_start_run(self, *args, **kwargs):
+        assert self.db is not db_session
+        start_session_ids.add(id(self.db))
+        return await original_start_run(self, *args, **kwargs)
+
     async def fake_run_and_stream(self, run_id, db, resume_payload=None, mode=None):
+        assert db is not db_session
+        stream_session_ids.add(id(db))
         run = await db.get(AgentRun, run_id)
         run.status = RunStatus.completed
         run.output_result = {
@@ -118,6 +137,7 @@ async def test_agent_call_tool_success_returns_compact_output(db_session, monkey
         if False:
             yield None
 
+    monkeypatch.setattr(AgentExecutorService, "start_run", wrapped_start_run)
     monkeypatch.setattr(AgentExecutorService, "run_and_stream", fake_run_and_stream)
 
     executor = ToolNodeExecutor(tenant_id=tenant.id, db=db_session)
@@ -134,6 +154,9 @@ async def test_agent_call_tool_success_returns_compact_output(db_session, monkey
     assert payload["output"] == {"answer": "child-ok"}
     assert payload["context"] == {"source": "child"}
     assert UUID(payload["run_id"])
+    assert start_session_ids
+    assert stream_session_ids
+    assert stream_session_ids.issubset(start_session_ids)
 
 
 @pytest.mark.asyncio
@@ -195,6 +218,486 @@ async def test_agent_call_tool_timeout_returns_failed_payload(db_session, monkey
     run = await db_session.get(AgentRun, UUID(payload["run_id"]))
     assert run is not None
     assert run.status == RunStatus.failed
+
+
+@pytest.mark.asyncio
+async def test_agent_call_tool_rejects_cancelled_parent_run(db_session):
+    tenant, user = await _seed_tenant_and_user(db_session)
+    target = await _create_agent(
+        db_session,
+        tenant_id=tenant.id,
+        user_id=user.id,
+        slug=f"cancelled-parent-child-{uuid4().hex[:8]}",
+        status=AgentStatus.published,
+    )
+    tool = await _create_agent_call_tool(db_session, tenant_id=tenant.id, target_agent_slug=target.slug)
+
+    parent_run = AgentRun(
+        tenant_id=tenant.id,
+        agent_id=target.id,
+        user_id=user.id,
+        initiator_user_id=user.id,
+        status=RunStatus.cancelled,
+        input_params={"messages": []},
+        depth=0,
+    )
+    db_session.add(parent_run)
+    await db_session.commit()
+    await db_session.refresh(parent_run)
+
+    executor = ToolNodeExecutor(tenant_id=tenant.id, db=db_session)
+    with pytest.raises(RuntimeError, match="cancelled"):
+        await executor.execute(
+            state={"context": {"input": "should not execute"}},
+            config={"tool_id": str(tool.id)},
+            context={"node_id": "tool-node", "mode": "debug", "run_id": str(parent_run.id)},
+        )
+
+
+@pytest.mark.asyncio
+async def test_start_run_rechecks_parent_status_from_db_when_session_is_stale(db_session):
+    tenant, user = await _seed_tenant_and_user(db_session)
+    target = await _create_agent(
+        db_session,
+        tenant_id=tenant.id,
+        user_id=user.id,
+        slug=f"stale-parent-child-{uuid4().hex[:8]}",
+        status=AgentStatus.published,
+    )
+
+    parent_run = AgentRun(
+        tenant_id=tenant.id,
+        agent_id=target.id,
+        user_id=user.id,
+        initiator_user_id=user.id,
+        status=RunStatus.running,
+        input_params={"messages": []},
+        depth=0,
+    )
+    db_session.add(parent_run)
+    await db_session.commit()
+    await db_session.refresh(parent_run)
+
+    stale_parent = await db_session.get(AgentRun, parent_run.id)
+    assert stale_parent is not None
+    assert stale_parent.status == RunStatus.running
+
+    async with sessionmaker() as other_session:
+        fresh_parent = await other_session.get(AgentRun, parent_run.id)
+        assert fresh_parent is not None
+        fresh_parent.status = RunStatus.cancelled
+        await other_session.commit()
+
+    executor = AgentExecutorService(db_session)
+    with pytest.raises(RuntimeError, match="cancelled"):
+        await executor.start_run(
+            agent_id=target.id,
+            input_params={"input": "should not spawn", "context": {}},
+            user_id=user.id,
+            background=False,
+            parent_run_id=parent_run.id,
+        )
+
+
+@pytest.mark.asyncio
+async def test_reasoning_node_stops_after_tool_if_run_was_cancelled(db_session, monkeypatch):
+    tenant, user = await _seed_tenant_and_user(db_session)
+    target = await _create_agent(
+        db_session,
+        tenant_id=tenant.id,
+        user_id=user.id,
+        slug=f"reasoning-cancel-child-{uuid4().hex[:8]}",
+        status=AgentStatus.published,
+    )
+    tool = await _create_agent_call_tool(db_session, tenant_id=tenant.id, target_agent_slug=target.slug)
+
+    current_run = AgentRun(
+        tenant_id=tenant.id,
+        agent_id=target.id,
+        user_id=user.id,
+        initiator_user_id=user.id,
+        status=RunStatus.running,
+        input_params={"messages": []},
+        depth=0,
+    )
+    db_session.add(current_run)
+    await db_session.commit()
+    await db_session.refresh(current_run)
+
+    class _FakeProvider:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def stream(self, _messages, _system_prompt=None, **_kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                yield AIMessageChunk(
+                    content="",
+                    tool_call_chunks=[{"id": "call-1", "name": tool.slug, "args": '{"input":"ask child"}'}],
+                )
+                return
+            yield AIMessageChunk(content="parent final output should not happen")
+
+    provider = _FakeProvider()
+
+    async def fake_resolve_for_execution(_self, _model_id, policy_override=None, policy_snapshot=None):
+        return SimpleNamespace(
+            provider_instance=provider,
+            resolved_provider="unit",
+            binding=SimpleNamespace(id="binding-1", provider_model_id="unit-provider-model"),
+            logical_model=SimpleNamespace(id="unit-model"),
+        )
+
+    async def fake_tool_execute(self, state, config, context=None):
+        async with sessionmaker() as other_session:
+            run = await other_session.get(AgentRun, current_run.id)
+            assert run is not None
+            run.status = RunStatus.cancelled
+            run.completed_at = datetime.now(timezone.utc)
+            await other_session.commit()
+        return {
+            "context": {
+                "mode": "sync",
+                "target_agent_slug": target.slug,
+                "status": "completed",
+                "output": "child final output",
+            }
+        }
+
+    monkeypatch.setattr(ModelResolver, "resolve_for_execution", fake_resolve_for_execution)
+    monkeypatch.setattr(ToolNodeExecutor, "execute", fake_tool_execute)
+
+    executor = ReasoningNodeExecutor(tenant_id=tenant.id, db=db_session)
+    state_update = await executor.execute(
+        state={"messages": [{"role": "user", "content": "call child"}], "state": {}},
+        config={
+            "model_id": "unit-model",
+            "name": "Agent",
+            "tools": [str(tool.id)],
+            "max_tool_iterations": 2,
+            "tool_execution_mode": "sequential",
+            "output_format": "text",
+        },
+        context={"node_id": "agent_node_1", "run_id": str(current_run.id)},
+    )
+
+    await db_session.refresh(current_run)
+    assert current_run.status == RunStatus.cancelled
+    contents = [str(getattr(message, "content", "") or "") for message in state_update["messages"]]
+    assert "parent final output should not happen" not in " ".join(contents)
+    assert provider.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_agent_call_tool_rechecks_current_run_before_spawning_child(db_session, monkeypatch):
+    tenant, user = await _seed_tenant_and_user(db_session)
+    target = await _create_agent(
+        db_session,
+        tenant_id=tenant.id,
+        user_id=user.id,
+        slug=f"tool-gate-child-{uuid4().hex[:8]}",
+        status=AgentStatus.published,
+    )
+    tool = await _create_agent_call_tool(db_session, tenant_id=tenant.id, target_agent_slug=target.slug)
+
+    current_run = AgentRun(
+        tenant_id=tenant.id,
+        agent_id=target.id,
+        user_id=user.id,
+        initiator_user_id=user.id,
+        status=RunStatus.running,
+        input_params={"messages": []},
+        depth=1,
+    )
+    db_session.add(current_run)
+    await db_session.commit()
+    await db_session.refresh(current_run)
+
+    original_resolve_target = ToolNodeExecutor._resolve_agent_target
+    child_spawn_attempted = False
+
+    async def wrapped_resolve_target(self, *args, **kwargs):
+        async with sessionmaker() as other_session:
+            run = await other_session.get(AgentRun, current_run.id)
+            assert run is not None
+            run.status = RunStatus.cancelled
+            run.completed_at = datetime.now(timezone.utc)
+            await other_session.commit()
+        return await original_resolve_target(self, *args, **kwargs)
+
+    async def fail_if_called(*args, **kwargs):
+        nonlocal child_spawn_attempted
+        child_spawn_attempted = True
+        raise AssertionError("child execution should not start for a cancelled run")
+
+    monkeypatch.setattr(ToolNodeExecutor, "_resolve_agent_target", wrapped_resolve_target)
+    monkeypatch.setattr(AgentExecutorService, "execute_sync_with_new_session", fail_if_called)
+
+    executor = ToolNodeExecutor(tenant_id=tenant.id, db=db_session)
+    with pytest.raises(RuntimeError, match="cancelled"):
+        await executor.execute(
+            state={"context": {"input": "call child"}},
+            config={"tool_id": str(tool.id)},
+            context={"node_id": "tool-node", "mode": "debug", "run_id": str(current_run.id)},
+        )
+
+    assert child_spawn_attempted is False
+
+
+@pytest.mark.asyncio
+async def test_agent_call_tool_blocks_descendant_spawn_when_root_cancel_requested(db_session, monkeypatch):
+    tenant, user = await _seed_tenant_and_user(db_session)
+    target = await _create_agent(
+        db_session,
+        tenant_id=tenant.id,
+        user_id=user.id,
+        slug=f"root-cancel-child-{uuid4().hex[:8]}",
+        status=AgentStatus.published,
+    )
+    tool = await _create_agent_call_tool(db_session, tenant_id=tenant.id, target_agent_slug=target.slug)
+
+    root_run = AgentRun(
+        tenant_id=tenant.id,
+        agent_id=target.id,
+        user_id=user.id,
+        initiator_user_id=user.id,
+        status=RunStatus.running,
+        input_params={"messages": []},
+        depth=0,
+    )
+    db_session.add(root_run)
+    await db_session.flush()
+    child_run = AgentRun(
+        tenant_id=tenant.id,
+        agent_id=target.id,
+        user_id=user.id,
+        initiator_user_id=user.id,
+        status=RunStatus.running,
+        input_params={"messages": []},
+        root_run_id=root_run.id,
+        parent_run_id=root_run.id,
+        depth=1,
+    )
+    db_session.add(child_run)
+    await db_session.commit()
+    await db_session.refresh(root_run)
+    await db_session.refresh(child_run)
+
+    original_resolve_target = ToolNodeExecutor._resolve_agent_target
+    child_spawn_attempted = False
+
+    async def wrapped_resolve_target(self, *args, **kwargs):
+        mark_run_cancel_requested([root_run.id])
+        return await original_resolve_target(self, *args, **kwargs)
+
+    async def fail_if_called(*args, **kwargs):
+        nonlocal child_spawn_attempted
+        child_spawn_attempted = True
+        raise AssertionError("child execution should not start under a cancelled root")
+
+    monkeypatch.setattr(ToolNodeExecutor, "_resolve_agent_target", wrapped_resolve_target)
+    monkeypatch.setattr(AgentExecutorService, "execute_sync_with_new_session", fail_if_called)
+
+    executor = ToolNodeExecutor(tenant_id=tenant.id, db=db_session)
+    with pytest.raises(RuntimeError, match="cancelled"):
+        await executor.execute(
+            state={"context": {"input": "call child"}},
+            config={"tool_id": str(tool.id)},
+            context={
+                "node_id": "tool-node",
+                "mode": "debug",
+                "run_id": str(child_run.id),
+                "root_run_id": str(root_run.id),
+                "parent_run_id": str(root_run.id),
+            },
+        )
+
+    assert child_spawn_attempted is False
+
+
+@pytest.mark.asyncio
+async def test_agent_call_tool_concurrent_runs_use_distinct_child_sessions(db_session, monkeypatch):
+    tenant, user = await _seed_tenant_and_user(db_session)
+    target = await _create_agent(
+        db_session,
+        tenant_id=tenant.id,
+        user_id=user.id,
+        slug=f"parallel-child-{uuid4().hex[:8]}",
+        status=AgentStatus.published,
+    )
+    tool = await _create_agent_call_tool(db_session, tenant_id=tenant.id, target_agent_slug=target.slug)
+
+    active_session_ids: set[int] = set()
+
+    async def fake_run_and_stream(self, run_id, db, resume_payload=None, mode=None):
+        assert db is not db_session
+        active_session_ids.add(id(db))
+        run = await db.get(AgentRun, run_id)
+        run.status = RunStatus.completed
+        run.output_result = {
+            "state": {"last_agent_output": {"run_id": str(run_id)}},
+            "context": {"source": "parallel"},
+        }
+        run.completed_at = datetime.now(timezone.utc)
+        await asyncio.sleep(0.05)
+        await db.commit()
+        if False:
+            yield None
+
+    monkeypatch.setattr(AgentExecutorService, "run_and_stream", fake_run_and_stream)
+
+    executor = ToolNodeExecutor(tenant_id=tenant.id, db=db_session)
+    results = await asyncio.gather(
+        executor.execute(
+            state={"context": {"input": "hello child 1"}},
+            config={"tool_id": str(tool.id)},
+            context={"node_id": "tool-node", "mode": "debug"},
+        ),
+        executor.execute(
+            state={"context": {"input": "hello child 2"}},
+            config={"tool_id": str(tool.id)},
+            context={"node_id": "tool-node", "mode": "debug"},
+        ),
+    )
+
+    assert len(active_session_ids) == 2
+    assert all(item["context"]["status"] == "completed" for item in results)
+
+
+@pytest.mark.asyncio
+async def test_execute_sync_with_new_session_cleans_up_child_task_on_cancellation(db_session, monkeypatch):
+    tenant, user = await _seed_tenant_and_user(db_session)
+    target = await _create_agent(
+        db_session,
+        tenant_id=tenant.id,
+        user_id=user.id,
+        slug=f"cancel-cleanup-child-{uuid4().hex[:8]}",
+        status=AgentStatus.published,
+    )
+
+    started = asyncio.Event()
+    settled = asyncio.Event()
+
+    async def hanging_run_and_stream(self, run_id, db, resume_payload=None, mode=None):
+        started.set()
+        try:
+            while True:
+                await asyncio.sleep(1)
+                if False:
+                    yield None
+        finally:
+            settled.set()
+
+    monkeypatch.setattr(AgentExecutorService, "run_and_stream", hanging_run_and_stream)
+
+    task = asyncio.create_task(
+        AgentExecutorService.execute_sync_with_new_session(
+            agent_id=target.id,
+            input_params={"input": "cancel me", "context": {}},
+            user_id=user.id,
+            mode=ExecutionMode.DEBUG,
+        )
+    )
+
+    try:
+        await asyncio.wait_for(started.wait(), timeout=2.0)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        await asyncio.wait_for(settled.wait(), timeout=2.0)
+    finally:
+        if not task.done():
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
+
+
+@pytest.mark.asyncio
+async def test_agent_call_tool_derives_child_lineage_from_current_run(db_session, monkeypatch):
+    tenant, user = await _seed_tenant_and_user(db_session)
+    target = await _create_agent(
+        db_session,
+        tenant_id=tenant.id,
+        user_id=user.id,
+        slug=f"lineage-child-{uuid4().hex[:8]}",
+        status=AgentStatus.published,
+    )
+    tool = await _create_agent_call_tool(db_session, tenant_id=tenant.id, target_agent_slug=target.slug)
+
+    captured: dict[str, object] = {}
+    original_start_run = AgentExecutorService.start_run
+
+    async def wrapped_start_run(self, *args, **kwargs):
+        captured["root_run_id"] = kwargs.get("root_run_id")
+        captured["parent_run_id"] = kwargs.get("parent_run_id")
+        captured["parent_node_id"] = kwargs.get("parent_node_id")
+        captured["depth"] = kwargs.get("depth")
+        return await original_start_run(self, *args, **kwargs)
+
+    async def fake_run_and_stream(self, run_id, db, resume_payload=None, mode=None):
+        run = await db.get(AgentRun, run_id)
+        run.status = RunStatus.completed
+        run.output_result = {"state": {"last_agent_output": {"ok": True}}}
+        run.completed_at = datetime.now(timezone.utc)
+        await db.commit()
+        if False:
+            yield None
+
+    monkeypatch.setattr(AgentExecutorService, "start_run", wrapped_start_run)
+    monkeypatch.setattr(AgentExecutorService, "run_and_stream", fake_run_and_stream)
+
+    current_root_run_id = uuid4()
+    current_run_id = uuid4()
+    db_session.add(
+        AgentRun(
+            id=current_root_run_id,
+            agent_id=target.id,
+            tenant_id=tenant.id,
+            user_id=user.id,
+            thread_id=None,
+            status=RunStatus.running,
+            input_params={},
+            root_run_id=current_root_run_id,
+            parent_run_id=None,
+            parent_node_id=None,
+            depth=0,
+        )
+    )
+    db_session.add(
+        AgentRun(
+            id=current_run_id,
+            agent_id=target.id,
+            tenant_id=tenant.id,
+            user_id=user.id,
+            thread_id=None,
+            status=RunStatus.running,
+            input_params={},
+            root_run_id=current_root_run_id,
+            parent_run_id=current_root_run_id,
+            parent_node_id=None,
+            depth=2,
+        )
+    )
+    await db_session.commit()
+
+    executor = ToolNodeExecutor(tenant_id=tenant.id, db=db_session)
+    await executor.execute(
+        state={"context": {"input": "hello child"}},
+        config={"tool_id": str(tool.id)},
+        context={
+            "node_id": "agent_node_1",
+            "mode": "debug",
+            "run_id": str(current_run_id),
+            "root_run_id": str(current_root_run_id),
+            "parent_run_id": str(uuid4()),
+            "depth": 2,
+        },
+    )
+
+    assert captured["root_run_id"] == current_root_run_id
+    assert captured["parent_run_id"] == current_run_id
+    assert captured["parent_node_id"] == "agent_node_1"
+    assert captured["depth"] == 3
 
 
 @pytest.mark.asyncio

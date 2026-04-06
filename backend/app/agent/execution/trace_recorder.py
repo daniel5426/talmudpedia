@@ -101,6 +101,7 @@ class ExecutionTraceRecorder:
             events.append(
                 {
                     "id": str(trace.id),
+                    "run_id": str(run_id),
                     "sequence": int(metadata.get("sequence") or 0),
                     "timestamp": trace.start_time.isoformat() if trace.start_time else None,
                     "event": trace.span_type,

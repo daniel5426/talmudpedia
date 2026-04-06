@@ -1,6 +1,6 @@
 # Tool Execution Tests
 
-Last Updated: 2026-03-31
+Last Updated: 2026-04-05
 
 ## Scope
 Validate MCP/function/agent-call execution paths in the `ToolNodeExecutor`.
@@ -52,10 +52,18 @@ Validate MCP/function/agent-call execution paths in the `ToolNodeExecutor`.
 - Reasoning tool-call normalization now preserves direct argument fields when no `input/args/parameters` wrapper is present.
 - Reasoning executor now emits internal trace events when it infers a tool call from assistant JSON fallback instead of a native provider tool call.
 - `agent_call` success returns compact sync payload with child output/context
+- `agent_call` synchronous child runs now create and execute the child run inside a fresh `AsyncSession`, not the parent executor session
 - `agent_call` rejects draft/unpublished targets
 - `agent_call` enforces cross-tenant target isolation
 - `agent_call` timeout returns failed payload and marks child run failed
 - `agent_call` now maps agent-contract modality fields into child `workflow_input` and declared state-var fields into seeded child `state`
+- concurrent `agent_call` executions now use distinct child sessions even when the parent tool executor is shared
+- `agent_call` now rejects cancelled parent runs instead of spawning more descendants from a cancelled caller
+- `agent_call` child spawning now rechecks the parent run from the database instead of trusting a stale in-session `AgentRun`, so aborts from another session stop further descendant spawns
+- synchronous `agent_call` child execution now runs inside a dedicated child task and drains that task before closing the child `AsyncSession`, so abort during nested execution does not close SQLAlchemy mid-flush
+- reasoning nodes now recheck run cancellation at tool-loop boundaries, so a cancelled parent run stops after the current tool returns instead of continuing into another LLM iteration
+- tool execution now rechecks the current run from the database immediately before nested `agent_call` child creation, so an abort that lands between tool selection and child spawn blocks the next descendant cleanly
+- runtime cancellation is now also enforced by a shared in-process run registry keyed by run/root lineage, so a cancelled root or parent run cannot spawn deeper descendants even if a live child task has not yet observed the DB status flip
 - tool publish pins `artifact_revision_id` for tenant artifact-backed tools
 - tenant artifact-backed tools execute via `ArtifactExecutionService` on `artifact_prod_interactive`
 - tenant artifact-backed tool publish ensures the pinned revision has a production deployment
@@ -143,6 +151,24 @@ Validate MCP/function/agent-call execution paths in the `ToolNodeExecutor`.
 - Command: `PYTHONPATH=/Users/danielbenassaya/Code/personal/talmudpedia python3 -m pytest -q backend/tests/tool_execution/test_agent_call_tool_execution.py`
 - Date/Time: 2026-03-31 Asia/Hebron
 - Result: PASS (`5 passed`)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/tool_execution/test_agent_call_tool_execution.py backend/tests/agent_execution_events/test_tool_event_metadata.py`
+- Date/Time: 2026-04-04 Asia/Hebron
+- Result: PASS (`18 passed, 7 warnings`)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/agent_resume_authorization backend/tests/orchestration_limits_and_cancellation/test_limits_and_cancellation.py backend/tests/tool_execution/test_agent_call_tool_execution.py`
+- Date/Time: 2026-04-04 Asia/Hebron
+- Result: PASS (`18 passed, 8 warnings`)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/tool_execution/test_agent_call_tool_execution.py`
+- Date/Time: 2026-04-05 Asia/Hebron
+- Result: PASS (`10 passed, 7 warnings`)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/tool_execution/test_agent_call_tool_execution.py`
+- Date/Time: 2026-04-05 Asia/Hebron
+- Result: PASS (`11 passed, 7 warnings`)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/agent_resume_authorization backend/tests/tool_execution/test_agent_call_tool_execution.py`
+- Date/Time: 2026-04-05 Asia/Hebron
+- Result: PASS (`17 passed, 8 warnings`)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/tool_execution/test_agent_call_tool_execution.py backend/tests/agent_resume_authorization backend/tests/runtime_adapter`
+- Date/Time: 2026-04-05 Asia/Hebron
+- Result: PASS (`27 passed, 10 warnings`)
 
 ## Known Gaps / Follow-ups
 - Add coverage for `agent_call` payload mode variants beyond sync (`spawn`/future orchestration modes).

@@ -1,6 +1,6 @@
 # Test State: Published Apps External Runtime
 
-Last Updated: 2026-03-16
+Last Updated: 2026-04-05
 
 ## Scope
 - Host-anywhere published-app runtime surface under `/public/external/apps/*`.
@@ -17,13 +17,14 @@ Last Updated: 2026-03-16
 - External OIDC exchange returns a bearer session token.
 - External authenticated stream persists threads and exposes list/detail history APIs.
 - External thread detail remains app-account scoped.
+- External thread detail can return nested `lineage` and `subthread_tree` payloads when `include_subthreads=true`.
 - Auth-disabled apps stream ephemerally with no persisted thread.
 - Disallowed origins are rejected on the external runtime surface.
 
 ## Last Run Command + Date/Time + Result
-- Command: `cd backend && PYTHONPATH=. pytest -q tests/published_apps_external_runtime/test_external_runtime_api.py`
-- Date/Time: 2026-03-16
-- Result: PASS (6 passed, 6 warnings)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/published_apps_external_runtime/test_external_runtime_api.py backend/tests/published_apps_host_runtime/test_host_runtime_same_url_auth.py`
+- Date/Time: 2026-04-05 Asia/Hebron
+- Result: PASS (`17 passed`)
 
 ## Known Gaps or Follow-ups
 - Add explicit preflight `OPTIONS` coverage for allowed and blocked origins.

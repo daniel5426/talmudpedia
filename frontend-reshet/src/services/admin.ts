@@ -86,11 +86,22 @@ class AdminService {
 
   async getThread(
     threadId: string,
-    options?: { beforeTurnIndex?: number; limit?: number }
+    options?: {
+      beforeTurnIndex?: number
+      limit?: number
+      includeSubthreads?: boolean
+      subthreadDepth?: number
+      subthreadTurnLimit?: number
+      subthreadChildLimit?: number
+    }
   ): Promise<Record<string, unknown>> {
     const query = new URLSearchParams();
     if (typeof options?.beforeTurnIndex === "number") query.set("before_turn_index", String(options.beforeTurnIndex));
     if (typeof options?.limit === "number") query.set("limit", String(options.limit));
+    if (typeof options?.includeSubthreads === "boolean") query.set("include_subthreads", String(options.includeSubthreads));
+    if (typeof options?.subthreadDepth === "number") query.set("subthread_depth", String(options.subthreadDepth));
+    if (typeof options?.subthreadTurnLimit === "number") query.set("subthread_turn_limit", String(options.subthreadTurnLimit));
+    if (typeof options?.subthreadChildLimit === "number") query.set("subthread_child_limit", String(options.subthreadChildLimit));
     const suffix = query.toString() ? `?${query.toString()}` : "";
     return httpClient.get<Record<string, unknown>>(`/admin/threads/${threadId}${suffix}`);
   }

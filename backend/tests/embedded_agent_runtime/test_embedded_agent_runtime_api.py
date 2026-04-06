@@ -237,6 +237,90 @@ async def test_embedded_agent_thread_detail_includes_run_events_and_delete_route
 
 
 @pytest.mark.asyncio
+async def test_embedded_agent_thread_detail_returns_subthread_tree_when_requested(client, db_session, monkeypatch):
+    tenant, owner, _, agent = await seed_admin_tenant_and_agent(db_session)
+    _, token = await _create_embed_key(db_session, tenant_id=tenant.id, created_by=owner.id)
+
+    async def fake_run_and_stream(self, *args, **kwargs):
+        yield {"event": "token", "data": {"content": "hello from embed"}, "visibility": "client_safe"}
+
+    monkeypatch.setattr("app.services.embedded_agent_runtime_service.AgentExecutorService.run_and_stream", fake_run_and_stream)
+
+    stream_resp = await client.post(
+        f"/public/embed/agents/{agent.id}/chat/stream",
+        headers=_embed_headers(token),
+        json={"input": "hi", "external_user_id": "customer-user-1"},
+    )
+    thread_id = UUID(str(stream_resp.headers["X-Thread-ID"]))
+    root_thread = await db_session.get(AgentThread, thread_id)
+    assert root_thread is not None
+    root_run = await db_session.scalar(select(AgentRun).where(AgentRun.thread_id == root_thread.id).limit(1))
+    assert root_run is not None
+    root_turn = await db_session.scalar(select(AgentThreadTurn).where(AgentThreadTurn.run_id == root_run.id).limit(1))
+    if root_turn is None:
+        root_turn = AgentThreadTurn(
+            thread_id=root_thread.id,
+            run_id=root_run.id,
+            turn_index=0,
+            user_input_text="hi",
+            assistant_output_text="hello from embed",
+            status=AgentThreadTurnStatus.completed,
+        )
+        db_session.add(root_turn)
+        await db_session.flush()
+
+    child_thread = AgentThread(
+        tenant_id=tenant.id,
+        agent_id=agent.id,
+        external_user_id="customer-user-1",
+        surface=root_thread.surface,
+        title="Embedded child thread",
+        root_thread_id=root_thread.id,
+        parent_thread_id=root_thread.id,
+        parent_thread_turn_id=root_turn.id,
+        spawned_by_run_id=root_run.id,
+        lineage_depth=1,
+    )
+    db_session.add(child_thread)
+    await db_session.flush()
+    child_run = AgentRun(
+        tenant_id=tenant.id,
+        agent_id=agent.id,
+        initiator_user_id=owner.id,
+        thread_id=child_thread.id,
+        input_params={"input": "child hi"},
+        parent_run_id=root_run.id,
+        root_run_id=root_run.id,
+        depth=1,
+    )
+    db_session.add(child_run)
+    await db_session.flush()
+    db_session.add(
+        AgentThreadTurn(
+            thread_id=child_thread.id,
+            run_id=child_run.id,
+            turn_index=0,
+            user_input_text="child hi",
+            assistant_output_text="embedded child reply",
+            status=AgentThreadTurnStatus.completed,
+        )
+    )
+    await db_session.commit()
+
+    detail_resp = await client.get(
+        f"/public/embed/agents/{agent.id}/threads/{thread_id}",
+        headers=_embed_headers(token),
+        params={"external_user_id": "customer-user-1", "include_subthreads": "true"},
+    )
+    assert detail_resp.status_code == 200
+    payload = detail_resp.json()
+    assert payload["lineage"]["root_thread_id"] == str(root_thread.id)
+    assert payload["subthread_tree"]["thread"]["id"] == str(root_thread.id)
+    assert payload["subthread_tree"]["children"][0]["thread"]["id"] == str(child_thread.id)
+    assert payload["subthread_tree"]["children"][0]["lineage"]["parent_thread_id"] == str(root_thread.id)
+
+
+@pytest.mark.asyncio
 async def test_embedded_agent_routes_reject_wrong_scope_revoked_keys_and_cross_user_access(client, db_session, monkeypatch):
     tenant, owner, _, agent = await seed_admin_tenant_and_agent(db_session)
     _, token = await _create_embed_key(db_session, tenant_id=tenant.id, created_by=owner.id)

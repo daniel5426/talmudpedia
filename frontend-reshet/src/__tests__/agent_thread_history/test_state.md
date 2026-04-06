@@ -1,4 +1,4 @@
-Last Updated: 2026-03-29
+Last Updated: 2026-04-05
 
 ## Scope
 Historical agent-thread replay and per-turn trace hydration in the admin playground thread history flow.
@@ -7,6 +7,7 @@ Historical agent-thread replay and per-turn trace hydration in the admin playgro
 - `frontend-reshet/src/__tests__/agent_thread_history/useAgentThreadHistory.test.tsx`
 
 ## Key Scenarios Covered
+- Initial history fetch is scoped to the current user and the currently selected agent.
 - Duplicate or corrupted `turn_index` values fall back to chronological ordering during thread replay.
 - Assistant trace blocks are hydrated for every assistant turn, not only the latest turn.
 - Architect-worker style replay with a continued worker thread preserves the expected message order.
@@ -15,6 +16,9 @@ Historical agent-thread replay and per-turn trace hydration in the admin playgro
 - Tool-call replay still hydrates for aborted turns even when the persisted assistant text is empty.
 
 ## Last Run
+- Command: `pnpm --dir frontend-reshet test -- --runInBand src/__tests__/agent_thread_history/useAgentThreadHistory.test.tsx`
+- Date: 2026-04-05 19:58 EEST
+- Result: Pass (`3 passed`)
 - Command: `cd frontend-reshet && npm test -- --runInBand src/__tests__/admin_threads/admin_thread_page.test.tsx src/__tests__/agent_thread_history/useAgentThreadHistory.test.tsx`
 - Date: 2026-03-27 Asia/Hebron
 - Result: Pass (`2 passed`)

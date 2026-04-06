@@ -4,6 +4,7 @@ Agents API Router - Thin dispatch layer for agent endpoints.
 Routers should only: Validate, Authenticate, Dispatch.
 All business logic lives in AgentService.
 """
+import asyncio
 from uuid import UUID
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -53,15 +54,14 @@ from app.db.postgres.models.agents import Agent, AgentRun
 from app.db.postgres.models.registry import ToolRegistry
 from sqlalchemy import select
 from typing import Optional
-from datetime import datetime
-from app.db.postgres.models.agent_threads import AgentThreadSurface, AgentThreadTurnStatus
+from datetime import datetime, timezone
+from app.db.postgres.models.agent_threads import AgentThreadSurface
 from app.db.postgres.models.agents import RunStatus
+from app.db.postgres.engine import sessionmaker as fresh_sessionmaker
 from app.services.runtime_attachment_service import RuntimeAttachmentOwner, RuntimeAttachmentService
 from app.services.context_window_service import ContextWindowService
 from app.services.model_accounting import usage_payload_from_run
-from app.services.thread_service import ThreadService
-
-
+from app.services.orchestration_kernel_service import OrchestrationKernelService
 router = APIRouter(prefix="/agents", tags=["agents"])
 
 
@@ -81,6 +81,26 @@ def _optional_uuid(value: Any) -> Optional[UUID]:
         return UUID(str(value))
     except Exception:
         return None
+
+
+async def _cancel_foreground_run_tree(run_id: UUID, *, reason: str) -> None:
+    async with fresh_sessionmaker() as session:
+        run = await session.get(AgentRun, run_id)
+        if run is None:
+            return
+        status = str(getattr(run.status, "value", run.status))
+        if status in {
+            RunStatus.completed.value,
+            RunStatus.failed.value,
+            RunStatus.cancelled.value,
+        }:
+            return
+        await OrchestrationKernelService(session).cancel_subtree(
+            caller_run_id=run.id,
+            run_id=run.id,
+            include_root=True,
+            reason=reason,
+        )
 
 
 def _serialize_run_usage(run: AgentRun) -> dict[str, Any]:
@@ -835,32 +855,36 @@ async def stream_agent(
         
         # filtered stream via adapter
         filtered_stream = StreamAdapter.filter_stream(raw_stream, execution_mode)
-
-        # Initial Event + padding to force proxy flush.
-        seq = 1
-        yield ": " + (" " * 4096) + "\n\n"
-        if _stream_v2_enforced():
-            accepted = build_stream_v2_event(
-                seq=seq,
-                run_id=str(run_id),
-                event="run.accepted",
-                stage="run",
-                payload={
-                    "status": "running",
-                    "thread_id": thread_id_value,
-                    "context_window": ContextWindowService.read_from_run(run_row),
-                    "run_usage": _serialize_run_usage(run_row),
-                },
-            )
-            seq += 1
-            yield f"data: {json.dumps(accepted, default=str)}\n\n"
-        else:
-            yield f"data: {json.dumps({'event': 'run_id', 'run_id': str(run_id)})}\n\n"
+        disconnected = False
+        saw_terminal = False
 
         try:
+            # Initial Event + padding to force proxy flush.
+            seq = 1
+            yield ": " + (" " * 4096) + "\n\n"
+            if _stream_v2_enforced():
+                accepted = build_stream_v2_event(
+                    seq=seq,
+                    run_id=str(run_id),
+                    event="run.accepted",
+                    stage="run",
+                    payload={
+                        "status": "running",
+                        "thread_id": thread_id_value,
+                        "context_window": ContextWindowService.read_from_run(run_row),
+                        "run_usage": _serialize_run_usage(run_row),
+                    },
+                )
+                seq += 1
+                yield f"data: {json.dumps(accepted, default=str)}\n\n"
+            else:
+                yield f"data: {json.dumps({'event': 'run_id', 'run_id': str(run_id)})}\n\n"
+
             async for event_dict in filtered_stream:
                 if _stream_v2_enforced():
                     mapped_event, stage, payload, diagnostics = normalize_filtered_event_to_v2(raw_event=event_dict)
+                    if mapped_event in {"run.completed", "run.failed", "run.cancelled"}:
+                        saw_terminal = True
                     envelope = build_stream_v2_event(
                         seq=seq,
                         run_id=str(run_id),
@@ -872,7 +896,13 @@ async def stream_agent(
                     seq += 1
                     yield f"data: {json.dumps(envelope, default=str)}\n\n"
                 else:
+                    legacy_event = str(event_dict.get("event") or event_dict.get("type") or "")
+                    if legacy_event in {"run.completed", "run.failed", "run.cancelled"}:
+                        saw_terminal = True
                     yield f"data: {json.dumps(event_dict, default=str)}\n\n"
+        except asyncio.CancelledError:
+            disconnected = True
+            raise
         except Exception as e:
             logger = logging.getLogger(__name__)
             logger.error(f"[STREAM] Error during stream: {e}")
@@ -888,6 +918,26 @@ async def stream_agent(
                 yield f"data: {json.dumps(envelope, default=str)}\n\n"
             else:
                 yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
+        finally:
+            if disconnected and not saw_terminal:
+                asyncio.create_task(
+                    _cancel_foreground_run_tree(
+                        run_id,
+                        reason="cancelled_by_client_disconnect",
+                    )
+                )
+            filtered_aclose = getattr(filtered_stream, "aclose", None)
+            if callable(filtered_aclose):
+                try:
+                    await filtered_aclose()
+                except Exception:
+                    pass
+            raw_aclose = getattr(raw_stream, "aclose", None)
+            if callable(raw_aclose):
+                try:
+                    await raw_aclose()
+                except Exception:
+                    pass
 
     return StreamingResponse(
         event_generator(), 
@@ -897,6 +947,7 @@ async def stream_agent(
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",  # Disable nginx buffering
             "Content-Encoding": "identity", # Disable compression
+            "X-Run-ID": str(run_id),
             "X-Thread-ID": thread_id_value or "",
         }
     )
@@ -1075,8 +1126,16 @@ async def cancel_run_v2(
         }
 
     partial_text = str(request.assistant_output_text or "").strip()
+    await OrchestrationKernelService(db).cancel_subtree(
+        caller_run_id=run.id,
+        run_id=run.id,
+        include_root=True,
+        reason="cancelled_by_user",
+    )
+
+    await db.refresh(run)
     run.status = RunStatus.cancelled
-    run.completed_at = datetime.utcnow()
+    run.completed_at = datetime.now(timezone.utc)
     run.error_message = None
 
     output_result = dict(run.output_result or {}) if isinstance(run.output_result, dict) else {}
@@ -1088,35 +1147,6 @@ async def cancel_run_v2(
         output_result["final_output"] = partial_text
     output_result["messages"] = messages
     run.output_result = output_result
-
-    if run.thread_id:
-        thread_service = ThreadService(db)
-        input_text = None
-        attachment_ids: list[UUID] = []
-        if isinstance(run.input_params, dict):
-            raw_input = run.input_params.get("input_display_text") or run.input_params.get("input")
-            if isinstance(raw_input, str):
-                input_text = raw_input
-            raw_attachment_ids = run.input_params.get("attachment_ids")
-            if isinstance(raw_attachment_ids, list):
-                for item in raw_attachment_ids:
-                    try:
-                        attachment_ids.append(UUID(str(item)))
-                    except Exception:
-                        continue
-        await thread_service.start_turn(
-            thread_id=run.thread_id,
-            run_id=run.id,
-            user_input_text=input_text,
-            attachment_ids=attachment_ids,
-            metadata={"cancelled": True},
-        )
-        await thread_service.complete_turn(
-            run_id=run.id,
-            status=AgentThreadTurnStatus.cancelled,
-            assistant_output_text=partial_text or None,
-            metadata={"cancelled": True},
-        )
 
     await db.commit()
     return {

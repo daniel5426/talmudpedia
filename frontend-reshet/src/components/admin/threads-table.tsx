@@ -6,7 +6,17 @@ import { DataTable } from "@/components/ui/data-table"
 import { ColumnDef, type PaginationState } from "@tanstack/react-table"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Button } from "@/components/ui/button"
-import { MoreHorizontal, Trash2, ExternalLink, MessageSquareText, Bot, UserRound, PencilLine } from "lucide-react"
+import {
+  MoreHorizontal,
+  Trash2,
+  ExternalLink,
+  MessageSquareText,
+  Bot,
+  UserRound,
+  PencilLine,
+  ChevronDown,
+  ChevronUp,
+} from "lucide-react"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -34,6 +44,57 @@ interface ThreadsTableProps {
 
 const ALL_AGENTS_VALUE = "__all_agents__"
 
+type ThreadTableRow = Thread & {
+  _treeDepth: number
+  _subthreadCount: number
+  _parentThreadId: string | null
+  _childThreadIds: string[]
+}
+
+export function buildThreadTableRows(threads: Thread[]): ThreadTableRow[] {
+  const threadById = new Map(threads.map((thread) => [thread.id, thread]))
+  const childrenByParentId = new Map<string, Thread[]>()
+  const visited = new Set<string>()
+
+  for (const thread of threads) {
+    const parentId = thread.lineage?.parent_thread_id || null
+    if (!parentId || !threadById.has(parentId)) continue
+    const bucket = childrenByParentId.get(parentId) || []
+    bucket.push(thread)
+    childrenByParentId.set(parentId, bucket)
+  }
+
+  const countDescendants = (threadId: string): number => {
+    const children = childrenByParentId.get(threadId) || []
+    return children.reduce((total, child) => total + 1 + countDescendants(child.id), 0)
+  }
+
+  const ordered: ThreadTableRow[] = []
+
+  const appendBranch = (thread: Thread, depth: number) => {
+    if (visited.has(thread.id)) return
+    visited.add(thread.id)
+    ordered.push({
+      ...thread,
+      _treeDepth: depth,
+      _subthreadCount: countDescendants(thread.id),
+      _parentThreadId: thread.lineage?.parent_thread_id || null,
+      _childThreadIds: (childrenByParentId.get(thread.id) || []).map((child) => child.id),
+    })
+    const children = childrenByParentId.get(thread.id) || []
+    children.forEach((child) => appendBranch(child, depth + 1))
+  }
+
+  threads.forEach((thread) => {
+    const parentId = thread.lineage?.parent_thread_id || null
+    if (parentId && threadById.has(parentId)) return
+    appendBranch(thread, 0)
+  })
+
+  threads.forEach((thread) => appendBranch(thread, Number(thread.lineage?.depth || 0)))
+  return ordered
+}
+
 export function ThreadsTable({
   data: externalData,
   pageCount: externalPageCount,
@@ -56,6 +117,8 @@ export function ThreadsTable({
     pageSize: 20,
   })
   const [internalPageCount, setInternalPageCount] = useState(0)
+  const [expandedThreadIds, setExpandedThreadIds] = useState<Record<string, boolean>>({})
+  const [hoveredSubthreadToggleId, setHoveredSubthreadToggleId] = useState<string | null>(null)
 
   const pagination = externalPagination ?? internalPagination
   const search = externalSearch ?? internalSearch
@@ -65,6 +128,19 @@ export function ThreadsTable({
   const setSearch = onSearchChange ?? setInternalSearch
   const setAgentId = onAgentIdChange ?? setInternalAgentId
   const threads = externalData || internalThreads
+  const tableRows = useMemo(() => buildThreadTableRows(threads), [threads])
+  const visibleRows = useMemo(() => {
+    const expanded = expandedThreadIds
+    return tableRows.filter((row) => {
+      let parentId = row._parentThreadId
+      while (parentId) {
+        if (!expanded[parentId]) return false
+        const parentRow = tableRows.find((entry) => entry.id === parentId)
+        parentId = parentRow?._parentThreadId || null
+      }
+      return true
+    })
+  }, [expandedThreadIds, tableRows])
 
   useEffect(() => {
     const loadAgents = async () => {
@@ -118,24 +194,63 @@ export function ThreadsTable({
     }
   }
 
-  const columns: ColumnDef<Thread>[] = useMemo(() => {
-    const dataColumns: ColumnDef<Thread>[] = [
+  const columns: ColumnDef<ThreadTableRow>[] = useMemo(() => {
+      const dataColumns: ColumnDef<ThreadTableRow>[] = [
       {
       accessorKey: "title",
       header: "Thread",
       cell: ({ row }) => {
         const thread = row.original
         const title = thread.title || "Untitled Thread"
+        const subthreadChevronVisible = hoveredSubthreadToggleId === thread.id
         return (
-          <div className="min-w-0 max-w-[240px]">
-            <Link
-              href={`${basePath}/${thread.id}`}
-              className="block truncate font-medium transition hover:text-primary"
-              title={title}
-            >
-              {title}
-            </Link>
-            <div className="truncate text-xs text-muted-foreground">{thread.id}</div>
+          <div
+            className="min-w-0 max-w-[280px]"
+            style={{ paddingLeft: thread._treeDepth > 0 ? `${Math.min(thread._treeDepth, 5) * 20}px` : undefined }}
+          >
+            <div className="flex min-w-0 items-start gap-3">
+              {thread._subthreadCount > 0 || thread._treeDepth > 0 ? (
+                <div className="shrink-0 self-center">
+                  {thread._subthreadCount > 0 ? (
+                    <button
+                      type="button"
+                      onMouseEnter={() => setHoveredSubthreadToggleId(thread.id)}
+                      onMouseLeave={() => setHoveredSubthreadToggleId((current) => (current === thread.id ? null : current))}
+                      onClick={() => {
+                        setExpandedThreadIds((current) => ({
+                          ...current,
+                          [thread.id]: !current[thread.id],
+                        }))
+                      }}
+                      className="relative inline-flex items-center justify-center rounded-md text-base font-medium leading-none text-primary transition-colors hover:text-primary/80"
+                      aria-expanded={Boolean(expandedThreadIds[thread.id])}
+                      aria-label={`${expandedThreadIds[thread.id] ? "Hide" : "Show"} ${thread._subthreadCount} subthreads for ${title}`}
+                    >
+                      <span className={`transition-opacity ${subthreadChevronVisible ? "opacity-0" : "opacity-100"}`}>{`+${thread._subthreadCount}`}</span>
+                      <span
+                        className={`pointer-events-none absolute inset-0 flex items-center justify-center transition-opacity ${subthreadChevronVisible ? "opacity-100" : "opacity-0"}`}
+                      >
+                        {expandedThreadIds[thread.id] ? (
+                          <ChevronUp className="h-4 w-4 shrink-0" aria-hidden />
+                        ) : (
+                          <ChevronDown className="h-4 w-4 shrink-0" aria-hidden />
+                        )}
+                      </span>
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
+              <div className="min-w-0">
+              <Link
+                href={`${basePath}/${thread.id}`}
+                className="block truncate font-medium transition hover:text-primary"
+                title={title}
+              >
+                {title}
+              </Link>
+              <div className="truncate text-xs text-muted-foreground">{thread.id}</div>
+              </div>
+            </div>
           </div>
         )
       },
@@ -273,13 +388,13 @@ export function ThreadsTable({
       },
       ...dataColumns,
     ]
-  }, [basePath, externalData, fetchThreads, selectionMode])
+  }, [basePath, expandedThreadIds, externalData, fetchThreads, hoveredSubthreadToggleId, selectionMode])
 
   return (
     <div className="space-y-4">
       <DataTable
         columns={columns}
-        data={threads}
+        data={visibleRows}
         onBulkDelete={handleBulkDelete}
         filterColumn="title"
         filterPlaceholder="Search threads..."

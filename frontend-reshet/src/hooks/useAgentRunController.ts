@@ -29,6 +29,21 @@ const resolveArchitectResponse = (content: string) => {
   return extractStructuredAssistantText(content) || content;
 };
 
+const finalizeLiveSteps = (
+  steps: ExecutionStep[],
+  status: "completed" | "error",
+  output?: unknown,
+): ExecutionStep[] =>
+  steps.map((step) =>
+    step.status === "running"
+      ? {
+          ...step,
+          status,
+          output: step.output !== undefined ? step.output : output,
+        }
+      : step,
+  );
+
 const logRunControllerDebug = (event: string, details?: Record<string, unknown>) => {
   if (process.env.NODE_ENV === "production") return;
   console.debug("[playground-controller-debug]", event, details || {});
@@ -83,6 +98,7 @@ const normalizeExecutionEvent = (rawEvent: Record<string, unknown>): AgentExecut
 export function useAgentRunController(
   agentId: string | undefined,
   graphDefinition?: AgentGraphDefinition | null,
+  agentSlug?: string | null,
 ): ChatController & {
   executionSteps: ExecutionStep[];
   executionEvents: AgentExecutionEvent[];
@@ -143,6 +159,7 @@ export function useAgentRunController(
   const streamingContentRef = useRef<string>("");
   const activeStreamingIdRef = useRef<string | null>(null);
   const currentRunIdRef = useRef<string | null>(null);
+  const rootRunIdRef = useRef<string | null>(null);
   const currentThreadIdRef = useRef<string | null>(null);
   const lastAgentIdRef = useRef<string | undefined>(agentId);
   const authUserId = useAuthStore((state) => state.user?.id);
@@ -154,7 +171,21 @@ export function useAgentRunController(
     loadThreadById,
     loadOlderThreadMessages,
     upsertHistoryItem,
-  } = useAgentThreadHistory(authUserId);
+  } = useAgentThreadHistory(authUserId, agentId);
+
+  const runtimeContext = useCallback(
+    (extra?: Record<string, unknown>) => {
+      const context: Record<string, unknown> = {};
+      if (agentSlug === "platform-architect") {
+        context.architect_mode = "default";
+      }
+      if (extra && typeof extra === "object") {
+        Object.assign(context, extra);
+      }
+      return Object.keys(context).length > 0 ? context : undefined;
+    },
+    [agentSlug],
+  );
 
   useEffect(() => {
     messagesRef.current = messages;
@@ -198,6 +229,7 @@ export function useAgentRunController(
     setActiveStreamingId(null);
     setCurrentRunId(null);
     setCurrentRunStatus(null);
+    rootRunIdRef.current = null;
     setCurrentThreadId(null);
     setIsPaused(false);
     setPendingApproval(false);
@@ -244,7 +276,12 @@ export function useAgentRunController(
         (lastReasoningRef.current && lastReasoningRef.current.length > 0)
           ? lastReasoningRef.current
           : reasoningRef.current;
-      const responseBlocks = responseBlocksRef.current;
+      const responseBlocks = sortChatRenderBlocks(
+        finalizeAssistantRenderBlocks(responseBlocksRef.current, trimmedContent, {
+          runId: rootRunIdRef.current || currentRunIdRef.current || undefined,
+        }),
+      );
+      responseBlocksRef.current = responseBlocks;
 
       if (!trimmedContent && (!reasoning || reasoning.length === 0) && responseBlocks.length === 0) return;
 
@@ -253,12 +290,15 @@ export function useAgentRunController(
         role: "assistant",
         content: trimmedContent,
         createdAt: new Date(),
+        runId: rootRunIdRef.current || currentRunIdRef.current || undefined,
         responseBlocks: responseBlocks.length > 0 ? responseBlocks : undefined,
+        animateResponseBlocks: responseBlocks.length > 0,
         reasoningSteps: reasoning && reasoning.length > 0 ? reasoning : undefined,
         thinkingDurationMs: thinkingDurationRef.current || undefined,
       };
 
       setMessages((prev) => {
+        if (prev.some((msg) => msg.id === assistantMsg.id)) return prev;
         const next = [...prev, assistantMsg];
         persistHistory(next);
         return next;
@@ -269,11 +309,21 @@ export function useAgentRunController(
 
   const handleStop = useCallback(() => {
     const partialText = streamingContentRef.current.trim();
-    const runId = currentRunIdRef.current;
+    const runId = rootRunIdRef.current || currentRunIdRef.current;
     commitStreamingMessage("stop");
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-      abortControllerRef.current = null;
+    setLiveExecutionSteps((prev) =>
+      finalizeLiveSteps(prev, "error", { error: "Run cancelled" }),
+    );
+    if (runId) {
+      setExecutionEvents((prev) => [
+        ...prev,
+        {
+          event: "run.cancelled",
+          run_id: runId,
+          data: { status: "cancelled" },
+          received_at: Date.now(),
+        } as AgentExecutionEvent,
+      ]);
     }
     if (runId) {
       void agentService.cancelRun(runId, {
@@ -281,6 +331,10 @@ export function useAgentRunController(
       }).catch((error) => {
         console.error("Failed to cancel run", { runId, error });
       });
+    }
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
     }
     setActiveStreamingId(null);
     setStreamingContent("");
@@ -306,6 +360,7 @@ export function useAgentRunController(
     setCurrentRunId(null);
     setCurrentRunStatus(null);
     setCurrentThreadId(null);
+    rootRunIdRef.current = null;
     setIsPaused(false);
     setPendingApproval(false);
     setInspectedTraceSteps(null);
@@ -420,6 +475,8 @@ export function useAgentRunController(
       setCurrentRunStatus(null);
       setLastThinkingDurationMs(null);
     });
+    rootRunIdRef.current = null;
+    currentRunIdRef.current = null;
     const newStreamingId = nanoid();
     setActiveStreamingId(newStreamingId);
     thinkingStartRef.current = Date.now();
@@ -445,13 +502,19 @@ export function useAgentRunController(
           state: Object.keys(seededState).length > 0 ? seededState : undefined,
           runId: isPaused ? currentRunId || undefined : undefined,
           threadId: currentThreadIdRef.current || undefined,
-          context: isPaused && pendingApproval ? { approval: message.text } : undefined,
+          context: runtimeContext(isPaused && pendingApproval ? { approval: message.text } : undefined),
         },
         'debug'
       );
       const responseThreadId = response.headers.get("X-Thread-ID");
       if (responseThreadId) {
         setCurrentThreadId(responseThreadId);
+      }
+      const responseRunId = response.headers.get("X-Run-ID");
+      if (responseRunId && responseRunId.trim().length > 0) {
+        rootRunIdRef.current = responseRunId;
+        currentRunIdRef.current = responseRunId;
+        setCurrentRunId(responseRunId);
       }
       setIsPaused(false); // Reset pause state when starting/resuming
       setPendingApproval(false);
@@ -493,8 +556,12 @@ export function useAgentRunController(
                 ? normalizedEvent.data
                 : payload;
             if (typeof rawEvent.run_id === "string" && rawEvent.run_id.trim().length > 0) {
-              latestRunId = rawEvent.run_id;
-              setCurrentRunId(rawEvent.run_id);
+              if (!rootRunIdRef.current) {
+                rootRunIdRef.current = rawEvent.run_id;
+              }
+              latestRunId = rootRunIdRef.current;
+              currentRunIdRef.current = rootRunIdRef.current;
+              setCurrentRunId(rootRunIdRef.current);
             }
 
             if (
@@ -520,6 +587,9 @@ export function useAgentRunController(
 
             if (eventName === "run.failed") {
               terminalError = String(eventData.error || (Array.isArray(rawEvent.diagnostics) ? (rawEvent.diagnostics[0] as Record<string, unknown> | undefined)?.message : "") || "Agent error");
+              setLiveExecutionSteps((prev) =>
+                finalizeLiveSteps(prev, "error", { error: terminalError || "Agent error" }),
+              );
               setCurrentRunStatus("failed");
               break;
             }
@@ -555,6 +625,13 @@ export function useAgentRunController(
               if (typeof threadIdFromStatus === "string" && threadIdFromStatus.trim().length > 0) {
                 setCurrentThreadId(threadIdFromStatus);
               }
+              if (status === "completed") {
+                setLiveExecutionSteps((prev) => finalizeLiveSteps(prev, "completed"));
+              } else if (status === "cancelled") {
+                setLiveExecutionSteps((prev) =>
+                  finalizeLiveSteps(prev, "error", { error: "Run cancelled" }),
+                );
+              }
               setCurrentRunStatus(status as AgentRunStatus["status"]);
               if (status === "paused") {
                 setIsPaused(true);
@@ -572,6 +649,7 @@ export function useAgentRunController(
               const stepId = String(payload.span_id || rawEvent.run_id || nanoid());
               setLiveExecutionSteps(prev => [...prev, {
                 id: stepId,
+                nodeId: typeof eventData.source_node_id === "string" ? eventData.source_node_id : undefined,
                 spanId: stepId,
                 name: String(eventData.display_name || eventData.summary || eventData.tool || "Tool"),
                 type: "tool",
@@ -583,8 +661,17 @@ export function useAgentRunController(
               const stepId = String(payload.span_id || rawEvent.run_id || "");
               setLiveExecutionSteps(prev => prev.map(s => s.id === stepId ? {
                 ...s,
+                nodeId: s.nodeId || (typeof eventData.source_node_id === "string" ? eventData.source_node_id : undefined),
                 status: "completed",
                 output: s.output !== undefined ? s.output : payload.output,
+              } : s));
+            } else if (eventName === "tool.failed") {
+              const stepId = String(payload.span_id || rawEvent.run_id || "");
+              setLiveExecutionSteps(prev => prev.map(s => s.id === stepId ? {
+                ...s,
+                nodeId: s.nodeId || (typeof eventData.source_node_id === "string" ? eventData.source_node_id : undefined),
+                status: "error",
+                output: s.output !== undefined ? s.output : { error: payload.error || "Tool failed" },
               } : s));
             } else if (eventName === "node_start" || eventName === "on_chain_start") {
               const data = normalizedEvent.data || {};
@@ -657,10 +744,12 @@ export function useAgentRunController(
           createdAt: new Date(),
           runId: latestRunId || currentRunId || undefined,
           responseBlocks: finalizedBlocks.length > 0 ? finalizedBlocks : undefined,
+          animateResponseBlocks: finalizedBlocks.length > 0,
           reasoningSteps: lastReasoningRef.current && lastReasoningRef.current.length > 0 ? lastReasoningRef.current : undefined,
           thinkingDurationMs: thinkingDurationRef.current || undefined,
         };
         setMessages(prev => {
+          if (prev.some((msg) => msg.id === assistantMsg.id)) return prev;
           const next = [...prev, assistantMsg];
           persistHistory(next);
           return next;

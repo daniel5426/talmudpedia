@@ -1,6 +1,6 @@
 # Agent Execution Current State
 
-Last Updated: 2026-03-20
+Last Updated: 2026-04-05
 
 This document describes the current agent execution architecture as implemented in the backend.
 
@@ -43,6 +43,12 @@ Legacy note:
 
 This is not just “kick off a LangGraph.” It is the orchestration boundary where identity, thread ownership, quota, and runtime context are normalized.
 
+Current nested-run rule:
+- synchronous `agent_call` child runs execute inside a dedicated fresh `AsyncSession`
+- synchronous `agent_call` child runs also execute inside a dedicated child task, and cancellation drains that task before the child session closes
+- the parent tool/node session no longer owns child run creation or child run streaming
+- cancelled parent runs are not allowed to spawn new child runs through `agent_call` or orchestration fanout paths
+
 ### Graph Execution
 
 Execution is based on compiled graph definitions and runtime adapters.
@@ -66,6 +72,18 @@ Current stream-contract rule:
 - generic runtime `error` events are non-terminal diagnostics
 - only explicit terminal run events such as `run.completed`, `run.failed`, `run.cancelled`, and `run.paused` should terminate client streaming flows
 - persisted run traces can be replayed by `run_id` through `GET /agents/runs/{run_id}/events`, which is now the canonical path for thread-history trace rehydration
+- tool lifecycle events now separate identity from attribution: `span_id` is the unique tool-call span and `source_node_id` identifies the owning graph node
+- `POST /agents/runs/{run_id}/cancel` now cancels the full descendant run subtree rooted at that run, not just the selected root row
+- subtree cancel now also cancels any live in-process run task registered for those run ids, so abort can interrupt an active nested `agent_call` wait instead of only flipping DB state
+- subtree cancel now also marks the full live run subtree in a shared in-process cancellation registry keyed by run/root lineage, and nested execution checks that registry before node dispatch, tool execution, orchestration fanout, and child `start_run`
+- a run already marked `cancelled` must not be revived back to `running` if its worker starts late
+- runtime-stream cancellation now cancels the underlying LangGraph task instead of waiting for it to keep running in the background, which is required for abort and timeout to stop nested delegated runs cleanly
+- foreground `/agents/{id}/stream` runs are also cancelled on client disconnect, so closing the live stream cannot leave a foreground delegated run tree running indefinitely
+- the cancel endpoint no longer writes thread turns synchronously; turn finalization stays with the run worker to avoid deadlocks on `agent_threads`
+- reasoning nodes now recheck current run cancellation at tool-loop boundaries, so a cancelled run stops after the active tool returns instead of continuing into another post-tool model iteration
+- cancellation-sensitive run-state checks now use direct SQL refreshes instead of session-cached `AgentRun` reads, and `ToolNodeExecutor` rechecks the current run immediately before nested `agent_call` child creation
+- runtime cancellation markers now persist for the life of the process for that run subtree instead of being cleared when a single run task exits, which prevents later descendant spawns from an already-cancelled root
+- cancellation now performs best-effort session rollback before a cancelled execution frame unwinds, so task cancellation does not close request-scoped or child-owned SQLAlchemy sessions in an illegal transaction state
 
 ### Node Execution
 
@@ -112,6 +130,11 @@ The current execution core is shared, but the public contracts are intentionally
 - embedded-agent runtime uses `/public/embed/agents/{agent_id}/*` with tenant API keys and `external_user_id` thread ownership
 
 So the runtime engine is unified below the route/auth layer, while product contracts remain surface-specific.
+
+Current platform-architect startup rule:
+- the seeded `platform-architect` agent requires `context.architect_mode` on new `/agents/{id}/stream` runs
+- internal playground/builder callers should send an explicit mode such as `default`; this is no longer inferred server-side
+- missing `context.architect_mode` fails run startup with HTTP 400 before graph execution begins
 
 ## Relationship To Older Docs
 

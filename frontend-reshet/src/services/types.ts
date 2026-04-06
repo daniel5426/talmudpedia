@@ -45,6 +45,14 @@ export interface Thread {
   actor_type?: string | null;
   actor_display?: string | null;
   actor_email?: string | null;
+  lineage?: {
+    root_thread_id?: string | null;
+    parent_thread_id?: string | null;
+    parent_thread_turn_id?: string | null;
+    spawned_by_run_id?: string | null;
+    depth?: number;
+    is_root?: boolean;
+  } | null;
 }
 
 export interface ChatHistory {

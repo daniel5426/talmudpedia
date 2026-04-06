@@ -12,8 +12,8 @@ importers:
         specifier: ^1.0.4
         version: 1.0.4
       '@agents24/ui-blocks-contract':
-        specifier: ^0.1.0
-        version: 0.1.0
+        specifier: ^0.2.0
+        version: 0.2.0
       '@fontsource-variable/noto-sans':
         specifier: ^5.2.10
         version: 5.2.10
@@ -217,8 +217,8 @@ packages:
     resolution: {integrity: sha512-nzUHU1IIVR0P7a6Z9z3OjvyN5y+vWHBIz2Ai1dq5e0OgfgOPRgl1Fq1bPQepzn06U5k02sxXWRBg1x97hX9epw==}
     engines: {node: '>=18.17'}
 
-  '@agents24/ui-blocks-contract@0.1.0':
-    resolution: {integrity: sha512-Re7VbIm+z+4zrtGnvGT9mVj4jAC8vyGHC072xnQmROEV5RdqPqk57kP2qwZEq1/zkYCr19u7YrR5Gex9BxsWiw==}
+  '@agents24/ui-blocks-contract@0.2.0':
+    resolution: {integrity: sha512-X2n5nnA5OkYo5NNIdZG0wNyco+ztUb4piSJBR5n+p1XCmM0gPnysacQX+4w3X9KMYk9QBSCDSN7Jrxqm/MgY0Q==}
 
   '@ai-sdk/gateway@3.0.66':
     resolution: {integrity: sha512-SIQ0YY0iMuv+07HLsZ+bB990zUJ6S4ujORAh+Jv1V2KGNn73qQKnGO0JBk+w+Res8YqOFSycwDoWcFlQrVxS4A==}
@@ -4742,7 +4742,7 @@ snapshots:
 
   '@agents24/embed-sdk@1.0.4': {}
 
-  '@agents24/ui-blocks-contract@0.1.0':
+  '@agents24/ui-blocks-contract@0.2.0':
     dependencies:
       zod: 4.3.6
 

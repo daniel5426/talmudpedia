@@ -1,6 +1,7 @@
 import logging
 import asyncio
 import traceback
+from contextlib import suppress
 from uuid import UUID, uuid4
 from datetime import datetime, timezone
 from typing import Dict, Any, Optional, AsyncGenerator
@@ -17,6 +18,12 @@ from app.agent.runtime.base import RuntimeState
 from app.agent.execution.types import ExecutionEvent, EventVisibility, ExecutionMode
 from app.agent.execution.durable_checkpointer import DurableMemorySaver
 from app.agent.execution.output_projection import extract_assistant_output_text
+from app.agent.execution.run_task_registry import (
+    is_run_cancel_requested,
+    record_run_lineage,
+    register_run_task,
+    unregister_run_task,
+)
 from app.agent.cel_engine import evaluate_template
 from app.agent.execution.trace_recorder import ExecutionTraceRecorder
 from app.db.postgres.models.agent_threads import AgentThreadSurface, AgentThreadTurnStatus
@@ -61,6 +68,15 @@ class RequestedModelTarget:
     logical_model_id: UUID | None
     ref: str | None
 
+
+@dataclass(frozen=True)
+class SyncRunExecutionResult:
+    run_id: UUID
+    status: str
+    output_result: dict[str, Any]
+    error_message: str | None
+
+
 class AgentExecutorService:
     _checkpointer = DurableMemorySaver()
 
@@ -70,6 +86,22 @@ class AgentExecutorService:
         # but _execute will create its own local compiler.
         self.compiler = AgentCompiler(db=db) if db else None
         self.trace_recorder = ExecutionTraceRecorder(serializer=self._serialize_state)
+
+    @staticmethod
+    async def _rollback_quietly(db: AsyncSession) -> None:
+        try:
+            await asyncio.shield(db.rollback())
+        except Exception:
+            logger.debug("Best-effort session rollback failed", exc_info=True)
+
+    @staticmethod
+    async def _drain_task(task: asyncio.Task[Any] | None) -> None:
+        if task is None:
+            return
+        if not task.done():
+            task.cancel()
+        with suppress(asyncio.CancelledError):
+            await asyncio.shield(task)
 
     @staticmethod
     def _apply_run_scoped_model_override(
@@ -472,6 +504,25 @@ class AgentExecutorService:
         return AgentThreadTurnStatus.completed
 
     @staticmethod
+    def _status_text(value: Any) -> str:
+        return str(getattr(value, "value", value) or "").strip().lower()
+
+    @classmethod
+    def _is_cancelled_status(cls, value: Any) -> bool:
+        return cls._status_text(value) == RunStatus.cancelled.value
+
+    async def _assert_parent_run_accepting_children(self, parent_run_id: UUID | None) -> None:
+        if parent_run_id is None:
+            return
+        parent_status = (
+            await self.db.execute(select(AgentRun.status).where(AgentRun.id == parent_run_id))
+        ).scalar_one_or_none()
+        if parent_status is None:
+            raise ValueError(f"Parent run {parent_run_id} not found")
+        if self._is_cancelled_status(parent_status):
+            raise RuntimeError(f"Parent run {parent_run_id} is cancelled")
+
+    @staticmethod
     async def _refresh_run_record(db: AsyncSession, run: AgentRun) -> AgentRun:
         await db.refresh(run)
         return run
@@ -539,9 +590,13 @@ class AgentExecutorService:
         If background is True, it triggers a background task and returns the ID.
         If background is False, it only creates the DB record.
         """
+        if is_run_cancel_requested(run_id=parent_run_id, root_run_id=root_run_id):
+            raise RuntimeError("Cannot start run under a cancelled run tree")
         agent = await self.db.get(Agent, agent_id)
         if not agent:
             raise ValueError(f"Agent {agent_id} not found")
+
+        await self._assert_parent_run_accepting_children(parent_run_id)
 
         # Create Run record
         runtime_context = {}
@@ -616,6 +671,7 @@ class AgentExecutorService:
                 surface=surface,
                 thread_id=parsed_thread_id,
                 input_text=input_params.get("input") if isinstance(input_params.get("input"), str) else None,
+                parent_run_id=parent_run_id,
             )
         except ThreadAccessError as exc:
             raise ValueError(str(exc)) from exc
@@ -802,6 +858,7 @@ class AgentExecutorService:
             run.root_run_id = run.id
             await self.db.commit()
             await self.db.refresh(run)
+        record_run_lineage(run.id, root_run_id=run.root_run_id or run.id, parent_run_id=run.parent_run_id)
 
         # Trigger background execution if requested
         if background:
@@ -817,6 +874,104 @@ class AgentExecutorService:
                 await self._execute(run_id, db=session, resume_payload=resume_payload, mode=mode)
             except Exception as e:
                 logger.error(f"Background execution wrapper failed: {e}")
+
+    @classmethod
+    async def execute_sync_with_new_session(
+        cls,
+        *,
+        agent_id: UUID,
+        input_params: Dict[str, Any],
+        user_id: Optional[UUID] = None,
+        mode: ExecutionMode = ExecutionMode.DEBUG,
+        requested_scopes: Optional[list[str]] = None,
+        root_run_id: Optional[UUID] = None,
+        parent_run_id: Optional[UUID] = None,
+        parent_node_id: Optional[str] = None,
+        depth: int = 0,
+        spawn_key: Optional[str] = None,
+        orchestration_group_id: Optional[UUID] = None,
+        thread_id: Optional[UUID] = None,
+        timeout_s: float | None = None,
+    ) -> SyncRunExecutionResult:
+        from app.db.postgres.engine import sessionmaker as get_session
+
+        async with get_session() as session:
+            executor = cls(db=session)
+            run_id = await executor.start_run(
+                agent_id=agent_id,
+                input_params=input_params,
+                user_id=user_id,
+                background=False,
+                mode=mode,
+                requested_scopes=requested_scopes,
+                root_run_id=root_run_id,
+                parent_run_id=parent_run_id,
+                parent_node_id=parent_node_id,
+                depth=depth,
+                spawn_key=spawn_key,
+                orchestration_group_id=orchestration_group_id,
+                thread_id=thread_id,
+            )
+            child_task: asyncio.Task[None] | None = None
+
+            try:
+                async def _run_sync() -> None:
+                    async for _ in executor.run_and_stream(run_id, session, None, mode):
+                        pass
+
+                child_task = asyncio.create_task(_run_sync(), name=f"sync-agent-call:{run_id}")
+                if timeout_s is None:
+                    await child_task
+                else:
+                    await asyncio.wait_for(child_task, timeout=timeout_s)
+            except asyncio.TimeoutError:
+                await cls._drain_task(child_task)
+                await cls._rollback_quietly(session)
+                run = await session.get(AgentRun, run_id)
+                if run is not None:
+                    run.status = RunStatus.failed
+                    run.error_message = f"agent_call timed out after {int(timeout_s)}s"
+                    run.completed_at = datetime.now(timezone.utc)
+                    await session.commit()
+                    await session.refresh(run)
+                    return SyncRunExecutionResult(
+                        run_id=run_id,
+                        status=str(getattr(run.status, "value", run.status)),
+                        output_result=run.output_result if isinstance(run.output_result, dict) else {},
+                        error_message=run.error_message,
+                    )
+                raise
+            except asyncio.CancelledError:
+                await cls._drain_task(child_task)
+                await cls._rollback_quietly(session)
+                current_task = asyncio.current_task()
+                if current_task and current_task.cancelling():
+                    raise
+                run = await session.get(AgentRun, run_id)
+                if run is not None:
+                    await session.refresh(run)
+                    return SyncRunExecutionResult(
+                        run_id=run_id,
+                        status=str(getattr(run.status, "value", run.status)),
+                        output_result=run.output_result if isinstance(run.output_result, dict) else {},
+                        error_message=run.error_message,
+                    )
+                raise
+            except Exception:
+                await cls._drain_task(child_task)
+                await cls._rollback_quietly(session)
+                raise
+
+            run = await session.get(AgentRun, run_id)
+            if run is None:
+                raise RuntimeError("Child run missing after synchronous execution")
+            await session.refresh(run)
+            return SyncRunExecutionResult(
+                run_id=run_id,
+                status=str(getattr(run.status, "value", run.status)),
+                output_result=run.output_result if isinstance(run.output_result, dict) else {},
+                error_message=run.error_message,
+            )
 
     async def resume_run(self, run_id: UUID, user_input: Dict[str, Any], background: bool = True) -> None:
         """
@@ -864,427 +1019,112 @@ class AgentExecutorService:
         - Runs LangGraph execution and queue consumption concurrently.
         - Normalizes ALL events (both LangGraph and explicit) to ExecutionEvent.
         """
-        # 1. Fetch Run & Agent
         run = await db.get(AgentRun, run_id)
         if not run:
             raise ValueError(f"Run {run_id} not found")
-
-        agent = await db.get(Agent, run.agent_id)
-        if not agent:
-            raise ValueError(f"Agent {run.agent_id} not found")
-
-        # Capture input params before commit to avoid async lazy-loads
-        run_input_params = run.input_params
-
-        # Propagate delegation context into runtime state for node executors.
-        runtime_context = {}
-        if isinstance(run_input_params, dict):
-            runtime_context = dict(run_input_params.get("context") or {})
-        if run.initiator_user_id:
-            runtime_context["initiator_user_id"] = str(run.initiator_user_id)
-        runtime_context["run_id"] = str(run.id)
-        if run.root_run_id:
-            runtime_context["root_run_id"] = str(run.root_run_id)
-        if run.parent_run_id:
-            runtime_context["parent_run_id"] = str(run.parent_run_id)
-        if run.parent_node_id:
-            runtime_context["parent_node_id"] = str(run.parent_node_id)
-        if run.thread_id:
-            runtime_context["thread_id"] = str(run.thread_id)
-        runtime_context["depth"] = int(run.depth or 0)
-        if run.spawn_key:
-            runtime_context["spawn_key"] = run.spawn_key
-        if run.orchestration_group_id:
-            runtime_context["orchestration_group_id"] = str(run.orchestration_group_id)
-        if run.tenant_id:
-            runtime_context["tenant_id"] = str(run.tenant_id)
-        runtime_context["agent_id"] = str(agent.id)
-        if getattr(agent, "slug", None):
-            runtime_context["agent_slug"] = str(agent.slug)
-        if run.resolved_model_id:
-            runtime_context["resolved_model_id"] = str(run.resolved_model_id)
-        runtime_context["orchestration_surface"] = "option_a_graphspec_v2"
-        if isinstance(run_input_params, dict):
-            run_input_params = dict(run_input_params)
-            run_input_params["context"] = runtime_context
-            workflow_input = run_input_params.get("workflow_input")
-            if not isinstance(workflow_input, dict):
-                workflow_input = {}
-            workflow_input = {
-                "text": str(run_input_params.get("input") or workflow_input.get("text") or workflow_input.get("input_as_text") or ""),
-                "input_as_text": str(run_input_params.get("input") or workflow_input.get("text") or workflow_input.get("input_as_text") or ""),
-                **workflow_input,
-            }
-            run_input_params["workflow_input"] = workflow_input
-            # Keep auth/runtime context in persistent state bag too.
-            # Top-level `context` is used by workflow logic and may be overwritten.
-            existing_state = run_input_params.get("state")
-            if not isinstance(existing_state, dict):
-                existing_state = {}
-            existing_state = dict(existing_state)
-            existing_state["context"] = dict(runtime_context)
-            run_input_params["state"] = existing_state
-        else:
-            run_input_params = {
-                "context": runtime_context,
-                "workflow_input": {"text": "", "input_as_text": ""},
-                "state": {"context": dict(runtime_context)},
-            }
-
-        resolved_execution = await self._resolve_run_model_receipt(
-            db=db,
-            run=run,
-            agent=agent,
-            runtime_context=runtime_context,
+        register_run_task(
+            run_id,
+            root_run_id=run.root_run_id or run.id,
+            parent_run_id=run.parent_run_id,
         )
-        if resolved_execution is not None:
-            runtime_context["resolved_model_id"] = str(resolved_execution.logical_model.id)
-            runtime_context["resolved_binding_id"] = str(resolved_execution.binding.id)
-            runtime_context["resolved_provider"] = resolved_execution.resolved_provider
-            runtime_context["resolved_provider_model_id"] = resolved_execution.binding.provider_model_id
-
-        # Update status
-        run.status = RunStatus.running
-        if not run.started_at:
-            run.started_at = datetime.utcnow()
-        await db.commit()
-
-        event_sequence = 0
-
-        def persist_event(event: ExecutionEvent | dict[str, Any]) -> None:
-            nonlocal event_sequence
-            event_sequence += 1
-            self.trace_recorder.schedule_persist(run_id, event, sequence=event_sequence)
-
-        persist_event(
-            ExecutionEvent(
-                event="run.lifecycle",
-                data={
-                    "phase": "started",
-                    "agent_id": str(agent.id),
-                    "agent_slug": getattr(agent, "slug", None),
-                    "mode": mode.value,
-                },
-                run_id=str(run_id),
-                span_id=str(run_id),
-                name="AgentRun",
-                visibility=EventVisibility.INTERNAL,
-                metadata={"category": "lifecycle", "mode": mode.value},
-            )
-        )
-
         try:
-            # 2. Compile Graph to GraphIR
-            persist_event(
-                ExecutionEvent(
-                    event="run.lifecycle",
-                    data={"phase": "compile_graph_started"},
-                    run_id=str(run_id),
-                    span_id=str(run_id),
-                    name="AgentRun",
-                    visibility=EventVisibility.INTERNAL,
-                    metadata={"category": "lifecycle"},
-                )
-            )
-            compiler = AgentCompiler(db=db, tenant_id=agent.tenant_id)
-            resolved_model_id = str(run.resolved_model_id) if run.resolved_model_id else None
-            if not resolved_model_id:
-                candidate = runtime_context.get("resolved_model_id")
-                if candidate:
-                    resolved_model_id = str(candidate)
-            graph_payload = agent.graph_definition if isinstance(agent.graph_definition, dict) else {}
-            graph_payload = self._apply_run_scoped_model_override(graph_payload, resolved_model_id)
-            graph_payload = await PromptReferenceResolver(db, agent.tenant_id).resolve_graph_definition(graph_payload)
-            graph_def = AgentGraph(**graph_payload)
-            compile_input_params = run_input_params
-            if resume_payload and isinstance(resume_payload, dict):
-                if "approval" in resume_payload:
-                    compile_input_params = dict(run_input_params or {})
-                    compile_input_params["approval"] = resume_payload.get("approval")
-            graph_ir = await compiler.compile(
-                agent.id,
-                agent.version,
-                graph_def,
-                config={"mode": mode.value},
-                input_params=compile_input_params,
-            )
-            persist_event(
-                ExecutionEvent(
-                    event="run.lifecycle",
-                    data={
-                        "phase": "compile_graph_completed",
-                        "node_count": len(graph_def.nodes),
-                        "edge_count": len(graph_def.edges),
-                    },
-                    run_id=str(run_id),
-                    span_id=str(run_id),
-                    name="AgentRun",
-                    visibility=EventVisibility.INTERNAL,
-                    metadata={"category": "lifecycle"},
-                )
-            )
-            analysis = graph_ir.metadata.get("analysis") if isinstance(graph_ir.metadata, dict) else {}
-            inventory = analysis.get("inventory") if isinstance(analysis, dict) else {}
-            persist_event(
-                ExecutionEvent(
-                    event="workflow.inventory_snapshot",
-                    data={
-                        "workflow_input_count": len(inventory.get("workflow_input") or []),
-                        "state_count": len(inventory.get("state") or []),
-                        "node_output_group_count": len(inventory.get("node_outputs") or []),
-                    },
-                    run_id=str(run_id),
-                    span_id=str(run_id),
-                    name="AgentRun",
-                    visibility=EventVisibility.INTERNAL,
-                    metadata={"category": "workflow_contract", "mode": mode.value},
-                )
-            )
+            if self._is_cancelled_status(run.status) or is_run_cancel_requested(
+                run_id=run.id,
+                root_run_id=run.root_run_id or run.id,
+                parent_run_id=run.parent_run_id,
+            ):
+                return
 
-            # 3. Create Runtime Adapter + Executable
-            adapter_cls = RuntimeAdapterRegistry.get_default()
-            adapter = adapter_cls(tenant_id=agent.tenant_id, db=db)
-            executable = await adapter.compile(graph_ir, checkpointer=self._checkpointer)
-            persist_event(
-                ExecutionEvent(
-                    event="run.lifecycle",
-                    data={"phase": "adapter_ready", "adapter": adapter_cls.__name__},
-                    run_id=str(run_id),
-                    span_id=str(run_id),
-                    name="AgentRun",
-                    visibility=EventVisibility.INTERNAL,
-                    metadata={"category": "lifecycle"},
-                )
-            )
+            agent = await db.get(Agent, run.agent_id)
+            if not agent:
+                raise ValueError(f"Agent {run.agent_id} not found")
 
-            # 4. Prepare Config
-            config = {
-                "thread_id": str(run_id),
-                "run_id": str(run_id),
-                "mode": mode.value,
-                "resume_payload": resume_payload,
-                "architect_mode": runtime_context.get("architect_mode"),
-                "initiator_user_id": str(run.initiator_user_id) if run.initiator_user_id else None,
-                "tenant_id": str(run.tenant_id) if run.tenant_id else None,
-                "user_id": str(run.user_id) if run.user_id else None,
-                "agent_id": str(agent.id),
-                "agent_slug": str(getattr(agent, "slug", "")) or None,
-                "auth_token": runtime_context.get("token"),
-                "root_run_id": str(run.root_run_id) if run.root_run_id else None,
-                "parent_run_id": str(run.parent_run_id) if run.parent_run_id else None,
-                "parent_node_id": run.parent_node_id,
-                "depth": int(run.depth or 0),
-                "spawn_key": run.spawn_key,
-                "orchestration_group_id": str(run.orchestration_group_id) if run.orchestration_group_id else None,
-                "orchestration_surface": runtime_context.get("orchestration_surface"),
-            }
-        except Exception as e:
-            await db.rollback()
-            logger.error(f"Execution setup failed for run {run_id}: {e}")
-            traceback.print_exc()
-            persist_event(
-                ExecutionEvent(
-                    event="run.lifecycle",
-                    data={"phase": "setup_failed", "error": str(e)},
-                    run_id=str(run_id),
-                    span_id=str(run_id),
-                    name="AgentRun",
-                    visibility=EventVisibility.INTERNAL,
-                    metadata={"category": "lifecycle"},
-                )
-            )
-            error_event = ExecutionEvent(
-                event="error",
-                data={"error": str(e)},
-                run_id=str(run_id),
-                visibility=EventVisibility.CLIENT_SAFE
-            )
-            persist_event(error_event)
-            yield error_event
-            await self._mark_run_failed(run_id, e, mode=mode)
-            return
+            run_input_params = run.input_params
 
-        try:
-            turn = None
+            runtime_context = {}
+            if isinstance(run_input_params, dict):
+                runtime_context = dict(run_input_params.get("context") or {})
+            if run.initiator_user_id:
+                runtime_context["initiator_user_id"] = str(run.initiator_user_id)
+            runtime_context["run_id"] = str(run.id)
+            if run.root_run_id:
+                runtime_context["root_run_id"] = str(run.root_run_id)
+            if run.parent_run_id:
+                runtime_context["parent_run_id"] = str(run.parent_run_id)
+            if run.parent_node_id:
+                runtime_context["parent_node_id"] = str(run.parent_node_id)
             if run.thread_id:
-                thread_service = ThreadService(db)
-                turn = await thread_service.start_turn(
-                    thread_id=run.thread_id,
-                    run_id=run_id,
-                    user_input_text=(
-                        run_input_params.get("input_display_text")
-                        if isinstance(run_input_params, dict)
-                        else None
-                    ) or (
-                        run_input_params.get("input")
-                        if isinstance(run_input_params, dict)
-                        else None
-                    ),
-                    attachment_ids=[
-                        UUID(str(item))
-                        for item in ((run_input_params.get("attachment_ids") or []) if isinstance(run_input_params, dict) else [])
-                        if str(item).strip()
-                    ],
-                    metadata={
-                        "mode": mode.value,
-                        "context_window": ContextWindowService.read_from_run(run),
-                    },
-                )
-            # 5. Stream Execution Events (Platform-normalized)
-            persist_event(
-                ExecutionEvent(
-                    event="run.lifecycle",
-                    data={"phase": "stream_started"},
-                    run_id=str(run_id),
-                    span_id=str(run_id),
-                    name="AgentRun",
-                    visibility=EventVisibility.INTERNAL,
-                    metadata={"category": "lifecycle"},
-                )
-            )
-            await self._refresh_run_record(db, run)
-            invocation_service = RunInvocationService(db)
-            async for event in adapter.stream(executable, run_input_params, config):
-                persist_event(event)
-                yield event
-                invocation_payload = self._extract_invocation_payload(event)
-                if invocation_payload is not None:
-                    await invocation_service.append_from_payload(run=run, payload=invocation_payload)
-                    _, context_window = await invocation_service.recompute_run_aggregates(run)
-                    if turn is not None:
-                        next_metadata = dict(turn.metadata_ or {})
-                        next_metadata["context_window"] = ContextWindowService.read_from_run(run)
-                        turn.metadata_ = next_metadata
-                    await db.flush()
-                    usage_event = ExecutionEvent(
-                        event="run_usage.updated",
-                        data={"run_usage": self._serialize_run_usage_event(run)},
-                        run_id=str(run_id),
-                        visibility=EventVisibility.CLIENT_SAFE,
-                        metadata={"category": "usage", "mode": mode.value},
-                    )
-                    persist_event(usage_event)
-                    yield usage_event
-                    context_event = ExecutionEvent(
-                        event="context_window.updated",
-                        data={"context_window": context_window or ContextWindowService.read_from_run(run)},
-                        run_id=str(run_id),
-                        visibility=EventVisibility.CLIENT_SAFE,
-                        metadata={"category": "context", "mode": mode.value},
-                    )
-                    persist_event(context_event)
-                    yield context_event
-                await self._refresh_run_record(db, run)
-                if run.status == RunStatus.cancelled:
-                    persist_event(
-                        ExecutionEvent(
-                            event="run.lifecycle",
-                            data={"phase": "cancelled_during_stream"},
-                            run_id=str(run_id),
-                            span_id=str(run_id),
-                            name="AgentRun",
-                            visibility=EventVisibility.INTERNAL,
-                            metadata={"category": "lifecycle", "mode": mode.value},
-                        )
-                    )
-                    break
-
-            # 6. Post-Execution Check
-            await self._refresh_run_record(db, run)
-            output_result: Dict[str, Any] | Any = run.output_result if isinstance(run.output_result, dict) else {}
-            snapshot_next = None
-            final_status = RunStatus.completed
-            if run.status == RunStatus.cancelled:
-                final_status = RunStatus.cancelled
-                if not isinstance(run.output_result, dict):
-                    run.output_result = {}
-                    output_result = run.output_result
-                run.completed_at = run.completed_at or datetime.utcnow()
+                runtime_context["thread_id"] = str(run.thread_id)
+            runtime_context["depth"] = int(run.depth or 0)
+            if run.spawn_key:
+                runtime_context["spawn_key"] = run.spawn_key
+            if run.orchestration_group_id:
+                runtime_context["orchestration_group_id"] = str(run.orchestration_group_id)
+            if run.tenant_id:
+                runtime_context["tenant_id"] = str(run.tenant_id)
+            runtime_context["agent_id"] = str(agent.id)
+            if getattr(agent, "slug", None):
+                runtime_context["agent_slug"] = str(agent.slug)
+            if run.resolved_model_id:
+                runtime_context["resolved_model_id"] = str(run.resolved_model_id)
+            runtime_context["orchestration_surface"] = "option_a_graphspec_v2"
+            if isinstance(run_input_params, dict):
+                run_input_params = dict(run_input_params)
+                run_input_params["context"] = runtime_context
+                workflow_input = run_input_params.get("workflow_input")
+                if not isinstance(workflow_input, dict):
+                    workflow_input = {}
+                workflow_input = {
+                    "text": str(run_input_params.get("input") or workflow_input.get("text") or workflow_input.get("input_as_text") or ""),
+                    "input_as_text": str(run_input_params.get("input") or workflow_input.get("text") or workflow_input.get("input_as_text") or ""),
+                    **workflow_input,
+                }
+                run_input_params["workflow_input"] = workflow_input
+                existing_state = run_input_params.get("state")
+                if not isinstance(existing_state, dict):
+                    existing_state = {}
+                existing_state = dict(existing_state)
+                existing_state["context"] = dict(runtime_context)
+                run_input_params["state"] = existing_state
             else:
-                snapshot: RuntimeState = adapter.get_state(executable, config)
-                snapshot_next = snapshot.next
-                output_result = self._serialize_state(snapshot.values)
-                terminal_failure = output_result.get("_run_failure") if isinstance(output_result, dict) else None
-                terminal_failure_message = ""
-                if isinstance(terminal_failure, dict):
-                    terminal_failure_message = str(
-                        terminal_failure.get("message")
-                        or output_result.get("error")
-                        or ""
-                    ).strip()
+                run_input_params = {
+                    "context": runtime_context,
+                    "workflow_input": {"text": "", "input_as_text": ""},
+                    "state": {"context": dict(runtime_context)},
+                }
 
-                if snapshot_next:
-                    final_status = RunStatus.paused
-                    run.status = RunStatus.paused
-                    run.checkpoint = output_result
-                elif terminal_failure_message:
-                    final_status = RunStatus.failed
-                    run.status = RunStatus.failed
-                    run.output_result = output_result
-                    run.error_message = terminal_failure_message
-                    run.completed_at = datetime.utcnow()
-                else:
-                    run.status = RunStatus.completed
-                    run.output_result = output_result
-                    run.completed_at = datetime.utcnow()
-
-            await self._finalize_run_accounting(
+            resolved_execution = await self._resolve_run_model_receipt(
+                db=db,
                 run=run,
-                resolved_execution=resolved_execution,
-                observed_usage=None,
-                observed_usage_source=None,
-                input_params=run_input_params if isinstance(run_input_params, dict) else {},
-                output_result=run.output_result if isinstance(run.output_result, dict) else output_result if isinstance(output_result, dict) else None,
+                agent=agent,
+                runtime_context=runtime_context,
             )
+            if resolved_execution is not None:
+                runtime_context["resolved_model_id"] = str(resolved_execution.logical_model.id)
+                runtime_context["resolved_binding_id"] = str(resolved_execution.binding.id)
+                runtime_context["resolved_provider"] = resolved_execution.resolved_provider
+                runtime_context["resolved_provider_model_id"] = resolved_execution.binding.provider_model_id
 
-            # Emit final status event
-            next_nodes = []
-            if snapshot_next:
-                next_ids = snapshot_next if isinstance(snapshot_next, list) else [snapshot_next]
-                node_index = {n.id: n for n in graph_def.nodes}
-                for next_id in next_ids:
-                    node = node_index.get(next_id)
-                    if node:
-                        next_nodes.append(
-                            self._build_paused_node_payload(
-                                node=node.model_dump(),
-                                state=snapshot.values if isinstance(snapshot.values, dict) else {},
-                            )
-                        )
-                    else:
-                        next_nodes.append({"id": next_id})
+            run.status = RunStatus.running
+            if not run.started_at:
+                run.started_at = datetime.utcnow()
+            await db.commit()
 
-            run_status_event = ExecutionEvent(
-                event="run_status",
-                data={
-                    "status": final_status.value,
-                    "next": snapshot_next,
-                    "next_nodes": next_nodes or None,
-                    "final_output": (
-                        run.output_result.get("final_output")
-                        if final_status == RunStatus.completed and isinstance(run.output_result, dict)
-                        else None
-                    ),
-                    "error": (
-                        run.error_message
-                        if final_status == RunStatus.failed
-                        else None
-                    ),
-                    "context_window": ContextWindowService.read_from_run(run),
-                    "run_usage": self._serialize_run_usage_event(run),
-                },
-                run_id=str(run_id),
-                visibility=EventVisibility.CLIENT_SAFE,
-                metadata={"mode": mode.value}
-            )
-            persist_event(run_status_event)
+            event_sequence = 0
+
+            def persist_event(event: ExecutionEvent | dict[str, Any]) -> None:
+                nonlocal event_sequence
+                event_sequence += 1
+                self.trace_recorder.schedule_persist(run_id, event, sequence=event_sequence)
+
             persist_event(
                 ExecutionEvent(
                     event="run.lifecycle",
                     data={
-                        "phase": "finished",
-                        "status": final_status.value,
-                        "next": snapshot_next,
+                        "phase": "started",
+                        "agent_id": str(agent.id),
+                        "agent_slug": getattr(agent, "slug", None),
+                        "mode": mode.value,
                     },
                     run_id=str(run_id),
                     span_id=str(run_id),
@@ -1294,51 +1134,382 @@ class AgentExecutorService:
                 )
             )
 
-            quota_service = UsageQuotaService(db)
-            await quota_service.settle_for_run(
-                run_id=run_id,
-                actual_usage_tokens=billable_total_tokens(run),
-            )
-            await ResourcePolicyQuotaService(db).settle_for_run(run=run)
-            if run.thread_id:
-                thread_service = ThreadService(db)
-                await thread_service.complete_turn(
-                    run_id=run_id,
-                    status=self._thread_turn_status_for_run(run),
-                    assistant_output_text=self._extract_turn_assistant_output_text(run),
-                    metadata=self._extract_turn_metadata(
-                        run.output_result if isinstance(run.output_result, dict) else None
-                    ),
+            try:
+                persist_event(
+                    ExecutionEvent(
+                        event="run.lifecycle",
+                        data={"phase": "compile_graph_started"},
+                        run_id=str(run_id),
+                        span_id=str(run_id),
+                        name="AgentRun",
+                        visibility=EventVisibility.INTERNAL,
+                        metadata={"category": "lifecycle"},
+                    )
                 )
-            await db.commit()
-            yield run_status_event
+                compiler = AgentCompiler(db=db, tenant_id=agent.tenant_id)
+                resolved_model_id = str(run.resolved_model_id) if run.resolved_model_id else None
+                if not resolved_model_id:
+                    candidate = runtime_context.get("resolved_model_id")
+                    if candidate:
+                        resolved_model_id = str(candidate)
+                graph_payload = agent.graph_definition if isinstance(agent.graph_definition, dict) else {}
+                graph_payload = self._apply_run_scoped_model_override(graph_payload, resolved_model_id)
+                graph_payload = await PromptReferenceResolver(db, agent.tenant_id).resolve_graph_definition(graph_payload)
+                graph_def = AgentGraph(**graph_payload)
+                compile_input_params = run_input_params
+                if resume_payload and isinstance(resume_payload, dict) and "approval" in resume_payload:
+                    compile_input_params = dict(run_input_params or {})
+                    compile_input_params["approval"] = resume_payload.get("approval")
+                graph_ir = await compiler.compile(
+                    agent.id,
+                    agent.version,
+                    graph_def,
+                    config={"mode": mode.value},
+                    input_params=compile_input_params,
+                )
+                persist_event(
+                    ExecutionEvent(
+                        event="run.lifecycle",
+                        data={
+                            "phase": "compile_graph_completed",
+                            "node_count": len(graph_def.nodes),
+                            "edge_count": len(graph_def.edges),
+                        },
+                        run_id=str(run_id),
+                        span_id=str(run_id),
+                        name="AgentRun",
+                        visibility=EventVisibility.INTERNAL,
+                        metadata={"category": "lifecycle"},
+                    )
+                )
+                analysis = graph_ir.metadata.get("analysis") if isinstance(graph_ir.metadata, dict) else {}
+                inventory = analysis.get("inventory") if isinstance(analysis, dict) else {}
+                persist_event(
+                    ExecutionEvent(
+                        event="workflow.inventory_snapshot",
+                        data={
+                            "workflow_input_count": len(inventory.get("workflow_input") or []),
+                            "state_count": len(inventory.get("state") or []),
+                            "node_output_group_count": len(inventory.get("node_outputs") or []),
+                        },
+                        run_id=str(run_id),
+                        span_id=str(run_id),
+                        name="AgentRun",
+                        visibility=EventVisibility.INTERNAL,
+                        metadata={"category": "workflow_contract", "mode": mode.value},
+                    )
+                )
 
-        except Exception as e:
-            await db.rollback()
-            logger.error(f"Streaming execution failed for run {run_id}: {e}")
-            traceback.print_exc()
-            persist_event(
-                ExecutionEvent(
-                    event="run.lifecycle",
-                    data={"phase": "stream_failed", "error": str(e)},
+                adapter_cls = RuntimeAdapterRegistry.get_default()
+                adapter = adapter_cls(tenant_id=agent.tenant_id, db=db)
+                executable = await adapter.compile(graph_ir, checkpointer=self._checkpointer)
+                persist_event(
+                    ExecutionEvent(
+                        event="run.lifecycle",
+                        data={"phase": "adapter_ready", "adapter": adapter_cls.__name__},
+                        run_id=str(run_id),
+                        span_id=str(run_id),
+                        name="AgentRun",
+                        visibility=EventVisibility.INTERNAL,
+                        metadata={"category": "lifecycle"},
+                    )
+                )
+
+                config = {
+                    "thread_id": str(run_id),
+                    "run_id": str(run_id),
+                    "mode": mode.value,
+                    "resume_payload": resume_payload,
+                    "architect_mode": runtime_context.get("architect_mode"),
+                    "initiator_user_id": str(run.initiator_user_id) if run.initiator_user_id else None,
+                    "tenant_id": str(run.tenant_id) if run.tenant_id else None,
+                    "user_id": str(run.user_id) if run.user_id else None,
+                    "agent_id": str(agent.id),
+                    "agent_slug": str(getattr(agent, "slug", "")) or None,
+                    "auth_token": runtime_context.get("token"),
+                    "root_run_id": str(run.root_run_id) if run.root_run_id else None,
+                    "parent_run_id": str(run.parent_run_id) if run.parent_run_id else None,
+                    "parent_node_id": run.parent_node_id,
+                    "depth": int(run.depth or 0),
+                    "spawn_key": run.spawn_key,
+                    "orchestration_group_id": str(run.orchestration_group_id) if run.orchestration_group_id else None,
+                    "orchestration_surface": runtime_context.get("orchestration_surface"),
+                }
+            except Exception as e:
+                await db.rollback()
+                logger.error(f"Execution setup failed for run {run_id}: {e}")
+                traceback.print_exc()
+                persist_event(
+                    ExecutionEvent(
+                        event="run.lifecycle",
+                        data={"phase": "setup_failed", "error": str(e)},
+                        run_id=str(run_id),
+                        span_id=str(run_id),
+                        name="AgentRun",
+                        visibility=EventVisibility.INTERNAL,
+                        metadata={"category": "lifecycle"},
+                    )
+                )
+                error_event = ExecutionEvent(
+                    event="error",
+                    data={"error": str(e)},
                     run_id=str(run_id),
-                    span_id=str(run_id),
-                    name="AgentRun",
-                    visibility=EventVisibility.INTERNAL,
-                    metadata={"category": "lifecycle"},
+                    visibility=EventVisibility.CLIENT_SAFE,
                 )
-            )
+                persist_event(error_event)
+                yield error_event
+                await self._mark_run_failed(run_id, e, mode=mode)
+                return
 
-            # Emit error event
-            error_event = ExecutionEvent(
-                event="error",
-                data={"error": str(e)},
-                run_id=str(run_id),
-                visibility=EventVisibility.CLIENT_SAFE
-            )
-            persist_event(error_event)
-            yield error_event
-            await self._mark_run_failed(run_id, e, mode=mode)
+            try:
+                turn = None
+                if run.thread_id:
+                    thread_service = ThreadService(db)
+                    turn = await thread_service.start_turn(
+                        thread_id=run.thread_id,
+                        run_id=run_id,
+                        user_input_text=(
+                            run_input_params.get("input_display_text")
+                            if isinstance(run_input_params, dict)
+                            else None
+                        ) or (
+                            run_input_params.get("input")
+                            if isinstance(run_input_params, dict)
+                            else None
+                        ),
+                        attachment_ids=[
+                            UUID(str(item))
+                            for item in ((run_input_params.get("attachment_ids") or []) if isinstance(run_input_params, dict) else [])
+                            if str(item).strip()
+                        ],
+                        metadata={
+                            "mode": mode.value,
+                            "context_window": ContextWindowService.read_from_run(run),
+                        },
+                    )
+
+                persist_event(
+                    ExecutionEvent(
+                        event="run.lifecycle",
+                        data={"phase": "stream_started"},
+                        run_id=str(run_id),
+                        span_id=str(run_id),
+                        name="AgentRun",
+                        visibility=EventVisibility.INTERNAL,
+                        metadata={"category": "lifecycle"},
+                    )
+                )
+                await self._refresh_run_record(db, run)
+                invocation_service = RunInvocationService(db)
+                async for event in adapter.stream(executable, run_input_params, config):
+                    persist_event(event)
+                    yield event
+                    invocation_payload = self._extract_invocation_payload(event)
+                    if invocation_payload is not None:
+                        await invocation_service.append_from_payload(run=run, payload=invocation_payload)
+                        _, context_window = await invocation_service.recompute_run_aggregates(run)
+                        if turn is not None:
+                            next_metadata = dict(turn.metadata_ or {})
+                            next_metadata["context_window"] = ContextWindowService.read_from_run(run)
+                            turn.metadata_ = next_metadata
+                        await db.flush()
+                        usage_event = ExecutionEvent(
+                            event="run_usage.updated",
+                            data={"run_usage": self._serialize_run_usage_event(run)},
+                            run_id=str(run_id),
+                            visibility=EventVisibility.CLIENT_SAFE,
+                            metadata={"category": "usage", "mode": mode.value},
+                        )
+                        persist_event(usage_event)
+                        yield usage_event
+                        context_event = ExecutionEvent(
+                            event="context_window.updated",
+                            data={"context_window": context_window or ContextWindowService.read_from_run(run)},
+                            run_id=str(run_id),
+                            visibility=EventVisibility.CLIENT_SAFE,
+                            metadata={"category": "context", "mode": mode.value},
+                        )
+                        persist_event(context_event)
+                        yield context_event
+                    await self._refresh_run_record(db, run)
+                    if run.status == RunStatus.cancelled or is_run_cancel_requested(
+                        run_id=run.id,
+                        root_run_id=run.root_run_id or run.id,
+                        parent_run_id=run.parent_run_id,
+                    ):
+                        if run.status != RunStatus.cancelled:
+                            run.status = RunStatus.cancelled
+                            run.completed_at = run.completed_at or datetime.utcnow()
+                        persist_event(
+                            ExecutionEvent(
+                                event="run.lifecycle",
+                                data={"phase": "cancelled_during_stream"},
+                                run_id=str(run_id),
+                                span_id=str(run_id),
+                                name="AgentRun",
+                                visibility=EventVisibility.INTERNAL,
+                                metadata={"category": "lifecycle", "mode": mode.value},
+                            )
+                        )
+                        break
+
+                await self._refresh_run_record(db, run)
+                output_result: Dict[str, Any] | Any = run.output_result if isinstance(run.output_result, dict) else {}
+                snapshot_next = None
+                final_status = RunStatus.completed
+                if run.status == RunStatus.cancelled or is_run_cancel_requested(
+                    run_id=run.id,
+                    root_run_id=run.root_run_id or run.id,
+                    parent_run_id=run.parent_run_id,
+                ):
+                    run.status = RunStatus.cancelled
+                    final_status = RunStatus.cancelled
+                    if not isinstance(run.output_result, dict):
+                        run.output_result = {}
+                        output_result = run.output_result
+                    run.completed_at = run.completed_at or datetime.utcnow()
+                else:
+                    snapshot: RuntimeState = adapter.get_state(executable, config)
+                    snapshot_next = snapshot.next
+                    output_result = self._serialize_state(snapshot.values)
+                    terminal_failure = output_result.get("_run_failure") if isinstance(output_result, dict) else None
+                    terminal_failure_message = ""
+                    if isinstance(terminal_failure, dict):
+                        terminal_failure_message = str(
+                            terminal_failure.get("message")
+                            or output_result.get("error")
+                            or ""
+                        ).strip()
+
+                    if snapshot_next:
+                        final_status = RunStatus.paused
+                        run.status = RunStatus.paused
+                        run.checkpoint = output_result
+                    elif terminal_failure_message:
+                        final_status = RunStatus.failed
+                        run.status = RunStatus.failed
+                        run.output_result = output_result
+                        run.error_message = terminal_failure_message
+                        run.completed_at = datetime.utcnow()
+                    else:
+                        run.status = RunStatus.completed
+                        run.output_result = output_result
+                        run.completed_at = datetime.utcnow()
+
+                await self._finalize_run_accounting(
+                    run=run,
+                    resolved_execution=resolved_execution,
+                    observed_usage=None,
+                    observed_usage_source=None,
+                    input_params=run_input_params if isinstance(run_input_params, dict) else {},
+                    output_result=run.output_result if isinstance(run.output_result, dict) else output_result if isinstance(output_result, dict) else None,
+                )
+
+                next_nodes = []
+                if snapshot_next:
+                    next_ids = snapshot_next if isinstance(snapshot_next, list) else [snapshot_next]
+                    node_index = {n.id: n for n in graph_def.nodes}
+                    for next_id in next_ids:
+                        node = node_index.get(next_id)
+                        if node:
+                            next_nodes.append(
+                                self._build_paused_node_payload(
+                                    node=node.model_dump(),
+                                    state=snapshot.values if isinstance(snapshot.values, dict) else {},
+                                )
+                            )
+                        else:
+                            next_nodes.append({"id": next_id})
+
+                run_status_event = ExecutionEvent(
+                    event="run_status",
+                    data={
+                        "status": final_status.value,
+                        "next": snapshot_next,
+                        "next_nodes": next_nodes or None,
+                        "final_output": (
+                            run.output_result.get("final_output")
+                            if final_status == RunStatus.completed and isinstance(run.output_result, dict)
+                            else None
+                        ),
+                        "error": (
+                            run.error_message
+                            if final_status == RunStatus.failed
+                            else None
+                        ),
+                        "context_window": ContextWindowService.read_from_run(run),
+                        "run_usage": self._serialize_run_usage_event(run),
+                    },
+                    run_id=str(run_id),
+                    visibility=EventVisibility.CLIENT_SAFE,
+                    metadata={"mode": mode.value},
+                )
+                persist_event(run_status_event)
+                persist_event(
+                    ExecutionEvent(
+                        event="run.lifecycle",
+                        data={
+                            "phase": "finished",
+                            "status": final_status.value,
+                            "next": snapshot_next,
+                        },
+                        run_id=str(run_id),
+                        span_id=str(run_id),
+                        name="AgentRun",
+                        visibility=EventVisibility.INTERNAL,
+                        metadata={"category": "lifecycle", "mode": mode.value},
+                    )
+                )
+
+                quota_service = UsageQuotaService(db)
+                await quota_service.settle_for_run(
+                    run_id=run_id,
+                    actual_usage_tokens=billable_total_tokens(run),
+                )
+                await ResourcePolicyQuotaService(db).settle_for_run(run=run)
+                if run.thread_id:
+                    thread_service = ThreadService(db)
+                    await thread_service.complete_turn(
+                        run_id=run_id,
+                        status=self._thread_turn_status_for_run(run),
+                        assistant_output_text=self._extract_turn_assistant_output_text(run),
+                        metadata=self._extract_turn_metadata(
+                            run.output_result if isinstance(run.output_result, dict) else None
+                        ),
+                    )
+                await db.commit()
+                yield run_status_event
+
+            except asyncio.CancelledError:
+                await self._rollback_quietly(db)
+                raise
+            except Exception as e:
+                await db.rollback()
+                logger.error(f"Streaming execution failed for run {run_id}: {e}")
+                traceback.print_exc()
+                persist_event(
+                    ExecutionEvent(
+                        event="run.lifecycle",
+                        data={"phase": "stream_failed", "error": str(e)},
+                        run_id=str(run_id),
+                        span_id=str(run_id),
+                        name="AgentRun",
+                        visibility=EventVisibility.INTERNAL,
+                        metadata={"category": "lifecycle"},
+                    )
+                )
+
+                error_event = ExecutionEvent(
+                    event="error",
+                    data={"error": str(e)},
+                    run_id=str(run_id),
+                    visibility=EventVisibility.CLIENT_SAFE,
+                )
+                persist_event(error_event)
+                yield error_event
+                await self._mark_run_failed(run_id, e, mode=mode)
+        finally:
+            unregister_run_task(run_id)
 
     async def _mark_run_failed(self, run_id: UUID, error: Exception, *, mode: ExecutionMode | None = None) -> None:
         error_text = str(error)

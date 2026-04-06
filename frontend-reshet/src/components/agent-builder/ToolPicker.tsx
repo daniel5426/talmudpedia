@@ -12,6 +12,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, SheetFo
 import { Search, X, ArrowLeft, Check, Wrench, Globe, Box, Code2, ChevronRight } from "lucide-react"
 import { TOOL_BUCKETS, filterTools, getToolBucket, getSubtypeLabel } from "@/lib/tool-types"
 import { cn } from "@/lib/utils"
+import { ToolDefinitionDetailBody } from "./tool-definition-detail-body"
 
 interface ToolPickerProps {
     tools: ToolDefinition[]
@@ -151,53 +152,8 @@ export function ToolPicker({ tools, value, onChange, open, onOpenChange }: ToolP
                 {/* ── Detail view ── */}
                 {view === "detail" && selectedTool ? (
                     <ScrollArea className="flex-1">
-                        <div className="px-5 py-4 space-y-5">
-                            {/* Meta badges */}
-                            <div className="flex flex-wrap gap-1.5">
-                                <Badge variant="secondary" className="text-xs">
-                                    {TOOL_BUCKETS.find((b) => b.id === getToolBucket(selectedTool))?.label ?? getToolBucket(selectedTool)}
-                                </Badge>
-                                <Badge variant="outline" className="text-xs">
-                                    {getSubtypeLabel(selectedTool.implementation_type)}
-                                </Badge>
-                                <Badge variant="outline" className="text-xs">
-                                    v{selectedTool.version}
-                                </Badge>
-                                <Badge
-                                    variant={selectedTool.status === "published" ? "default" : "outline"}
-                                    className="text-xs"
-                                >
-                                    {selectedTool.status}
-                                </Badge>
-                            </div>
-
-                            {/* Slug */}
-                            <div>
-                                <div className="text-xs font-medium text-muted-foreground mb-1">Identifier</div>
-                                <code className="text-xs bg-muted px-2 py-1 rounded font-mono block">
-                                    {selectedTool.slug}
-                                </code>
-                            </div>
-
-                            {/* Input Schema */}
-                            {selectedTool.input_schema && Object.keys(selectedTool.input_schema).length > 0 && (
-                                <div>
-                                    <div className="text-xs font-medium text-muted-foreground mb-2">Input Schema</div>
-                                    <pre className="text-xs bg-muted rounded-md p-3 overflow-x-auto max-h-[200px] overflow-y-auto font-mono leading-relaxed">
-                                        {JSON.stringify(selectedTool.input_schema, null, 2)}
-                                    </pre>
-                                </div>
-                            )}
-
-                            {/* Output Schema */}
-                            {selectedTool.output_schema && Object.keys(selectedTool.output_schema).length > 0 && (
-                                <div>
-                                    <div className="text-xs font-medium text-muted-foreground mb-2">Output Schema</div>
-                                    <pre className="text-xs bg-muted rounded-md p-3 overflow-x-auto max-h-[200px] overflow-y-auto font-mono leading-relaxed">
-                                        {JSON.stringify(selectedTool.output_schema, null, 2)}
-                                    </pre>
-                                </div>
-                            )}
+                        <div className="px-5 py-4">
+                            <ToolDefinitionDetailBody tool={selectedTool} />
                         </div>
                     </ScrollArea>
                 ) : (

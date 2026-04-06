@@ -33,6 +33,7 @@ export type ChatToolPresentation = {
   title: string;
   detail?: string | null;
   path?: string | null;
+  threadId?: string | null;
   isExploration?: boolean;
   input?: unknown;
   output?: unknown;
@@ -147,6 +148,14 @@ export type NormalizedRunStreamEvent =
       data?: Record<string, unknown>;
     });
 
+function completeStreamingAssistantTextBlocks(blocks: ChatRenderBlock[]): ChatRenderBlock[] {
+  return blocks.map((block) =>
+    block.kind === "assistant_text" && block.status === "streaming"
+      ? { ...block, status: "complete" as const }
+      : block,
+  );
+}
+
 function toSafeSeq(value: unknown, fallback: number): number {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return fallback;
@@ -155,6 +164,35 @@ function toSafeSeq(value: unknown, fallback: number): number {
 
 function toSafeText(value: unknown): string {
   return typeof value === "string" ? value : String(value ?? "");
+}
+
+function extractThreadIdFromRecord(record: Record<string, unknown>): string | null {
+  const directKeys = ["thread_id", "threadId"];
+  for (const key of directKeys) {
+    const value = record[key];
+    if (typeof value !== "string") continue;
+    const trimmed = value.trim();
+    if (trimmed) return trimmed;
+  }
+  return null;
+}
+
+function extractThreadIdFromValue(value: unknown): string | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+
+  const record = value as Record<string, unknown>;
+  const directMatch = extractThreadIdFromRecord(record);
+  if (directMatch) return directMatch;
+
+  const wrapperKeys = ["context", "output", "result", "data", "payload"];
+  for (const key of wrapperKeys) {
+    const nested = record[key];
+    if (!nested || typeof nested !== "object" || Array.isArray(nested)) continue;
+    const nestedMatch = extractThreadIdFromRecord(nested as Record<string, unknown>);
+    if (nestedMatch) return nestedMatch;
+  }
+
+  return null;
 }
 
 export function extractStructuredAssistantText(content: string): string {
@@ -408,6 +446,7 @@ function buildToolBlockFromStart(event: Extract<NormalizedRunStreamEvent, { kind
       title: extractToolTitleForEvent(event.toolName, presentationPayload, "running", path),
       detail: extractToolDetailForEvent(event.toolName, presentationPayload),
       path,
+      threadId: extractThreadIdFromValue(event.input),
       isExploration: isExplorationToolName(event.toolName),
       input: event.input,
     },
@@ -449,6 +488,11 @@ function buildToolBlockFromEnd(
         extractToolDetailForEvent(event.toolName, presentationPayload) ||
         existing?.tool.detail,
       path,
+      threadId:
+        extractThreadIdFromValue(event.output) ||
+        extractThreadIdFromValue(existing?.tool.input) ||
+        existing?.tool.threadId ||
+        null,
       isExploration: isExplorationToolName(event.toolName),
       input: existing?.tool.input,
       output: event.output,
@@ -462,13 +506,12 @@ export function applyRunStreamEventToBlocks(
 ): ChatRenderBlock[] {
   if (event.kind === "token") {
     const next = [...blocks];
-    const existingIndex = next.findIndex((block) => block.kind === "assistant_text");
-    if (existingIndex >= 0) {
-      const existing = next[existingIndex] as ChatAssistantTextBlock;
-      next[existingIndex] = {
-        ...existing,
+    const lastBlock = next[next.length - 1];
+    if (lastBlock?.kind === "assistant_text") {
+      next[next.length - 1] = {
+        ...lastBlock,
         status: "streaming",
-        text: `${existing.text}${event.content}`,
+        text: `${lastBlock.text}${event.content}`,
       };
       return next;
     }
@@ -486,7 +529,7 @@ export function applyRunStreamEventToBlocks(
   }
 
   if (event.kind === "tool_start") {
-    const next = [...blocks];
+    const next = completeStreamingAssistantTextBlocks(blocks);
     const toolBlock = buildToolBlockFromStart(event);
     const existingIndex = next.findIndex(
       (block) => block.kind === "tool_call" && block.id === toolBlock.id,
@@ -500,7 +543,7 @@ export function applyRunStreamEventToBlocks(
   }
 
   if (event.kind === "tool_end") {
-    const next = [...blocks];
+    const next = completeStreamingAssistantTextBlocks(blocks);
     const existingIndex = next.findIndex(
       (block) => block.kind === "tool_call" && block.id === (event.toolCallId || ""),
     );
@@ -521,7 +564,7 @@ export function applyRunStreamEventToBlocks(
     ) {
       return blocks;
     }
-    const next = [...blocks];
+    const next = completeStreamingAssistantTextBlocks(blocks);
     const existingIndex = event.stepId
       ? next.findIndex(
           (block) => block.kind === "reasoning_note" && block.stepId === event.stepId,
@@ -553,7 +596,7 @@ export function applyRunStreamEventToBlocks(
   }
 
   if (event.kind === "error") {
-    const next = [...blocks];
+    const next = completeStreamingAssistantTextBlocks(blocks);
     next.push({
       id: `error:${event.runId || "run"}:${event.seq}`,
       kind: "error",
@@ -596,15 +639,12 @@ export function finalizeAssistantRenderBlocks(
     return next;
   }
 
-  const assistantTextIndex = next.findIndex((block) => block.kind === "assistant_text");
-  if (assistantTextIndex >= 0) {
-    const current = next[assistantTextIndex] as ChatAssistantTextBlock;
-    next[assistantTextIndex] = {
-      ...current,
-      text: parsedText,
-      status: "complete",
-    };
-  } else {
+  const assistantTextIndices = next
+    .map((block, index) => ({ block, index }))
+    .filter(({ block }) => block.kind === "assistant_text")
+    .map(({ index }) => index);
+
+  if (assistantTextIndices.length === 0) {
     next.push(
       createAssistantTextBlock({
         id: `assistant-text:${options?.runId || "run"}:${options?.fallbackSeq ?? next.length + 1}`,
@@ -614,21 +654,40 @@ export function finalizeAssistantRenderBlocks(
         status: "complete",
       }),
     );
-  }
-
-  const matchingAssistantIndices = next
-    .map((block, index) => ({ block, index }))
-    .filter(
-      ({ block }) => block.kind === "assistant_text" && block.text.trim() === parsedText.trim(),
-    )
-    .map(({ index }) => index);
-  if (matchingAssistantIndices.length <= 1) {
     return next;
   }
 
-  const keepIndex = matchingAssistantIndices[0];
+  const concatenatedText = assistantTextIndices
+    .map((index) => (next[index] as ChatAssistantTextBlock).text)
+    .join("");
+  if (concatenatedText.trim() === parsedText.trim()) {
+    return next;
+  }
+
+  if (assistantTextIndices.length === 1) {
+    const assistantTextIndex = assistantTextIndices[0];
+    const current = next[assistantTextIndex] as ChatAssistantTextBlock;
+    next[assistantTextIndex] = {
+      ...current,
+      text: parsedText,
+      status: "complete",
+    };
+    return next;
+  }
+
+  if (next.some((block) => block.kind !== "assistant_text")) {
+    return next;
+  }
+
+  const keepIndex = assistantTextIndices[0];
+  next[keepIndex] = {
+    ...(next[keepIndex] as ChatAssistantTextBlock),
+    text: parsedText,
+    status: "complete",
+  };
+
   return next.filter(
-    (block, index) => block.kind !== "assistant_text" || index === keepIndex || block.text.trim() !== parsedText.trim(),
+    (block, index) => block.kind !== "assistant_text" || index === keepIndex,
   );
 }
 

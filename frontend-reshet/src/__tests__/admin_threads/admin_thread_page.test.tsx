@@ -111,16 +111,28 @@ describe("admin thread page", () => {
         estimated_total_tokens: null,
       },
       turns: [],
+      subthread_tree: null,
     } as any)
-    mockedMapTurnsToMessages.mockResolvedValue([
-      {
-        id: "assistant-1",
-        role: "assistant",
-        content: "Saved answer",
-        createdAt: new Date("2026-03-22T10:00:00Z"),
-        runId: "run-1",
-      },
-    ])
+    mockedMapTurnsToMessages.mockImplementation(async (threadId, turns) => {
+      if (turns.length === 0) {
+        return [
+          {
+            id: `${threadId}-assistant-1`,
+            role: "assistant",
+            content: "Saved answer",
+            createdAt: new Date("2026-03-22T10:00:00Z"),
+            runId: "run-1",
+          },
+        ] as any
+      }
+      return turns.map((turn: any, index: number) => ({
+        id: `${threadId}-message-${index}`,
+        role: turn.assistant_output_text ? "assistant" : "user",
+        content: turn.assistant_output_text || turn.user_input_text || "",
+        createdAt: new Date(turn.created_at || "2026-03-22T10:00:00Z"),
+        runId: turn.run_id,
+      })) as any
+    })
     mockedLoadRunTraceInspection.mockResolvedValue({
       response: {
         run_id: "run-1",
@@ -160,5 +172,12 @@ describe("admin thread page", () => {
       expect(screen.getByText("Search library")).toBeInTheDocument()
       expect(screen.getByRole("button", { name: "Copy full trace" })).toBeInTheDocument()
     })
+  })
+
+  it("does not render a separate subagent footer section", async () => {
+    render(<AdminThreadPage />)
+
+    await screen.findByText("Saved answer")
+    expect(screen.queryByText("Subagent Threads")).not.toBeInTheDocument()
   })
 })

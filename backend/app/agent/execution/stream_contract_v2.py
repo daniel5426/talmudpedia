@@ -54,6 +54,7 @@ def normalize_filtered_event_to_v2(
             {
                 "tool": raw_event.get("name"),
                 "span_id": raw_event.get("span_id"),
+                "source_node_id": data.get("source_node_id"),
                 "input": data.get("input"),
                 "message": data.get("message"),
                 "tool_slug": data.get("tool_slug"),
@@ -73,6 +74,7 @@ def normalize_filtered_event_to_v2(
             {
                 "tool": raw_event.get("name"),
                 "span_id": raw_event.get("span_id"),
+                "source_node_id": data.get("source_node_id"),
                 "output": data.get("output"),
                 "tool_slug": data.get("tool_slug"),
                 "action": data.get("action"),
@@ -91,6 +93,7 @@ def normalize_filtered_event_to_v2(
             {
                 "tool": raw_event.get("name"),
                 "span_id": raw_event.get("span_id"),
+                "source_node_id": data.get("source_node_id"),
                 "input": data.get("input"),
                 "error": data.get("error"),
                 "tool_slug": data.get("tool_slug"),

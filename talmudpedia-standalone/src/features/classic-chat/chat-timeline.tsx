@@ -36,7 +36,7 @@ import { cn } from "@/lib/utils";
 
 import { BotInputArea } from "./bot-input-area";
 import { useLocale } from "./locale-context";
-import { useStreamingMessageView } from "./use-streaming-message-view";
+import { StreamingTextResponse } from "./streaming-text-response";
 import type {
   ComposerSubmitPayload,
   TemplateMessage,
@@ -157,10 +157,28 @@ function hasRunningTask(message: TemplateMessage): boolean {
   );
 }
 
-function renderBlock(block: TemplateRenderBlock) {
+function getLastTextBlockId(message: TemplateMessage): string | null {
+  const blocks = message.blocks || [];
+  for (let index = blocks.length - 1; index >= 0; index -= 1) {
+    const block = blocks[index];
+    if (block?.kind === "text") {
+      return block.id;
+    }
+  }
+  return null;
+}
+
+function renderBlock(block: TemplateRenderBlock, options?: { isStreamingText?: boolean }) {
   if (block.kind === "text") {
     const content = stripLeakedUiBlocksJson(block.content);
-    return content ? <MessageResponse key={block.id}>{content}</MessageResponse> : null;
+    return content ? (
+      <StreamingTextResponse
+        key={block.id}
+        blockId={block.id}
+        isStreaming={Boolean(options?.isStreamingText)}
+        text={content}
+      />
+    ) : null;
   }
 
   if (block.kind === "reasoning") {
@@ -231,19 +249,19 @@ export function ChatTimeline({
   isLoadingOlderMessages = false,
 }: ChatTimelineProps) {
   const { locale } = useLocale();
-  const renderedMessages = useStreamingMessageView(messages);
-  const hasMessages = renderedMessages.length > 0;
+  const hasMessages = messages.length > 0;
   const loadInFlightRef = useRef(false);
 
   const timelineMessages = useMemo(
     () =>
-      renderedMessages.map((message) => ({
+      messages.map((message) => ({
         ...message,
         plainText: messageText(message),
         latestReasoning: latestReasoningBlock(message),
         hasRunningTask: hasRunningTask(message),
+        lastTextBlockId: getLastTextBlockId(message),
       })),
-    [renderedMessages]
+    [messages]
   );
 
   const handleScrollCapture = useCallback((event: UIEvent<HTMLElement>) => {
@@ -311,7 +329,14 @@ export function ChatTimeline({
                 <>{message.plainText ? <MessageResponse>{message.plainText}</MessageResponse> : null}</>
               ) : (
                 <>
-                  {message.blocks?.map((block) => renderBlock(block))}
+                  {message.blocks?.map((block) =>
+                    renderBlock(block, {
+                      isStreamingText:
+                        block.kind === "text" &&
+                        block.id === message.lastTextBlockId &&
+                        (message.runStatus === "streaming" || message.runStatus === "pending"),
+                    }),
+                  )}
                   {message.runStatus && message.runStatus !== "completed" && !message.hasRunningTask && message.latestReasoning ? (
                     <div className="px-1 py-1 text-[0.90rem] text-muted-foreground">
                       <Shimmer>

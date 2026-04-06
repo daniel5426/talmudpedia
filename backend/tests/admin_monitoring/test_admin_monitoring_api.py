@@ -240,6 +240,12 @@ async def test_admin_threads_filter_by_agent_and_include_actor_metadata(client, 
     assert all(item["agent_id"] == str(fixture["agent_primary"].id) for item in payload["items"])
     assert any(item["actor_type"] == "platform_user" for item in payload["items"])
     assert any(item["actor_type"] == "published_app_account" for item in payload["items"])
+    assert all("lineage" in item for item in payload["items"])
+    root_row = next(item for item in payload["items"] if item["id"] == str(fixture["threads"][0].id))
+    assert root_row["lineage"]["root_thread_id"] == str(fixture["threads"][0].id)
+    assert root_row["lineage"]["parent_thread_id"] is None
+    assert root_row["lineage"]["depth"] == 0
+    assert root_row["lineage"]["is_root"] is True
 
 
 @pytest.mark.asyncio
@@ -280,6 +286,83 @@ async def test_admin_thread_detail_joins_run_usage(client, db_session):
         "cached_output_tokens": None,
         "reasoning_tokens": None,
     }
+
+
+@pytest.mark.asyncio
+async def test_admin_thread_detail_returns_lineage_and_subthread_tree_when_requested(client, db_session):
+    fixture = await _seed_monitoring_fixture(db_session)
+    headers = _auth_headers(str(fixture["owner"].id), str(fixture["tenant"].id), str(fixture["org_unit"].id))
+    root_thread = fixture["threads"][0]
+    root_run = await db_session.scalar(select(AgentRun).where(AgentRun.thread_id == root_thread.id).limit(1))
+    assert root_run is not None
+
+    root_turn = AgentThreadTurn(
+        thread_id=root_thread.id,
+        run_id=root_run.id,
+        turn_index=0,
+        user_input_text="root hello",
+        assistant_output_text="root world",
+    )
+    db_session.add(root_turn)
+    await db_session.flush()
+
+    child_thread = AgentThread(
+        tenant_id=fixture["tenant"].id,
+        user_id=fixture["platform_user"].id,
+        agent_id=fixture["agent_secondary"].id,
+        surface=AgentThreadSurface.internal,
+        title="Child thread",
+        root_thread_id=root_thread.id,
+        parent_thread_id=root_thread.id,
+        parent_thread_turn_id=root_turn.id,
+        spawned_by_run_id=root_run.id,
+        lineage_depth=1,
+    )
+    db_session.add(child_thread)
+    await db_session.flush()
+    child_run = AgentRun(
+        tenant_id=fixture["tenant"].id,
+        agent_id=fixture["agent_secondary"].id,
+        user_id=fixture["platform_user"].id,
+        initiator_user_id=fixture["platform_user"].id,
+        thread_id=child_thread.id,
+        input_params={"input": "child hello"},
+        parent_run_id=root_run.id,
+        root_run_id=root_run.id,
+        depth=1,
+    )
+    db_session.add(child_run)
+    await db_session.flush()
+    db_session.add(
+        AgentThreadTurn(
+            thread_id=child_thread.id,
+            run_id=child_run.id,
+            turn_index=0,
+            user_input_text="child hello",
+            assistant_output_text="child world",
+        )
+    )
+    await db_session.commit()
+
+    response = await client.get(
+        f"/admin/threads/{root_thread.id}?include_subthreads=true&subthread_depth=1",
+        headers=headers,
+    )
+    assert response.status_code == 200
+    payload = response.json()
+
+    assert payload["lineage"]["root_thread_id"] == str(root_thread.id)
+    assert payload["lineage"]["is_root"] is True
+    assert payload["subthread_tree"]["thread"]["id"] == str(root_thread.id)
+    assert len(payload["subthread_tree"]["children"]) == 1
+    child_payload = payload["subthread_tree"]["children"][0]
+    assert child_payload["thread"]["id"] == str(child_thread.id)
+    assert child_payload["lineage"]["root_thread_id"] == str(root_thread.id)
+    assert child_payload["lineage"]["parent_thread_id"] == str(root_thread.id)
+    assert child_payload["lineage"]["parent_thread_turn_id"] == str(root_turn.id)
+    assert child_payload["lineage"]["spawned_by_run_id"] == str(root_run.id)
+    assert child_payload["lineage"]["depth"] == 1
+    assert child_payload["turns"][0]["assistant_output_text"] == "child world"
 
 
 @pytest.mark.asyncio

@@ -15,7 +15,9 @@ const mockUpsertHistoryItem = jest.fn();
 
 jest.mock("@/services/agent", () => ({
   agentService: {
+    cancelRun: jest.fn(),
     getRunEvents: jest.fn(),
+    getRunTree: jest.fn(),
     streamAgent: jest.fn(),
     uploadAgentAttachments: jest.fn(),
   },
@@ -255,6 +257,58 @@ describe("useAgentRunController trace inspection", () => {
     });
   });
 
+  it("keeps live tool steps attached to the owning node via source_node_id", async () => {
+    const encoder = new TextEncoder();
+    const streamPayload = [
+      'data: {"event":"tool.started","run_id":"run-live","payload":{"span_id":"call-1","source_node_id":"agent_1","tool":"platform sdk","display_name":"List sources","input":{"topic":"Shabbat"}}}\n\n',
+      'data: {"event":"tool.completed","run_id":"run-live","payload":{"span_id":"call-1","source_node_id":"agent_1","tool":"platform sdk","display_name":"List sources","output":{"count":4}}}\n\n',
+      'data: {"event":"run.completed","run_id":"run-live","payload":{"status":"completed"}}\n\n',
+      "data: [DONE]\n\n",
+    ].join("");
+
+    mockedAgentService.streamAgent.mockResolvedValue({
+      headers: {
+        get: () => null,
+      },
+      body: {
+        getReader: () => {
+          let consumed = false;
+          return {
+            read: async () => {
+              if (consumed) {
+                return { done: true, value: undefined };
+              }
+              consumed = true;
+              return { done: false, value: encoder.encode(streamPayload) };
+            },
+          };
+        },
+      },
+    } as unknown as Response);
+
+    const { result } = renderHook(({ agentId }) => useAgentRunController(agentId), {
+      initialProps: { agentId: "agent-1" as string | undefined },
+    });
+
+    await act(async () => {
+      await result.current.handleSubmit({ text: "hello", files: [] });
+    });
+
+    await waitFor(() => {
+      expect(result.current.executionSteps).toHaveLength(1);
+    });
+
+    expect(result.current.executionSteps[0]).toMatchObject({
+      id: "call-1",
+      nodeId: "agent_1",
+      name: "List sources",
+      type: "tool",
+      status: "completed",
+      input: { topic: "Shabbat" },
+      output: { count: 4 },
+    });
+  });
+
   it("passes seeded state through streamAgent submissions", async () => {
     const encoder = new TextEncoder();
     mockedAgentService.streamAgent.mockResolvedValue({
@@ -298,6 +352,197 @@ describe("useAgentRunController trace inspection", () => {
         }),
         "debug",
       );
+    });
+  });
+
+  it("finalizes live tool steps when the run is cancelled before tool completion", async () => {
+    const encoder = new TextEncoder();
+    const streamPayload = [
+      'data: {"event":"tool.started","run_id":"run-live","payload":{"span_id":"call-1","source_node_id":"agent_1","tool":"platform sdk","display_name":"List sources","input":{"topic":"Shabbat"}}}\n\n',
+      'data: {"event":"run.cancelled","run_id":"run-live","payload":{"status":"cancelled"}}\n\n',
+      "data: [DONE]\n\n",
+    ].join("");
+
+    mockedAgentService.streamAgent.mockResolvedValue({
+      headers: {
+        get: () => null,
+      },
+      body: {
+        getReader: () => {
+          let consumed = false;
+          return {
+            read: async () => {
+              if (consumed) {
+                return { done: true, value: undefined };
+              }
+              consumed = true;
+              return { done: false, value: encoder.encode(streamPayload) };
+            },
+          };
+        },
+      },
+    } as unknown as Response);
+
+    const { result } = renderHook(({ agentId }) => useAgentRunController(agentId), {
+      initialProps: { agentId: "agent-1" as string | undefined },
+    });
+
+    await act(async () => {
+      await result.current.handleSubmit({ text: "hello", files: [] });
+    });
+
+    await waitFor(() => {
+      expect(result.current.executionSteps).toHaveLength(1);
+    });
+
+    expect(result.current.executionSteps[0]).toMatchObject({
+      id: "call-1",
+      nodeId: "agent_1",
+      name: "List sources",
+      type: "tool",
+      status: "error",
+      input: { topic: "Shabbat" },
+      output: { error: "Run cancelled" },
+    });
+  });
+
+  it("sends default architect_mode for platform-architect runs", async () => {
+    const encoder = new TextEncoder();
+    mockedAgentService.streamAgent.mockResolvedValue({
+      headers: {
+        get: () => null,
+      },
+      body: {
+        getReader: () => {
+          let consumed = false;
+          return {
+            read: async () => {
+              if (consumed) return { done: true, value: undefined };
+              consumed = true;
+              return {
+                done: false,
+                value: encoder.encode('data: {"event":"run.completed","run_id":"run-architect","payload":{"status":"completed"}}\n\ndata: [DONE]\n\n'),
+              };
+            },
+          };
+        },
+      },
+    } as unknown as Response);
+
+    const { result } = renderHook(
+      ({ agentId, agentSlug }) => useAgentRunController(agentId, undefined, agentSlug),
+      {
+        initialProps: {
+          agentId: "agent-architect" as string | undefined,
+          agentSlug: "platform-architect" as string | undefined,
+        },
+      },
+    );
+
+    await act(async () => {
+      await result.current.handleSubmit({ text: "build me an app", files: [] });
+    });
+
+    await waitFor(() => {
+      expect(mockedAgentService.streamAgent).toHaveBeenCalledWith(
+        "agent-architect",
+        expect.objectContaining({
+          context: { architect_mode: "default" },
+        }),
+        "debug",
+      );
+    });
+  });
+
+  it("stops the immutable root run even if later events carry another run_id", async () => {
+    const encoder = new TextEncoder();
+    let releaseSecondRead: (() => void) | null = null;
+    const secondRead = new Promise<void>((resolve) => {
+      releaseSecondRead = resolve;
+    });
+
+    mockedAgentService.cancelRun.mockResolvedValue({
+      run_id: "run-root",
+      status: "cancelled",
+      thread_id: "thread-root",
+    });
+    mockedAgentService.streamAgent.mockResolvedValue({
+      headers: {
+        get: (name: string) => {
+          if (name === "X-Run-ID") return "run-root";
+          if (name === "X-Thread-ID") return "thread-root";
+          return null;
+        },
+      },
+      body: {
+        getReader: () => {
+          let index = 0;
+          return {
+            read: async () => {
+              index += 1;
+              if (index === 1) {
+                return {
+                  done: false,
+                  value: encoder.encode(
+                    'data: {"event":"run.accepted","run_id":"run-root","payload":{"status":"running"}}\n\n' +
+                    'data: {"event":"tool.started","run_id":"run-child","payload":{"span_id":"call-1","source_node_id":"agent_1","tool":"delegate","display_name":"Delegate"}}\n\n'
+                  ),
+                };
+              }
+              if (index === 2) {
+                await secondRead;
+                return { done: true, value: undefined };
+              }
+              return { done: true, value: undefined };
+            },
+          };
+        },
+      },
+    } as unknown as Response);
+
+    const { result } = renderHook(({ agentId }) => useAgentRunController(agentId), {
+      initialProps: { agentId: "agent-1" as string | undefined },
+    });
+
+    await act(async () => {
+      void result.current.handleSubmit({ text: "hello", files: [] });
+    });
+
+    await waitFor(() => {
+      expect(result.current.currentRunId).toBe("run-root");
+    });
+
+    await waitFor(() => {
+      expect(result.current.currentResponseBlocks).toHaveLength(1);
+    });
+
+    act(() => {
+      result.current.handleStop();
+    });
+
+    await waitFor(() => {
+      expect(mockedAgentService.cancelRun).toHaveBeenCalledWith("run-root", {
+        assistantOutputText: undefined,
+      });
+    });
+
+    expect(result.current.currentRunStatus).toBe("cancelled");
+    expect(result.current.executionSteps[0]).toMatchObject({
+      id: "call-1",
+      status: "error",
+      output: { error: "Run cancelled" },
+    });
+
+    releaseSecondRead?.();
+
+    await waitFor(() => {
+      const assistantMessages = result.current.messages.filter((message) => message.role === "assistant");
+      expect(assistantMessages.length).toBeLessThanOrEqual(1);
+      if (assistantMessages[0]?.responseBlocks) {
+        expect(assistantMessages[0].responseBlocks).toMatchObject([
+          { kind: "tool_call", status: "complete" },
+        ]);
+      }
     });
   });
 });

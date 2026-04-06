@@ -58,7 +58,6 @@ import { useAuthStore } from "@/lib/store/useAuthStore";
 // import "@livekit/components-styles";
 import { LibrarySearchModal } from "./LibrarySearchModal";
 import { ChatPaneHeader } from "../navigation/ChatPaneHeader";
-import { useSmoothStream } from "@/hooks/useSmoothStream";
 import { Button } from "@/components/ui/button";
 import { ReactArtifactPane } from "@/components/ai-elements/ReactArtifactPane";
 import { useReactArtifactPanel } from "@/lib/react-artifacts/useReactArtifactPanel";
@@ -68,6 +67,7 @@ import {
   blocksFromLegacyAssistantContent,
   createApprovalRequestBlock,
   sortChatRenderBlocks,
+  type ChatToolCallBlock,
 } from "@/services/chat-presentation";
 
 const formatThinkingDuration = (durationMs?: number | null) => {
@@ -378,24 +378,32 @@ export function ChatWorkspace({
   isVoiceModeActive,
   handleToggleVoiceMode,
   analyser,
+  showAssistantAvatar = true,
   noBackground = false,
   hideInputArea = false,
   hideRetryAction = false,
   onOpenArtifact,
   isArtifactMessage,
   conversationScrollClassName,
+  getToolChildCount,
+  getToolHref,
+  renderToolSubthread,
 }: {
   controller: ChatController;
   chatId?: string;
   isVoiceModeActive: boolean;
   handleToggleVoiceMode: () => void;
   analyser?: AnalyserNode | null;
+  showAssistantAvatar?: boolean;
   noBackground?: boolean;
   hideInputArea?: boolean;
   hideRetryAction?: boolean;
   onOpenArtifact?: (messageId: string, content: string) => void;
   isArtifactMessage?: (content: string) => boolean;
   conversationScrollClassName?: string;
+  getToolChildCount?: (block: ChatToolCallBlock) => number;
+  getToolHref?: (block: ChatToolCallBlock) => string | null;
+  renderToolSubthread?: (block: ChatToolCallBlock) => React.ReactNode;
 }) {
   // Auto (Agent Router) - Extract controller methods and state
   const {
@@ -436,9 +444,6 @@ export function ChatWorkspace({
   const containerRef = useRef<HTMLDivElement>(null);
   // Auto (Agent Router) - Container width state for responsive layout
   const [containerWidth, setContainerWidth] = useState<number>(1000);
-  // Smoothing the streaming content for a better UX (typewriter effect)
-  const smoothedStreamingContent = useSmoothStream(streamingContent, isLoading);
-
   // Unify history and streaming messages for stable rendering
   const displayMessages = React.useMemo(() => {
     const list = [...messages];
@@ -449,7 +454,7 @@ export function ChatWorkspace({
       list.push({
         id: activeStreamingId,
         role: "assistant",
-        content: smoothedStreamingContent,
+        content: streamingContent,
         createdAt: new Date(),
         responseBlocks: liveBlocks.length > 0 ? liveBlocks : undefined,
         reasoningSteps: currentReasoning,
@@ -473,7 +478,7 @@ export function ChatWorkspace({
       } as any);
     }
     return list;
-  }, [messages, activeStreamingId, streamingContent, smoothedStreamingContent, currentReasoning, currentResponseBlocks, lastThinkingDurationMs, isLoading, pendingApproval, controller]);
+  }, [messages, activeStreamingId, streamingContent, currentReasoning, currentResponseBlocks, lastThinkingDurationMs, isLoading, pendingApproval, controller]);
 
   // Auto (Agent Router) - Determine if chat is in empty state.
   // We use a "hasStarted" check to prevent flickering back to empty state during completion.
@@ -686,7 +691,7 @@ export function ChatWorkspace({
 
                 return (
                   <div key={renderKey} className="flex w-full">
-                  {msg.role === "assistant" && containerWidth >= 550 && (
+                  {showAssistantAvatar && msg.role === "assistant" && containerWidth >= 550 && (
                     <div
                       className={cn(
                         "shrink-0",
@@ -726,7 +731,11 @@ export function ChatWorkspace({
                               return (
                                 <div dir={direction} className="overflow-hidden">
                                   <AssistantResponseTimeline
+                                    animateOnMount={Boolean(msg.animateResponseBlocks)}
                                     blocks={responseBlocks}
+                                    getToolChildCount={getToolChildCount}
+                                    getToolHref={getToolHref}
+                                    renderToolSubthread={renderToolSubthread}
                                     onApprovalAction={handleApprovalClick}
                                     isLoading={isLoading && msg.id === activeStreamingId}
                                   />

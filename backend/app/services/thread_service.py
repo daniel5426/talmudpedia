@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -17,6 +18,7 @@ from app.db.postgres.models.agent_threads import (
     AgentThreadTurn,
     AgentThreadTurnStatus,
 )
+from app.db.postgres.models.agents import AgentRun
 from app.db.postgres.models.runtime_attachments import AgentThreadTurnAttachment, RuntimeAttachment
 from app.services.runtime_attachment_storage import RuntimeAttachmentStorage
 
@@ -42,6 +44,23 @@ class ThreadTurnPage:
 class ThreadTurnPageResult:
     thread: AgentThread
     page: ThreadTurnPage
+
+
+@dataclass
+class ThreadLineageResolveContext:
+    root_thread_id: UUID
+    parent_thread_id: UUID
+    parent_thread_turn_id: UUID | None
+    spawned_by_run_id: UUID
+    lineage_depth: int
+
+
+@dataclass
+class ThreadSubtreeNode:
+    thread: AgentThread
+    page: ThreadTurnPage
+    children: list["ThreadSubtreeNode"]
+    has_children: bool
 
 
 class ThreadService:
@@ -82,7 +101,12 @@ class ThreadService:
         surface: AgentThreadSurface,
         thread_id: Optional[UUID],
         input_text: Optional[str],
+        parent_run_id: Optional[UUID] = None,
     ) -> ThreadResolveResult:
+        lineage_context = await self._build_lineage_context(
+            tenant_id=tenant_id,
+            parent_run_id=parent_run_id,
+        )
         if thread_id is not None:
             thread = await self.db.get(AgentThread, thread_id)
             if thread is None or thread.tenant_id != tenant_id:
@@ -103,6 +127,8 @@ class ThreadService:
                     raise ThreadAccessError("Thread ownership mismatch")
             elif thread.user_id is not None and user_id is not None and thread.user_id != user_id:
                 raise ThreadAccessError("Thread ownership mismatch")
+            await self._ensure_thread_lineage(thread)
+            self._assert_lineage_compatible(thread=thread, lineage_context=lineage_context)
             return ThreadResolveResult(thread=thread, created=False)
 
         thread = AgentThread(
@@ -118,9 +144,15 @@ class ThreadService:
             status=AgentThreadStatus.active,
             title=self._derive_title(input_text=input_text),
             last_activity_at=datetime.now(timezone.utc),
+            root_thread_id=lineage_context.root_thread_id if lineage_context else None,
+            parent_thread_id=lineage_context.parent_thread_id if lineage_context else None,
+            parent_thread_turn_id=lineage_context.parent_thread_turn_id if lineage_context else None,
+            spawned_by_run_id=lineage_context.spawned_by_run_id if lineage_context else None,
+            lineage_depth=lineage_context.lineage_depth if lineage_context else 0,
         )
         self.db.add(thread)
         await self.db.flush()
+        await self._ensure_thread_lineage(thread)
         return ThreadResolveResult(thread=thread, created=True)
 
     async def start_turn(
@@ -288,6 +320,7 @@ class ThreadService:
         )
         if thread is None:
             return None
+        await self._ensure_thread_lineage(thread)
         thread.turns.sort(key=self._turn_sort_key)
         return thread
 
@@ -330,6 +363,7 @@ class ThreadService:
             return None
         if external_session_id is not None and thread.external_session_id != external_session_id:
             return None
+        await self._ensure_thread_lineage(thread)
         return thread
 
     async def get_thread_turn_page(
@@ -396,6 +430,24 @@ class ThreadService:
             ),
         )
 
+    async def build_subthread_tree(
+        self,
+        *,
+        root_thread: AgentThread,
+        root_page: ThreadTurnPage,
+        depth: int,
+        turn_limit: int,
+        child_limit: int,
+    ) -> ThreadSubtreeNode:
+        await self._ensure_thread_lineage(root_thread)
+        return await self._build_subtree_node(
+            thread=root_thread,
+            page=root_page,
+            remaining_depth=max(0, int(depth)),
+            turn_limit=max(1, int(turn_limit)),
+            child_limit=max(1, int(child_limit)),
+        )
+
     async def delete_threads(self, *, tenant_id: UUID, thread_ids: list[UUID]) -> int:
         if not thread_ids:
             return 0
@@ -407,6 +459,22 @@ class ThreadService:
             .options(selectinload(AgentThread.attachments))
         )
         rows = list(result.scalars().all())
+        all_thread_ids = {row.id for row in rows}
+        if all_thread_ids:
+            descendants = await self._collect_descendant_thread_ids(
+                tenant_id=tenant_id,
+                parent_thread_ids=all_thread_ids,
+            )
+            all_thread_ids.update(descendants)
+        if all_thread_ids:
+            result = await self.db.execute(
+                select(AgentThread)
+                .where(
+                    and_(AgentThread.tenant_id == tenant_id, AgentThread.id.in_(all_thread_ids))
+                )
+                .options(selectinload(AgentThread.attachments))
+            )
+            rows = list(result.scalars().all())
         for row in rows:
             for attachment in row.attachments or []:
                 storage_key = str(getattr(attachment, "storage_key", "") or "").strip()
@@ -415,3 +483,189 @@ class ThreadService:
             await self.db.delete(row)
         await self.db.flush()
         return len(rows)
+
+    @staticmethod
+    def serialize_thread_lineage(thread: AgentThread) -> dict[str, Any]:
+        root_thread_id = thread.root_thread_id or thread.id
+        return {
+            "root_thread_id": str(root_thread_id) if root_thread_id else None,
+            "parent_thread_id": str(thread.parent_thread_id) if thread.parent_thread_id else None,
+            "parent_thread_turn_id": str(thread.parent_thread_turn_id) if thread.parent_thread_turn_id else None,
+            "spawned_by_run_id": str(thread.spawned_by_run_id) if thread.spawned_by_run_id else None,
+            "depth": int(thread.lineage_depth or 0),
+            "is_root": str(root_thread_id) == str(thread.id),
+        }
+
+    async def _build_lineage_context(
+        self,
+        *,
+        tenant_id: UUID,
+        parent_run_id: UUID | None,
+    ) -> ThreadLineageResolveContext | None:
+        if parent_run_id is None:
+            return None
+        parent_run = await self.db.get(AgentRun, parent_run_id)
+        if parent_run is None or parent_run.tenant_id != tenant_id or parent_run.thread_id is None:
+            raise ThreadAccessError("Parent run thread not found")
+        parent_thread = await self.db.get(AgentThread, parent_run.thread_id)
+        if parent_thread is None or parent_thread.tenant_id != tenant_id:
+            raise ThreadAccessError("Parent run thread not found")
+        await self._ensure_thread_lineage(parent_thread)
+        parent_turn_id = await self.db.scalar(
+            select(AgentThreadTurn.id).where(AgentThreadTurn.run_id == parent_run.id).limit(1)
+        )
+        return ThreadLineageResolveContext(
+            root_thread_id=parent_thread.root_thread_id or parent_thread.id,
+            parent_thread_id=parent_thread.id,
+            parent_thread_turn_id=parent_turn_id,
+            spawned_by_run_id=parent_run.id,
+            lineage_depth=int(parent_thread.lineage_depth or 0) + 1,
+        )
+
+    async def _ensure_thread_lineage(self, thread: AgentThread) -> None:
+        changed = False
+        if thread.root_thread_id is None:
+            thread.root_thread_id = thread.id
+            changed = True
+        if thread.lineage_depth is None:
+            thread.lineage_depth = 0
+            changed = True
+        if changed:
+            await self.db.flush()
+
+    @staticmethod
+    def _assert_lineage_compatible(
+        *,
+        thread: AgentThread,
+        lineage_context: ThreadLineageResolveContext | None,
+    ) -> None:
+        if lineage_context is None:
+            return
+        thread_root_id = thread.root_thread_id or thread.id
+        if str(thread_root_id) != str(lineage_context.root_thread_id):
+            raise ThreadAccessError("Thread lineage mismatch")
+
+    async def _build_subtree_node(
+        self,
+        *,
+        thread: AgentThread,
+        page: ThreadTurnPage,
+        remaining_depth: int,
+        turn_limit: int,
+        child_limit: int,
+    ) -> ThreadSubtreeNode:
+        child_threads = await self._load_direct_child_threads(
+            tenant_id=thread.tenant_id,
+            parent_thread_id=thread.id,
+            child_limit=child_limit,
+        )
+        children: list[ThreadSubtreeNode] = []
+        if remaining_depth > 0:
+            for child_thread in child_threads:
+                child_page = await self._get_thread_turn_page_for_thread(
+                    thread=child_thread,
+                    limit=turn_limit,
+                )
+                children.append(
+                    await self._build_subtree_node(
+                        thread=child_thread,
+                        page=child_page,
+                        remaining_depth=remaining_depth - 1,
+                        turn_limit=turn_limit,
+                        child_limit=child_limit,
+                    )
+                )
+        return ThreadSubtreeNode(
+            thread=thread,
+            page=page,
+            children=children,
+            has_children=bool(child_threads),
+        )
+
+    async def _load_direct_child_threads(
+        self,
+        *,
+        tenant_id: UUID,
+        parent_thread_id: UUID,
+        child_limit: int,
+    ) -> list[AgentThread]:
+        rows = (
+            await self.db.execute(
+                select(AgentThread)
+                .where(
+                    AgentThread.tenant_id == tenant_id,
+                    AgentThread.parent_thread_id == parent_thread_id,
+                )
+                .options(selectinload(AgentThread.agent))
+                .order_by(
+                    AgentThread.last_activity_at.desc().nullslast(),
+                    AgentThread.updated_at.desc(),
+                    AgentThread.created_at.desc(),
+                )
+                .limit(max(1, int(child_limit)))
+            )
+        ).scalars().all()
+        items = list(rows)
+        for item in items:
+            await self._ensure_thread_lineage(item)
+        return items
+
+    async def _get_thread_turn_page_for_thread(
+        self,
+        *,
+        thread: AgentThread,
+        limit: int,
+        before_turn_index: int | None = None,
+    ) -> ThreadTurnPage:
+        safe_limit = max(1, int(limit))
+        turn_query = (
+            select(AgentThreadTurn)
+            .where(AgentThreadTurn.thread_id == thread.id)
+            .options(
+                joinedload(AgentThreadTurn.run),
+                selectinload(AgentThreadTurn.attachment_links).selectinload(AgentThreadTurnAttachment.attachment),
+            )
+        )
+        if before_turn_index is not None:
+            turn_query = turn_query.where(AgentThreadTurn.turn_index < int(before_turn_index))
+        turn_query = turn_query.order_by(
+            desc(AgentThreadTurn.turn_index),
+            desc(AgentThreadTurn.created_at),
+            desc(AgentThreadTurn.completed_at),
+            desc(AgentThreadTurn.id),
+        ).limit(safe_limit + 1)
+        turn_rows = list((await self.db.execute(turn_query)).scalars().all())
+        has_more = len(turn_rows) > safe_limit
+        paged_turns = turn_rows[:safe_limit]
+        paged_turns.sort(key=self._turn_sort_key)
+        next_before_turn_index = None
+        if has_more and paged_turns:
+            next_before_turn_index = int(paged_turns[0].turn_index or 0)
+        return ThreadTurnPage(
+            turns=paged_turns,
+            has_more=has_more,
+            next_before_turn_index=next_before_turn_index,
+        )
+
+    async def _collect_descendant_thread_ids(
+        self,
+        *,
+        tenant_id: UUID,
+        parent_thread_ids: set[UUID],
+    ) -> set[UUID]:
+        collected: set[UUID] = set()
+        frontier = set(parent_thread_ids)
+        while frontier:
+            rows = (
+                await self.db.execute(
+                    select(AgentThread.id)
+                    .where(
+                        AgentThread.tenant_id == tenant_id,
+                        AgentThread.parent_thread_id.in_(frontier),
+                    )
+                )
+            ).scalars().all()
+            next_frontier = {UUID(str(item)) for item in rows if UUID(str(item)) not in collected}
+            collected.update(next_frontier)
+            frontier = next_frontier
+        return collected

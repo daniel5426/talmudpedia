@@ -8,6 +8,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.execution.service import AgentExecutorService
+from app.agent.execution.run_task_registry import (
+    cancel_run_tasks,
+    is_run_cancel_requested,
+    mark_run_cancel_requested,
+)
 from app.db.postgres.models.agents import Agent, AgentRun, RunStatus
 from app.db.postgres.models.orchestration import OrchestrationGroup, OrchestrationGroupMember
 from app.services.orchestration_lineage_service import OrchestrationLineageService
@@ -45,6 +50,15 @@ class OrchestrationKernelService:
         thread_id: UUID | None = None,
     ) -> dict[str, Any]:
         caller_run = await self._require_run(caller_run_id)
+        if is_run_cancel_requested(
+            run_id=caller_run.id,
+            root_run_id=caller_run.root_run_id or caller_run.id,
+            parent_run_id=caller_run.parent_run_id,
+        ):
+            raise RuntimeError(f"Caller run {caller_run_id} is cancelled")
+        caller_status = caller_run.status.value if hasattr(caller_run.status, "value") else str(caller_run.status)
+        if caller_status == RunStatus.cancelled.value:
+            raise RuntimeError(f"Caller run {caller_run_id} is cancelled")
         target = await self._resolve_target(
             tenant_id=caller_run.tenant_id,
             target_agent_id=target_agent_id,
@@ -145,6 +159,12 @@ class OrchestrationKernelService:
         start_background: bool = True,
     ) -> dict[str, Any]:
         caller_run = await self._require_run(caller_run_id)
+        if is_run_cancel_requested(
+            run_id=caller_run.id,
+            root_run_id=caller_run.root_run_id or caller_run.id,
+            parent_run_id=caller_run.parent_run_id,
+        ):
+            raise RuntimeError(f"Caller run {caller_run_id} is cancelled")
         policy = await self.policy.get_policy(caller_run.tenant_id, caller_run.agent_id)
 
         if not targets:
@@ -429,7 +449,9 @@ class OrchestrationKernelService:
                 changed += 1
                 cancelled_ids.append(str(item.id))
 
+        mark_run_cancel_requested(str(item_id) for item_id in subtree_ids)
         await self.db.commit()
+        cancel_run_tasks(str(item_id) for item_id in subtree_ids)
 
         return {
             "run_id": str(run_id),
@@ -473,7 +495,7 @@ class OrchestrationKernelService:
         return await self.lineage.query_tree(run_id)
 
     async def _require_run(self, run_id: UUID) -> AgentRun:
-        row = await self.db.get(AgentRun, run_id)
+        row = await self.db.get(AgentRun, run_id, populate_existing=True)
         if row is None:
             raise ValueError("Run not found")
         return row

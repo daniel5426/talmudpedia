@@ -63,7 +63,7 @@ function PlaygroundContent() {
     const pendingUrlThreadIdRef = useRef<string | null>(null)
     const clearingThreadRef = useRef(false)
 
-    const controller = useAgentRunController(agentId || undefined, agent?.graph_definition)
+    const controller = useAgentRunController(agentId || undefined, agent?.graph_definition, agent?.slug)
     const { executionSteps, currentThreadId, inspectedTraceCopyText } = controller
     const { direction } = useDirection()
     const { currentTenant } = useTenant()
@@ -473,6 +473,7 @@ function PlaygroundContent() {
                                     controller={chatController}
                                     isVoiceModeActive={false}
                                     handleToggleVoiceMode={() => { }}
+                                    showAssistantAvatar={false}
                                     conversationScrollClassName="admin-page-scroll"
                                     onOpenArtifact={openFromMessage}
                                     isArtifactMessage={isArtifactMessage}

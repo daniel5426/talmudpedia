@@ -1,6 +1,6 @@
 # Published Apps Spec
 
-Last Updated: 2026-03-22
+Last Updated: 2026-04-05
 
 This document is the canonical product/specification overview for published apps.
 
@@ -83,6 +83,8 @@ Important current behavior verified in code:
 - preview source-UI mode is also removed in favor of runtime/bootstrap flows
 - runtime attachments are upload-first and chat requests reference `attachment_ids`
 - thread detail payloads include attachment descriptors so replay preserves file context
+- host and external thread detail endpoints also support optional nested subagent thread trees via `include_subthreads=true`
+- nested thread payloads expose `lineage` plus recursive `subthread_tree` nodes with `thread`, `turns`, `paging`, `has_children`, and `children`
 - runtime bootstrap records app bootstrap-view and visit-start analytics events
 - app analytics exclude preview bootstrap traffic by default and exclude builder coding-agent runs from runtime usage totals
 

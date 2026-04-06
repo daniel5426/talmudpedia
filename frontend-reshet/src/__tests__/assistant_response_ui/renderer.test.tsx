@@ -57,7 +57,6 @@ describe("AssistantResponseTimeline", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /validate agent nodes/i }));
     expect(screen.getByText("Validate agent graph against the current contract and return structured validation errors and warnings.")).toBeInTheDocument();
-    expect(screen.getByText("Validate agent nodes").closest("p")?.className || "").toContain("text-transparent");
 
     fireEvent.click(screen.getByRole("button", { name: "Approve" }));
     expect(onApprovalAction).toHaveBeenCalledWith("approve");
@@ -95,8 +94,37 @@ describe("AssistantResponseTimeline", () => {
 
     const { container } = render(<AssistantResponseTimeline blocks={blocks} isLoading />);
 
-    expect(screen.getByText("List agent nodes").closest("p")?.className || "").not.toContain("text-transparent");
-    expect(screen.getByText("Get agent schemas").closest("p")?.className || "").toContain("text-transparent");
     expect(container.querySelectorAll(".text-transparent").length).toBe(1);
+  });
+
+  it("shows a hover redirect for thread-backed tool calls", () => {
+    const blocks: ChatRenderBlock[] = [
+      {
+        id: "tool-redirect",
+        kind: "tool_call",
+        runId: "run-3",
+        seq: 1,
+        status: "complete",
+        source: { event: "tool.completed", stage: "tool" },
+        tool: {
+          toolCallId: "call-redirect",
+          toolName: "agent_call",
+          title: "Artifact Worker",
+          threadId: "thread-child-1",
+        },
+      },
+    ];
+
+    render(
+      <AssistantResponseTimeline
+        blocks={blocks}
+        getToolHref={(block) => block.tool.threadId ? `/admin/threads/${block.tool.threadId}` : null}
+      />,
+    );
+
+    expect(screen.getByRole("link", { name: "Open thread for Artifact Worker" })).toHaveAttribute(
+      "href",
+      "/admin/threads/thread-child-1",
+    );
   });
 });

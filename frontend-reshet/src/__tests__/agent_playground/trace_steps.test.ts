@@ -89,6 +89,7 @@ describe("playground persisted trace replay", () => {
         run_id: "run-1",
         payload: {
           span_id: "call-1",
+          source_node_id: "agent_1",
           tool: "platform sdk",
           display_name: "List sources",
           input: { topic: "Shabbat" },
@@ -101,6 +102,7 @@ describe("playground persisted trace replay", () => {
         run_id: "run-1",
         payload: {
           span_id: "call-1",
+          source_node_id: "agent_1",
           tool: "platform sdk",
           display_name: "List sources",
           output: { count: 4 },
@@ -111,6 +113,7 @@ describe("playground persisted trace replay", () => {
     expect(steps).toHaveLength(1);
     expect(steps[0]).toMatchObject({
       id: "call-1",
+      nodeId: "agent_1",
       name: "List sources",
       type: "tool",
       status: "completed",
@@ -203,6 +206,42 @@ describe("playground persisted trace replay", () => {
       status: "completed",
       input: { has_schema: true },
       output: { response: "hello world hello boganda." },
+    });
+  });
+
+  it("finalizes open tool steps when the run is cancelled mid-tool", () => {
+    const steps = buildExecutionStepsFromRunEvents([
+      {
+        seq: 1,
+        ts: "2026-03-12T10:00:00Z",
+        event: "tool.started",
+        run_id: "run-1",
+        payload: {
+          span_id: "call-1",
+          source_node_id: "agent_1",
+          tool: "platform sdk",
+          display_name: "List sources",
+          input: { topic: "Shabbat" },
+        },
+      },
+      {
+        seq: 2,
+        ts: "2026-03-12T10:00:01Z",
+        event: "run.cancelled",
+        run_id: "run-1",
+        payload: { status: "cancelled" },
+      },
+    ]);
+
+    expect(steps).toHaveLength(1);
+    expect(steps[0]).toMatchObject({
+      id: "call-1",
+      nodeId: "agent_1",
+      name: "List sources",
+      type: "tool",
+      status: "error",
+      input: { topic: "Shabbat" },
+      output: { error: "Run cancelled" },
     });
   });
 });

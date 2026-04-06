@@ -61,9 +61,11 @@ describe("run trace block loader", () => {
     );
 
     expect(blocks).toHaveLength(2);
-    expect(blocks?.[0].kind).toBe("tool_call");
-    expect(blocks?.[0].tool.title).toBe("List RAG operators");
-    expect(blocks?.[1].kind).toBe("assistant_text");
-    expect(blocks?.[1].text).toBe("List RAG operators\nFound 12 operators.");
+    const toolBlock = blocks?.[0];
+    const textBlock = blocks?.[1];
+    expect(toolBlock?.kind).toBe("tool_call");
+    expect(toolBlock?.kind === "tool_call" ? toolBlock.tool.title : null).toBe("List RAG operators");
+    expect(textBlock?.kind).toBe("assistant_text");
+    expect(textBlock?.kind === "assistant_text" ? textBlock.text : null).toBe("List RAG operators\nFound 12 operators.");
   });
 });

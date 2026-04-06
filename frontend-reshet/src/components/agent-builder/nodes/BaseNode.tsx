@@ -1,11 +1,12 @@
 "use client"
 
-import { memo } from "react"
+import { memo, useState } from "react"
 import { NodeProps, Position, Handle } from "@xyflow/react"
-import { Play, Square, Brain, Wrench, Search, GitBranch, GitFork, UserCheck, RefreshCw, Sparkles, Database, Bot, ListFilter, GitMerge, Link, Route, Scale, Ban, Mic } from "lucide-react"
+import { Play, Square, Brain, Wrench, Search, GitBranch, GitFork, UserCheck, RefreshCw, Sparkles, Database, Bot, ListFilter, GitMerge, Link, Route, Scale, Ban, Mic, ChevronDown, ChevronUp } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { BaseNode as SharedBaseNode, SharedNodeData, SharedNodeHandle } from "../../builder/nodes/BaseNode"
 import { AgentNodeData, CATEGORY_COLORS, getClassifyHandleIds, getHandleColor, AgentNodeType, getNodeOutputHandles } from "../types"
+import { AgentNodeExpandedBody } from "./AgentNodeExpandedBody"
 
 const NODE_ICONS: Record<AgentNodeType, React.ElementType> = {
     start: Play,
@@ -68,6 +69,7 @@ function NodeBranchRow({
 }
 
 function BaseNodeComponent(props: NodeProps) {
+    const [agentExpanded, setAgentExpanded] = useState(false)
     const fallbackData: AgentNodeData = {
         nodeType: "transform",
         category: "data",
@@ -86,6 +88,12 @@ function BaseNodeComponent(props: NodeProps) {
     const isEndNode = data.nodeType === "end"
     const isConditional = data.nodeType === "conditional"
     const isSpecialNode = ["if_else", "while", "user_approval", "classify", "join", "router", "judge", "replan"].includes(data.nodeType)
+    const isAgent = data.nodeType === "agent"
+    const modelId = typeof data.config?.model_id === "string" ? data.config.model_id : undefined
+    const rawTools = data.config?.tools
+    const agentToolIds = Array.isArray(rawTools)
+        ? rawTools.filter((item): item is string => typeof item === "string" && item.length > 0)
+        : []
     const connectableProps = props as { isConnectable?: boolean; connectable?: boolean }
     const isHandleConnectable = connectableProps.isConnectable ?? connectableProps.connectable ?? true
 
@@ -228,6 +236,13 @@ function BaseNodeComponent(props: NodeProps) {
         )
     }
 
+    const expandedBody =
+        isAgent && agentExpanded ? (
+            <AgentNodeExpandedBody nodeId={props.id} modelId={modelId} toolIds={agentToolIds} />
+        ) : (
+            specializedContent
+        )
+
     return (
         <SharedBaseNode
             {...props}
@@ -240,8 +255,37 @@ function BaseNodeComponent(props: NodeProps) {
             icon={Icon}
             categoryColor={borderColor}
             getHandleColor={getHandleColor as (type: string) => string}
+            className={cn(
+                isAgent && agentExpanded ? "min-w-[228px] max-w-[300px] w-full" : undefined,
+                (props as { className?: string }).className
+            )}
+            leadingBadge={
+                isAgent ? (
+                    <button
+                        type="button"
+                        className="absolute inset-0 z-[1] flex items-center justify-center rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+                        aria-expanded={agentExpanded}
+                        aria-label={agentExpanded ? "Collapse agent details" : "Expand agent details"}
+                        onPointerDown={(e) => e.stopPropagation()}
+                        onMouseDown={(e) => e.stopPropagation()}
+                        onClick={(e) => {
+                            e.stopPropagation()
+                            setAgentExpanded((open) => !open)
+                        }}
+                    >
+                        <span className="relative block h-4 w-4 shrink-0">
+                            <Icon className="pointer-events-none h-4 w-4 text-foreground/80 absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 transition-opacity duration-150 ease-out group-hover:opacity-0" />
+                            {agentExpanded ? (
+                                <ChevronUp className="pointer-events-none h-4 w-4 text-foreground/80 absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 opacity-0 transition-opacity duration-150 ease-out group-hover:opacity-100" />
+                            ) : (
+                                <ChevronDown className="pointer-events-none h-4 w-4 text-foreground/80 absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 opacity-0 transition-opacity duration-150 ease-out group-hover:opacity-100" />
+                            )}
+                        </span>
+                    </button>
+                ) : undefined
+            }
         >
-            {specializedContent}
+            {expandedBody}
         </SharedBaseNode>
     )
 }

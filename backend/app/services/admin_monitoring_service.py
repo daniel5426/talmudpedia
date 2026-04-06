@@ -63,6 +63,11 @@ class MonitoringThreadRow:
     actor_display: str | None
     actor_email: str | None
     user_id: str | None
+    root_thread_id: str | None
+    parent_thread_id: str | None
+    parent_thread_turn_id: str | None
+    spawned_by_run_id: str | None
+    lineage_depth: int
 
 
 @dataclass(slots=True)
@@ -270,6 +275,11 @@ class AdminMonitoringService:
                     actor_display=context.actor_display,
                     actor_email=context.actor_email,
                     user_id=str(thread.user_id) if thread.user_id else None,
+                    root_thread_id=str(thread.root_thread_id or thread.id),
+                    parent_thread_id=str(thread.parent_thread_id) if thread.parent_thread_id else None,
+                    parent_thread_turn_id=str(thread.parent_thread_turn_id) if thread.parent_thread_turn_id else None,
+                    spawned_by_run_id=str(thread.spawned_by_run_id) if thread.spawned_by_run_id else None,
+                    lineage_depth=int(thread.lineage_depth or 0),
                 )
             )
         rows.sort(

@@ -1,6 +1,6 @@
 # Test State: Agent Execution Events
 
-Last Updated: 2026-03-30
+Last Updated: 2026-04-04
 
 **Scope**
 Execution event emission coverage for core nodes in debug streaming runs.
@@ -16,6 +16,7 @@ Execution event emission coverage for core nodes in debug streaming runs.
 - Node executor exceptions are converted into recoverable state updates (no node re-raise)
 - Run setup failures emit stream error events and persist failed thread turns/output text
 - Tool lifecycle stream normalization preserves platform tool action/display metadata for shared chat rendering
+- Tool lifecycle stream normalization now preserves explicit `source_node_id` attribution separately from the unique tool-call `span_id`
 - Failed tool calls now emit terminal `tool.failed` lifecycle events and failed reasoning steps so UI traces do not leave tool calls spinning indefinitely
 - Generic runtime `error` events stay non-terminal in the v2 stream contract; only explicit run terminal events should end a client stream
 - `UI Blocks` tool events preserve `renderer_kind` on tool start/end and emit `output_kind=ui_blocks_bundle` on completion
@@ -30,6 +31,9 @@ Execution event emission coverage for core nodes in debug streaming runs.
 - Command: `PYTHONPATH=. pytest -q tests/agent_execution_events/test_tool_event_metadata.py tests/tool_execution/test_llm_provider_content_blocks.py`
 - Date: 2026-03-30 19:49 EEST
 - Result: PASS (`19 passed, 2 warnings`)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/tool_execution/test_agent_call_tool_execution.py backend/tests/agent_execution_events/test_tool_event_metadata.py`
+- Date: 2026-04-04 Asia/Hebron
+- Result: PASS (`18 passed, 7 warnings`)
 - Command: `PYTHONPATH=. pytest -q tests/agent_execution_events/test_tool_event_metadata.py tests/tool_execution/test_llm_provider_content_blocks.py tests/context_window/test_token_counter_service.py`
 - Date: 2026-03-30 19:49 EEST
 - Result: PASS (`24 passed, 2 warnings`)

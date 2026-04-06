@@ -45,10 +45,24 @@ class AgentThread(Base):
     surface = Column(SQLEnum(AgentThreadSurface), nullable=False, default=AgentThreadSurface.internal, index=True)
     title = Column(String(255), nullable=True)
     status = Column(SQLEnum(AgentThreadStatus), nullable=False, default=AgentThreadStatus.active, index=True)
+    root_thread_id = Column(UUID(as_uuid=True), ForeignKey("agent_threads.id", ondelete="SET NULL"), nullable=False, index=True)
+    parent_thread_id = Column(UUID(as_uuid=True), ForeignKey("agent_threads.id", ondelete="SET NULL"), nullable=True, index=True)
+    parent_thread_turn_id = Column(UUID(as_uuid=True), ForeignKey("agent_thread_turns.id", ondelete="SET NULL"), nullable=True)
+    spawned_by_run_id = Column(UUID(as_uuid=True), ForeignKey("agent_runs.id", ondelete="SET NULL"), nullable=True, index=True)
+    lineage_depth = Column(Integer, nullable=False, default=0)
     last_run_id = Column(UUID(as_uuid=True), ForeignKey("agent_runs.id", ondelete="SET NULL"), nullable=True, index=True)
     last_activity_at = Column(DateTime(timezone=True), nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    def __init__(self, **kwargs):
+        if kwargs.get("id") is None:
+            kwargs["id"] = uuid.uuid4()
+        if kwargs.get("root_thread_id") is None:
+            kwargs["root_thread_id"] = kwargs["id"]
+        if kwargs.get("lineage_depth") is None:
+            kwargs["lineage_depth"] = 0
+        super().__init__(**kwargs)
 
     tenant = relationship("Tenant")
     user = relationship("User")
@@ -56,12 +70,16 @@ class AgentThread(Base):
     tenant_api_key = relationship("TenantAPIKey")
     agent = relationship("Agent")
     published_app = relationship("PublishedApp")
+    parent_thread = relationship("AgentThread", remote_side=[id], foreign_keys=[parent_thread_id], backref="child_threads")
+    parent_thread_turn = relationship("AgentThreadTurn", foreign_keys=[parent_thread_turn_id])
+    spawned_by_run = relationship("AgentRun", foreign_keys=[spawned_by_run_id])
     last_run = relationship("AgentRun", foreign_keys=[last_run_id])
     turns = relationship(
         "AgentThreadTurn",
         back_populates="thread",
         cascade="all, delete-orphan",
         order_by="AgentThreadTurn.turn_index",
+        foreign_keys="AgentThreadTurn.thread_id",
     )
     attachments = relationship(
         "RuntimeAttachment",
@@ -90,7 +108,7 @@ class AgentThreadTurn(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     completed_at = Column(DateTime(timezone=True), nullable=True)
 
-    thread = relationship("AgentThread", back_populates="turns")
+    thread = relationship("AgentThread", back_populates="turns", foreign_keys=[thread_id])
     run = relationship("AgentRun", foreign_keys=[run_id], back_populates="thread_turn")
     attachment_links = relationship(
         "AgentThreadTurnAttachment",

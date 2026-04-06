@@ -21,6 +21,33 @@ describe("useAgentThreadHistory", () => {
     jest.clearAllMocks();
   });
 
+  it("requests only the current user's threads for the selected agent", async () => {
+    mockedAdminService.getUserThreads.mockResolvedValue({
+      items: [
+        {
+          id: "thread-1",
+          title: "Agent 1 thread",
+          updated_at: "2026-04-05T09:00:00Z",
+          agent_id: "agent-1",
+        },
+      ],
+      total: 1,
+      page: 1,
+      pages: 1,
+    } as any);
+
+    const { result } = renderHook(() => useAgentThreadHistory("user-1", "agent-1"));
+
+    await waitFor(() => {
+      expect(result.current.history).toHaveLength(1);
+    });
+
+    expect(mockedAdminService.getUserThreads).toHaveBeenCalledWith("user-1", 1, 50, "", {
+      agentId: "agent-1",
+    });
+    expect(result.current.history[0]?.agentId).toBe("agent-1");
+  });
+
   it("replays architect-worker threads in stable order and hydrates trace blocks for every assistant turn", async () => {
     mockedAdminService.getUserThreads.mockResolvedValue({
       items: [
@@ -28,6 +55,7 @@ describe("useAgentThreadHistory", () => {
           id: "thread-1",
           title: "Worker thread",
           updated_at: "2026-03-16T12:45:00Z",
+          agent_id: "agent-1",
         },
       ],
       total: 1,

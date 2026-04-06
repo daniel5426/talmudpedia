@@ -1,4 +1,4 @@
-Last Updated: 2026-03-27
+Last Updated: 2026-04-05
 
 # Test State: Published Apps Host Runtime (Same-URL Auth Gate)
 
@@ -23,11 +23,15 @@ Backend same-URL published app host runtime flow for `*.apps` domains:
 - Host runtime history endpoints: `GET /_talmudpedia/threads`, `GET /_talmudpedia/threads/{thread_id}`
 - Host runtime thread detail is enforced by app-account ownership, not just app scope
 - Host runtime thread detail includes client-safe `run_events` for history rehydration parity
+- Host runtime thread detail can return nested `lineage` and `subthread_tree` payloads when `include_subthreads=true`
 - Legacy `/public/apps/{slug}` published runtime/auth/chat endpoints return `410`
 
 ## Last Run
 - Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/agent_threads/test_thread_service.py backend/tests/admin_monitoring/test_admin_monitoring_api.py backend/tests/published_apps_host_runtime/test_host_runtime_same_url_auth.py`
 - Date/Time: 2026-03-27 Asia/Hebron
+- Result: PASS (`17 passed`)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/published_apps_external_runtime/test_external_runtime_api.py backend/tests/published_apps_host_runtime/test_host_runtime_same_url_auth.py`
+- Date/Time: 2026-04-05 Asia/Hebron
 - Result: PASS (`17 passed`)
 - Command: `pytest -q backend/tests/published_apps_host_runtime/test_host_runtime_same_url_auth.py`
 - Date/Time: 2026-03-22 (local run)

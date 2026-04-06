@@ -8,7 +8,7 @@ import pytest
 from app.db.postgres.models.agent_threads import AgentThread, AgentThreadSurface, AgentThreadTurn, AgentThreadTurnStatus
 from app.db.postgres.models.agents import Agent, AgentRun
 from app.db.postgres.models.identity import Tenant, User
-from app.services.thread_service import ThreadService
+from app.services.thread_service import ThreadAccessError, ThreadService
 
 
 async def _seed_thread_context(db_session):
@@ -250,3 +250,205 @@ async def test_complete_turn_keeps_assistant_text_when_string_final_output_diffe
     turn = stored.turns[0]
     assert turn.assistant_output_text == "Chat-facing reply"
     assert turn.metadata_["final_output"] == "Workflow-facing reply"
+
+
+@pytest.mark.asyncio
+async def test_resolve_or_create_thread_sets_root_lineage_for_new_root_thread(db_session):
+    tenant, user, agent = await _seed_thread_context(db_session)
+
+    service = ThreadService(db_session)
+    resolved = await service.resolve_or_create_thread(
+        tenant_id=tenant.id,
+        user_id=user.id,
+        agent_id=agent.id,
+        published_app_id=None,
+        surface=AgentThreadSurface.internal,
+        thread_id=None,
+        input_text="Root thread",
+    )
+
+    assert resolved.created is True
+    assert resolved.thread.root_thread_id == resolved.thread.id
+    assert resolved.thread.parent_thread_id is None
+    assert resolved.thread.parent_thread_turn_id is None
+    assert resolved.thread.spawned_by_run_id is None
+    assert resolved.thread.lineage_depth == 0
+
+
+@pytest.mark.asyncio
+async def test_resolve_or_create_thread_stamps_child_lineage_from_parent_run(db_session):
+    tenant, user, agent = await _seed_thread_context(db_session)
+    service = ThreadService(db_session)
+    parent = await service.resolve_or_create_thread(
+        tenant_id=tenant.id,
+        user_id=user.id,
+        agent_id=agent.id,
+        published_app_id=None,
+        surface=AgentThreadSurface.internal,
+        thread_id=None,
+        input_text="Parent thread",
+    )
+    parent_run = AgentRun(
+        tenant_id=tenant.id,
+        agent_id=agent.id,
+        user_id=user.id,
+        initiator_user_id=user.id,
+        thread_id=parent.thread.id,
+        input_params={"input": "Parent prompt"},
+    )
+    db_session.add(parent_run)
+    await db_session.flush()
+    parent_turn = await service.start_turn(
+        thread_id=parent.thread.id,
+        run_id=parent_run.id,
+        user_input_text="Parent prompt",
+    )
+
+    child = await service.resolve_or_create_thread(
+        tenant_id=tenant.id,
+        user_id=user.id,
+        agent_id=agent.id,
+        published_app_id=None,
+        surface=AgentThreadSurface.internal,
+        thread_id=None,
+        input_text="Child thread",
+        parent_run_id=parent_run.id,
+    )
+
+    assert child.thread.root_thread_id == parent.thread.id
+    assert child.thread.parent_thread_id == parent.thread.id
+    assert child.thread.parent_thread_turn_id == parent_turn.id
+    assert child.thread.spawned_by_run_id == parent_run.id
+    assert child.thread.lineage_depth == 1
+
+
+@pytest.mark.asyncio
+async def test_resolve_or_create_thread_keeps_existing_child_lineage_on_manual_continuation(db_session):
+    tenant, user, agent = await _seed_thread_context(db_session)
+    service = ThreadService(db_session)
+    root = await service.resolve_or_create_thread(
+        tenant_id=tenant.id,
+        user_id=user.id,
+        agent_id=agent.id,
+        published_app_id=None,
+        surface=AgentThreadSurface.internal,
+        thread_id=None,
+        input_text="Root thread",
+    )
+    parent_run = AgentRun(
+        tenant_id=tenant.id,
+        agent_id=agent.id,
+        user_id=user.id,
+        initiator_user_id=user.id,
+        thread_id=root.thread.id,
+        input_params={"input": "Parent prompt"},
+    )
+    db_session.add(parent_run)
+    await db_session.flush()
+    await service.start_turn(
+        thread_id=root.thread.id,
+        run_id=parent_run.id,
+        user_input_text="Parent prompt",
+    )
+    child = await service.resolve_or_create_thread(
+        tenant_id=tenant.id,
+        user_id=user.id,
+        agent_id=agent.id,
+        published_app_id=None,
+        surface=AgentThreadSurface.internal,
+        thread_id=None,
+        input_text="Child thread",
+        parent_run_id=parent_run.id,
+    )
+    original_parent_thread_id = child.thread.parent_thread_id
+    original_root_thread_id = child.thread.root_thread_id
+
+    continued = await service.resolve_or_create_thread(
+        tenant_id=tenant.id,
+        user_id=user.id,
+        agent_id=agent.id,
+        published_app_id=None,
+        surface=AgentThreadSurface.internal,
+        thread_id=child.thread.id,
+        input_text="Continue child thread",
+    )
+
+    assert continued.thread.id == child.thread.id
+    assert continued.thread.parent_thread_id == original_parent_thread_id
+    assert continued.thread.root_thread_id == original_root_thread_id
+    assert continued.thread.lineage_depth == 1
+
+
+@pytest.mark.asyncio
+async def test_resolve_or_create_thread_rejects_existing_child_thread_from_different_root(db_session):
+    tenant, user, agent = await _seed_thread_context(db_session)
+    service = ThreadService(db_session)
+    root_one = await service.resolve_or_create_thread(
+        tenant_id=tenant.id,
+        user_id=user.id,
+        agent_id=agent.id,
+        published_app_id=None,
+        surface=AgentThreadSurface.internal,
+        thread_id=None,
+        input_text="Root one",
+    )
+    root_two = await service.resolve_or_create_thread(
+        tenant_id=tenant.id,
+        user_id=user.id,
+        agent_id=agent.id,
+        published_app_id=None,
+        surface=AgentThreadSurface.internal,
+        thread_id=None,
+        input_text="Root two",
+    )
+
+    parent_run_one = AgentRun(
+        tenant_id=tenant.id,
+        agent_id=agent.id,
+        user_id=user.id,
+        initiator_user_id=user.id,
+        thread_id=root_one.thread.id,
+        input_params={"input": "Parent one"},
+    )
+    parent_run_two = AgentRun(
+        tenant_id=tenant.id,
+        agent_id=agent.id,
+        user_id=user.id,
+        initiator_user_id=user.id,
+        thread_id=root_two.thread.id,
+        input_params={"input": "Parent two"},
+    )
+    db_session.add_all([parent_run_one, parent_run_two])
+    await db_session.flush()
+    await service.start_turn(
+        thread_id=root_one.thread.id,
+        run_id=parent_run_one.id,
+        user_input_text="Parent one",
+    )
+    await service.start_turn(
+        thread_id=root_two.thread.id,
+        run_id=parent_run_two.id,
+        user_input_text="Parent two",
+    )
+    child = await service.resolve_or_create_thread(
+        tenant_id=tenant.id,
+        user_id=user.id,
+        agent_id=agent.id,
+        published_app_id=None,
+        surface=AgentThreadSurface.internal,
+        thread_id=None,
+        input_text="Shared child",
+        parent_run_id=parent_run_one.id,
+    )
+
+    with pytest.raises(ThreadAccessError, match="Thread lineage mismatch"):
+        await service.resolve_or_create_thread(
+            tenant_id=tenant.id,
+            user_id=user.id,
+            agent_id=agent.id,
+            published_app_id=None,
+            surface=AgentThreadSurface.internal,
+            thread_id=child.thread.id,
+            input_text="Reuse from other root",
+            parent_run_id=parent_run_two.id,
+        )

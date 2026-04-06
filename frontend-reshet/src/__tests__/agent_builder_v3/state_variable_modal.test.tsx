@@ -5,7 +5,7 @@ import { StartNodeSettings } from "@/components/agent-builder/ConfigPanelSpecial
 import { DirectionProvider } from "@/components/direction-provider"
 
 function renderWithDirection(ui: ReactElement) {
-  return render(<DirectionProvider initialDirection="ltr">{ui}</DirectionProvider>)
+  return render(<DirectionProvider>{ui}</DirectionProvider>)
 }
 
 describe("state variable modal", () => {

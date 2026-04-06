@@ -6,8 +6,12 @@ import re
 from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Tuple
+from uuid import UUID
+
+from sqlalchemy import select
 
 from app.agent.execution.types import EventVisibility
+from app.agent.execution.run_task_registry import is_run_cancel_requested
 from app.agent.graph.contracts import (
     build_default_end_output_bindings,
     build_default_end_output_schema,
@@ -38,6 +42,7 @@ from app.services.prompt_reference_resolver import PromptReferenceResolver
 from app.services.run_invocation_service import RunInvocationService
 from app.services.token_counter_service import TokenCounterService
 from app.services.resource_policy_service import ResourcePolicySnapshot
+from app.db.postgres.models.agents import AgentRun, RunStatus
 
 logger = logging.getLogger(__name__)
 
@@ -599,6 +604,49 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
             node_id=node_id,
             category="tool_reasoning",
         )
+
+    async def _is_current_run_cancelled(self, context: Dict[str, Any] | None) -> bool:
+        if not self.db or not isinstance(context, dict):
+            return False
+        if is_run_cancel_requested(
+            run_id=context.get("run_id"),
+            root_run_id=context.get("root_run_id"),
+            parent_run_id=context.get("parent_run_id"),
+        ):
+            return True
+        raw_run_id = context.get("run_id")
+        if not raw_run_id:
+            return False
+        try:
+            run_id = UUID(str(raw_run_id))
+        except Exception:
+            return False
+        status = (
+            await self.db.execute(select(AgentRun.status).where(AgentRun.id == run_id))
+        ).scalar_one_or_none()
+        return str(getattr(status, "value", status) or "").strip().lower() == RunStatus.cancelled.value
+
+    @staticmethod
+    def _build_reasoning_state_update(
+        *,
+        state: Dict[str, Any],
+        emitted_messages: List[BaseMessage],
+        last_agent_output: Any,
+        tool_outputs: List[Any],
+        last_context: Any,
+    ) -> Dict[str, Any]:
+        state_update = {
+            "messages": emitted_messages,
+            "state": {
+                **(state.get("state", {})),
+                "last_agent_output": last_agent_output,
+            },
+        }
+        if tool_outputs:
+            state_update["tool_outputs"] = tool_outputs
+        if last_context is not None:
+            state_update["context"] = last_context
+        return state_update
 
     def _normalize_tool_call(self, payload: Any) -> Optional[Dict[str, Any]]:
         if payload is None:
@@ -1475,6 +1523,14 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
             last_agent_output: Any = None
 
             for iteration in range(max_tool_iterations):
+                if await self._is_current_run_cancelled(context):
+                    return self._build_reasoning_state_update(
+                        state=state,
+                        emitted_messages=emitted_messages,
+                        last_agent_output=last_agent_output,
+                        tool_outputs=tool_outputs,
+                        last_context=last_context,
+                    )
                 full_content = ""
                 tool_call_buffers: Dict[str, Dict[str, Any]] = {}
                 tool_call_order: List[str] = []
@@ -1664,18 +1720,25 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
                 emitted_messages.append(ai_message)
                 conversation_messages.append(ai_message)
 
+                if await self._is_current_run_cancelled(context):
+                    return self._build_reasoning_state_update(
+                        state=state,
+                        emitted_messages=emitted_messages,
+                        last_agent_output=last_agent_output,
+                        tool_outputs=tool_outputs,
+                        last_context=last_context,
+                    )
+
                 if not tool_calls:
-                    state_update = {
-                        "messages": emitted_messages,
-                        "state": {
-                            **(state.get("state", {})),
-                            "last_agent_output": last_agent_output,
-                        },
-                    }
-                    if tool_outputs:
-                        state_update["tool_outputs"] = tool_outputs
+                    state_update = self._build_reasoning_state_update(
+                        state=state,
+                        emitted_messages=emitted_messages,
+                        last_agent_output=last_agent_output,
+                        tool_outputs=tool_outputs,
+                        last_context=last_context,
+                    )
                     if last_context is not None:
-                        state_update["context"] = last_context
+                        pass
                     elif config.get("write_output_to_context") and isinstance(result_content, dict):
                         state_update["context"] = result_content
                     return state_update
@@ -1736,8 +1799,9 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
                     tool_state = self._build_tool_state(state, call["input"])
                     tool_context = {
                         **(context or {}),
-                        # Include per-call id so emitter span_id is unique for each tool invocation.
-                        "node_id": f"{node_id}::tool::{call['tool_id']}::{call['call_id']}",
+                        "node_id": node_id,
+                        "source_node_id": node_id,
+                        "tool_call_id": call["call_id"],
                         "node_name": f"Tool:{call['tool_id']}",
                     }
                     timeout = call["policy"].timeout_s
@@ -1753,6 +1817,14 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
                         return call["call_id"], {"error": str(exc)}
 
                 execution_results: Dict[str, Any] = {}
+                if await self._is_current_run_cancelled(context):
+                    return self._build_reasoning_state_update(
+                        state=state,
+                        emitted_messages=emitted_messages,
+                        last_agent_output=last_agent_output,
+                        tool_outputs=tool_outputs,
+                        last_context=last_context,
+                    )
                 if tool_execution_mode == "parallel_safe":
                     batches = self._build_tool_batches(resolved_calls, max_parallel_tools)
                     for batch in batches:
@@ -1794,6 +1866,15 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
                     tool_message = ToolMessage(content=content, tool_call_id=call["call_id"])
                     emitted_messages.append(tool_message)
                     conversation_messages.append(tool_message)
+
+                if await self._is_current_run_cancelled(context):
+                    return self._build_reasoning_state_update(
+                        state=state,
+                        emitted_messages=emitted_messages,
+                        last_agent_output=last_agent_output,
+                        tool_outputs=tool_outputs,
+                        last_context=last_context,
+                    )
 
             error_msg = "Max tool iterations reached"
             if emitter:

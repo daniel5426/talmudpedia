@@ -478,12 +478,36 @@ export const agentService = {
   },
 
   async cancelRun(runId: string, payload?: { assistantOutputText?: string }) {
-    return httpClient.post<{ run_id: string; status: string; thread_id?: string | null }>(
-      `/agents/runs/${runId}/cancel`,
-      {
+    const directBackendUrl = process.env.NEXT_PUBLIC_BACKEND_STREAM_URL || "http://127.0.0.1:8026";
+    const url = new URL(`${directBackendUrl}/agents/runs/${runId}/cancel`);
+    const { useAuthStore } = await import("@/lib/store/useAuthStore");
+    const authState = useAuthStore.getState();
+    const token = authState.token;
+    const tenantId = authState.user?.tenant_id;
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    if (token) headers.Authorization = `Bearer ${token}`;
+    if (tenantId) headers["X-Tenant-ID"] = tenantId;
+    const response = await fetch(url.toString(), {
+      method: "POST",
+      headers,
+      credentials: "include",
+      body: JSON.stringify({
         assistant_output_text: payload?.assistantOutputText,
+      }),
+    });
+    if (!response.ok) {
+      let detail: unknown = null;
+      try {
+        const data = await response.json();
+        detail = data?.detail ?? data;
+      } catch {
+        detail = response.statusText || "Request failed";
       }
-    );
+      throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
+    }
+    return response.json() as Promise<{ run_id: string; status: string; thread_id?: string | null }>;
   },
 
   async getRunStatus(runId: string, includeTree = false) {
