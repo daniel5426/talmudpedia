@@ -21,6 +21,12 @@ interface GraphSpecNormalizeOptions {
     stateContract?: AgentGraphDefinition["state_contract"]
 }
 
+type BuilderNode = Node<AgentNodeData> & {
+    config?: Record<string, unknown>
+    nodeType?: AgentNodeType
+    input_mappings?: Record<string, string>
+}
+
 const DEFAULT_WORKFLOW_CONTRACT: NonNullable<AgentGraphDefinition["workflow_contract"]> = {
     inputs: [
         {
@@ -210,8 +216,8 @@ function normalizeOrchestrationConfig(node: Node<AgentNodeData>): Record<string,
     return config
 }
 
-function normalizeBranchAwareNode(node: Node): Node<AgentNodeData> {
-    const raw: any = node as any
+function normalizeBranchAwareNode(node: Node | BuilderNode): Node<AgentNodeData> {
+    const raw = node as BuilderNode
     const existing = (raw.data || {}) as Partial<AgentNodeData>
     const nodeType = (raw.type || raw.nodeType || existing.nodeType || "transform") as AgentNodeType
     const rawConfig = raw.config ?? {}
@@ -222,11 +228,11 @@ function normalizeBranchAwareNode(node: Node): Node<AgentNodeData> {
         const result = normalizeIfElseConditionsWithHandleMap((rawConfig as Record<string, unknown>).conditions)
         ;(rawConfig as Record<string, unknown>).conditions = result.items
     }
-    return normalizeBuilderNode({ ...node, config: rawConfig })
+    return normalizeBuilderNode({ ...raw, config: rawConfig })
 }
 
-export function normalizeBuilderNode(node: Node): Node<AgentNodeData> {
-    const raw: any = node as any
+export function normalizeBuilderNode(node: Node | BuilderNode): Node<AgentNodeData> {
+    const raw = node as BuilderNode
     const existing = (raw.data || {}) as Partial<AgentNodeData>
     const nodeType = (raw.type || raw.nodeType || existing.nodeType || "transform") as AgentNodeType
     const spec = getNodeSpec(nodeType)
@@ -248,7 +254,7 @@ export function normalizeBuilderNode(node: Node): Node<AgentNodeData> {
     const inputType = existing.inputType ?? spec?.inputType ?? "any"
     const outputType = existing.outputType ?? spec?.outputType ?? "any"
 
-    return {
+    const normalizedNode: BuilderNode = {
         ...node,
         type: nodeType,
         config,
@@ -264,7 +270,9 @@ export function normalizeBuilderNode(node: Node): Node<AgentNodeData> {
             hasErrors: existing.hasErrors ?? false,
             inputMappings: resolvedInputMappings,
         } as AgentNodeData,
-    } as Node<AgentNodeData>
+    }
+
+    return normalizedNode as unknown as Node<AgentNodeData>
 }
 
 export function normalizeGraphSpecForSave(

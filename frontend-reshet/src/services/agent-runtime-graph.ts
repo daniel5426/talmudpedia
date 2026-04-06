@@ -617,7 +617,7 @@ export const applyRuntimeEvent = (
         return node
       }
       mutated = true
-      const nextConfig = {
+      const nextConfig: Record<string, unknown> = {
         ...(node.data.config || {}),
         run_status: eventName === "run.cancelled" ? "cancelled" : "failed",
       }

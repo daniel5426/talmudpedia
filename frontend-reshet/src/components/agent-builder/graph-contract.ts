@@ -61,6 +61,10 @@ export interface GraphValueRefConsumer {
   label: string
 }
 
+function isDefined<T>(value: T | null | undefined): value is T {
+  return value != null
+}
+
 export function normalizeValueRef(value: unknown): ValueRef | undefined {
   if (!value || typeof value !== "object") return undefined
   const raw = value as Record<string, unknown>
@@ -123,7 +127,7 @@ export function normalizeStateVariables(value: unknown): StateVariableDefinition
       else if ("default" in raw) normalized.default_value = raw.default
       return normalized
     })
-    .filter((item): item is StateVariableDefinition => !!item)
+    .filter(isDefined)
 }
 
 export function normalizeSetStateAssignments(value: unknown): SetStateAssignment[] {
@@ -143,7 +147,7 @@ export function normalizeSetStateAssignments(value: unknown): SetStateAssignment
       normalized.value_ref = normalizeValueRef(raw.value_ref)
       return normalized
     })
-    .filter((item): item is SetStateAssignment => !!item)
+    .filter(isDefined)
 }
 
 export function normalizeEndConfig(value: unknown): { output_schema: EndOutputSchemaConfig; output_bindings: EndOutputBinding[] } {
@@ -239,7 +243,7 @@ export function normalizeClassifyCategoriesWithHandleMap(value: unknown): Branch
         description: typeof raw.description === "string" ? raw.description : "",
       }
     })
-    .filter((item): item is Record<string, unknown> => !!item)
+    .filter(isDefined)
   return deriveStableBranchIds(normalized, "category")
 }
 
@@ -259,7 +263,7 @@ export function normalizeIfElseConditionsWithHandleMap(value: unknown): BranchNo
         expression: typeof raw.expression === "string" ? raw.expression : "",
       }
     })
-    .filter((item): item is Record<string, unknown> => !!item)
+    .filter(isDefined)
   return deriveStableBranchIds(normalized, "condition")
 }
 
