@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any, Dict
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,6 +19,8 @@ router = APIRouter(prefix="/agents", tags=["agents"])
 @router.get("/runs/{run_id}/events", response_model=Dict[str, Any])
 async def get_run_events(
     run_id: UUID,
+    after_sequence: int | None = Query(default=None, ge=0),
+    limit: int | None = Query(default=None, ge=1, le=1000),
     _: Dict[str, Any] = Depends(require_scopes("agents.execute")),
     context: Dict[str, Any] = Depends(get_agent_context),
     db: AsyncSession = Depends(get_db),
@@ -30,7 +32,7 @@ async def get_run_events(
         raise HTTPException(status_code=403, detail="Tenant mismatch")
 
     recorder = ExecutionTraceRecorder(serializer=lambda value: value)
-    events = await recorder.list_events(db, run_id)
+    events = await recorder.list_events(db, run_id, after_sequence=after_sequence, limit=limit)
     return {
         "run_id": str(run_id),
         "event_count": len(events),

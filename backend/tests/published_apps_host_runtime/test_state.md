@@ -1,4 +1,4 @@
-Last Updated: 2026-04-05
+Last Updated: 2026-04-09
 
 # Test State: Published Apps Host Runtime (Same-URL Auth Gate)
 
@@ -20,6 +20,7 @@ Backend same-URL published app host runtime flow for `*.apps` domains:
 - `/_talmudpedia/chat/stream` requires auth when `auth_enabled=true`
 - Authenticated `/_talmudpedia/chat/stream` streams and returns `X-Thread-ID`
   - Signed-up host users are granted tenant member RBAC assignment in test setup so delegated run scopes intersect correctly under strict runtime delegation
+- Host chat stream now attaches to persisted worker-owned run events instead of executing in the request path
 - Host runtime history endpoints: `GET /_talmudpedia/threads`, `GET /_talmudpedia/threads/{thread_id}`
 - Host runtime thread detail is enforced by app-account ownership, not just app scope
 - Host runtime thread detail includes client-safe `run_events` for history rehydration parity
@@ -33,6 +34,9 @@ Backend same-URL published app host runtime flow for `*.apps` domains:
 - Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/published_apps_external_runtime/test_external_runtime_api.py backend/tests/published_apps_host_runtime/test_host_runtime_same_url_auth.py`
 - Date/Time: 2026-04-05 Asia/Hebron
 - Result: PASS (`17 passed`)
+- Command: `TEST_USE_REAL_DB=0 PYTHONPATH=backend python3 -m pytest -q backend/tests/embedded_agent_runtime/test_embedded_agent_runtime_api.py backend/tests/published_apps/test_public_chat_scope_and_persistence.py backend/tests/published_apps_external_runtime/test_external_runtime_api.py backend/tests/published_apps_host_runtime/test_host_runtime_same_url_auth.py`
+- Date/Time: 2026-04-09 Asia/Hebron
+- Result: PASS (`26 passed`)
 - Command: `pytest -q backend/tests/published_apps_host_runtime/test_host_runtime_same_url_auth.py`
 - Date/Time: 2026-03-22 (local run)
 - Result: PASS (`9 passed`, `7 warnings`)

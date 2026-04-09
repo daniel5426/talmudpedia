@@ -1,6 +1,6 @@
 # Embedded Agent Runtime Tests
 
-Last Updated: 2026-04-05
+Last Updated: 2026-04-09
 
 Scope:
 - Public embedded-agent runtime routes authenticated by tenant API keys.
@@ -11,7 +11,7 @@ Test files present:
 
 Key scenarios covered:
 - Published agents stream successfully through `/public/embed/agents/{agent_id}/chat/stream`.
-- Stream responses emit `run-stream.v2` envelopes and `X-Thread-ID`.
+- Stream responses emit detached `run-stream.v2` envelopes from persisted run events and `X-Thread-ID`.
 - Embedded runtime persists thread ownership and exposes scoped thread history.
 - Thread detail returns per-turn historical `run_events` for replaying old tool/reasoning activity.
 - Thread detail preserves separate `assistant_output_text` and `final_output` values on persisted turns.
@@ -24,9 +24,9 @@ Key scenarios covered:
 - Wrong-scope and revoked API keys are rejected.
 - Draft agents cannot be embedded.
 
-Last run command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/agent_threads/test_thread_service.py backend/tests/admin_monitoring/test_admin_monitoring_api.py backend/tests/embedded_agent_runtime/test_embedded_agent_runtime_api.py`
-Last run date/time: 2026-04-05 Asia/Hebron
-Last run result: pass (`23 passed`)
+Last run command: `TEST_USE_REAL_DB=0 PYTHONPATH=backend python3 -m pytest -q backend/tests/embedded_agent_runtime/test_embedded_agent_runtime_api.py backend/tests/published_apps/test_public_chat_scope_and_persistence.py backend/tests/published_apps_external_runtime/test_external_runtime_api.py backend/tests/published_apps_host_runtime/test_host_runtime_same_url_auth.py`
+Last run date/time: 2026-04-09 Asia/Hebron
+Last run result: pass (`26 passed`)
 
 Known gaps / follow-ups:
 - Add cross-agent thread read/delete coverage once multi-agent embed examples land.

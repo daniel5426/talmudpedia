@@ -1,7 +1,10 @@
+from datetime import datetime, timezone
 from uuid import uuid4
 
+from app.agent.execution.trace_recorder import ExecutionTraceRecorder
+from app.agent.execution.service import AgentExecutorService
 from app.core.security import create_access_token, get_password_hash
-from app.db.postgres.models.agents import Agent, AgentStatus
+from app.db.postgres.models.agents import Agent, AgentRun, AgentStatus, RunStatus
 from app.db.postgres.models.identity import (
     MembershipStatus,
     OrgMembership,
@@ -156,3 +159,45 @@ async def seed_published_app(
     await db_session.commit()
     await db_session.refresh(app)
     return app
+
+
+def install_stub_agent_worker(
+    monkeypatch,
+    *,
+    content: str,
+    final_output: dict | None = None,
+):
+    async def fake_enqueue_background_run(self, run_id):
+        run = await self.db.get(AgentRun, run_id)
+        if run is None:
+            raise ValueError(f"Run {run_id} not found")
+        run.dispatch_count = int(getattr(run, "dispatch_count", 0) or 0) + 1
+        run.last_dispatched_at = datetime.now(timezone.utc)
+        run.execution_owner_kind = "celery"
+        run.execution_owner_id = "stub-worker"
+        recorder = ExecutionTraceRecorder(serializer=lambda value: value)
+        await recorder.save_event(
+            run.id,
+            self.db,
+            {
+                "event": "token",
+                "sequence": 1,
+                "data": {"content": content},
+                "visibility": "client_safe",
+            },
+        )
+        run.status = RunStatus.completed
+        run.output_result = {
+            "final_output": final_output if final_output is not None else {"text": content}
+        }
+        run.completed_at = datetime.now(timezone.utc)
+        run.execution_owner_id = None
+        run.execution_lease_expires_at = None
+        run.execution_heartbeat_at = None
+        await self.db.commit()
+
+    monkeypatch.setattr(
+        AgentExecutorService,
+        "_enqueue_background_run",
+        fake_enqueue_background_run,
+    )

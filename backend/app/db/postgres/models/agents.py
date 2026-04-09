@@ -161,6 +161,12 @@ class AgentRun(Base):
     engine_run_ref = Column(String, nullable=True)
     has_workspace_writes = Column(Boolean, nullable=False, default=False, server_default=text("false"))
     batch_finalized_at = Column(DateTime(timezone=True), nullable=True)
+    execution_owner_kind = Column(String, nullable=True, index=True)
+    execution_owner_id = Column(String, nullable=True, index=True)
+    execution_lease_expires_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    execution_heartbeat_at = Column(DateTime(timezone=True), nullable=True)
+    dispatch_count = Column(Integer, nullable=False, default=0, server_default=text("0"))
+    last_dispatched_at = Column(DateTime(timezone=True), nullable=True)
 
     # Orchestration lineage and idempotency
     root_run_id = Column(UUID(as_uuid=True), ForeignKey("agent_runs.id", ondelete="SET NULL"), nullable=True, index=True)

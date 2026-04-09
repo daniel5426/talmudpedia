@@ -11,10 +11,12 @@ from langchain_core.messages import AIMessageChunk
 
 from app.agent.executors.standard import ReasoningNodeExecutor
 from app.agent.executors.tool import ToolNodeExecutor
+from app.agent.execution.emitter import active_emitter
 from app.agent.execution.run_task_registry import mark_run_cancel_requested
 from app.agent.execution.service import AgentExecutorService
 from app.agent.execution.types import ExecutionMode
 from app.db.postgres.engine import sessionmaker
+from app.db.postgres.models.agent_threads import AgentThread, AgentThreadSurface, AgentThreadStatus
 from app.db.postgres.models.agents import Agent, AgentRun, AgentStatus, RunStatus
 from app.db.postgres.models.identity import Tenant, User
 from app.db.postgres.models.registry import (
@@ -24,6 +26,26 @@ from app.db.postgres.models.registry import (
     ToolStatus,
 )
 from app.services.model_resolver import ModelResolver
+
+
+class FakeToolChildRunEmitter:
+    def __init__(self) -> None:
+        self.internal_events: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def emit_tool_start(self, *args, **kwargs) -> None:
+        return None
+
+    def emit_tool_end(self, *args, **kwargs) -> None:
+        return None
+
+    def emit_tool_failed(self, *args, **kwargs) -> None:
+        return None
+
+    def emit_error(self, *args, **kwargs) -> None:
+        return None
+
+    def emit_internal_event(self, event_name, data, *, node_id=None, category=None, visibility=None) -> None:
+        self.internal_events.append((str(event_name), dict(data or {}), node_id, category))
 
 
 async def _seed_tenant_and_user(db_session):
@@ -157,6 +179,56 @@ async def test_agent_call_tool_success_uses_fresh_child_session_and_returns_comp
     assert start_session_ids
     assert stream_session_ids
     assert stream_session_ids.issubset(start_session_ids)
+
+
+@pytest.mark.asyncio
+async def test_agent_call_tool_emits_hidden_child_run_started_with_target_agent_name(db_session, monkeypatch):
+    tenant, user = await _seed_tenant_and_user(db_session)
+    target = await _create_agent(
+        db_session,
+        tenant_id=tenant.id,
+        user_id=user.id,
+        slug=f"named-child-{uuid4().hex[:8]}",
+        status=AgentStatus.published,
+    )
+    tool = await _create_agent_call_tool(db_session, tenant_id=tenant.id, target_agent_slug=target.slug)
+
+    emitter = FakeToolChildRunEmitter()
+
+    async def fake_execute_sync_with_new_session(*args, **kwargs):
+        on_run_created = kwargs.get("on_run_created")
+        child_run_id = uuid4()
+        if callable(on_run_created):
+            on_run_created(child_run_id)
+        return SimpleNamespace(
+            run_id=child_run_id,
+            status="completed",
+            output_result={"state": {"last_agent_output": {"answer": "ok"}}},
+            error_message=None,
+        )
+
+    monkeypatch.setattr(AgentExecutorService, "execute_sync_with_new_session", fake_execute_sync_with_new_session)
+
+    token = active_emitter.set(emitter)
+    try:
+        executor = ToolNodeExecutor(tenant_id=tenant.id, db=db_session)
+        await executor.execute(
+            state={"context": {"input": "hello child"}},
+            config={"tool_id": str(tool.id)},
+            context={"node_id": "agent_1", "mode": "debug"},
+        )
+    finally:
+        active_emitter.reset(token)
+
+    matching = [item for item in emitter.internal_events if item[0] == "tool.child_run_started"]
+    assert matching
+    event_name, data, node_id, category = matching[0]
+    assert event_name == "tool.child_run_started"
+    assert data["agent_id"] == str(target.id)
+    assert data["agent_name"] == target.name
+    assert data["source_node_id"] == "agent_1"
+    assert node_id == "agent_1"
+    assert category == "tool_execution"
 
 
 @pytest.mark.asyncio
@@ -648,13 +720,25 @@ async def test_agent_call_tool_derives_child_lineage_from_current_run(db_session
 
     current_root_run_id = uuid4()
     current_run_id = uuid4()
+    shared_thread = AgentThread(
+        tenant_id=tenant.id,
+        user_id=user.id,
+        agent_id=target.id,
+        published_app_id=None,
+        surface=AgentThreadSurface.internal,
+        status=AgentThreadStatus.active,
+        title="Lineage Thread",
+        last_activity_at=datetime.now(timezone.utc),
+    )
+    db_session.add(shared_thread)
+    await db_session.flush()
     db_session.add(
         AgentRun(
             id=current_root_run_id,
             agent_id=target.id,
             tenant_id=tenant.id,
             user_id=user.id,
-            thread_id=None,
+            thread_id=shared_thread.id,
             status=RunStatus.running,
             input_params={},
             root_run_id=current_root_run_id,
@@ -669,7 +753,7 @@ async def test_agent_call_tool_derives_child_lineage_from_current_run(db_session
             agent_id=target.id,
             tenant_id=tenant.id,
             user_id=user.id,
-            thread_id=None,
+            thread_id=shared_thread.id,
             status=RunStatus.running,
             input_params={},
             root_run_id=current_root_run_id,
@@ -698,6 +782,49 @@ async def test_agent_call_tool_derives_child_lineage_from_current_run(db_session
     assert captured["parent_run_id"] == current_run_id
     assert captured["parent_node_id"] == "agent_node_1"
     assert captured["depth"] == 3
+
+
+@pytest.mark.asyncio
+async def test_agent_call_tool_emits_hidden_child_run_started_event_for_overlay(db_session, monkeypatch):
+    tenant, user = await _seed_tenant_and_user(db_session)
+    target = await _create_agent(
+        db_session,
+        tenant_id=tenant.id,
+        user_id=user.id,
+        slug=f"agent-call-overlay-{uuid4().hex[:8]}",
+        status=AgentStatus.published,
+    )
+    tool = await _create_agent_call_tool(db_session, tenant_id=tenant.id, target_agent_slug=target.slug)
+
+    async def fake_run_and_stream(self, run_id, db, resume_payload=None, mode=None):
+        run = await db.get(AgentRun, run_id)
+        run.status = RunStatus.completed
+        run.output_result = {"state": {"last_agent_output": {"ok": True}}}
+        run.completed_at = datetime.now(timezone.utc)
+        await db.commit()
+        if False:
+            yield None
+
+    monkeypatch.setattr(AgentExecutorService, "run_and_stream", fake_run_and_stream)
+
+    fake_emitter = FakeToolChildRunEmitter()
+    token = active_emitter.set(fake_emitter)
+    try:
+        executor = ToolNodeExecutor(tenant_id=tenant.id, db=db_session)
+        await executor.execute(
+            state={"context": {"input": "hello child"}},
+            config={"tool_id": str(tool.id)},
+            context={"node_id": "agent_node_overlay", "mode": "debug"},
+        )
+    finally:
+        active_emitter.reset(token)
+
+    started = next(event for event in fake_emitter.internal_events if event[0] == "tool.child_run_started")
+    assert started[1]["status"] == "running"
+    assert started[1]["source_node_id"] == "agent_node_overlay"
+    assert UUID(str(started[1]["child_run_id"]))
+    assert started[2] == "agent_node_overlay"
+    assert started[3] == "tool_execution"
 
 
 @pytest.mark.asyncio

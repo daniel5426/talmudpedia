@@ -130,6 +130,18 @@ const makeRuntimeNode = ({
   } as AgentNodeData,
 })
 
+const resolveChildRunDisplayName = (params: {
+  agentName?: string | null
+  existingDisplayName?: string | null
+  runId: string
+}): string => {
+  const agentName = String(params.agentName || "").trim()
+  if (agentName) return agentName
+  const existingDisplayName = String(params.existingDisplayName || "").trim()
+  if (existingDisplayName) return existingDisplayName
+  return `Child Run ${params.runId.slice(0, 8)}`
+}
+
 const updateRunNodeStatusIfAllowed = (
   state: RuntimeGraphState,
   runId: string,
@@ -164,20 +176,42 @@ const ensureChildRunNode = (
   state: RuntimeGraphState,
   runId: string,
   position: { x: number; y: number },
-  status = "queued"
+  status = "queued",
+  agentName?: string | null,
 ): RuntimeGraphState => {
   const existingNodeId = state.indexes.childRunNodeByRunId[runId]
   if (existingNodeId) {
-    return updateRunNodeStatusIfAllowed(state, runId, status)
+    let nextState = updateRunNodeStatusIfAllowed(state, runId, status)
+    if (!agentName) return nextState
+    const targetNode = nextState.runtimeNodes.find((node) => node.id === existingNodeId)
+    if (!targetNode) return nextState
+    return {
+      ...nextState,
+      runtimeNodes: upsertRuntimeNode(nextState.runtimeNodes, {
+        ...targetNode,
+        data: {
+          ...targetNode.data,
+          displayName: resolveChildRunDisplayName({
+            agentName,
+            existingDisplayName: targetNode.data.displayName,
+            runId,
+          }),
+          config: {
+            ...(targetNode.data.config || {}),
+            agent_name: String(agentName || "").trim() || undefined,
+          },
+        } as AgentNodeData,
+      }),
+    }
   }
 
   const runtimeNodeId = `runtime-run:${runId}`
   const runNode = makeRuntimeNode({
     id: runtimeNodeId,
     nodeType: "agent",
-    displayName: `Child Run ${runId.slice(0, 8)}`,
+    displayName: resolveChildRunDisplayName({ agentName, runId }),
     executionStatus: toRuntimeExecutionStatus(status),
-    config: { run_id: runId, run_status: status },
+    config: { run_id: runId, run_status: status, agent_name: String(agentName || "").trim() || undefined },
     position,
   })
 
@@ -259,15 +293,35 @@ const markTakenStaticEdgeBetweenNodes = (
   }
 }
 
+const ensureStaticParentToChildRuntimeEdge = (
+  state: RuntimeGraphState,
+  parentNodeId: string,
+  childRunId: string,
+): RuntimeGraphState => {
+  const childNodeId = state.indexes.childRunNodeByRunId[childRunId]
+  if (!childNodeId) return state
+  return {
+    ...state,
+    runtimeEdges: upsertRuntimeEdge(state.runtimeEdges, {
+      id: `runtime-edge:static:${parentNodeId}:${childNodeId}`,
+      source: parentNodeId,
+      target: childNodeId,
+      animated: true,
+      style: { stroke: "#334155", strokeWidth: 2, strokeDasharray: "5 4" },
+    }),
+  }
+}
+
 const upsertChildRunMetadata = (
   state: RuntimeGraphState,
   params: {
     runId: string
     parentNodeId?: string | null
     status?: string
+    agentName?: string | null
   },
 ): RuntimeGraphState => {
-  const { runId, parentNodeId, status } = params
+  const { runId, parentNodeId, status, agentName } = params
   const nodeId = state.indexes.childRunNodeByRunId[runId]
   if (!nodeId) return state
   const targetNode = state.runtimeNodes.find((node) => node.id === nodeId)
@@ -281,11 +335,17 @@ const upsertChildRunMetadata = (
     ...(targetNode.data.config || {}),
     ...(parentNodeId ? { parent_node_id: parentNodeId } : {}),
     ...(effectiveStatus ? { run_status: effectiveStatus } : {}),
+    ...(agentName ? { agent_name: agentName } : {}),
   }
   const patchedNode: Node<AgentNodeData> = {
     ...targetNode,
     data: {
       ...targetNode.data,
+      displayName: resolveChildRunDisplayName({
+        agentName,
+        existingDisplayName: targetNode.data.displayName,
+        runId,
+      }),
       executionStatus: effectiveStatus ? toRuntimeExecutionStatus(effectiveStatus) : targetNode.data.executionStatus,
       config: nextConfig,
     } as AgentNodeData,
@@ -419,22 +479,28 @@ export const applyRuntimeEvent = (
     return state
   }
 
-  if (eventName === "orchestration.child_lifecycle") {
+  if (eventName === "orchestration.child_lifecycle" || eventName === "tool.child_run_started") {
     const childRunId = String(event.data?.child_run_id || "")
     const lifecycleStatus = String(event.data?.status || "running")
     if (!childRunId) return state
+    const parentNodeId = String(event.span_id || "") || undefined
     state = ensureChildRunNode(
       state,
       childRunId,
       { x: 560, y: 140 + state.runtimeNodes.length * 80 },
-      lifecycleStatus
+      lifecycleStatus,
+      String(event.data?.agent_name || "")
     )
     state = updateRunNodeStatusIfAllowed(state, childRunId, lifecycleStatus)
     state = upsertChildRunMetadata(state, {
       runId: childRunId,
-      parentNodeId: String(event.span_id || "") || undefined,
+      parentNodeId,
       status: lifecycleStatus,
+      agentName: String(event.data?.agent_name || ""),
     })
+    if (parentNodeId) {
+      state = ensureStaticParentToChildRuntimeEdge(state, parentNodeId, childRunId)
+    }
 
     const groupId = typeof event.data?.orchestration_group_id === "string"
       ? event.data.orchestration_group_id
@@ -579,6 +645,19 @@ export const applyRuntimeEvent = (
     return nextState
   }
 
+  if (eventName === "tool.started" || eventName === "tool.completed" || eventName === "tool.failed") {
+    const sourceNodeId =
+      String(event.data?.source_node_id || event.span_id || "")
+    if (!sourceNodeId || !getStaticNode(staticNodes, sourceNodeId)) return state
+    return {
+      ...state,
+      runtimeStatusByNodeId: {
+        ...state.runtimeStatusByNodeId,
+        [sourceNodeId]: "running",
+      },
+    }
+  }
+
   if (eventName === "node_end" || eventName === "on_chain_end") {
     const sourceNodeId = String(event.span_id || "")
     if (!sourceNodeId || !getStaticNode(staticNodes, sourceNodeId)) return state
@@ -599,6 +678,21 @@ export const applyRuntimeEvent = (
     nextState = syncStaticParentNodeStatusesFromChildren(nextState, staticNodes)
     if (!nextHandle) return nextState
     return markTakenStaticEdgeIds(nextState, staticEdges, sourceNodeId, nextHandle)
+  }
+
+  if (eventName === "run.completed") {
+    const nextStatuses = { ...state.runtimeStatusByNodeId }
+    let mutated = false
+    Object.entries(nextStatuses).forEach(([nodeId, status]) => {
+      if (status !== "running" || !getStaticNode(staticNodes, nodeId)) return
+      nextStatuses[nodeId] = "completed"
+      mutated = true
+    })
+    if (!mutated) return state
+    return {
+      ...state,
+      runtimeStatusByNodeId: nextStatuses,
+    }
   }
 
   if (eventName === "run.failed" || eventName === "run.cancelled") {
@@ -715,12 +809,13 @@ export const reconcileRuntimeTree = (
     }
     const x = 540 + (treeNode.depth || 0) * 220
     const y = 80 + idx * 96
-    state = ensureChildRunNode(state, runId, { x, y }, treeNode.status)
+    state = ensureChildRunNode(state, runId, { x, y }, treeNode.status, treeNode.agent_name)
     state = updateRunNodeStatusIfAllowed(state, runId, treeNode.status)
     state = upsertChildRunMetadata(state, {
       runId,
       parentNodeId: treeNode.parent_node_id || undefined,
       status: treeNode.status,
+      agentName: treeNode.agent_name,
     })
 
     if (treeNode.parent_run_id) {

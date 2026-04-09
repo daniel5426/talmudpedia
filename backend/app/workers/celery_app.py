@@ -17,6 +17,7 @@ def _is_truthy(raw: str | None) -> bool:
 _quota_beat_enabled = _is_truthy(os.getenv("QUOTA_WORKERS_BEAT_ENABLED", "1"))
 _expire_interval_seconds = int(os.getenv("QUOTA_EXPIRE_SWEEP_INTERVAL_SECONDS", "300"))
 _reconcile_interval_seconds = int(os.getenv("QUOTA_RECONCILE_INTERVAL_SECONDS", "1800"))
+_task_always_eager = _is_truthy(os.getenv("CELERY_TASK_ALWAYS_EAGER", "1" if running_under_pytest() else "0"))
 _beat_schedule = {}
 if _quota_beat_enabled:
     _beat_schedule = {
@@ -56,6 +57,7 @@ celery_app.conf.update(
         Queue("ingestion", routing_key="ingestion"),
         Queue("embedding", routing_key="embedding"),
         Queue("apps_build", routing_key="apps_build"),
+        Queue("agent_runs", routing_key="agent_runs"),
         Queue("artifact_prod_interactive", routing_key="artifact_prod_interactive"),
         Queue("artifact_prod_background", routing_key="artifact_prod_background"),
         Queue("artifact_test", routing_key="artifact_test"),
@@ -71,14 +73,17 @@ celery_app.conf.update(
         "app.workers.tasks.build_published_app_revision_task": {"queue": "apps_build"},
         "app.workers.tasks.publish_version_pointer_after_build_task": {"queue": "apps_build"},
         "app.workers.tasks.publish_published_app_task": {"queue": "apps_build"},
+        "app.workers.tasks.execute_agent_run_task": {"queue": "agent_runs"},
         "app.workers.tasks.reap_published_app_draft_dev_sessions_task": {"queue": "default"},
         "app.workers.tasks.expire_usage_quota_reservations_task": {"queue": "default"},
         "app.workers.tasks.reconcile_usage_quota_counters_task": {"queue": "default"},
     },
 
     beat_schedule=_beat_schedule,
-    
+
     result_expires=86400,
+    task_always_eager=_task_always_eager,
+    task_eager_propagates=True,
     
     broker_connection_retry_on_startup=True,
 )

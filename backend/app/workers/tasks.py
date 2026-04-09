@@ -14,17 +14,9 @@ from sqlalchemy import and_, select
 
 from app.workers.celery_app import celery_app
 from app.workers.job_manager import job_manager, JobStatus
+from app.workers.async_runner import run_async
 
 logger = get_task_logger(__name__)
-
-
-def run_async(coro):
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    try:
-        return loop.run_until_complete(coro)
-    finally:
-        loop.close()
 
 
 def _truncate_error(raw: str, *, max_chars: int = 4000) -> str:
@@ -124,6 +116,53 @@ def _build_published_url(slug: str) -> str:
 def _publish_mock_mode_enabled() -> bool:
     raw = (os.getenv("APPS_PUBLISH_MOCK_MODE") or "").strip().lower()
     return raw in {"1", "true", "yes", "on"}
+
+
+def _agent_run_task_time_limit_seconds() -> int:
+    raw = (os.getenv("AGENT_RUN_TASK_TIME_LIMIT_SECONDS") or "").strip()
+    try:
+        value = int(raw) if raw else 8 * 60 * 60
+    except Exception:
+        value = 8 * 60 * 60
+    return max(300, value)
+
+
+def _agent_run_task_soft_time_limit_seconds() -> int:
+    hard_limit = _agent_run_task_time_limit_seconds()
+    raw = (os.getenv("AGENT_RUN_TASK_SOFT_TIME_LIMIT_SECONDS") or "").strip()
+    try:
+        value = int(raw) if raw else hard_limit - 60
+    except Exception:
+        value = hard_limit - 60
+    return max(240, min(value, hard_limit))
+
+
+@celery_app.task(
+    bind=True,
+    name="app.workers.tasks.execute_agent_run_task",
+    acks_late=True,
+    reject_on_worker_lost=True,
+    time_limit=_agent_run_task_time_limit_seconds(),
+    soft_time_limit=_agent_run_task_soft_time_limit_seconds(),
+)
+def execute_agent_run_task(self, run_id: str):
+    async def _run() -> str:
+        from app.agent.execution.service import AgentExecutorService
+
+        return await AgentExecutorService.execute_worker_run_with_new_session(
+            run_id=UUID(str(run_id)),
+            owner_id=str(self.request.id or ""),
+        )
+
+    try:
+        status = run_async(_run())
+    except Exception as exc:
+        logger.error("Generic agent worker task failed for run %s: %s", run_id, exc)
+        raise
+
+    if status == "busy":
+        raise self.retry(countdown=5, max_retries=12)
+    return status
 
 
 @celery_app.task(bind=True, name="app.workers.tasks.ingest_documents_task")

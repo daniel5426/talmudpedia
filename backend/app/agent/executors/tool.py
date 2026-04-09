@@ -524,8 +524,28 @@ class ToolNodeExecutor(BaseNodeExecutor):
         input_params["context"] = child_context
 
         from app.agent.execution.service import AgentExecutorService
+        from app.agent.execution.emitter import active_emitter
 
         user_id = self._parse_uuid((node_context or {}).get("user_id"))
+        emitter = active_emitter.get()
+
+        def emit_child_run_created(child_run_id: UUID) -> None:
+            if emitter is None:
+                return
+            emitter.emit_internal_event(
+                "tool.child_run_started",
+                {
+                    "child_run_id": str(child_run_id),
+                    "status": "running",
+                    "source_node_id": source_node_id,
+                    "tool_slug": getattr(_tool, "slug", None),
+                    "agent_id": str(target.id),
+                    "agent_name": str(getattr(target, "name", "") or getattr(target, "slug", "") or ""),
+                },
+                node_id=source_node_id,
+                category="tool_execution",
+            )
+
         await self._assert_current_run_accepting_work(node_context)
         execution = await AgentExecutorService.execute_sync_with_new_session(
             agent_id=target.id,
@@ -541,6 +561,7 @@ class ToolNodeExecutor(BaseNodeExecutor):
             orchestration_group_id=self._parse_uuid(child_context.get("orchestration_group_id")),
             thread_id=self._parse_uuid(child_context.get("thread_id")),
             timeout_s=float(timeout_s),
+            on_run_created=emit_child_run_created,
         )
 
         output_result = execution.output_result

@@ -4,13 +4,10 @@ Agents API Router - Thin dispatch layer for agent endpoints.
 Routers should only: Validate, Authenticate, Dispatch.
 All business logic lives in AgentService.
 """
-import asyncio
 from uuid import UUID
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-import json
-import logging
 import os
 from pydantic import BaseModel, Field
 
@@ -36,10 +33,6 @@ from app.services.agent_service import (
 from app.services.resource_policy_quota_service import ResourcePolicyQuotaExceeded
 from app.services.usage_quota_service import QuotaExceededError
 from app.agent.graph.contracts import contract_fields_from_schema, schema_to_value_type
-from app.agent.execution.stream_contract_v2 import (
-    build_stream_v2_event,
-    normalize_filtered_event_to_v2,
-)
 from app.api.schemas.agents import (
     CreateAgentRequest,
     UpdateAgentRequest,
@@ -57,7 +50,7 @@ from typing import Optional
 from datetime import datetime, timezone
 from app.db.postgres.models.agent_threads import AgentThreadSurface
 from app.db.postgres.models.agents import RunStatus
-from app.db.postgres.engine import sessionmaker as fresh_sessionmaker
+from app.agent.execution.persisted_stream import stream_persisted_run_events
 from app.services.runtime_attachment_service import RuntimeAttachmentOwner, RuntimeAttachmentService
 from app.services.context_window_service import ContextWindowService
 from app.services.model_accounting import usage_payload_from_run
@@ -81,26 +74,6 @@ def _optional_uuid(value: Any) -> Optional[UUID]:
         return UUID(str(value))
     except Exception:
         return None
-
-
-async def _cancel_foreground_run_tree(run_id: UUID, *, reason: str) -> None:
-    async with fresh_sessionmaker() as session:
-        run = await session.get(AgentRun, run_id)
-        if run is None:
-            return
-        status = str(getattr(run.status, "value", run.status))
-        if status in {
-            RunStatus.completed.value,
-            RunStatus.failed.value,
-            RunStatus.cancelled.value,
-        }:
-            return
-        await OrchestrationKernelService(session).cancel_subtree(
-            caller_run_id=run.id,
-            run_id=run.id,
-            include_root=True,
-            reason=reason,
-        )
 
 
 def _serialize_run_usage(run: AgentRun) -> dict[str, Any]:
@@ -776,7 +749,6 @@ async def stream_agent(
     """
     from app.agent.execution.service import AgentExecutorService
     from app.agent.execution.types import ExecutionMode
-    from app.agent.execution.adapter import StreamAdapter
     
     # 1. Determine Mode
     # Default to PRODUCTION for safety
@@ -792,21 +764,24 @@ async def stream_agent(
 
     executor = AgentExecutorService(db=db)
     
-    # 2. Identify or Create Run
+    # 2. Identify or Create/Attach Run
     run_id = request.run_id
     resume_payload = None
-    
+
     if run_id:
-        # Resume existing run
+        existing_run = await db.get(AgentRun, run_id)
+        if existing_run is None:
+            raise HTTPException(status_code=404, detail="Run not found")
         try:
-            # For playground, user message is the resume payload
-            if request.context:
-                resume_payload = request.context
-            elif request.input:
-                resume_payload = {"input": request.input}
-            else:
-                resume_payload = {}
-            await executor.resume_run(run_id, resume_payload, background=False)
+            status = str(getattr(existing_run.status, "value", existing_run.status) or "").strip().lower()
+            if status == RunStatus.paused.value:
+                if request.context:
+                    resume_payload = dict(request.context)
+                elif request.input:
+                    resume_payload = {"input": request.input}
+                else:
+                    resume_payload = {}
+                await executor.resume_run(run_id, resume_payload, background=True)
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Cannot resume run {run_id}: {e}")
     else:
@@ -837,7 +812,7 @@ async def stream_agent(
                 agent_id,
                 input_params,
                 user_id=initiating_user_id,
-                background=False,
+                background=True,
                 mode=execution_mode,
                 thread_id=request.thread_id,
             )
@@ -849,98 +824,13 @@ async def stream_agent(
     run_row = await db.get(AgentRun, run_id)
     thread_id_value = str(run_row.thread_id) if run_row and run_row.thread_id else None
 
-    async def event_generator():
-        # raw stream from engine (full firehose)
-        raw_stream = executor.run_and_stream(run_id, db, resume_payload, mode=execution_mode)
-        
-        # filtered stream via adapter
-        filtered_stream = StreamAdapter.filter_stream(raw_stream, execution_mode)
-        disconnected = False
-        saw_terminal = False
-
-        try:
-            # Initial Event + padding to force proxy flush.
-            seq = 1
-            yield ": " + (" " * 4096) + "\n\n"
-            if _stream_v2_enforced():
-                accepted = build_stream_v2_event(
-                    seq=seq,
-                    run_id=str(run_id),
-                    event="run.accepted",
-                    stage="run",
-                    payload={
-                        "status": "running",
-                        "thread_id": thread_id_value,
-                        "context_window": ContextWindowService.read_from_run(run_row),
-                        "run_usage": _serialize_run_usage(run_row),
-                    },
-                )
-                seq += 1
-                yield f"data: {json.dumps(accepted, default=str)}\n\n"
-            else:
-                yield f"data: {json.dumps({'event': 'run_id', 'run_id': str(run_id)})}\n\n"
-
-            async for event_dict in filtered_stream:
-                if _stream_v2_enforced():
-                    mapped_event, stage, payload, diagnostics = normalize_filtered_event_to_v2(raw_event=event_dict)
-                    if mapped_event in {"run.completed", "run.failed", "run.cancelled"}:
-                        saw_terminal = True
-                    envelope = build_stream_v2_event(
-                        seq=seq,
-                        run_id=str(run_id),
-                        event=mapped_event,
-                        stage=stage,
-                        payload=payload,
-                        diagnostics=diagnostics,
-                    )
-                    seq += 1
-                    yield f"data: {json.dumps(envelope, default=str)}\n\n"
-                else:
-                    legacy_event = str(event_dict.get("event") or event_dict.get("type") or "")
-                    if legacy_event in {"run.completed", "run.failed", "run.cancelled"}:
-                        saw_terminal = True
-                    yield f"data: {json.dumps(event_dict, default=str)}\n\n"
-        except asyncio.CancelledError:
-            disconnected = True
-            raise
-        except Exception as e:
-            logger = logging.getLogger(__name__)
-            logger.error(f"[STREAM] Error during stream: {e}")
-            if _stream_v2_enforced():
-                envelope = build_stream_v2_event(
-                    seq=seq,
-                    run_id=str(run_id),
-                    event="run.failed",
-                    stage="run",
-                    payload={"error": str(e)},
-                    diagnostics=[{"message": str(e)}],
-                )
-                yield f"data: {json.dumps(envelope, default=str)}\n\n"
-            else:
-                yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
-        finally:
-            if disconnected and not saw_terminal:
-                asyncio.create_task(
-                    _cancel_foreground_run_tree(
-                        run_id,
-                        reason="cancelled_by_client_disconnect",
-                    )
-                )
-            filtered_aclose = getattr(filtered_stream, "aclose", None)
-            if callable(filtered_aclose):
-                try:
-                    await filtered_aclose()
-                except Exception:
-                    pass
-            raw_aclose = getattr(raw_stream, "aclose", None)
-            if callable(raw_aclose):
-                try:
-                    await raw_aclose()
-                except Exception:
-                    pass
-
     return StreamingResponse(
-        event_generator(), 
+        stream_persisted_run_events(
+            run_id=run_id,
+            mode=execution_mode,
+            stream_v2_enforced=_stream_v2_enforced(),
+            thread_id_value=thread_id_value,
+        ),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

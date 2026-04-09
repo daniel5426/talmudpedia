@@ -167,3 +167,66 @@ async def test_trace_persistence_lists_events_in_order(db_session, test_tenant_i
     assert events[0]["inputs"] == {"input": {"value": 1}}
     assert events[1]["sequence"] == 2
     assert events[1]["outputs"] == {"output": {"value": 2}}
+
+
+@pytest.mark.asyncio
+@pytest.mark.real_db
+async def test_scheduled_trace_persistence_preserves_sequence_order_in_listed_stream(
+    db_session,
+    test_tenant_id,
+    test_user_id,
+    run_prefix,
+):
+    agent = Agent(
+        tenant_id=test_tenant_id,
+        name=f"{run_prefix}-trace-ordered-queue",
+        slug=f"{run_prefix}-trace-ordered-queue",
+        graph_definition=_graph_definition(),
+        created_by=test_user_id,
+    )
+    db_session.add(agent)
+    await db_session.commit()
+    await db_session.refresh(agent)
+
+    run = AgentRun(
+        tenant_id=test_tenant_id,
+        agent_id=agent.id,
+        user_id=test_user_id,
+        status=RunStatus.running,
+    )
+    db_session.add(run)
+    await db_session.commit()
+    await db_session.refresh(run)
+
+    recorder = ExecutionTraceRecorder(serializer=lambda value: value)
+    recorder.schedule_persist(
+        run.id,
+        {
+            "event": "orchestration.child_lifecycle",
+            "run_id": str(run.id),
+            "span_id": "spawn-node",
+            "name": "orchestration.child_lifecycle",
+            "data": {"child_run_id": "child-1", "status": "running"},
+            "metadata": {"category": "orchestration"},
+        },
+        sequence=10,
+    )
+    recorder.schedule_persist(
+        run.id,
+        {
+            "event": "node_end",
+            "run_id": str(run.id),
+            "span_id": "agent-node",
+            "name": "Agent",
+            "data": {"output": {"done": True}},
+            "metadata": {"category": "node"},
+        },
+        sequence=11,
+    )
+    await recorder.drain()
+
+    events = await recorder.list_events(db_session, run.id)
+    assert [(event["sequence"], event["event"]) for event in events] == [
+        (10, "orchestration.child_lifecycle"),
+        (11, "node_end"),
+    ]

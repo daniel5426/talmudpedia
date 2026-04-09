@@ -64,6 +64,19 @@ const normalizeExecutionEvent = (rawEvent: Record<string, unknown>): AgentExecut
       ? (rawEvent.metadata as Record<string, unknown>)
       : null;
 
+  const nestedPayloadData =
+    payload?.data && typeof payload.data === "object"
+      ? (payload.data as Record<string, unknown>)
+      : null;
+  const nestedPayloadEventData =
+    nestedPayloadData?.data && typeof nestedPayloadData.data === "object"
+      ? (nestedPayloadData.data as Record<string, unknown>)
+      : null;
+  const nestedPayloadMetadata =
+    nestedPayloadData?.metadata && typeof nestedPayloadData.metadata === "object"
+      ? (nestedPayloadData.metadata as Record<string, unknown>)
+      : null;
+
   return {
     event: typeof rawEvent.event === "string" ? rawEvent.event : undefined,
     type: typeof rawEvent.type === "string" ? rawEvent.type : undefined,
@@ -75,20 +88,26 @@ const normalizeExecutionEvent = (rawEvent: Record<string, unknown>): AgentExecut
         ? rawEvent.span_id
         : typeof payload?.span_id === "string"
           ? payload.span_id
+          : typeof nestedPayloadData?.span_id === "string"
+            ? nestedPayloadData.span_id
           : undefined,
     name:
       typeof rawEvent.name === "string"
         ? rawEvent.name
         : typeof payload?.name === "string"
           ? payload.name
+          : typeof nestedPayloadData?.name === "string"
+            ? nestedPayloadData.name
           : undefined,
     data:
       topLevelData ||
+      nestedPayloadEventData ||
       (payload?.data && typeof payload.data === "object"
         ? (payload.data as Record<string, unknown>)
         : undefined),
     metadata:
       topLevelMetadata ||
+      nestedPayloadMetadata ||
       (payload?.metadata && typeof payload.metadata === "object"
         ? (payload.metadata as Record<string, unknown>)
         : undefined),
@@ -531,7 +550,6 @@ export function useAgentRunController(
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-        console.log(`[useAgentRunController] RAW CHUNK: Received ${value?.length} bytes at ${new Date().toLocaleTimeString()}`);
 
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split("\n");
@@ -540,7 +558,6 @@ export function useAgentRunController(
         for (const line of lines) {
           if (!line.startsWith("data: ")) continue;
           const dataStr = line.slice(6).trim();
-          console.log("[useAgentRunController] Received event:", dataStr.slice(0, 50));
           if (dataStr === "[DONE]") break;
 
           try {
@@ -566,8 +583,13 @@ export function useAgentRunController(
 
             if (
               eventName.startsWith("orchestration.") ||
+              eventName === "tool.child_run_started" ||
+              eventName === "tool.started" ||
+              eventName === "tool.completed" ||
+              eventName === "tool.failed" ||
               eventName === "run.failed" ||
               eventName === "run.cancelled" ||
+              eventName === "run.completed" ||
               eventName === "node_start" ||
               eventName === "node_end" ||
               eventName === "on_chain_start" ||
@@ -576,14 +598,15 @@ export function useAgentRunController(
               setExecutionEvents((prev) => [...prev, { ...normalizedEvent, received_at: Date.now() }]);
             }
 
-            const nextBlocks = sortChatRenderBlocks(
-              applyRunStreamEventToBlocks(
-                responseBlocksRef.current,
-                adaptRunStreamEvent(rawEvent, streamEventIndex++),
-              ),
+            const appliedBlocks = applyRunStreamEventToBlocks(
+              responseBlocksRef.current,
+              adaptRunStreamEvent(rawEvent, streamEventIndex++),
             );
-            responseBlocksRef.current = nextBlocks;
-            setCurrentResponseBlocks(nextBlocks);
+            if (appliedBlocks !== responseBlocksRef.current) {
+              const nextBlocks = sortChatRenderBlocks(appliedBlocks);
+              responseBlocksRef.current = nextBlocks;
+              setCurrentResponseBlocks(nextBlocks);
+            }
 
             if (eventName === "run.failed") {
               terminalError = String(eventData.error || (Array.isArray(rawEvent.diagnostics) ? (rawEvent.diagnostics[0] as Record<string, unknown> | undefined)?.message : "") || "Agent error");
@@ -598,7 +621,7 @@ export function useAgentRunController(
               const content = String(payload.content || "");
               if (content) {
                 fullAiContent += content;
-                flushSync(() => setStreamingContent(fullAiContent));
+                setStreamingContent(fullAiContent);
 
                 if (thinkingStartRef.current) {
                   const duration = Date.now() - thinkingStartRef.current;

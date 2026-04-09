@@ -127,4 +127,40 @@ describe("AssistantResponseTimeline", () => {
       "/admin/threads/thread-child-1",
     );
   });
+
+  it("renders live assistant text immediately while a run is still streaming", () => {
+    const blocks: ChatRenderBlock[] = [
+      {
+        id: "text-live",
+        kind: "assistant_text",
+        runId: "run-live",
+        seq: 1,
+        status: "streaming",
+        text: "Streaming now",
+        source: { event: "assistant.delta", stage: "assistant" },
+      },
+    ];
+
+    render(<AssistantResponseTimeline blocks={blocks} isLoading />);
+
+    expect(screen.getByText("Streaming now")).toBeInTheDocument();
+  });
+
+  it("renders completed assistant text on the non-streaming branch", () => {
+    const blocks: ChatRenderBlock[] = [
+      {
+        id: "text-complete",
+        kind: "assistant_text",
+        runId: "run-complete",
+        seq: 1,
+        status: "complete",
+        text: "**Done**",
+        source: { event: "assistant.text", stage: "assistant" },
+      },
+    ];
+
+    render(<AssistantResponseTimeline blocks={blocks} />);
+
+    expect(screen.getByText("**Done**")).toBeInTheDocument();
+  });
 });

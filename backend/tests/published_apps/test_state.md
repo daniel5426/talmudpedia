@@ -1,6 +1,6 @@
 # Published Apps Backend Tests
 
-Last Updated: 2026-03-30
+Last Updated: 2026-04-09
 
 ## Scope of the feature
 - Admin CRUD for published apps and builder state primitives.
@@ -31,6 +31,7 @@ Last Updated: 2026-03-30
 - Public runtime/config endpoints enforce visibility and auth constraints.
 - Path-mode published auth/chat/runtime endpoints are removed (`410`), while admin user-management tests use host-runtime auth (`/_talmudpedia/*`).
 - Public preview stream uses token auth and persists run-native thread records.
+- Public preview stream now attaches to persisted worker-owned run events instead of executing in the request path.
 - Runtime bootstrap contract includes `request_contract_version=thread.v1`.
 - Agent integration contract payload is exposed and validated.
 - Agent integration contract exposes `frontend_requirements` for frontend-dependent tools such as the new built-in `UI Blocks` tool, including installer command metadata.
@@ -61,6 +62,9 @@ Last Updated: 2026-03-30
 - Command: `PYTHONPATH=/Users/danielbenassaya/Code/personal/talmudpedia/backend python3 -m pytest -q /Users/danielbenassaya/Code/personal/talmudpedia/backend/tests/builtin_tools_registry/test_builtin_registry_api.py /Users/danielbenassaya/Code/personal/talmudpedia/backend/tests/published_apps/test_builder_agent_integration_contract.py /Users/danielbenassaya/Code/personal/talmudpedia/backend/tests/builtin_tool_execution/test_builtin_tool_executor.py`
 - Date: 2026-03-30
 - Result: PASS (28 passed, 7 warnings)
+- Command: `TEST_USE_REAL_DB=0 PYTHONPATH=backend python3 -m pytest -q backend/tests/embedded_agent_runtime/test_embedded_agent_runtime_api.py backend/tests/published_apps/test_public_chat_scope_and_persistence.py backend/tests/published_apps_external_runtime/test_external_runtime_api.py backend/tests/published_apps_host_runtime/test_host_runtime_same_url_auth.py`
+- Date: 2026-04-09
+- Result: PASS (`26 passed`, detached stream regression suite)
 
 ## Known gaps or follow-ups
 - Add explicit regression tests for removed `/admin/apps/{app_id}/publish` route in this folder (currently covered under `backend/tests/app_versions/`).

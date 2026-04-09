@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import json
 import os
 from datetime import datetime, timezone
-from typing import Any, AsyncGenerator
+from typing import Any
 from uuid import UUID
 
 from fastapi import HTTPException
@@ -11,17 +10,14 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.execution.adapter import StreamAdapter
+from app.agent.execution.persisted_stream import stream_persisted_run_events
 from app.agent.execution.service import AgentExecutorService
-from app.agent.execution.stream_contract_v2 import (
-    build_stream_v2_event,
-    normalize_filtered_event_to_v2,
-)
+from app.agent.execution.stream_contract_v2 import build_stream_v2_event, normalize_filtered_event_to_v2
 from app.agent.execution.trace_recorder import ExecutionTraceRecorder
 from app.agent.execution.types import ExecutionMode
 from app.db.postgres.models.agents import Agent, AgentRun, AgentStatus
 from app.db.postgres.models.agent_threads import AgentThread, AgentThreadTurn
 from app.services.runtime_attachment_service import RuntimeAttachmentService
-from app.services.context_window_service import ContextWindowService
 from app.services.model_accounting import usage_payload_from_run
 from app.services.thread_detail_service import (
     serialize_thread_paging,
@@ -278,7 +274,7 @@ async def stream_embedded_agent(
                 "context": request_context,
             },
             user_id=None,
-            background=False,
+            background=True,
             mode=ExecutionMode.PRODUCTION,
             thread_id=thread_id,
         )
@@ -290,61 +286,14 @@ async def stream_embedded_agent(
     run_row = await db.get(AgentRun, run_id)
     thread_id_value = str(run_row.thread_id) if run_row and run_row.thread_id else None
 
-    async def event_generator() -> AsyncGenerator[str, None]:
-        raw_stream = executor.run_and_stream(run_id, db, resume_payload=None, mode=ExecutionMode.PRODUCTION)
-        filtered_stream = StreamAdapter.filter_stream(raw_stream, ExecutionMode.PRODUCTION)
-        seq = 1
-        yield ": " + (" " * 2048) + "\n\n"
-        if _stream_v2_enforced():
-            accepted = build_stream_v2_event(
-                seq=seq,
-                run_id=str(run_id),
-                event="run.accepted",
-                stage="run",
-                payload={
-                    "status": "running",
-                    "thread_id": thread_id_value,
-                    "context_window": ContextWindowService.read_from_run(run_row),
-                    "run_usage": _serialize_run_usage(run_row),
-                },
-            )
-            seq += 1
-            yield f"data: {json.dumps(accepted, default=str)}\n\n"
-        else:
-            yield f"data: {json.dumps({'event': 'run_id', 'run_id': str(run_id)})}\n\n"
-
-        try:
-            async for event_dict in filtered_stream:
-                if _stream_v2_enforced():
-                    mapped_event, stage, payload, diagnostics = normalize_filtered_event_to_v2(raw_event=event_dict)
-                    envelope = build_stream_v2_event(
-                        seq=seq,
-                        run_id=str(run_id),
-                        event=mapped_event,
-                        stage=stage,
-                        payload=payload,
-                        diagnostics=diagnostics,
-                    )
-                    seq += 1
-                    yield f"data: {json.dumps(envelope, default=str)}\n\n"
-                else:
-                    yield f"data: {json.dumps(event_dict, default=str)}\n\n"
-        except Exception as exc:
-            if _stream_v2_enforced():
-                envelope = build_stream_v2_event(
-                    seq=seq,
-                    run_id=str(run_id),
-                    event="run.failed",
-                    stage="run",
-                    payload={"error": str(exc)},
-                    diagnostics=[{"message": str(exc)}],
-                )
-                yield f"data: {json.dumps(envelope, default=str)}\n\n"
-            else:
-                yield f"data: {json.dumps({'type': 'error', 'error': str(exc)})}\n\n"
-
     return StreamingResponse(
-        event_generator(),
+        stream_persisted_run_events(
+            run_id=run_id,
+            mode=ExecutionMode.PRODUCTION,
+            stream_v2_enforced=_stream_v2_enforced(),
+            thread_id_value=thread_id_value,
+            padding_bytes=2048,
+        ),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

@@ -27,6 +27,7 @@ from app.services.credentials_service import CredentialsService
 from app.services.model_accounting import binding_pricing_snapshot
 from app.services.model_runtime import (
     ModelRuntimeAdapterRegistry,
+    ResolvedModelBindingReceipt as _ResolvedModelBindingReceipt,
     ResolvedModelRuntimeExecution,
     SpeechToTextRuntime,
     register_default_model_runtime_adapters,
@@ -56,6 +57,7 @@ class ModelResolutionPolicy:
 
 
 ResolvedModelExecution = ResolvedModelRuntimeExecution[Any]
+ResolvedModelBindingReceipt = _ResolvedModelBindingReceipt
 
 
 @dataclass
@@ -103,6 +105,32 @@ class ModelResolver:
             model_id,
             policy_override=policy_override,
             policy_snapshot=policy_snapshot,
+        )
+
+    async def resolve_receipt(
+        self,
+        model_id: str,
+        policy_override: Optional[ModelResolutionPolicy] = None,
+        policy_snapshot: ResourcePolicySnapshot | None = None,
+        required_capability: ModelCapabilityType = ModelCapabilityType.CHAT,
+    ) -> ResolvedModelBindingReceipt:
+        binding_ctx = await self._resolve_binding_context(
+            model_id=model_id,
+            required_capability=required_capability,
+            policy_override=policy_override,
+            policy_snapshot=policy_snapshot,
+            allow_default=False,
+        )
+        merged_config, credentials_payload = await self._build_runtime_config(binding_ctx.binding)
+        return ResolvedModelBindingReceipt(
+            logical_model=binding_ctx.model,
+            binding=binding_ctx.binding,
+            binding_scope="tenant" if binding_ctx.binding.tenant_id is not None else "global",
+            merged_config=merged_config,
+            credentials_payload=credentials_payload,
+            pricing_snapshot=binding_pricing_snapshot(binding_ctx.binding),
+            capability_flags=self._capability_flags(binding_ctx.binding),
+            capability_type=required_capability,
         )
 
     async def resolve_chat_execution(

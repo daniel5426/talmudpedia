@@ -1,4 +1,4 @@
-Last Updated: 2026-04-06
+Last Updated: 2026-04-09
 
 ## Scope
 Shared assistant-response normalization and timeline rendering used by the agent builder execute panel and the agent playground.
@@ -8,7 +8,6 @@ Shared assistant-response normalization and timeline rendering used by the agent
 - `frontend-reshet/src/__tests__/assistant_response_ui/renderer.test.tsx`
 - `frontend-reshet/src/__tests__/assistant_response_ui/trace_loader.test.ts`
 - `frontend-reshet/src/__tests__/assistant_response_ui/chat_context_status.test.tsx`
-- `frontend-reshet/src/__tests__/assistant_response_ui/useSmoothedTextBlock.test.tsx`
 
 ## Key Scenarios Covered
 - Tool lifecycle events stay inline in chronological order with assistant text.
@@ -24,13 +23,16 @@ Shared assistant-response normalization and timeline rendering used by the agent
 - Persisted run events can be replayed back into assistant response blocks for lazy trace loading and latest-turn thread hydration.
 - Finalization collapses duplicate assistant text blocks when persisted replay and saved final text resolve to the same assistant message.
 - Shared chat context widget renders canonical context-window input usage instead of legacy estimated-total-with-reserve semantics.
-- Shared smoothing continues draining after a fast stream completes instead of snapping immediately to the final text.
+- Timeline assistant text blocks now stay on the same plain-text renderer during and after live streaming, avoiding a completion-time renderer swap.
 - Shared stream normalization preserves `assistant_text -> tool -> assistant_text` chronology instead of collapsing all live text into one block.
 
 ## Last Run
-- Command: `pnpm --dir frontend-reshet test -- --runInBand src/__tests__/assistant_response_ui/useSmoothedTextBlock.test.tsx src/__tests__/assistant_response_ui/normalizer.test.ts src/__tests__/assistant_response_ui/trace_loader.test.ts`
-- Date: 2026-04-05 Asia/Hebron
-- Result: PASS (`3 suites, 10 tests`)
+- Command: `pnpm -C frontend-reshet test -- --runTestsByPath src/__tests__/assistant_response_ui/renderer.test.tsx src/__tests__/agent_playground/useAgentRunController.test.tsx --watch=false`
+- Date: 2026-04-09 Asia/Hebron
+- Result: PASS (`2 suites, 15 tests`)
+- Command: `pnpm -C frontend-reshet test -- --runTestsByPath src/__tests__/assistant_response_ui/normalizer.test.ts src/__tests__/assistant_response_ui/trace_loader.test.ts src/__tests__/assistant_response_ui/renderer.test.tsx --watch=false`
+- Date: 2026-04-09 Asia/Hebron
+- Result: PASS (`3 suites, 12 tests`)
 - Command: `cd frontend-reshet && npm test -- --runInBand src/__tests__/assistant_response_ui/renderer.test.tsx`
 - Date: 2026-04-06 Asia/Hebron
 - Result: PASS (`3 passed`)

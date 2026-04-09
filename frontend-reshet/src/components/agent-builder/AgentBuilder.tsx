@@ -53,6 +53,7 @@ import { AgentBuilderUiContext } from "./agent-builder-ui-context"
 import { useAgentBuilderCanvasResources } from "./hooks/useAgentBuilderCanvasResources"
 import { AgentToolDetailPanel } from "./AgentToolDetailPanel"
 import { getCenteredViewportXForPanels } from "./canvas-centering"
+import { loadRunTraceInspection, type ExecutionStep as LoadedExecutionStep } from "@/services/run-trace-steps"
 
 interface AgentBuilderProps {
     agentId?: string
@@ -218,6 +219,11 @@ function matchesEventToNode(event: AgentExecutionEvent, node: Node<AgentNodeData
     return false
 }
 
+function shouldRenderOrchestrationEventInTrace(event: AgentExecutionEvent): boolean {
+    const eventName = event.event || event.type || ""
+    return eventName !== "orchestration.child_lifecycle"
+}
+
 function AgentBuilderInner({
     agentId,
     agentSlug,
@@ -261,6 +267,8 @@ function AgentBuilderInner({
     const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
     const [highlightedToolId, setHighlightedToolId] = useState<string | null>(null)
     const [executeTraceNodeId, setExecuteTraceNodeId] = useState<string | null>(null)
+    const [runtimeTraceSteps, setRuntimeTraceSteps] = useState<LoadedExecutionStep[] | null>(null)
+    const [runtimeTraceLoading, setRuntimeTraceLoading] = useState(false)
     const [internalMode, setInternalMode] = useState<"build" | "execute">("build")
     const [interactionMode, setInteractionMode] = useState<InteractionMode>("pan")
     const [isCatalogVisible, setIsCatalogVisible] = useState(true)
@@ -506,6 +514,12 @@ function AgentBuilderInner({
     const executeTraceNode = renderNodes.find((n) => n.id === executeTraceNodeId) as
         | Node<AgentNodeData>
         | undefined
+    const executeTraceRunId = useMemo(() => {
+        const config = (executeTraceNode?.data?.config || {}) as Record<string, unknown>
+        const runId = typeof config.run_id === "string" ? config.run_id.trim() : ""
+        return runId || null
+    }, [executeTraceNode])
+    const isExecuteTraceRuntimeNode = Boolean(executeTraceNode && isRuntimeNodeId(executeTraceNode.id))
 
     const selectedNodeData: AgentNodeData | undefined = selectedNode?.data as AgentNodeData | undefined
     const safeSelectedNodeData: AgentNodeData | undefined = selectedNodeData ?? (selectedNode ? normalizeNode(selectedNode).data : undefined)
@@ -518,6 +532,9 @@ function AgentBuilderInner({
     const safeExecuteTraceNodeData: AgentNodeData | undefined =
         executeTraceNodeData ?? (executeTraceNode ? normalizeNode(executeTraceNode).data : undefined)
     const selectedNodeTraceSteps = useMemo(() => {
+        if (isExecuteTraceRuntimeNode) {
+            return runtimeTraceSteps || ([] as ExecutionStep[])
+        }
         if (!executeTraceNode || !safeExecuteTraceNodeData) {
             return [] as ExecutionStep[]
         }
@@ -527,18 +544,45 @@ function AgentBuilderInner({
         )
         const orchestrationSteps = executionEvents
             .filter((event) => typeof event.event === "string" && event.event.startsWith("orchestration."))
+            .filter((event) => shouldRenderOrchestrationEventInTrace(event))
             .filter((event) => matchesEventToNode(event, executeTraceNode as Node<AgentNodeData>, safeExecuteTraceNodeData))
             .map((event, index) => mapOrchestrationEventToExecutionStep(event, index))
 
         return [...baseSteps, ...orchestrationSteps].sort(
             (a, b) => a.timestamp.getTime() - b.timestamp.getTime()
         )
-    }, [executeTraceNode, safeExecuteTraceNodeData, executionSteps, executionEvents])
+    }, [executeTraceNode, safeExecuteTraceNodeData, executionSteps, executionEvents, isExecuteTraceRuntimeNode, runtimeTraceSteps])
+
+    useEffect(() => {
+        let cancelled = false
+        if (!isExecuteTraceRuntimeNode || !executeTraceRunId) {
+            setRuntimeTraceSteps(null)
+            setRuntimeTraceLoading(false)
+            return
+        }
+        setRuntimeTraceLoading(true)
+        void loadRunTraceInspection(executeTraceRunId)
+            .then((loaded) => {
+                if (cancelled) return
+                setRuntimeTraceSteps(loaded?.steps || [])
+            })
+            .catch(() => {
+                if (cancelled) return
+                setRuntimeTraceSteps([])
+            })
+            .finally(() => {
+                if (cancelled) return
+                setRuntimeTraceLoading(false)
+            })
+        return () => {
+            cancelled = true
+        }
+    }, [executeTraceRunId, isExecuteTraceRuntimeNode])
 
     const showExecuteNodeTracePanel =
         mode === "execute" &&
         Boolean(executeTraceNode && safeExecuteTraceNodeData) &&
-        selectedNodeTraceSteps.length > 0
+        (isExecuteTraceRuntimeNode || selectedNodeTraceSteps.length > 0)
 
     const handleNodesChange = useCallback((changes: NodeChange<Node<AgentNodeData>>[]) => {
         if (mode !== "execute") {
@@ -802,6 +846,7 @@ function AgentBuilderInner({
                         nodeName={safeExecuteTraceNodeData.displayName}
                         steps={selectedNodeTraceSteps}
                         nodeStatus={safeExecuteTraceNodeData.executionStatus as "pending" | "running" | "completed" | "failed" | "skipped" | undefined}
+                        loading={runtimeTraceLoading}
                         onClose={() => setExecuteTraceNodeId(null)}
                     />
                 </FloatingPanel>

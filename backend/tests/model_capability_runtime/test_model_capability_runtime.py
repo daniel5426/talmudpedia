@@ -19,6 +19,7 @@ from app.services import registry_seeding
 from app.services.model_resolver import ModelResolver, ModelResolverError
 from app.services.model_runtime import (
     ModelRuntimeAdapterRegistry,
+    ResolvedModelBindingReceipt,
     ResolvedModelRuntimeExecution,
     SpeechToTextResult,
     register_default_model_runtime_adapters,
@@ -119,6 +120,58 @@ async def test_speech_to_text_default_resolution_returns_typed_execution_receipt
     assert execution.merged_config["project_id"] == "test-project"
     assert execution.resolved_provider == "google"
     assert isinstance(execution.provider_instance, _FakeSpeechRuntime)
+
+
+@pytest.mark.asyncio
+async def test_chat_receipt_resolution_does_not_instantiate_runtime(db_session, monkeypatch):
+    tenant = Tenant(name=f"Tenant {uuid4().hex[:8]}", slug=f"tenant-{uuid4().hex[:8]}")
+    db_session.add(tenant)
+    await db_session.flush()
+
+    model = ModelRegistry(
+        tenant_id=tenant.id,
+        name="Loop Safe Chat",
+        capability_type=ModelCapabilityType.CHAT,
+        status=ModelStatus.ACTIVE,
+        is_active=True,
+        metadata_={},
+    )
+    db_session.add(model)
+    await db_session.flush()
+
+    binding = ModelProviderBinding(
+        model_id=model.id,
+        tenant_id=tenant.id,
+        provider=ModelProviderType.ANTHROPIC,
+        provider_model_id="claude-sonnet",
+        priority=0,
+        config={"temperature": 0.1},
+        is_enabled=True,
+    )
+    db_session.add(binding)
+    await db_session.commit()
+
+    async def _boom_factory(**kwargs):
+        raise AssertionError(f"runtime factory should not be called: {kwargs['binding'].id}")
+
+    original_factories = dict(ModelRuntimeAdapterRegistry._factories)
+    monkeypatch.setattr(
+        ModelRuntimeAdapterRegistry,
+        "_factories",
+        {
+            **original_factories,
+            (ModelCapabilityType.CHAT, ModelProviderType.ANTHROPIC): _boom_factory,
+        },
+    )
+
+    resolver = ModelResolver(db_session, tenant.id)
+    receipt = await resolver.resolve_receipt(str(model.id))
+
+    assert isinstance(receipt, ResolvedModelBindingReceipt)
+    assert receipt.logical_model.id == model.id
+    assert receipt.binding.id == binding.id
+    assert receipt.resolved_provider == "anthropic"
+    assert receipt.merged_config["temperature"] == 0.1
 
 
 @pytest.mark.asyncio

@@ -131,4 +131,87 @@ describe("useAgentRuntimeGraph", () => {
       expect(result.current.runtimeStatusByNodeId.agent_1).toBe("failed")
     })
   })
+
+  it("reconciles immediately on active runtime events and keeps polling aggressively while running", async () => {
+    const runningTree: AgentRunTreeResponse = {
+      root_run_id: "run-root",
+      node_count: 2,
+      tree: {
+        run_id: "run-root",
+        agent_id: "agent-root",
+        status: "running",
+        depth: 0,
+        parent_run_id: null,
+        parent_node_id: null,
+        spawn_key: null,
+        orchestration_group_id: null,
+        children: [
+          {
+            run_id: "child-fast",
+            agent_id: "agent-child",
+            status: "completed",
+            depth: 1,
+            parent_run_id: "run-root",
+            parent_node_id: "agent_1",
+            spawn_key: null,
+            orchestration_group_id: null,
+            children: [],
+            groups: [],
+          },
+        ],
+        groups: [],
+      },
+    }
+
+    mockedAgentService.getRunTree.mockResolvedValue(runningTree)
+
+    const { result, rerender } = renderHook(
+      ({ executionEvents }) =>
+        useAgentRuntimeGraph({
+          staticNodes,
+          staticEdges,
+          runId: "run-root",
+          executionEvents,
+          runStatus: "running",
+        }),
+      {
+        initialProps: {
+          executionEvents: [{ event: "node_start", run_id: "run-root", span_id: "agent_1", data: {} }] as AgentExecutionEvent[],
+        },
+      },
+    )
+
+    await waitFor(() => {
+      expect(mockedAgentService.getRunTree).toHaveBeenCalledTimes(2)
+    })
+
+    rerender({
+      executionEvents: [
+        { event: "node_start", run_id: "run-root", span_id: "agent_1", data: {} },
+        {
+          event: "orchestration.child_lifecycle",
+          run_id: "run-root",
+          span_id: "agent_1",
+          data: { child_run_id: "child-fast", status: "running" },
+        },
+      ] satisfies AgentExecutionEvent[],
+    })
+
+    await waitFor(() => {
+      expect(mockedAgentService.getRunTree).toHaveBeenCalledTimes(3)
+    })
+
+    act(() => {
+      jest.advanceTimersByTime(260)
+    })
+
+    await waitFor(() => {
+      expect(mockedAgentService.getRunTree).toHaveBeenCalledTimes(4)
+    })
+
+    await waitFor(() => {
+      const childNode = result.current.runtimeNodes.find((node) => node.id === "runtime-run:child-fast")
+      expect(childNode?.data.executionStatus).toBe("completed")
+    })
+  })
 })

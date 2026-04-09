@@ -8,12 +8,13 @@ from app.services.model_runtime.interfaces import (
     TextToSpeechRuntime,
 )
 from app.services.model_runtime.registry import ModelRuntimeAdapterRegistry
-from app.services.model_runtime.types import ResolvedModelRuntimeExecution
+from app.services.model_runtime.types import ResolvedModelBindingReceipt, ResolvedModelRuntimeExecution
 
 __all__ = [
     "ChatRuntime",
     "EmbeddingRuntime",
     "ModelRuntimeAdapterRegistry",
+    "ResolvedModelBindingReceipt",
     "ResolvedModelRuntimeExecution",
     "SpeechToTextResult",
     "SpeechToTextRuntime",

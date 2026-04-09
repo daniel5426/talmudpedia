@@ -1,6 +1,6 @@
 # Test State: Published Apps External Runtime
 
-Last Updated: 2026-04-05
+Last Updated: 2026-04-09
 
 ## Scope
 - Host-anywhere published-app runtime surface under `/public/external/apps/*`.
@@ -16,6 +16,7 @@ Last Updated: 2026-04-05
 - External password auth returns bearer tokens and supports `me` and `logout`.
 - External OIDC exchange returns a bearer session token.
 - External authenticated stream persists threads and exposes list/detail history APIs.
+- External authenticated stream replays persisted worker-owned run events instead of executing in the request path.
 - External thread detail remains app-account scoped.
 - External thread detail can return nested `lineage` and `subthread_tree` payloads when `include_subthreads=true`.
 - Auth-disabled apps stream ephemerally with no persisted thread.
@@ -25,6 +26,9 @@ Last Updated: 2026-04-05
 - Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/published_apps_external_runtime/test_external_runtime_api.py backend/tests/published_apps_host_runtime/test_host_runtime_same_url_auth.py`
 - Date/Time: 2026-04-05 Asia/Hebron
 - Result: PASS (`17 passed`)
+- Command: `TEST_USE_REAL_DB=0 PYTHONPATH=backend python3 -m pytest -q backend/tests/embedded_agent_runtime/test_embedded_agent_runtime_api.py backend/tests/published_apps/test_public_chat_scope_and_persistence.py backend/tests/published_apps_external_runtime/test_external_runtime_api.py backend/tests/published_apps_host_runtime/test_host_runtime_same_url_auth.py`
+- Date/Time: 2026-04-09 Asia/Hebron
+- Result: PASS (`26 passed`)
 
 ## Known Gaps or Follow-ups
 - Add explicit preflight `OPTIONS` coverage for allowed and blocked origins.

@@ -507,7 +507,7 @@ def _ensure_celery_worker_if_needed() -> None:
         "app.workers.celery_app.celery_app",
         "worker",
         "-Q",
-        "apps_build,default,ingestion,embedding",
+        "apps_build,agent_runs,default,ingestion,embedding",
         "-l",
         "info",
     ]

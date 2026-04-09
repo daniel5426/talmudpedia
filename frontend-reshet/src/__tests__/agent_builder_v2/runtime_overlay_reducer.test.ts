@@ -95,6 +95,28 @@ describe("runtime overlay reducer", () => {
     expect(state.takenStaticEdgeIds).toContain("e-join-completed")
   })
 
+  it("labels child runtime nodes with the called agent name when available", () => {
+    const events: AgentExecutionEvent[] = [
+      {
+        event: "tool.child_run_started",
+        run_id: "run-root",
+        span_id: "spawn_core_group",
+        data: {
+          child_run_id: "child-a",
+          status: "running",
+          source_node_id: "spawn_core_group",
+          agent_name: "Research Agent",
+        },
+      },
+    ]
+
+    const state = applyRuntimeEvents(createEmptyRuntimeGraphState(), events, staticNodes, staticEdges)
+    const childNode = state.runtimeNodes.find((node) => node.id === "runtime-run:child-a")
+
+    expect(childNode?.data.displayName).toBe("Research Agent")
+    expect((childNode?.data.config as Record<string, unknown>)?.agent_name).toBe("Research Agent")
+  })
+
   it("marks the single classify branch from branch_taken output", () => {
     const classifyNodes: Node<AgentNodeData>[] = [
       {
@@ -338,5 +360,106 @@ describe("runtime overlay reducer", () => {
     expect(state.runtimeStatusByNodeId.agent_1).toBe("running")
     const childNode = state.runtimeNodes.find((node) => node.id === "runtime-run:child-a")
     expect((childNode?.data.config as Record<string, unknown>)?.parent_node_id).toBe("agent_1")
+  })
+
+  it("creates the static parent-to-child runtime edge as soon as a tool child run starts", () => {
+    const nodes: Node<AgentNodeData>[] = [
+      {
+        id: "agent_1",
+        type: "agent",
+        position: { x: 0, y: 0 },
+        data: {
+          nodeType: "agent",
+          category: "reasoning",
+          displayName: "Agent",
+          config: {},
+          inputType: "message",
+          outputType: "message",
+          isConfigured: true,
+          hasErrors: false,
+        },
+      },
+    ]
+
+    const state = applyRuntimeEvents(
+      createEmptyRuntimeGraphState(),
+      [
+        {
+          event: "tool.child_run_started",
+          run_id: "run-root",
+          span_id: "agent_1",
+          data: { child_run_id: "child-a", status: "running" },
+        },
+      ],
+      nodes,
+      [],
+    )
+
+    expect(state.runtimeEdges.some((edge) => edge.id === "runtime-edge:static:agent_1:runtime-run:child-a")).toBe(true)
+  })
+
+  it("finalizes still-running static nodes when the root run completes", () => {
+    const nodes: Node<AgentNodeData>[] = [
+      {
+        id: "agent_1",
+        type: "agent",
+        position: { x: 0, y: 0 },
+        data: {
+          nodeType: "agent",
+          category: "reasoning",
+          displayName: "Agent",
+          config: {},
+          inputType: "message",
+          outputType: "message",
+          isConfigured: true,
+          hasErrors: false,
+        },
+      },
+    ]
+
+    const state = applyRuntimeEvents(
+      createEmptyRuntimeGraphState(),
+      [
+        { event: "node_start", run_id: "run-root", span_id: "agent_1", data: {} },
+        { event: "run.completed", run_id: "run-root", data: { status: "completed" } },
+      ],
+      nodes,
+      [],
+    )
+
+    expect(state.runtimeStatusByNodeId.agent_1).toBe("completed")
+  })
+
+  it("keeps an agent node running across tool lifecycle after an early node_end", () => {
+    const nodes: Node<AgentNodeData>[] = [
+      {
+        id: "agent_1",
+        type: "agent",
+        position: { x: 0, y: 0 },
+        data: {
+          nodeType: "agent",
+          category: "reasoning",
+          displayName: "Agent",
+          config: {},
+          inputType: "message",
+          outputType: "message",
+          isConfigured: true,
+          hasErrors: false,
+        },
+      },
+    ]
+
+    const state = applyRuntimeEvents(
+      createEmptyRuntimeGraphState(),
+      [
+        { event: "node_start", run_id: "run-root", span_id: "agent_1", data: {} },
+        { event: "node_end", run_id: "run-root", span_id: "agent_1", data: { output: { content_length: 0 } } },
+        { event: "tool.started", run_id: "run-root", data: { source_node_id: "agent_1" } },
+      ],
+      nodes,
+      [],
+    )
+
+    expect(state.runtimeStatusByNodeId.agent_1).toBe("running")
   })
 })

@@ -35,11 +35,40 @@ def execution_trace_file_path() -> str:
 class ExecutionTraceRecorder:
     def __init__(self, serializer: Callable[[Any], Any]):
         self._serializer = serializer
+        self._pending_queue: asyncio.Queue[tuple[UUID, dict[str, Any]] | None] = asyncio.Queue()
+        self._worker_task: asyncio.Task[Any] | None = None
+
+    def _ensure_worker(self) -> None:
+        if self._worker_task is not None and not self._worker_task.done():
+            return
+        self._worker_task = asyncio.create_task(self._drain_pending_queue(), name="trace-recorder-persist")
 
     def schedule_persist(self, run_id: UUID, event: ExecutionEvent | dict[str, Any], *, sequence: int) -> None:
         payload = self._normalize_event(run_id, event, sequence=sequence)
         self._mirror_to_file(payload)
-        asyncio.create_task(self._persist_safe(run_id, payload))
+        self._ensure_worker()
+        self._pending_queue.put_nowait((run_id, payload))
+
+    async def drain(self) -> None:
+        if self._worker_task is None:
+            return
+        await self._pending_queue.join()
+        await self._pending_queue.put(None)
+        worker = self._worker_task
+        self._worker_task = None
+        if worker is not None:
+            await asyncio.gather(worker, return_exceptions=True)
+
+    async def _drain_pending_queue(self) -> None:
+        while True:
+            item = await self._pending_queue.get()
+            try:
+                if item is None:
+                    return
+                run_id, payload = item
+                await self._persist_safe(run_id, payload)
+            finally:
+                self._pending_queue.task_done()
 
     async def _persist_safe(self, run_id: UUID, payload: dict[str, Any]) -> None:
         from app.db.postgres.engine import sessionmaker as get_session
@@ -83,7 +112,14 @@ class ExecutionTraceRecorder:
         db.add(trace)
         return trace
 
-    async def list_events(self, db: AsyncSession, run_id: UUID) -> list[dict[str, Any]]:
+    async def list_events(
+        self,
+        db: AsyncSession,
+        run_id: UUID,
+        *,
+        after_sequence: int | None = None,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
         result = await db.execute(
             select(AgentTrace).where(AgentTrace.run_id == run_id)
         )
@@ -98,11 +134,14 @@ class ExecutionTraceRecorder:
         events: list[dict[str, Any]] = []
         for trace in traces:
             metadata = dict(trace.metadata_ or {})
+            sequence = int(metadata.get("sequence") or 0)
+            if after_sequence is not None and sequence <= int(after_sequence):
+                continue
             events.append(
                 {
                     "id": str(trace.id),
                     "run_id": str(run_id),
-                    "sequence": int(metadata.get("sequence") or 0),
+                    "sequence": sequence,
                     "timestamp": trace.start_time.isoformat() if trace.start_time else None,
                     "event": trace.span_type,
                     "name": trace.name,
@@ -120,6 +159,8 @@ class ExecutionTraceRecorder:
                     },
                 }
             )
+            if limit is not None and len(events) >= max(0, int(limit)):
+                break
         return events
 
     def _normalize_event(

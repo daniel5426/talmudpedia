@@ -7,7 +7,7 @@ from app.db.postgres.models.identity import User
 from app.db.postgres.models.published_apps import PublishedAppAccount, PublishedAppRevision, PublishedAppRevisionKind
 from app.services.security_bootstrap_service import SecurityBootstrapService
 from app.services.thread_service import ThreadService
-from tests.published_apps._helpers import seed_admin_tenant_and_agent, seed_published_app
+from tests.published_apps._helpers import install_stub_agent_worker, seed_admin_tenant_and_agent, seed_published_app
 
 
 def _host_headers(slug: str) -> dict[str, str]:
@@ -172,14 +172,7 @@ async def test_host_chat_stream_uses_cookie_auth_and_persists(client, db_session
     )
     await db_session.commit()
 
-    async def fake_run_and_stream(self, *args, **kwargs):
-        yield {
-            "event": "token",
-            "data": {"content": "Hello from host runtime"},
-            "visibility": "client_safe",
-        }
-
-    monkeypatch.setattr("app.api.routers.published_apps_public.AgentExecutorService.run_and_stream", fake_run_and_stream)
+    install_stub_agent_worker(monkeypatch, content="Hello from host runtime")
 
     stream_resp = await client.post(
         "/_talmudpedia/chat/stream",
@@ -229,14 +222,7 @@ async def test_host_thread_detail_is_scoped_to_app_account(client, db_session, m
     )
     await db_session.commit()
 
-    async def fake_run_and_stream(self, *args, **kwargs):
-        yield {
-            "event": "token",
-            "data": {"content": "Thread scoped response"},
-            "visibility": "client_safe",
-        }
-
-    monkeypatch.setattr("app.api.routers.published_apps_public.AgentExecutorService.run_and_stream", fake_run_and_stream)
+    install_stub_agent_worker(monkeypatch, content="Thread scoped response")
 
     stream_resp = await client.post(
         "/_talmudpedia/chat/stream",

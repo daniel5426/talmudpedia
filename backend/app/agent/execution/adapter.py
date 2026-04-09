@@ -12,7 +12,7 @@ class StreamAdapter:
     """
 
     _PRODUCTION_LEGACY_ALLOW = {"on_chat_model_stream", "run_status"}
-    _TOOL_LIFECYCLE_EVENTS = {"on_tool_start", "on_tool_end", "tool.failed"}
+    _TOOL_LIFECYCLE_EVENTS = {"on_tool_start", "on_tool_end", "tool.failed", "tool.child_run_started"}
 
     @classmethod
     def _is_client_safe(cls, visibility: Any) -> bool:

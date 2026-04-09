@@ -17,7 +17,7 @@ from app.db.postgres.models.runtime_attachments import (
     RuntimeAttachmentStatus,
 )
 from app.services.tenant_api_key_service import TenantAPIKeyService
-from tests.published_apps._helpers import seed_admin_tenant_and_agent
+from tests.published_apps._helpers import install_stub_agent_worker, seed_admin_tenant_and_agent
 
 
 def _embed_headers(token: str) -> dict[str, str]:
@@ -49,15 +49,7 @@ def _extract_stream_events(stream_text: str) -> list[dict]:
 async def test_embedded_agent_stream_persists_and_scopes_threads(client, db_session, monkeypatch):
     tenant, owner, _, agent = await seed_admin_tenant_and_agent(db_session)
     api_key, token = await _create_embed_key(db_session, tenant_id=tenant.id, created_by=owner.id)
-
-    async def fake_run_and_stream(self, *args, **kwargs):
-        yield {
-            "event": "token",
-            "data": {"content": "hello from embed"},
-            "visibility": "client_safe",
-        }
-
-    monkeypatch.setattr("app.services.embedded_agent_runtime_service.AgentExecutorService.run_and_stream", fake_run_and_stream)
+    install_stub_agent_worker(monkeypatch, content="hello from embed")
 
     stream_resp = await client.post(
         f"/public/embed/agents/{agent.id}/chat/stream",
@@ -110,15 +102,7 @@ async def test_embedded_agent_stream_persists_and_scopes_threads(client, db_sess
 async def test_embedded_agent_thread_detail_includes_run_events_and_delete_route(client, db_session, monkeypatch):
     tenant, owner, _, agent = await seed_admin_tenant_and_agent(db_session)
     _, token = await _create_embed_key(db_session, tenant_id=tenant.id, created_by=owner.id)
-
-    async def fake_run_and_stream(self, *args, **kwargs):
-        yield {
-            "event": "token",
-            "data": {"content": "hello from embed"},
-            "visibility": "client_safe",
-        }
-
-    monkeypatch.setattr("app.services.embedded_agent_runtime_service.AgentExecutorService.run_and_stream", fake_run_and_stream)
+    install_stub_agent_worker(monkeypatch, content="hello from embed")
 
     stream_resp = await client.post(
         f"/public/embed/agents/{agent.id}/chat/stream",
@@ -240,11 +224,7 @@ async def test_embedded_agent_thread_detail_includes_run_events_and_delete_route
 async def test_embedded_agent_thread_detail_returns_subthread_tree_when_requested(client, db_session, monkeypatch):
     tenant, owner, _, agent = await seed_admin_tenant_and_agent(db_session)
     _, token = await _create_embed_key(db_session, tenant_id=tenant.id, created_by=owner.id)
-
-    async def fake_run_and_stream(self, *args, **kwargs):
-        yield {"event": "token", "data": {"content": "hello from embed"}, "visibility": "client_safe"}
-
-    monkeypatch.setattr("app.services.embedded_agent_runtime_service.AgentExecutorService.run_and_stream", fake_run_and_stream)
+    install_stub_agent_worker(monkeypatch, content="hello from embed")
 
     stream_resp = await client.post(
         f"/public/embed/agents/{agent.id}/chat/stream",
@@ -339,10 +319,7 @@ async def test_embedded_agent_routes_reject_wrong_scope_revoked_keys_and_cross_u
     await TenantAPIKeyService(db_session).revoke_api_key(tenant_id=tenant.id, key_id=revoked_key.id)
     await db_session.commit()
 
-    async def fake_run_and_stream(self, *args, **kwargs):
-        yield {"event": "token", "data": {"content": "ok"}, "visibility": "client_safe"}
-
-    monkeypatch.setattr("app.services.embedded_agent_runtime_service.AgentExecutorService.run_and_stream", fake_run_and_stream)
+    install_stub_agent_worker(monkeypatch, content="ok")
 
     resp = await client.post(
         f"/public/embed/agents/{agent.id}/chat/stream",
@@ -415,14 +392,7 @@ async def test_embedded_agent_attachment_upload_processing_and_delete_cleanup(
     tenant, owner, _, agent = await seed_admin_tenant_and_agent(db_session)
     _, token = await _create_embed_key(db_session, tenant_id=tenant.id, created_by=owner.id)
 
-    async def fake_run_and_stream(self, *args, **kwargs):
-        yield {
-            "event": "token",
-            "data": {"content": "processed attachment"},
-            "visibility": "client_safe",
-        }
-
-    monkeypatch.setattr("app.services.embedded_agent_runtime_service.AgentExecutorService.run_and_stream", fake_run_and_stream)
+    install_stub_agent_worker(monkeypatch, content="processed attachment")
 
     upload_resp = await client.post(
         f"/public/embed/agents/{agent.id}/attachments/upload",

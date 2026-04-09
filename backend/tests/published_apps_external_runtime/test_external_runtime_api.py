@@ -8,7 +8,7 @@ from app.db.postgres.models.identity import User
 from app.db.postgres.models.published_apps import PublishedAppAccount, PublishedAppRevision, PublishedAppRevisionBuildStatus, PublishedAppRevisionKind
 from app.services.published_app_auth_service import AuthResult
 from app.services.security_bootstrap_service import SecurityBootstrapService
-from tests.published_apps._helpers import seed_admin_tenant_and_agent, seed_published_app
+from tests.published_apps._helpers import install_stub_agent_worker, seed_admin_tenant_and_agent, seed_published_app
 
 
 ALLOWED_ORIGIN = "https://client.example.com"
@@ -195,14 +195,7 @@ async def test_external_stream_persists_thread_and_history_is_scoped(client, db_
         email="thread-user-one@example.com",
     )
 
-    async def fake_run_and_stream(self, *args, **kwargs):
-        yield {
-            "event": "token",
-            "data": {"content": "Hello from external runtime"},
-            "visibility": "client_safe",
-        }
-
-    monkeypatch.setattr("app.api.routers.published_apps_public.AgentExecutorService.run_and_stream", fake_run_and_stream)
+    install_stub_agent_worker(monkeypatch, content="Hello from external runtime")
 
     stream_resp = await client.post(
         f"/public/external/apps/{app.slug}/chat/stream",
@@ -286,10 +279,7 @@ async def test_external_thread_detail_returns_subthread_tree_when_requested(clie
         email="subthreads@example.com",
     )
 
-    async def fake_run_and_stream(self, *args, **kwargs):
-        yield {"event": "token", "data": {"content": "Hello from external runtime"}, "visibility": "client_safe"}
-
-    monkeypatch.setattr("app.api.routers.published_apps_public.AgentExecutorService.run_and_stream", fake_run_and_stream)
+    install_stub_agent_worker(monkeypatch, content="Hello from external runtime")
 
     stream_resp = await client.post(
         f"/public/external/apps/{app.slug}/chat/stream",
@@ -378,14 +368,7 @@ async def test_external_stream_is_ephemeral_when_app_auth_disabled(client, db_se
         allowed_origins=[ALLOWED_ORIGIN],
     )
 
-    async def fake_run_and_stream(self, *args, **kwargs):
-        yield {
-            "event": "token",
-            "data": {"content": "Public response"},
-            "visibility": "client_safe",
-        }
-
-    monkeypatch.setattr("app.api.routers.published_apps_public.AgentExecutorService.run_and_stream", fake_run_and_stream)
+    install_stub_agent_worker(monkeypatch, content="Public response")
 
     resp = await client.post(
         f"/public/external/apps/{app.slug}/chat/stream",

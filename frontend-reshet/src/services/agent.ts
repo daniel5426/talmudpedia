@@ -341,6 +341,7 @@ export interface AgentRunTreeGroup {
 export interface AgentRunTreeNode {
   run_id: string
   agent_id: string
+  agent_name?: string
   status: string
   depth: number
   parent_run_id?: string | null

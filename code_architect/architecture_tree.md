@@ -1,6 +1,6 @@
 # Architecture Tree (Curated)
 
-Last Updated: 2026-04-05
+Last Updated: 2026-04-09
 
 This file is a backend-only architecture map optimized for agent context efficiency.
 
@@ -81,6 +81,7 @@ backend/app/agent/execution/adapter.py
 backend/app/agent/execution/field_resolver.py
 backend/app/agent/execution/emitter.py
 backend/app/agent/execution/trace_recorder.py
+backend/app/agent/execution/persisted_stream.py
 backend/app/agent/execution/stream_contract_v2.py
 backend/app/agent/execution/tool_event_metadata.py
 backend/app/agent/execution/tool_error_details.py
@@ -218,6 +219,10 @@ backend/app/services/published_app_sandbox_backend_controller.py
 backend/app/services/published_app_sandbox_backend_sprite.py
 backend/app/services/published_app_sprite_proxy_tunnel.py
 backend/app/services/published_app_sandbox_backend_e2b_workspace.py
+
+backend/app/workers/
+backend/app/workers/celery_app.py
+backend/app/workers/tasks.py
 backend/app/services/published_app_sandbox_backend_e2b_runtime.py
 backend/app/services/published_app_sandbox_backend_e2b.py
 backend/app/services/published_app_draft_dev_runtime.py
@@ -262,6 +267,7 @@ backend/app/middleware/published_apps_host_runtime.py
 
 backend/app/workers/
 backend/app/workers/celery_app.py
+backend/app/workers/async_runner.py
 backend/app/workers/tasks.py
 backend/app/workers/artifact_tasks.py
 backend/app/workers/job_manager.py

@@ -11,10 +11,11 @@ interface NodeTracePanelProps {
     nodeName: string
     steps: ExecutionStep[]
     nodeStatus?: "pending" | "running" | "completed" | "failed" | "skipped"
+    loading?: boolean
     onClose: () => void
 }
 
-export function NodeTracePanel({ nodeId, nodeName, steps, nodeStatus, onClose }: NodeTracePanelProps) {
+export function NodeTracePanel({ nodeId, nodeName, steps, nodeStatus, loading = false, onClose }: NodeTracePanelProps) {
     const traceStatus = nodeStatus
         ? nodeStatus.toUpperCase()
         : (steps.length > 0 ? steps[steps.length - 1].status.toUpperCase() : "IDLE")
@@ -50,9 +51,15 @@ export function NodeTracePanel({ nodeId, nodeName, steps, nodeStatus, onClose }:
                     showHeader={false}
                 />
 
-                {steps.length === 0 && (
+                {steps.length === 0 && !loading && (
                     <div className="p-8 text-center text-muted-foreground">
                         <p className="text-[11px] font-medium opacity-50">No execution trace found for this node yet.</p>
+                    </div>
+                )}
+
+                {steps.length === 0 && loading && (
+                    <div className="p-8 text-center text-muted-foreground">
+                        <p className="text-[11px] font-medium opacity-50">Loading trace...</p>
                     </div>
                 )}
             </div>

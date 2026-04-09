@@ -309,6 +309,103 @@ describe("useAgentRunController trace inspection", () => {
     });
   });
 
+  it("unnests v2 passthrough orchestration events for the runtime overlay", async () => {
+    const encoder = new TextEncoder();
+    const streamPayload = [
+      'data: {"version":"run-stream.v2","seq":1,"ts":"2026-04-09T10:00:00Z","event":"orchestration.child_lifecycle","run_id":"run-root","stage":"system","payload":{"name":null,"span_id":"spawn_node","data":{"child_run_id":"child-1","status":"running","orchestration_group_id":null},"metadata":{"category":"orchestration"}},"diagnostics":[]}\n\n',
+      'data: {"version":"run-stream.v2","seq":2,"ts":"2026-04-09T10:00:01Z","event":"run.completed","run_id":"run-root","stage":"run","payload":{"status":"completed"},"diagnostics":[]}\n\n',
+      "data: [DONE]\n\n",
+    ].join("");
+
+    mockedAgentService.streamAgent.mockResolvedValue({
+      headers: {
+        get: (name: string) => (name === "X-Run-ID" ? "run-root" : null),
+      },
+      body: {
+        getReader: () => {
+          let consumed = false;
+          return {
+            read: async () => {
+              if (consumed) {
+                return { done: true, value: undefined };
+              }
+              consumed = true;
+              return { done: false, value: encoder.encode(streamPayload) };
+            },
+          };
+        },
+      },
+    } as unknown as Response);
+
+    const { result } = renderHook(({ agentId }) => useAgentRunController(agentId), {
+      initialProps: { agentId: "agent-1" as string | undefined },
+    });
+
+    await act(async () => {
+      await result.current.handleSubmit({ text: "hello", files: [] });
+    });
+
+    await waitFor(() => {
+      const childLifecycle = result.current.executionEvents.find((event) => event.event === "orchestration.child_lifecycle");
+      expect(childLifecycle).toMatchObject({
+        run_id: "run-root",
+        span_id: "spawn_node",
+        data: {
+          child_run_id: "child-1",
+          status: "running",
+        },
+      });
+    });
+  });
+
+  it("keeps hidden tool child-run overlay events out of trace steps while exposing them to the overlay state", async () => {
+    const encoder = new TextEncoder();
+    const streamPayload = [
+      'data: {"version":"run-stream.v2","seq":1,"ts":"2026-04-09T10:00:00Z","event":"tool.child_run_started","run_id":"run-root","stage":"system","payload":{"name":null,"span_id":"agent_1","data":{"child_run_id":"child-1","status":"running","source_node_id":"agent_1","tool_slug":"agent-call-tool"},"metadata":{"category":"tool_execution"}},"diagnostics":[]}\n\n',
+      'data: {"version":"run-stream.v2","seq":2,"ts":"2026-04-09T10:00:01Z","event":"run.completed","run_id":"run-root","stage":"run","payload":{"status":"completed"},"diagnostics":[]}\n\n',
+      "data: [DONE]\n\n",
+    ].join("");
+
+    mockedAgentService.streamAgent.mockResolvedValue({
+      headers: {
+        get: (name: string) => (name === "X-Run-ID" ? "run-root" : null),
+      },
+      body: {
+        getReader: () => {
+          let consumed = false;
+          return {
+            read: async () => {
+              if (consumed) return { done: true, value: undefined };
+              consumed = true;
+              return { done: false, value: encoder.encode(streamPayload) };
+            },
+          };
+        },
+      },
+    } as unknown as Response);
+
+    const { result } = renderHook(({ agentId }) => useAgentRunController(agentId), {
+      initialProps: { agentId: "agent-1" as string | undefined },
+    });
+
+    await act(async () => {
+      await result.current.handleSubmit({ text: "hello", files: [] });
+    });
+
+    await waitFor(() => {
+      const childEvent = result.current.executionEvents.find((event) => event.event === "tool.child_run_started");
+      expect(childEvent).toMatchObject({
+        span_id: "agent_1",
+        data: {
+          child_run_id: "child-1",
+          status: "running",
+        },
+      });
+    });
+
+    expect(result.current.executionSteps).toHaveLength(0);
+  });
+
   it("passes seeded state through streamAgent submissions", async () => {
     const encoder = new TextEncoder();
     mockedAgentService.streamAgent.mockResolvedValue({

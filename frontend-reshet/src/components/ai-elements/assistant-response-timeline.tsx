@@ -19,7 +19,6 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { ArrowUpRight, ChevronDown, ChevronRight } from "lucide-react";
 import { MessageResponse } from "./message";
-import { SmoothedMessageResponse } from "./smoothed-message-response";
 import { Shimmer } from "./shimmer";
 import { Task, TaskContent, TaskItem, TaskItemFile, TaskTrigger } from "./task";
 
@@ -185,7 +184,6 @@ function renderApprovalBlock(
 }
 
 export function AssistantResponseTimeline({
-  animateOnMount = false,
   blocks,
   getToolChildCount,
   getToolHref,
@@ -197,10 +195,6 @@ export function AssistantResponseTimeline({
   const renderedBlocks = useMemo(() => {
     const items: React.ReactNode[] = [];
     let index = 0;
-    const lastAssistantTextBlockId = [...blocks]
-      .reverse()
-      .find((entry) => entry.kind === "assistant_text")
-      ?.id;
     const lastToolCallId = [...blocks]
       .reverse()
       .find((entry): entry is ChatToolCallBlock => entry.kind === "tool_call")
@@ -309,13 +303,11 @@ export function AssistantResponseTimeline({
 
       if (block.kind === "assistant_text") {
         items.push(
-          <SmoothedMessageResponse
+          <MessageResponse
             key={block.id}
-            animateOnMount={animateOnMount && block.id === lastAssistantTextBlockId}
-            blockId={block.id}
-            isStreaming={block.status === "streaming"}
-            text={block.text}
-          />,
+          >
+            {block.text}
+          </MessageResponse>,
         );
         index += 1;
         continue;
@@ -365,7 +357,7 @@ export function AssistantResponseTimeline({
     }
 
     return items;
-  }, [animateOnMount, blocks, expandedToolSubthreads, getToolChildCount, getToolHref, isLoading, onApprovalAction, renderToolSubthread]);
+  }, [blocks, expandedToolSubthreads, getToolChildCount, getToolHref, isLoading, onApprovalAction, renderToolSubthread]);
 
   return (
     <div className="space-y-3">

@@ -1,6 +1,6 @@
 # Tool Execution Tests
 
-Last Updated: 2026-04-05
+Last Updated: 2026-04-09
 
 ## Scope
 Validate MCP/function/agent-call execution paths in the `ToolNodeExecutor`.
@@ -21,6 +21,8 @@ Validate MCP/function/agent-call execution paths in the `ToolNodeExecutor`.
 - MCP error handling on missing result
 - Function tool execution via registry allowlist
 - Function-tool execution now bootstraps runtime-owned callable modules explicitly instead of relying on test/module import side effects
+- Agent-call sync child execution now emits a hidden `tool.child_run_started` event as soon as the child run exists, so builder/runtime overlays can render spawned child nodes before completion without adding a duplicate visible trace row.
+- Hidden `tool.child_run_started` payloads now include the target agent id/name so the runtime overlay can label child-run nodes with the called agent's name.
 - Function-tool execution propagates architect runtime context (`tenant_id`, `requested_scopes`, `architect_mode`, `architect_effective_scopes`) into nested function payloads.
 - Missing function tool name raises a clear error
 - Reasoning-node tool input coercion maps file/path aliases (`file_path`, `filePath`, `fromPath`, `toPath`) to canonical tool schema keys.
@@ -169,6 +171,9 @@ Validate MCP/function/agent-call execution paths in the `ToolNodeExecutor`.
 - Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/tool_execution/test_agent_call_tool_execution.py backend/tests/agent_resume_authorization backend/tests/runtime_adapter`
 - Date/Time: 2026-04-05 Asia/Hebron
 - Result: PASS (`27 passed, 10 warnings`)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/tool_execution/test_agent_call_tool_execution.py`
+- Date/Time: 2026-04-09 Asia/Hebron
+- Result: PASS (`15 passed, 7 warnings`)
 
 ## Known Gaps / Follow-ups
 - Add coverage for `agent_call` payload mode variants beyond sync (`spawn`/future orchestration modes).

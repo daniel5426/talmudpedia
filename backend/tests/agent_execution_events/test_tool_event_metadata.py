@@ -10,6 +10,27 @@ from app.services.context_window_service import ContextWindowService
 from app.services.run_invocation_service import RunInvocationService
 
 
+@pytest.mark.asyncio
+async def test_production_stream_keeps_hidden_child_run_start_events():
+    async def _stream():
+        yield {
+            "event": "tool.child_run_started",
+            "span_id": "agent-node-1",
+            "data": {
+                "child_run_id": "child-1",
+                "status": "running",
+                "source_node_id": "agent-node-1",
+            },
+            "visibility": "internal",
+            "metadata": {"category": "tool_execution"},
+        }
+
+    events = [item async for item in StreamAdapter.filter_stream(_stream(), ExecutionMode.PRODUCTION)]
+    assert len(events) == 1
+    assert events[0]["event"] == "tool.child_run_started"
+    assert events[0]["data"]["child_run_id"] == "child-1"
+
+
 def test_resolve_tool_event_metadata_uses_platform_action_summary():
     metadata = resolve_tool_event_metadata(
         tool_slug="platform-agents",

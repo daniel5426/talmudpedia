@@ -1,6 +1,6 @@
 # Backend Architecture Current State
 
-Last Updated: 2026-03-11
+Last Updated: 2026-04-09
 
 This document is the current backend architecture overview for Talmudpedia. It is intended to replace the older backend architecture summary in `backend/ARCHITECTURE.md`.
 
@@ -96,6 +96,7 @@ The current architecture is no longer just a simple chat workflow. It is a platf
 - quota-aware execution
 - persisted traces and resumability
 - integration with workload delegation and published-app contexts
+- worker-owned detached generic execution for top-level background runs
 
 ### RAG Domain
 
@@ -181,6 +182,11 @@ Important worker modules:
 - `backend/app/workers/artifact_tasks.py`
 - `backend/app/workers/job_manager.py`
 - `backend/app/workers/livekit_worker.py`
+
+Current generic-agent worker split:
+- top-level generic background runs dispatch to the Celery `agent_runs` queue
+- `agent_runs` remains the source of truth for execution ownership and lease metadata
+- generic stream routes now attach to persisted run events instead of owning execution in the API process
 
 ## Cross-Cutting Concerns
 

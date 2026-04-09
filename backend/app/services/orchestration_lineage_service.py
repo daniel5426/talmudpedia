@@ -7,6 +7,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.db.postgres.models.agents import Agent
 from app.db.postgres.models.agents import AgentRun
 from app.db.postgres.models.orchestration import OrchestrationGroup, OrchestrationGroupMember
 
@@ -61,6 +62,14 @@ class OrchestrationLineageService:
             members = list(members_res.scalars().all())
 
         runs_by_id = {r.id: r for r in runs}
+        agent_ids = list({r.agent_id for r in runs if r.agent_id is not None})
+        agent_name_by_id: dict[UUID, str] = {}
+        if agent_ids:
+            agents_res = await self.db.execute(
+                select(Agent).where(Agent.id.in_(agent_ids))
+            )
+            for agent in agents_res.scalars().all():
+                agent_name_by_id[agent.id] = str(agent.name or agent.slug or "")
         child_map: dict[UUID, list[UUID]] = {}
         for item in runs:
             if item.parent_run_id is not None:
@@ -97,6 +106,7 @@ class OrchestrationLineageService:
             return {
                 "run_id": str(item.id),
                 "agent_id": str(item.agent_id),
+                "agent_name": agent_name_by_id.get(item.agent_id, ""),
                 "status": item.status.value if hasattr(item.status, "value") else str(item.status),
                 "depth": int(item.depth or 0),
                 "parent_run_id": str(item.parent_run_id) if item.parent_run_id else None,

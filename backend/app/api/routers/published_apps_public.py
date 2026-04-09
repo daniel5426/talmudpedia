@@ -1,4 +1,3 @@
-import json
 import os
 import re
 from pathlib import PurePosixPath
@@ -12,12 +11,8 @@ from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agent.execution.adapter import StreamAdapter
+from app.agent.execution.persisted_stream import stream_persisted_run_events
 from app.agent.execution.service import AgentExecutorService
-from app.agent.execution.stream_contract_v2 import (
-    build_stream_v2_event,
-    normalize_filtered_event_to_v2,
-)
 from app.agent.execution.types import ExecutionMode
 from app.api.dependencies import (
     get_current_published_app_preview_principal,
@@ -38,8 +33,6 @@ from app.db.postgres.models.published_apps import (
 )
 from app.db.postgres.session import get_db
 from app.services.thread_service import ThreadService
-from app.services.context_window_service import ContextWindowService
-from app.services.model_accounting import usage_payload_from_run
 from app.services.runtime_attachment_service import RuntimeAttachmentOwner, RuntimeAttachmentService
 from app.services.published_app_bundle_storage import (
     PublishedAppBundleAssetNotFound,
@@ -505,13 +498,18 @@ async def _stream_chat_for_app(
     run_id = payload.run_id
     resume_payload: Optional[dict[str, Any]] = None
     if run_id:
-        resume_payload = dict(payload.context or {})
-        if payload.input and "input" not in resume_payload:
-            resume_payload["input"] = payload.input
-        try:
-            await executor.resume_run(run_id, resume_payload, background=False)
-        except Exception as exc:
-            raise HTTPException(status_code=400, detail=f"Cannot resume run {run_id}: {exc}")
+        run_row = await db.get(AgentRun, run_id)
+        if run_row is None:
+            raise HTTPException(status_code=404, detail="Run not found")
+        status = str(getattr(run_row.status, "value", run_row.status) or "").strip().lower()
+        if status == "paused":
+            resume_payload = dict(payload.context or {})
+            if payload.input and "input" not in resume_payload:
+                resume_payload["input"] = payload.input
+            try:
+                await executor.resume_run(run_id, resume_payload, background=True)
+            except Exception as exc:
+                raise HTTPException(status_code=400, detail=f"Cannot resume run {run_id}: {exc}")
     else:
         try:
             run_id = await executor.start_run(
@@ -524,7 +522,7 @@ async def _stream_chat_for_app(
                     "context": request_context,
                 },
                 user_id=user_uuid,
-                background=False,
+                background=True,
                 mode=ExecutionMode.PRODUCTION,
                 thread_id=payload.thread_id,
             )
@@ -540,57 +538,15 @@ async def _stream_chat_for_app(
         cleanup_thread_ids.append(run_row.thread_id)
 
     async def event_generator():
-        raw_stream = executor.run_and_stream(run_id, db, resume_payload=resume_payload, mode=ExecutionMode.PRODUCTION)
-        filtered_stream = StreamAdapter.filter_stream(raw_stream, ExecutionMode.PRODUCTION)
-        seq = 1
-        yield ": " + (" " * 2048) + "\n\n"
-        if _stream_v2_enforced():
-            accepted = build_stream_v2_event(
-                seq=seq,
-                run_id=str(run_id),
-                event="run.accepted",
-                stage="run",
-                payload={
-                    "status": "running",
-                    "thread_id": thread_id_value,
-                    "context_window": ContextWindowService.read_from_run(run_row),
-                    "run_usage": usage_payload_from_run(run_row),
-                },
-            )
-            seq += 1
-            yield f"data: {json.dumps(accepted, default=str)}\n\n"
-        else:
-            yield f"data: {json.dumps({'event': 'run_id', 'run_id': str(run_id)})}\n\n"
-
         try:
-            async for event_dict in filtered_stream:
-                if _stream_v2_enforced():
-                    mapped_event, stage, payload_v2, diagnostics = normalize_filtered_event_to_v2(raw_event=event_dict)
-                    envelope = build_stream_v2_event(
-                        seq=seq,
-                        run_id=str(run_id),
-                        event=mapped_event,
-                        stage=stage,
-                        payload=payload_v2,
-                        diagnostics=diagnostics,
-                    )
-                    seq += 1
-                    yield f"data: {json.dumps(envelope, default=str)}\n\n"
-                else:
-                    yield f"data: {json.dumps(event_dict, default=str)}\n\n"
-        except Exception as exc:
-            if _stream_v2_enforced():
-                envelope = build_stream_v2_event(
-                    seq=seq,
-                    run_id=str(run_id),
-                    event="run.failed",
-                    stage="run",
-                    payload={"error": str(exc)},
-                    diagnostics=[{"message": str(exc)}],
-                )
-                yield f"data: {json.dumps(envelope, default=str)}\n\n"
-            else:
-                yield f"data: {json.dumps({'type': 'error', 'error': str(exc)})}\n\n"
+            async for chunk in stream_persisted_run_events(
+                run_id=run_id,
+                mode=ExecutionMode.PRODUCTION,
+                stream_v2_enforced=_stream_v2_enforced(),
+                thread_id_value=thread_id_value,
+                padding_bytes=2048,
+            ):
+                yield chunk
         finally:
             if cleanup_thread_ids:
                 await ThreadService(db).delete_threads(

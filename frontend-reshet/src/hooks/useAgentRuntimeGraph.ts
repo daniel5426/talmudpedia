@@ -36,6 +36,7 @@ interface UseAgentRuntimeGraphResult {
 }
 
 const TERMINAL_STATUSES = new Set<AgentRunStatus["status"]>(["completed", "failed", "cancelled"])
+const ACTIVE_RECONCILE_INTERVAL_MS = 250
 
 export function useAgentRuntimeGraph({
   staticNodes,
@@ -86,14 +87,6 @@ export function useAgentRuntimeGraph({
     processedEventsRef.current = 0
   }, [runId])
 
-  useEffect(() => {
-    if (!runId) return
-    if (executionEvents.length <= processedEventsRef.current) return
-    const nextEvents = executionEvents.slice(processedEventsRef.current)
-    processedEventsRef.current = executionEvents.length
-    setState((prev) => applyRuntimeEvents(prev, nextEvents, staticNodes, staticEdges))
-  }, [executionEvents, runId, staticNodes, staticEdges])
-
   const runTreeReconcile = useCallback(async (): Promise<boolean> => {
     if (!runId) return false
     setIsReconciling(true)
@@ -113,11 +106,22 @@ export function useAgentRuntimeGraph({
 
   useEffect(() => {
     if (!runId) return
+    if (executionEvents.length <= processedEventsRef.current) return
+    const nextEvents = executionEvents.slice(processedEventsRef.current)
+    processedEventsRef.current = executionEvents.length
+    setState((prev) => applyRuntimeEvents(prev, nextEvents, staticNodes, staticEdges))
+    if (runStatus === "running" || runStatus === "paused") {
+      void runTreeReconcile()
+    }
+  }, [executionEvents, runId, runStatus, runTreeReconcile, staticNodes, staticEdges])
+
+  useEffect(() => {
+    if (!runId) return
     if (runStatus !== "running" && runStatus !== "paused") return
     void runTreeReconcile()
     const interval = window.setInterval(() => {
       void runTreeReconcile()
-    }, 2000)
+    }, ACTIVE_RECONCILE_INTERVAL_MS)
     return () => window.clearInterval(interval)
   }, [runId, runStatus, runTreeReconcile])
 

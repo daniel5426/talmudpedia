@@ -1,10 +1,11 @@
 import logging
 import asyncio
+import inspect
 import traceback
 from contextlib import suppress
 from uuid import UUID, uuid4
-from datetime import datetime, timezone
-from typing import Dict, Any, Optional, AsyncGenerator
+from datetime import datetime, timezone, timedelta
+from typing import Dict, Any, Optional, AsyncGenerator, Callable
 from dataclasses import dataclass
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -53,7 +54,12 @@ from app.services.model_accounting import (
     usage_payload_from_run,
 )
 from app.services.context_window_service import ContextWindowService
-from app.services.model_resolver import ModelResolver, ModelResolverError, ResolvedModelExecution
+from app.services.model_resolver import (
+    ModelResolver,
+    ModelResolverError,
+    ResolvedModelBindingReceipt,
+    ResolvedModelExecution,
+)
 from app.services.run_invocation_service import RunInvocationService
 from app.services.architect_mode_service import (
     ArchitectModeError,
@@ -79,6 +85,8 @@ class SyncRunExecutionResult:
 
 class AgentExecutorService:
     _checkpointer = DurableMemorySaver()
+    _WORKER_LEASE_SECONDS = 30
+    _WORKER_HEARTBEAT_SECONDS = 5
 
     def __init__(self, db: Optional[AsyncSession] = None):
         self.db = db
@@ -381,7 +389,7 @@ class AgentExecutorService:
         run: AgentRun,
         agent: Agent,
         runtime_context: dict[str, Any],
-    ) -> ResolvedModelExecution | None:
+    ) -> ResolvedModelBindingReceipt | None:
         raw_requested_model_id = (
             runtime_context.get("requested_model_id")
             or (str(run.requested_model_id) if run.requested_model_id else None)
@@ -395,7 +403,7 @@ class AgentExecutorService:
 
         try:
             policy_snapshot = self._safe_policy_snapshot_from_context(runtime_context)
-            execution = await ModelResolver(db, agent.tenant_id).resolve_for_execution(
+            execution = await ModelResolver(db, agent.tenant_id).resolve_receipt(
                 str(raw_requested_model_id),
                 policy_snapshot=policy_snapshot,
             )
@@ -511,6 +519,47 @@ class AgentExecutorService:
     def _is_cancelled_status(cls, value: Any) -> bool:
         return cls._status_text(value) == RunStatus.cancelled.value
 
+    @classmethod
+    def _is_terminal_status(cls, value: Any) -> bool:
+        return cls._status_text(value) in {
+            RunStatus.completed.value,
+            RunStatus.failed.value,
+            RunStatus.cancelled.value,
+        }
+
+    @staticmethod
+    def _normalize_execution_mode(raw: Any) -> ExecutionMode:
+        value = str(raw or "").strip().lower()
+        return ExecutionMode.DEBUG if value == ExecutionMode.DEBUG.value else ExecutionMode.PRODUCTION
+
+    @classmethod
+    def _execution_mode_from_input_params(cls, input_params: dict[str, Any] | None) -> ExecutionMode:
+        context = input_params.get("context") if isinstance(input_params, dict) else {}
+        if not isinstance(context, dict):
+            context = {}
+        return cls._normalize_execution_mode(context.get("execution_mode"))
+
+    @staticmethod
+    def _pending_resume_payload_from_input_params(input_params: dict[str, Any] | None) -> dict[str, Any] | None:
+        context = input_params.get("context") if isinstance(input_params, dict) else {}
+        if not isinstance(context, dict):
+            return None
+        payload = context.get("pending_resume_payload")
+        return dict(payload) if isinstance(payload, dict) else None
+
+    @staticmethod
+    def _strip_pending_resume_payload(input_params: dict[str, Any] | None) -> dict[str, Any] | None:
+        if not isinstance(input_params, dict):
+            return input_params
+        updated = dict(input_params)
+        context = updated.get("context")
+        if not isinstance(context, dict):
+            return updated
+        context = dict(context)
+        context.pop("pending_resume_payload", None)
+        updated["context"] = context
+        return updated
+
     async def _assert_parent_run_accepting_children(self, parent_run_id: UUID | None) -> None:
         if parent_run_id is None:
             return
@@ -526,6 +575,149 @@ class AgentExecutorService:
     async def _refresh_run_record(db: AsyncSession, run: AgentRun) -> AgentRun:
         await db.refresh(run)
         return run
+
+    async def _enqueue_background_run(self, run_id: UUID) -> None:
+        from app.workers.tasks import execute_agent_run_task
+        from app.workers.celery_app import celery_app
+
+        run = await self.db.get(AgentRun, run_id)
+        if run is None:
+            raise ValueError(f"Run {run_id} not found")
+
+        run.dispatch_count = int(getattr(run, "dispatch_count", 0) or 0) + 1
+        run.last_dispatched_at = datetime.now(timezone.utc)
+        if not str(getattr(run, "execution_owner_kind", "") or "").strip():
+            run.execution_owner_kind = "celery"
+        await self.db.commit()
+
+        if bool(getattr(celery_app.conf, "task_always_eager", False)):
+            try:
+                asyncio.get_running_loop()
+            except RuntimeError:
+                pass
+            else:
+                asyncio.create_task(
+                    self.__class__.execute_worker_run_with_new_session(
+                        run_id=run_id,
+                        owner_id=f"eager-{uuid4()}",
+                    ),
+                    name=f"agent-run-eager-dispatch:{run_id}",
+                )
+                return
+
+        execute_agent_run_task.apply_async(args=[str(run_id)], queue="agent_runs")
+
+    @classmethod
+    async def _claim_run_for_worker(
+        cls,
+        *,
+        run_id: UUID,
+        owner_id: str,
+    ) -> tuple[str, dict[str, Any] | None, ExecutionMode]:
+        from app.db.postgres.engine import sessionmaker as get_session
+
+        async with get_session() as session:
+            run = await session.get(AgentRun, run_id, with_for_update=True)
+            if run is None:
+                return "missing", None, ExecutionMode.PRODUCTION
+
+            status = cls._status_text(run.status)
+            if cls._is_terminal_status(run.status):
+                return "terminal", None, cls._execution_mode_from_input_params(run.input_params)
+
+            now = datetime.now(timezone.utc)
+            lease_expires_at = run.execution_lease_expires_at
+            if (
+                run.execution_owner_id
+                and str(run.execution_owner_id) != str(owner_id)
+                and lease_expires_at is not None
+                and lease_expires_at > now
+            ):
+                return "busy", None, cls._execution_mode_from_input_params(run.input_params)
+
+            resume_payload = cls._pending_resume_payload_from_input_params(run.input_params)
+            run.input_params = cls._strip_pending_resume_payload(run.input_params)
+            run.execution_owner_kind = "celery"
+            run.execution_owner_id = str(owner_id)
+            run.execution_heartbeat_at = now
+            run.execution_lease_expires_at = now + timedelta(seconds=cls._WORKER_LEASE_SECONDS)
+            if status == RunStatus.paused.value:
+                run.status = RunStatus.queued
+            await session.commit()
+            return "claimed", resume_payload, cls._execution_mode_from_input_params(run.input_params)
+
+    @classmethod
+    async def _heartbeat_worker_run(
+        cls,
+        *,
+        run_id: UUID,
+        owner_id: str,
+        stop_event: asyncio.Event,
+    ) -> None:
+        from app.db.postgres.engine import sessionmaker as get_session
+
+        while not stop_event.is_set():
+            try:
+                await asyncio.wait_for(stop_event.wait(), timeout=cls._WORKER_HEARTBEAT_SECONDS)
+                break
+            except asyncio.TimeoutError:
+                pass
+
+            async with get_session() as session:
+                run = await session.get(AgentRun, run_id, with_for_update=True)
+                if run is None or str(run.execution_owner_id or "") != str(owner_id):
+                    return
+                if cls._is_terminal_status(run.status):
+                    return
+                now = datetime.now(timezone.utc)
+                run.execution_heartbeat_at = now
+                run.execution_lease_expires_at = now + timedelta(seconds=cls._WORKER_LEASE_SECONDS)
+                await session.commit()
+
+    @classmethod
+    async def _release_worker_claim(
+        cls,
+        *,
+        run_id: UUID,
+        owner_id: str,
+    ) -> None:
+        from app.db.postgres.engine import sessionmaker as get_session
+
+        async with get_session() as session:
+            run = await session.get(AgentRun, run_id, with_for_update=True)
+            if run is None or str(run.execution_owner_id or "") != str(owner_id):
+                return
+            run.execution_owner_id = None
+            run.execution_lease_expires_at = None
+            run.execution_heartbeat_at = None
+            await session.commit()
+
+    @classmethod
+    async def execute_worker_run_with_new_session(cls, *, run_id: UUID, owner_id: str) -> str:
+        claim_status, resume_payload, mode = await cls._claim_run_for_worker(
+            run_id=run_id,
+            owner_id=owner_id,
+        )
+        if claim_status != "claimed":
+            return claim_status
+
+        from app.db.postgres.engine import sessionmaker as get_session
+
+        stop_event = asyncio.Event()
+        heartbeat_task = asyncio.create_task(
+            cls._heartbeat_worker_run(run_id=run_id, owner_id=owner_id, stop_event=stop_event),
+            name=f"agent-run-heartbeat:{run_id}",
+        )
+        try:
+            async with get_session() as session:
+                executor = cls(db=session)
+                await executor._execute(run_id, db=session, resume_payload=resume_payload, mode=mode)
+        finally:
+            stop_event.set()
+            with suppress(asyncio.CancelledError):
+                await heartbeat_task
+            await cls._release_worker_claim(run_id=run_id, owner_id=owner_id)
+        return "claimed"
 
     @staticmethod
     def _extract_turn_metadata(output_result: Dict[str, Any] | None) -> Dict[str, Any] | None:
@@ -794,10 +986,11 @@ class AgentExecutorService:
                 context_payload["resource_policy_principal"] = policy_snapshot.principal.to_payload()
         if quota_metadata.get("max_output_cap"):
             context_payload["quota_max_output_tokens"] = int(quota_metadata["max_output_cap"])
-        pre_run_execution: ResolvedModelExecution | None = None
+        context_payload["execution_mode"] = mode.value
+        pre_run_receipt: ResolvedModelBindingReceipt | None = None
         if requested_model_ref:
             try:
-                pre_run_execution = await ModelResolver(self.db, agent.tenant_id).resolve_for_execution(
+                pre_run_receipt = await ModelResolver(self.db, agent.tenant_id).resolve_receipt(
                     requested_model_ref,
                     policy_snapshot=policy_snapshot,
                 )
@@ -806,13 +999,13 @@ class AgentExecutorService:
         context_window = await ContextWindowService(self.db).build_pre_run_window(
             tenant_id=agent.tenant_id,
             model_id=(
-                str(pre_run_execution.logical_model.id)
-                if pre_run_execution is not None
+                str(pre_run_receipt.logical_model.id)
+                if pre_run_receipt is not None
                 else requested_model_ref or (str(requested_model_id) if requested_model_id else None)
             ),
-            resolved_provider=pre_run_execution.resolved_provider if pre_run_execution is not None else None,
-            resolved_provider_model_id=pre_run_execution.binding.provider_model_id if pre_run_execution is not None else None,
-            api_key=getattr(getattr(pre_run_execution, "provider_instance", None), "api_key", None),
+            resolved_provider=pre_run_receipt.resolved_provider if pre_run_receipt is not None else None,
+            resolved_provider_model_id=pre_run_receipt.binding.provider_model_id if pre_run_receipt is not None else None,
+            api_key=pre_run_receipt.api_key if pre_run_receipt is not None else None,
             input_params=input_params,
             runtime_context=context_payload,
         )
@@ -832,11 +1025,11 @@ class AgentExecutorService:
             surface=runtime_surface or None,
             input_params=input_params,
             context_window_json=context_window,
-            requested_model_id=pre_run_execution.logical_model.id if pre_run_execution is not None else requested_model_id,
-            resolved_model_id=pre_run_execution.logical_model.id if pre_run_execution is not None else None,
-            resolved_binding_id=pre_run_execution.binding.id if pre_run_execution is not None else None,
-            resolved_provider=pre_run_execution.resolved_provider if pre_run_execution is not None else None,
-            resolved_provider_model_id=pre_run_execution.binding.provider_model_id if pre_run_execution is not None else None,
+            requested_model_id=pre_run_receipt.logical_model.id if pre_run_receipt is not None else requested_model_id,
+            resolved_model_id=pre_run_receipt.logical_model.id if pre_run_receipt is not None else None,
+            resolved_binding_id=pre_run_receipt.binding.id if pre_run_receipt is not None else None,
+            resolved_provider=pre_run_receipt.resolved_provider if pre_run_receipt is not None else None,
+            resolved_provider_model_id=pre_run_receipt.binding.provider_model_id if pre_run_receipt is not None else None,
             status=RunStatus.queued,
             root_run_id=root_run_id,
             parent_run_id=parent_run_id,
@@ -860,14 +1053,13 @@ class AgentExecutorService:
             await self.db.refresh(run)
         record_run_lineage(run.id, root_run_id=run.root_run_id or run.id, parent_run_id=run.parent_run_id)
 
-        # Trigger background execution if requested
         if background:
-            asyncio.create_task(self._execute_with_new_session(run.id, mode=mode))
+            await self._enqueue_background_run(run.id)
         
         return run.id
 
     async def _execute_with_new_session(self, run_id: UUID, resume_payload: Optional[Dict[str, Any]] = None, mode: ExecutionMode = ExecutionMode.DEBUG):
-        """Wrapper to provide a fresh session for background execution."""
+        """Wrapper to provide a fresh session for inline execution."""
         from app.db.postgres.engine import sessionmaker as get_session
         async with get_session() as session:
             try:
@@ -892,6 +1084,7 @@ class AgentExecutorService:
         orchestration_group_id: Optional[UUID] = None,
         thread_id: Optional[UUID] = None,
         timeout_s: float | None = None,
+        on_run_created: Callable[[UUID], Any] | None = None,
     ) -> SyncRunExecutionResult:
         from app.db.postgres.engine import sessionmaker as get_session
 
@@ -912,6 +1105,10 @@ class AgentExecutorService:
                 orchestration_group_id=orchestration_group_id,
                 thread_id=thread_id,
             )
+            if on_run_created is not None:
+                callback_result = on_run_created(run_id)
+                if inspect.isawaitable(callback_result):
+                    await callback_result
             child_task: asyncio.Task[None] | None = None
 
             try:
@@ -984,12 +1181,23 @@ class AgentExecutorService:
         if run.status != RunStatus.paused:
             raise ValueError(f"Run {run_id} is not paused (status: {run.status})")
         
-        # Set status back to running/queued to prevent double resume
+        input_params = dict(run.input_params or {}) if isinstance(run.input_params, dict) else {}
+        context = input_params.get("context") if isinstance(input_params.get("context"), dict) else {}
+        context = dict(context)
+        if background and isinstance(user_input, dict):
+            context["pending_resume_payload"] = dict(user_input)
+        else:
+            context.pop("pending_resume_payload", None)
+        input_params["context"] = context
+        run.input_params = input_params
         run.status = RunStatus.queued
+        run.execution_owner_id = None
+        run.execution_lease_expires_at = None
+        run.execution_heartbeat_at = None
         await self.db.commit()
 
         if background:
-            asyncio.create_task(self._execute_with_new_session(run.id, resume_payload=user_input))
+            await self._enqueue_background_run(run.id)
 
     async def _execute(self, run_id: UUID, db: AsyncSession, resume_payload: Optional[Dict[str, Any]] = None, mode: ExecutionMode = ExecutionMode.DEBUG):
         """
@@ -1001,6 +1209,14 @@ class AgentExecutorService:
         except Exception as e:
             # Error handling is inside run_and_stream or wrapped there
             logger.error(f"Execution run {run_id} failed: {e}")
+        finally:
+            run = await db.get(AgentRun, run_id)
+            if run is not None and self._status_text(run.status) == RunStatus.running.value:
+                if not isinstance(run.output_result, dict):
+                    run.output_result = {}
+                run.status = RunStatus.completed
+                run.completed_at = run.completed_at or datetime.utcnow()
+                await db.commit()
 
     async def run_and_stream(
         self, 
@@ -1509,6 +1725,7 @@ class AgentExecutorService:
                 yield error_event
                 await self._mark_run_failed(run_id, e, mode=mode)
         finally:
+            await self.trace_recorder.drain()
             unregister_run_task(run_id)
 
     async def _mark_run_failed(self, run_id: UUID, error: Exception, *, mode: ExecutionMode | None = None) -> None:
