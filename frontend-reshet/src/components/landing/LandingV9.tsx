@@ -168,7 +168,7 @@ export function LandingV9() {
   const leftInnerX = useTransform(rawProgress, [0, 1], [isMobile ? 475 : 475, 600]);
   const rightInnerX = useTransform(rawProgress, [0, 1], [isMobile ? 965 : 965, 840]);
   const logoRestTop = useTransform(logoLiftProgress, [0, 1], [metrics.logoStartTop, metrics.logoStartTop - (isMobile ? 300 : 380)]);
-  const logoTop = useTransform([logoRestTop, logoTravelProgress], ([restTop, travel]) => {
+  const logoTop = useTransform<number, number>([logoRestTop, logoTravelProgress], ([restTop, travel]) => {
     const finalTop = metrics.logoFinalTop;
     return restTop + (finalTop - restTop) * travel;
   });
@@ -181,15 +181,13 @@ export function LandingV9() {
   const logoX = useTransform(logoSize, (value) => -value / 2);
   const logoRotate = useTransform(logoTravelProgress, [0, 1], [0, 420]);
   const logoOpacity = useTransform(rawProgress, [0, 0.12, 1], [1, 1, 1]);
-  const domainStops = PLATFORM_DOMAINS.map((_, index) =>
-    PLATFORM_DOMAINS.length === 1 ? 0 : index / (PLATFORM_DOMAINS.length - 1),
-  );
+  const domainStops = PLATFORM_DOMAINS.map((_, index) => index / (PLATFORM_DOMAINS.length - 1));
   const domainLogoTopPositions = PLATFORM_DOMAINS.map((_, index) =>
     metrics.logoFinalTop + index * (isMobile ? 64 : 88),
   );
   const domainLogoTop = useTransform(domainsScrollProgress, domainStops, domainLogoTopPositions);
   const domainLogoOpacity = useTransform(domainsScrollProgress, [0, 0.03, 1], [0, 1, 1]);
-  const heroFixedLogoOpacity = useTransform(
+  const heroFixedLogoOpacity = useTransform<number, number>(
     [logoOpacity, domainLogoOpacity],
     ([heroOpacity, domainOpacity]) => heroOpacity * (1 - domainOpacity),
   );
