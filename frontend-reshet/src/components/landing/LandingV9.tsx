@@ -123,6 +123,7 @@ function DomainTextContent({
 
 export function LandingV9() {
   const [scrolled, setScrolled] = useState(false);
+
   const [isMobile, setIsMobile] = useState(false);
   const [viewportWidth, setViewportWidth] = useState(1440);
   const [vhInstance, setVhInstance] = useState(800);
@@ -131,6 +132,7 @@ export function LandingV9() {
   const heroSceneRef = useRef<HTMLElement | null>(null);
   const domainsSceneRef = useRef<HTMLElement | null>(null);
   const closingSceneRef = useRef<HTMLElement | null>(null);
+  const footerRef = useRef<HTMLElement | null>(null);
   const domainsContainerRef = useRef<HTMLDivElement | null>(null);
   const prefersReducedMotion = useReducedMotion();
 
@@ -234,10 +236,10 @@ export function LandingV9() {
     return restTop + (finalTop - restTop) * travel;
   });
   const logoSize = useTransform(logoTravelProgress, [0, 1], [metrics.logoStartSize, metrics.logoFinalSize]);
-  
+
   // Calculate left side anchor for the logo (closer to the left edge of the page)
   const finalLeftAnchor = Math.max(24, (viewportWidth - 1580) / 2 + 24) + 60;
-  
+
   const logoLeft = useTransform(
     logoTravelProgress,
     [0, 1],
@@ -252,7 +254,7 @@ export function LandingV9() {
   const effectiveDomainsProgress = useTransform(
     domainsScrollProgress,
     [0, 0.15, 0.25, 0.40, 0.50, 0.65, 0.75, 1.0], // Input scroll segments
-    [0, 0,    0.333, 0.333, 0.666, 0.666, 1,    1]    // Output to domain indices
+    [0, 0, 0.333, 0.333, 0.666, 0.666, 1, 1]    // Output to domain indices
   );
 
   // Layout Constants for dynamic tracking
@@ -266,7 +268,7 @@ export function LandingV9() {
     // baseTop is the exact Top Edge where the hero lands.
     const baseTop = metrics.logoFinalTop;
     const expansionOffset = index > activeIdx ? SUBTEXT_H : 0;
-    
+
     // We simply calculate the TOP of the logo.
     // At index 0, it returns exactly baseTop (matching hero landing).
     return baseTop + index * (TITLE_H + GAP_H) + expansionOffset;
@@ -305,7 +307,7 @@ export function LandingV9() {
   const dentD = metrics.logoStartSize * 0.45;
   const botW = metrics.logoStartSize * 0.63; // Widened flat bottom upon request
   const svgW = 1200;
-  const svgH = dentD + 30; 
+  const svgH = dentD + 30;
   const cX = svgW / 2;
   const tL = cX - topW / 2;
   const tR = cX + topW / 2;
@@ -349,7 +351,7 @@ export function LandingV9() {
       return hT as number;
     }
   );
-  
+
   const univLogoLeft = useTransform(
     [logoLeft, closingLogoLeft, domainsScrollProgress, closingScrollProgress],
     ([hL, cL, dP, cP]) => {
@@ -376,8 +378,15 @@ export function LandingV9() {
       return hR as number;
     }
   );
-  
+
   const univLogoOpacity = useTransform(rawProgress, [0, 0.12, 1], [1, 1, 1]); // Stays at 1 throughout
+
+  // --- Footer "S24" split animation ---
+  const { scrollYProgress: footerScrollProgress } = useScroll({
+    target: footerRef,
+    offset: ["start end", "end end"],
+  });
+  const s24TranslateX = useTransform(footerScrollProgress, [0.3, 1], [0, 120]);
 
   useMotionValueEvent(effectiveDomainsProgress, "change", (value) => {
     const nextIndex = Math.min(
@@ -421,6 +430,8 @@ export function LandingV9() {
   return (
     <div className="min-h-screen bg-white font-sans overflow-x-hidden selection:bg-black/10">
       <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Archivo+Black&display=swap');
+        
         html { scroll-behavior: smooth; }
         @keyframes heroFadeUp {
           from { opacity: 0; transform: translateY(28px); }
@@ -444,20 +455,18 @@ export function LandingV9() {
       `}</style>
 
       <nav
-        className={`fixed top-0 z-50 w-full transition-all duration-500 ease-out ${
-          scrolled ? "pt-3 px-4 md:px-8" : ""
-        }`}
+        className={`fixed top-0 z-50 w-full transition-all duration-500 ease-out ${scrolled ? "pt-3 px-4 md:px-8" : ""
+          }`}
       >
         <div
-          className={`mx-auto flex items-center h-14 transition-all duration-500 ease-out ${
-            scrolled
+          className={`mx-auto flex items-center h-14 transition-all duration-500 ease-out ${scrolled
               ? "max-w-4xl bg-white/90 backdrop-blur-xl rounded-full border border-gray-200/60 px-5"
               : "max-w-[1200px] bg-transparent px-6"
-          }`}
+            }`}
         >
           <Link href="/" className="flex items-center gap-2.5">
             <Image src="/kesher.png" alt="AGENTS24" width={28} height={28} className="h-7 w-7 rounded-lg" />
-            <span className="text-lg font-bold tracking-tight text-white mix-blend-difference">AGENTS24</span>
+            <span className="text-lg font-bold ">AGENTS24</span>
           </Link>
           <div className="flex-1" />
           <div className="hidden md:flex items-center gap-6 text-[13px] font-medium text-[#4b5563]">
@@ -482,7 +491,7 @@ export function LandingV9() {
 
       {/* UNIVERSAL LOGO — One element, entire journey */}
       <motion.div
-        className="fixed z-40 pointer-events-none"
+        className="fixed z-30 pointer-events-none"
         style={{
           top: univLogoTop,
           left: univLogoLeft,
@@ -514,13 +523,7 @@ export function LandingV9() {
           <div className="absolute top-[30%] right-[15%] h-[250px] w-[250px] rounded-full bg-blue-500/[0.02] blur-[100px] pointer-events-none animate-breathe" />
 
           <div className="relative z-20 flex h-full flex-col items-center px-6 pt-36 pb-[24rem] md:pb-[38rem] text-center">
-            <div className="hero-1 mb-8 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-3.5 py-1.5 backdrop-blur-md">
-              <span className="flex h-2 w-2 rounded-full bg-[#22c55e] animate-pulse" />
-              <span className="text-[12px] font-medium tracking-wide text-white/70 uppercase">
-                Multi-tenant AI Platform
-              </span>
-            </div>
-            <h1 className="hero-2 mb-6 text-[48px] font-medium leading-[1.05] tracking-tight text-white sm:text-[56px] md:text-[68px]">
+            <h1 className="hero-2 mt-12 mb-6 text-[48px] font-medium leading-[1.05] tracking-tight text-white sm:text-[56px] md:text-[78px]">
               Your AI operations,
               <br />
               one dashboard.
@@ -564,19 +567,18 @@ export function LandingV9() {
         >
           <div
             ref={domainsContainerRef}
-            className={`h-screen overflow-visible bg-white ${
-              domainsScenePhase === "active"
+            className={`h-screen overflow-visible bg-white ${domainsScenePhase === "active"
                 ? "fixed inset-x-0 top-0 z-20"
                 : "absolute inset-x-0 z-20"
-            } ${domainsScenePhase === "before" ? "top-0" : ""} ${domainsScenePhase === "after" ? "bottom-0" : ""}`}
+              } ${domainsScenePhase === "before" ? "top-0" : ""} ${domainsScenePhase === "after" ? "bottom-0" : ""}`}
           >
             <div className="relative z-10 mx-auto grid h-full max-w-[1580px] gap-10 px-6 md:grid-cols-[340px_minmax(0,1fr)] md:gap-16">
-              
+
               {/* Left Column: Flowing Logo & Domain Labels (Dynamic Accordion) */}
               <div className="relative hidden self-start md:block">
-                <div 
+                <div
                   className="flex flex-col gap-8"
-                  style={{ 
+                  style={{
                     paddingTop: (metrics.logoFinalTop + metrics.logoFinalSize / 2) - (TITLE_H / 2) - 1
                   }}
                 >
@@ -586,20 +588,19 @@ export function LandingV9() {
                       key={domain.title}
                       className="relative left-[130px] w-[240px] text-left"
                     >
-                      <motion.p 
+                      <motion.p
                         layout="position"
-                        className={`text-[19px] font-medium tracking-tight transition-colors duration-300 ${
-                          index === activeDomainIndex ? "text-[#0a0a0a]" : "text-[#0a0a0a]/28"
-                        }`}
+                        className={`text-[19px] font-medium tracking-tight transition-colors duration-300 ${index === activeDomainIndex ? "text-[#0a0a0a]" : "text-[#0a0a0a]/28"
+                          }`}
                       >
                         {domain.title}
                       </motion.p>
-                      
+
                       {/* Expanding subtext section */}
                       <div className="overflow-hidden">
                         <AnimatePresence>
                           {index === activeDomainIndex && (
-                            <motion.p 
+                            <motion.p
                               layout
                               initial={{ height: 0, opacity: 0, marginTop: 0 }}
                               animate={{ height: "auto", opacity: 1, marginTop: 12 }}
@@ -620,14 +621,14 @@ export function LandingV9() {
               {/* Right Column: Active Domain Content */}
               <div className="relative flex min-h-0 items-center justify-center py-20 md:py-28">
                 {/* Persistent Layout Wrapper */}
-                <motion.div 
+                <motion.div
                   style={{ scale: exitScale, x: exitX, opacity: exitOpacity }}
                   className="absolute top-[20vh] lg:top-[16vh] left-[60px] md:left-[60px] w-[120vw] md:w-[90vw] lg:w-[1400px] h-[80vh] md:h-[90vh] lg:h-[1000px]"
                 >
                   <div className="relative w-full h-full">
                     {/* Soft background padding (STATIONARY — shared across all domains) */}
                     <div className="absolute inset-0 -left-6 -top-6 md:-left-12 md:-top-12 bg-[#f4f4f5] rounded-tl-[40px] md:rounded-tl-[56px]" />
-                    
+
                     {/* Animate individual screenshots over the persistent bg */}
                     <AnimatePresence mode="wait">
                       <DomainTextContent
@@ -644,60 +645,57 @@ export function LandingV9() {
         </section>
 
         {/* --- Post-Domains Transition: Closing Sequence --- */}
-        <section 
-          ref={closingSceneRef} 
-          className="relative bg-white pt-px w-full" 
+        <section
+          ref={closingSceneRef}
+          className="relative bg-white z-10 pt-px w-full"
           style={{ height: "100vh" }}
         >
-           {/* The Black Section Base */}
-           <div 
-             className="absolute inset-x-0 bottom-0 bg-[#0a0a0a] pointer-events-auto" 
-             style={{ top: verticalMiddle + metrics.logoStartSize * 0.52 + svgH - 1 }}
-           >
-              {/* SVG Hexagonal Dent - sits exactly on top of the black base */}
-              <div className="absolute bottom-[calc(100%-1px)] left-0 right-0 overflow-hidden flex justify-center pointer-events-none" style={{ height: svgH }}>
-                <svg width={svgW} height={svgH} viewBox={`0 0 ${svgW} ${svgH}`} className="shrink-0">
-                  <path d={dentPath} fill="#0a0a0a" />
-                </svg>
-                {/* Invisible side extensions for ultra-widescreen */}
-                <div className="absolute right-1/2 mr-[600px] w-[50vw] h-full bg-[#0a0a0a]" />
-                <div className="absolute left-1/2 ml-[600px] w-[50vw] h-full bg-[#0a0a0a]" />
-              </div>
+          {/* The Black Section Base */}
+          <div
+            className="absolute inset-x-0 bottom-0 bg-[#0a0a0a] z-10 pointer-events-auto"
+            style={{ top: verticalMiddle + metrics.logoStartSize * 0.52 + svgH - 1 }}
+          >
+            {/* SVG Hexagonal Dent - sits exactly on top of the black base */}
+            <div className="absolute z-0 bottom-[calc(100%-1px)] left-0 right-0 overflow-hidden flex justify-center pointer-events-none" style={{ height: svgH }}>
+              <svg width={svgW} height={svgH} viewBox={`0 0 ${svgW} ${svgH}`} className="shrink-0">
+                <path d={dentPath} fill="#0a0a0a" />
+              </svg>
+              {/* Invisible side extensions for ultra-widescreen */}
+              <div className="absolute right-1/2 mr-[600px] w-[50vw] h-full bg-[#0a0a0a]" />
+              <div className="absolute left-1/2 ml-[600px] w-[50vw] h-full bg-[#0a0a0a]" />
+            </div>
+          </div>
 
-              {/* Split Content (Left: Liftoff, Right: CTA) */}
-              <div 
-                className="absolute inset-x-0 z-20 w-full max-w-[1240px] mx-auto px-8 flex flex-col md:flex-row items-center md:items-start justify-between pointer-events-auto"
-                style={{ top: -svgH + 60 }}
-              >
-                 {/* Left Side */}
-                 <div className="text-center md:text-left mt-2">
-                   <p className="text-3xl md:text-[40px] font-medium tracking-tight text-white leading-tight">
-                     Experience
-                     <br />
-                     liftoff.
-                   </p>
-                 </div>
-                 
-                 {/* Right Side */}
-                 <div className="flex flex-col items-center md:items-end text-center md:text-right mt-1">
-                   <h2 className="text-[20px] md:text-2xl font-medium tracking-tight text-white mb-5">
-                     Ready to deploy?
-                   </h2>
-                   <Link href="/auth/signup" className="px-8 py-3.5 bg-white text-black text-[15px] font-semibold rounded-full hover:bg-gray-100 transition-colors shadow-lg hover:shadow-xl hover:-translate-y-1 transform duration-300">
-                     Build your first agent 
-                   </Link>
-                 </div>
-              </div>
-           </div>
+          {/* Split Content (Left: Liftoff, Right: CTA) — Sibling for clean layering */}
+          <div
+            className="absolute inset-x-0 z-20 w-full max-w-[1240px] mx-auto px-8 flex flex-col md:flex-row items-center md:items-start justify-between pointer-events-auto"
+            style={{ top: verticalMiddle + metrics.logoStartSize * 0.52 + 60 }}
+          >
+            {/* Left Side */}
+            <div className="text-center md:text-left mt-2">
+              <p className="text-3xl md:text-[40px] font-medium tracking-tight text-white leading-tight">
+                Experience
+                <br />
+                liftoff.
+              </p>
+            </div>
+
+            {/* Right Side */}
+            <div className="flex flex-col items-center md:items-end text-center md:text-right mt-1">
+              <h2 className="text-[20px] md:text-2xl font-medium tracking-tight text-white mb-5">
+                Ready to deploy?
+              </h2>
+              <Link href="/auth/signup" className="px-8 py-3.5 bg-white text-black text-[15px] font-semibold rounded-full hover:bg-gray-100 transition-colors shadow-lg hover:shadow-xl hover:-translate-y-1 transform duration-300">
+                Build your first agent
+              </Link>
+            </div>
+          </div>
         </section>
       </main>
 
-      <footer className="bg-[#0a0a0a]">
-        <div className="max-w-[1100px] mx-auto px-6 py-14">
+      <footer ref={footerRef} className="bg-[#0a0a0a] relative z-50">
+        <div className="max-w-[1100px] mx-auto mb-24 -mt-20 relative">
           <div className="grid grid-cols-2 md:grid-cols-5 gap-10">
-            <div className="col-span-2 md:col-span-1">
-              {/* Empty column to preserve 5-col grid structure (Liftoff text moved up) */}
-            </div>
             {[
               { links: [{ label: "Product", href: "#platform" }, { label: "Structure", href: "#platform" }, { label: "Governance", href: "#platform" }, { label: "Deploy", href: "#platform" }] },
               { links: [{ label: "Sign Up", href: "/auth/signup" }, { label: "Log In", href: "/auth/login" }] },
@@ -719,28 +717,26 @@ export function LandingV9() {
           </div>
         </div>
 
-        <div className="px-6 pb-6">
+        <div className="px-6 pb-6 relative overflow-hidden">
           <h2
-            className="text-[18vw] md:text-[14vw] font-black tracking-tighter text-white leading-[0.85] select-none"
-            style={{ fontFamily: "system-ui, -apple-system, sans-serif" }}
+            className="text-[20vw] md:text-[14vw] font-black tracking-tighter text-white leading-[0.85] select-none whitespace-nowrap"
+            style={{ 
+              fontFamily: "'Archivo Black', sans-serif",
+              maskImage: 'linear-gradient(to right, black 70%, transparent 100%)',
+              WebkitMaskImage: 'linear-gradient(to right, black 70%, transparent 100%)'
+            }}
           >
-            AGENTS24
+            <span>AGENT</span>
+            <motion.span
+              style={{ x: s24TranslateX, display: 'inline-block' }}
+            >
+              S24
+            </motion.span>
           </h2>
         </div>
 
-        <div className="border-t border-white/10 px-6 py-5">
+        <div className=" px-6 py-5">
           <div className="max-w-[1100px] mx-auto flex flex-col sm:flex-row items-center justify-between gap-3">
-            <div className="flex items-center gap-2.5">
-              <Image src="/kesher.png" alt="AGENTS24" width={20} height={20} className="h-5 w-5 rounded" />
-              <span className="text-xs text-gray-500">AGENTS24</span>
-            </div>
-            <div className="flex items-center gap-6">
-              {["About", "Privacy", "Terms"].map((link) => (
-                <Link key={link} href="#" className="text-xs text-gray-500 hover:text-white transition-colors">
-                  {link}
-                </Link>
-              ))}
-            </div>
           </div>
         </div>
       </footer>
