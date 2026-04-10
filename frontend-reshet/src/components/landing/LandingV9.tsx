@@ -125,10 +125,12 @@ export function LandingV9() {
   const [scrolled, setScrolled] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const [viewportWidth, setViewportWidth] = useState(1440);
+  const [vhInstance, setVhInstance] = useState(800);
   const [activeDomainIndex, setActiveDomainIndex] = useState(0);
   const [domainsScenePhase, setDomainsScenePhase] = useState<"before" | "active" | "after">("before");
   const heroSceneRef = useRef<HTMLElement | null>(null);
   const domainsSceneRef = useRef<HTMLElement | null>(null);
+  const closingSceneRef = useRef<HTMLElement | null>(null);
   const domainsContainerRef = useRef<HTMLDivElement | null>(null);
   const prefersReducedMotion = useReducedMotion();
 
@@ -178,7 +180,10 @@ export function LandingV9() {
   }, []);
 
   useEffect(() => {
-    const update = () => setViewportWidth(window.innerWidth);
+    const update = () => {
+      setViewportWidth(window.innerWidth);
+      setVhInstance(window.innerHeight);
+    };
     update();
     window.addEventListener("resize", update, { passive: true });
     return () => window.removeEventListener("resize", update);
@@ -193,6 +198,10 @@ export function LandingV9() {
   const { scrollYProgress: domainsScrollProgress } = useScroll({
     target: domainsSceneRef,
     offset: ["start start", "end end"],
+  });
+  const { scrollYProgress: closingScrollProgress } = useScroll({
+    target: closingSceneRef,
+    offset: ["start end", "end start"], // distance = 200vh total for a 100vh section
   });
 
   const rawProgress = useTransform(scrollYProgress, (value) => {
@@ -280,12 +289,94 @@ export function LandingV9() {
   const domainLogoRotate = useTransform(domainsScrollProgress, [0, 0.12, 1], [420, 420 + 60, 420 + 480]);
   const domainLogoOpacity = useTransform(domainsScrollProgress, [0, 0.08, 1], [0, 1, 1]);
 
+  // --- Exit Transition Logic ---
+  // As we reach the end of the section (0.9 to 1.0), the big elements shrink/fade
+  const exitProgress = useTransform(domainsScrollProgress, [0.88, 1], [0, 1]);
+  const exitScale = useTransform(exitProgress, [0, 1], [1, 0.82]);
+  const exitX = useTransform(exitProgress, [0, 1], [0, -40]);
+  const exitOpacity = useTransform(exitProgress, [0, 0.6, 1], [1, 1, 0]);
+
   // --- Universal Logo Integration (Zero-Fade Journey) ---
-  // We use the hero values until the domains section starts, then hand over to academic values.
-  const univLogoTop = useTransform([logoTop, domainLogoTop, domainsScrollProgress], ([hT, dT, dP]) => (dP as number) > 0 ? (dT as number) : (hT as number));
-  const univLogoLeft = useTransform([logoLeft, domainsScrollProgress], ([hL, dP]) => (dP as number) > 0 ? finalLeftAnchor : (hL as number));
-  const univLogoSize = useTransform([logoSize, domainsScrollProgress], ([hS, dP]) => (dP as number) > 0 ? metrics.logoFinalSize : (hS as number));
-  const univLogoRotate = useTransform([logoRotate, domainLogoRotate, domainsScrollProgress], ([hR, dR, dP]) => (dP as number) > 0 ? (dR as number) : (hR as number));
+  const finalDomainTop = getLogoYForIndex(PLATFORM_DOMAINS.length - 1, PLATFORM_DOMAINS.length - 1);
+  const verticalMiddle = vhInstance / 2 - metrics.logoStartSize / 2;
+
+  // --- Dent Math (Hexagonal Fit) ---
+  const topW = metrics.logoStartSize * 0.95;
+  const dentD = metrics.logoStartSize * 0.45;
+  const botW = metrics.logoStartSize * 0.63; // Widened flat bottom upon request
+  const svgW = 1200;
+  const svgH = dentD + 30; 
+  const cX = svgW / 2;
+  const tL = cX - topW / 2;
+  const tR = cX + topW / 2;
+  const bL = cX - botW / 2;
+  const bR = cX + botW / 2;
+
+  const dentPath = `
+    M 0 ${svgH}
+    L 0 0
+    L ${tL - 40} 0
+    C ${tL - 15} 0, ${tL} 10, ${tL + 10} 30
+    L ${bL - 10} ${dentD - 20}
+    C ${bL} ${dentD}, ${bL + 15} ${dentD}, ${bL + 40} ${dentD}
+    L ${bR - 40} ${dentD}
+    C ${bR - 15} ${dentD}, ${bR} ${dentD}, ${bR + 10} ${dentD - 20}
+    L ${tR - 10} 30
+    C ${tR} 10, ${tR + 15} 0, ${tR + 40} 0
+    L ${svgW} 0
+    L ${svgW} ${svgH}
+    Z
+  `;
+
+  const closingLogoTop = useTransform(
+    closingScrollProgress,
+    [0, 0.5, 1], // 0.5 is when the 100vh section fully fills the viewport
+    [
+      finalDomainTop,
+      verticalMiddle,
+      verticalMiddle - vhInstance
+    ]
+  );
+  const closingLogoLeft = useTransform(closingScrollProgress, [0, 0.5, 1], [finalLeftAnchor, viewportWidth / 2, viewportWidth / 2]);
+  const closingLogoSize = useTransform(closingScrollProgress, [0, 0.5, 1], [metrics.logoFinalSize, metrics.logoStartSize, metrics.logoStartSize]);
+  const closingLogoRotate = useTransform(closingScrollProgress, [0, 0.5, 1], [900, 1440, 1440]);
+
+  const univLogoTop = useTransform(
+    [logoTop, domainLogoTop, closingLogoTop, domainsScrollProgress, closingScrollProgress],
+    ([hT, dT, cT, dP, cP]) => {
+      if ((cP as number) > 0) return cT as number;
+      if ((dP as number) > 0) return dT as number;
+      return hT as number;
+    }
+  );
+  
+  const univLogoLeft = useTransform(
+    [logoLeft, closingLogoLeft, domainsScrollProgress, closingScrollProgress],
+    ([hL, cL, dP, cP]) => {
+      if ((cP as number) > 0) return cL as number;
+      if ((dP as number) > 0) return finalLeftAnchor;
+      return hL as number;
+    }
+  );
+
+  const univLogoSize = useTransform(
+    [logoSize, closingLogoSize, domainsScrollProgress, closingScrollProgress],
+    ([hS, cS, dP, cP]) => {
+      if ((cP as number) > 0) return cS as number;
+      if ((dP as number) > 0) return metrics.logoFinalSize;
+      return hS as number;
+    }
+  );
+
+  const univLogoRotate = useTransform(
+    [logoRotate, domainLogoRotate, closingLogoRotate, domainsScrollProgress, closingScrollProgress],
+    ([hR, dR, cR, dP, cP]) => {
+      if ((cP as number) > 0) return cR as number;
+      if ((dP as number) > 0) return dR as number;
+      return hR as number;
+    }
+  );
+  
   const univLogoOpacity = useTransform(rawProgress, [0, 0.12, 1], [1, 1, 1]); // Stays at 1 throughout
 
   useMotionValueEvent(effectiveDomainsProgress, "change", (value) => {
@@ -391,7 +482,7 @@ export function LandingV9() {
 
       {/* UNIVERSAL LOGO — One element, entire journey */}
       <motion.div
-        className="fixed z-50 pointer-events-none"
+        className="fixed z-40 pointer-events-none"
         style={{
           top: univLogoTop,
           left: univLogoLeft,
@@ -529,7 +620,10 @@ export function LandingV9() {
               {/* Right Column: Active Domain Content */}
               <div className="relative flex min-h-0 items-center justify-center py-20 md:py-28">
                 {/* Persistent Layout Wrapper */}
-                <div className="absolute top-[20vh] lg:top-[16vh] left-[60px] md:left-[60px] w-[120vw] md:w-[90vw] lg:w-[1400px] h-[80vh] md:h-[90vh] lg:h-[1000px]">
+                <motion.div 
+                  style={{ scale: exitScale, x: exitX, opacity: exitOpacity }}
+                  className="absolute top-[20vh] lg:top-[16vh] left-[60px] md:left-[60px] w-[120vw] md:w-[90vw] lg:w-[1400px] h-[80vh] md:h-[90vh] lg:h-[1000px]"
+                >
                   <div className="relative w-full h-full">
                     {/* Soft background padding (STATIONARY — shared across all domains) */}
                     <div className="absolute inset-0 -left-6 -top-6 md:-left-12 md:-top-12 bg-[#f4f4f5] rounded-tl-[40px] md:rounded-tl-[56px]" />
@@ -543,22 +637,66 @@ export function LandingV9() {
                       />
                     </AnimatePresence>
                   </div>
-                </div>
+                </motion.div>
               </div>
             </div>
           </div>
         </section>
+
+        {/* --- Post-Domains Transition: Closing Sequence --- */}
+        <section 
+          ref={closingSceneRef} 
+          className="relative bg-white pt-px w-full" 
+          style={{ height: "100vh" }}
+        >
+           {/* The Black Section Base */}
+           <div 
+             className="absolute inset-x-0 bottom-0 bg-[#0a0a0a] pointer-events-auto" 
+             style={{ top: verticalMiddle + metrics.logoStartSize * 0.52 + svgH - 1 }}
+           >
+              {/* SVG Hexagonal Dent - sits exactly on top of the black base */}
+              <div className="absolute bottom-[calc(100%-1px)] left-0 right-0 overflow-hidden flex justify-center pointer-events-none" style={{ height: svgH }}>
+                <svg width={svgW} height={svgH} viewBox={`0 0 ${svgW} ${svgH}`} className="shrink-0">
+                  <path d={dentPath} fill="#0a0a0a" />
+                </svg>
+                {/* Invisible side extensions for ultra-widescreen */}
+                <div className="absolute right-1/2 mr-[600px] w-[50vw] h-full bg-[#0a0a0a]" />
+                <div className="absolute left-1/2 ml-[600px] w-[50vw] h-full bg-[#0a0a0a]" />
+              </div>
+
+              {/* Split Content (Left: Liftoff, Right: CTA) */}
+              <div 
+                className="absolute inset-x-0 z-20 w-full max-w-[1240px] mx-auto px-8 flex flex-col md:flex-row items-center md:items-start justify-between pointer-events-auto"
+                style={{ top: -svgH + 60 }}
+              >
+                 {/* Left Side */}
+                 <div className="text-center md:text-left mt-2">
+                   <p className="text-3xl md:text-[40px] font-medium tracking-tight text-white leading-tight">
+                     Experience
+                     <br />
+                     liftoff.
+                   </p>
+                 </div>
+                 
+                 {/* Right Side */}
+                 <div className="flex flex-col items-center md:items-end text-center md:text-right mt-1">
+                   <h2 className="text-[20px] md:text-2xl font-medium tracking-tight text-white mb-5">
+                     Ready to deploy?
+                   </h2>
+                   <Link href="/auth/signup" className="px-8 py-3.5 bg-white text-black text-[15px] font-semibold rounded-full hover:bg-gray-100 transition-colors shadow-lg hover:shadow-xl hover:-translate-y-1 transform duration-300">
+                     Build your first agent 
+                   </Link>
+                 </div>
+              </div>
+           </div>
+        </section>
       </main>
 
-      <footer className="bg-white border-t border-gray-100">
+      <footer className="bg-[#0a0a0a]">
         <div className="max-w-[1100px] mx-auto px-6 py-14">
           <div className="grid grid-cols-2 md:grid-cols-5 gap-10">
             <div className="col-span-2 md:col-span-1">
-              <p className="text-2xl md:text-3xl font-semibold tracking-tight text-gray-900 leading-tight">
-                Experience
-                <br />
-                liftoff
-              </p>
+              {/* Empty column to preserve 5-col grid structure (Liftoff text moved up) */}
             </div>
             {[
               { links: [{ label: "Product", href: "#platform" }, { label: "Structure", href: "#platform" }, { label: "Governance", href: "#platform" }, { label: "Deploy", href: "#platform" }] },
@@ -570,7 +708,7 @@ export function LandingV9() {
                 <ul className="space-y-2.5">
                   {group.links.map((link) => (
                     <li key={link.label}>
-                      <Link href={link.href} className="text-sm text-gray-500 hover:text-gray-900 transition-colors">
+                      <Link href={link.href} className="text-sm text-gray-400 hover:text-white transition-colors">
                         {link.label}
                       </Link>
                     </li>
@@ -583,22 +721,22 @@ export function LandingV9() {
 
         <div className="px-6 pb-6">
           <h2
-            className="text-[18vw] md:text-[14vw] font-black tracking-tighter text-gray-900 leading-[0.85] select-none"
+            className="text-[18vw] md:text-[14vw] font-black tracking-tighter text-white leading-[0.85] select-none"
             style={{ fontFamily: "system-ui, -apple-system, sans-serif" }}
           >
             AGENTS24
           </h2>
         </div>
 
-        <div className="border-t border-gray-100 px-6 py-5">
+        <div className="border-t border-white/10 px-6 py-5">
           <div className="max-w-[1100px] mx-auto flex flex-col sm:flex-row items-center justify-between gap-3">
             <div className="flex items-center gap-2.5">
               <Image src="/kesher.png" alt="AGENTS24" width={20} height={20} className="h-5 w-5 rounded" />
-              <span className="text-xs text-gray-400">AGENTS24</span>
+              <span className="text-xs text-gray-500">AGENTS24</span>
             </div>
             <div className="flex items-center gap-6">
               {["About", "Privacy", "Terms"].map((link) => (
-                <Link key={link} href="#" className="text-xs text-gray-400 hover:text-gray-900 transition-colors">
+                <Link key={link} href="#" className="text-xs text-gray-500 hover:text-white transition-colors">
                   {link}
                 </Link>
               ))}

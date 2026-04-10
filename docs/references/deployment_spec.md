@@ -1,6 +1,6 @@
 # Deployment Spec
 
-Last Updated: 2026-03-29
+Last Updated: 2026-04-10
 
 This document is the canonical source of truth for the current Talmudpedia hosting and deployment state.
 
@@ -20,6 +20,11 @@ The current production topology is:
   - host: `https://frontend-production-c45b.up.railway.app`
   - platform: Railway app service
   - source intent: `frontend-reshet/`
+- `docs-site`
+  - host: `https://docs-site-production-baa9.up.railway.app`
+  - intended custom domain: `https://docs.agents24.dev`
+  - platform: Railway app service
+  - source root: `/docs-site`
 - `backend`
   - host: `https://web-production-fe8b5e.up.railway.app`
   - health: `GET /health`
@@ -48,13 +53,14 @@ External infrastructure kept outside Railway:
 
 ## Current Live Status
 
-As of the last verified Railway state on 2026-03-24:
+As of the last verified Railway state on 2026-04-10:
 
 - `backend`: `SUCCESS`
 - `backend-worker`: `SUCCESS`
 - `Postgres`: `SUCCESS`
 - `Redis`: `SUCCESS`
-- `frontend`: `FAILED`
+- `frontend`: `SUCCESS`
+- `docs-site`: `SUCCESS`
 - `crawl4ai`: `FAILED`
 
 This means the platform is partially live:
@@ -62,7 +68,8 @@ This means the platform is partially live:
 - backend API is up
 - worker infrastructure is up
 - primary database and Redis are up
-- frontend deployment is not currently healthy
+- frontend deployment is healthy
+- docs-site deployment is healthy on the Railway-generated domain
 - Crawl4AI is not currently deployed successfully
 
 ## Current Runtime Commands
@@ -71,6 +78,9 @@ Tracked service commands:
 
 - frontend
   - from [`frontend-reshet/railway.toml`](/Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet/railway.toml)
+  - `node_modules/.bin/next start --hostname 0.0.0.0 --port $PORT`
+- docs-site
+  - from [`docs-site/railway.toml`](/Users/danielbenassaya/Code/personal/talmudpedia/docs-site/railway.toml)
   - `node_modules/.bin/next start --hostname 0.0.0.0 --port $PORT`
 - backend
   - from [`backend/railway.toml`](/Users/danielbenassaya/Code/personal/talmudpedia/backend/railway.toml)
@@ -90,14 +100,23 @@ Current Railway-generated public domains:
 
 - frontend
   - `https://frontend-production-c45b.up.railway.app`
+- docs-site
+  - `https://docs-site-production-baa9.up.railway.app`
 - backend
   - `https://web-production-fe8b5e.up.railway.app`
 
 Not yet in place as deployed production custom-domain architecture:
 
-- dedicated platform custom domain
+- dedicated docs custom domain
 - dedicated API custom domain
 - wildcard published-app domain such as `*.apps.<domain>`
+
+Current docs custom-domain state:
+
+- `docs.agents24.dev` is attached to the `docs-site` Railway service
+- Railway currently requires DNS updates before the domain can verify and serve traffic
+- required DNS route: `docs CNAME v074b16m.up.railway.app`
+- required ownership TXT: `_railway-verify.docs TXT railway-verify=4a5235637efb48029ef4968e8d5ba9a0981a5b0a43f157e5caa764979d951d34`
 
 ## Current Configuration State
 
@@ -134,6 +153,14 @@ The frontend still has deployment/config drift:
 
 - `NEXT_PUBLIC_APPS_BASE_DOMAIN=apps.localhost`
 - no final custom domain config
+
+### Docs Site
+
+The docs-site currently has live Railway env wiring for:
+
+- `NEXT_PUBLIC_SITE_URL=https://docs.agents24.dev`
+
+The service is repo-backed and deployed from `/docs-site`.
 
 ## Auth State
 
@@ -194,13 +221,16 @@ Current code changes already made in repo:
 - playground page lazy-loads React artifact pane to avoid eager compiler/editor imports:
   - [`frontend-reshet/src/app/admin/agents/playground/page.tsx`](/Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet/src/app/admin/agents/playground/page.tsx)
 
-Despite that, the latest verified Railway service status for `frontend` is currently `FAILED`, so frontend deployment remains unstable.
+The latest verified Railway service status for `frontend` is `SUCCESS`.
+
+The latest verified Railway service status for `docs-site` is also `SUCCESS` on the Railway-generated domain.
 
 ## Tracked Deployment Files
 
 Current tracked deployment files in repo:
 
 - [`frontend-reshet/railway.toml`](/Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet/railway.toml)
+- [`docs-site/railway.toml`](/Users/danielbenassaya/Code/personal/talmudpedia/docs-site/railway.toml)
 - [`frontend-reshet/railway.env.example`](/Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet/railway.env.example)
 - [`backend/railway.toml`](/Users/danielbenassaya/Code/personal/talmudpedia/backend/railway.toml)
 - [`backend/Dockerfile`](/Users/danielbenassaya/Code/personal/talmudpedia/backend/Dockerfile)
