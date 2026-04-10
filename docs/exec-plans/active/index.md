@@ -1,6 +1,6 @@
 # Active Execution Plans
 
-Last Updated: 2026-03-31
+Last Updated: 2026-04-10
 
 This section holds work that is planned or currently in progress.
 
@@ -27,3 +27,4 @@ This section holds work that is planned or currently in progress.
 - `rag_extreme_test_campaign_plan.md`
 - `resource_policy_sets_full_test_plan.md`
 - `tools_update_v1_plan.md`
+- `public_docs_gap_log.md`

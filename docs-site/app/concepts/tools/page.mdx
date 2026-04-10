@@ -1,0 +1,34 @@
+---
+title: Tools
+description: Understand the runtime-facing tool model so your first agent uses tools deliberately instead of accidentally.
+status: published
+audience: external-builders
+lastUpdated: 2026-04-10
+lastValidated: 2026-04-10
+canonicalSources:
+  - docs/product-specs/tools_domain_spec.md
+  - docs/product-specs/artifacts_domain_spec.md
+verificationStatus: partial
+---
+
+# Tools
+
+Tools are callable runtime capabilities. In the product, they come from more than one authoring surface, but the agent still sees one runtime-facing tool catalog.
+
+## Important distinction
+
+- the runtime catalog is unified
+- authorship is not unified
+
+Some tools are created directly in the tools surface. Others are mirrored in from artifacts, pipelines, or agent exports.
+
+## First-build rule
+
+Start with one tool that has a narrow, obvious outcome. This makes debugging much easier than starting with several broad tools.
+
+## Runtime guardrails
+
+- inactive tools are blocked
+- production mode expects published tools
+- debug mode is more permissive
+- tenant visibility still applies

@@ -1,0 +1,38 @@
+---
+title: Agents
+description: Learn the product-level mental model for Agents24 agents before going deeper into graph contracts.
+status: published
+audience: external-builders
+lastUpdated: 2026-04-10
+lastValidated: 2026-04-10
+canonicalSources:
+  - docs/design-docs/agent_execution_current.md
+  - docs/product-specs/agent_graph_spec.md
+verificationStatus: partial
+---
+
+# Agents
+
+In Agents24, an agent is not just a prompt. It is a runnable graph with explicit nodes, edges, inputs, and output behavior.
+
+## What matters first
+
+- drafts can be incomplete and still saved
+- runnability is decided at compile and execution time, not by forcing every draft to be perfect
+- runtime values come from workflow input, state, or node outputs
+
+## Practical reading of the model
+
+For the first implementation pass, think in this order:
+
+1. What enters the run?
+2. What decisions does the graph make?
+3. What outside capabilities can it call?
+4. What leaves the run?
+
+## What to avoid in the first build
+
+- branching-heavy graphs
+- broad state contracts
+- multiple tools with overlapping responsibility
+- large knowledge scopes you cannot validate manually

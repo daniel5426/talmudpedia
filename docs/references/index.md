@@ -1,6 +1,6 @@
 # References Index
 
-Last Updated: 2026-03-24
+Last Updated: 2026-04-10
 
 This section is for stable supporting documentation used as lookup material by humans and agents.
 
@@ -37,3 +37,5 @@ This section is for stable supporting documentation used as lookup material by h
   - Canonical Railway launch runbook for the core platform, including backend, worker, Crawl4AI, Redis/Postgres, and R2 wiring.
 - `deployment_spec.md`
   - Canonical current-state deployment and hosting spec for the live Railway environment, including working services, failed services, domains, and known drift.
+- `public_docs_source_map.md`
+  - Source-of-truth bridge between `docs-site/` public pages and internal canonical docs.

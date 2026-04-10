@@ -1,0 +1,80 @@
+---
+title: Quickstart
+description: Build your first useful Agents24 workflow by wiring a model, retrieval source, tool, and run path.
+status: published
+audience: external-builders
+lastUpdated: 2026-04-10
+lastValidated: 2026-04-10
+canonicalSources:
+  - docs/design-docs/platform_current_state.md
+  - docs/product-specs/agent_graph_spec.md
+  - docs/product-specs/rag_pipeline_spec.md
+  - docs/product-specs/tools_domain_spec.md
+verificationStatus: partial
+sidebarTitle: Start fast
+---
+
+import { Callout, Steps } from "nextra/components";
+
+# Quickstart
+
+This is the shortest useful path through the platform. The goal is not full mastery. The goal is to prove one agent can read context, call a tool, and produce a traceable run.
+
+<Steps>
+
+### Create or access a tenant
+
+Use a tenant where you can configure models, knowledge assets, and tools. If tenant bootstrap still depends on internal setup knowledge in your environment, treat that as a docs gap immediately.
+
+### Configure a model
+
+Set one default model you trust for normal text generation before building the agent. Do not start with multi-model routing in the first pass.
+
+### Prepare one retrieval source
+
+Create one knowledge input that can answer a narrow set of questions. Keep the corpus small enough that you can tell whether retrieval actually helped.
+
+### Attach one tool
+
+Choose one tool with an obvious success condition. A broad tool catalog hides product gaps. A single tool makes run inspection clearer.
+
+### Build the first graph
+
+Start with a minimal flow:
+
+- `Start`
+- one agent node
+- retrieval connection if needed
+- one tool path if needed
+- `End`
+
+### Run and inspect
+
+Execute the graph with one test prompt you can verify manually. Then inspect the run trace, tool usage, and outputs before expanding scope.
+
+</Steps>
+
+## Recommended first prompt
+
+Use a prompt that forces both retrieval and tool usage to matter. If the answer is easy without either, you will not learn much from the run.
+
+## Success criteria
+
+- the run completes without hidden manual intervention
+- you can tell which context came from retrieval
+- you can tell whether a tool was called
+- the output is inspectable after the run
+
+## Verification checklist
+
+- tenant is accessible
+- model is configured
+- one retrieval source is available
+- one tool is visible to the agent
+- run can be executed and inspected
+
+## Known gaps
+
+<Callout type="warning">
+  This quickstart is seeded from canonical platform docs, but the public end-to-end setup path still needs a full fresh-run validation in the live product flow.
+</Callout>

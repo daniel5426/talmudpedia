@@ -1,0 +1,41 @@
+---
+title: Knowledge and Retrieval
+description: Understand how Agents24 treats knowledge stores, ingestion, and retrieval as distinct but connected runtime surfaces.
+status: published
+audience: external-builders
+lastUpdated: 2026-04-10
+lastValidated: 2026-04-10
+canonicalSources:
+  - docs/design-docs/platform_current_state.md
+  - docs/product-specs/rag_pipeline_spec.md
+verificationStatus: partial
+sidebarTitle: Knowledge
+---
+
+# Knowledge and Retrieval
+
+Retrieval in Agents24 is a system, not a single checkbox. The platform distinguishes:
+
+- ingestion and transformation
+- knowledge storage
+- retrieval consumption during a run
+
+## Product mental model
+
+- RAG pipelines build or refresh knowledge representations
+- knowledge stores are the logical bridge
+- agents consume retrieval results during runtime
+
+## Good first-use constraints
+
+- use a narrow corpus
+- prefer one knowledge path over many
+- test with prompts where grounded context changes the answer
+
+## What success looks like
+
+You should be able to tell:
+
+- which documents were relevant
+- whether retrieval improved the result
+- whether missing or weak context caused the answer to degrade

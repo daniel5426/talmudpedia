@@ -1,0 +1,88 @@
+---
+title: First Agent with Retrieval and Tools
+description: Follow the first end-to-end public tutorial for building one grounded, tool-using agent on Agents24.
+status: published
+audience: external-builders
+lastUpdated: 2026-04-10
+lastValidated: 2026-04-10
+canonicalSources:
+  - docs/design-docs/platform_current_state.md
+  - docs/product-specs/agent_graph_spec.md
+  - docs/product-specs/rag_pipeline_spec.md
+  - docs/product-specs/tools_domain_spec.md
+verificationStatus: partial
+sidebarTitle: First Agent
+---
+
+import { Callout, Steps } from "nextra/components";
+
+# First Agent with Retrieval and Tools
+
+This tutorial is the anchor journey for the docs program. It is intentionally opinionated and narrow.
+
+## Outcome
+
+By the end, you should have:
+
+- one runnable agent graph
+- one retrieval source that can materially change an answer
+- one tool with a visible runtime effect
+- one inspectable run you can reason about afterward
+
+<Steps>
+
+### Set the runtime floor
+
+Choose one tenant, one model, one small knowledge scope, and one tool. Keep all four fixed through the first run.
+
+### Create the agent graph
+
+Build the smallest graph that can still prove the platform path:
+
+- `Start`
+- agent node
+- retrieval/tool integration path as needed
+- `End`
+
+### Connect retrieval
+
+Use knowledge that answers a question the base model should not answer reliably without grounded context.
+
+### Connect one tool
+
+Use a tool whose execution is easy to confirm. If you cannot tell whether it ran, it is the wrong first tool for this tutorial.
+
+### Run with one verification prompt
+
+Use a prompt that should fail or degrade when retrieval or the tool is missing.
+
+### Inspect the run
+
+Check whether:
+
+- retrieval context appeared
+- the tool was callable and actually called
+- the final answer reflects those intermediate steps
+
+</Steps>
+
+## Acceptance check
+
+- the agent run completes
+- retrieval affects the answer
+- the tool path is visible
+- the output can be reviewed after the run
+
+## Verification checklist
+
+- tenant access confirmed
+- model configured
+- knowledge path available
+- tool attached and visible
+- run trace inspectable
+
+## Known gaps
+
+<Callout type="warning">
+  This tutorial is ready as the base public path, but the team still needs to execute a fresh full run against the live product and convert any friction into tracked gap-log items.
+</Callout>

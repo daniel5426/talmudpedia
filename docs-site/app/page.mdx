@@ -1,0 +1,66 @@
+---
+title: Introduction
+description: Start here to understand what Agents24 is, what the platform covers, and how this docs site is organized.
+status: published
+audience: external-builders
+lastUpdated: 2026-04-10
+lastValidated: 2026-04-10
+canonicalSources:
+  - docs/design-docs/platform_current_state.md
+  - docs/design-docs/platform_architecture_layers.md
+  - docs/product-specs/published_apps_spec.md
+verificationStatus: partial
+---
+
+import { Callout, Cards } from "nextra/components";
+
+# Build Agents24 with less guesswork
+
+Agents24 is an AI platform for building agents, retrieval flows, tools, published apps, and runtime integrations without stitching those pieces together by hand.
+
+This public site is intentionally task-first:
+
+- start with a working path
+- validate it against the real product
+- log gaps instead of hiding them
+
+<Callout type="info">
+  The current docs wave is centered on one journey: build an agent with retrieval and tools, run it, inspect the run, then hand off toward deployment.
+</Callout>
+
+## What the platform covers
+
+<Cards>
+  <Cards.Card title="Agents" href="/concepts/agents">
+    Graph-based agent authoring and execution.
+  </Cards.Card>
+  <Cards.Card title="Knowledge and Retrieval" href="/concepts/knowledge-and-retrieval">
+    Knowledge stores, ingestion, and retrieval-connected runtime flows.
+  </Cards.Card>
+  <Cards.Card title="Tools" href="/concepts/tools">
+    Manual, bound, artifact-backed, and runtime-executed tools.
+  </Cards.Card>
+  <Cards.Card title="Quickstart" href="/quickstart">
+    Fastest path to a first runnable build.
+  </Cards.Card>
+</Cards>
+
+## How to use this docs site
+
+1. Read [Quickstart](/quickstart) to get the shortest working path.
+2. Use [Concepts](/concepts) only when you need the model behind the workflow.
+3. Follow [Tutorials](/tutorials/first-agent-with-retrieval-and-tools) for the end-to-end build path.
+4. Use [Guides](/guides/runs-and-debugging) when something behaves differently than expected.
+
+## Public docs contract
+
+- Public pages are curated and simplified.
+- Internal canonical engineering docs remain in the repo under `docs/`.
+- If a flow cannot be fully validated yet, the limitation is stated explicitly and tracked as a gap.
+
+## Current validation state
+
+- Docs app foundation: implemented
+- Search: local Pagefind indexing configured
+- External content coverage: seeded, not complete
+- Full product journey validation: still partial in this first pass

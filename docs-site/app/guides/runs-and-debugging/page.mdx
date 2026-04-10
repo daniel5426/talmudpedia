@@ -1,0 +1,44 @@
+---
+title: Runs and Debugging
+description: Inspect runs systematically so docs work also doubles as platform validation.
+status: published
+audience: external-builders
+lastUpdated: 2026-04-10
+lastValidated: 2026-04-10
+canonicalSources:
+  - docs/design-docs/agent_execution_current.md
+  - docs/product-specs/admin_stats_spec.md
+  - backend/documentations/summary/chat_thread_token_spec.md
+verificationStatus: partial
+---
+
+import { Callout } from "nextra/components";
+
+# Runs and Debugging
+
+When a build fails, do not guess from the final answer alone. Inspect the run as a sequence:
+
+1. inputs
+2. retrieval behavior
+3. tool calls
+4. output
+5. persisted trace or event surface
+
+## What to verify on every run
+
+- the run actually started with the input you expected
+- retrieval inputs were attached when needed
+- the intended tool was visible and callable
+- the final output reflects the observed intermediate behavior
+
+## Fast triage order
+
+- bad answer with no tool call: check tool availability and prompt shape
+- bad answer with no useful context: check retrieval setup and corpus scope
+- incomplete run visibility: check trace and event surfaces before changing the graph
+
+## Docs-driven debugging rule
+
+<Callout type="info">
+  If a tutorial step cannot be debugged from visible product surfaces, that is not only a product problem. It is also a docs gap and should be logged.
+</Callout>

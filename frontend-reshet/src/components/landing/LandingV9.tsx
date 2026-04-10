@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { AnimatePresence, motion, useMotionTemplate, useMotionValueEvent, useReducedMotion, useScroll, useTransform } from "motion/react";
 import { ArrowRight, ChevronDown } from "lucide-react";
+import { ParticleField, type Repulsor, type ClearZone } from "./v9/ParticleField";
 
 type HeroMetrics = {
   logoStartTop: number;
@@ -49,6 +50,8 @@ const PLATFORM_DOMAINS = [
     heading: "Design and operate graph-based agent systems without splitting authoring from runtime.",
     body: "Move from prompt chains to explicit execution graphs, tool orchestration, and governed runtime behavior in one surface.",
     points: ["Graph authoring", "Tool contracts", "Runtime execution", "Trace visibility"],
+    statLabel: "Active graphs",
+    statValue: "124",
   },
   {
     title: "Knowledge",
@@ -56,6 +59,8 @@ const PLATFORM_DOMAINS = [
     heading: "Attach structured knowledge pipelines directly to the platform that serves production agents.",
     body: "Keep ingestion, retrieval, source management, and operator-level control in the same operating layer as your deployed agents.",
     points: ["Source pipelines", "Operator tuning", "Index governance", "Answer grounding"],
+    statLabel: "Indexed sources",
+    statValue: "18.4K",
   },
   {
     title: "Governance",
@@ -63,6 +68,8 @@ const PLATFORM_DOMAINS = [
     heading: "Track cost, permissions, and model behavior with explicit platform rules instead of ad-hoc conventions.",
     body: "Make runtime budgets, model policy, resource controls, and operator boundaries first-class platform primitives.",
     points: ["Quota policy", "Scope control", "Model routing", "Usage accounting"],
+    statLabel: "Guardrails enforced",
+    statValue: "31",
   },
   {
     title: "Deployments",
@@ -70,8 +77,49 @@ const PLATFORM_DOMAINS = [
     heading: "Move from local iteration to deployed runtime surfaces without losing visibility or control.",
     body: "Ship hosted experiences, embedded runtimes, and managed app surfaces from the same platform backbone.",
     points: ["Hosted apps", "Embedded runtime", "Preview flow", "Release controls"],
+    statLabel: "Live environments",
+    statValue: "52",
   },
 ] as const;
+
+const DOMAIN_SCREENSHOTS = [
+  "/platform_screenshot/Screenshot 2026-03-23 at 22.50.52.png",
+  "/platform_screenshot/Screenshot 2026-03-23 at 22.49.30.png",
+  "/platform_screenshot/Screenshot 2026-03-23 at 22.58.34.png",
+  "/platform_screenshot/Screenshot 2026-03-23 at 22.59.00.png",
+] as const;
+
+
+/* ═══════════════════════════════════════════════════════════
+   DOMAIN TEXT CONTENT — Floating Minimalist Layout
+   ═══════════════════════════════════════════════════════════ */
+function DomainTextContent({
+  domain,
+  index,
+}: {
+  domain: (typeof PLATFORM_DOMAINS)[number];
+  index: number;
+}) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, x: 20, y: 30 }}
+      animate={{ opacity: 1, x: 0, y: 0 }}
+      exit={{ opacity: 0, x: -10, y: -20 }}
+      transition={{ duration: 0.4, ease: [0.19, 1, 0.22, 1] }}
+      className="relative w-full h-full"
+    >
+      {/* Screenshot hero (only top-left needs radius) */}
+      <div className="relative w-full h-full rounded-tl-[24px] md:rounded-tl-[32px] overflow-hidden border-l border-t border-black/[0.04] bg-[#fdfdfd]">
+        <Image
+          src={DOMAIN_SCREENSHOTS[index]}
+          alt={domain.title}
+          fill
+          className="object-cover object-left-top"
+        />
+      </div>
+    </motion.div>
+  );
+}
 
 export function LandingV9() {
   const [scrolled, setScrolled] = useState(false);
@@ -81,7 +129,11 @@ export function LandingV9() {
   const [domainsScenePhase, setDomainsScenePhase] = useState<"before" | "active" | "after">("before");
   const heroSceneRef = useRef<HTMLElement | null>(null);
   const domainsSceneRef = useRef<HTMLElement | null>(null);
+  const domainsContainerRef = useRef<HTMLDivElement | null>(null);
   const prefersReducedMotion = useReducedMotion();
+
+  // Particle data — mutable refs, never trigger re-renders
+  const particleRepulsorsRef = useRef<Repulsor[]>([]);
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 40);
@@ -173,32 +225,98 @@ export function LandingV9() {
     return restTop + (finalTop - restTop) * travel;
   });
   const logoSize = useTransform(logoTravelProgress, [0, 1], [metrics.logoStartSize, metrics.logoFinalSize]);
+  
+  // Calculate left side anchor for the logo (closer to the left edge of the page)
+  const finalLeftAnchor = Math.max(24, (viewportWidth - 1580) / 2 + 24) + 60;
+  
   const logoLeft = useTransform(
     logoTravelProgress,
     [0, 1],
-    [viewportWidth / 2, viewportWidth - metrics.logoFinalRight - metrics.logoFinalSize / 2],
+    [viewportWidth / 2, finalLeftAnchor],
   );
   const logoX = useTransform(logoSize, (value) => -value / 2);
   const logoRotate = useTransform(logoTravelProgress, [0, 1], [0, 420]);
   const logoOpacity = useTransform(rawProgress, [0, 0.12, 1], [1, 1, 1]);
   const domainStops = PLATFORM_DOMAINS.map((_, index) => index / (PLATFORM_DOMAINS.length - 1));
-  const domainLogoTopPositions = PLATFORM_DOMAINS.map((_, index) =>
-    metrics.logoFinalTop + index * (isMobile ? 64 : 88),
-  );
-  const domainLogoTop = useTransform(domainsScrollProgress, domainStops, domainLogoTopPositions);
-  const domainLogoOpacity = useTransform(domainsScrollProgress, [0, 0.03, 1], [0, 1, 1]);
-  const heroFixedLogoOpacity = useTransform<number, number>(
-    [logoOpacity, domainLogoOpacity],
-    ([heroOpacity, domainOpacity]) => heroOpacity * (1 - domainOpacity),
+  // Staircase transform: Creates 4 distinct 'stops' where the UI lingers on a domain.
+  // Each domain gets a stay period, then a transition to the next.
+  const effectiveDomainsProgress = useTransform(
+    domainsScrollProgress,
+    [0, 0.15, 0.25, 0.40, 0.50, 0.65, 0.75, 1.0], // Input scroll segments
+    [0, 0,    0.333, 0.333, 0.666, 0.666, 1,    1]    // Output to domain indices
   );
 
-  useMotionValueEvent(domainsScrollProgress, "change", (value) => {
+  // Layout Constants for dynamic tracking
+  const TITLE_H = 28; // Matches actual line-height of text-[19px]
+  const GAP_H = 32; // Matches gap-8
+  const SUBTEXT_H = 58; // 2 lines at 20px + 12px mt + buffer
+
+  // Dynamic Center Calculation:
+  // We want the logo's TOP EDGE to follow the trajectory needed to keep its center on the title.
+  const getLogoYForIndex = (index: number, activeIdx: number) => {
+    // baseTop is the exact Top Edge where the hero lands.
+    const baseTop = metrics.logoFinalTop;
+    const expansionOffset = index > activeIdx ? SUBTEXT_H : 0;
+    
+    // We simply calculate the TOP of the logo.
+    // At index 0, it returns exactly baseTop (matching hero landing).
+    return baseTop + index * (TITLE_H + GAP_H) + expansionOffset;
+  };
+
+  const domainLogoTop = useTransform(effectiveDomainsProgress, (value) => {
+    const activeIdx = value * (PLATFORM_DOMAINS.length - 1);
+    const i1 = Math.floor(activeIdx);
+    const i2 = Math.ceil(activeIdx);
+    const f = activeIdx - i1;
+
+    // Interpolate logo between "Logo centered on title i1 (with i1 expanded)"
+    // and "Logo centered on title i2 (with i2 expanded)".
+    const y1 = getLogoYForIndex(i1, i1);
+    const y2 = getLogoYForIndex(i2, i2);
+
+    return y1 + (y2 - y1) * f;
+  });
+
+  const domainLogoRotate = useTransform(domainsScrollProgress, [0, 0.12, 1], [420, 420 + 60, 420 + 480]);
+  const domainLogoOpacity = useTransform(domainsScrollProgress, [0, 0.08, 1], [0, 1, 1]);
+
+  // --- Universal Logo Integration (Zero-Fade Journey) ---
+  // We use the hero values until the domains section starts, then hand over to academic values.
+  const univLogoTop = useTransform([logoTop, domainLogoTop, domainsScrollProgress], ([hT, dT, dP]) => (dP as number) > 0 ? (dT as number) : (hT as number));
+  const univLogoLeft = useTransform([logoLeft, domainsScrollProgress], ([hL, dP]) => (dP as number) > 0 ? finalLeftAnchor : (hL as number));
+  const univLogoSize = useTransform([logoSize, domainsScrollProgress], ([hS, dP]) => (dP as number) > 0 ? metrics.logoFinalSize : (hS as number));
+  const univLogoRotate = useTransform([logoRotate, domainLogoRotate, domainsScrollProgress], ([hR, dR, dP]) => (dP as number) > 0 ? (dR as number) : (hR as number));
+  const univLogoOpacity = useTransform(rawProgress, [0, 0.12, 1], [1, 1, 1]); // Stays at 1 throughout
+
+  useMotionValueEvent(effectiveDomainsProgress, "change", (value) => {
     const nextIndex = Math.min(
       PLATFORM_DOMAINS.length - 1,
       Math.max(0, Math.round(value * (PLATFORM_DOMAINS.length - 1))),
     );
     setActiveDomainIndex(nextIndex);
   });
+
+  // ── Logo repulsor for particles ──
+  // Writes directly to ref — zero re-renders. Tracks both the main logo and domain logo.
+  const updateRepulsors = useCallback(() => {
+    const container = domainsContainerRef.current;
+    if (!container) return;
+    const containerRect = container.getBoundingClientRect();
+    const reps: Repulsor[] = [];
+
+    // Universal Logo Repulsor
+    const currentTop = univLogoTop.get();
+    const currentLeft = univLogoLeft.get();
+    const currentSize = univLogoSize.get();
+    const relY = currentTop - containerRect.top + currentSize / 2;
+    if (relY > -currentSize && relY < containerRect.height + currentSize) {
+      reps.push({ x: currentLeft - containerRect.left, y: relY, radius: currentSize * 1.8, strength: 1.2 });
+    }
+
+    particleRepulsorsRef.current = reps;
+  }, [univLogoTop, univLogoLeft, univLogoSize, metrics.logoFinalSize]);
+
+  useMotionValueEvent(univLogoTop, "change", updateRepulsors);
 
   const bottomNotchPath = useMotionTemplate`M0 ${metrics.seamY}
                    C 80 ${metrics.seamY}, 170 ${metrics.seamY}, 250 ${metrics.seamY}
@@ -242,13 +360,13 @@ export function LandingV9() {
         <div
           className={`mx-auto flex items-center h-14 transition-all duration-500 ease-out ${
             scrolled
-              ? "max-w-4xl bg-white/90 backdrop-blur-xl rounded-full shadow-[0_4px_24px_-4px_rgba(0,0,0,0.08)] border border-gray-200/60 px-5"
+              ? "max-w-4xl bg-white/90 backdrop-blur-xl rounded-full border border-gray-200/60 px-5"
               : "max-w-[1200px] bg-transparent px-6"
           }`}
         >
           <Link href="/" className="flex items-center gap-2.5">
             <Image src="/kesher.png" alt="AGENTS24" width={28} height={28} className="h-7 w-7 rounded-lg" />
-            <span className="text-lg font-bold tracking-tight text-black">AGENTS24</span>
+            <span className="text-lg font-bold tracking-tight text-white mix-blend-difference">AGENTS24</span>
           </Link>
           <div className="flex-1" />
           <div className="hidden md:flex items-center gap-6 text-[13px] font-medium text-[#4b5563]">
@@ -271,33 +389,20 @@ export function LandingV9() {
         </div>
       </nav>
 
+      {/* UNIVERSAL LOGO — One element, entire journey */}
       <motion.div
-        className="fixed z-40 pointer-events-none"
+        className="fixed z-50 pointer-events-none"
         style={{
-          top: logoTop,
-          left: logoLeft,
-          width: logoSize,
-          height: logoSize,
-          x: logoX,
-          rotate: logoRotate,
-          opacity: heroFixedLogoOpacity,
+          top: univLogoTop,
+          left: univLogoLeft,
+          width: univLogoSize,
+          height: univLogoSize,
+          x: useTransform(univLogoSize, (s) => -(s as number) / 2),
+          rotate: univLogoRotate,
+          opacity: univLogoOpacity,
         }}
       >
         <Image src="/kesher.png" alt="AGENTS24" width={560} height={560} className="h-full w-full object-contain" priority />
-      </motion.div>
-
-      <motion.div
-        className="fixed z-40 pointer-events-none"
-        style={{
-          top: domainLogoTop,
-          left: viewportWidth - metrics.logoFinalRight - metrics.logoFinalSize / 2,
-          width: metrics.logoFinalSize,
-          height: metrics.logoFinalSize,
-          x: -metrics.logoFinalSize / 2,
-          opacity: domainLogoOpacity,
-        }}
-      >
-        <Image src="/kesher.png" alt="AGENTS24" width={88} height={88} className="h-full w-full object-contain" />
       </motion.div>
 
       <section
@@ -359,66 +464,85 @@ export function LandingV9() {
         </div>
       </section>
 
-      <main className="relative -mt-[54vh] bg-white md:-mt-[60vh]">
+      <main className="relative -mt-[62vh] bg-white md:-mt-[68vh]">
         <section
           ref={domainsSceneRef}
           id="platform"
           className="relative"
-          style={{ height: isMobile ? "260vh" : "320vh" }}
+          style={{ height: isMobile ? "400vh" : "700vh" }}
         >
           <div
+            ref={domainsContainerRef}
             className={`h-screen overflow-visible bg-white ${
               domainsScenePhase === "active"
                 ? "fixed inset-x-0 top-0 z-20"
                 : "absolute inset-x-0 z-20"
             } ${domainsScenePhase === "before" ? "top-0" : ""} ${domainsScenePhase === "after" ? "bottom-0" : ""}`}
           >
-            <div className="mx-auto grid h-full max-w-[1480px] gap-10 px-6 md:grid-cols-[minmax(0,1.15fr)_360px] md:gap-16">
-              <div className="relative flex min-h-0 items-center py-24 md:py-28">
-                <AnimatePresence mode="wait">
-                  <motion.div
-                    key={PLATFORM_DOMAINS[activeDomainIndex].title}
-                    initial={{ opacity: 0, y: 24 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -24 }}
-                    transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
-                    className="w-full rounded-[34px] border border-[#0a0a0a]/8 bg-[#f6f3ee] p-8 shadow-[0_30px_80px_-45px_rgba(10,10,10,0.28)] md:p-12"
-                  >
-                    <p className="mb-4 text-xs font-semibold uppercase tracking-[0.28em] text-[#0a0a0a]/45">
-                      {PLATFORM_DOMAINS[activeDomainIndex].eyebrow}
-                    </p>
-                    <h2 className="max-w-3xl text-[34px] font-medium leading-[0.98] tracking-tight text-[#0a0a0a] md:text-[58px]">
-                      {PLATFORM_DOMAINS[activeDomainIndex].heading}
-                    </h2>
-                    <p className="mt-6 max-w-2xl text-[17px] leading-8 text-[#0a0a0a]/65 md:text-[19px]">
-                      {PLATFORM_DOMAINS[activeDomainIndex].body}
-                    </p>
-                    <div className="mt-10 grid gap-3 sm:grid-cols-2">
-                      {PLATFORM_DOMAINS[activeDomainIndex].points.map((point) => (
-                        <div key={point} className="rounded-[22px] border border-[#0a0a0a]/7 bg-white/70 px-5 py-4 text-[15px] font-medium text-[#0a0a0a]/78">
-                          {point}
-                        </div>
-                      ))}
-                    </div>
-                  </motion.div>
-                </AnimatePresence>
+            <div className="relative z-10 mx-auto grid h-full max-w-[1580px] gap-10 px-6 md:grid-cols-[340px_minmax(0,1fr)] md:gap-16">
+              
+              {/* Left Column: Flowing Logo & Domain Labels (Dynamic Accordion) */}
+              <div className="relative hidden self-start md:block">
+                <div 
+                  className="flex flex-col gap-8"
+                  style={{ 
+                    paddingTop: (metrics.logoFinalTop + metrics.logoFinalSize / 2) - (TITLE_H / 2) - 1
+                  }}
+                >
+                  {PLATFORM_DOMAINS.map((domain, index) => (
+                    <motion.div
+                      layout
+                      key={domain.title}
+                      className="relative left-[130px] w-[240px] text-left"
+                    >
+                      <motion.p 
+                        layout="position"
+                        className={`text-[19px] font-medium tracking-tight transition-colors duration-300 ${
+                          index === activeDomainIndex ? "text-[#0a0a0a]" : "text-[#0a0a0a]/28"
+                        }`}
+                      >
+                        {domain.title}
+                      </motion.p>
+                      
+                      {/* Expanding subtext section */}
+                      <div className="overflow-hidden">
+                        <AnimatePresence>
+                          {index === activeDomainIndex && (
+                            <motion.p 
+                              layout
+                              initial={{ height: 0, opacity: 0, marginTop: 0 }}
+                              animate={{ height: "auto", opacity: 1, marginTop: 12 }}
+                              exit={{ height: 0, opacity: 0, marginTop: 0 }}
+                              transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
+                              className="text-[14px] leading-relaxed text-[#0a0a0a]/40 pr-8"
+                            >
+                              {domain.body}
+                            </motion.p>
+                          )}
+                        </AnimatePresence>
+                      </div>
+                    </motion.div>
+                  ))}
+                </div>
               </div>
 
-              <div className="relative hidden self-start md:block">
-                <div className="relative">
-                  {PLATFORM_DOMAINS.map((domain, index) => (
-                    <div
-                      key={domain.title}
-                      className="absolute right-[120px] w-[200px] text-right"
-                      style={{ top: `${domainLogoTopPositions[index] + metrics.logoFinalSize / 2 - 14}px` }}
-                    >
-                      <p className={`text-[19px] font-medium tracking-tight transition-colors duration-300 ${
-                        index === activeDomainIndex ? "text-[#0a0a0a]" : "text-[#0a0a0a]/28"
-                      }`}>
-                        {domain.title}
-                      </p>
-                    </div>
-                  ))}
+              {/* Right Column: Active Domain Content */}
+              <div className="relative flex min-h-0 items-center justify-center py-20 md:py-28">
+                {/* Persistent Layout Wrapper */}
+                <div className="absolute top-[20vh] lg:top-[16vh] left-[60px] md:left-[60px] w-[120vw] md:w-[90vw] lg:w-[1400px] h-[80vh] md:h-[90vh] lg:h-[1000px]">
+                  <div className="relative w-full h-full">
+                    {/* Soft background padding (STATIONARY — shared across all domains) */}
+                    <div className="absolute inset-0 -left-6 -top-6 md:-left-12 md:-top-12 bg-[#f4f4f5] rounded-tl-[40px] md:rounded-tl-[56px]" />
+                    
+                    {/* Animate individual screenshots over the persistent bg */}
+                    <AnimatePresence mode="wait">
+                      <DomainTextContent
+                        key={activeDomainIndex}
+                        domain={PLATFORM_DOMAINS[activeDomainIndex]}
+                        index={activeDomainIndex}
+                      />
+                    </AnimatePresence>
+                  </div>
                 </div>
               </div>
             </div>
