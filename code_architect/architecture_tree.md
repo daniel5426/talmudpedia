@@ -1,6 +1,6 @@
 # Architecture Tree (Curated)
 
-Last Updated: 2026-04-09
+Last Updated: 2026-04-12
 
 This file is a backend-only architecture map optimized for agent context efficiency.
 
@@ -38,8 +38,10 @@ backend/app/api/routers/rag_operator_contracts.py
 backend/app/api/routers/artifacts.py
 backend/app/api/routers/artifact_runs.py
 backend/app/api/routers/artifact_coding_agent.py
+backend/app/api/routers/mcp.py
 backend/app/api/schemas/
 backend/app/api/schemas/context_window.py
+backend/app/api/schemas/mcp.py
 backend/app/api/schemas/run_usage.py
 
 backend/app/core/
@@ -124,6 +126,7 @@ backend/app/db/postgres/models/
 backend/app/db/postgres/models/agents.py
 backend/app/db/postgres/models/artifact_runtime.py
 backend/app/db/postgres/models/agent_threads.py
+backend/app/db/postgres/models/mcp.py
 backend/app/db/postgres/models/published_app_analytics.py
 backend/app/db/postgres/models/prompts.py
 backend/app/db/postgres/models/runtime_attachments.py
@@ -152,6 +155,9 @@ backend/app/services/prompt_library_service.py
 backend/app/services/prompt_reference_resolver.py
 backend/app/services/credentials_service.py
 backend/app/services/integration_provider_catalog.py
+backend/app/services/mcp_client.py
+backend/app/services/mcp_crypto.py
+backend/app/services/mcp_service.py
 backend/app/services/registry_seeding.py
 backend/app/services/artifact_coding_chat_history_service.py
 backend/app/services/artifact_coding_shared_draft_service.py
@@ -202,7 +208,6 @@ backend/app/services/speech_to_text_service.py
 backend/app/services/orchestration_kernel_service.py
 backend/app/services/orchestration_policy_service.py
 backend/app/services/orchestration_lineage_service.py
-backend/app/services/mcp_client.py
 backend/app/services/node_surface_inventory.py
 backend/app/services/web_search.py
 backend/app/services/tool_binding_service.py

@@ -3,9 +3,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
-import { AnimatePresence, motion, useMotionTemplate, useMotionValueEvent, useReducedMotion, useScroll, useTransform } from "motion/react";
-import { ArrowRight, ChevronDown } from "lucide-react";
-import { ParticleField, type Repulsor, type ClearZone } from "./v9/ParticleField";
+import { AnimatePresence, motion, useMotionTemplate, useMotionValueEvent, useReducedMotion, useScroll, useTransform, animate } from "motion/react";
+import { ChevronDown } from "lucide-react";
+import { type Repulsor } from "./v9/ParticleField";
+import { DOMAIN_SCREENSHOTS, PLATFORM_DOMAINS, PLATFORM_DOMAIN_SCROLL_MODEL, getPlatformDomainsSceneHeight } from "./v9/platformDomains";
 
 type HeroMetrics = {
   logoStartTop: number;
@@ -20,11 +21,11 @@ type HeroMetrics = {
 };
 
 const MOBILE_METRICS: HeroMetrics = {
-  logoStartTop: 850,
+  logoStartTop: 650,
   logoStartSize: 228,
   topArcHeight: 140,
   seamY: 590,
-  apexYOpen: 390,
+  apexYOpen: 190,
   sceneHeight: "205vh",
   logoFinalTop: 92,
   logoFinalRight: 20,
@@ -32,88 +33,43 @@ const MOBILE_METRICS: HeroMetrics = {
 };
 
 const DESKTOP_METRICS: HeroMetrics = {
-  logoStartTop: 710,
+  logoStartTop: 647,
   logoStartSize: 560,
   topArcHeight: 108,
   seamY: 560,
-  apexYOpen: 320,
+  apexYOpen: 260,
   sceneHeight: "220vh",
   logoFinalTop: 96,
   logoFinalRight: 28,
   logoFinalSize: 88,
 };
 
-const PLATFORM_DOMAINS = [
-  {
-    title: "Agent Graphs",
-    eyebrow: "Execution",
-    heading: "Design and operate graph-based agent systems without splitting authoring from runtime.",
-    body: "Move from prompt chains to explicit execution graphs, tool orchestration, and governed runtime behavior in one surface.",
-    points: ["Graph authoring", "Tool contracts", "Runtime execution", "Trace visibility"],
-    statLabel: "Active graphs",
-    statValue: "124",
-  },
-  {
-    title: "Knowledge",
-    eyebrow: "Retrieval",
-    heading: "Attach structured knowledge pipelines directly to the platform that serves production agents.",
-    body: "Keep ingestion, retrieval, source management, and operator-level control in the same operating layer as your deployed agents.",
-    points: ["Source pipelines", "Operator tuning", "Index governance", "Answer grounding"],
-    statLabel: "Indexed sources",
-    statValue: "18.4K",
-  },
-  {
-    title: "Governance",
-    eyebrow: "Control",
-    heading: "Track cost, permissions, and model behavior with explicit platform rules instead of ad-hoc conventions.",
-    body: "Make runtime budgets, model policy, resource controls, and operator boundaries first-class platform primitives.",
-    points: ["Quota policy", "Scope control", "Model routing", "Usage accounting"],
-    statLabel: "Guardrails enforced",
-    statValue: "31",
-  },
-  {
-    title: "Deployments",
-    eyebrow: "Runtime",
-    heading: "Move from local iteration to deployed runtime surfaces without losing visibility or control.",
-    body: "Ship hosted experiences, embedded runtimes, and managed app surfaces from the same platform backbone.",
-    points: ["Hosted apps", "Embedded runtime", "Preview flow", "Release controls"],
-    statLabel: "Live environments",
-    statValue: "52",
-  },
-] as const;
-
-const DOMAIN_SCREENSHOTS = [
-  "/platform_screenshot/Screenshot 2026-03-23 at 22.50.52.png",
-  "/platform_screenshot/Screenshot 2026-03-23 at 22.49.30.png",
-  "/platform_screenshot/Screenshot 2026-03-23 at 22.58.34.png",
-  "/platform_screenshot/Screenshot 2026-03-23 at 22.59.00.png",
-] as const;
-
-
 /* ═══════════════════════════════════════════════════════════
    DOMAIN TEXT CONTENT — Floating Minimalist Layout
    ═══════════════════════════════════════════════════════════ */
 function DomainTextContent({
   domain,
-  index,
 }: {
   domain: (typeof PLATFORM_DOMAINS)[number];
-  index: number;
 }) {
   return (
     <motion.div
       initial={{ opacity: 0, x: 20, y: 30 }}
       animate={{ opacity: 1, x: 0, y: 0 }}
       exit={{ opacity: 0, x: -10, y: -20 }}
-      transition={{ duration: 0.4, ease: [0.19, 1, 0.22, 1] }}
+      transition={{ duration: 0.25, ease: [0.19, 1, 0.22, 1] }}
       className="relative w-full h-full"
     >
       {/* Screenshot hero (only top-left needs radius) */}
-      <div className="relative w-full h-full rounded-tl-[24px] md:rounded-tl-[32px] overflow-hidden border-l border-t border-black/[0.04] bg-[#fdfdfd]">
+      <div className="relative w-full h-full rounded-tl-[16px] md:rounded-tl-[22px] overflow-hidden border-l border-t border-black/[0.04] bg-[#fdfdfd]">
         <Image
-          src={DOMAIN_SCREENSHOTS[index]}
+          src={DOMAIN_SCREENSHOTS[domain.title]}
           alt={domain.title}
           fill
+          priority
+          placeholder="blur"
+          quality={95}
+          sizes="(max-width: 768px) 100vw, (max-width: 1200px) 70vw, 1400px"
           className="object-cover object-left-top"
         />
       </div>
@@ -208,29 +164,27 @@ export function LandingV9() {
 
   const rawProgress = useTransform(scrollYProgress, (value) => {
     if (prefersReducedMotion) return 0;
-    if (value <= 0.31) return 0;
-    if (value >= 0.92) return 1;
-    return (value - 0.31) / 0.61;
-  });
-
-  const logoLiftProgress = useTransform(scrollYProgress, (value) => {
-    if (prefersReducedMotion) return 0;
-    if (value <= 0.015) return 0;
-    if (value >= 0.34) return 1;
-    return (value - 0.015) / 0.325;
+    if (value <= 0.42) return 0;
+    if (value >= 0.76) return 1;
+    return (value - 0.42) / 0.34;
   });
 
   const logoTravelProgress = useTransform(scrollYProgress, (value) => {
     if (prefersReducedMotion) return 0;
-    if (value <= 0.48) return 0;
+    if (value <= 0.42) return 0;
     if (value >= 1) return 1;
-    return (value - 0.48) / 0.52;
+    return (value - 0.42) / 0.58;
   });
 
   const notchApexY = useTransform(rawProgress, [0, 1], [metrics.apexYOpen, metrics.seamY]);
   const leftInnerX = useTransform(rawProgress, [0, 1], [isMobile ? 475 : 475, 600]);
   const rightInnerX = useTransform(rawProgress, [0, 1], [isMobile ? 965 : 965, 840]);
-  const logoRestTop = useTransform(logoLiftProgress, [0, 1], [metrics.logoStartTop, metrics.logoStartTop - (isMobile ? 300 : 380)]);
+  
+  const maxScrollY = isMobile ? (1.05 * vhInstance) : (1.2 * vhInstance);
+  const logoRestTop = useTransform(scrollYProgress, (progress) => {
+    const p = Math.min(progress, 0.42); 
+    return metrics.logoStartTop - (p * maxScrollY);
+  });
   const logoTop = useTransform<number, number>([logoRestTop, logoTravelProgress], ([restTop, travel]) => {
     const finalTop = metrics.logoFinalTop;
     return restTop + (finalTop - restTop) * travel;
@@ -245,16 +199,11 @@ export function LandingV9() {
     [0, 1],
     [viewportWidth / 2, finalLeftAnchor],
   );
-  const logoX = useTransform(logoSize, (value) => -value / 2);
   const logoRotate = useTransform(logoTravelProgress, [0, 1], [0, 420]);
-  const logoOpacity = useTransform(rawProgress, [0, 0.12, 1], [1, 1, 1]);
-  const domainStops = PLATFORM_DOMAINS.map((_, index) => index / (PLATFORM_DOMAINS.length - 1));
-  // Staircase transform: Creates 4 distinct 'stops' where the UI lingers on a domain.
-  // Each domain gets a stay period, then a transition to the next.
   const effectiveDomainsProgress = useTransform(
     domainsScrollProgress,
-    [0, 0.15, 0.25, 0.40, 0.50, 0.65, 0.75, 1.0], // Input scroll segments
-    [0, 0, 0.333, 0.333, 0.666, 0.666, 1, 1]    // Output to domain indices
+    PLATFORM_DOMAIN_SCROLL_MODEL.inputRange,
+    PLATFORM_DOMAIN_SCROLL_MODEL.outputRange,
   );
 
   // Layout Constants for dynamic tracking
@@ -289,11 +238,13 @@ export function LandingV9() {
   });
 
   const domainLogoRotate = useTransform(domainsScrollProgress, [0, 0.12, 1], [420, 420 + 60, 420 + 480]);
-  const domainLogoOpacity = useTransform(domainsScrollProgress, [0, 0.08, 1], [0, 1, 1]);
 
   // --- Exit Transition Logic ---
-  // As we reach the end of the section (0.9 to 1.0), the big elements shrink/fade
-  const exitProgress = useTransform(domainsScrollProgress, [0.88, 1], [0, 1]);
+  // Start the exit only after the last domain has had time to settle.
+  const lastDomainHoldPoint =
+    PLATFORM_DOMAIN_SCROLL_MODEL.clickTargets[PLATFORM_DOMAIN_SCROLL_MODEL.clickTargets.length - 1] ?? 0.94;
+  const exitStart = Math.min(0.975, lastDomainHoldPoint + 0.025);
+  const exitProgress = useTransform(domainsScrollProgress, [exitStart, 1], [0, 1]);
   const exitScale = useTransform(exitProgress, [0, 1], [1, 0.82]);
   const exitX = useTransform(exitProgress, [0, 1], [0, -40]);
   const exitOpacity = useTransform(exitProgress, [0, 0.6, 1], [1, 1, 0]);
@@ -379,7 +330,24 @@ export function LandingV9() {
     }
   );
 
-  const univLogoOpacity = useTransform(rawProgress, [0, 0.12, 1], [1, 1, 1]); // Stays at 1 throughout
+  const startLogoOpacity = useTransform(
+    scrollYProgress,
+    (v) => (v as number) < 0.42 ? 1 : 0
+  );
+
+  const univLogoOpacity = useTransform(
+    [scrollYProgress, closingScrollProgress],
+    ([heroP, closingP]) => {
+      if ((heroP as number) < 0.42) return 0;
+      if ((closingP as number) >= 0.5) return 0;
+      return 1;
+    }
+  );
+
+  const staticLogoOpacity = useTransform(
+    closingScrollProgress,
+    (v) => (v as number) >= 0.5 ? 1 : 0
+  );
 
   // --- Footer "S24" split animation ---
   const { scrollYProgress: footerScrollProgress } = useScroll({
@@ -395,6 +363,35 @@ export function LandingV9() {
     );
     setActiveDomainIndex(nextIndex);
   });
+
+  const handleDomainClick = (index: number) => {
+    if (!domainsSceneRef.current) return;
+    const rect = domainsSceneRef.current.getBoundingClientRect();
+    const absTop = window.scrollY + rect.top;
+    const scrollableDistance = rect.height - window.innerHeight;
+    
+    const targetProgress = PLATFORM_DOMAIN_SCROLL_MODEL.clickTargets[index] ?? PLATFORM_DOMAIN_SCROLL_MODEL.clickTargets[0];
+    const targetY = absTop + (scrollableDistance * targetProgress);
+    
+    // Disable native CSS smooth scroll temporarily so our JS animation can run without fighting it
+    const htmlEl = document.documentElement;
+    const bodyEl = document.body;
+    const htmlOriginal = htmlEl.style.scrollBehavior;
+    const bodyOriginal = bodyEl.style.scrollBehavior;
+    htmlEl.style.scrollBehavior = 'auto';
+    bodyEl.style.scrollBehavior = 'auto';
+
+    // Use JS-driven scroll animation to prevent browser scroll abortion during layout shifts
+    animate(window.scrollY, targetY, {
+      duration: 0.7,
+      ease: [0.16, 1, 0.3, 1], // Custom snappy but smooth easing
+      onUpdate: (latest) => window.scrollTo(0, latest),
+      onComplete: () => {
+        htmlEl.style.scrollBehavior = htmlOriginal;
+        bodyEl.style.scrollBehavior = bodyOriginal;
+      }
+    });
+  };
 
   // ── Logo repulsor for particles ──
   // Writes directly to ref — zero re-renders. Tracks both the main logo and domain logo.
@@ -414,15 +411,15 @@ export function LandingV9() {
     }
 
     particleRepulsorsRef.current = reps;
-  }, [univLogoTop, univLogoLeft, univLogoSize, metrics.logoFinalSize]);
+  }, [univLogoTop, univLogoLeft, univLogoSize]);
 
   useMotionValueEvent(univLogoTop, "change", updateRepulsors);
 
   const bottomNotchPath = useMotionTemplate`M0 ${metrics.seamY}
-                   C 80 ${metrics.seamY}, 170 ${metrics.seamY}, 250 ${metrics.seamY}
-                   C 420 ${metrics.seamY}, ${leftInnerX} ${notchApexY}, 720 ${notchApexY}
-                   C ${rightInnerX} ${notchApexY}, 1020 ${metrics.seamY}, 1190 ${metrics.seamY}
-                   C 1270 ${metrics.seamY}, 1360 ${metrics.seamY}, 1440 ${metrics.seamY}
+                   C 70 ${metrics.seamY}, 140 ${metrics.seamY}, 210 ${metrics.seamY}
+                   C 370 ${metrics.seamY}, ${leftInnerX} ${notchApexY}, 720 ${notchApexY}
+                   C ${rightInnerX} ${notchApexY}, 1070 ${metrics.seamY}, 1230 ${metrics.seamY}
+                   C 1300 ${metrics.seamY}, 1370 ${metrics.seamY}, 1440 ${metrics.seamY}
                    L1440 560
                    L0 560
                    Z`;
@@ -430,9 +427,12 @@ export function LandingV9() {
   return (
     <div className="min-h-screen bg-white font-sans overflow-x-hidden selection:bg-black/10">
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Archivo+Black&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Archivo+Black&family=Playfair+Display:wght@400;700;900&family=JetBrains+Mono:wght@300;400;500&family=Sora:wght@300;400;600;700&family=DM+Serif+Display&display=swap');
         
-        html { scroll-behavior: smooth; }
+        html, body {
+          background-color: #0a0a0a;
+          scroll-behavior: smooth;
+        }
         @keyframes heroFadeUp {
           from { opacity: 0; transform: translateY(28px); }
           to { opacity: 1; transform: translateY(0); }
@@ -452,6 +452,10 @@ export function LandingV9() {
         }
         .animate-breathe { animation: breathe 6s ease-in-out infinite; }
         .animate-breathe-slow { animation: breathe 8s ease-in-out infinite; }
+        @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+        .cursor-blink { animation: blink 1.1s step-end infinite; }
+        @keyframes typewriter { from{width:0} to{width:100%} }
+        @keyframes orbitSlow { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
       `}</style>
 
       <nav
@@ -510,6 +514,22 @@ export function LandingV9() {
         className="relative"
         style={{ height: metrics.sceneHeight }}
       >
+        {/* Native Start Logo - identically natively scrolls with the page, resolving 100% of compositor jitter before handing off to the fixed logo */}
+        <motion.div
+           className="absolute pointer-events-none"
+           style={{
+             top: metrics.logoStartTop,
+             left: viewportWidth / 2,
+             width: metrics.logoStartSize,
+             height: metrics.logoStartSize,
+             x: -(metrics.logoStartSize / 2),
+             opacity: startLogoOpacity,
+             zIndex: 30,
+           }}
+        >
+            <Image src="/kesher.png" alt="AGENTS24" width={560} height={560} className="h-full w-full object-contain" priority />
+        </motion.div>
+
         <div className="sticky top-0 h-screen overflow-hidden bg-[#0a0a0a]">
           <div className="absolute top-0 left-0 right-0 z-10 pointer-events-none">
             <svg viewBox="0 0 1440 160" fill="none" className="h-[140px] w-full md:h-[clamp(88px,14vw,140px)]" preserveAspectRatio="none">
@@ -523,24 +543,26 @@ export function LandingV9() {
           <div className="absolute top-[30%] right-[15%] h-[250px] w-[250px] rounded-full bg-blue-500/[0.02] blur-[100px] pointer-events-none animate-breathe" />
 
           <div className="relative z-20 flex h-full flex-col items-center px-6 pt-36 pb-[24rem] md:pb-[38rem] text-center">
-            <h1 className="hero-2 mt-12 mb-6 text-[48px] font-medium leading-[1.05] tracking-tight text-white sm:text-[56px] md:text-[78px]">
-              Your AI operations,
-              <br />
-              one dashboard.
-            </h1>
-            <p className="hero-3 mb-10 max-w-2xl text-[17px] leading-relaxed text-[#a1a1aa] md:text-[18px]">
-              AGENTS24 gives teams a single surface to build agents, manage knowledge
-              pipelines, and govern every token in production.
-            </p>
-            <div className="hero-4 mb-12 flex flex-col items-center gap-4 sm:flex-row">
-              <Link href="/auth/signup" className="group flex items-center gap-2 rounded-full bg-white px-7 py-3.5 text-[14px] font-medium text-black transition-all duration-300 hover:bg-gray-100 hover:shadow-[0_0_40px_rgba(255,255,255,0.2)] shadow-[0_0_30px_rgba(255,255,255,0.1)]">
-                Start building
-                <ArrowRight className="h-4 w-4 transition-transform duration-300 group-hover:translate-x-1" />
-              </Link>
-              <Link href="#platform" className="rounded-full border border-white/10 bg-white/10 px-7 py-3.5 text-[14px] font-medium text-white backdrop-blur-md transition-all duration-300 hover:border-white/20 hover:bg-white/15">
-                View platform
-              </Link>
+            
+            <div className="hero-2 mt-8 mb-8 flex flex-col items-center">
+              <span className="text-[72px] sm:text-[96px] md:text-[130px] font-black leading-[0.85] tracking-tighter text-white/[0.04] select-none" style={{ fontFamily: "'Archivo Black', sans-serif" }}>CONTROL</span>
+              <h1 className="-mt-6 md:-mt-10 text-[44px] sm:text-[52px] md:text-[72px] font-medium leading-[1.08] tracking-tight text-white">
+                Every agent. Every token.
+                <br />
+                <span className="inline-flex items-center">
+                  <Image src="/kesher.png" alt="O" width={64} height={64} className="w-[32px] h-[32px] sm:w-[38px] sm:h-[38px] md:w-[54px] md:h-[54px] object-contain mr-[1.5px] md:mr-[3px] translate-y-[2px] md:translate-y-[4px] brightness-0 invert" />
+                  <span>ne</span>
+                </span> single surface.
+              </h1>
             </div>
+            
+            <p className="hero-3 mb-10 max-w-lg text-[16px] leading-relaxed text-[#a1a1aa] md:text-[17px]">
+              Build agents, manage knowledge, govern tokens.
+              <br className="hidden md:block" />
+              One platform. Zero fragmentation.
+            </p>
+
+            <div className="hero-4 mb-32" />
           </div>
 
           <div className="absolute inset-x-0 bottom-0 z-20 pointer-events-none overflow-visible">
@@ -563,7 +585,7 @@ export function LandingV9() {
           ref={domainsSceneRef}
           id="platform"
           className="relative"
-          style={{ height: isMobile ? "400vh" : "700vh" }}
+          style={{ height: getPlatformDomainsSceneHeight(isMobile) }}
         >
           <div
             ref={domainsContainerRef}
@@ -586,11 +608,12 @@ export function LandingV9() {
                     <motion.div
                       layout
                       key={domain.title}
-                      className="relative left-[130px] w-[240px] text-left"
+                      className="relative left-[130px] w-[240px] text-left cursor-pointer group"
+                      onClick={() => handleDomainClick(index)}
                     >
                       <motion.p
                         layout="position"
-                        className={`text-[19px] font-medium tracking-tight transition-colors duration-300 ${index === activeDomainIndex ? "text-[#0a0a0a]" : "text-[#0a0a0a]/28"
+                        className={`text-[19px] font-medium tracking-tight transition-colors duration-300 ${index === activeDomainIndex ? "text-[#0a0a0a]" : "text-[#0a0a0a]/28 group-hover:text-[#0a0a0a]/50"
                           }`}
                       >
                         {domain.title}
@@ -605,7 +628,7 @@ export function LandingV9() {
                               initial={{ height: 0, opacity: 0, marginTop: 0 }}
                               animate={{ height: "auto", opacity: 1, marginTop: 12 }}
                               exit={{ height: 0, opacity: 0, marginTop: 0 }}
-                              transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
+                              transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
                               className="text-[14px] leading-relaxed text-[#0a0a0a]/40 pr-8"
                             >
                               {domain.body}
@@ -627,14 +650,13 @@ export function LandingV9() {
                 >
                   <div className="relative w-full h-full">
                     {/* Soft background padding (STATIONARY — shared across all domains) */}
-                    <div className="absolute inset-0 -left-6 -top-6 md:-left-12 md:-top-12 bg-[#f4f4f5] rounded-tl-[40px] md:rounded-tl-[56px]" />
+                    <div className="absolute inset-0 -left-6 -top-6 md:-left-12 md:-top-12 bg-[#f4f4f5] rounded-tl-[24px] md:rounded-tl-[32px]" />
 
                     {/* Animate individual screenshots over the persistent bg */}
                     <AnimatePresence mode="wait">
                       <DomainTextContent
                         key={activeDomainIndex}
                         domain={PLATFORM_DOMAINS[activeDomainIndex]}
-                        index={activeDomainIndex}
                       />
                     </AnimatePresence>
                   </div>
@@ -648,8 +670,31 @@ export function LandingV9() {
         <section
           ref={closingSceneRef}
           className="relative bg-white z-10 pt-px w-full"
-          style={{ height: "100vh" }}
+          style={{ height: vhInstance }}
         >
+          {/* Static Landed Logo - seamlessly replaces the fixed logo to eliminate bounding jitter natively */}
+          <motion.div
+            className="absolute pointer-events-none"
+            style={{
+              top: verticalMiddle,
+              left: viewportWidth / 2,
+              width: metrics.logoStartSize,
+              height: metrics.logoStartSize,
+              x: -(metrics.logoStartSize / 2),
+              opacity: staticLogoOpacity,
+              zIndex: 30,
+            }}
+          >
+            <Image 
+              src="/kesher.png" 
+              alt="AGENTS24" 
+              width={560} 
+              height={560} 
+              className="h-full w-full object-contain" 
+              priority
+            />
+          </motion.div>
+
           {/* The Black Section Base */}
           <div
             className="absolute inset-x-0 bottom-0 bg-[#0a0a0a] z-10 pointer-events-auto"
@@ -739,7 +784,9 @@ export function LandingV9() {
           <div className="max-w-[1100px] mx-auto flex flex-col sm:flex-row items-center justify-between gap-3">
           </div>
         </div>
+
       </footer>
+
     </div>
   );
 }

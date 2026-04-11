@@ -58,6 +58,7 @@ export type {
 export { agentService } from "./agent";
 export { modelsService } from "./models";
 export { toolsService } from "./tools";
+export { mcpService } from "./mcp";
 export { promptsService } from "./prompts";
 export type {
   PromptRecord,
@@ -122,6 +123,16 @@ export type {
   UpdateToolRequest,
   ToolsListResponse,
 } from "./agent";
+export type {
+  McpServer,
+  McpDiscoveredTool,
+  McpAccountConnection,
+  McpAgentMount,
+  McpAuthMode,
+  McpApprovalPolicy,
+  CreateMcpServerRequest,
+  UpdateMcpServerRequest,
+} from "./mcp";
 
 export type {
   PublishedApp,

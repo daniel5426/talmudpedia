@@ -7,17 +7,20 @@ import {
     Loader2,
     AlertCircle,
     CheckCircle2,
+    PlugZap,
+    RefreshCw,
+    Unplug,
 } from "lucide-react"
-import { Node, Edge } from "@xyflow/react"
 
 import { CustomBreadcrumb } from "@/components/ui/custom-breadcrumb"
 
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { agentService, Agent, AgentGraphDefinition } from "@/services"
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { agentService, Agent, AgentGraphDefinition, mcpService, McpAgentMount, McpServer } from "@/services"
 import { formatHttpErrorMessage } from "@/services/http"
-import { AgentBuilder, AgentNodeData } from "@/components/agent-builder"
+import { AgentBuilder } from "@/components/agent-builder"
 import { normalizeGraphDefinition } from "@/components/agent-builder/graphspec"
 import { HeaderConfigEditor } from "@/components/builder"
 
@@ -33,6 +36,11 @@ export default function AgentBuilderPage() {
     const [error, setError] = useState<string | null>(null)
     const [actionError, setActionError] = useState<string | null>(null)
     const [builderMode, setBuilderMode] = useState<"build" | "execute">("build")
+    const [mcpDialogOpen, setMcpDialogOpen] = useState(false)
+    const [mcpServers, setMcpServers] = useState<McpServer[]>([])
+    const [mcpMounts, setMcpMounts] = useState<McpAgentMount[]>([])
+    const [mcpLoading, setMcpLoading] = useState(false)
+    const [mcpError, setMcpError] = useState<string | null>(null)
 
     // Store current graph state for saving
     const graphRef = useRef<AgentGraphDefinition>(normalizeGraphDefinition({ spec_version: "4.0", nodes: [], edges: [] }))
@@ -127,6 +135,62 @@ export default function AgentBuilderPage() {
         }
     }
 
+    const loadMcpState = useCallback(async () => {
+        if (!id) return
+        try {
+            setMcpLoading(true)
+            setMcpError(null)
+            const [servers, mounts] = await Promise.all([
+                mcpService.listServers(),
+                mcpService.listAgentMounts(id as string),
+            ])
+            setMcpServers(servers)
+            setMcpMounts(mounts)
+        } catch (err) {
+            setMcpError(formatHttpErrorMessage(err, "Failed to load MCP mounts."))
+        } finally {
+            setMcpLoading(false)
+        }
+    }, [id])
+
+    useEffect(() => {
+        if (!mcpDialogOpen) return
+        loadMcpState()
+    }, [mcpDialogOpen, loadMcpState])
+
+    async function handleAttach(serverId: string) {
+        if (!id) return
+        try {
+            setMcpError(null)
+            await mcpService.createAgentMount(id as string, { server_id: serverId, approval_policy: "always_allow" })
+            await loadMcpState()
+        } catch (err) {
+            setMcpError(formatHttpErrorMessage(err, "Failed to attach MCP server."))
+        }
+    }
+
+    async function handleApplyLatest(mountId: string) {
+        if (!id) return
+        try {
+            setMcpError(null)
+            await mcpService.updateAgentMount(id as string, mountId, { apply_latest_snapshot: true })
+            await loadMcpState()
+        } catch (err) {
+            setMcpError(formatHttpErrorMessage(err, "Failed to apply latest MCP snapshot."))
+        }
+    }
+
+    async function handleDetach(mountId: string) {
+        if (!id) return
+        try {
+            setMcpError(null)
+            await mcpService.deleteAgentMount(id as string, mountId)
+            await loadMcpState()
+        } catch (err) {
+            setMcpError(formatHttpErrorMessage(err, "Failed to detach MCP server."))
+        }
+    }
+
     return (
         <div className="flex w-full flex-col h-screen overflow-hidden">
             {/* Header */}
@@ -194,6 +258,16 @@ export default function AgentBuilderPage() {
                             identifierLabel="Agent ID"
                             disabled={isSaving || isLoading}
                         />
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setMcpDialogOpen(true)}
+                            disabled={isLoading || isSaving}
+                            className="h-8 rounded-md text-xs shadow-none"
+                        >
+                            <PlugZap className="mr-2 h-3 w-3" />
+                            Manage MCP
+                        </Button>
                         {saveStatus === "saved" && (
                             <span className="flex h-8 items-center gap-1 text-xs text-green-600">
                                 <CheckCircle2 className="h-3 w-3" />
@@ -261,6 +335,82 @@ export default function AgentBuilderPage() {
                     />
                 )}
             </main>
+
+            <Dialog open={mcpDialogOpen} onOpenChange={setMcpDialogOpen}>
+                <DialogContent className="sm:max-w-3xl">
+                    <DialogHeader>
+                        <DialogTitle>Agent MCP Mounts</DialogTitle>
+                        <DialogDescription>
+                            Attach synced MCP servers. Mounted MCP tools become available to reasoning nodes on this agent.
+                        </DialogDescription>
+                    </DialogHeader>
+
+                    {mcpError && (
+                        <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+                            {mcpError}
+                        </div>
+                    )}
+
+                    <div className="space-y-3">
+                        {mcpLoading ? (
+                            <div className="flex items-center justify-center py-10 text-sm text-muted-foreground">
+                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                Loading MCP servers...
+                            </div>
+                        ) : mcpServers.length === 0 ? (
+                            <div className="rounded-md border border-border/50 px-4 py-8 text-center text-sm text-muted-foreground">
+                                No MCP servers configured yet. Create them from settings first.
+                            </div>
+                        ) : (
+                            mcpServers.map((server) => {
+                                const mount = mcpMounts.find((item) => item.server_id === server.id) ?? null
+                                const pinned = mount?.applied_snapshot_version ?? null
+                                const latest = server.tool_snapshot_version
+                                const stale = mount !== null && pinned !== latest
+                                return (
+                                    <div key={server.id} className="rounded-lg border border-border/60 px-4 py-3">
+                                        <div className="flex flex-wrap items-center justify-between gap-3">
+                                            <div className="space-y-1">
+                                                <div className="flex items-center gap-2">
+                                                    <span className="font-medium">{server.name}</span>
+                                                    <Badge variant="outline">{server.auth_mode}</Badge>
+                                                    <Badge variant={server.sync_status === "ready" ? "default" : "outline"}>
+                                                        {server.sync_status}
+                                                    </Badge>
+                                                </div>
+                                                <div className="text-xs text-muted-foreground">
+                                                    latest snapshot {latest}
+                                                    {mount ? ` • pinned ${pinned}` : ""}
+                                                </div>
+                                            </div>
+
+                                            <div className="flex flex-wrap gap-2">
+                                                {mount ? (
+                                                    <>
+                                                        <Button variant="outline" size="sm" onClick={() => handleApplyLatest(mount.id)} disabled={!stale}>
+                                                            <RefreshCw className="mr-2 h-3 w-3" />
+                                                            {stale ? "Apply Latest" : "Up to Date"}
+                                                        </Button>
+                                                        <Button variant="outline" size="sm" onClick={() => handleDetach(mount.id)}>
+                                                            <Unplug className="mr-2 h-3 w-3" />
+                                                            Detach
+                                                        </Button>
+                                                    </>
+                                                ) : (
+                                                    <Button size="sm" onClick={() => handleAttach(server.id)} disabled={server.tool_snapshot_version <= 0}>
+                                                        <PlugZap className="mr-2 h-3 w-3" />
+                                                        Attach
+                                                    </Button>
+                                                )}
+                                            </div>
+                                        </div>
+                                    </div>
+                                )
+                            })
+                        )}
+                    </div>
+                </DialogContent>
+            </Dialog>
         </div>
     )
 }

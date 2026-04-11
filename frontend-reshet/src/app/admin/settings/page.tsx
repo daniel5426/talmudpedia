@@ -370,6 +370,12 @@ export default function SettingsPage() {
           description="Manage tenant-scoped credentials. Secret values are write-only."
         />
 
+        <div className="mb-4 flex justify-end">
+          <Button asChild variant="outline" size="sm">
+            <Link href="/admin/settings/mcp">Open MCP Servers</Link>
+          </Button>
+        </div>
+
         {integrationsError && (
           <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive mb-4">
             {integrationsError}

@@ -140,6 +140,10 @@ export type NormalizedRunStreamEvent =
       status?: string;
     })
   | (RunStreamBase & {
+      kind: "approval_request";
+      text: string;
+    })
+  | (RunStreamBase & {
       kind: "error";
       error: string;
     })
@@ -400,6 +404,16 @@ export function adaptRunStreamEvent(rawEvent: Record<string, unknown>, index: nu
     };
   }
 
+  if (eventName === "approval.request" || eventName === "mcp.auth_required") {
+    return {
+      ...base,
+      kind: "approval_request",
+      text:
+        toSafeText(payload.message) ||
+        (eventName === "mcp.auth_required" ? "Connect your account to continue." : "Approval required."),
+    };
+  }
+
   if (eventName === "run.failed") {
     return {
       ...base,
@@ -592,6 +606,20 @@ export function applyRunStreamEventToBlocks(
       return next;
     }
     next.push(nextBlock);
+    return next;
+  }
+
+  if (event.kind === "approval_request") {
+    const next = completeStreamingAssistantTextBlocks(blocks);
+    next.push(
+      createApprovalRequestBlock({
+        id: `approval:${event.runId || "run"}:${event.seq}`,
+        text: event.text,
+        runId: event.runId,
+        seq: event.seq,
+        ts: event.ts,
+      }),
+    );
     return next;
   }
 

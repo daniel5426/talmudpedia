@@ -387,16 +387,10 @@ export default function AppsPage() {
                       </span>
                     </div>
                     <div className="mt-0.5 flex flex-wrap items-center gap-2">
-                      <span className="truncate font-mono text-xs text-muted-foreground/60">
-                        /{app.slug}
-                      </span>
                       {agent ? (
-                        <>
-                          <span className="text-muted-foreground/30">·</span>
-                          <span className="truncate text-xs text-muted-foreground/60">
-                            {agent.name}
-                          </span>
-                        </>
+                        <span className="truncate text-xs text-muted-foreground/60">
+                          {agent.name}
+                        </span>
                       ) : null}
                     </div>
                   </div>

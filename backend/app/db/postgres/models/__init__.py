@@ -118,3 +118,14 @@ from .prompts import (
     PromptScope,
     PromptStatus,
 )
+from .mcp import (
+    McpAccountConnectionStatus,
+    McpAgentMount,
+    McpApprovalPolicy,
+    McpAuthMode,
+    McpDiscoveredTool,
+    McpOauthState,
+    McpServer,
+    McpSyncStatus,
+    McpUserAccountConnection,
+)

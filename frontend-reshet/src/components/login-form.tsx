@@ -94,7 +94,6 @@ export function LoginForm({
               <GoogleLogin
                 onSuccess={handleGoogleSuccess}
                 onError={() => setError("Google Login Failed")}
-                useOneTap
                 theme="outline"
                 size="large"
                 text="signin_with"

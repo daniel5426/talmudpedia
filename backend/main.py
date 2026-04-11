@@ -1066,6 +1066,7 @@ from app.api.routers import models as models_router
 from app.api.routers import resource_policies as resource_policies_router
 from app.api.routers import prompts as prompts_router
 from app.api.routers import tools as tools_router
+from app.api.routers import mcp as mcp_router
 from app.api.routers import artifacts as artifacts_router
 from app.api.routers import artifact_runs as artifact_runs_router
 from app.api.routers import artifact_coding_agent as artifact_coding_agent_router
@@ -1113,6 +1114,7 @@ app.include_router(knowledge_stores_router.router, prefix="/admin/knowledge-stor
 app.include_router(models_router.router, tags=["models"])
 app.include_router(prompts_router.router, tags=["prompts"])
 app.include_router(tools_router.router, tags=["tools"])
+app.include_router(mcp_router.router)
 app.include_router(org_units_router.router, prefix="/api", tags=["org-units"])
 app.include_router(rbac_router.router, prefix="/api", tags=["rbac"])
 app.include_router(audit_router.router, prefix="/api", tags=["audit"])

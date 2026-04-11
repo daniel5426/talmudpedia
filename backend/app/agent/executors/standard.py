@@ -42,6 +42,7 @@ from app.services.prompt_reference_resolver import PromptReferenceResolver
 from app.services.run_invocation_service import RunInvocationService
 from app.services.token_counter_service import TokenCounterService
 from app.services.resource_policy_service import ResourcePolicySnapshot
+from app.services.mcp_service import McpRuntimeService
 from app.db.postgres.models.agents import AgentRun, RunStatus
 
 logger = logging.getLogger(__name__)
@@ -1260,7 +1261,13 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
             batches.append(current)
         return batches
 
-    async def _resolve_tool_id(self, tool_call: Dict[str, Any], configured_tools: List[Any]) -> Optional[str]:
+    async def _resolve_tool_id(
+        self,
+        tool_call: Dict[str, Any],
+        configured_tools: List[Any],
+        *,
+        tool_records: Optional[List[Any]] = None,
+    ) -> Optional[str]:
         if not configured_tools:
             return None
 
@@ -1273,6 +1280,7 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
             return re.sub(r"\s+", " ", text).strip()
 
         configured = [str(tool) for tool in configured_tools if tool]
+        resolved_records = list(tool_records or [])
 
         tool_id = tool_call.get("tool_id")
         if tool_id:
@@ -1289,6 +1297,19 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
         normalized_tool_name = _normalize_tool_label(tool_name)
         if tool_name in configured:
             return str(tool_name)
+
+        for tool in resolved_records:
+            if not tool:
+                continue
+            record_id = str(getattr(tool, "id", "") or "").strip()
+            record_name = str(getattr(tool, "name", "") or "").strip()
+            record_slug = str(getattr(tool, "slug", "") or "").strip()
+            if tool_name_lower in {record_name.lower(), record_slug.lower()}:
+                return record_id or None
+            normalized_name = _normalize_tool_label(record_name)
+            normalized_slug = _normalize_tool_label(record_slug)
+            if normalized_tool_name and normalized_tool_name in {normalized_name, normalized_slug}:
+                return record_id or None
 
         if not self.db:
             return None
@@ -1507,13 +1528,30 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
                 })
 
             tool_records = await self._load_tool_records(tools)
+            mcp_tools: list[Any] = []
+            if self.db is not None and self.tenant_id is not None:
+                agent_id_raw = (context or {}).get("agent_id")
+                if agent_id_raw:
+                    try:
+                        agent_uuid = UUID(str(agent_id_raw))
+                        runtime_user_id = (context or {}).get("initiator_user_id") or (context or {}).get("user_id")
+                        runtime_user_uuid = UUID(str(runtime_user_id)) if runtime_user_id else None
+                        mcp_tools = await McpRuntimeService(self.db, self.tenant_id).list_agent_tools(
+                            agent_id=agent_uuid,
+                            user_id=runtime_user_uuid,
+                        )
+                    except Exception as exc:
+                        logger.warning(f"Failed to load MCP mounted tools: {exc}")
+            if mcp_tools:
+                tool_records.extend(mcp_tools)
             tool_records_by_id = {str(t.id): t for t in tool_records if getattr(t, "id", None)}
             tool_records_by_slug = {
                 str(getattr(t, "slug", "")).strip(): t
                 for t in tool_records
                 if getattr(t, "slug", None)
             }
-            langchain_tools = [self._build_langchain_tool(t) for t in tool_records] if tools else []
+            effective_tools = list(tools or []) + [str(t.id) for t in mcp_tools if getattr(t, "id", None)]
+            langchain_tools = [self._build_langchain_tool(t) for t in tool_records] if tool_records else []
             tool_accounting_payloads = [_serialize_tool_for_accounting(t) for t in tool_records]
 
             conversation_messages = list(formatted_messages)
@@ -1755,7 +1793,8 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
                     elif tool_name:
                         resolved_tool_id = await self._resolve_tool_id(
                             {"tool_name": tool_name},
-                            tools,
+                            effective_tools,
+                            tool_records=tool_records,
                         )
                     if not resolved_tool_id:
                         logger.warning(f"Unresolved tool call: {tool_name or tool_id}")

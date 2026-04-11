@@ -128,21 +128,12 @@ export function AppRowStats({
       <span className="self-end leading-none text-muted-foreground/20">·</span>
 
       <StatUnit label="runs" value={formatCompact(stats.agent_runs)} />
-      {stats.failed_runs > 0 && (
-        <span className="self-end text-[11px] leading-none tabular-nums text-red-400/70">
-          {stats.failed_runs}f
-        </span>
-      )}
       <MiniSparkline data={stats.runs_by_day} color="#3b82f6" />
 
       <span className="self-end leading-none text-muted-foreground/20">·</span>
 
       <StatUnit label="tok" value={formatCompact(stats.tokens)} />
       <MiniSparkline data={stats.tokens_by_day} color="#10b981" />
-
-      <span className="self-end leading-none text-muted-foreground/20">·</span>
-
-      <StatUnit label="acct" value={formatCompact(stats.app_accounts)} dimmed />
 
       {approximate && (
         <span className="self-end text-[10px] leading-none text-muted-foreground/30" title="Approximate values">

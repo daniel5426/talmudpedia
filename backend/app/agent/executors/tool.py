@@ -40,6 +40,12 @@ from app.services.artifact_runtime.registry_service import ArtifactRegistryServi
 from app.services.artifact_coding_agent_tools import is_artifact_coding_mutation_tool_slug
 from app.services.credentials_service import CredentialsService
 from app.services.mcp_client import call_mcp_tool
+from app.services.mcp_service import (
+    McpApprovalRequiredRuntimeError,
+    McpAuthRequiredRuntimeError,
+    McpRuntimeService,
+    McpToolUnavailableRuntimeError,
+)
 from app.services.published_app_coding_agent_tools import (
     normalize_coding_agent_tool_payload,
     normalize_coding_agent_tool_exception,
@@ -793,8 +799,19 @@ class ToolNodeExecutor(BaseNodeExecutor):
         _tool: Any,
         input_data: dict[str, Any],
         implementation_config: dict[str, Any],
+        context: dict[str, Any] | None,
         timeout_s: int | None,
     ) -> dict[str, Any]:
+        if str(implementation_config.get("type") or "").strip().lower() == "mcp_mount":
+            if not self.tenant_id:
+                raise PermissionError("Mounted MCP tools require tenant context")
+            runtime_user_id = (context or {}).get("initiator_user_id") or (context or {}).get("user_id")
+            runtime_user_uuid = self._parse_uuid(runtime_user_id)
+            return await McpRuntimeService(self.db, self.tenant_id).execute_virtual_tool(
+                tool_id=str(getattr(_tool, "id", "") or implementation_config.get("tool_id") or ""),
+                arguments=input_data.get("arguments") if isinstance(input_data.get("arguments"), dict) else input_data,
+                user_id=runtime_user_uuid,
+            )
         server_url = implementation_config.get("server_url")
         tool_name = implementation_config.get("tool_name")
         headers = implementation_config.get("headers")
@@ -1116,7 +1133,7 @@ class ToolNodeExecutor(BaseNodeExecutor):
             return await self._execute_function_tool(tool, input_data, implementation_config, context)
         if builtin_key == "mcp_call":
             timeout_s = execution_config.get("timeout_s") if isinstance(execution_config, dict) else None
-            return await self._execute_mcp_tool(tool, input_data, implementation_config, timeout_s)
+            return await self._execute_mcp_tool(tool, input_data, implementation_config, context, timeout_s)
         if builtin_key == "web_fetch":
             return await self._execute_web_fetch_builtin(input_data, implementation_config)
         if builtin_key == "web_search":
@@ -1445,7 +1462,40 @@ class ToolNodeExecutor(BaseNodeExecutor):
             except Exception:
                 return False
 
-    async def _load_tool(self, tool_id: UUID) -> Any:
+    async def _load_tool(self, tool_id: UUID | str) -> Any:
+        tool_id_text = str(tool_id)
+        if tool_id_text.startswith("mcp:"):
+            if not self.tenant_id:
+                raise PermissionError("Mounted MCP tools require tenant context")
+            mount, server, discovered = await McpRuntimeService(self.db, self.tenant_id).resolve_virtual_tool(tool_id_text)
+            server_slug = re.sub(r"[^a-zA-Z0-9]+", "_", str(server.name or "").strip().lower()).strip("_") or "mcp"
+            tool_slug = re.sub(r"[^a-zA-Z0-9]+", "_", str(discovered.name or "").strip().lower()).strip("_") or "tool"
+            return SimpleNamespace(
+                id=tool_id_text,
+                name=discovered.title or discovered.name,
+                slug=f"mcp_{server_slug}_{tool_slug}",
+                description=discovered.description or f"MCP tool from {server.name}",
+                schema={"input": discovered.input_schema or {}, "output": {}},
+                config_schema={
+                    "implementation": {
+                        "type": "mcp_mount",
+                        "tool_name": discovered.name,
+                        "server_id": str(server.id),
+                        "mount_id": str(mount.id),
+                    },
+                    "execution": {"timeout_s": 60},
+                },
+                implementation_type="mcp",
+                is_active=True,
+                is_system=False,
+                artifact_id=None,
+                artifact_version=None,
+                artifact_revision_id=None,
+                builtin_key=None,
+                is_builtin_template=False,
+                status="published",
+            )
+
         tool = None
         try:
             if await self._has_artifact_columns():
@@ -1521,7 +1571,11 @@ class ToolNodeExecutor(BaseNodeExecutor):
 
         await self._assert_current_run_accepting_work(context)
 
-        tool_id = UUID(tool_id_str)
+        tool_id: UUID | str
+        if str(tool_id_str).startswith("mcp:"):
+            tool_id = str(tool_id_str)
+        else:
+            tool_id = UUID(tool_id_str)
         tool = await self._load_tool(tool_id)
         self._assert_runtime_policy(tool, context)
 
@@ -1585,7 +1639,7 @@ class ToolNodeExecutor(BaseNodeExecutor):
             emitter.emit_internal_event(
                 "tool.execution_prepared",
                 {
-                    "tool_id": str(tool_id),
+                    "tool_id": str(tool_id_str),
                     "tool_slug": getattr(tool, "slug", None),
                     "implementation_type": impl_type,
                     "input_shape": _tool_input_shape(input_data),
@@ -1657,7 +1711,7 @@ class ToolNodeExecutor(BaseNodeExecutor):
                 elif impl_type == "function":
                     output_data = await self._execute_function_tool(tool, input_data, implementation_config, context)
                 elif impl_type == "mcp":
-                    output_data = await self._execute_mcp_tool(tool, input_data, implementation_config, timeout_s)
+                    output_data = await self._execute_mcp_tool(tool, input_data, implementation_config, context, timeout_s)
                 elif impl_type == "rag_retrieval":
                     output_data = await self._execute_retrieval_pipeline_tool(tool, input_data, implementation_config)
                 elif impl_type == "rag_pipeline":
@@ -1706,6 +1760,39 @@ class ToolNodeExecutor(BaseNodeExecutor):
         except Exception as e:
             error_details = build_tool_exception_details(e)
             logger.exception("Tool execution failed", extra={"tool_error_details": error_details})
+            if emitter and isinstance(e, McpAuthRequiredRuntimeError):
+                emitter.emit_internal_event(
+                    "mcp.auth_required",
+                    {
+                        "server_id": str(getattr(e.server, "id", "") or ""),
+                        "server_name": getattr(e.server, "name", None),
+                        "tool_name": e.tool_name,
+                        "message": str(e),
+                    },
+                    node_id=node_id,
+                    category="mcp",
+                    visibility=EventVisibility.CLIENT_SAFE,
+                )
+            if emitter and isinstance(e, McpApprovalRequiredRuntimeError):
+                emitter.emit_internal_event(
+                    "approval.request",
+                    {
+                        "message": str(e),
+                        "tool_name": e.tool_name,
+                        "mount_id": str(e.mount.id),
+                    },
+                    node_id=node_id,
+                    category="approval",
+                    visibility=EventVisibility.CLIENT_SAFE,
+                )
+            if emitter and isinstance(e, McpToolUnavailableRuntimeError):
+                emitter.emit_internal_event(
+                    "mcp.tool_unavailable",
+                    {"message": str(e)},
+                    node_id=node_id,
+                    category="mcp",
+                    visibility=EventVisibility.CLIENT_SAFE,
+                )
             if emitter:
                 emitter.emit_internal_event(
                     "tool.execution_completed",
