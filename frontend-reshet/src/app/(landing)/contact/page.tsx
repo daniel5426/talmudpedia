@@ -35,7 +35,7 @@ export default function ContactPage() {
 
       {/* Right column: Form */}
       <div className="flex-1 flex items-center justify-center p-8 sm:p-12 lg:p-24 bg-gray-50/10 w-full">
-        <div className="w-full max-w-md">
+        <div className="w-full max-w-2xl">
           <ContactForm source="contact-page" submitLabel="Send message" />
         </div>
       </div>

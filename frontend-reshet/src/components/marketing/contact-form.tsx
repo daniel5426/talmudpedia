@@ -94,7 +94,7 @@ export function ContactForm({
         className,
       )}
     >
-      <div className={cn("grid gap-8", compact ? "md:grid-cols-1" : "md:grid-cols-2")}>
+      <div className={cn("grid", compact ? "gap-4 md:grid-cols-2" : "gap-8 md:grid-cols-2")}>
         <div className="space-y-2">
           <label className="text-[11px] font-medium text-gray-400 uppercase tracking-widest block">Name</label>
           <input
@@ -121,7 +121,7 @@ export function ContactForm({
           />
         </div>
 
-        <div className={cn("space-y-2", compact ? "" : "md:col-span-2")}>
+        <div className="space-y-2 md:col-span-2">
           <label className="text-[11px] font-medium text-gray-400 uppercase tracking-widest block">
             Company or use case
           </label>
@@ -135,13 +135,16 @@ export function ContactForm({
           />
         </div>
 
-        <div className={cn("space-y-2", compact ? "" : "md:col-span-2")}>
+        <div className="space-y-2 md:col-span-2">
           <label className="text-[11px] font-medium text-gray-400 uppercase tracking-widest block">Message</label>
           <textarea
             value={form.message}
             onChange={(event) => handleChange("message", event.target.value)}
             placeholder="Tell us what you need..."
-            className="min-h-[120px] w-full resize-y bg-transparent border-t-0 border-l-0 border-r-0 border-b border-gray-200 px-0 py-3 text-sm leading-relaxed text-gray-900 placeholder:text-gray-300 outline-none focus:ring-0 focus:border-black transition-colors shadow-none"
+            className={cn(
+              "w-full resize-y bg-transparent border-t-0 border-l-0 border-r-0 border-b border-gray-200 px-0 py-3 text-sm leading-relaxed text-gray-900 placeholder:text-gray-300 outline-none focus:ring-0 focus:border-black transition-colors shadow-none",
+              compact ? "min-h-[70px]" : "min-h-[120px]"
+            )}
             style={{ boxShadow: 'none' }}
             required
           />
@@ -171,7 +174,7 @@ export function ContactForm({
         </div>
       ) : null}
 
-      <div className={cn("mt-10 flex flex-col sm:flex-row sm:items-center gap-6", compact ? "justify-end" : "justify-between")}>
+      <div className={cn(compact ? "mt-6" : "mt-10", "flex flex-col sm:flex-row sm:items-center gap-6", compact ? "justify-end" : "justify-between")}>
         {!compact && (
           <p className="text-xs text-gray-400 font-mono tracking-wide">
             Response usually within 24 hours
