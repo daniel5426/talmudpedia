@@ -1,6 +1,6 @@
 # Tool Execution Tests
 
-Last Updated: 2026-04-09
+Last Updated: 2026-04-12
 
 ## Scope
 Validate MCP/function/agent-call execution paths in the `ToolNodeExecutor`.
@@ -19,6 +19,7 @@ Validate MCP/function/agent-call execution paths in the `ToolNodeExecutor`.
 - MCP JSON-RPC request shape and successful result handling
 - MCP runtime now rejects private/loopback hosts by default, supports explicit host allowlists, and normalizes transport / invalid-JSON failures into stable runtime errors
 - MCP error handling on missing result
+- OAuth metadata discovery now supports RFC 8414 path-based issuers such as GitHub (`/login/oauth`) and Airtable (`/oauth2/v1`) instead of only issuer-relative `/.well-known/*` lookups
 - Function tool execution via registry allowlist
 - Function-tool execution now bootstraps runtime-owned callable modules explicitly instead of relying on test/module import side effects
 - Agent-call sync child execution now emits a hidden `tool.child_run_started` event as soon as the child run exists, so builder/runtime overlays can render spawned child nodes before completion without adding a duplicate visible trace row.
@@ -72,6 +73,9 @@ Validate MCP/function/agent-call execution paths in the `ToolNodeExecutor`.
 - non-UUID artifact bindings are rejected; artifact-backed tools must resolve to UUID-backed tenant or system artifacts
 
 ## Last Run
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/tool_execution/test_mcp_tool_execution.py`
+- Date/Time: 2026-04-12 19:19 EEST
+- Result: PASS (`7 passed, 7 warnings`)
 - Command: `PYTHONPATH=. pytest -q tests/tool_execution/test_llm_provider_content_blocks.py`
 - Date/Time: 2026-03-30 Asia/Hebron
 - Result: PASS (`7 passed, 2 warnings`)

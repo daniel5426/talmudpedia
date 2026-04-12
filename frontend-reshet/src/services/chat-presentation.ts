@@ -170,6 +170,22 @@ function toSafeText(value: unknown): string {
   return typeof value === "string" ? value : String(value ?? "");
 }
 
+function isProviderStructuredToolDeltaText(value: unknown): boolean {
+  if (typeof value !== "string") return false;
+  const trimmed = value.trim();
+  if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) return false;
+  const normalized = trimmed.replace(/"/g, "'").replace(/\s+/g, " ");
+  const structuredTypes = [
+    "tool_use",
+    "input_json_delta",
+    "tool_call",
+    "tool_call_chunk",
+    "server_tool_call",
+    "server_tool_call_chunk",
+  ];
+  return structuredTypes.some((type) => normalized.includes(`'type': '${type}'`));
+}
+
 function extractThreadIdFromRecord(record: Record<string, unknown>): string | null {
   const directKeys = ["thread_id", "threadId"];
   for (const key of directKeys) {
@@ -328,10 +344,18 @@ export function adaptRunStreamEvent(rawEvent: Record<string, unknown>, index: nu
     : [];
 
   if (eventName === "assistant.delta") {
+    const content = toSafeText(payload.content);
+    if (isProviderStructuredToolDeltaText(content)) {
+      return {
+        ...base,
+        kind: "other",
+        data: payload,
+      };
+    }
     return {
       ...base,
       kind: "token",
-      content: toSafeText(payload.content),
+      content,
     };
   }
 

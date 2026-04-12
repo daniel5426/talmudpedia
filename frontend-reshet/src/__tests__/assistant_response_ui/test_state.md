@@ -1,4 +1,4 @@
-Last Updated: 2026-04-09
+Last Updated: 2026-04-12
 
 ## Scope
 Shared assistant-response normalization and timeline rendering used by the agent builder execute panel and the agent playground.
@@ -25,8 +25,13 @@ Shared assistant-response normalization and timeline rendering used by the agent
 - Shared chat context widget renders canonical context-window input usage instead of legacy estimated-total-with-reserve semantics.
 - Timeline assistant text blocks now stay on the same plain-text renderer during and after live streaming, avoiding a completion-time renderer swap.
 - Shared stream normalization preserves `assistant_text -> tool -> assistant_text` chronology instead of collapsing all live text into one block.
+- Shared stream normalization drops provider-native tool delta objects like MCP `tool_use` / `input_json_delta` chunks so raw structured payloads do not leak into live assistant text.
 
 ## Last Run
+- Command: `pnpm -C frontend-reshet test -- --runTestsByPath src/__tests__/assistant_response_ui/normalizer.test.ts src/__tests__/agent_playground/useAgentRunController.test.tsx --watch=false`
+- Date: 2026-04-12 15:44:55 EEST
+- Result: PASS (`2 suites, 18 tests`)
+
 - Command: `pnpm -C frontend-reshet test -- --runTestsByPath src/__tests__/assistant_response_ui/renderer.test.tsx src/__tests__/agent_playground/useAgentRunController.test.tsx --watch=false`
 - Date: 2026-04-09 Asia/Hebron
 - Result: PASS (`2 suites, 15 tests`)

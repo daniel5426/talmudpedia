@@ -1,8 +1,7 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback, type ReactNode } from "react";
+import { startTransition, useState, useEffect, useRef, useCallback, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import { flushSync } from "react-dom";
 import type { FileUIPart } from "ai";
 import type { LucideIcon } from "lucide-react";
 import { SearchIcon, DotIcon } from "lucide-react";
@@ -184,6 +183,91 @@ export function useChatController(): ChatController {
   const isActivelyStreamingRef = useRef(false);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const liveVoiceIdsRef = useRef<{ user?: string; assistant?: string }>({});
+  const pendingStreamingContentRef = useRef("");
+  const streamingFrameRef = useRef<number | null>(null);
+  const pendingReasoningStepsRef = useRef<ChatMessage["reasoningSteps"]>([]);
+  const reasoningFrameRef = useRef<number | null>(null);
+
+  const cancelStreamingFrame = useCallback(() => {
+    if (streamingFrameRef.current === null || typeof window === "undefined") {
+      streamingFrameRef.current = null;
+      return;
+    }
+    window.cancelAnimationFrame(streamingFrameRef.current);
+    streamingFrameRef.current = null;
+  }, []);
+
+  const cancelReasoningFrame = useCallback(() => {
+    if (reasoningFrameRef.current === null || typeof window === "undefined") {
+      reasoningFrameRef.current = null;
+      return;
+    }
+    window.cancelAnimationFrame(reasoningFrameRef.current);
+    reasoningFrameRef.current = null;
+  }, []);
+
+  const flushStreamingContent = useCallback((content?: string) => {
+    const nextContent =
+      typeof content === "string" ? content : pendingStreamingContentRef.current;
+    pendingStreamingContentRef.current = nextContent;
+    cancelStreamingFrame();
+    startTransition(() => {
+      setStreamingContent(nextContent);
+    });
+  }, [cancelStreamingFrame]);
+
+  const scheduleStreamingContent = useCallback((content: string) => {
+    pendingStreamingContentRef.current = content;
+    if (streamingFrameRef.current !== null) {
+      return;
+    }
+    if (
+      typeof window === "undefined" ||
+      typeof window.requestAnimationFrame !== "function"
+    ) {
+      flushStreamingContent(content);
+      return;
+    }
+    streamingFrameRef.current = window.requestAnimationFrame(() => {
+      streamingFrameRef.current = null;
+      flushStreamingContent();
+    });
+  }, [flushStreamingContent]);
+
+  const flushReasoningSteps = useCallback(
+    (steps?: ChatMessage["reasoningSteps"]) => {
+      const nextSteps = steps ?? pendingReasoningStepsRef.current ?? [];
+      pendingReasoningStepsRef.current = nextSteps;
+      reasoningRef.current = nextSteps;
+      cancelReasoningFrame();
+      startTransition(() => {
+        setCurrentReasoning(nextSteps);
+      });
+    },
+    [cancelReasoningFrame]
+  );
+
+  const scheduleReasoningSteps = useCallback(
+    (steps: ChatMessage["reasoningSteps"]) => {
+      pendingReasoningStepsRef.current = steps ?? [];
+      reasoningRef.current = steps ?? [];
+      if (reasoningFrameRef.current !== null) {
+        return;
+      }
+      if (
+        typeof window === "undefined" ||
+        typeof window.requestAnimationFrame !== "function"
+      ) {
+        flushReasoningSteps(steps);
+        return;
+      }
+      reasoningFrameRef.current = window.requestAnimationFrame(() => {
+        reasoningFrameRef.current = null;
+        flushReasoningSteps();
+      });
+    },
+    [flushReasoningSteps]
+  );
 
   const upsertLiveVoiceMessage = useCallback(
     (input: {
@@ -268,16 +352,20 @@ export function useChatController(): ChatController {
   );
 
   const clearStreamingState = useCallback(() => {
+    cancelStreamingFrame();
+    cancelReasoningFrame();
     setIsLoading(false);
     setStreamingContent("");
+    pendingStreamingContentRef.current = "";
     setCurrentReasoning([]);
+    pendingReasoningStepsRef.current = [];
     citationsRef.current = [];
     reasoningRef.current = [];
     thinkingStartRef.current = null;
     thinkingDurationRef.current = null;
     isActivelyStreamingRef.current = false;
     setActiveStreamingId(null);
-  }, []);
+  }, [cancelReasoningFrame, cancelStreamingFrame]);
 
   useEffect(() => {
     const prevActiveChatId = prevActiveChatIdRef.current;
@@ -526,6 +614,8 @@ export function useChatController(): ChatController {
         let aiContent = "";
         const decoder = new TextDecoder();
         let buffer = "";
+        pendingStreamingContentRef.current = "";
+        pendingReasoningStepsRef.current = [];
 
         while (true) {
           const { done, value } = await reader.read();
@@ -551,7 +641,7 @@ export function useChatController(): ChatController {
                   setLastThinkingDurationMs(duration);
                 }
                 aiContent += event.content;
-                flushSync(() => setStreamingContent(aiContent));
+                scheduleStreamingContent(aiContent);
               } else if (event.type === "citation") {
                 const newCitation = event.data;
                 citationsRef.current = [
@@ -572,30 +662,26 @@ export function useChatController(): ChatController {
                   sources: stepData.sources,
                 } as any;
 
-                flushSync(() => {
-                  setCurrentReasoning((prev) => {
-                    const existing = prev || [];
-                    const index = existing.findIndex(
-                      (s) => s.label === step.label
-                    );
-                    let newSteps;
-                    if (index !== -1) {
-                      newSteps = [...existing];
-                      newSteps[index] = { ...newSteps[index], ...step };
-                    } else {
-                      newSteps = [...existing, step];
-                    }
-                    const merged = mergeReasoningSteps(newSteps);
-                    reasoningRef.current = merged;
-                    return merged;
-                  });
-                });
+                const existing = pendingReasoningStepsRef.current || [];
+                const index = existing.findIndex((s) => s.label === step.label);
+                let newSteps;
+                if (index !== -1) {
+                  newSteps = [...existing];
+                  newSteps[index] = { ...newSteps[index], ...step };
+                } else {
+                  newSteps = [...existing, step];
+                }
+                const merged = mergeReasoningSteps(newSteps);
+                scheduleReasoningSteps(merged);
               }
             } catch (e) {
               console.error("Error parsing JSON stream line:", line, e);
             }
           }
         }
+
+        flushStreamingContent(aiContent);
+        flushReasoningSteps();
 
         const aiMessage: ChatMessage = {
           id: activeStreamingId || nanoid(),
@@ -614,7 +700,9 @@ export function useChatController(): ChatController {
 
         setMessages((prev) => [...prev, aiMessage]);
         setStreamingContent("");
+        pendingStreamingContentRef.current = "";
         setCurrentReasoning([]);
+        pendingReasoningStepsRef.current = [];
         setIsLoading(false);
         setActiveStreamingId(null);
       } catch (error: any) {

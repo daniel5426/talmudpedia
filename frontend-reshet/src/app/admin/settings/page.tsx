@@ -30,12 +30,14 @@ import {
   ChevronRight,
   KeyRound,
   Loader2,
+  PlugZap,
   ShieldCheck,
   Sliders,
   User,
 } from "lucide-react"
 import { CredentialFormDialog } from "./components/CredentialFormDialog"
 import { CredentialDeleteDialog } from "./components/CredentialDeleteDialog"
+import McpSettingsSection from "./mcp/page"
 
 const CATEGORY_LABELS: Record<IntegrationCredentialCategory, { title: string; description: string }> = {
   llm_provider: {
@@ -62,12 +64,12 @@ const RETRIEVAL_POLICIES: Array<{ value: RetrievalPolicy; label: string }> = [
   { value: "keyword_only", label: "Keyword Only" },
   { value: "recency_boosted", label: "Recency Boosted" },
 ]
-
-type SettingsSection = "profile" | "integrations" | "defaults" | "security"
+type SettingsSection = "profile" | "integrations" | "mcp_servers" | "defaults" | "security"
 
 const NAV_ITEMS: Array<{ key: SettingsSection; label: string; icon: typeof User }> = [
   { key: "profile", label: "General", icon: User },
-  { key: "integrations", label: "Integrations", icon: KeyRound },
+  { key: "integrations", label: "Credentials", icon: KeyRound },
+  { key: "mcp_servers", label: "MCP Servers", icon: PlugZap },
   { key: "defaults", label: "Defaults", icon: Sliders },
   { key: "security", label: "Security", icon: ShieldCheck },
 ]
@@ -366,15 +368,9 @@ export default function SettingsPage() {
     return (
       <div>
         <SectionHeader
-          title="Integrations"
+          title="Credentials"
           description="Manage tenant-scoped credentials. Secret values are write-only."
         />
-
-        <div className="mb-4 flex justify-end">
-          <Button asChild variant="outline" size="sm">
-            <Link href="/admin/settings/mcp">Open MCP Servers</Link>
-          </Button>
-        </div>
 
         {integrationsError && (
           <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive mb-4">
@@ -596,10 +592,10 @@ export default function SettingsPage() {
       </div>
     )
   }
-
   const SECTION_RENDERERS: Record<SettingsSection, () => React.ReactNode> = {
     profile: renderProfile,
     integrations: renderIntegrations,
+    mcp_servers: () => <McpSettingsSection />,
     defaults: renderDefaults,
     security: renderSecurity,
   }
@@ -612,7 +608,7 @@ export default function SettingsPage() {
       </AdminPageHeader>
 
       <div className="flex-1 flex overflow-hidden">
-        <nav className="w-48 shrink-0 border-r border-border/40 p-3 overflow-y-auto hidden sm:block">
+        <nav className="w-48 shrink-0 p-3 overflow-y-auto hidden sm:block">
           <div className="space-y-0.5">
             {NAV_ITEMS.map((item) => {
               const Icon = item.icon
@@ -650,7 +646,7 @@ export default function SettingsPage() {
         </div>
 
         <main className="flex-1 overflow-y-auto" data-admin-page-scroll>
-          <div className="max-w-4xl px-4 sm:px-6 py-6">
+          <div className="max-w-4xl mx-auto px-4 sm:px-6 py-6">
             {loading ? (
               <LoadingSkeleton />
             ) : fetchError ? (

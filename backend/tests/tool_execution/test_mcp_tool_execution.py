@@ -195,9 +195,23 @@ async def test_mcp_tool_execution_rejects_invalid_json_response(monkeypatch):
         fake_resolve_hostname,
     )
 
-    with pytest.raises(RuntimeError, match="invalid JSON"):
+    with pytest.raises(RuntimeError, match="non-JSON response"):
         await mcp_client.call_mcp_tool(
             server_url="https://mcp.test/tools",
             tool_name="do_thing",
             arguments={"foo": "bar"},
         )
+
+
+def test_mcp_oauth_metadata_candidates_support_path_issuers():
+    candidates = mcp_client._authorization_server_metadata_candidates("https://github.com/login/oauth")
+
+    assert "https://github.com/.well-known/oauth-authorization-server/login/oauth" in candidates
+    assert "https://github.com/login/oauth/.well-known/oauth-authorization-server" in candidates
+
+
+def test_mcp_oauth_metadata_candidates_support_root_issuers():
+    candidates = mcp_client._authorization_server_metadata_candidates("https://mcp.linear.app")
+
+    assert candidates[0] == "https://mcp.linear.app/.well-known/oauth-authorization-server"
+    assert "https://mcp.linear.app/.well-known/openid-configuration" in candidates

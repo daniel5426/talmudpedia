@@ -198,6 +198,78 @@ describe("chat presentation normalizer", () => {
     expect(secondTextBlock.kind === "assistant_text" ? secondTextBlock.text : null).toBe("Second part.");
   });
 
+  it("drops provider-native tool delta objects from live assistant text", () => {
+    let blocks: ChatRenderBlock[] = [];
+
+    blocks = sortChatRenderBlocks(
+      applyRunStreamEventToBlocks(
+        blocks,
+        adaptRunStreamEvent(
+          {
+            version: "run-stream.v2",
+            seq: 1,
+            ts: "2026-04-12T10:00:00Z",
+            event: "assistant.delta",
+            run_id: "run-tool-delta",
+            stage: "assistant",
+            payload: { content: "Sure! Let me fetch your Linear projects right away." },
+            diagnostics: [],
+          },
+          0,
+        ),
+      ),
+    );
+
+    blocks = sortChatRenderBlocks(
+      applyRunStreamEventToBlocks(
+        blocks,
+        adaptRunStreamEvent(
+          {
+            version: "run-stream.v2",
+            seq: 2,
+            ts: "2026-04-12T10:00:01Z",
+            event: "assistant.delta",
+            run_id: "run-tool-delta",
+            stage: "assistant",
+            payload: {
+              content:
+                "{'id': 'toolu_01VDqRJyMwtk6oBdqdVN9Gjn', 'caller': {'type': 'direct'}, 'input': {}, 'name': 'mcp_line_list_projects', 'type': 'tool_use', 'index': 1}",
+            },
+            diagnostics: [],
+          },
+          1,
+        ),
+      ),
+    );
+
+    blocks = sortChatRenderBlocks(
+      applyRunStreamEventToBlocks(
+        blocks,
+        adaptRunStreamEvent(
+          {
+            version: "run-stream.v2",
+            seq: 3,
+            ts: "2026-04-12T10:00:02Z",
+            event: "assistant.delta",
+            run_id: "run-tool-delta",
+            stage: "assistant",
+            payload: {
+              content: "{'partial_json': '', 'type': 'input_json_delta', 'index': 1}",
+            },
+            diagnostics: [],
+          },
+          2,
+        ),
+      ),
+    );
+
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]?.kind).toBe("assistant_text");
+    expect(blocks[0]?.kind === "assistant_text" ? blocks[0].text : null).toBe(
+      "Sure! Let me fetch your Linear projects right away.",
+    );
+  });
+
   it("shortens verbose platform sdk summaries into shared action titles", () => {
     const blocks = sortChatRenderBlocks(
       applyRunStreamEventToBlocks(

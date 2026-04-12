@@ -165,10 +165,13 @@ class McpService:
         return list(result.scalars().all())
 
     async def create_server(self, payload: dict[str, Any], *, created_by: UUID | None) -> McpServer:
-        server_url = await validate_mcp_server_url(
-            str(payload.get("server_url") or "").strip(),
-            for_auth=str(payload.get("auth_mode") or "").strip().lower() == McpAuthMode.OAUTH_USER_ACCOUNT.value,
-        )
+        try:
+            server_url = await validate_mcp_server_url(
+                str(payload.get("server_url") or "").strip(),
+                for_auth=str(payload.get("auth_mode") or "").strip().lower() == McpAuthMode.OAUTH_USER_ACCOUNT.value,
+            )
+        except ValueError as exc:
+            raise McpServiceError(str(exc)) from exc
         server = McpServer(
             tenant_id=self.tenant_id,
             created_by=created_by,
@@ -197,10 +200,13 @@ class McpService:
         if "description" in payload:
             server.description = str(payload.get("description") or "").strip() or None
         if "server_url" in payload:
-            server.server_url = await validate_mcp_server_url(
-                str(payload.get("server_url") or "").strip(),
-                for_auth=(payload.get("auth_mode") or server.auth_mode) == McpAuthMode.OAUTH_USER_ACCOUNT.value,
-            )
+            try:
+                server.server_url = await validate_mcp_server_url(
+                    str(payload.get("server_url") or "").strip(),
+                    for_auth=(payload.get("auth_mode") or server.auth_mode) == McpAuthMode.OAUTH_USER_ACCOUNT.value,
+                )
+            except ValueError as exc:
+                raise McpServiceError(str(exc)) from exc
         if "auth_mode" in payload:
             server.auth_mode = str(payload.get("auth_mode") or McpAuthMode.NONE.value).strip().lower()
         if "auth_config" in payload:
@@ -403,13 +409,28 @@ class McpService:
                 "capabilities": init.capabilities,
             }
         except McpUnauthorizedError as exc:
-            metadata = await discover_mcp_oauth_metadata(server_url=server.server_url, challenge_header=exc.www_authenticate)
+            try:
+                metadata = await discover_mcp_oauth_metadata(server_url=server.server_url, challenge_header=exc.www_authenticate)
+            except ValueError as metadata_exc:
+                raise McpServiceError(str(metadata_exc)) from metadata_exc
             server.auth_metadata = metadata
             server.sync_status = McpSyncStatus.AUTH_REQUIRED.value
             server.sync_error = None
             server.last_tested_at = _utcnow()
             await self.db.flush()
             return {"status": "auth_required", "auth_metadata": metadata}
+        except McpProtocolError as exc:
+            server.sync_status = McpSyncStatus.ERROR.value
+            server.sync_error = str(exc)
+            server.last_tested_at = _utcnow()
+            await self.db.flush()
+            raise McpServiceError(str(exc)) from exc
+        except Exception as exc:
+            server.sync_status = McpSyncStatus.ERROR.value
+            server.sync_error = str(exc)
+            server.last_tested_at = _utcnow()
+            await self.db.flush()
+            raise McpServiceError(f"MCP test failed: {exc}") from exc
 
     async def sync_server(self, server_id: UUID, *, user_id: UUID | None = None) -> dict[str, Any]:
         server = await self._get_server(server_id)
@@ -422,17 +443,25 @@ class McpService:
                 auth_identity=auth.auth_identity,
             )
         except McpUnauthorizedError as exc:
-            metadata = await discover_mcp_oauth_metadata(server_url=server.server_url, challenge_header=exc.www_authenticate)
+            try:
+                metadata = await discover_mcp_oauth_metadata(server_url=server.server_url, challenge_header=exc.www_authenticate)
+            except ValueError as metadata_exc:
+                raise McpServiceError(str(metadata_exc)) from metadata_exc
             server.auth_metadata = metadata
             server.sync_status = McpSyncStatus.AUTH_REQUIRED.value
             server.sync_error = None
             await self.db.flush()
             raise McpAuthRequiredRuntimeError("Connect your account to sync this MCP server", server=server) from exc
+        except McpProtocolError as exc:
+            server.sync_status = McpSyncStatus.ERROR.value
+            server.sync_error = str(exc)
+            await self.db.flush()
+            raise McpServiceError(str(exc)) from exc
         except Exception as exc:
             server.sync_status = McpSyncStatus.ERROR.value
             server.sync_error = str(exc)
             await self.db.flush()
-            raise
+            raise McpServiceError(f"MCP sync failed: {exc}") from exc
 
         server.tool_snapshot_version = int(server.tool_snapshot_version or 0) + 1
         server.sync_status = McpSyncStatus.READY.value
@@ -472,7 +501,10 @@ class McpService:
                 auth_identity=f"server:{server.id}",
             )
         except McpUnauthorizedError as exc:
-            metadata = await discover_mcp_oauth_metadata(server_url=server.server_url, challenge_header=exc.www_authenticate)
+            try:
+                metadata = await discover_mcp_oauth_metadata(server_url=server.server_url, challenge_header=exc.www_authenticate)
+            except ValueError as metadata_exc:
+                raise McpServiceError(str(metadata_exc)) from metadata_exc
             server.auth_metadata = metadata
             await self.db.flush()
             return metadata
@@ -496,9 +528,6 @@ class McpService:
             return registration_client_id, str(registration.get("client_secret") or "").strip() or None, token_method
 
         callback_url = f"{resolve_local_backend_origin().rstrip('/')}/mcp/auth/callback"
-        if bool(auth_server_metadata.get("client_id_metadata_document_supported")):
-            return self.build_client_metadata_document_url(server.id), None, "none"
-
         registration_endpoint = str(auth_server_metadata.get("registration_endpoint") or "").strip()
         if registration_endpoint:
             registered = await register_oauth_client(
@@ -514,6 +543,9 @@ class McpService:
             server.oauth_client_registration = registered
             await self.db.flush()
             return str(registered["client_id"]), str(registered.get("client_secret") or "").strip() or None, "none"
+
+        if bool(auth_server_metadata.get("client_id_metadata_document_supported")):
+            return self.build_client_metadata_document_url(server.id), None, "none"
 
         raise McpServiceError("This MCP server requires admin-configured OAuth client credentials")
 

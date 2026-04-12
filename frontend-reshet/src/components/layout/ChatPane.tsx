@@ -802,7 +802,7 @@ export function ChatWorkspace({
                             {msg.approvalRequest ? (
                               <MessageResponse>{msg.content}</MessageResponse>
                             ) : (
-                              <MessageResponse>{(() => {
+                              <MessageResponse streaming={msg.id === activeStreamingId && isLoading}>{(() => {
                                 // Try to parse if it's a JSON response from the architect agent
                                 try {
                                   const trimmed = msg.content.trim();

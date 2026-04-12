@@ -1,7 +1,6 @@
 "use client";
 
-import { useState, useRef, useCallback, useEffect } from "react";
-import { flushSync } from "react-dom";
+import { startTransition, useState, useRef, useCallback, useEffect } from "react";
 import { nanoid } from "nanoid";
 import { agentService } from "@/services";
 import type { AgentExecutionEvent, AgentRunStatus } from "@/services";
@@ -483,7 +482,7 @@ export function useAgentRunController(
     };
 
     setMessages(prev => [...prev, userMsg]);
-    flushSync(() => {
+    startTransition(() => {
       setIsLoading(true);
       setStreamingContent("");
       setCurrentReasoning([]);

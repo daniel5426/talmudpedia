@@ -1,4 +1,4 @@
-Last Updated: 2026-04-09
+Last Updated: 2026-04-12
 
 ## Scope
 Playground-specific trace inspection behavior for assistant responses, execute-pane seeded-state submission, and persisted trace replay into the execution sidebar across playground state changes.
@@ -37,6 +37,9 @@ Playground-specific trace inspection behavior for assistant responses, execute-p
 - Deep-linking to a hidden playground agent redirects to the first visible agent when available.
 
 ## Last Run
+- Command: `pnpm -C frontend-reshet test -- --runTestsByPath src/__tests__/assistant_response_ui/normalizer.test.ts src/__tests__/agent_playground/useAgentRunController.test.tsx --watch=false`
+- Date: 2026-04-12 15:44:55 EEST
+- Result: Pass (2 suites, 18 tests)
 - Command: `pnpm -C frontend-reshet test -- --runTestsByPath src/__tests__/assistant_response_ui/renderer.test.tsx src/__tests__/agent_playground/useAgentRunController.test.tsx --watch=false`
 - Date: 2026-04-09 Asia/Hebron
 - Result: Pass (2 suites, 15 tests)

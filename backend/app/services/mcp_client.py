@@ -12,7 +12,7 @@ import socket
 import time
 import uuid
 from typing import Any
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urlparse
 
 import httpx
 
@@ -181,10 +181,42 @@ def _store_session_id(cache_key: str, session_id: str | None) -> None:
 
 
 def _extract_json_payload(response: httpx.Response) -> dict[str, Any]:
+    content_type = str(response.headers.get("content-type") or "").strip().lower()
+    if "text/event-stream" in content_type:
+        raw_text = response.text or ""
+        data_lines: list[str] = []
+        for line in raw_text.splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith(":"):
+                continue
+            if stripped.lower().startswith("data:"):
+                data_lines.append(stripped[5:].strip())
+        if data_lines:
+            try:
+                payload = json.loads("\n".join(data_lines))
+            except ValueError as exc:
+                preview = raw_text.strip()
+                if len(preview) > 160:
+                    preview = preview[:160] + "...[truncated]"
+                raise McpProtocolError(
+                    "MCP server returned event-stream data that was not valid JSON. "
+                    f"Response preview: {preview}"
+                ) from exc
+            if not isinstance(payload, dict):
+                raise McpProtocolError("MCP server returned an invalid SSE JSON-RPC envelope")
+            return payload
+
     try:
         payload = response.json()
     except ValueError as exc:
-        raise McpProtocolError("MCP server returned invalid JSON") from exc
+        content_type = content_type or "unknown"
+        preview = (response.text or "").strip()
+        if len(preview) > 160:
+            preview = preview[:160] + "...[truncated]"
+        detail = f"MCP server returned non-JSON response (content-type: {content_type})"
+        if preview:
+            detail += f". Response preview: {preview}"
+        raise McpProtocolError(detail) from exc
     if not isinstance(payload, dict):
         raise McpProtocolError("MCP server returned an invalid JSON-RPC envelope")
     return payload
@@ -380,6 +412,49 @@ async def fetch_json_document(url: str, *, timeout_s: int | None = None) -> dict
     return payload
 
 
+def _authorization_server_metadata_candidates(auth_server: str) -> list[str]:
+    normalized = str(auth_server or "").strip().rstrip("/")
+    if not normalized:
+        return []
+    parsed = urlparse(normalized)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return []
+
+    origin = f"{parsed.scheme}://{parsed.netloc}"
+    issuer_path = parsed.path.strip("/")
+    candidates: list[str] = []
+
+    # RFC 8414 path-based issuer form:
+    #   https://host/.well-known/oauth-authorization-server/<issuer-path>
+    #   https://host/.well-known/openid-configuration/<issuer-path>
+    if issuer_path:
+        candidates.extend(
+            [
+                f"{origin}/.well-known/oauth-authorization-server/{issuer_path}",
+                f"{origin}/.well-known/openid-configuration/{issuer_path}",
+            ]
+        )
+
+    # Legacy/common issuer-relative locations used by some providers.
+    candidates.extend(
+        [
+            f"{normalized}/.well-known/oauth-authorization-server",
+            f"{normalized}/.well-known/openid-configuration",
+            f"{origin}/.well-known/oauth-authorization-server",
+            f"{origin}/.well-known/openid-configuration",
+        ]
+    )
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        deduped.append(candidate)
+    return deduped
+
+
 async def discover_mcp_oauth_metadata(
     *,
     server_url: str,
@@ -398,12 +473,10 @@ async def discover_mcp_oauth_metadata(
     if not isinstance(auth_servers, list) or not auth_servers:
         raise ValueError("Protected resource metadata did not include authorization_servers")
     auth_server = str(auth_servers[0]).rstrip("/")
-    openid_url = urljoin(f"{auth_server}/", ".well-known/openid-configuration")
-    oauth_url = urljoin(f"{auth_server}/", ".well-known/oauth-authorization-server")
 
     auth_server_metadata: dict[str, Any] | None = None
     fetch_errors: list[str] = []
-    for candidate in (openid_url, oauth_url):
+    for candidate in _authorization_server_metadata_candidates(auth_server):
         try:
             auth_server_metadata = await fetch_json_document(candidate, timeout_s=timeout_s)
             break
