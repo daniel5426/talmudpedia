@@ -1,0 +1,12 @@
+{
+  "name": "talmudpedia",
+  "private": true,
+  "packageManager": "pnpm@10.25.0",
+  "scripts": {
+    "build": "pnpm run build:embed-sdk && pnpm run build:docs-site && pnpm run build:frontend-reshet && pnpm run build:talmudpedia-standalone",
+    "build:embed-sdk": "pnpm --dir packages/embed-sdk build",
+    "build:docs-site": "pnpm --dir docs-site build",
+    "build:frontend-reshet": "pnpm --dir frontend-reshet build",
+    "build:talmudpedia-standalone": "pnpm --dir talmudpedia-standalone build"
+  }
+}

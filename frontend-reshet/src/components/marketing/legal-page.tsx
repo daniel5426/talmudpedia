@@ -2,7 +2,7 @@ import Link from "next/link";
 
 type LegalSection = {
   title: string;
-  paragraphs: string[];
+  paragraphs: readonly string[];
 };
 
 type LegalPageProps = {
@@ -10,7 +10,7 @@ type LegalPageProps = {
   title: string;
   description: string;
   effectiveDate: string;
-  sections: LegalSection[];
+  sections: readonly LegalSection[];
 };
 
 export function LegalPage({

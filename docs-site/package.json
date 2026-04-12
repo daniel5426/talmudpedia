@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "next dev --webpack",
     "build": "next build --webpack",
-    "postbuild": "pagefind --site .next/server/app --output-path public/_pagefind",
+    "postbuild": "node scripts/run-pagefind.mjs",
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "validate:content": "node scripts/validate-doc-pages.mjs"
