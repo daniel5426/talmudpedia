@@ -1,6 +1,7 @@
 "use client"
 
 import Link from "next/link"
+import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { CustomBreadcrumb } from "@/components/ui/custom-breadcrumb"
 import { AdminPageHeader } from "@/components/admin/AdminPageHeader"
@@ -64,15 +65,18 @@ const RETRIEVAL_POLICIES: Array<{ value: RetrievalPolicy; label: string }> = [
   { value: "keyword_only", label: "Keyword Only" },
   { value: "recency_boosted", label: "Recency Boosted" },
 ]
-type SettingsSection = "profile" | "integrations" | "mcp_servers" | "defaults" | "security"
+type SettingsSection = "profile" | "integrations" | "mcp_servers" | "security"
 
-const NAV_ITEMS: Array<{ key: SettingsSection; label: string; icon: typeof User }> = [
+const NAV_ITEMS: Array<{ key: SettingsSection; label: string; icon: any }> = [
   { key: "profile", label: "General", icon: User },
   { key: "integrations", label: "Credentials", icon: KeyRound },
   { key: "mcp_servers", label: "MCP Servers", icon: PlugZap },
-  { key: "defaults", label: "Defaults", icon: Sliders },
   { key: "security", label: "Security", icon: ShieldCheck },
 ]
+
+function parseSection(value: string | null): SettingsSection {
+  return NAV_ITEMS.some((item) => item.key === value) ? (value as SettingsSection) : "profile"
+}
 
 function SectionHeader({ title, description }: { title: string; description: string }) {
   return (
@@ -83,25 +87,7 @@ function SectionHeader({ title, description }: { title: string; description: str
   )
 }
 
-function FieldRow({
-  label,
-  description,
-  children,
-}: {
-  label: string
-  description?: string
-  children: React.ReactNode
-}) {
-  return (
-    <div className="flex flex-col sm:flex-row sm:items-start gap-2 sm:gap-6 py-4 border-b border-border/40 last:border-0">
-      <div className="sm:w-48 shrink-0">
-        <Label className="text-sm font-medium">{label}</Label>
-        {description && <p className="text-xs text-muted-foreground/60 mt-0.5">{description}</p>}
-      </div>
-      <div className="flex-1 max-w-md">{children}</div>
-    </div>
-  )
-}
+
 
 function LoadingSkeleton() {
   return (
@@ -123,12 +109,15 @@ function LoadingSkeleton() {
 export default function SettingsPage() {
   const { direction } = useDirection()
   const isRTL = direction === "rtl"
+  const router = useRouter()
+  const pathname = usePathname()
+  const searchParams = useSearchParams()
   const user = useAuthStore((state) => state.user)
   const { currentTenant, setCurrentTenant, refreshTenants } = useTenant()
 
   const canEdit = user?.role === "admin" || user?.org_role === "owner" || user?.org_role === "admin"
 
-  const [activeSection, setActiveSection] = useState<SettingsSection>("profile")
+  const [activeSection, setActiveSection] = useState<SettingsSection>(() => parseSection(searchParams.get("tab")))
   const [loading, setLoading] = useState(true)
   const [fetchError, setFetchError] = useState<string | null>(null)
 
@@ -220,6 +209,26 @@ export default function SettingsPage() {
     fetchData()
   }, [currentTenant?.slug, fetchData])
 
+  useEffect(() => {
+    const nextSection = parseSection(searchParams.get("tab"))
+    setActiveSection((currentSection) => (currentSection === nextSection ? currentSection : nextSection))
+  }, [searchParams])
+
+  const handleSectionChange = useCallback(
+    (section: SettingsSection) => {
+      setActiveSection(section)
+      const params = new URLSearchParams(searchParams.toString())
+      if (section === "profile") {
+        params.delete("tab")
+      } else {
+        params.set("tab", section)
+      }
+      const nextQuery = params.toString()
+      router.replace(nextQuery ? `${pathname}?${nextQuery}` : pathname, { scroll: false })
+    },
+    [pathname, router, searchParams]
+  )
+
   const grouped = useMemo(() => {
     return credentials.reduce<Record<IntegrationCredentialCategory, IntegrationCredential[]>>(
       (acc, cred) => {
@@ -292,72 +301,156 @@ export default function SettingsPage() {
 
   function renderProfile() {
     return (
-      <div>
-        <SectionHeader title="General" description="Core tenant identity and configuration." />
+      <div className="space-y-6">
+        <SectionHeader title="General Settings" description="Core identity and platform defaults." />
 
-        <FieldRow label="Tenant Name" description="Display name across the platform.">
-          <Input
-            value={profileForm.name}
-            onChange={(e) => setProfileForm((prev) => ({ ...prev, name: e.target.value }))}
-            disabled={!canEdit}
-            className="h-9"
-          />
-        </FieldRow>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+          {/* Identity Column */}
+          <div className="space-y-5">
+            <h3 className="text-sm font-semibold text-foreground border-b border-border/40 pb-2">Identity</h3>
+            
+            <div className="space-y-4">
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium text-muted-foreground">Tenant Name</Label>
+                <Input
+                  value={profileForm.name}
+                  onChange={(e) => setProfileForm((prev) => ({ ...prev, name: e.target.value }))}
+                  disabled={!canEdit}
+                  className="h-9 w-full"
+                />
+              </div>
 
-        <FieldRow label="Slug" description="URL-safe identifier for routing.">
-          <Input
-            value={profileForm.slug}
-            onChange={(e) => setProfileForm((prev) => ({ ...prev, slug: e.target.value }))}
-            disabled={!canEdit}
-            className="h-9 font-mono text-sm"
-          />
-        </FieldRow>
-
-        <FieldRow label="Status">
-          <Select
-            value={profileForm.status}
-            onValueChange={(value) => setProfileForm((prev) => ({ ...prev, status: value }))}
-            disabled={!canEdit}
-          >
-            <SelectTrigger className="h-9">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="active">Active</SelectItem>
-              <SelectItem value="suspended">Suspended</SelectItem>
-              <SelectItem value="pending">Pending</SelectItem>
-            </SelectContent>
-          </Select>
-        </FieldRow>
-
-        {profileDirty && (
-          <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-sm mt-4 flex items-start gap-2">
-            <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
-            <div>
-              <p className="font-medium text-amber-700 text-xs">Danger Zone</p>
-              <p className="text-muted-foreground text-xs mt-0.5">
-                Changing the slug can break bookmarked URLs and tenant-scoped integrations.
-              </p>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium text-muted-foreground">Status</Label>
+                <Select
+                  value={profileForm.status}
+                  onValueChange={(value) => setProfileForm((prev) => ({ ...prev, status: value }))}
+                  disabled={!canEdit}
+                >
+                  <SelectTrigger className="h-9 w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="active">Active</SelectItem>
+                    <SelectItem value="suspended">Suspended</SelectItem>
+                    <SelectItem value="pending">Pending</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
+          </div>
+
+          {/* Defaults Column */}
+          <div className="space-y-5">
+            <h3 className="text-sm font-semibold text-foreground border-b border-border/40 pb-2">Defaults</h3>
+            
+            <div className="space-y-4">
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium text-muted-foreground">Default Chat Model</Label>
+                <Select
+                  value={defaultsForm.default_chat_model_id || "none"}
+                  onValueChange={(value) => setDefaultsForm((prev) => ({ ...prev, default_chat_model_id: value === "none" ? null : value }))}
+                  disabled={!canEdit}
+                >
+                  <SelectTrigger className="h-9 w-full">
+                    <SelectValue placeholder="Select chat model" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">None</SelectItem>
+                    {chatModels.map((model) => (
+                      <SelectItem key={model.id} value={model.id}>
+                        {model.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium text-muted-foreground">Default Embedding Model</Label>
+                <Select
+                  value={defaultsForm.default_embedding_model_id || "none"}
+                  onValueChange={(value) =>
+                    setDefaultsForm((prev) => ({ ...prev, default_embedding_model_id: value === "none" ? null : value }))
+                  }
+                  disabled={!canEdit}
+                >
+                  <SelectTrigger className="h-9 w-full">
+                    <SelectValue placeholder="Select embedding model" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">None</SelectItem>
+                    {embeddingModels.map((model) => (
+                      <SelectItem key={model.id} value={model.id}>
+                        {model.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium text-muted-foreground">Retrieval Policy</Label>
+                <Select
+                  value={defaultsForm.default_retrieval_policy || "none"}
+                  onValueChange={(value) =>
+                    setDefaultsForm((prev) => ({
+                      ...prev,
+                      default_retrieval_policy: value === "none" ? null : (value as RetrievalPolicy),
+                    }))
+                  }
+                  disabled={!canEdit}
+                >
+                  <SelectTrigger className="h-9 w-full">
+                    <SelectValue placeholder="Select policy" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">None</SelectItem>
+                    {RETRIEVAL_POLICIES.map((policy) => (
+                      <SelectItem key={policy.value} value={policy.value}>
+                        {policy.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Warnings & Errors */}
+        {(chatDefaultMissing || embeddingDefaultMissing) && (
+          <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs text-amber-700 mt-2 flex items-start gap-2 max-w-2xl">
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+            <span>One or more defaults point to missing or disabled models.</span>
           </div>
         )}
 
         {!canEdit && (
-          <p className="text-xs text-muted-foreground/60 mt-4">Read-only access. Contact an admin to make changes.</p>
+          <p className="text-xs text-muted-foreground/60 mt-2">Read-only access. Contact an admin to make changes.</p>
         )}
-        {profileError && <p className="text-sm text-destructive mt-3">{profileError}</p>}
+        
+        {(profileError || defaultsError) && (
+          <div className="space-y-1 mt-2">
+            {profileError && <p className="text-sm text-destructive">{profileError}</p>}
+            {defaultsError && <p className="text-sm text-destructive">{defaultsError}</p>}
+          </div>
+        )}
 
-        <div className={cn("flex gap-2 mt-6 pt-4 border-t border-border/40", isRTL ? "justify-start" : "justify-end")}>
-          <Button variant="outline" size="sm" onClick={fetchData} disabled={profileSaving}>
+        <div className={cn("flex gap-2 pt-6 border-t border-border/40 mt-6", isRTL ? "justify-start" : "justify-end")}>
+          <Button variant="outline" size="sm" onClick={fetchData} disabled={profileSaving || defaultsSaving}>
             Reset
           </Button>
           <Button
             size="sm"
-            onClick={handleSaveProfile}
-            disabled={!canEdit || !profileDirty || !profileForm.name.trim() || !profileForm.slug.trim() || profileSaving}
+            onClick={async () => {
+              if (profileDirty) await handleSaveProfile();
+              if (defaultsDirty) await handleSaveDefaults();
+            }}
+            disabled={!canEdit || (!profileDirty && !defaultsDirty) || !profileForm.name.trim() || profileSaving || defaultsSaving}
           >
-            {profileSaving && <Loader2 className="h-3.5 w-3.5 animate-spin mr-2" />}
-            Save
+            {(profileSaving || defaultsSaving) && <Loader2 className="h-3.5 w-3.5 animate-spin mr-2" />}
+            Save Changes
           </Button>
         </div>
       </div>
@@ -452,106 +545,6 @@ export default function SettingsPage() {
     )
   }
 
-  function renderDefaults() {
-    return (
-      <div>
-        <SectionHeader
-          title="Defaults"
-          description="Default model and retrieval configuration for tenant workflows."
-        />
-
-        <FieldRow label="Chat Model" description="Default model for conversational AI.">
-          <Select
-            value={defaultsForm.default_chat_model_id || "none"}
-            onValueChange={(value) => setDefaultsForm((prev) => ({ ...prev, default_chat_model_id: value === "none" ? null : value }))}
-            disabled={!canEdit}
-          >
-            <SelectTrigger className="h-9">
-              <SelectValue placeholder="Select chat model" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="none">None</SelectItem>
-              {chatModels.map((model) => (
-                <SelectItem key={model.id} value={model.id}>
-                  {model.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </FieldRow>
-
-        <FieldRow label="Embedding Model" description="Default model for vector embeddings.">
-          <Select
-            value={defaultsForm.default_embedding_model_id || "none"}
-            onValueChange={(value) =>
-              setDefaultsForm((prev) => ({ ...prev, default_embedding_model_id: value === "none" ? null : value }))
-            }
-            disabled={!canEdit}
-          >
-            <SelectTrigger className="h-9">
-              <SelectValue placeholder="Select embedding model" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="none">None</SelectItem>
-              {embeddingModels.map((model) => (
-                <SelectItem key={model.id} value={model.id}>
-                  {model.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </FieldRow>
-
-        <FieldRow label="Retrieval Policy" description="Default strategy for RAG retrieval.">
-          <Select
-            value={defaultsForm.default_retrieval_policy || "none"}
-            onValueChange={(value) =>
-              setDefaultsForm((prev) => ({
-                ...prev,
-                default_retrieval_policy: value === "none" ? null : (value as RetrievalPolicy),
-              }))
-            }
-            disabled={!canEdit}
-          >
-            <SelectTrigger className="h-9">
-              <SelectValue placeholder="Select policy" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="none">None</SelectItem>
-              {RETRIEVAL_POLICIES.map((policy) => (
-                <SelectItem key={policy.value} value={policy.value}>
-                  {policy.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </FieldRow>
-
-        {(chatDefaultMissing || embeddingDefaultMissing) && (
-          <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs text-amber-700 mt-4 flex items-start gap-2">
-            <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-            <span>One or more defaults point to missing or disabled models.</span>
-          </div>
-        )}
-
-        {!canEdit && (
-          <p className="text-xs text-muted-foreground/60 mt-4">Read-only access. Contact an admin to make changes.</p>
-        )}
-        {defaultsError && <p className="text-sm text-destructive mt-3">{defaultsError}</p>}
-
-        <div className={cn("flex gap-2 mt-6 pt-4 border-t border-border/40", isRTL ? "justify-start" : "justify-end")}>
-          <Button variant="outline" size="sm" onClick={fetchData} disabled={defaultsSaving}>
-            Reset
-          </Button>
-          <Button size="sm" onClick={handleSaveDefaults} disabled={!canEdit || !defaultsDirty || defaultsSaving}>
-            {defaultsSaving && <Loader2 className="h-3.5 w-3.5 animate-spin mr-2" />}
-            Save
-          </Button>
-        </div>
-      </div>
-    )
-  }
-
   function renderSecurity() {
     return (
       <div>
@@ -596,7 +589,6 @@ export default function SettingsPage() {
     profile: renderProfile,
     integrations: renderIntegrations,
     mcp_servers: () => <McpSettingsSection />,
-    defaults: renderDefaults,
     security: renderSecurity,
   }
 
@@ -616,7 +608,7 @@ export default function SettingsPage() {
               return (
                 <button
                   key={item.key}
-                  onClick={() => setActiveSection(item.key)}
+                  onClick={() => handleSectionChange(item.key)}
                   className={cn(
                     "flex items-center gap-2.5 w-full rounded-md px-2.5 py-1.5 text-sm transition-colors text-left",
                     isActive ? "bg-muted/60 text-foreground font-medium" : "text-muted-foreground hover:text-foreground hover:bg-muted/30"
@@ -634,7 +626,7 @@ export default function SettingsPage() {
           {NAV_ITEMS.map((item) => (
             <button
               key={item.key}
-              onClick={() => setActiveSection(item.key)}
+              onClick={() => handleSectionChange(item.key)}
               className={cn(
                 "px-3 py-1.5 rounded-md text-xs whitespace-nowrap transition-colors",
                 activeSection === item.key ? "bg-muted/60 text-foreground font-medium" : "text-muted-foreground hover:text-foreground"

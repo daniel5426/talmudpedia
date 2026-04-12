@@ -337,7 +337,21 @@ async def test_host_thread_detail_includes_public_run_events(client, db_session,
         run_id=run.id,
         status=AgentThreadTurnStatus.completed,
         assistant_output_text="History response",
-        metadata={"final_output": "History response"},
+        metadata={
+            "final_output": "History response",
+            "response_blocks": [
+                {
+                    "id": f"assistant-text:{run.id}:1",
+                    "kind": "assistant_text",
+                    "runId": str(run.id),
+                    "seq": 1,
+                    "status": "complete",
+                    "text": "History response",
+                    "ts": None,
+                    "source": {"event": "assistant.text", "stage": "assistant"},
+                }
+            ],
+        },
     )
     await db_session.commit()
 
@@ -348,6 +362,18 @@ async def test_host_thread_detail_includes_public_run_events(client, db_session,
     assert thread_resp.status_code == 200
     payload = thread_resp.json()
     assert len(payload["turns"]) == 1
+    assert payload["turns"][0]["response_blocks"] == [
+        {
+            "id": f"assistant-text:{run.id}:1",
+            "kind": "assistant_text",
+            "runId": str(run.id),
+            "seq": 1,
+            "status": "complete",
+            "text": "History response",
+            "ts": None,
+            "source": {"event": "assistant.text", "stage": "assistant"},
+        }
+    ]
     assert payload["turns"][0]["run_events"][0]["event"] == "reasoning.update"
 
 

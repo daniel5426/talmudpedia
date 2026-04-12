@@ -455,6 +455,38 @@ def _authorization_server_metadata_candidates(auth_server: str) -> list[str]:
     return deduped
 
 
+def _protected_resource_metadata_candidates(server_url: str) -> list[str]:
+    normalized = str(server_url or "").strip().rstrip("/")
+    if not normalized:
+        return []
+    parsed = urlparse(normalized)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return []
+
+    origin = f"{parsed.scheme}://{parsed.netloc}"
+    resource_path = parsed.path.strip("/")
+    candidates: list[str] = []
+
+    if resource_path:
+        candidates.append(f"{origin}/.well-known/oauth-protected-resource/{resource_path}")
+
+    candidates.extend(
+        [
+            f"{origin}/.well-known/oauth-protected-resource",
+            f"{normalized}/.well-known/oauth-protected-resource",
+        ]
+    )
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        deduped.append(candidate)
+    return deduped
+
+
 async def discover_mcp_oauth_metadata(
     *,
     server_url: str,
@@ -464,10 +496,17 @@ async def discover_mcp_oauth_metadata(
     await validate_mcp_server_url(server_url, for_auth=True)
     challenge_params = parse_www_authenticate_header(challenge_header)
     prm_url = challenge_params.get("resource_metadata")
-    if not prm_url:
-        parsed = urlparse(server_url)
-        prm_url = f"{parsed.scheme}://{parsed.netloc}/.well-known/oauth-protected-resource"
-    protected_resource = await fetch_json_document(prm_url, timeout_s=timeout_s)
+    protected_resource: dict[str, Any] | None = None
+    fetch_errors: list[str] = []
+    for candidate in ([prm_url] if prm_url else _protected_resource_metadata_candidates(server_url)):
+        try:
+            protected_resource = await fetch_json_document(candidate, timeout_s=timeout_s)
+            prm_url = candidate
+            break
+        except Exception as exc:
+            fetch_errors.append(f"{candidate}: {exc}")
+    if protected_resource is None:
+        raise ValueError("Unable to resolve protected resource metadata: " + "; ".join(fetch_errors))
 
     auth_servers = protected_resource.get("authorization_servers")
     if not isinstance(auth_servers, list) or not auth_servers:
@@ -475,7 +514,7 @@ async def discover_mcp_oauth_metadata(
     auth_server = str(auth_servers[0]).rstrip("/")
 
     auth_server_metadata: dict[str, Any] | None = None
-    fetch_errors: list[str] = []
+    fetch_errors = []
     for candidate in _authorization_server_metadata_candidates(auth_server):
         try:
             auth_server_metadata = await fetch_json_document(candidate, timeout_s=timeout_s)

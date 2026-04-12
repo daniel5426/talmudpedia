@@ -215,3 +215,10 @@ def test_mcp_oauth_metadata_candidates_support_root_issuers():
 
     assert candidates[0] == "https://mcp.linear.app/.well-known/oauth-authorization-server"
     assert "https://mcp.linear.app/.well-known/openid-configuration" in candidates
+
+
+def test_mcp_protected_resource_metadata_candidates_support_path_resources():
+    candidates = mcp_client._protected_resource_metadata_candidates("https://gitlab.com/api/v4/mcp")
+
+    assert candidates[0] == "https://gitlab.com/.well-known/oauth-protected-resource/api/v4/mcp"
+    assert "https://gitlab.com/.well-known/oauth-protected-resource" in candidates

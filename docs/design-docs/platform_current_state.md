@@ -1,138 +1,226 @@
 # Platform Current State
 
-Last Updated: 2026-03-11
+Last Updated: 2026-04-13
 
-This document is the canonical current-state overview for the Talmudpedia platform. It summarizes the live platform at a domain level and points to more focused design docs for detail.
+This document is the canonical high-level overview of the Talmudpedia platform. It is the best single entry point when someone needs to understand what the platform is, which domains it contains, and which technical concepts shape the system.
 
 ## Platform Definition
 
-Talmudpedia is a multi-tenant AI platform that combines:
-- control-plane APIs for models, tools, governance, and configuration
-- graph-based RAG authoring and execution
-- graph-based agent authoring and execution
-- published app runtimes and builder workflows
-- artifact-based extension and execution infrastructure
+Talmudpedia is a multi-tenant AI platform for building, governing, and running AI systems across several related product surfaces.
 
-The platform is not just an agent app and not just a RAG backend. It is a backend platform with multiple execution surfaces sharing common governance, tracing, and runtime services.
+At a platform level, it combines:
+- agent authoring and execution
+- RAG pipeline authoring and execution
+- shared tool, model, credential, and artifact registries
+- published app hosting and builder workflows
+- embedded/public runtime surfaces
+- platform-wide governance, tracing, and operations
 
-## Core Domains
+The platform is not a single chatbot product. It is a control plane plus multiple execution planes that share the same core infrastructure.
 
-### Agents
+## What The Platform Contains
 
-The agent domain supports:
-- graph-based authoring and validation
-- compiled execution through runtime adapters
-- threaded runs and persisted traces
-- heterogeneous node execution, including logic, tools, retrieval, artifacts, and orchestration
-- execution modes and surface-specific visibility rules
+The platform currently spans these major domains:
+
+### 1. Agent Domain
+
+The agent domain provides:
+- graph-based agent builders
+- draft-safe persistence of agent workflows
+- graph analysis, validation, and compilation
+- runtime execution across nodes such as LLMs, tools, retrieval, logic, human input, and artifacts
+- threaded runs, streamed outputs, and persisted execution traces
+
+Use this domain when the system needs reasoning, orchestration, tool usage, and multi-step execution.
 
 See:
-- `docs/design-docs/backend_architecture_current.md`
 - `docs/design-docs/agent_execution_current.md`
+- `docs/product-specs/agent_graph_spec.md`
 
-### RAG
+### 2. RAG Domain
 
-The RAG domain supports:
-- ingestion and retrieval pipeline compilation
-- graph execution with operator registries
-- file and external-source inputs
-- chunking, embedding, crawling, and vector-store providers
-- logical knowledge stores as the contract between ingestion and retrieval consumers
+The RAG domain provides:
+- ingestion pipelines
+- retrieval pipelines
+- operator-based graph authoring
+- chunking, embedding, crawling, normalization, and search
+- compile-time and run-time contracts for pipeline behavior
 
-The core distinction remains:
-- RAG builds or queries knowledge representations
-- agents consume retrieval outputs during reasoning or tool execution
+Use this domain when the system needs to turn raw data into retrievable knowledge or query that knowledge in a structured way.
 
-### Knowledge Stores
+See:
+- `docs/product-specs/rag_pipeline_spec.md`
 
-Knowledge stores remain the logical bridge between data ingestion and reasoning/runtime consumers.
+### 3. Knowledge Store Domain
+
+Knowledge stores are the logical bridge between ingestion and runtime retrieval.
 
 They define:
-- retrieval policy
-- vector backend relationship
-- embedding expectations
-- the logical endpoint that both pipelines and agents can target
+- where retrieval-ready knowledge lives
+- which embedding/vector relationship is expected
+- which retrieval policies and contracts consumers depend on
 
-### Tools and Shared Resources
+This domain matters because Agent and RAG stay separate as products, but they still meet through shared knowledge resources.
 
-Shared platform resources include:
-- model registry and model resolution
-- tool registry and built-in tool catalog
-- integration credentials
-- artifact registry and artifact-backed execution
+### 4. Tools Domain
 
-These resources are consumed across both the agent and RAG sides of the system.
+The tools domain provides the runtime-facing catalog of callable capabilities.
 
-Current artifact runtime usage now spans:
-- artifact admin/test-run flows
-- tenant artifact nodes in agents
+It includes:
+- manually managed tools
+- built-in system tools
+- MCP-backed tools
 - artifact-backed tools
+- pipeline-backed tools
+- agent-backed tools
+
+This gives the platform a single execution-facing tool model even when authoring happens from different product surfaces.
+
+See:
+- `docs/product-specs/tools_domain_spec.md`
+
+### 5. Artifact Domain
+
+Artifacts are the platform’s packaged extension/runtime unit.
+
+They are used for:
+- executable custom logic
+- artifact-backed tools
+- artifact-backed agent nodes
 - artifact-backed RAG operators
+- artifact admin and test-run flows
 
-Tenant artifact execution now uses a Cloudflare Workers-compatible substrate, while the backend remains the artifact control plane.
+The backend acts as the artifact control plane, while isolated execution runs on a Workers-compatible substrate.
 
-Current runtime modes include:
-- Workers for Platforms as the intended production deployment shape
-- a temporary free-plan `standard_worker_test` mode used to validate the current artifact migration before dispatch namespaces are enabled
+See:
+- `docs/product-specs/artifacts_domain_spec.md`
+- `docs/design-docs/artifact_execution_current.md`
 
-### Published Apps
+### 6. Published Apps Domain
 
-Published apps are a major runtime domain.
+Published apps are the user-facing application/runtime layer built on top of shared platform capabilities.
 
-The current backend includes support for:
-- admin-side app management
-- public and hosted app runtime routes
-- builder preview and draft runtime flows
-- coding-agent runtimes
-- revision storage and publishing pipelines
-- sandbox backend selection and execution
+This domain includes:
+- app draft workspaces and previews
+- revision storage and publishing
+- hosted/public runtime routes
+- admin management flows
+- coding-agent-assisted app development flows
 
-### Governance and Security
+Published apps are not separate from the platform. They are one of its main runtime surfaces.
 
-Governance spans:
+See:
+- `docs/product-specs/published_apps_spec.md`
+- `docs/design-docs/apps_builder_current.md`
+
+### 7. Embedded Runtime Domain
+
+The platform also supports embedded agent/app experiences through the public embed contract and SDK-based runtime access patterns.
+
+This matters because the platform is designed to power both first-party hosted experiences and external customer-facing embeddings.
+
+See:
+- `docs/product-specs/embedded_agent_runtime_spec.md`
+
+## Core Technical Concepts
+
+The main technical concepts that define the platform are:
+
+### Multi-Tenant Control Plane
+
+The platform centrally manages:
+- tenants and org boundaries
+- models and provider bindings
+- tools and visibility rules
+- credentials and integrations
+- runtime policies and permissions
+
+This is the shared control layer behind every domain.
+
+### Builder To Compiler To Runtime Flow
+
+Several surfaces follow the same general lifecycle:
+1. users author drafts visually
+2. drafts are persisted even when incomplete
+3. analysis/validation explains what is missing
+4. compilation or materialization creates runnable state
+5. runtime execution uses the compiled form with tracing and policy enforcement
+
+This pattern appears in both Agent and RAG, and also influences published-app and artifact flows.
+
+### Shared Resource Model
+
+Models, tools, artifacts, credentials, and knowledge resources are shared platform objects, not page-local implementation details.
+
+That lets multiple domains reuse the same resources while preserving tenant scope and governance rules.
+
+### Multiple Execution Surfaces
+
+The platform runs workloads through several surfaces, including:
+- synchronous API calls
+- streamed runs
+- background workers
+- isolated artifact runtimes
+- published-app runtime hosts
+- embedded/public runtimes
+
+This is why the architecture is closer to an AI operating platform than a single API service.
+
+### Governance As A First-Class System
+
+Governance is built into the platform through:
 - auth and internal auth
-- RBAC and org/tenant boundaries
-- workload identity and delegated execution
-- token brokering and security policy enforcement
-- audit and scoped runtime behavior
+- RBAC and tenant scoping
+- workload identity
+- delegated execution policies
+- audit and security enforcement
 
-This is a platform-wide concern, not an add-on module.
+It is not an afterthought around the execution engine.
 
-### Observability and Operations
+### Observability As Shared Infrastructure
 
-The platform currently includes:
-- execution event streaming
+The platform treats tracing and execution visibility as reusable infrastructure.
+
+Key concepts include:
+- run events
 - trace recording
-- run and log inspection surfaces
-- stats and usage aggregation
-- worker-managed background execution
+- execution logs
+- usage and stats aggregation
+- surface-aware visibility rules
 
-The system relies on observability as a first-class control-plane feature, especially for agent runs, RAG pipeline execution, and published-app coding flows.
+This is especially important for debugging agent runs, pipeline execution, published-app preview behavior, and coding-agent flows.
 
-## Current Architectural Shape
+## Runtime And Infrastructure Shape
 
-The backend currently operates as a set of cooperating domains:
-- API and websocket surfaces expose platform and runtime operations
-- services coordinate business logic and policy
-- graph compilers and runtimes handle agent and RAG execution
-- workers and runtime-specific execution surfaces handle asynchronous or isolated workloads
-- shared governance and observability infrastructure apply across all runtime surfaces
+At a high level, the current system is shaped as:
+- API and websocket surfaces for control-plane and runtime operations
+- service-layer orchestration for business logic and policy
+- graph compilers and execution runtimes for Agent and RAG
+- background workers for longer-running tasks
+- isolated runtime substrates for artifact-style execution
+- shared persistence and trace infrastructure across domains
 
-## Important Current Realities
+Important current realities:
+- PostgreSQL is the primary operational store
+- MongoDB is still used for Sefaria/text-oriented paths
+- Celery remains important for async/background work
+- local bootstrapping is still concentrated in `backend/main.py`
 
-- PostgreSQL is the primary operational store for platform entities and runtime metadata.
-- MongoDB is still present for Sefaria/text-oriented paths.
-- Celery and background execution remain important for longer-running jobs.
-- local development bootstrapping is still concentrated in `backend/main.py`.
-- the platform already contains multiple runtime surfaces beyond the basic API request/response cycle.
+## Short Positioning Summary
 
-## Known Gaps and Ongoing Areas
+For CV or experience framing, the platform can be described as:
 
-Some areas are clearly still evolving:
-- deeper agent memory and durable execution capabilities
-- further tool-governance hardening
-- richer retrieval and multi-store capabilities
-- stronger artifact queue fairness and scheduling controls beyond the current queue-class split
-- continued cleanup of architecture documentation drift
+Talmudpedia is a multi-tenant AI platform that combines agent orchestration, RAG pipelines, shared tool and artifact infrastructure, published app hosting, embedded runtimes, and platform-wide governance/observability into one backend system.
 
-These gaps do not change the current architectural picture; they only indicate active evolution.
+## Related Canonical Docs
+
+- `docs/design-docs/platform_architecture_layers.md`
+- `docs/design-docs/backend_architecture_current.md`
+- `docs/design-docs/agent_execution_current.md`
+- `docs/design-docs/apps_builder_current.md`
+- `docs/design-docs/artifact_execution_current.md`
+- `docs/product-specs/agent_graph_spec.md`
+- `docs/product-specs/rag_pipeline_spec.md`
+- `docs/product-specs/tools_domain_spec.md`
+- `docs/product-specs/artifacts_domain_spec.md`
+- `docs/product-specs/published_apps_spec.md`

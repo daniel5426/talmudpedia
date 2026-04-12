@@ -64,7 +64,6 @@ import { useReactArtifactPanel } from "@/lib/react-artifacts/useReactArtifactPan
 import { parseReactArtifact } from "@/lib/react-artifacts/parseReactArtifact";
 import { useTenant } from "@/contexts/TenantContext";
 import {
-  blocksFromLegacyAssistantContent,
   createApprovalRequestBlock,
   sortChatRenderBlocks,
   type ChatToolCallBlock,
@@ -722,10 +721,7 @@ export function ChatWorkspace({
                             const responseBlocks =
                               Array.isArray(msg.responseBlocks) && msg.responseBlocks.length > 0
                                 ? sortChatRenderBlocks(msg.responseBlocks)
-                                : blocksFromLegacyAssistantContent({
-                                    messageId: msg.id,
-                                    content: msg.content,
-                                  });
+                                : [];
 
                             if (responseBlocks.length > 0) {
                               return (
@@ -802,25 +798,10 @@ export function ChatWorkspace({
                             {msg.approvalRequest ? (
                               <MessageResponse>{msg.content}</MessageResponse>
                             ) : (
-                              <MessageResponse streaming={msg.id === activeStreamingId && isLoading}>{(() => {
-                                // Try to parse if it's a JSON response from the architect agent
-                                try {
-                                  const trimmed = msg.content.trim();
-                                  if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
-                                    const parsed = JSON.parse(trimmed);
-                                    // If it's a "respond" action or just has a message field, show that
-                                    if (parsed.action === 'respond' && parsed.message) {
-                                      return parsed.message;
-                                    }
-                                    if (parsed.message) {
-                                      return parsed.message;
-                                    }
-                                  }
-                                } catch {
-                                  // Not JSON or invalid, ignore
-                                }
-                                return msg.content;
-                              })()}</MessageResponse>
+                              <MessageResponse
+                                streaming={msg.id === activeStreamingId && isLoading}
+                                streamingId={msg.id}
+                              >{msg.content}</MessageResponse>
                             )}
                           </div>
                           )}

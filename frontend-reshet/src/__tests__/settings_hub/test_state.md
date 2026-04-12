@@ -1,6 +1,6 @@
 # Settings Hub Frontend Tests
 
-Last Updated: 2026-02-22
+Last Updated: 2026-04-12
 
 ## Scope
 Settings Hub UI behavior for:
@@ -15,14 +15,16 @@ Settings Hub UI behavior for:
 
 ## Key Scenarios Covered
 - Settings hub renders the four primary sections.
+- Settings hub restores the active section from the `tab` query string.
 - Tenant profile save calls update API with edited fields.
 - Non-admin/member role renders profile controls as read-only.
 - Defaults tab submits the expected payload shape.
+- Settings tab changes update the `tab` query string for reload persistence.
 
 ## Last Run
 - Command: `npm test -- --runInBand src/__tests__/settings_hub`
-- Date: 2026-02-22
-- Result: Pass (3 suites, 4 tests)
+- Date: 2026-04-12 23:17:02 EEST
+- Result: Pass (3 suites, 6 tests)
 
 ## Known Gaps / Follow-ups
 - Add tests for slug-change tenant context refresh flow.

@@ -6,6 +6,7 @@ export type {
   RuntimeInputMessage,
   RawRuntimeEvent,
   NormalizedRuntimeEvent,
+  RuntimeResponseBlock,
   RuntimeClientOptions,
   RuntimeStreamResult,
   RuntimeAuthCapabilities,

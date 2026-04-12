@@ -2,6 +2,17 @@ import { render, screen, waitFor } from "@testing-library/react"
 import SettingsPage from "@/app/admin/settings/page"
 import { credentialsService, orgUnitsService, modelsService } from "@/services"
 
+let mockSearch = ""
+const replaceMock = jest.fn((href: string) => {
+  mockSearch = href.split("?")[1] ?? ""
+})
+
+jest.mock("next/navigation", () => ({
+  useRouter: () => ({ replace: replaceMock }),
+  usePathname: () => "/admin/settings",
+  useSearchParams: () => new URLSearchParams(mockSearch),
+}))
+
 jest.mock("@/services", () => ({
   credentialsService: {
     listCredentials: jest.fn(),
@@ -38,6 +49,8 @@ jest.mock("@/lib/store/useAuthStore", () => ({
 
 describe("Settings Hub", () => {
   beforeEach(() => {
+    mockSearch = ""
+    replaceMock.mockReset()
     ;(orgUnitsService.getTenant as jest.Mock).mockResolvedValue({
       id: "tenant-1",
       name: "Tenant One",
@@ -63,8 +76,18 @@ describe("Settings Hub", () => {
 
     await waitFor(() => expect(orgUnitsService.getTenant).toHaveBeenCalled())
     await waitFor(() => expect(screen.getAllByRole("button", { name: "General" }).length).toBeGreaterThan(0))
-    expect(screen.getAllByRole("button", { name: "Integrations" }).length).toBeGreaterThan(0)
+    expect(screen.getAllByRole("button", { name: "Credentials" }).length).toBeGreaterThan(0)
+    expect(screen.getAllByRole("button", { name: "MCP Servers" }).length).toBeGreaterThan(0)
     expect(screen.getAllByRole("button", { name: "Defaults" }).length).toBeGreaterThan(0)
     expect(screen.getAllByRole("button", { name: "Security" }).length).toBeGreaterThan(0)
+  })
+
+  it("loads the tab from the query string", async () => {
+    mockSearch = "tab=defaults"
+
+    render(<SettingsPage />)
+
+    await waitFor(() => expect(orgUnitsService.getTenant).toHaveBeenCalled())
+    await waitFor(() => expect(screen.getByText("Retrieval Policy")).toBeInTheDocument())
   })
 })

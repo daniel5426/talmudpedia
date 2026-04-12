@@ -1,5 +1,34 @@
 import type { EmbeddedAgentSDKErrorKind } from "./errors";
 
+export type EmbeddedAgentResponseBlock =
+  | {
+      id: string;
+      kind: "assistant_text";
+      runId?: string | null;
+      seq: number;
+      status: string;
+      text: string;
+      ts?: string | null;
+    }
+  | {
+      id: string;
+      kind: "tool_call";
+      runId?: string | null;
+      seq: number;
+      status: string;
+      ts?: string | null;
+      tool: Record<string, unknown>;
+    }
+  | {
+      id: string;
+      kind: "reasoning_note" | "approval_request" | "error" | "artifact" | "user_message";
+      runId?: string | null;
+      seq: number;
+      status: string;
+      ts?: string | null;
+      [key: string]: unknown;
+    };
+
 export type EmbeddedAgentStreamRequest = {
   input?: string;
   messages?: Array<Record<string, unknown>>;
@@ -48,6 +77,7 @@ export type EmbeddedAgentThreadTurn = {
   status: string;
   usage_tokens: number;
   metadata: Record<string, unknown>;
+  response_blocks: EmbeddedAgentResponseBlock[];
   attachments: EmbeddedAgentAttachment[];
   created_at: string;
   completed_at: string | null;

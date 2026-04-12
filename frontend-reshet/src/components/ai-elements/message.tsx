@@ -20,8 +20,9 @@ import {
   XIcon,
 } from "lucide-react";
 import type { ComponentProps, HTMLAttributes, ReactElement, ReactNode } from "react";
-import { createContext, memo, useContext, useDeferredValue, useEffect, useState } from "react";
+import { createContext, memo, useContext, useEffect, useState } from "react";
 import { Streamdown } from "streamdown";
+import { useStreamingAssistantTextView } from "./useStreamingAssistantTextView";
 
 export type MessageProps = HTMLAttributes<HTMLDivElement> & {
   from: UIMessage["role"];
@@ -307,11 +308,18 @@ export const MessageBranchPage = ({
 
 export type MessageResponseProps = ComponentProps<typeof Streamdown> & {
   streaming?: boolean;
+  streamingId?: string;
 };
 
 export const MessageResponse = memo(
-  ({ className, streaming = false, children, ...props }: MessageResponseProps) => {
-    const deferredChildren = useDeferredValue(children);
+  ({ className, streaming = false, streamingId, children, ...props }: MessageResponseProps) => {
+    const streamingText = useStreamingAssistantTextView({
+      isStreaming: streaming && typeof children === "string",
+      streamId: streamingId || "default-stream",
+      text: typeof children === "string" ? children : "",
+    });
+    const renderedChildren =
+      streaming && typeof children === "string" ? streamingText : children;
     return (
       <Streamdown
         className={cn(
@@ -320,13 +328,14 @@ export const MessageResponse = memo(
         )}
         {...props}
       >
-        {streaming ? deferredChildren : children}
+        {renderedChildren}
       </Streamdown>
     );
   },
   (prevProps, nextProps) =>
     prevProps.children === nextProps.children &&
-    prevProps.streaming === nextProps.streaming
+    prevProps.streaming === nextProps.streaming &&
+    prevProps.streamingId === nextProps.streamingId
 );
 
 MessageResponse.displayName = "MessageResponse";

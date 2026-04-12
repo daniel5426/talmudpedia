@@ -9,10 +9,7 @@ import { ChatController, ChatMessage, Citation } from "@/components/layout/useCh
 import type { ChatRenderBlock } from "@/services/chat-presentation";
 import type { FileUIPart } from "ai";
 import {
-  adaptRunStreamEvent,
-  applyRunStreamEventToBlocks,
-  extractStructuredAssistantText,
-  finalizeAssistantRenderBlocks,
+  extractAssistantTextFromBlocks,
   sortChatRenderBlocks,
 } from "@/services/chat-presentation";
 import {
@@ -24,8 +21,25 @@ import { AgentChatHistoryItem, useAgentThreadHistory } from "./useAgentThreadHis
 
 export type { ExecutionStep } from "@/services/run-trace-steps";
 
-const resolveArchitectResponse = (content: string) => {
-  return extractStructuredAssistantText(content) || content;
+const resolveAssistantContentFromBlocks = (
+  blocks: ChatRenderBlock[],
+  fallbackContent: string,
+) => {
+  const assistantText = extractAssistantTextFromBlocks(blocks);
+
+  if (assistantText) {
+    return assistantText;
+  }
+
+  return fallbackContent.trim();
+};
+
+const readResponseBlocksFromPayload = (payload: Record<string, unknown>): ChatRenderBlock[] | null => {
+  const blocks = payload.response_blocks;
+  if (!Array.isArray(blocks)) {
+    return null;
+  }
+  return sortChatRenderBlocks(blocks as ChatRenderBlock[]);
 };
 
 const finalizeLiveSteps = (
@@ -41,6 +55,22 @@ const finalizeLiveSteps = (
           output: step.output !== undefined ? step.output : output,
         }
       : step,
+  );
+
+const finalizeVisibleResponseBlocks = (blocks: ChatRenderBlock[]): ChatRenderBlock[] =>
+  sortChatRenderBlocks(
+    blocks.map((block) => {
+      if (block.kind === "assistant_text" && (block.status === "running" || block.status === "streaming")) {
+        return { ...block, status: "complete" as const };
+      }
+      if (block.kind === "tool_call" && block.status === "running") {
+        return { ...block, status: "complete" as const };
+      }
+      if (block.kind === "reasoning_note" && block.status === "running") {
+        return { ...block, status: "complete" as const };
+      }
+      return block;
+    }),
   );
 
 const logRunControllerDebug = (event: string, details?: Record<string, unknown>) => {
@@ -294,19 +324,19 @@ export function useAgentRunController(
         (lastReasoningRef.current && lastReasoningRef.current.length > 0)
           ? lastReasoningRef.current
           : reasoningRef.current;
-      const responseBlocks = sortChatRenderBlocks(
-        finalizeAssistantRenderBlocks(responseBlocksRef.current, trimmedContent, {
-          runId: rootRunIdRef.current || currentRunIdRef.current || undefined,
-        }),
-      );
+      const responseBlocks =
+        reason === "stop" || reason === "interrupt"
+          ? finalizeVisibleResponseBlocks(responseBlocksRef.current)
+          : sortChatRenderBlocks(responseBlocksRef.current);
       responseBlocksRef.current = responseBlocks;
+      const resolvedContent = resolveAssistantContentFromBlocks(responseBlocks, trimmedContent);
 
-      if (!trimmedContent && (!reasoning || reasoning.length === 0) && responseBlocks.length === 0) return;
+      if (!resolvedContent && (!reasoning || reasoning.length === 0) && responseBlocks.length === 0) return;
 
       const assistantMsg: ChatMessage = {
         id: streamingId,
         role: "assistant",
-        content: trimmedContent,
+        content: resolvedContent,
         createdAt: new Date(),
         runId: rootRunIdRef.current || currentRunIdRef.current || undefined,
         responseBlocks: responseBlocks.length > 0 ? responseBlocks : undefined,
@@ -541,9 +571,7 @@ export function useAgentRunController(
 
       const decoder = new TextDecoder();
       let buffer = "";
-      let fullAiContent = "";
       let terminalError: string | null = null;
-      let streamEventIndex = 0;
       let latestRunId: string | null = null;
 
       while (true) {
@@ -571,6 +599,7 @@ export function useAgentRunController(
               normalizedEvent.data && typeof normalizedEvent.data === "object"
                 ? normalizedEvent.data
                 : payload;
+            const payloadResponseBlocks = readResponseBlocksFromPayload(payload);
             if (typeof rawEvent.run_id === "string" && rawEvent.run_id.trim().length > 0) {
               if (!rootRunIdRef.current) {
                 rootRunIdRef.current = rawEvent.run_id;
@@ -597,14 +626,32 @@ export function useAgentRunController(
               setExecutionEvents((prev) => [...prev, { ...normalizedEvent, received_at: Date.now() }]);
             }
 
-            const appliedBlocks = applyRunStreamEventToBlocks(
-              responseBlocksRef.current,
-              adaptRunStreamEvent(rawEvent, streamEventIndex++),
-            );
-            if (appliedBlocks !== responseBlocksRef.current) {
-              const nextBlocks = sortChatRenderBlocks(appliedBlocks);
+            if (payloadResponseBlocks) {
+              const nextBlocks = sortChatRenderBlocks(payloadResponseBlocks);
+              const nextAssistantText = extractAssistantTextFromBlocks(nextBlocks);
               responseBlocksRef.current = nextBlocks;
               setCurrentResponseBlocks(nextBlocks);
+              setStreamingContent(nextAssistantText);
+              streamingContentRef.current = nextAssistantText;
+              if (thinkingStartRef.current && nextAssistantText) {
+                const duration = Date.now() - thinkingStartRef.current;
+                thinkingDurationRef.current = duration;
+                setLastThinkingDurationMs(duration);
+                thinkingStartRef.current = null;
+              }
+            } else if (eventName === "assistant.delta") {
+              const content = String(payload.content || "");
+              if (content) {
+                const nextContent = `${streamingContentRef.current}${content}`;
+                setStreamingContent(nextContent);
+                streamingContentRef.current = nextContent;
+                if (thinkingStartRef.current) {
+                  const duration = Date.now() - thinkingStartRef.current;
+                  thinkingDurationRef.current = duration;
+                  setLastThinkingDurationMs(duration);
+                  thinkingStartRef.current = null;
+                }
+              }
             }
 
             if (eventName === "run.failed") {
@@ -616,20 +663,7 @@ export function useAgentRunController(
               break;
             }
 
-            if (eventName === "assistant.delta") {
-              const content = String(payload.content || "");
-              if (content) {
-                fullAiContent += content;
-                setStreamingContent(fullAiContent);
-
-                if (thinkingStartRef.current) {
-                  const duration = Date.now() - thinkingStartRef.current;
-                  thinkingDurationRef.current = duration;
-                  setLastThinkingDurationMs(duration);
-                  thinkingStartRef.current = null;
-                }
-              }
-            } else if (
+            if (
               eventName === "run.accepted" ||
               eventName === "run.completed" ||
               eventName === "run.paused" ||
@@ -744,25 +778,23 @@ export function useAgentRunController(
 
       // Use the local newStreamingId to ensure it matches exactly what was used during the stream
       if (terminalError) {
-        fullAiContent = `Error: ${terminalError}`;
+        const errorContent = `Error: ${terminalError}`;
+        setStreamingContent(errorContent);
+        streamingContentRef.current = errorContent;
       }
-      const resolvedContent = resolveArchitectResponse(fullAiContent);
-      const finalizedBlocks = sortChatRenderBlocks(
-        finalizeAssistantRenderBlocks(responseBlocksRef.current, resolvedContent, {
-          runId: latestRunId || currentRunId || newStreamingId,
-          fallbackSeq: streamEventIndex + 1,
-        }),
-      );
+      const resolvedContent = streamingContentRef.current.trim();
+      const finalizedBlocks = sortChatRenderBlocks(responseBlocksRef.current);
       responseBlocksRef.current = finalizedBlocks;
+      const displayContent = resolveAssistantContentFromBlocks(finalizedBlocks, resolvedContent);
       const hasAssistantPayload =
-        (resolvedContent && resolvedContent.trim().length > 0) ||
+        (displayContent && displayContent.trim().length > 0) ||
         finalizedBlocks.length > 0 ||
         (lastReasoningRef.current && lastReasoningRef.current.length > 0);
       if (hasAssistantPayload) {
         const assistantMsg: ChatMessage = {
           id: newStreamingId,
           role: "assistant",
-          content: resolvedContent,
+          content: displayContent,
           createdAt: new Date(),
           runId: latestRunId || currentRunId || undefined,
           responseBlocks: finalizedBlocks.length > 0 ? finalizedBlocks : undefined,

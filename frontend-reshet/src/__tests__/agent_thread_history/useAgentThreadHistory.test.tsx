@@ -83,6 +83,30 @@ describe("useAgentThreadHistory", () => {
             total_tokens: 42,
             source: "exact",
           },
+          metadata: {
+            response_blocks: [
+              {
+                id: "call-newer",
+                kind: "tool_call",
+                runId: "run-newer",
+                seq: 1,
+                status: "complete",
+                tool: {
+                  toolCallId: "call-newer",
+                  toolName: "Artifact Coding Read File",
+                  title: "Artifact Coding Read File",
+                },
+              },
+              {
+                id: "assistant-newer",
+                kind: "assistant_text",
+                runId: "run-newer",
+                seq: 2,
+                status: "complete",
+                text: "What is your favorite programming language? Please reply via the worker interactive channel — after you reply I'll update the draft to include it and return a short demo output. I will not persist the artifact yet.",
+              },
+            ],
+          },
         },
         {
           id: "turn-older",
@@ -99,89 +123,33 @@ describe("useAgentThreadHistory", () => {
             total_tokens: 24,
             source: "exact",
           },
+          metadata: {
+            response_blocks: [
+              {
+                id: "call-older",
+                kind: "tool_call",
+                runId: "run-older",
+                seq: 1,
+                status: "complete",
+                tool: {
+                  toolCallId: "call-older",
+                  toolName: "Artifact Coding Update File Range",
+                  title: "Artifact Coding Update File Range",
+                },
+              },
+              {
+                id: "assistant-older",
+                kind: "assistant_text",
+                runId: "run-older",
+                seq: 2,
+                status: "complete",
+                text: "What is your favorite programming language?",
+              },
+            ],
+          },
         },
       ],
     } as any);
-
-    mockedAgentService.getRunEvents.mockImplementation(async (runId: string) => {
-      if (runId === "run-older") {
-        return {
-          run_id: runId,
-          event_count: 2,
-          events: [
-            {
-              version: "run-stream.v2",
-              seq: 1,
-              ts: "2026-03-16T12:42:10Z",
-              event: "tool.started",
-              run_id: runId,
-              stage: "tool",
-              payload: {
-                span_id: "call-older",
-                tool: "Artifact Coding Update File Range",
-                display_name: "Artifact Coding Update File Range",
-                summary: "Artifact Coding Update File Range",
-              },
-              diagnostics: [],
-            },
-            {
-              version: "run-stream.v2",
-              seq: 2,
-              ts: "2026-03-16T12:42:20Z",
-              event: "tool.completed",
-              run_id: runId,
-              stage: "tool",
-              payload: {
-                span_id: "call-older",
-                tool: "Artifact Coding Update File Range",
-                display_name: "Artifact Coding Update File Range",
-                summary: "Artifact Coding Update File Range",
-                output: { ok: true },
-              },
-              diagnostics: [],
-            },
-          ],
-        } as any;
-      }
-
-      return {
-        run_id: runId,
-        event_count: 2,
-        events: [
-          {
-            version: "run-stream.v2",
-            seq: 1,
-            ts: "2026-03-16T12:44:05Z",
-            event: "tool.started",
-            run_id: runId,
-            stage: "tool",
-            payload: {
-              span_id: "call-newer",
-              tool: "Artifact Coding Read File",
-              display_name: "Artifact Coding Read File",
-              summary: "Artifact Coding Read File",
-            },
-            diagnostics: [],
-          },
-          {
-            version: "run-stream.v2",
-            seq: 2,
-            ts: "2026-03-16T12:44:10Z",
-            event: "tool.completed",
-            run_id: runId,
-            stage: "tool",
-            payload: {
-              span_id: "call-newer",
-              tool: "Artifact Coding Read File",
-              display_name: "Artifact Coding Read File",
-              summary: "Artifact Coding Read File",
-              output: { path: "main.py" },
-            },
-            diagnostics: [],
-          },
-        ],
-      } as any;
-    });
 
     const { result } = renderHook(() => useAgentThreadHistory("user-1"));
 
@@ -232,39 +200,14 @@ describe("useAgentThreadHistory", () => {
     ).toBeTruthy();
   });
 
-  it("hydrates tool trace blocks even when the persisted assistant text is empty", async () => {
-    mockedAgentService.getRunEvents.mockResolvedValue({
-      run_id: "run-aborted",
-      event_count: 2,
-      events: [
-        {
-          seq: 1,
-          ts: "2026-03-29T15:00:01Z",
-          event: "on_tool_start",
-          run_id: "run-aborted",
-          name: "Artifact Coding Read File",
-          span_id: "tool-1",
-          data: { input: { path: "main.py" } },
-        },
-        {
-          seq: 2,
-          ts: "2026-03-29T15:00:02Z",
-          event: "on_tool_end",
-          run_id: "run-aborted",
-          name: "Artifact Coding Read File",
-          span_id: "tool-1",
-          data: { output: { path: "main.py" } },
-        },
-      ],
-    } as any);
-
+  it("falls back to persisted assistant text for legacy turns without response blocks", async () => {
     const messages = await mapTurnsToMessages("thread-1", [
       {
         id: "turn-1",
         run_id: "run-aborted",
         turn_index: 0,
         user_input_text: "Inspect the file",
-        assistant_output_text: null,
+        assistant_output_text: "The file was inspected.",
         created_at: "2026-03-29T15:00:00Z",
         completed_at: "2026-03-29T15:00:03Z",
       },
@@ -272,8 +215,37 @@ describe("useAgentThreadHistory", () => {
 
     expect(messages).toHaveLength(2);
     expect(messages[1].role).toBe("assistant");
-    expect(messages[1].content).toBe("");
+    expect(messages[1].content).toBe("The file was inspected.");
     expect(messages[1].runId).toBe("run-aborted");
-    expect(messages[1].responseBlocks?.some((block) => block.kind === "tool_call")).toBe(true);
+    expect(messages[1].responseBlocks).toMatchObject([
+      {
+        kind: "assistant_text",
+        text: "The file was inspected.",
+      },
+    ]);
+  });
+
+  it("uses persisted assistant_output_text as the only legacy fallback when response blocks are missing", async () => {
+    const messages = await mapTurnsToMessages("thread-1", [
+      {
+        id: "turn-1",
+        run_id: "run-markdown",
+        turn_index: 0,
+        user_input_text: "Give me bullets",
+        assistant_output_text: "Title item one item two",
+        created_at: "2026-04-12T09:00:00Z",
+        completed_at: "2026-04-12T09:00:03Z",
+      },
+    ]);
+
+    expect(messages).toHaveLength(2);
+    expect(messages[1].role).toBe("assistant");
+    expect(messages[1].content).toBe("Title item one item two");
+    expect(messages[1].responseBlocks).toMatchObject([
+      {
+        kind: "assistant_text",
+        text: "Title item one item two",
+      },
+    ]);
   });
 });

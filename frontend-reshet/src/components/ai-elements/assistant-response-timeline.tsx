@@ -306,6 +306,7 @@ export function AssistantResponseTimeline({
           <MessageResponse
             key={block.id}
             streaming={block.status === "running" || block.status === "streaming"}
+            streamingId={block.id}
           >
             {block.text}
           </MessageResponse>,

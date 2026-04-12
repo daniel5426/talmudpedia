@@ -5,6 +5,11 @@ import json
 from typing import Any, AsyncGenerator
 from uuid import UUID
 
+from app.agent.execution.chat_response_blocks import (
+    apply_stream_v2_event_to_response_blocks,
+    extract_assistant_text_from_blocks,
+    finalize_response_blocks,
+)
 from app.agent.execution.adapter import StreamAdapter
 from app.agent.execution.stream_contract_v2 import build_stream_v2_event, normalize_filtered_event_to_v2
 from app.agent.execution.trace_recorder import ExecutionTraceRecorder
@@ -131,6 +136,7 @@ async def stream_persisted_run_events(
     seq = 1
     last_sequence = 0
     saw_terminal = False
+    response_blocks: list[dict[str, Any]] = []
 
     yield ": " + (" " * max(0, int(padding_bytes))) + "\n\n"
 
@@ -164,6 +170,7 @@ async def stream_persisted_run_events(
                             "thread_id": thread_id_value,
                             "context_window": ContextWindowService.read_from_run(run),
                             "run_usage": usage_payload_from_run(run) or {},
+                            "response_blocks": [],
                         },
                     )
                     yield f"data: {json.dumps(accepted, default=str)}\n\n"
@@ -177,8 +184,29 @@ async def stream_persisted_run_events(
                 last_sequence = max(last_sequence, int(item.get("_sequence") or 0))
                 if stream_v2_enforced:
                     mapped_event, stage, payload, diagnostics = normalize_filtered_event_to_v2(raw_event=item)
+                    response_blocks = apply_stream_v2_event_to_response_blocks(
+                        response_blocks,
+                        event=mapped_event,
+                        run_id=str(run.id),
+                        seq=seq,
+                        ts=None,
+                        stage=stage,
+                        payload=payload,
+                        diagnostics=diagnostics,
+                    )
                     if mapped_event in {"run.completed", "run.failed", "run.cancelled", "run.paused"}:
+                        response_blocks = finalize_response_blocks(
+                            response_blocks,
+                            final_output=(payload or {}).get("final_output"),
+                            run_id=str(run.id),
+                            fallback_seq=seq,
+                        )
                         saw_terminal = True
+                    payload = dict(payload or {})
+                    payload["response_blocks"] = response_blocks
+                    assistant_text = extract_assistant_text_from_blocks(response_blocks)
+                    if assistant_text:
+                        payload["assistant_output_text"] = assistant_text
                     envelope = build_stream_v2_event(
                         seq=seq,
                         run_id=str(run.id),
@@ -201,7 +229,21 @@ async def stream_persisted_run_events(
             if status in _TERMINAL_STATUSES:
                 if not saw_terminal:
                     if stream_v2_enforced:
-                        yield f"data: {json.dumps(_build_terminal_envelope(seq=seq, run=run), default=str)}\n\n"
+                        terminal_envelope = _build_terminal_envelope(seq=seq, run=run)
+                        terminal_payload = terminal_envelope.get("payload") if isinstance(terminal_envelope.get("payload"), dict) else {}
+                        response_blocks = finalize_response_blocks(
+                            response_blocks,
+                            final_output=terminal_payload.get("final_output"),
+                            run_id=str(run.id),
+                            fallback_seq=seq,
+                        )
+                        terminal_payload = dict(terminal_payload)
+                        terminal_payload["response_blocks"] = response_blocks
+                        assistant_text = extract_assistant_text_from_blocks(response_blocks)
+                        if assistant_text:
+                            terminal_payload["assistant_output_text"] = assistant_text
+                        terminal_envelope["payload"] = terminal_payload
+                        yield f"data: {json.dumps(terminal_envelope, default=str)}\n\n"
                     else:
                         yield f"data: {json.dumps(_legacy_terminal_payload(run), default=str)}\n\n"
                 return

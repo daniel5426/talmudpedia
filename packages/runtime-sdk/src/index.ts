@@ -7,6 +7,7 @@ export type {
   RuntimeStreamResult,
   RawRuntimeEvent,
   NormalizedRuntimeEvent,
+  RuntimeResponseBlock,
   RuntimeAuthCapabilities,
 } from "./core";
 

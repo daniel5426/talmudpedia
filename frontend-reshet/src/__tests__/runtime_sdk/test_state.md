@@ -1,6 +1,6 @@
 # Runtime SDK Frontend Tests
 
-Last Updated: 2026-03-16
+Last Updated: 2026-04-12
 
 ## Scope of the feature
 - Runtime SDK transport behavior from template/frontend usage perspective.
@@ -19,6 +19,7 @@ Last Updated: 2026-03-16
 - Published runtime bootstrap uses the dedicated external-runtime route family.
 - Published app auth/history helpers target external bearer-token routes.
 - Normalized event helper falls back from `payload.content` when direct `content` is absent.
+- Normalized stream events expose canonical `responseBlocks` and `assistantOutputText` from backend payloads.
 
 ## Last run command + date/time + result
 - Command: `cd frontend-reshet && npm test -- --runInBand src/__tests__/runtime_sdk/runtime_sdk_core.test.ts`

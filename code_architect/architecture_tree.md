@@ -77,6 +77,7 @@ backend/app/agent/graph/node_factory.py
 
 backend/app/agent/execution/
 backend/app/agent/execution/service.py
+backend/app/agent/execution/chat_response_blocks.py
 backend/app/agent/execution/run_task_registry.py
 backend/app/agent/execution/durable_checkpointer.py
 backend/app/agent/execution/adapter.py

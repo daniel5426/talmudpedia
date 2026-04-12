@@ -40,6 +40,7 @@ async def _serialize_public_turn(
     turn: Any,
     run_events_loader=list_public_run_events,
 ) -> dict[str, Any]:
+    metadata = dict(turn.metadata_ or {})
     return {
         "id": str(turn.id),
         "run_id": str(turn.run_id),
@@ -51,7 +52,8 @@ async def _serialize_public_turn(
         "run_usage": _serialize_run_usage(getattr(turn, "run", None)),
         "created_at": turn.created_at,
         "completed_at": turn.completed_at,
-        "metadata": turn.metadata_,
+        "metadata": metadata,
+        "response_blocks": metadata.get("response_blocks") if isinstance(metadata.get("response_blocks"), list) else [],
         "attachments": [
             RuntimeAttachmentService.serialize_attachment(link.attachment)
             for link in sorted(turn.attachment_links or [], key=lambda item: str(item.id))

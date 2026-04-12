@@ -186,6 +186,22 @@ function isProviderStructuredToolDeltaText(value: unknown): boolean {
   return structuredTypes.some((type) => normalized.includes(`'type': '${type}'`));
 }
 
+function stripProviderStructuredToolDeltaText(value: string): string {
+  if (!value) return "";
+
+  const patterns = [
+    /\{['"]id['"]:\s*['"][^'"]+['"],\s*['"]caller['"]:\s*\{[^{}]*\},\s*['"]input['"]:\s*\{[^{}]*\},\s*['"]name['"]:\s*['"][^'"]+['"],\s*['"]type['"]:\s*['"]tool_use['"],\s*['"]index['"]:\s*\d+\}/g,
+    /\{['"]partial_json['"]:\s*.*?['"]type['"]:\s*['"]input_json_delta['"],\s*['"]index['"]:\s*\d+\}/g,
+  ];
+
+  let next = value;
+  for (const pattern of patterns) {
+    next = next.replace(pattern, "");
+  }
+
+  return next.replace(/\}\{/g, "").replace(/[ \t]{2,}/g, " ").trim();
+}
+
 function extractThreadIdFromRecord(record: Record<string, unknown>): string | null {
   const directKeys = ["thread_id", "threadId"];
   for (const key of directKeys) {
@@ -215,9 +231,9 @@ function extractThreadIdFromValue(value: unknown): string | null {
   return null;
 }
 
-export function extractStructuredAssistantText(content: string): string {
-  const trimmed = String(content || "").trim();
-  if (!trimmed) return "";
+function extractStructuredResponsePayloadText(content: string): string | null {
+  const trimmed = stripProviderStructuredToolDeltaText(String(content || "").trim());
+  if (!trimmed) return null;
 
   const raw = trimmed.startsWith("```")
     ? trimmed.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "")
@@ -226,7 +242,7 @@ export function extractStructuredAssistantText(content: string): string {
   try {
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== "object") {
-      return trimmed;
+      return null;
     }
 
     if (typeof (parsed as { message?: unknown }).message === "string") {
@@ -251,10 +267,48 @@ export function extractStructuredAssistantText(content: string): string {
       }
     }
   } catch {
-    return trimmed;
+    return null;
   }
 
-  return trimmed;
+  return null;
+}
+
+export function extractStructuredAssistantText(content: string): string {
+  const trimmed = stripProviderStructuredToolDeltaText(String(content || "").trim());
+  if (!trimmed) return "";
+  return extractStructuredResponsePayloadText(trimmed) || trimmed;
+}
+
+export function extractAssistantTextFromUnknown(value: unknown): string {
+  if (typeof value === "string") {
+    return extractStructuredAssistantText(value);
+  }
+
+  if (!value || typeof value !== "object") {
+    return "";
+  }
+
+  const record = value as Record<string, unknown>;
+  const directKeys = ["message", "response", "text", "content"];
+  for (const key of directKeys) {
+    if (typeof record[key] === "string" && String(record[key] || "").trim()) {
+      return extractStructuredAssistantText(String(record[key]));
+    }
+  }
+
+  const nestedKeys = ["payload", "data", "result", "output"];
+  for (const key of nestedKeys) {
+    const nestedText = extractAssistantTextFromUnknown(record[key]);
+    if (nestedText) {
+      return nestedText;
+    }
+  }
+
+  try {
+    return extractStructuredAssistantText(JSON.stringify(value));
+  } catch {
+    return "";
+  }
 }
 
 export function createAssistantTextBlock(params: {
@@ -716,12 +770,17 @@ export function finalizeAssistantRenderBlocks(
     return next;
   }
 
+  const structuredOverrideText = extractStructuredResponsePayloadText(finalContent);
+
   if (assistantTextIndices.length === 1) {
+    if (!structuredOverrideText) {
+      return next;
+    }
     const assistantTextIndex = assistantTextIndices[0];
     const current = next[assistantTextIndex] as ChatAssistantTextBlock;
     next[assistantTextIndex] = {
       ...current,
-      text: parsedText,
+      text: structuredOverrideText,
       status: "complete",
     };
     return next;
@@ -741,6 +800,16 @@ export function finalizeAssistantRenderBlocks(
   return next.filter(
     (block, index) => block.kind !== "assistant_text" || index === keepIndex,
   );
+}
+
+export function extractAssistantTextFromBlocks(
+  blocks: ChatRenderBlock[],
+): string {
+  return blocks
+    .filter((block): block is ChatAssistantTextBlock => block.kind === "assistant_text")
+    .map((block) => block.text)
+    .join("")
+    .trim();
 }
 
 export function sortChatRenderBlocks(blocks: ChatRenderBlock[]): ChatRenderBlock[] {

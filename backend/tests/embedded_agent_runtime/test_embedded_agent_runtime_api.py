@@ -188,6 +188,7 @@ async def test_embedded_agent_thread_detail_includes_run_events_and_delete_route
     assert turn["run_id"] == str(run_id)
     assert turn["assistant_output_text"] == "hello from embed"
     assert turn["final_output"] == {"answer": "machine-facing embed output"}
+    assert turn["response_blocks"] == []
     assert [item["event"] for item in turn["run_events"]] == [
         "tool.started",
         "reasoning.update",

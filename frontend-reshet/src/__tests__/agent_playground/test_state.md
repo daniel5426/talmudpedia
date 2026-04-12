@@ -18,6 +18,7 @@ Playground-specific trace inspection behavior for assistant responses, execute-p
 - Live streamed builder/playground execution uses the same trace reducer, preserving published node output and End `final_output`.
 - Playground submissions can include per-run seeded workflow state alongside text/files payloads.
 - Execute chat input only shows the mic when workflow `audio` is enabled, so mic capture follows the workflow audio modality instead of implicit STT text insertion.
+- Live playground/execute streaming now consumes backend-owned canonical `response_blocks` snapshots instead of rebuilding assistant UI blocks from raw SSE events.
 - The playground forwards terminal run-failure events into the execute overlay path, so stuck loading badges can clear when a run aborts mid-workflow.
 - The execute-panel stop path now pins the root run id from stream start and cancels that immutable root run even if later streamed events mention another run id.
 - The stop path now finalizes any visible tool/reasoning blocks before committing the partial assistant row, so stopped tool calls do not keep shimmering.
@@ -37,6 +38,9 @@ Playground-specific trace inspection behavior for assistant responses, execute-p
 - Deep-linking to a hidden playground agent redirects to the first visible agent when available.
 
 ## Last Run
+- Command: `pnpm --dir frontend-reshet test -- --runInBand src/__tests__/agent_thread_history/useAgentThreadHistory.test.tsx src/__tests__/agent_playground/useAgentRunController.test.tsx src/__tests__/assistant_response_ui/normalizer.test.ts`
+- Date: 2026-04-12 Asia/Hebron
+- Result: Pass (`25 passed`)
 - Command: `pnpm -C frontend-reshet test -- --runTestsByPath src/__tests__/assistant_response_ui/normalizer.test.ts src/__tests__/agent_playground/useAgentRunController.test.tsx --watch=false`
 - Date: 2026-04-12 15:44:55 EEST
 - Result: Pass (2 suites, 18 tests)

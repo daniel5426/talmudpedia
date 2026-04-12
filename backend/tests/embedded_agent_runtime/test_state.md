@@ -1,6 +1,6 @@
 # Embedded Agent Runtime Tests
 
-Last Updated: 2026-04-09
+Last Updated: 2026-04-12
 
 Scope:
 - Public embedded-agent runtime routes authenticated by tenant API keys.
@@ -13,7 +13,7 @@ Key scenarios covered:
 - Published agents stream successfully through `/public/embed/agents/{agent_id}/chat/stream`.
 - Stream responses emit detached `run-stream.v2` envelopes from persisted run events and `X-Thread-ID`.
 - Embedded runtime persists thread ownership and exposes scoped thread history.
-- Thread detail returns per-turn historical `run_events` for replaying old tool/reasoning activity.
+- Thread detail returns canonical `response_blocks` plus historical `run_events` for debug/inspection.
 - Thread detail preserves separate `assistant_output_text` and `final_output` values on persisted turns.
 - Thread detail can return nested `lineage` and `subthread_tree` payloads when `include_subthreads=true`.
 - Embedded runtime supports scoped thread deletion through the public embed surface.

@@ -128,7 +128,36 @@ describe("embed-sdk", () => {
     const fetchImpl = jest
       .fn()
       .mockResolvedValueOnce(buildJsonResponse({ items: [], total: 0 }))
-      .mockResolvedValueOnce(buildJsonResponse({ id: "thread-1", turns: [] }));
+      .mockResolvedValueOnce(
+        buildJsonResponse({
+          id: "thread-1",
+          turns: [
+            {
+              id: "turn-1",
+              run_id: "run-1",
+              turn_index: 0,
+              user_input_text: "hi",
+              assistant_output_text: "hello",
+              status: "completed",
+              usage_tokens: 0,
+              metadata: {},
+              response_blocks: [
+                {
+                  id: "assistant-text-1",
+                  kind: "assistant_text",
+                  seq: 1,
+                  status: "complete",
+                  text: "hello",
+                },
+              ],
+              attachments: [],
+              created_at: "2026-03-17T12:00:00Z",
+              completed_at: "2026-03-17T12:00:01Z",
+              run_events: [],
+            },
+          ],
+        }),
+      );
 
     const client = new EmbeddedAgentClient({
       baseUrl: "https://api.example.com/api",
@@ -142,7 +171,7 @@ describe("embed-sdk", () => {
       skip: 3,
       limit: 7,
     });
-    await client.getAgentThread("agent-1", "thread-1", {
+    const detail = await client.getAgentThread("agent-1", "thread-1", {
       externalUserId: "user-1",
       externalSessionId: "session-1",
     });
@@ -160,6 +189,13 @@ describe("embed-sdk", () => {
     expect(fetchImpl.mock.calls[1][0]).toBe(
       "https://api.example.com/api/public/embed/agents/agent-1/threads/thread-1?external_user_id=user-1&external_session_id=session-1",
     );
+    expect(detail.turns[0].response_blocks).toMatchObject([
+      {
+        id: "assistant-text-1",
+        kind: "assistant_text",
+        text: "hello",
+      },
+    ]);
   });
 
   test("malformed or wrong-version SSE events raise protocol errors", async () => {

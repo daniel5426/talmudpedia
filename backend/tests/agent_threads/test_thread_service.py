@@ -253,6 +253,67 @@ async def test_complete_turn_keeps_assistant_text_when_string_final_output_diffe
 
 
 @pytest.mark.asyncio
+async def test_complete_turn_persists_response_blocks_metadata(db_session):
+    tenant, user, agent = await _seed_thread_context(db_session)
+    thread = AgentThread(
+        tenant_id=tenant.id,
+        user_id=user.id,
+        agent_id=agent.id,
+        surface=AgentThreadSurface.internal,
+        title="Response blocks thread",
+    )
+    db_session.add(thread)
+    await db_session.flush()
+
+    run = AgentRun(
+        tenant_id=tenant.id,
+        agent_id=agent.id,
+        user_id=user.id,
+        initiator_user_id=user.id,
+        thread_id=thread.id,
+        input_params={"input": "hello"},
+    )
+    db_session.add(run)
+    await db_session.flush()
+
+    service = ThreadService(db_session)
+    await service.start_turn(
+        thread_id=thread.id,
+        run_id=run.id,
+        user_input_text="hello",
+    )
+    await service.complete_turn(
+        run_id=run.id,
+        status=AgentThreadTurnStatus.completed,
+        assistant_output_text="Visible assistant reply",
+        metadata={
+            "response_blocks": [
+                {
+                    "id": "assistant-1",
+                    "kind": "assistant_text",
+                    "runId": str(run.id),
+                    "seq": 1,
+                    "status": "complete",
+                    "text": "Visible assistant reply",
+                }
+            ]
+        },
+    )
+    await db_session.commit()
+
+    stored = await service.get_thread_with_turns(
+        tenant_id=tenant.id,
+        thread_id=thread.id,
+        user_id=user.id,
+    )
+
+    assert stored is not None
+    turn = stored.turns[0]
+    assert turn.metadata_["response_blocks"][0]["kind"] == "assistant_text"
+    assert turn.metadata_["response_blocks"][0]["text"] == "Visible assistant reply"
+
+
+@pytest.mark.asyncio
 async def test_resolve_or_create_thread_sets_root_lineage_for_new_root_thread(db_session):
     tenant, user, agent = await _seed_thread_context(db_session)
 

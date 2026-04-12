@@ -581,8 +581,8 @@ describe("useAgentRunController trace inspection", () => {
                 return {
                   done: false,
                   value: encoder.encode(
-                    'data: {"event":"run.accepted","run_id":"run-root","payload":{"status":"running"}}\n\n' +
-                    'data: {"event":"tool.started","run_id":"run-child","payload":{"span_id":"call-1","source_node_id":"agent_1","tool":"delegate","display_name":"Delegate"}}\n\n'
+                    'data: {"event":"run.accepted","run_id":"run-root","payload":{"status":"running","response_blocks":[]}}\n\n' +
+                    'data: {"event":"tool.started","run_id":"run-child","payload":{"span_id":"call-1","source_node_id":"agent_1","tool":"delegate","display_name":"Delegate","response_blocks":[{"id":"call-1","kind":"tool_call","runId":"run-root","seq":2,"status":"running","tool":{"toolCallId":"call-1","toolName":"delegate","displayName":"Delegate","title":"Delegate"}}]}}\n\n'
                   ),
                 };
               }
@@ -642,4 +642,5 @@ describe("useAgentRunController trace inspection", () => {
       }
     });
   });
+
 });

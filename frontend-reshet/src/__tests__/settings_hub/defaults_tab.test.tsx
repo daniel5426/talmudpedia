@@ -2,30 +2,9 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import SettingsPage from "@/app/admin/settings/page"
 import { credentialsService, orgUnitsService, modelsService } from "@/services"
 
-jest.mock("@/components/ui/tabs", () => {
-  const React = require("react")
-  const TabsContext = React.createContext({ value: "", setValue: (_v: string) => {} })
-  return {
-    Tabs: ({ value, onValueChange, children }: any) => (
-      <TabsContext.Provider value={{ value, setValue: onValueChange }}>
-        <div>{children}</div>
-      </TabsContext.Provider>
-    ),
-    TabsList: ({ children }: any) => <div>{children}</div>,
-    TabsTrigger: ({ value, children }: any) => {
-      const ctx = React.useContext(TabsContext)
-      return (
-        <button role="tab" onClick={() => ctx.setValue(value)}>
-          {children}
-        </button>
-      )
-    },
-    TabsContent: ({ value, children }: any) => {
-      const ctx = React.useContext(TabsContext)
-      if (ctx.value !== value) return null
-      return <div>{children}</div>
-    },
-  }
+let mockSearch = ""
+const replaceMock = jest.fn((href: string) => {
+  mockSearch = href.split("?")[1] ?? ""
 })
 
 jest.mock("@/components/ui/select", () => ({
@@ -41,6 +20,12 @@ jest.mock("@/components/ui/select", () => ({
   SelectItem: ({ children }: any) => <div>{children}</div>,
   SelectTrigger: ({ children }: any) => <div>{children}</div>,
   SelectValue: ({ placeholder }: any) => <span>{placeholder}</span>,
+}))
+
+jest.mock("next/navigation", () => ({
+  useRouter: () => ({ replace: replaceMock }),
+  usePathname: () => "/admin/settings",
+  useSearchParams: () => new URLSearchParams(mockSearch),
 }))
 
 jest.mock("@/services", () => ({
@@ -79,6 +64,8 @@ jest.mock("@/lib/store/useAuthStore", () => ({
 
 describe("Defaults Tab", () => {
   beforeEach(() => {
+    mockSearch = ""
+    replaceMock.mockReset()
     ;(orgUnitsService.getTenant as jest.Mock).mockResolvedValue({
       id: "tenant-1",
       name: "Tenant One",
@@ -116,14 +103,11 @@ describe("Defaults Tab", () => {
   })
 
   it("saves defaults payload", async () => {
+    mockSearch = "tab=defaults"
     render(<SettingsPage />)
 
     await waitFor(() => expect(orgUnitsService.getTenant).toHaveBeenCalled())
-    await waitFor(() => expect(screen.getAllByRole("button", { name: "Defaults" }).length).toBeGreaterThan(0))
-
-    const defaultsTab = screen.getAllByRole("button", { name: "Defaults" })[0]
-    fireEvent.click(defaultsTab)
-    await waitFor(() => expect(screen.getByText("Save")).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText("Retrieval Policy")).toBeInTheDocument())
 
     fireEvent.click(screen.getAllByTestId("mock-select")[0])
 
@@ -136,5 +120,15 @@ describe("Defaults Tab", () => {
         default_retrieval_policy: null,
       })
     })
+  })
+
+  it("writes the selected tab into the query string", async () => {
+    render(<SettingsPage />)
+
+    await waitFor(() => expect(orgUnitsService.getTenant).toHaveBeenCalled())
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Defaults" })[0])
+
+    expect(replaceMock).toHaveBeenCalledWith("/admin/settings?tab=defaults", { scroll: false })
   })
 })

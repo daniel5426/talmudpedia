@@ -164,7 +164,7 @@ export function BotInputArea({
   }
 
   return (
-    <div className={cn("w-[calc(100%-2rem)]", animate && "animate-in fade-in slide-in-from-bottom-4 duration-500")}>
+    <div className={cn("w-[calc(100%)]", animate && "animate-in fade-in slide-in-from-bottom-4 duration-500")}>
       <PromptInputProvider>
         <PromptInputAttachments>
           {(attachment) => <NewPromptInputAttachment data={attachment} />}

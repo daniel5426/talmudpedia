@@ -18,6 +18,10 @@ from app.agent.runtime.registry import RuntimeAdapterRegistry
 from app.agent.runtime.base import RuntimeState
 from app.agent.execution.types import ExecutionEvent, EventVisibility, ExecutionMode
 from app.agent.execution.durable_checkpointer import DurableMemorySaver
+from app.agent.execution.chat_response_blocks import (
+    build_response_blocks_from_trace_events,
+    extract_assistant_text_from_blocks,
+)
 from app.agent.execution.output_projection import extract_assistant_output_text
 from app.agent.execution.run_task_registry import (
     is_run_cancel_requested,
@@ -727,6 +731,28 @@ class AgentExecutorService:
         if "final_output" in output_result:
             metadata["final_output"] = output_result.get("final_output")
         return metadata or None
+
+    async def _build_thread_turn_payload(
+        self,
+        *,
+        db: AsyncSession,
+        run: AgentRun,
+    ) -> tuple[str | None, Dict[str, Any] | None]:
+        output_result = run.output_result if isinstance(run.output_result, dict) else None
+        metadata = self._extract_turn_metadata(output_result)
+        recorder = ExecutionTraceRecorder(serializer=lambda value: value)
+        raw_events = await recorder.list_events(db, run.id)
+        response_blocks = build_response_blocks_from_trace_events(
+            raw_events=raw_events,
+            run_id=str(run.id),
+            final_output=(output_result or {}).get("final_output"),
+            mode=ExecutionMode.PRODUCTION,
+        )
+        assistant_text = extract_assistant_text_from_blocks(response_blocks) or self._extract_turn_assistant_output_text(run)
+        next_metadata = dict(metadata or {})
+        if response_blocks:
+            next_metadata["response_blocks"] = response_blocks
+        return assistant_text, (next_metadata or None)
 
     @staticmethod
     def _build_paused_node_payload(
@@ -1685,13 +1711,12 @@ class AgentExecutorService:
                 await ResourcePolicyQuotaService(db).settle_for_run(run=run)
                 if run.thread_id:
                     thread_service = ThreadService(db)
+                    assistant_output_text, thread_metadata = await self._build_thread_turn_payload(db=db, run=run)
                     await thread_service.complete_turn(
                         run_id=run_id,
                         status=self._thread_turn_status_for_run(run),
-                        assistant_output_text=self._extract_turn_assistant_output_text(run),
-                        metadata=self._extract_turn_metadata(
-                            run.output_result if isinstance(run.output_result, dict) else None
-                        ),
+                        assistant_output_text=assistant_output_text,
+                        metadata=thread_metadata,
                     )
                 await db.commit()
                 yield run_status_event
@@ -1789,11 +1814,14 @@ class AgentExecutorService:
                         user_input_text=input_text,
                         metadata=start_meta,
                     )
+                    assistant_output_text, thread_metadata = await self._build_thread_turn_payload(db=err_db, run=err_run)
+                    merged_metadata = dict(thread_metadata or {})
+                    merged_metadata["error"] = error_text
                     await thread_service.complete_turn(
                         run_id=run_id,
                         status=AgentThreadTurnStatus.failed,
-                        assistant_output_text=self._extract_turn_assistant_output_text(err_run),
-                        metadata={"error": error_text},
+                        assistant_output_text=assistant_output_text,
+                        metadata=merged_metadata,
                     )
                 await err_db.commit()
         except Exception as se:

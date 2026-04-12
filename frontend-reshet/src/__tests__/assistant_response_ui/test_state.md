@@ -8,6 +8,7 @@ Shared assistant-response normalization and timeline rendering used by the agent
 - `frontend-reshet/src/__tests__/assistant_response_ui/renderer.test.tsx`
 - `frontend-reshet/src/__tests__/assistant_response_ui/trace_loader.test.ts`
 - `frontend-reshet/src/__tests__/assistant_response_ui/chat_context_status.test.tsx`
+- `frontend-reshet/src/__tests__/assistant_response_ui/use_streaming_assistant_text_view.test.tsx`
 
 ## Key Scenarios Covered
 - Tool lifecycle events stay inline in chronological order with assistant text.
@@ -24,10 +25,19 @@ Shared assistant-response normalization and timeline rendering used by the agent
 - Finalization collapses duplicate assistant text blocks when persisted replay and saved final text resolve to the same assistant message.
 - Shared chat context widget renders canonical context-window input usage instead of legacy estimated-total-with-reserve semantics.
 - Timeline assistant text blocks now stay on the same plain-text renderer during and after live streaming, avoiding a completion-time renderer swap.
+- The active assistant text segment now uses a dedicated display-only pacing hook instead of painting every canonical text jump immediately.
+- General chat now treats backend-owned `response_blocks` as the canonical render contract; markdown rendering remains a pure `MessageResponse` concern.
 - Shared stream normalization preserves `assistant_text -> tool -> assistant_text` chronology instead of collapsing all live text into one block.
 - Shared stream normalization drops provider-native tool delta objects like MCP `tool_use` / `input_json_delta` chunks so raw structured payloads do not leak into live assistant text.
 
 ## Last Run
+- Command: `pnpm --dir frontend-reshet test -- --runInBand src/__tests__/agent_thread_history/useAgentThreadHistory.test.tsx src/__tests__/agent_playground/useAgentRunController.test.tsx src/__tests__/assistant_response_ui/normalizer.test.ts`
+- Date: 2026-04-12 Asia/Hebron
+- Result: PASS (`25 passed`)
+- Command: `pnpm --dir frontend-reshet test -- --runInBand src/__tests__/assistant_response_ui/use_streaming_assistant_text_view.test.tsx src/__tests__/assistant_response_ui/renderer.test.tsx`
+- Date: 2026-04-12 Asia/Hebron
+- Result: PASS (`2 suites, 8 tests`)
+
 - Command: `pnpm -C frontend-reshet test -- --runTestsByPath src/__tests__/assistant_response_ui/normalizer.test.ts src/__tests__/agent_playground/useAgentRunController.test.tsx --watch=false`
 - Date: 2026-04-12 15:44:55 EEST
 - Result: PASS (`2 suites, 18 tests`)

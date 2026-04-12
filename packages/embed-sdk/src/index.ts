@@ -8,6 +8,7 @@ export type {
   EmbeddedAgentClientOptions,
   EmbeddedAgentRuntimeDiagnostic,
   EmbeddedAgentRuntimeEvent,
+  EmbeddedAgentResponseBlock,
   EmbeddedAgentSDKSerializedError,
   EmbeddedAgentStreamRequest,
   EmbeddedAgentThreadDetail,

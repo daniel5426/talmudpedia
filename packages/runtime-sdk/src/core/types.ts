@@ -33,12 +33,43 @@ export type RuntimeBootstrap = {
 
 export type RawRuntimeEvent = Record<string, unknown>;
 
+export type RuntimeResponseBlock =
+  | {
+      id: string;
+      kind: "assistant_text";
+      runId?: string | null;
+      seq: number;
+      status: string;
+      text: string;
+      ts?: string | null;
+    }
+  | {
+      id: string;
+      kind: "tool_call";
+      runId?: string | null;
+      seq: number;
+      status: string;
+      ts?: string | null;
+      tool: Record<string, unknown>;
+    }
+  | {
+      id: string;
+      kind: "reasoning_note" | "approval_request" | "error" | "artifact" | "user_message";
+      runId?: string | null;
+      seq: number;
+      status: string;
+      ts?: string | null;
+      [key: string]: unknown;
+    };
+
 export type NormalizedRuntimeEvent = {
   type: string;
   event?: string;
   data?: Record<string, unknown>;
   payload?: Record<string, unknown>;
   content?: string;
+  responseBlocks?: RuntimeResponseBlock[];
+  assistantOutputText?: string;
   raw: RawRuntimeEvent;
 };
 

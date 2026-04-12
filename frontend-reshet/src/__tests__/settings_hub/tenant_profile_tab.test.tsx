@@ -3,6 +3,16 @@ import SettingsPage from "@/app/admin/settings/page"
 import { credentialsService, orgUnitsService, modelsService } from "@/services"
 
 let mockUser: any = { role: "admin", org_role: "owner" }
+let mockSearch = ""
+const replaceMock = jest.fn((href: string) => {
+  mockSearch = href.split("?")[1] ?? ""
+})
+
+jest.mock("next/navigation", () => ({
+  useRouter: () => ({ replace: replaceMock }),
+  usePathname: () => "/admin/settings",
+  useSearchParams: () => new URLSearchParams(mockSearch),
+}))
 
 jest.mock("@/services", () => ({
   credentialsService: {
@@ -41,6 +51,8 @@ jest.mock("@/lib/store/useAuthStore", () => ({
 describe("Tenant Profile Tab", () => {
   beforeEach(() => {
     mockUser = { role: "admin", org_role: "owner" }
+    mockSearch = ""
+    replaceMock.mockReset()
     ;(orgUnitsService.getTenant as jest.Mock).mockResolvedValue({
       id: "tenant-1",
       name: "Tenant One",

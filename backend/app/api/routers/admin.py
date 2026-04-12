@@ -38,6 +38,7 @@ def _serialize_run_usage(run: AgentRun | None) -> dict[str, Any] | None:
 
 
 async def _serialize_admin_turn(turn: AgentThreadTurn) -> dict[str, Any]:
+    metadata = turn.metadata_ if isinstance(turn.metadata_, dict) else {}
     return {
         "id": str(turn.id),
         "run_id": str(turn.run_id),
@@ -54,7 +55,8 @@ async def _serialize_admin_turn(turn: AgentThreadTurn) -> dict[str, Any]:
             for link in (turn.attachment_links or [])
             if getattr(link, "attachment", None) is not None
         ],
-        "metadata": turn.metadata_,
+        "metadata": metadata,
+        "response_blocks": metadata.get("response_blocks") if isinstance(metadata.get("response_blocks"), list) else [],
     }
 
 # --- Dependencies & Helpers ---

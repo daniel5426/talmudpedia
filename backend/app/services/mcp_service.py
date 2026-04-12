@@ -491,7 +491,10 @@ class McpService:
 
     async def ensure_oauth_metadata(self, server: McpServer) -> dict[str, Any]:
         metadata = _json_dict(server.auth_metadata)
-        if metadata.get("authorization_server_metadata"):
+        auth_server_metadata = _json_dict(metadata.get("authorization_server_metadata"))
+        authorization_endpoint = str(auth_server_metadata.get("authorization_endpoint") or "").strip()
+        token_endpoint = str(auth_server_metadata.get("token_endpoint") or "").strip()
+        if auth_server_metadata and authorization_endpoint and token_endpoint:
             return metadata
         try:
             await initialize_mcp_session(
@@ -528,24 +531,30 @@ class McpService:
             return registration_client_id, str(registration.get("client_secret") or "").strip() or None, token_method
 
         callback_url = f"{resolve_local_backend_origin().rstrip('/')}/mcp/auth/callback"
+        if bool(auth_server_metadata.get("client_id_metadata_document_supported")):
+            return self.build_client_metadata_document_url(server.id), None, "none"
+
         registration_endpoint = str(auth_server_metadata.get("registration_endpoint") or "").strip()
         if registration_endpoint:
-            registered = await register_oauth_client(
-                registration_endpoint=registration_endpoint,
-                payload={
-                    "client_name": f"Talmudpedia MCP Client ({server.name})",
-                    "redirect_uris": [callback_url],
-                    "grant_types": ["authorization_code", "refresh_token"],
-                    "response_types": ["code"],
-                    "token_endpoint_auth_method": "none",
-                },
-            )
+            try:
+                registered = await register_oauth_client(
+                    registration_endpoint=registration_endpoint,
+                    payload={
+                        "client_name": f"Talmudpedia MCP Client ({server.name})",
+                        "redirect_uris": [callback_url],
+                        "grant_types": ["authorization_code", "refresh_token"],
+                        "response_types": ["code"],
+                        "token_endpoint_auth_method": "none",
+                    },
+                )
+            except Exception as exc:
+                raise McpServiceError(
+                    "Dynamic OAuth client registration failed for this MCP server. "
+                    "Configure OAuth client credentials manually and try again."
+                ) from exc
             server.oauth_client_registration = registered
             await self.db.flush()
             return str(registered["client_id"]), str(registered.get("client_secret") or "").strip() or None, "none"
-
-        if bool(auth_server_metadata.get("client_id_metadata_document_supported")):
-            return self.build_client_metadata_document_url(server.id), None, "none"
 
         raise McpServiceError("This MCP server requires admin-configured OAuth client credentials")
 

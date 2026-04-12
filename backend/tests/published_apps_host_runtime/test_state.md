@@ -1,4 +1,4 @@
-Last Updated: 2026-04-09
+Last Updated: 2026-04-12
 
 # Test State: Published Apps Host Runtime (Same-URL Auth Gate)
 
@@ -23,7 +23,7 @@ Backend same-URL published app host runtime flow for `*.apps` domains:
 - Host chat stream now attaches to persisted worker-owned run events instead of executing in the request path
 - Host runtime history endpoints: `GET /_talmudpedia/threads`, `GET /_talmudpedia/threads/{thread_id}`
 - Host runtime thread detail is enforced by app-account ownership, not just app scope
-- Host runtime thread detail includes client-safe `run_events` for history rehydration parity
+- Host runtime thread detail includes canonical persisted `response_blocks`; `run_events` are secondary debug/history data
 - Host runtime thread detail can return nested `lineage` and `subthread_tree` payloads when `include_subthreads=true`
 - Legacy `/public/apps/{slug}` published runtime/auth/chat endpoints return `410`
 

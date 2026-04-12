@@ -1,6 +1,6 @@
 # Embed SDK Tests
 
-Last Updated: 2026-03-19
+Last Updated: 2026-04-12
 
 Scope:
 - TypeScript `@agents24/embed-sdk` transport, protocol, and server-only runtime behavior.
@@ -12,6 +12,7 @@ Key scenarios covered:
 - Bearer API-key auth and correct `Accept` headers are attached to embed requests.
 - `streamAgent` normalizes `baseUrl`, parses `run-stream.v2` SSE envelopes, and returns `X-Thread-ID`.
 - Thread list/detail helpers serialize required external-user query params.
+- Thread detail payloads expose canonical persisted `response_blocks` for assistant rendering.
 - Wrong-version SSE envelopes raise protocol errors.
 - HTTP, text-body, and network failures map to typed SDK errors.
 - Browser runtime instantiation is rejected.

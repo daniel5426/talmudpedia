@@ -1,11 +1,12 @@
 # Test State: Agent Execution Events
 
-Last Updated: 2026-04-09
+Last Updated: 2026-04-12
 
 **Scope**
 Execution event emission coverage for core nodes in debug streaming runs.
 
 **Test Files**
+- `test_chat_response_blocks.py`
 - `test_node_event_emission.py`
 - `test_runtime_error_recovery.py`
 - `test_tool_event_metadata.py`
@@ -27,8 +28,12 @@ Execution event emission coverage for core nodes in debug streaming runs.
 - Dedicated `artifact.draft.updated` client events still survive normalization unchanged
 - Executor accounting now reads nested exact usage payloads emitted from shared node-end metadata
 - Streamed usage payloads are merged cumulatively instead of letting the last non-null chunk overwrite the total
+- Backend canonical chat-response block normalization strips provider tool delta text, preserves tool timelines, and keeps streamed markdown when flatter final output arrives later
 
 **Last Run**
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/agent_execution_events/test_chat_response_blocks.py backend/tests/agent_execution_events/test_tool_event_metadata.py backend/tests/agent_threads/test_thread_service.py`
+- Date: 2026-04-12 Asia/Hebron
+- Result: PASS (`26 passed, 3 warnings`)
 - Command: `PYTHONPATH=. pytest -q tests/agent_execution_events/test_tool_event_metadata.py tests/tool_execution/test_llm_provider_content_blocks.py`
 - Date: 2026-03-30 19:49 EEST
 - Result: PASS (`19 passed, 2 warnings`)

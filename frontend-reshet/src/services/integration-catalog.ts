@@ -51,6 +51,17 @@ export const INTEGRATION_CATEGORY_LABELS: Record<
 export const INTEGRATION_CATALOG: IntegrationCatalogEntry[] = [
   // ── Productivity ──────────────────────────────────────────────────
   {
+    slug: "notion",
+    name: "Notion",
+    description: "Read and write pages, databases, and blocks.",
+    category: "productivity",
+    server_url: "https://mcp.notion.com/mcp",
+    auth_mode: "oauth_user_account",
+    requires_user_oauth: true,
+    accent: "#000000",
+    icon_svg: `<path d="M4.459 4.208c.746.606 1.026.56 2.428.466l13.215-.793c.28 0 .047-.28-.046-.326L18.29 2.09c-.466-.373-.98-.746-2.055-.653L3.459 2.57c-.466.046-.56.28-.374.466zM5.252 7.5v14.367c0 .793.373 1.073 1.213 1.026l14.515-.84c.84-.046.933-.56.933-1.166V6.753c0-.606-.233-.886-.746-.84l-15.17.886c-.56.047-.746.327-.746.7zm14.328.746c.093.42 0 .84-.42.886l-.7.14v10.633c-.606.327-1.166.513-1.633.513-.746 0-.933-.233-1.493-.933l-4.574-7.186v6.953l1.446.327s0 .84-1.166.84l-3.22.186c-.093-.186 0-.653.327-.746l.84-.233V9.854l-1.166-.093c-.093-.42.14-1.026.793-1.073l3.46-.233 4.76 7.28v-6.44l-1.213-.14c-.093-.513.28-.886.746-.933z" fill="currentColor"/>`,
+  },
+  {
     slug: "airtable",
     name: "Airtable",
     description: "Query and update records in Airtable bases.",
@@ -96,6 +107,17 @@ export const INTEGRATION_CATALOG: IntegrationCatalogEntry[] = [
     requires_user_oauth: true,
     accent: "#362D59",
     icon_svg: `<path d="M13.96 2.32a1.87 1.87 0 00-3.22 0L7.6 8a10.2 10.2 0 015.5 8.84h-1.87a8.33 8.33 0 00-4.47-7.33l-2.7 4.68A3.87 3.87 0 006.1 18.7h1.87a2 2 0 01-1.12-3.22l1.24-2.15A6.45 6.45 0 0111.36 18.84h3.75a12.06 12.06 0 00-5.97-11.41l1.16-2a14.03 14.03 0 017 13.41h1.87a1.04 1.04 0 00.96-.56l1.42-2.46a1.87 1.87 0 000-1.87z" fill="currentColor"/>`,
+  },
+  {
+    slug: "gitlab",
+    name: "GitLab",
+    description: "Manage merge requests, issues, and CI/CD pipelines.",
+    category: "dev_tools",
+    server_url: "https://gitlab.com/api/v4/mcp",
+    auth_mode: "oauth_user_account",
+    requires_user_oauth: true,
+    accent: "#FC6D26",
+    icon_svg: `<path d="M12 21.35l-7.19-5.5a1.31 1.31 0 01-.48-1.47L5.6 10.6l1.64-5.05a.66.66 0 011.24 0L10.12 10.6h3.76l1.64-5.05a.66.66 0 011.24 0L18.4 10.6l1.27 3.78a1.31 1.31 0 01-.48 1.47z" fill="currentColor"/>`,
   },
 
   // ── Communication ─────────────────────────────────────────────────

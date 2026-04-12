@@ -1,13 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { adminService, agentService, Thread } from "@/services";
+import { adminService, Thread } from "@/services";
 import type { ChatMessage } from "@/components/layout/useChatController";
 import type { ChatRenderBlock } from "@/services/chat-presentation";
 import {
+  createAssistantTextBlock,
   sortChatRenderBlocks,
 } from "@/services/chat-presentation";
-import { buildResponseBlocksFromRunTrace } from "@/services/run-trace-blocks";
 import type { FileUIPart } from "ai";
 
 type RuntimeAttachmentDto = {
@@ -89,7 +89,6 @@ export const sortThreadTurnsForReplay = (turns: ThreadTurn[]): ThreadTurn[] =>
 
 const buildResponseBlocksFromTurn = async (
   turn: ThreadTurn,
-  assistantText: string,
 ): Promise<ChatRenderBlock[] | undefined> => {
   const metadata = turn.metadata && typeof turn.metadata === "object"
     ? (turn.metadata as Record<string, unknown>)
@@ -99,16 +98,6 @@ const buildResponseBlocksFromTurn = async (
     : [];
   if (storedBlocks.length > 0) {
     return sortChatRenderBlocks(storedBlocks);
-  }
-
-  const runId = String(turn.run_id || "").trim();
-  if (!runId) return undefined;
-
-  try {
-    return await buildResponseBlocksFromRunTrace(runId, assistantText, agentService.getRunEvents);
-  } catch (error) {
-    console.error("Failed to load run events for thread turn", { runId, error });
-    return undefined;
   }
 };
 
@@ -120,12 +109,8 @@ export const mapTurnsToMessages = async (threadId: string, turns: ThreadTurn[]):
 
   await Promise.all(
     sortedTurns.map(async (turn, index) => {
-      const rawAssistantText = String(turn.assistant_output_text ?? "").trim();
-      const runId = String(turn.run_id || "").trim();
-      if (!rawAssistantText && !runId) return;
       const turnKey = String(turn.id ?? index);
-      const blocks = await buildResponseBlocksFromTurn(turn, rawAssistantText);
-      responseBlocksByTurnKey.set(turnKey, blocks);
+      responseBlocksByTurnKey.set(turnKey, await buildResponseBlocksFromTurn(turn));
     })
   );
 
@@ -153,6 +138,7 @@ export const mapTurnsToMessages = async (threadId: string, turns: ThreadTurn[]):
       });
     }
 
+    const responseBlocks = responseBlocksByTurnKey.get(turnKey);
     let assistantText = rawAssistantText;
     if (assistantText && priorAssistantParts.length > 0) {
       const candidates = [
@@ -168,8 +154,17 @@ export const mapTurnsToMessages = async (threadId: string, turns: ThreadTurn[]):
       }
     }
 
-    const responseBlocks = responseBlocksByTurnKey.get(turnKey);
-    if (assistantText || (responseBlocks && responseBlocks.length > 0)) {
+    const fallbackBlocks =
+      !responseBlocks && assistantText
+        ? [
+            createAssistantTextBlock({
+              id: `${threadId}:turn:${turnKey}:assistant-text`,
+              text: assistantText,
+              runId: String(turn.run_id || "").trim() || undefined,
+            }),
+          ]
+        : responseBlocks;
+    if (assistantText || (fallbackBlocks && fallbackBlocks.length > 0)) {
       const assistantTimestamp = parseTimestamp(turn.completed_at, baseTimestamp + 1);
       next.push({
         id: `${threadId}:turn:${turnKey}:assistant`,
@@ -177,7 +172,7 @@ export const mapTurnsToMessages = async (threadId: string, turns: ThreadTurn[]):
         content: assistantText,
         createdAt: new Date(assistantTimestamp),
         runId: String(turn.run_id || "").trim() || undefined,
-        responseBlocks,
+        responseBlocks: fallbackBlocks,
         tokenUsage: turn.run_usage
           ? {
               inputTokens: turn.run_usage.input_tokens ?? null,

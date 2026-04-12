@@ -112,11 +112,31 @@ describe("runtime-sdk core", () => {
     const normalized = normalizeRuntimeEvent({
       version: "run-stream.v2",
       type: "assistant.delta",
-      payload: { content: "delta" },
+      payload: {
+        content: "delta",
+        assistant_output_text: "delta",
+        response_blocks: [
+          {
+            id: "assistant-text-1",
+            kind: "assistant_text",
+            seq: 1,
+            status: "streaming",
+            text: "delta",
+          },
+        ],
+      },
     });
 
     expect(normalized.type).toBe("assistant.delta");
     expect(normalized.content).toBe("delta");
+    expect(normalized.assistantOutputText).toBe("delta");
+    expect(normalized.responseBlocks).toMatchObject([
+      {
+        id: "assistant-text-1",
+        kind: "assistant_text",
+        text: "delta",
+      },
+    ]);
   });
 
   test("fetchRuntimeBootstrap sends preview auth via Authorization header only", async () => {

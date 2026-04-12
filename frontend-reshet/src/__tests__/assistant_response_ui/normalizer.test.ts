@@ -1,5 +1,7 @@
 import {
   adaptRunStreamEvent,
+  extractAssistantTextFromBlocks,
+  extractAssistantTextFromUnknown,
   applyRunStreamEventToBlocks,
   createAssistantTextBlock,
   extractStructuredAssistantText,
@@ -270,6 +272,56 @@ describe("chat presentation normalizer", () => {
     );
   });
 
+  it("extracts finalized assistant text from normalized blocks without MCP delta leakage", () => {
+    const blocks = sortChatRenderBlocks(
+      finalizeAssistantRenderBlocks(
+        sortChatRenderBlocks(
+          applyRunStreamEventToBlocks(
+            sortChatRenderBlocks(
+              applyRunStreamEventToBlocks(
+                [],
+                adaptRunStreamEvent(
+                  {
+                    version: "run-stream.v2",
+                    seq: 1,
+                    ts: "2026-04-12T10:00:00Z",
+                    event: "assistant.delta",
+                    run_id: "run-tool-delta",
+                    stage: "assistant",
+                    payload: { content: "It looks like you don't have any projects assigned at the moment. " },
+                    diagnostics: [],
+                  },
+                  0,
+                ),
+              ),
+            ),
+            adaptRunStreamEvent(
+              {
+                version: "run-stream.v2",
+                seq: 2,
+                ts: "2026-04-12T10:00:01Z",
+                event: "assistant.delta",
+                run_id: "run-tool-delta",
+                stage: "assistant",
+                payload: {
+                  content:
+                    "{'id': 'toolu_01U7z5VrQDKGtRuTMMxPfEyk', 'caller': {'type': 'direct'}, 'input': {}, 'name': 'mcp_line_list_projects', 'type': 'tool_use', 'index': 0}",
+                },
+                diagnostics: [],
+              },
+              1,
+            ),
+          ),
+        ),
+        "It looks like you don't have any projects assigned at the moment. {'id': 'toolu_01U7z5VrQDKGtRuTMMxPfEyk', 'caller': {'type': 'direct'}, 'input': {}, 'name': 'mcp_line_list_projects', 'type': 'tool_use', 'index': 0}You may want to create one.",
+      ),
+    );
+
+    expect(extractAssistantTextFromBlocks(blocks)).toBe(
+      "It looks like you don't have any projects assigned at the moment.",
+    );
+  });
+
   it("shortens verbose platform sdk summaries into shared action titles", () => {
     const blocks = sortChatRenderBlocks(
       applyRunStreamEventToBlocks(
@@ -351,6 +403,14 @@ describe("chat presentation normalizer", () => {
     expect(extractStructuredAssistantText("plain text")).toBe("plain text");
   });
 
+  it("preserves markdown newlines when extracting assistant text from final output objects", () => {
+    expect(
+      extractAssistantTextFromUnknown({
+        message: "## Title\n\n- item one\n- item two",
+      }),
+    ).toBe("## Title\n\n- item one\n- item two");
+  });
+
   it("replaces streamed json text with parsed final assistant text on finalize", () => {
     const initial = sortChatRenderBlocks(
       applyRunStreamEventToBlocks(
@@ -377,6 +437,40 @@ describe("chat presentation normalizer", () => {
     const textBlock = finalized[0];
     expect(textBlock.kind).toBe("assistant_text");
     expect(textBlock.kind === "assistant_text" ? textBlock.text : null).toBe("Hi there");
+  });
+
+  it("preserves streamed markdown when backend final text is flatter than the streamed block", () => {
+    const initial = sortChatRenderBlocks(
+      applyRunStreamEventToBlocks(
+        [],
+        adaptRunStreamEvent(
+          {
+            version: "run-stream.v2",
+            seq: 1,
+            ts: "2026-04-12T10:00:00Z",
+            event: "assistant.delta",
+            run_id: "run-markdown",
+            stage: "assistant",
+            payload: { content: "## Summary\n\n- First item\n- Second item" },
+            diagnostics: [],
+          },
+          0,
+        ),
+      ),
+    );
+
+    const finalized = finalizeAssistantRenderBlocks(
+      initial,
+      "## Summary - First item - Second item",
+      { runId: "run-markdown", fallbackSeq: 2 },
+    );
+
+    expect(finalized).toHaveLength(1);
+    const textBlock = finalized[0];
+    expect(textBlock.kind).toBe("assistant_text");
+    expect(textBlock.kind === "assistant_text" ? textBlock.text : null).toBe(
+      "## Summary\n\n- First item\n- Second item",
+    );
   });
 
   it("collapses duplicate finalized assistant text blocks", () => {
