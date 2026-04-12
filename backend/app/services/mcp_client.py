@@ -217,7 +217,16 @@ async def _post_jsonrpc(
             f"MCP server requires authorization for {method}",
             www_authenticate=response.headers.get("www-authenticate"),
         )
-    response.raise_for_status()
+    try:
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        status_code = exc.response.status_code
+        if status_code in {404, 405, 415}:
+            raise McpProtocolError(
+                f"MCP endpoint rejected {method} with HTTP {status_code}. "
+                "This URL does not appear to be a Streamable HTTP MCP endpoint."
+            ) from exc
+        raise McpProtocolError(f"MCP transport error: HTTP {status_code}") from exc
     if not expect_response:
         return None
     envelope = _extract_json_payload(response)

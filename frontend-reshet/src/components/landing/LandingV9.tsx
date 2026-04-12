@@ -4,9 +4,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { AnimatePresence, motion, useMotionTemplate, useMotionValueEvent, useReducedMotion, useScroll, useTransform, animate } from "motion/react";
-import { ChevronDown } from "lucide-react";
 import { type Repulsor } from "./v9/ParticleField";
 import { DOMAIN_SCREENSHOTS, PLATFORM_DOMAINS, PLATFORM_DOMAIN_SCROLL_MODEL, getPlatformDomainsSceneHeight } from "./v9/platformDomains";
+import { LandingFooter } from "@/components/marketing/landing-footer";
+import { useHeaderStore } from "@/lib/store/useHeaderStore";
 
 type HeroMetrics = {
   logoStartTop: number;
@@ -95,11 +96,24 @@ export function LandingV9() {
   // Particle data — mutable refs, never trigger re-renders
   const particleRepulsorsRef = useRef<Repulsor[]>([]);
 
+  const setHeaderScrolled = useHeaderStore((state) => state.setScrolled);
+  const setOnSelectDomain = useHeaderStore((state) => state.setOnSelectDomain);
+
   useEffect(() => {
-    const onScroll = () => setScrolled(window.scrollY > 40);
+    const onScroll = () => {
+      const isScrolled = window.scrollY > 40;
+      setScrolled(isScrolled);
+      setHeaderScrolled(isScrolled);
+    };
     window.addEventListener("scroll", onScroll, { passive: true });
     return () => window.removeEventListener("scroll", onScroll);
-  }, []);
+  }, [setHeaderScrolled]);
+
+  // Sync onSelectDomain with the layout once on mount
+  useEffect(() => {
+    setOnSelectDomain(handleDomainClick);
+    return () => setOnSelectDomain(null);
+  }, [setOnSelectDomain]);
 
   useEffect(() => {
     const updateDomainsScenePhase = () => {
@@ -458,40 +472,7 @@ export function LandingV9() {
         @keyframes orbitSlow { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
       `}</style>
 
-      <nav
-        className={`fixed top-0 z-50 w-full transition-all duration-500 ease-out ${scrolled ? "pt-3 px-4 md:px-8" : ""
-          }`}
-      >
-        <div
-          className={`mx-auto flex items-center h-14 transition-all duration-500 ease-out ${scrolled
-              ? "max-w-4xl bg-white/90 backdrop-blur-xl rounded-full border border-gray-200/60 px-5"
-              : "max-w-[1200px] bg-transparent px-6"
-            }`}
-        >
-          <Link href="/" className="flex items-center gap-2.5">
-            <Image src="/kesher.png" alt="AGENTS24" width={28} height={28} className="h-7 w-7 rounded-lg" />
-            <span className="text-lg font-bold ">AGENTS24</span>
-          </Link>
-          <div className="flex-1" />
-          <div className="hidden md:flex items-center gap-6 text-[13px] font-medium text-[#4b5563]">
-            <Link href="#platform" className="flex items-center gap-1 hover:text-black transition-colors">
-              Platform <ChevronDown className="w-3.5 h-3.5 opacity-60" />
-            </Link>
-            <Link href="#platform" className="hover:text-black transition-colors">Structure</Link>
-            <Link href="#platform" className="hover:text-black transition-colors">Governance</Link>
-            <Link href="#platform" className="hover:text-black transition-colors">Deploy</Link>
-          </div>
-          <div className="flex-1" />
-          <div className="flex items-center gap-3">
-            <Link href="/auth/login" className="hidden sm:block text-[13px] font-medium text-[#4b5563] hover:text-black transition-colors px-3 py-1.5">
-              Log in
-            </Link>
-            <Link href="/auth/signup" className="px-4 py-2 bg-black text-white hover:bg-gray-900 text-[13px] font-medium rounded-full transition-colors">
-              Start building
-            </Link>
-          </div>
-        </div>
-      </nav>
+      {/* LandingHeader removed here; now managed by the layout using useHeaderStore */}
 
       {/* UNIVERSAL LOGO — One element, entire journey */}
       <motion.div
@@ -739,28 +720,7 @@ export function LandingV9() {
       </main>
 
       <footer ref={footerRef} className="bg-[#0a0a0a] relative z-50">
-        <div className="max-w-[1100px] mx-auto mb-24 -mt-20 relative">
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-10">
-            {[
-              { links: [{ label: "Product", href: "#platform" }, { label: "Structure", href: "#platform" }, { label: "Governance", href: "#platform" }, { label: "Deploy", href: "#platform" }] },
-              { links: [{ label: "Sign Up", href: "/auth/signup" }, { label: "Log In", href: "/auth/login" }] },
-              { links: [{ label: "Agents", href: "#platform" }, { label: "Knowledge", href: "#platform" }, { label: "Controls", href: "#platform" }] },
-              { links: [{ label: "Privacy", href: "#" }, { label: "Terms", href: "#" }, { label: "Security", href: "#" }] },
-            ].map((group, gi) => (
-              <div key={gi}>
-                <ul className="space-y-2.5">
-                  {group.links.map((link) => (
-                    <li key={link.label}>
-                      <Link href={link.href} className="text-sm text-gray-400 hover:text-white transition-colors">
-                        {link.label}
-                      </Link>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ))}
-          </div>
-        </div>
+        <LandingFooter onSelectDomain={handleDomainClick} />
 
         <div className="px-6 pb-6 relative overflow-hidden">
           <h2

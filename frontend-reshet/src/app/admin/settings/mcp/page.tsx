@@ -94,6 +94,15 @@ export default function McpSettingsPage() {
     loadServers();
   }, [loadServers]);
 
+  const loadTools = useCallback(async (serverId: string) => {
+    try {
+      const tools = await mcpService.listTools(serverId);
+      setToolsByServer((current) => ({ ...current, [serverId]: tools }));
+    } catch (err) {
+      setError(formatHttpErrorMessage(err, "Failed to load discovered tools."));
+    }
+  }, []);
+
   useEffect(() => {
     function onMessage(event: MessageEvent) {
       if (event.data?.type !== "mcp-oauth-complete") return;
@@ -105,15 +114,6 @@ export default function McpSettingsPage() {
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
   }, [activeServerId, loadServers, loadTools]);
-
-  const loadTools = useCallback(async (serverId: string) => {
-    try {
-      const tools = await mcpService.listTools(serverId);
-      setToolsByServer((current) => ({ ...current, [serverId]: tools }));
-    } catch (err) {
-      setError(formatHttpErrorMessage(err, "Failed to load discovered tools."));
-    }
-  }, []);
 
   async function handleCreateServer() {
     setSubmitting(true);

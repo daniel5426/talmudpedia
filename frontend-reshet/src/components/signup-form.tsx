@@ -6,11 +6,16 @@ import { authService } from "@/services"
 import { useAuthStore } from "@/lib/store/useAuthStore"
 import { GoogleLogin } from "@react-oauth/google"
 import Link from "next/link"
+import Image from "next/image"
+import { useAuthAccess } from "@/components/auth/auth-access-context"
+import { LegalLinks } from "@/components/auth/legal-links"
+import { BetaAccessPanel } from "@/components/marketing/beta-access-panel"
 
 export function SignupForm({
   className,
   ...props
 }: React.ComponentProps<"div">) {
+  const { authUnlocked } = useAuthAccess()
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [fullName, setFullName] = useState("")
@@ -59,19 +64,31 @@ export function SignupForm({
       {/* Top bar */}
       <div className="flex items-center justify-between px-8 py-6">
         <Link href="/" className="flex items-center gap-2">
-          <img src="/kesher.png" alt="AGENTS24" className="w-7 h-7 rounded-lg" />
+          <Image src="/kesher.png" alt="AGENTS24" width={28} height={28} className="w-7 h-7 rounded-lg" />
           <span className="text-sm font-bold tracking-tight text-gray-900">AGENTS24</span>
         </Link>
-        <Link
-          href="/auth/login"
-          className="text-sm font-medium text-gray-500 hover:text-gray-900 transition-colors"
-        >
-          Sign in
-        </Link>
+        {authUnlocked ? (
+          <Link
+            href="/auth/login"
+            className="text-sm font-medium text-gray-500 hover:text-gray-900 transition-colors"
+          >
+            Sign in
+          </Link>
+        ) : (
+          <Link
+            href="/contact"
+            className="text-sm font-medium text-gray-500 hover:text-gray-900 transition-colors"
+          >
+            Contact
+          </Link>
+        )}
       </div>
 
       {/* Form area */}
       <div className="flex flex-1 items-center justify-center px-8 py-12">
+        {!authUnlocked ? (
+          <BetaAccessPanel source="auth-signup" />
+        ) : (
         <div className="w-full max-w-sm">
           <div className="mb-8">
             <h1 className="text-2xl font-bold text-gray-900 tracking-tight">
@@ -176,16 +193,16 @@ export function SignupForm({
             </Link>
           </p>
         </div>
+        )}
       </div>
 
       {/* Bottom terms */}
       <div className="px-8 py-5 text-center">
-        <p className="text-xs text-gray-400">
-          By signing up, you agree to our{" "}
-          <a href="#" className="text-[#7c5aed] hover:underline">Terms of Service</a>
-          {" "}and{" "}
-          <a href="#" className="text-[#7c5aed] hover:underline">Privacy Policy</a>
-        </p>
+        {authUnlocked ? (
+          <LegalLinks prefix="By signing up, you agree to our" />
+        ) : (
+          <p className="text-xs text-gray-400">Access is currently reviewed manually.</p>
+        )}
       </div>
     </div>
   )
