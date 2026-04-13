@@ -156,6 +156,15 @@ export const INTEGRATION_CATEGORIES: IntegrationCategory[] = [
   "design",
 ];
 
+type CatalogServerLike = {
+  id: string;
+  server_url: string;
+  is_active?: boolean;
+  sync_status?: string;
+  tool_snapshot_version?: number;
+  updated_at?: string;
+};
+
 export function findCatalogEntry(
   slug: string
 ): IntegrationCatalogEntry | undefined {
@@ -168,6 +177,18 @@ export function getCatalogEntriesByCategory(
   return INTEGRATION_CATALOG.filter((entry) => entry.category === category);
 }
 
+export function normalizeCatalogServerUrl(serverUrl: string): string {
+  return String(serverUrl || "").replace(/\/+$/, "").trim().toLowerCase();
+}
+
+function getCatalogHostname(serverUrl: string): string | null {
+  try {
+    return new URL(serverUrl).hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Match a configured McpServer to a catalog entry by URL prefix.
  * Returns the entry slug or null if it's a custom (unlisted) server.
@@ -175,10 +196,52 @@ export function getCatalogEntriesByCategory(
 export function matchServerToCatalog(
   serverUrl: string
 ): IntegrationCatalogEntry | null {
-  const normalized = serverUrl.replace(/\/+$/, "").toLowerCase();
-  return (
+  const normalized = normalizeCatalogServerUrl(serverUrl);
+  const directMatch =
     INTEGRATION_CATALOG.find((entry) =>
-      normalized.startsWith(entry.server_url.replace(/\/+$/, "").toLowerCase())
-    ) ?? null
+      normalized.startsWith(normalizeCatalogServerUrl(entry.server_url))
+    ) ?? null;
+  if (directMatch) return directMatch;
+
+  const hostname = getCatalogHostname(serverUrl);
+  if (!hostname) return null;
+
+  const hostnameMatches = INTEGRATION_CATALOG.filter(
+    (entry) => getCatalogHostname(entry.server_url) === hostname
   );
+  return hostnameMatches.length === 1 ? hostnameMatches[0] : null;
+}
+
+export function pickPreferredCatalogServer<T extends CatalogServerLike>(
+  entry: IntegrationCatalogEntry,
+  servers: T[],
+  options?: { connectedServerIds?: ReadonlySet<string> }
+): T | null {
+  if (servers.length === 0) return null;
+  const connectedServerIds = options?.connectedServerIds;
+  const targetUrl = normalizeCatalogServerUrl(entry.server_url);
+
+  const ranked = [...servers].sort((left, right) => {
+    const leftScore =
+      (normalizeCatalogServerUrl(left.server_url) === targetUrl ? 1000 : 0) +
+      (connectedServerIds?.has(left.id) ? 200 : 0) +
+      (left.sync_status === "ready" ? 100 : 0) +
+      (left.is_active === false ? -50 : 0) +
+      Math.min(left.tool_snapshot_version ?? 0, 50);
+    const rightScore =
+      (normalizeCatalogServerUrl(right.server_url) === targetUrl ? 1000 : 0) +
+      (connectedServerIds?.has(right.id) ? 200 : 0) +
+      (right.sync_status === "ready" ? 100 : 0) +
+      (right.is_active === false ? -50 : 0) +
+      Math.min(right.tool_snapshot_version ?? 0, 50);
+    if (leftScore !== rightScore) return rightScore - leftScore;
+
+    const leftUpdated = Date.parse(left.updated_at ?? "") || 0;
+    const rightUpdated = Date.parse(right.updated_at ?? "") || 0;
+    if (leftUpdated !== rightUpdated) return rightUpdated - leftUpdated;
+
+    return left.id.localeCompare(right.id);
+  });
+
+  return ranked[0] ?? null;
 }

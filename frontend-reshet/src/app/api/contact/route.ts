@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import nodemailer from "nodemailer";
 
 const DEFAULT_CONTACT_EMAIL = "danielbenassaya2626@gmail.com";
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -63,11 +64,15 @@ export async function POST(request: Request) {
     );
   }
 
-  const resendApiKey = process.env.RESEND_API_KEY;
+  const smtpHost = process.env.SMTP_HOST;
+  const smtpPort = Number(process.env.SMTP_PORT || 587);
+  const smtpSecure = process.env.SMTP_SECURE === "true";
+  const smtpUser = process.env.SMTP_USER;
+  const smtpPass = process.env.SMTP_PASS;
   const fromEmail = process.env.CONTACT_FROM_EMAIL;
   const toEmail = process.env.CONTACT_EMAIL_TO || DEFAULT_CONTACT_EMAIL;
 
-  if (!resendApiKey || !fromEmail) {
+  if (!smtpHost || !smtpUser || !smtpPass || !fromEmail) {
     return NextResponse.json(
       { message: "Contact form email delivery is not configured yet." },
       { status: 503 },
@@ -80,15 +85,21 @@ export async function POST(request: Request) {
   const safeMessage = escapeHtml(message).replaceAll("\n", "<br />");
   const safeSource = escapeHtml(source);
 
-  const resendResponse = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${resendApiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
+  try {
+    const transporter = nodemailer.createTransport({
+      host: smtpHost,
+      port: smtpPort,
+      secure: smtpSecure,
+      auth: {
+        user: smtpUser,
+        pass: smtpPass,
+      },
+    });
+
+    await transporter.sendMail({
       from: fromEmail,
-      to: [toEmail],
+      to: toEmail,
+      replyTo: email,
       subject: `[AGENTS24] Contact request from ${name}`,
       html: `
         <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #111827;">
@@ -111,12 +122,9 @@ export async function POST(request: Request) {
         "Message:",
         message,
       ].join("\n"),
-    }),
-  });
-
-  if (!resendResponse.ok) {
-    const resendError = await resendResponse.text().catch(() => "Unable to read provider error.");
-    console.error("Contact form delivery failed:", resendError);
+    });
+  } catch (error) {
+    console.error("Contact form delivery failed:", error);
     return NextResponse.json(
       { message: "Unable to send the message right now." },
       { status: 502 },

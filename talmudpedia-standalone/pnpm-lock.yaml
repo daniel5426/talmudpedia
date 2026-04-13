@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@agents24/embed-sdk':
-        specifier: ^1.0.4
-        version: 1.0.4
+        specifier: ^1.1.0
+        version: 1.1.0
       '@agents24/ui-blocks-contract':
         specifier: ^0.2.0
         version: 0.2.0
@@ -213,8 +213,8 @@ importers:
 
 packages:
 
-  '@agents24/embed-sdk@1.0.4':
-    resolution: {integrity: sha512-nzUHU1IIVR0P7a6Z9z3OjvyN5y+vWHBIz2Ai1dq5e0OgfgOPRgl1Fq1bPQepzn06U5k02sxXWRBg1x97hX9epw==}
+  '@agents24/embed-sdk@1.1.0':
+    resolution: {integrity: sha512-Q16BZZgRWgVB3/LREONR0q37ZqWIQL+HbSK9z5dvw6j/n2+2C6V+jRszpYaWCUjX70kONmtSQlOKfesfGk/Jxg==}
     engines: {node: '>=18.17'}
 
   '@agents24/ui-blocks-contract@0.2.0':
@@ -4740,7 +4740,7 @@ packages:
 
 snapshots:
 
-  '@agents24/embed-sdk@1.0.4': {}
+  '@agents24/embed-sdk@1.1.0': {}
 
   '@agents24/ui-blocks-contract@0.2.0':
     dependencies:

@@ -6,13 +6,12 @@ import type {
   AgentAttachmentDto,
   AgentThreadDetailDto,
   AgentThreadSummaryDto,
-  StandaloneRuntimeEvent,
+  StandaloneResponseBlock,
 } from "./standalone-runtime";
 import type {
   TemplateAttachment,
   TemplateMessage,
   TemplateRenderBlock,
-  TemplateTextBlock,
   TemplateThread,
 } from "./types";
 
@@ -87,51 +86,49 @@ export function mapThreadSummary(summary: AgentThreadSummaryDto): TemplateThread
   };
 }
 
+function assistantTextFromTurn(turn: AgentThreadDetailDto["turns"][number]): string {
+  const responseBlocks = Array.isArray(turn.response_blocks) ? turn.response_blocks : [];
+  const blockText = responseBlocks
+    .filter((block) => block.kind === "assistant_text")
+    .map((block) => String(block.text || ""))
+    .join("")
+    .trim();
+  if (blockText) {
+    return blockText;
+  }
+  if (turn.assistant_output_text) {
+    return turn.assistant_output_text;
+  }
+  return "";
+}
+
 export function mapThreadDetail(detail: AgentThreadDetailDto): TemplateThread {
   const messages: TemplateMessage[] = [];
+
   for (const turn of detail.turns) {
-    if (turn.user_input_text) {
+    if (turn.user_input_text || (turn.attachments || []).length > 0) {
       messages.push({
         id: `${turn.id}-user`,
         role: "user",
         createdAt: turn.created_at,
         runStatus: "completed",
-        text: turn.user_input_text,
+        text: turn.user_input_text || undefined,
         attachments: (turn.attachments || []).map((attachment) => mapRuntimeAttachment(attachment)),
       });
     }
-    if (turn.assistant_output_text) {
-      let blocks: TemplateRenderBlock[] = [];
-      for (const event of turn.run_events || []) {
-        blocks = applyRuntimeEvent(blocks, event);
-      }
-      const textBlock: TemplateTextBlock = {
-        id: `${turn.id}-assistant-text`,
-        kind: "text",
-        content: turn.assistant_output_text,
-      };
+
+    const assistantText = assistantTextFromTurn(turn);
+    const blocks = mapCanonicalResponseBlocks(turn.response_blocks || [], assistantText);
+
+    if (assistantText || blocks.length > 0) {
       messages.push({
         id: `${turn.id}-assistant`,
         role: "assistant",
         createdAt: turn.completed_at || turn.created_at,
-        runStatus: "completed",
-        text: turn.assistant_output_text,
-        blocks: [...blocks, textBlock],
+        runStatus: turn.status === "failed" ? "error" : "completed",
+        text: assistantText || undefined,
+        blocks,
       });
-    } else if ((turn.run_events || []).length > 0) {
-      let blocks: TemplateRenderBlock[] = [];
-      for (const event of turn.run_events || []) {
-        blocks = applyRuntimeEvent(blocks, event);
-      }
-      if (blocks.length > 0) {
-        messages.push({
-          id: `${turn.id}-assistant`,
-          role: "assistant",
-          createdAt: turn.completed_at || turn.created_at,
-          runStatus: "completed",
-          blocks,
-        });
-      }
     }
   }
 
@@ -164,193 +161,6 @@ function deriveThreadTitle(messages: TemplateMessage[]): string {
   return "New chat";
 }
 
-export function applyRuntimeEvent(
-  blocks: TemplateRenderBlock[],
-  event: StandaloneRuntimeEvent,
-): TemplateRenderBlock[] {
-  const uiBlocksResult = extractUIBlocksToolResult(event);
-
-  if (event.event === "assistant.delta") {
-    const content = String(event.payload.content || "");
-    const lastBlock = blocks[blocks.length - 1];
-    if (lastBlock?.kind === "text") {
-      return [
-        ...blocks.slice(0, -1),
-        {
-          ...lastBlock,
-          content: lastBlock.content + content,
-        },
-      ];
-    }
-    return [
-      ...blocks,
-      {
-        id: createId(),
-        kind: "text",
-        content,
-      },
-    ];
-  }
-
-  if (event.event === "reasoning.update") {
-    const content = String(event.payload.content || event.payload.text || "");
-    const lastBlock = blocks[blocks.length - 1];
-    if (lastBlock?.kind === "reasoning") {
-      const nextSteps = content
-        ? [...lastBlock.steps, content].filter(Boolean)
-        : lastBlock.steps;
-      return [
-        ...blocks.slice(0, -1),
-        {
-          ...lastBlock,
-          steps: nextSteps,
-        },
-      ];
-    }
-    return [
-      ...blocks,
-      {
-        id: createId(),
-        kind: "reasoning",
-        title: "Reasoning",
-        steps: content ? [content] : [],
-      },
-    ];
-  }
-
-  if (event.event === "tool.started") {
-    if (isUIBlocksToolEvent(event)) {
-      return [
-        ...blocks,
-        {
-          id: createId(),
-          kind: "ui_blocks_loading",
-          spanId: typeof event.payload.span_id === "string" ? event.payload.span_id : undefined,
-        },
-      ];
-    }
-    return [
-      ...blocks,
-      {
-        id: createId(),
-        kind: "task",
-        title: String(event.payload.display_name || event.payload.summary || event.payload.tool || "Working..."),
-        spanId: typeof event.payload.span_id === "string" ? event.payload.span_id : undefined,
-        status: "running",
-        items: [],
-      },
-    ];
-  }
-
-  if (event.event === "tool.completed" || event.event === "tool.failed") {
-    const uiBlocksLoadingIndex = [...blocks]
-      .map((block, index) => ({ block, index }))
-      .reverse()
-      .find(({ block }) => {
-        if (block.kind !== "ui_blocks_loading") {
-          return false;
-        }
-        const spanId = typeof event.payload.span_id === "string" ? event.payload.span_id : null;
-        if (!spanId) {
-          return true;
-        }
-        return block.spanId === spanId;
-      })?.index;
-
-    if (event.event === "tool.completed" && uiBlocksResult) {
-      const parsed = validateUIBlocksBundle(uiBlocksResult.bundle);
-      const nextBlock = parsed.ok
-        ? {
-            id: createId(),
-            kind: "ui_blocks_bundle" as const,
-            bundle: parsed.bundle,
-          }
-        : {
-            id: createId(),
-            kind: "text" as const,
-            content: "Unable to render UI blocks bundle.",
-          };
-      if (typeof uiBlocksLoadingIndex === "number") {
-        return [
-          ...blocks.slice(0, uiBlocksLoadingIndex),
-          nextBlock,
-          ...blocks.slice(uiBlocksLoadingIndex + 1),
-        ];
-      }
-      return [...blocks, nextBlock];
-    }
-
-    if (event.event === "tool.failed" && typeof uiBlocksLoadingIndex === "number") {
-      return blocks.filter((_, index) => index !== uiBlocksLoadingIndex);
-    }
-    const spanId = typeof event.payload.span_id === "string" ? event.payload.span_id : null;
-    const taskIndex = [...blocks]
-      .map((block, index) => ({ block, index }))
-      .reverse()
-      .find(({ block }) => {
-        if (block.kind !== "task" || block.status !== "running") {
-          return false;
-        }
-        if (!spanId) {
-          return true;
-        }
-        return block.spanId === spanId;
-      })?.index;
-    if (typeof taskIndex !== "number") return blocks;
-    const taskBlock = blocks[taskIndex];
-    if (taskBlock.kind !== "task") return blocks;
-    const summary = event.payload.summary;
-    const error = event.payload.error;
-    const items = [...taskBlock.items];
-    if (typeof summary === "string" && summary.trim()) {
-      items.push(summary);
-    }
-    if (typeof error === "string" && error.trim()) {
-      items.push(error);
-    }
-    return [
-      ...blocks.slice(0, taskIndex),
-      {
-        ...taskBlock,
-        status: event.event === "tool.failed" ? "error" : "done",
-        items,
-      },
-      ...blocks.slice(taskIndex + 1),
-    ];
-  }
-
-  return blocks;
-}
-
-export function isUIBlocksToolEvent(event: StandaloneRuntimeEvent): boolean {
-  const rendererKind = String(event.payload.renderer_kind || "").trim().toLowerCase();
-  const toolSlug = String(event.payload.tool_slug || "").trim().toLowerCase();
-  return rendererKind === UI_BLOCKS_RENDERER_KIND || toolSlug === UI_BLOCKS_TOOL_SLUG;
-}
-
-export const isWidgetToolEvent = isUIBlocksToolEvent;
-
-type UIBlocksToolResult = {
-  bundle: unknown;
-};
-
-function extractUIBlocksToolResult(event: StandaloneRuntimeEvent): UIBlocksToolResult | null {
-  if (!isUIBlocksToolEvent(event)) {
-    return null;
-  }
-  const output = unwrapUIBlocksOutput(event.payload.output);
-  if (!output) {
-    return null;
-  }
-  const bundle = output.bundle;
-  if (!bundle || typeof bundle !== "object") {
-    return null;
-  }
-  return {
-    bundle,
-  };
-}
-
 function unwrapUIBlocksOutput(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object") {
     return null;
@@ -369,4 +179,141 @@ function unwrapUIBlocksOutput(value: unknown): Record<string, unknown> | null {
     return unwrapUIBlocksOutput(record.context);
   }
   return null;
+}
+
+function isUIBlocksTool(tool: Record<string, unknown>): boolean {
+  const rendererKind = String(tool.rendererKind || "").trim().toLowerCase();
+  const toolSlug = String(tool.toolSlug || "").trim().toLowerCase();
+  return rendererKind === UI_BLOCKS_RENDERER_KIND || toolSlug === UI_BLOCKS_TOOL_SLUG;
+}
+
+function extractUIBlocksToolResult(tool: Record<string, unknown>): { bundle: unknown } | null {
+  const output = unwrapUIBlocksOutput(tool.output);
+  if (!output) return null;
+  return { bundle: output.bundle };
+}
+
+function blockTextContent(block: StandaloneResponseBlock): string {
+  if (block.kind === "assistant_text") {
+    return String(block.text || "");
+  }
+  if (block.kind === "approval_request" || block.kind === "error") {
+    return String(block.text || "");
+  }
+  return "";
+}
+
+function normalizeTaskStatus(status: unknown): "running" | "done" | "error" {
+  if (status === "running") return "running";
+  if (status === "error") return "error";
+  return "done";
+}
+
+export function mapCanonicalResponseBlocks(
+  responseBlocks: StandaloneResponseBlock[] | undefined,
+  fallbackText?: string,
+): TemplateRenderBlock[] {
+  const canonicalBlocks = Array.isArray(responseBlocks) ? responseBlocks : [];
+  const mappedBlocks: TemplateRenderBlock[] = [];
+  const reasoningSteps: string[] = [];
+
+  for (const block of canonicalBlocks) {
+    if (!block || typeof block !== "object") continue;
+
+    if (block.kind === "assistant_text") {
+      const content = blockTextContent(block);
+      if (!content) continue;
+      mappedBlocks.push({
+        id: block.id,
+        kind: "text",
+        content,
+      });
+      continue;
+    }
+
+    if (block.kind === "reasoning_note") {
+      const label = typeof block.label === "string" ? block.label.trim() : "";
+      const description = typeof block.description === "string" ? block.description.trim() : "";
+      const step = description || label;
+      if (step) {
+        reasoningSteps.push(step);
+      }
+      continue;
+    }
+
+    if (block.kind === "approval_request" || block.kind === "error") {
+      const content = blockTextContent(block);
+      if (!content) continue;
+      mappedBlocks.push({
+        id: block.id,
+        kind: "text",
+        content,
+      });
+      continue;
+    }
+
+    if (block.kind !== "tool_call") {
+      continue;
+    }
+
+    const tool = block.tool && typeof block.tool === "object" ? (block.tool as Record<string, unknown>) : {};
+    const uiBlocksResult = extractUIBlocksToolResult(tool);
+    if (isUIBlocksTool(tool)) {
+      if (block.status === "running") {
+        mappedBlocks.push({
+          id: block.id,
+          kind: "ui_blocks_loading",
+          spanId: typeof tool.toolCallId === "string" ? tool.toolCallId : undefined,
+        });
+        continue;
+      }
+      if (uiBlocksResult) {
+        const parsed = validateUIBlocksBundle(uiBlocksResult.bundle);
+        mappedBlocks.push(
+          parsed.ok
+            ? { id: block.id, kind: "ui_blocks_bundle", bundle: parsed.bundle }
+            : { id: `${block.id}-invalid`, kind: "text", content: "Unable to render UI blocks bundle." },
+        );
+      }
+      continue;
+    }
+
+    const items: string[] = [];
+    const summary = typeof tool.summary === "string" ? tool.summary.trim() : "";
+    const detail = typeof tool.detail === "string" ? tool.detail.trim() : "";
+    if (summary) items.push(summary);
+    if (detail && detail !== summary) items.push(detail);
+
+    mappedBlocks.push({
+      id: block.id,
+      kind: "task",
+      title:
+        (typeof tool.title === "string" && tool.title.trim()) ||
+        (typeof tool.displayName === "string" && tool.displayName.trim()) ||
+        (typeof tool.toolName === "string" && tool.toolName.trim()) ||
+        "Working...",
+      spanId: typeof tool.toolCallId === "string" ? tool.toolCallId : undefined,
+      status: normalizeTaskStatus(block.status),
+      items,
+    });
+  }
+
+  if (reasoningSteps.length > 0) {
+    mappedBlocks.unshift({
+      id: "reasoning",
+      kind: "reasoning",
+      title: "Reasoning",
+      steps: reasoningSteps,
+    });
+  }
+
+  if (!mappedBlocks.some((block) => block.kind === "text") && fallbackText?.trim()) {
+    mappedBlocks.push({
+      id: "assistant-fallback-text",
+      kind: "text",
+      content: fallbackText,
+    });
+  }
+
+  return mappedBlocks;
 }

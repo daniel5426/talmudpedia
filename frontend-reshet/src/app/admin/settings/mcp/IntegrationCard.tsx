@@ -377,7 +377,9 @@ export function ConnectedIntegrationCard({
       {/* Info */}
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
-          <span className="text-sm font-medium truncate">{server.name}</span>
+          <span className="text-sm font-medium truncate">
+            {entry?.name ?? server.name}
+          </span>
           {isError ? (
             <span className="inline-flex items-center gap-1 rounded-full bg-destructive/10 px-2 py-0.5 text-[10px] font-medium text-destructive">
               <TriangleAlert className="h-2.5 w-2.5" />

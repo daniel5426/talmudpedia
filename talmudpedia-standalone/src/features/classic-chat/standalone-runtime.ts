@@ -21,6 +21,35 @@ export type AgentAttachmentDto = {
   updated_at: string;
 };
 
+export type StandaloneResponseBlock =
+  | {
+      id: string;
+      kind: "assistant_text";
+      runId?: string | null;
+      seq: number;
+      status: string;
+      text: string;
+      ts?: string | null;
+    }
+  | {
+      id: string;
+      kind: "tool_call";
+      runId?: string | null;
+      seq: number;
+      status: string;
+      ts?: string | null;
+      tool: Record<string, unknown>;
+    }
+  | {
+      id: string;
+      kind: "reasoning_note" | "approval_request" | "error" | "artifact" | "user_message";
+      runId?: string | null;
+      seq: number;
+      status: string;
+      ts?: string | null;
+      [key: string]: unknown;
+    };
+
 export type AgentThreadTurnDto = {
   id: string;
   run_id: string;
@@ -29,6 +58,7 @@ export type AgentThreadTurnDto = {
   status: string;
   usage_tokens: number;
   metadata: Record<string, unknown>;
+  response_blocks: StandaloneResponseBlock[];
   attachments: AgentAttachmentDto[];
   created_at: string;
   completed_at: string | null;

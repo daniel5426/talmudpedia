@@ -50,6 +50,7 @@ import {
   INTEGRATION_CATEGORIES,
   INTEGRATION_CATEGORY_LABELS,
   matchServerToCatalog,
+  pickPreferredCatalogServer,
   type IntegrationCatalogEntry,
   type IntegrationCategory,
 } from "@/services/integration-catalog";
@@ -189,20 +190,59 @@ export default function McpSettingsPage() {
 
   // ── Server ↔ catalog matching ────────────────────────────────────
 
+  const connectedServerIds = useMemo(() => {
+    return new Set(
+      Object.entries(connectionsByServer)
+        .filter(([, connection]) => connection?.status === "active")
+        .map(([serverId]) => serverId)
+    );
+  }, [connectionsByServer]);
+
   const serverByCatalogSlug = useMemo(() => {
-    const map: Record<string, McpServer> = {};
+    const grouped: Record<string, McpServer[]> = {};
     for (const server of servers) {
       const entry = matchServerToCatalog(server.server_url);
       if (entry) {
-        map[entry.slug] = server;
+        grouped[entry.slug] = [...(grouped[entry.slug] ?? []), server];
+      }
+    }
+
+    const map: Record<string, McpServer> = {};
+    for (const entry of INTEGRATION_CATALOG) {
+      const preferred = pickPreferredCatalogServer(
+        entry,
+        grouped[entry.slug] ?? [],
+        { connectedServerIds }
+      );
+      if (preferred) {
+        map[entry.slug] = preferred;
       }
     }
     return map;
-  }, [servers]);
+  }, [connectedServerIds, servers]);
 
   const connectedServers = useMemo(() => {
-    return servers.filter((s) => s.is_active);
-  }, [servers]);
+    const grouped: Record<string, McpServer[]> = {};
+    const custom: McpServer[] = [];
+
+    for (const server of servers) {
+      if (!server.is_active) continue;
+      const entry = matchServerToCatalog(server.server_url);
+      if (!entry) {
+        custom.push(server);
+        continue;
+      }
+      grouped[entry.slug] = [...(grouped[entry.slug] ?? []), server];
+    }
+
+    const dedupedCatalog = INTEGRATION_CATALOG.map((entry) =>
+      pickPreferredCatalogServer(entry, grouped[entry.slug] ?? [], {
+        connectedServerIds,
+      })
+    ).filter((server): server is McpServer => server !== null);
+
+    return [...dedupedCatalog, ...custom];
+  }, [connectedServerIds, servers]);
 
   // Servers that don't match any catalog entry (truly custom)
   const customServers = useMemo(() => {

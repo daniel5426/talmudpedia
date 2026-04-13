@@ -11,7 +11,7 @@ from typing import Any
 from urllib.parse import urlencode
 from uuid import UUID
 
-from sqlalchemy import delete, desc, select
+from sqlalchemy import delete, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.runtime_urls import resolve_local_backend_origin
@@ -118,6 +118,19 @@ class McpService:
             raise McpNotFoundError("MCP server not found")
         return server
 
+    async def _find_server_by_normalized_url(self, server_url: str) -> McpServer | None:
+        normalized = str(server_url or "").strip().rstrip("/").lower()
+        if not normalized:
+            return None
+        return await self.db.scalar(
+            select(McpServer)
+            .where(
+                McpServer.tenant_id == self.tenant_id,
+                func.lower(func.regexp_replace(McpServer.server_url, r"/+$", "")) == normalized,
+            )
+            .order_by(desc(McpServer.updated_at), McpServer.name.asc())
+        )
+
     async def _get_agent(self, agent_id: UUID) -> Agent:
         agent = await self.db.scalar(
             select(Agent).where(
@@ -172,6 +185,11 @@ class McpService:
             )
         except ValueError as exc:
             raise McpServiceError(str(exc)) from exc
+        existing = await self._find_server_by_normalized_url(server_url)
+        if existing is not None:
+            existing.is_active = bool(payload.get("is_active", True))
+            await self.db.flush()
+            return existing
         server = McpServer(
             tenant_id=self.tenant_id,
             created_by=created_by,

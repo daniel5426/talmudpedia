@@ -17,9 +17,8 @@ import {
   uploadAgentAttachments,
 } from "./standalone-runtime";
 import {
-  applyRuntimeEvent,
   createId,
-  isWidgetToolEvent,
+  mapCanonicalResponseBlocks,
   mapThreadDetail,
   mapRuntimeAttachment,
   mapThreadSummary,
@@ -340,7 +339,15 @@ export function useClassicChatState() {
 
             const updatedMessages = [...currentThread.messages];
             const message = { ...updatedMessages[msgIndex] };
-            message.blocks = applyRuntimeEvent([...(message.blocks || [])], event);
+            const responseBlocks = Array.isArray(event.payload?.response_blocks)
+              ? event.payload.response_blocks
+              : undefined;
+            message.blocks = mapCanonicalResponseBlocks(
+              responseBlocks,
+              typeof event.payload?.assistant_output_text === "string"
+                ? event.payload.assistant_output_text
+                : message.text,
+            );
             if (event.event === "run.completed") {
               message.runStatus = "completed";
             } else if (event.event === "run.failed") {
@@ -366,12 +373,7 @@ export function useClassicChatState() {
           });
         };
 
-        if (event.event === "tool.started" && isWidgetToolEvent(event)) {
-          flushSync(updateThreads);
-          return;
-        }
-
-        updateThreads();
+        flushSync(updateThreads);
       };
 
       const finalizeAssistantMessageAfterStream = () => {
@@ -450,17 +452,23 @@ export function useClassicChatState() {
         const updatedMessages = [...currentThread.messages];
         const message = { ...updatedMessages[msgIndex] };
         message.runStatus = "error";
-        message.blocks = [
-          ...(message.blocks || []),
-          {
-            id: createId(),
-            kind: "text",
-            content:
-              error instanceof Error
-                ? `Sorry, the standalone server failed: ${error.message}`
-                : "Sorry, I encountered an error while processing your request.",
-          },
-        ];
+        const errorText =
+          error instanceof Error
+            ? `Sorry, the standalone server failed: ${error.message}`
+            : "Sorry, I encountered an error while processing your request.";
+        message.blocks = mapCanonicalResponseBlocks(
+          [
+            {
+              id: `${message.id}-error`,
+              kind: "error",
+              seq: 0,
+              status: "error",
+              text: errorText,
+            },
+          ],
+          errorText,
+        );
+        message.text = errorText;
         updatedMessages[msgIndex] = message;
 
         return prevThreads.map((thread) =>
