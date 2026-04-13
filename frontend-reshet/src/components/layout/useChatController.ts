@@ -63,6 +63,9 @@ export interface ChatMessage {
   };
 }
 
+type ReasoningStep = NonNullable<ChatMessage["reasoningSteps"]>[number];
+type ReasoningSteps = NonNullable<ChatMessage["reasoningSteps"]>;
+
 const normalizeReasoningStatus = (
   status?: string
 ): "active" | "complete" | "pending" => {
@@ -650,7 +653,7 @@ export function useChatController(): ChatController {
                 ];
               } else if (event.type === "reasoning") {
                 const stepData = event.data;
-                const step = {
+                const step: ReasoningStep = {
                   label: stepData.step,
                   status: stepData.status,
                   icon: stepData.step.toLowerCase().includes("retrieval")
@@ -660,11 +663,12 @@ export function useChatController(): ChatController {
                   citations: stepData.citations,
                   query: stepData.query,
                   sources: stepData.sources,
-                } as any;
+                };
 
-                const existing = pendingReasoningStepsRef.current || [];
+                const existing: ReasoningSteps =
+                  pendingReasoningStepsRef.current ?? [];
                 const index = existing.findIndex((s) => s.label === step.label);
-                let newSteps;
+                let newSteps: ReasoningSteps;
                 if (index !== -1) {
                   newSteps = [...existing];
                   newSteps[index] = { ...newSteps[index], ...step };

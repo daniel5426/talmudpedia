@@ -3,7 +3,7 @@
 import Link from "next/link";
 import Image from "next/image";
 import { AnimatePresence, motion } from "motion/react";
-import { ChevronDown, Menu, X } from "lucide-react";
+import { ChevronDown } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { PLATFORM_DOMAINS } from "@/components/landing/v9/platformDomains";
@@ -18,7 +18,6 @@ type LandingHeaderProps = {
 export function LandingHeader({ scrolled: propsScrolled, onSelectDomain }: LandingHeaderProps) {
   const [internalScrolled, setInternalScrolled] = useState(false);
   const [platformOpen, setPlatformOpen] = useState(false);
-  const [mobileOpen, setMobileOpen] = useState(false);
   const pathname = usePathname();
   const router = useRouter();
 
@@ -40,8 +39,6 @@ export function LandingHeader({ scrolled: propsScrolled, onSelectDomain }: Landi
   // Use the prop if we're on home and it's defined, otherwise use internal scroll state
   const scrolled = (isHome && propsScrolled !== undefined) ? propsScrolled : internalScrolled;
 
-  const closeMobileMenu = () => setMobileOpen(false);
-
   const handleSelectDomain = (index: number) => {
     if (onSelectDomain) {
       onSelectDomain(index);
@@ -49,7 +46,6 @@ export function LandingHeader({ scrolled: propsScrolled, onSelectDomain }: Landi
       router.push("/#platform");
     }
     setPlatformOpen(false);
-    setMobileOpen(false);
   };
 
   return (
@@ -164,82 +160,7 @@ export function LandingHeader({ scrolled: propsScrolled, onSelectDomain }: Landi
             Start building
           </Link>
         </div>
-
-        <button
-          type="button"
-          onClick={() => setMobileOpen((current) => !current)}
-          className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-black/10 bg-white/90 text-slate-900 md:hidden"
-          aria-label={mobileOpen ? "Close menu" : "Open menu"}
-        >
-          {mobileOpen ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
-        </button>
       </div>
-
-      <AnimatePresence>
-        {mobileOpen ? (
-          <motion.div
-            initial={{ opacity: 0, y: -8 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -6 }}
-            transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-            className="mx-4 mt-3 rounded-[2rem] border border-black/8 bg-white/96 p-5 shadow-[0_24px_80px_-40px_rgba(15,23,42,0.45)] backdrop-blur-xl md:hidden"
-          >
-            <div>
-              <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-400">
-                Platform
-              </p>
-              <div className="mt-3 grid gap-2">
-                {PLATFORM_DOMAINS.map((domain, index) => (
-                  <button
-                    key={domain.title}
-                    type="button"
-                    onClick={() => {
-                      handleSelectDomain(index);
-                    }}
-                    className="rounded-[1.2rem] border border-slate-200 px-4 py-3 text-left"
-                  >
-                    <span className="block text-sm font-medium text-slate-900">{domain.title}</span>
-                    <span className="mt-1 block text-xs text-slate-500">{domain.eyebrow}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="mt-5 grid gap-2 text-sm text-slate-700">
-              <Link
-                href="https://docs.agents24.dev/"
-                target="_blank"
-                rel="noreferrer"
-                onClick={closeMobileMenu}
-                className="rounded-[1.2rem] border border-slate-200 px-4 py-3"
-              >
-                Docs
-              </Link>
-              <Link
-                href="/contact"
-                onClick={closeMobileMenu}
-                className="rounded-[1.2rem] border border-slate-200 px-4 py-3"
-              >
-                Contact
-              </Link>
-              <Link
-                href="/auth/login"
-                onClick={closeMobileMenu}
-                className="rounded-[1.2rem] border border-slate-200 px-4 py-3"
-              >
-                Log in
-              </Link>
-              <Link
-                href="/auth/signup"
-                onClick={closeMobileMenu}
-                className="rounded-[1.2rem] bg-black px-4 py-3 font-medium text-white"
-              >
-                Start building
-              </Link>
-            </div>
-          </motion.div>
-        ) : null}
-      </AnimatePresence>
     </nav>
   );
 }

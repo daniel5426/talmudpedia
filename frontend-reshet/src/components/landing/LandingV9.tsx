@@ -7,6 +7,7 @@ import { AnimatePresence, motion, useMotionTemplate, useMotionValueEvent, useRed
 import { type Repulsor } from "./v9/ParticleField";
 import { DOMAIN_SCREENSHOTS, PLATFORM_DOMAINS, PLATFORM_DOMAIN_SCROLL_MODEL, getPlatformDomainsSceneHeight } from "./v9/platformDomains";
 import { LandingFooter } from "@/components/marketing/landing-footer";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { useHeaderStore } from "@/lib/store/useHeaderStore";
 
 type HeroMetrics = {
@@ -79,9 +80,7 @@ function DomainTextContent({
 }
 
 export function LandingV9() {
-  const [scrolled, setScrolled] = useState(false);
-
-  const [isMobile, setIsMobile] = useState(false);
+  const [hasMounted, setHasMounted] = useState(false);
   const [viewportWidth, setViewportWidth] = useState(1440);
   const [vhInstance, setVhInstance] = useState(800);
   const [activeDomainIndex, setActiveDomainIndex] = useState(0);
@@ -92,6 +91,7 @@ export function LandingV9() {
   const footerRef = useRef<HTMLElement | null>(null);
   const domainsContainerRef = useRef<HTMLDivElement | null>(null);
   const prefersReducedMotion = useReducedMotion();
+  const isMobile = useIsMobile();
 
   // Particle data — mutable refs, never trigger re-renders
   const particleRepulsorsRef = useRef<Repulsor[]>([]);
@@ -102,7 +102,6 @@ export function LandingV9() {
   useEffect(() => {
     const onScroll = () => {
       const isScrolled = window.scrollY > 40;
-      setScrolled(isScrolled);
       setHeaderScrolled(isScrolled);
     };
     window.addEventListener("scroll", onScroll, { passive: true });
@@ -144,11 +143,7 @@ export function LandingV9() {
   }, []);
 
   useEffect(() => {
-    const media = window.matchMedia("(max-width: 767px)");
-    const update = () => setIsMobile(media.matches);
-    update();
-    media.addEventListener("change", update);
-    return () => media.removeEventListener("change", update);
+    setHasMounted(true);
   }, []);
 
   useEffect(() => {
@@ -162,17 +157,18 @@ export function LandingV9() {
   }, []);
 
   const metrics = isMobile ? MOBILE_METRICS : DESKTOP_METRICS;
+  const shouldBindSceneScroll = hasMounted && !isMobile;
 
   const { scrollYProgress } = useScroll({
-    target: heroSceneRef,
+    target: shouldBindSceneScroll ? heroSceneRef : undefined,
     offset: ["start start", "end end"],
   });
   const { scrollYProgress: domainsScrollProgress } = useScroll({
-    target: domainsSceneRef,
+    target: shouldBindSceneScroll ? domainsSceneRef : undefined,
     offset: ["start start", "end end"],
   });
   const { scrollYProgress: closingScrollProgress } = useScroll({
-    target: closingSceneRef,
+    target: shouldBindSceneScroll ? closingSceneRef : undefined,
     offset: ["start end", "end start"], // distance = 200vh total for a 100vh section
   });
 
@@ -362,10 +358,11 @@ export function LandingV9() {
     closingScrollProgress,
     (v) => (v as number) >= 0.5 ? 1 : 0
   );
+  const univLogoTranslateX = useTransform(univLogoSize, (s) => -(s as number) / 2);
 
   // --- Footer "S24" split animation ---
   const { scrollYProgress: footerScrollProgress } = useScroll({
-    target: footerRef,
+    target: shouldBindSceneScroll ? footerRef : undefined,
     offset: ["start end", "end end"],
   });
   const s24TranslateX = useTransform(footerScrollProgress, [0.3, 1], [0, 120]);
@@ -438,6 +435,28 @@ export function LandingV9() {
                    L0 560
                    Z`;
 
+  if (!hasMounted) {
+    return null;
+  }
+
+  if (isMobile) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-[#0a0a0a] px-6 text-white">
+        <div className="max-w-sm text-center">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-white/45">
+            Temporary Access
+          </p>
+          <h1 className="mt-4 text-3xl font-semibold tracking-[-0.04em]">
+            Available only on PC
+          </h1>
+          <p className="mt-3 text-sm leading-6 text-white/65">
+            Please open this page from a desktop or laptop for now.
+          </p>
+        </div>
+      </main>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-white font-sans overflow-x-hidden selection:bg-black/10">
       <style>{`
@@ -482,7 +501,7 @@ export function LandingV9() {
           left: univLogoLeft,
           width: univLogoSize,
           height: univLogoSize,
-          x: useTransform(univLogoSize, (s) => -(s as number) / 2),
+          x: univLogoTranslateX,
           rotate: univLogoRotate,
           opacity: univLogoOpacity,
         }}

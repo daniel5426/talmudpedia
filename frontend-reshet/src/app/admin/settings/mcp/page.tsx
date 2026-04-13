@@ -7,6 +7,7 @@ import {
   Layers,
   Loader2,
   PlugZap,
+  Search,
   Settings2,
   Target,
   X,
