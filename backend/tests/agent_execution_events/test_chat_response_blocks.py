@@ -32,6 +32,33 @@ def test_build_response_blocks_from_trace_events_strips_provider_tool_delta_text
     assert [block["kind"] for block in blocks] == ["assistant_text"]
 
 
+def test_build_response_blocks_from_trace_events_preserves_delta_whitespace_between_chunks():
+    blocks = build_response_blocks_from_trace_events(
+        raw_events=[
+            {
+                "event": "token",
+                "visibility": "client_safe",
+                "data": {"content": "Hello "},
+            },
+            {
+                "event": "token",
+                "visibility": "client_safe",
+                "data": {"content": "**world**"},
+            },
+            {
+                "event": "token",
+                "visibility": "client_safe",
+                "data": {"content": "\n\n- item"},
+            },
+        ],
+        run_id="run-1",
+        final_output=None,
+        mode=ExecutionMode.PRODUCTION,
+    )
+
+    assert extract_assistant_text_from_blocks(blocks) == "Hello **world**\n\n- item"
+
+
 def test_build_response_blocks_from_trace_events_keeps_tool_and_reasoning_timeline():
     blocks = build_response_blocks_from_trace_events(
         raw_events=[
@@ -105,3 +132,61 @@ def test_build_response_blocks_from_trace_events_keeps_streamed_markdown_when_fi
     )
 
     assert extract_assistant_text_from_blocks(blocks) == "## Summary\n\n- First item\n- Second item"
+
+
+def test_build_response_blocks_from_trace_events_emits_explicit_ui_blocks_block():
+    blocks = build_response_blocks_from_trace_events(
+        raw_events=[
+            {
+                "event": "on_tool_start",
+                "name": "ui blocks",
+                "span_id": "ui-call-1",
+                "visibility": "internal",
+                "data": {
+                    "tool_slug": "builtin-ui-blocks",
+                    "renderer_kind": "ui_blocks",
+                },
+            },
+            {
+                "event": "on_tool_end",
+                "name": "ui blocks",
+                "span_id": "ui-call-1",
+                "visibility": "internal",
+                "data": {
+                    "tool_slug": "builtin-ui-blocks",
+                    "renderer_kind": "ui_blocks",
+                    "output": {
+                        "kind": "ui_blocks_bundle",
+                        "contract_version": "v1",
+                        "bundle": {
+                            "title": "Overview",
+                            "rows": [
+                                {
+                                    "blocks": [
+                                        {
+                                            "id": "kpi-1",
+                                            "kind": "kpi",
+                                            "title": "Users",
+                                            "value": "42",
+                                            "span": 12,
+                                        }
+                                    ]
+                                }
+                            ],
+                        },
+                    },
+                },
+            },
+        ],
+        run_id="run-1",
+        final_output={"message": "Done."},
+        mode=ExecutionMode.PRODUCTION,
+    )
+
+    ui_block = next(block for block in blocks if block["kind"] == "ui_blocks")
+    assistant_block = next(block for block in blocks if block["kind"] == "assistant_text")
+
+    assert ui_block["status"] == "complete"
+    assert ui_block["bundle"]["title"] == "Overview"
+    assert ui_block["toolCallId"] == "ui-call-1"
+    assert assistant_block["text"] == "Done."

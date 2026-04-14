@@ -481,15 +481,9 @@ export const agentService = {
   async cancelRun(runId: string, payload?: { assistantOutputText?: string }) {
     const directBackendUrl = process.env.NEXT_PUBLIC_BACKEND_STREAM_URL || "http://127.0.0.1:8026";
     const url = new URL(`${directBackendUrl}/agents/runs/${runId}/cancel`);
-    const { useAuthStore } = await import("@/lib/store/useAuthStore");
-    const authState = useAuthStore.getState();
-    const token = authState.token;
-    const tenantId = authState.user?.tenant_id;
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
     };
-    if (token) headers.Authorization = `Bearer ${token}`;
-    if (tenantId) headers["X-Tenant-ID"] = tenantId;
     const response = await fetch(url.toString(), {
       method: "POST",
       headers,
@@ -552,23 +546,9 @@ export const agentService = {
         url.searchParams.append("mode", mode);
     }
 
-    // Get auth token for direct request
-    const { useAuthStore } = await import('@/lib/store/useAuthStore');
-    const authState = useAuthStore.getState();
-    const token = authState.token;
-    const tenantId = authState.user?.tenant_id;
-
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
     };
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
-    } else {
-      console.warn('[streamAgent] Missing bearer token; request may 401. Ensure login sets useAuthStore.token.');
-    }
-    if (tenantId) {
-      headers['X-Tenant-ID'] = tenantId;
-    }
     
     return fetch(url.toString(), {
       method: "POST",

@@ -138,8 +138,8 @@ async def test_production_blocks_draft_but_debug_allows(monkeypatch):
     async def fake_load_tool(_self, _tool_id):
         return tool
 
-    async def fake_http(_self, _tool, input_data, _impl, _ctx):
-        return {"ok": True, "echo": input_data}
+    async def fake_http(_self, _tool, envelope):
+        return {"ok": True, "echo": envelope.model_input_compiled}
 
     monkeypatch.setattr(ToolNodeExecutor, "_load_tool", fake_load_tool)
     monkeypatch.setattr(ToolNodeExecutor, "_execute_http_tool", fake_http)

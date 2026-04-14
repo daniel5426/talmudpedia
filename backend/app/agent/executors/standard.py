@@ -1,6 +1,6 @@
 import asyncio
-import logging
 import json
+import logging
 import os
 import re
 from dataclasses import dataclass
@@ -46,17 +46,6 @@ from app.services.mcp_service import McpRuntimeService
 from app.db.postgres.models.agents import AgentRun, RunStatus
 
 logger = logging.getLogger(__name__)
-
-STRICT_PLATFORM_TOOL_SLUGS = frozenset(
-    {
-        "platform-assets",
-        "platform-agents",
-        "platform-rag",
-        "platform-governance",
-    }
-)
-STRICT_PLATFORM_RAW_INPUT_KEY = "__strict_platform_raw_input__"
-
 
 def _policy_snapshot_from_state(state: Dict[str, Any]) -> ResourcePolicySnapshot | None:
     if not isinstance(state, dict):
@@ -247,15 +236,8 @@ def _build_tool_args_schema(tool_name: str, input_schema: dict[str, Any]) -> typ
 def _normalize_model_tool_args(call_args: Any, tool_record: Any | None) -> dict[str, Any]:
     if isinstance(call_args, dict):
         return call_args
-
-    tool_slug = str(getattr(tool_record, "slug", "") or "").strip()
-    if (
-        tool_record is not None
-        and is_strict_tool_input(tool_record)
-        and tool_slug in STRICT_PLATFORM_TOOL_SLUGS
-    ):
-        return {STRICT_PLATFORM_RAW_INPUT_KEY: call_args}
-    return {"value": call_args}
+    _ = tool_record
+    return {"raw_input": call_args}
 
 
 def _resolve_quota_max_output_tokens(state: Dict[str, Any]) -> Optional[int]:

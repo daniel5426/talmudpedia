@@ -17,10 +17,13 @@ from sqlalchemy import and_, or_, select, text
 from sqlalchemy.exc import ProgrammingError
 
 from app.agent.execution.tool_input_contracts import (
-    get_tool_input_schema,
     is_strict_tool_input,
-    summarize_validation_errors,
-    validate_tool_input_schema,
+)
+from app.agent.execution.tool_invocation import (
+    ToolInvocationEnvelope,
+    build_tool_invocation_envelope,
+    compile_tool_arguments,
+    tool_dispatch_target,
 )
 from app.agent.graph.schema import AgentGraph
 from app.agent.executors.base import BaseNodeExecutor, ValidationResult
@@ -58,34 +61,6 @@ from app.services.web_search import create_web_search_provider
 
 logger = logging.getLogger(__name__)
 
-INTERNAL_TOOL_RUNTIME_INPUT_KEYS = {
-    "run_id",
-    "thread_id",
-    "tenant_id",
-    "user_id",
-    "initiator_user_id",
-    "requested_scopes",
-    "root_run_id",
-    "parent_run_id",
-    "parent_node_id",
-    "depth",
-    "agent_id",
-    "agent_slug",
-    "mode",
-    "surface",
-    "orchestration_surface",
-    "quota_max_output_tokens",
-    "token",
-    "published_app_id",
-    "published_app_account_id",
-    "external_user_id",
-    "external_session_id",
-    "tenant_api_key_id",
-    "resource_policy_snapshot",
-    "resource_policy_principal",
-    "architect_mode",
-    "architect_effective_scopes",
-}
 AGENT_TOOL_MODALITY_FIELDS = {"text", "files", "audio", "images"}
 STRICT_PLATFORM_TOOL_SLUGS = frozenset(
     {
@@ -95,9 +70,6 @@ STRICT_PLATFORM_TOOL_SLUGS = frozenset(
         "platform-governance",
     }
 )
-STRICT_PLATFORM_RAW_INPUT_KEY = "__strict_platform_raw_input__"
-
-
 def _trace_safe_value(value: Any, *, max_string: int = 800, max_items: int = 12) -> Any:
     if callable(value):
         name = getattr(value, "__name__", value.__class__.__name__)
@@ -132,95 +104,11 @@ def _tool_input_shape(input_data: Any) -> dict[str, Any]:
         "has_payload_dict": isinstance(input_data.get("payload"), dict),
     }
 
-
 class ToolNodeExecutor(BaseNodeExecutor):
     @staticmethod
     def _is_strict_platform_tool(tool: Any) -> bool:
         tool_slug = str(getattr(tool, "slug", "") or "").strip()
         return is_strict_tool_input(tool) and tool_slug in STRICT_PLATFORM_TOOL_SLUGS
-
-    @staticmethod
-    def _inspect_platform_sdk_embedded_input(raw: Any) -> dict[str, Any]:
-        details: dict[str, Any] = {
-            "embedded_json_parseable": False,
-            "attempted_action": None,
-            "embedded_top_level_keys": [],
-            "embedded_payload_keys": [],
-        }
-        if isinstance(raw, dict):
-            details["embedded_json_parseable"] = True
-            details["embedded_top_level_keys"] = sorted(str(key) for key in raw.keys())
-            action = raw.get("action")
-            if isinstance(action, str) and action.strip():
-                details["attempted_action"] = action.strip()
-            payload = raw.get("payload")
-            if isinstance(payload, dict):
-                details["embedded_payload_keys"] = sorted(str(key) for key in payload.keys())
-            return details
-        if isinstance(raw, str):
-            from app.system_artifacts.platform_sdk.handler import _inspect_wrapped_platform_sdk_input
-
-            return _inspect_wrapped_platform_sdk_input(raw)
-        return details
-
-    def _extract_strict_platform_noncanonical_input_error(
-        self,
-        *,
-        tool: Any,
-        payload: dict[str, Any],
-    ) -> dict[str, Any] | None:
-        if not self._is_strict_platform_tool(tool):
-            return None
-
-        source_field: str | None = None
-        raw_value: Any = None
-        if STRICT_PLATFORM_RAW_INPUT_KEY in payload:
-            source_field = "raw_input"
-            raw_value = payload.get(STRICT_PLATFORM_RAW_INPUT_KEY)
-        elif not (isinstance(payload.get("action"), str) and payload.get("action", "").strip()):
-            for candidate_key in ("value", "query", "text"):
-                if candidate_key not in payload:
-                    continue
-                candidate_value = payload.get(candidate_key)
-                if candidate_value not in (None, ""):
-                    source_field = candidate_key
-                    raw_value = candidate_value
-                    break
-
-        if source_field is None:
-            return None
-
-        details = self._inspect_platform_sdk_embedded_input(raw_value)
-        attempted_action = details.get("attempted_action")
-        if source_field == "raw_input":
-            message = (
-                "Platform SDK strict tools require a top-level action and payload object. "
-                "Do not pass a raw scalar or string tool argument."
-            )
-        else:
-            message = (
-                f"Platform SDK no longer accepts wrapped tool input in '{source_field}'. "
-                "Send a top-level action and payload object instead."
-            )
-        error = {
-            "error": "non_canonical_wrapped_input",
-            "code": "NON_CANONICAL_PLATFORM_SDK_INPUT",
-            "message": message,
-            "http_status": 422,
-            "retryable": False,
-            "source_field": source_field,
-            "migration_hint": 'Send {"action":"...","payload":{...}} as the tool input object.',
-            **details,
-        }
-        return {
-            "action": str(attempted_action or "noop"),
-            "result": {
-                "status": "validation_error",
-                "reason": "non_canonical_input",
-                "message": message,
-            },
-            "errors": [error],
-        }
 
     @staticmethod
     def _coerce_scalar_text(value: Any) -> str | None:
@@ -451,11 +339,12 @@ class ToolNodeExecutor(BaseNodeExecutor):
     async def _execute_agent_call_tool(
         self,
         _tool: Any,
-        input_data: dict[str, Any],
-        implementation_config: dict[str, Any],
-        execution_config: dict[str, Any],
-        node_context: dict[str, Any] | None = None,
+        envelope: ToolInvocationEnvelope,
     ) -> dict[str, Any]:
+        input_data = self._compiled_input_dict(envelope)
+        implementation_config = envelope.tool_descriptor.implementation_config
+        execution_config = envelope.tool_descriptor.execution_config
+        node_context = envelope.runtime_context
         await self._assert_current_run_accepting_work(node_context)
         target = await self._resolve_agent_target(
             target_agent_id_raw=implementation_config.get("target_agent_id") or input_data.get("target_agent_id"),
@@ -594,10 +483,11 @@ class ToolNodeExecutor(BaseNodeExecutor):
     async def _execute_http_tool(
         self,
         _tool: Any,
-        input_data: dict[str, Any],
-        implementation_config: dict[str, Any],
-        node_context: dict[str, Any] | None = None,
+        envelope: ToolInvocationEnvelope,
     ) -> dict[str, Any]:
+        input_data = self._compiled_input_dict(envelope)
+        implementation_config = envelope.tool_descriptor.implementation_config
+        node_context = envelope.runtime_context
         url = implementation_config.get("url") or input_data.get("url")
         if not url:
             raise ValueError("HTTP tool requires a URL")
@@ -614,7 +504,7 @@ class ToolNodeExecutor(BaseNodeExecutor):
                 raise PermissionError("Tool requires authenticated caller token, but no token is available")
             headers["Authorization"] = f"Bearer {caller_token.strip()}"
 
-        timeout_s = implementation_config.get("timeout_s")
+        timeout_s = implementation_config.get("timeout_s") or envelope.execution_policy.timeout_s
         timeout = httpx.Timeout(timeout_s) if timeout_s else None
         body = input_data.get("body")
         params = input_data.get("params") if isinstance(input_data.get("params"), dict) else None
@@ -646,10 +536,9 @@ class ToolNodeExecutor(BaseNodeExecutor):
     async def _execute_function_tool(
         self,
         _tool: Any,
-        input_data: dict[str, Any],
-        implementation_config: dict[str, Any],
-        node_context: dict[str, Any] | None = None,
+        envelope: ToolInvocationEnvelope,
     ) -> dict[str, Any]:
+        implementation_config = envelope.tool_descriptor.implementation_config
         function_name = implementation_config.get("function_name")
         if not function_name:
             raise ValueError("Function tool is missing function_name in implementation_config")
@@ -660,119 +549,19 @@ class ToolNodeExecutor(BaseNodeExecutor):
             fn = get_tool_function(function_name)
         if not fn:
             raise RuntimeError(f"Function tool '{function_name}' is not registered")
-
-        def _parse_json_object(raw: Any) -> dict[str, Any] | None:
-            if not isinstance(raw, str):
-                return None
-            text = raw.strip()
-            if not text:
-                return None
-            candidates: list[str] = [text]
-
-            fenced = re.search(r"```(?:json)?\s*([\s\S]*?)```", text, re.IGNORECASE)
-            if fenced:
-                candidates.append(fenced.group(1).strip())
-
-            first = text.find("{")
-            last = text.rfind("}")
-            if first != -1 and last > first:
-                candidates.append(text[first : last + 1].strip())
-
-            trimmed = text.strip().rstrip(",")
-            if not trimmed.startswith("{") and ":" in trimmed:
-                candidates.append("{" + trimmed.strip("{} \t\r\n,") + "}")
-
-            for candidate in candidates:
-                if not candidate:
-                    continue
-                try:
-                    parsed = json.loads(candidate)
-                except Exception:
-                    parsed = None
-                if isinstance(parsed, str):
-                    inner = parsed.strip()
-                    if inner and inner != candidate:
-                        try:
-                            parsed = json.loads(inner)
-                        except Exception:
-                            parsed = None
-                if isinstance(parsed, dict):
-                    return parsed
-            return None
-
         strict_input = is_strict_tool_input(_tool)
-        payload = dict(input_data or {})
-        if not strict_input:
-            merged_payload = dict(payload)
-            for wrapper_key in ("args", "input", "parameters", "payload", "data", "arguments", "value"):
-                wrapper_payload = merged_payload.get(wrapper_key)
-                if isinstance(wrapper_payload, str):
-                    parsed_wrapper_payload = _parse_json_object(wrapper_payload)
-                    if isinstance(parsed_wrapper_payload, dict):
-                        wrapper_payload = parsed_wrapper_payload
-                        merged_payload[wrapper_key] = parsed_wrapper_payload
-                if isinstance(wrapper_payload, dict):
-                    for key, value in wrapper_payload.items():
-                        merged_payload[key] = value
-            payload = merged_payload
-        else:
-            input_schema = get_tool_input_schema(_tool)
-            declared_keys = set(input_schema.get("properties", {}).keys()) if isinstance(input_schema, dict) else set()
-            payload = {
-                key: value
-                for key, value in payload.items()
-                if key not in INTERNAL_TOOL_RUNTIME_INPUT_KEYS or key in declared_keys
-            }
-
-        if strict_input:
-            noncanonical_error = self._extract_strict_platform_noncanonical_input_error(
-                tool=_tool,
-                payload=payload,
-            )
-            if noncanonical_error is not None:
-                return noncanonical_error
-            validation_errors = validate_tool_input_schema(_tool, payload)
-            if validation_errors:
-                return {
-                    "error": "Tool input validation failed",
-                    "code": "TOOL_INPUT_VALIDATION_FAILED",
-                    "validation_summary": summarize_validation_errors(validation_errors),
-                    "validation_errors": validation_errors,
-                    "received_keys": sorted(str(key) for key in payload.keys()) if isinstance(payload, dict) else [],
-                }
-
-        runtime_context = {
-            key: value
-            for key, value in (node_context or {}).items()
-            if value is not None
-            and key
-            in {
-                "token",
-                "run_id",
-                "thread_id",
-                "tenant_id",
-                "user_id",
-                "initiator_user_id",
-                "root_run_id",
-                "parent_run_id",
-                "parent_node_id",
-                "depth",
-                "agent_id",
-                "agent_slug",
-                "mode",
-                "architect_mode",
-                "architect_effective_scopes",
-                "surface",
-            }
-        }
+        payload = self._compiled_input_dict(envelope)
+        runtime_context = dict(envelope.runtime_context)
         if runtime_context:
             payload["__tool_runtime_context__"] = runtime_context
-        if isinstance(node_context, dict) and not strict_input:
+        if not self._is_strict_platform_tool(_tool):
             existing_context = payload.get("context") if isinstance(payload.get("context"), dict) else {}
             payload["context"] = {
                 **dict(existing_context),
                 **runtime_context,
             }
+        elif "context" in payload and not isinstance(payload.get("context"), dict):
+            payload.pop("context", None)
         if function_name.startswith("coding_agent_"):
             payload = normalize_coding_agent_tool_payload(function_name, payload)
             missing_fields = validate_coding_agent_required_fields(function_name, payload)
@@ -797,11 +586,12 @@ class ToolNodeExecutor(BaseNodeExecutor):
     async def _execute_mcp_tool(
         self,
         _tool: Any,
-        input_data: dict[str, Any],
-        implementation_config: dict[str, Any],
-        context: dict[str, Any] | None,
-        timeout_s: int | None,
+        envelope: ToolInvocationEnvelope,
     ) -> dict[str, Any]:
+        input_data = self._compiled_input_dict(envelope)
+        implementation_config = envelope.tool_descriptor.implementation_config
+        context = envelope.runtime_context
+        timeout_s = envelope.execution_policy.timeout_s
         if str(implementation_config.get("type") or "").strip().lower() == "mcp_mount":
             if not self.tenant_id:
                 raise PermissionError("Mounted MCP tools require tenant context")
@@ -809,17 +599,16 @@ class ToolNodeExecutor(BaseNodeExecutor):
             runtime_user_uuid = self._parse_uuid(runtime_user_id)
             return await McpRuntimeService(self.db, self.tenant_id).execute_virtual_tool(
                 tool_id=str(getattr(_tool, "id", "") or implementation_config.get("tool_id") or ""),
-                arguments=input_data.get("arguments") if isinstance(input_data.get("arguments"), dict) else input_data,
+                arguments=input_data,
                 user_id=runtime_user_uuid,
             )
         server_url = implementation_config.get("server_url")
         tool_name = implementation_config.get("tool_name")
         headers = implementation_config.get("headers")
-        arguments = input_data.get("arguments") if isinstance(input_data.get("arguments"), dict) else input_data
         return await call_mcp_tool(
             server_url=server_url,
             tool_name=tool_name,
-            arguments=arguments,
+            arguments=input_data,
             headers=headers,
             timeout_s=timeout_s,
         )
@@ -827,9 +616,10 @@ class ToolNodeExecutor(BaseNodeExecutor):
     async def _execute_retrieval_pipeline_tool(
         self,
         _tool: Any,
-        input_data: dict[str, Any],
-        implementation_config: dict[str, Any],
+        envelope: ToolInvocationEnvelope,
     ) -> dict[str, Any]:
+        input_data = self._compiled_input_dict(envelope)
+        implementation_config = envelope.tool_descriptor.implementation_config
         if not self.tenant_id:
             raise PermissionError("Retrieval pipeline tools require tenant context")
 
@@ -1112,12 +902,13 @@ class ToolNodeExecutor(BaseNodeExecutor):
         self,
         *,
         tool: Any,
-        input_data: dict[str, Any],
-        implementation_config: dict[str, Any],
-        execution_config: dict[str, Any],
-        context: dict[str, Any] | None,
+        envelope: ToolInvocationEnvelope,
         emitter: Any | None,
     ) -> dict[str, Any] | None:
+        input_data = self._compiled_input_dict(envelope)
+        implementation_config = envelope.tool_descriptor.implementation_config
+        execution_config = envelope.tool_descriptor.execution_config
+        context = envelope.runtime_context
         builtin_key = str(getattr(tool, "builtin_key", "") or "").strip().lower()
         if not builtin_key:
             builtin_key = str(implementation_config.get("builtin") or "").strip().lower()
@@ -1126,14 +917,13 @@ class ToolNodeExecutor(BaseNodeExecutor):
             return None
 
         if builtin_key == "retrieval_pipeline":
-            return await self._execute_retrieval_pipeline_tool(tool, input_data, implementation_config)
+            return await self._execute_retrieval_pipeline_tool(tool, envelope)
         if builtin_key == "http_request":
-            return await self._execute_http_tool(tool, input_data, implementation_config, context)
+            return await self._execute_http_tool(tool, envelope)
         if builtin_key == "function_call":
-            return await self._execute_function_tool(tool, input_data, implementation_config, context)
+            return await self._execute_function_tool(tool, envelope)
         if builtin_key == "mcp_call":
-            timeout_s = execution_config.get("timeout_s") if isinstance(execution_config, dict) else None
-            return await self._execute_mcp_tool(tool, input_data, implementation_config, context, timeout_s)
+            return await self._execute_mcp_tool(tool, envelope)
         if builtin_key == "web_fetch":
             return await self._execute_web_fetch_builtin(input_data, implementation_config)
         if builtin_key == "web_search":
@@ -1242,6 +1032,18 @@ class ToolNodeExecutor(BaseNodeExecutor):
             sanitized.pop(key, None)
         return sanitized
 
+    @staticmethod
+    def _compiled_input_dict(envelope: ToolInvocationEnvelope) -> dict[str, Any]:
+        compiled = envelope.model_input_compiled
+        return dict(compiled) if isinstance(compiled, dict) else {}
+
+    @staticmethod
+    def _trace_runtime_context_keys(runtime_context: dict[str, Any]) -> dict[str, Any]:
+        return {
+            key: ("present" if value not in (None, "") else "empty")
+            for key, value in runtime_context.items()
+        }
+
     def _is_production_mode(self, context: dict[str, Any] | None) -> bool:
         if not isinstance(context, dict):
             return False
@@ -1335,9 +1137,10 @@ class ToolNodeExecutor(BaseNodeExecutor):
         self,
         *,
         tool: Any,
-        input_data: dict[str, Any],
-        context: dict[str, Any] | None,
+        envelope: ToolInvocationEnvelope,
     ) -> dict[str, Any]:
+        input_data = self._compiled_input_dict(envelope)
+        context = envelope.runtime_context
         artifact_id, _artifact_version = self._resolve_tool_artifact_binding(tool)
         if not artifact_id:
             raise ValueError("Missing artifact binding for artifact-backed tool")
@@ -1404,9 +1207,10 @@ class ToolNodeExecutor(BaseNodeExecutor):
         self,
         *,
         tool: Any,
-        input_data: dict[str, Any],
-        implementation_config: dict[str, Any],
+        envelope: ToolInvocationEnvelope,
     ) -> dict[str, Any]:
+        input_data = self._compiled_input_dict(envelope)
+        implementation_config = envelope.tool_descriptor.implementation_config
         if not self.tenant_id:
             raise PermissionError("Pipeline tools require tenant context")
 
@@ -1629,12 +1433,21 @@ class ToolNodeExecutor(BaseNodeExecutor):
 
         implementation_config = config_schema.get("implementation", {}) if isinstance(config_schema, dict) else {}
         execution_config = config_schema.get("execution", {}) if isinstance(config_schema, dict) else {}
-        timeout_s = execution_config.get("timeout_s") if isinstance(execution_config, dict) else None
 
         impl_type = getattr(tool, "implementation_type", None) or implementation_config.get("type", "internal")
         if hasattr(impl_type, "value"):
             impl_type = impl_type.value
         impl_type = str(impl_type).lower()
+        envelope = build_tool_invocation_envelope(
+            tool=tool,
+            raw_input=input_data,
+            node_context=context,
+            implementation_type=impl_type,
+            config_schema=config_schema if isinstance(config_schema, dict) else {},
+            implementation_config=implementation_config if isinstance(implementation_config, dict) else {},
+            execution_config=execution_config if isinstance(execution_config, dict) else {},
+        )
+        dispatch_target = tool_dispatch_target(envelope)
         if emitter:
             emitter.emit_internal_event(
                 "tool.execution_prepared",
@@ -1642,8 +1455,48 @@ class ToolNodeExecutor(BaseNodeExecutor):
                     "tool_id": str(tool_id_str),
                     "tool_slug": getattr(tool, "slug", None),
                     "implementation_type": impl_type,
-                    "input_shape": _tool_input_shape(input_data),
-                    "input_preview": _trace_safe_value(input_data),
+                    "validation_mode": envelope.execution_policy.validation_mode,
+                    "model_input_shape": _tool_input_shape(envelope.model_input_raw),
+                    "model_input_raw": _trace_safe_value(envelope.model_input_raw),
+                    "runtime_context_keys": self._trace_runtime_context_keys(envelope.runtime_context),
+                    "runtime_metadata_stripped": envelope.stripped_runtime_metadata_keys,
+                    "dispatch_target": dispatch_target,
+                },
+                node_id=node_id,
+                category="tool_execution",
+            )
+
+        compile_failure = compile_tool_arguments(envelope)
+        if compile_failure is not None:
+            output_data = compile_failure.to_payload()
+            if emitter:
+                emitter.emit_internal_event(
+                    "tool.arguments_compiled",
+                    {
+                        "tool_slug": getattr(tool, "slug", None),
+                        "implementation_type": impl_type,
+                        "status": "failed",
+                        "validation_mode": envelope.execution_policy.validation_mode,
+                        "compile_failure": _trace_safe_value(output_data),
+                    },
+                    node_id=node_id,
+                    category="tool_execution",
+                )
+                emitter.emit_tool_end(tool.name, output_data, node_id, tool_event_metadata)
+            return {
+                "tool_outputs": [output_data],
+                "context": output_data,
+            }
+        if emitter:
+            emitter.emit_internal_event(
+                "tool.arguments_compiled",
+                {
+                    "tool_slug": getattr(tool, "slug", None),
+                    "implementation_type": impl_type,
+                    "status": "ok",
+                    "validation_mode": envelope.execution_policy.validation_mode,
+                    "compiled_input": _trace_safe_value(envelope.model_input_compiled),
+                    "dispatch_target": dispatch_target,
                 },
                 node_id=node_id,
                 category="tool_execution",
@@ -1657,13 +1510,12 @@ class ToolNodeExecutor(BaseNodeExecutor):
             if artifact_id and artifact_uuid is not None:
                 result = await self._execute_tenant_artifact_tool(
                     tool=tool,
-                    input_data=input_data,
-                    context=context,
+                    envelope=envelope,
                 )
                 enforce_platform_architect_guardrails(
                     tool_slug=getattr(tool, "slug", None),
                     tool_result=result,
-                    input_data=input_data,
+                    input_data=self._compiled_input_dict(envelope),
                     node_context=context,
                     emitter=emitter,
                 )
@@ -1680,13 +1532,12 @@ class ToolNodeExecutor(BaseNodeExecutor):
                 if self._parse_uuid(implementation_artifact_id) is not None:
                     result = await self._execute_tenant_artifact_tool(
                         tool=tool,
-                        input_data=input_data,
-                        context=context,
+                        envelope=envelope,
                     )
                     enforce_platform_architect_guardrails(
                         tool_slug=getattr(tool, "slug", None),
                         tool_result=result,
-                        input_data=input_data,
+                        input_data=self._compiled_input_dict(envelope),
                         node_context=context,
                         emitter=emitter,
                     )
@@ -1699,42 +1550,32 @@ class ToolNodeExecutor(BaseNodeExecutor):
 
             output_data = await self._execute_builtin_dispatch(
                 tool=tool,
-                input_data=input_data,
-                implementation_config=implementation_config,
-                execution_config=execution_config,
-                context=context,
+                envelope=envelope,
                 emitter=emitter,
             )
             if output_data is None:
                 if impl_type == "http":
-                    output_data = await self._execute_http_tool(tool, input_data, implementation_config, context)
+                    output_data = await self._execute_http_tool(tool, envelope)
                 elif impl_type == "function":
-                    output_data = await self._execute_function_tool(tool, input_data, implementation_config, context)
+                    output_data = await self._execute_function_tool(tool, envelope)
                 elif impl_type == "mcp":
-                    output_data = await self._execute_mcp_tool(tool, input_data, implementation_config, context, timeout_s)
+                    output_data = await self._execute_mcp_tool(tool, envelope)
                 elif impl_type == "rag_retrieval":
-                    output_data = await self._execute_retrieval_pipeline_tool(tool, input_data, implementation_config)
+                    output_data = await self._execute_retrieval_pipeline_tool(tool, envelope)
                 elif impl_type == "rag_pipeline":
                     output_data = await self._execute_pipeline_tool(
                         tool=tool,
-                        input_data=input_data,
-                        implementation_config=implementation_config,
+                        envelope=envelope,
                     )
                 elif impl_type == "agent_call":
-                    output_data = await self._execute_agent_call_tool(
-                        tool,
-                        input_data,
-                        implementation_config,
-                        execution_config if isinstance(execution_config, dict) else {},
-                        context,
-                    )
+                    output_data = await self._execute_agent_call_tool(tool, envelope)
                 else:
                     raise NotImplementedError(f"Unsupported tool implementation type: {impl_type}")
 
             enforce_platform_architect_guardrails(
                 tool_slug=getattr(tool, "slug", None),
                 tool_result=output_data,
-                input_data=input_data,
+                input_data=self._compiled_input_dict(envelope),
                 node_context=context,
                 emitter=emitter,
             )
@@ -1744,6 +1585,8 @@ class ToolNodeExecutor(BaseNodeExecutor):
                     {
                         "tool_slug": getattr(tool, "slug", None),
                         "implementation_type": impl_type,
+                        "validation_mode": envelope.execution_policy.validation_mode,
+                        "dispatch_target": dispatch_target,
                         "output_preview": _trace_safe_value(output_data),
                     },
                     node_id=node_id,
@@ -1799,6 +1642,8 @@ class ToolNodeExecutor(BaseNodeExecutor):
                     {
                         "tool_slug": getattr(tool, "slug", None),
                         "implementation_type": impl_type,
+                        "validation_mode": envelope.execution_policy.validation_mode,
+                        "dispatch_target": dispatch_target,
                         "status": "failed",
                         "error": str(e),
                         "error_details": error_details,
@@ -1810,7 +1655,7 @@ class ToolNodeExecutor(BaseNodeExecutor):
                 emitter.emit_tool_failed(
                     tool.name,
                     error=str(e),
-                    input_data=input_data,
+                    input_data=self._compiled_input_dict(envelope),
                     node_id=node_id,
                     tool_metadata=tool_event_metadata,
                 )

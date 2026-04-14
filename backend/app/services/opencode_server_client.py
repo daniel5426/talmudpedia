@@ -619,8 +619,13 @@ class OpenCodeServerClient:
         parent_message_id = str(state.get("parent_message_id") or "").strip()
         timeout_seconds = float((os.getenv("APPS_CODING_AGENT_OPENCODE_OFFICIAL_STREAM_TIMEOUT_SECONDS") or "300").strip())
         deadline = time.monotonic() + max(30.0, timeout_seconds)
+        no_match_grace_seconds = float(
+            (os.getenv("APPS_CODING_AGENT_OPENCODE_OFFICIAL_GLOBAL_NO_MATCH_GRACE_SECONDS") or "3").strip()
+        )
+        no_match_grace_seconds = max(0.5, no_match_grace_seconds)
         global_read_timeout = float((os.getenv("APPS_CODING_AGENT_OPENCODE_OFFICIAL_GLOBAL_READ_TIMEOUT_SECONDS") or "30").strip())
         global_read_timeout = max(2.0, global_read_timeout)
+        opened_at = time.monotonic()
         saw_assistant_text = False
         terminal_event: dict[str, Any] | None = None
         global_event_seen = 0
@@ -753,9 +758,15 @@ class OpenCodeServerClient:
                     event_type = str(payload.get("type") or "").strip()
                     properties = payload.get("properties") if isinstance(payload.get("properties"), dict) else {}
                     if not event_type or not properties:
+                        if global_event_matched_session <= 0 and global_event_seen > 0:
+                            if (time.monotonic() - opened_at) >= no_match_grace_seconds:
+                                break
                         continue
                     event_session_id = self._extract_session_id_from_global_event_properties(properties)
                     if event_session_id != session_id:
+                        if global_event_matched_session <= 0 and global_event_seen > 0:
+                            if (time.monotonic() - opened_at) >= no_match_grace_seconds:
+                                break
                         continue
                     global_event_matched_session += 1
                     event_type_counts[event_type] = int(event_type_counts.get(event_type) or 0) + 1

@@ -607,7 +607,7 @@ export const artifactsService = {
     return response.json() as Promise<ArtifactCodingActiveRunState>;
   },
 
-  streamCodingAgentRun: async (runId: string, tenantId?: string | null): Promise<Response> => {
+  streamCodingAgentRun: async (runId: string, _tenantId?: string | null): Promise<Response> => {
     const streamBase = String(process.env.NEXT_PUBLIC_BACKEND_STREAM_URL || "").trim();
     const backendBase = String(process.env.NEXT_PUBLIC_BACKEND_URL || "").trim();
     const directBackendUrl = /^https?:\/\//i.test(streamBase)
@@ -615,20 +615,10 @@ export const artifactsService = {
       : /^https?:\/\//i.test(backendBase)
         ? backendBase
         : "http://127.0.0.1:8026";
-    const authState = useAuthStore.getState();
-    const token = authState.token;
     const headers: Record<string, string> = {
       Accept: "text/event-stream",
       "Cache-Control": "no-cache",
     };
-    if (token) {
-      headers.Authorization = `Bearer ${token}`;
-    }
-    if (tenantId) {
-      headers["X-Tenant-ID"] = tenantId;
-    } else if (authState.user?.tenant_id) {
-      headers["X-Tenant-ID"] = authState.user.tenant_id;
-    }
     const url = new URL(
       `/admin/artifacts/coding-agent/v1/runs/${encodeURIComponent(runId)}/stream`,
       directBackendUrl,

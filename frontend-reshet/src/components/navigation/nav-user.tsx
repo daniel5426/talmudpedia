@@ -34,6 +34,8 @@ import { useRouter } from "next/navigation"
 import { useAuthStore } from "@/lib/store/useAuthStore"
 import { useDirection } from "@/components/direction-provider"
 import { cn } from "@/lib/utils"
+import { authService } from "@/services"
+import { clearAuthSession } from "@/lib/auth-session"
 
 export function NavUser({
   user,
@@ -43,16 +45,27 @@ export function NavUser({
     email: string
     avatar: string
     role?: string
-    org_role?: string
   }
 }) {
   const { isMobile } = useSidebar()
   const router = useRouter()
-  const logout = useAuthStore((state) => state.logout)
+  const hasScope = useAuthStore((state) => state.hasScope)
   const { direction } = useDirection();
-  const handleLogout = () => {
-    logout()
-    router.push("/auth/login")
+  const canAccessAdmin =
+    hasScope("*") ||
+    hasScope("organizations.read") ||
+    hasScope("projects.read") ||
+    hasScope("agents.read")
+
+  const handleLogout = async () => {
+    try {
+      await authService.logout()
+    } catch (error) {
+      console.error("Failed to close browser session cleanly", error)
+    } finally {
+      clearAuthSession()
+      router.push("/auth/login")
+    }
   }
 
   return (
@@ -102,7 +115,7 @@ export function NavUser({
               </DropdownMenuItem>
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
-            {(user.role === "admin" || user.org_role === "owner" || user.org_role === "admin") && (
+            {canAccessAdmin && (
               <>
                 <DropdownMenuGroup>
                   <DropdownMenuItem

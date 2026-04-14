@@ -1,6 +1,6 @@
 # Tools Domain Spec
 
-Last Updated: 2026-03-19
+Last Updated: 2026-04-13
 
 This document is the canonical product/specification overview for the tools domain.
 
@@ -82,6 +82,7 @@ Current behavior includes:
 - create/update/publish/version flows for manual tools
 - tool-type filtering
 - sensitive config redaction on reads
+- strict-by-default execution config normalization through `execution.validation_mode`
 - explicit DTO fields for:
   - `implementation_config`
   - `execution_config`
@@ -115,6 +116,14 @@ Current runtime guardrails:
 - production mode requires published tools
 - debug mode can use draft/published tools
 - tool resolution enforces tenant visibility
+
+Current invocation rules:
+- tool execution uses a canonical envelope split into model-authored input plus runtime context
+- `ToolRegistry.schema.input` is the authoritative argument schema for registered tools
+- `execution.validation_mode` is `strict` by default and may be explicitly set to `none`
+- runtime metadata is stripped from model input before validation and passed separately to the backend executor
+- generic wrapper recovery is removed; wrapped payloads such as `args`, `input`, `parameters`, `payload`, `data`, `arguments`, and `value` are not executor-supported compatibility shapes
+- compile-time failures return a shared `TOOL_ARGUMENT_COMPILE_FAILED` envelope with stable structured issue codes
 
 ## Current Notable Tool Behaviors
 
@@ -192,6 +201,10 @@ The runtime path already works, but the docs should treat this as one connected 
 
 Current MCP tools execute through HTTP JSON-RPC `tools/call`.
 
+Current invocation contract:
+- MCP arguments are the compiled model input, not a mixed raw executor payload
+- MCP tools participate in the same strict-by-default validation model as other tool types unless `validation_mode = none`
+
 Current MCP runtime policy:
 - `server_url` must use `http` or `https`
 - embedded URL credentials are rejected
@@ -204,6 +217,7 @@ Current MCP runtime policy:
 - `backend/app/api/routers/tools.py`
 - `backend/app/services/builtin_tools.py`
 - `backend/app/agent/executors/tool.py`
+- `backend/app/agent/execution/tool_invocation.py`
 - `backend/app/db/postgres/models/registry.py`
 - `backend/app/services/artifact_runtime/registry_service.py`
 - `backend/app/services/artifact_runtime/execution_service.py`

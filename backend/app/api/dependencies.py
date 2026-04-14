@@ -4,8 +4,7 @@ from fastapi import Depends, HTTPException, Header, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 from .routers.auth import get_current_user
-from app.db.postgres.models.identity import Tenant, User, OrgUnit, OrgMembership
-from app.db.postgres.models.rbac import RoleAssignment, RolePermission
+from app.db.postgres.models.identity import Tenant, User, OrgUnit
 from app.services.tenant_api_key_service import TenantAPIKeyAuthError, TenantAPIKeyService
 from app.db.postgres.models.published_apps import (
     PublishedApp,
@@ -19,13 +18,17 @@ from sqlalchemy import and_, select
 from uuid import UUID
 import jwt
 from app.core.security import SECRET_KEY, ALGORITHM
-from app.core.scope_registry import legacy_permission_to_scope, is_platform_admin_role
+from app.core.scope_registry import is_platform_admin_role
 from app.core.security import decode_published_app_preview_token, decode_published_app_session_token
+from app.db.postgres.models.workspace import Project
+from app.services.auth_context_service import list_organization_projects, resolve_effective_scopes
+from app.services.browser_session_service import SESSION_COOKIE_NAME, BrowserSessionService
 
 class AuthContext(BaseModel):
     user: User
     tenant: Tenant
     org_unit: Optional[OrgUnit] = None
+    project: Optional[Project] = None
 
     class Config:
         arbitrary_types_allowed = True
@@ -34,143 +37,71 @@ class AuthContext(BaseModel):
 bearer_scheme = HTTPBearer(auto_error=False)
 
 async def get_tenant_context(
+    request: Request,
     db: AsyncSession = Depends(get_db),
-    x_tenant_id: Optional[str] = Header(None, alias="X-Tenant-ID")
+    x_tenant_id: Optional[str] = Header(None, alias="X-Tenant-ID"),
 ) -> Dict[str, Any]:
     """
     Dependency to get the current tenant context.
     Matches the placeholder logic but uses Postgres effectively.
     """
-    if not x_tenant_id:
-        raise HTTPException(status_code=400, detail="X-Tenant-ID header is required")
-    try:
-        tenant_uuid = UUID(x_tenant_id)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid X-Tenant-ID header")
+    tenant_uuid: UUID | None = None
+    if x_tenant_id:
+        try:
+            tenant_uuid = UUID(x_tenant_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Invalid X-Tenant-ID header") from exc
+    else:
+        cookie_token = str(request.cookies.get(SESSION_COOKIE_NAME) or "").strip()
+        if cookie_token:
+            session = await BrowserSessionService(db).resolve_session(cookie_token)
+            if session is not None:
+                tenant_uuid = session.organization_id
+    if tenant_uuid is None:
+        raise HTTPException(status_code=400, detail="Active organization context is required")
     result = await db.execute(select(Tenant).where(Tenant.id == tenant_uuid))
     tenant = result.scalar_one_or_none()
     if not tenant:
-        raise HTTPException(status_code=404, detail="Tenant not found")
-    return {"tenant_id": str(tenant.id), "tenant": tenant}
+        raise HTTPException(status_code=404, detail="Organization not found")
+    return {
+        "tenant_id": str(tenant.id),
+        "organization_id": str(tenant.id),
+        "tenant": tenant,
+        "organization": tenant,
+    }
 
 async def get_auth_context(
+    request: Request,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
-    # We could also inject the payload here if we wanted to get tenant/org from token
 ) -> AuthContext:
     """
     Unified dependency for full auth context including tenant and org unit.
     """
-    # For now, we resolve the first membership of the user as default context
-    # In a real enterprise app, we'd look at the JWT claims or a 'current context' session/cookie
-    result = await db.execute(
-        select(OrgMembership)
-        .where(OrgMembership.user_id == user.id)
-        .limit(1)
-    )
-    membership = result.scalar_one_or_none()
-    
-    if not membership:
-        # Fallback to global tenant if user is a system admin without membership
-        if _is_platform_admin(user):
-            result = await db.execute(select(Tenant).limit(1))
-            tenant = result.scalar_one_or_none()
-            if not tenant:
-                raise HTTPException(status_code=500, detail="No tenant configured")
-            return AuthContext(user=user, tenant=tenant)
-        
-        raise HTTPException(status_code=403, detail="User is not a member of any organization")
-
-    # Load full tenant and org unit
-    tenant_result = await db.execute(select(Tenant).where(Tenant.id == membership.tenant_id))
-    tenant = tenant_result.scalar_one()
-    
-    org_unit_result = await db.execute(select(OrgUnit).where(OrgUnit.id == membership.org_unit_id))
-    org_unit = org_unit_result.scalar_one_or_none()
-    
-    return AuthContext(user=user, tenant=tenant, org_unit=org_unit)
+    cookie_token = str(request.cookies.get(SESSION_COOKIE_NAME) or "").strip()
+    if cookie_token:
+        session = await BrowserSessionService(db).resolve_session(cookie_token)
+        if session is not None:
+            tenant = await db.get(Tenant, session.organization_id)
+            project = await db.get(Project, session.project_id)
+            if tenant is not None:
+                return AuthContext(user=user, tenant=tenant, org_unit=None, project=project)
+    if _is_platform_admin(user):
+        tenant = (await db.execute(select(Tenant).limit(1))).scalar_one_or_none()
+        if tenant is None:
+            raise HTTPException(status_code=500, detail="No organization configured")
+        projects = await list_organization_projects(db=db, organization_id=tenant.id)
+        return AuthContext(user=user, tenant=tenant, org_unit=None, project=projects[0] if projects else None)
+    raise HTTPException(status_code=403, detail="No active organization session")
 
 
 def _is_platform_admin(user: User) -> bool:
     return is_platform_admin_role(getattr(user, "role", None))
 
 
-async def _derive_user_scopes(payload: Dict[str, Any], user: User, db: AsyncSession) -> set[str]:
-    if _is_platform_admin(user):
-        return {"*"}
-
-    tenant_id_raw = payload.get("tenant_id")
-    if not tenant_id_raw:
-        return set()
-    try:
-        tenant_id = UUID(str(tenant_id_raw))
-    except Exception:
-        return set()
-
-    scopes: set[str] = set()
-    assignments_res = await db.execute(
-        select(RoleAssignment).where(
-            RoleAssignment.tenant_id == tenant_id,
-            RoleAssignment.user_id == user.id,
-        )
-    )
-    assignments = list(assignments_res.scalars().all())
-    if not assignments:
-        return scopes
-
-    role_ids = {a.role_id for a in assignments if a.role_id is not None}
-    if not role_ids:
-        return scopes
-
-    perm_res = await db.execute(
-        select(RolePermission).where(RolePermission.role_id.in_(list(role_ids)))
-    )
-    for perm in perm_res.scalars().all():
-        scope_key = getattr(perm, "scope_key", None)
-        if scope_key:
-            scopes.add(str(scope_key))
-            continue
-        mapped = legacy_permission_to_scope(
-            getattr(getattr(perm, "resource_type", None), "value", getattr(perm, "resource_type", None)),
-            getattr(getattr(perm, "action", None), "value", getattr(perm, "action", None)),
-        )
-        if mapped:
-            scopes.add(mapped)
-    return scopes
-
-
-async def _resolve_default_user_tenant_id(user: User, db: AsyncSession) -> Optional[str]:
-    membership_res = await db.execute(
-        select(OrgMembership)
-        .where(OrgMembership.user_id == user.id)
-        .order_by(OrgMembership.created_at.asc())
-        .limit(1)
-    )
-    membership = membership_res.scalar_one_or_none()
-    if membership is not None and membership.tenant_id is not None:
-        return str(membership.tenant_id)
-    if _is_platform_admin(user):
-        tenant_res = await db.execute(select(Tenant.id).limit(1))
-        tenant_id = tenant_res.scalar_one_or_none()
-        if tenant_id is not None:
-            return str(tenant_id)
-    return None
-
-
-async def _extract_bearer_token(
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
-) -> str:
-    if credentials is None or not credentials.credentials:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing bearer token",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    return credentials.credentials
-
-
 async def get_current_principal(
-    token: str = Depends(_extract_bearer_token),
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
     db: AsyncSession = Depends(get_db),
 ) -> Dict[str, Any]:
     """
@@ -178,19 +109,53 @@ async def get_current_principal(
     Supports authenticated user principals.
     """
     try:
-        user = await get_current_user(token=token, db=db)
+        raw_cookie = str(request.cookies.get(SESSION_COOKIE_NAME) or "").strip()
+        if raw_cookie:
+            session = await BrowserSessionService(db).resolve_session(raw_cookie)
+            if session is not None:
+                user = await db.get(User, session.user_id)
+                organization = await db.get(Tenant, session.organization_id)
+                project = await db.get(Project, session.project_id)
+                if user is not None and organization is not None and project is not None:
+                    scopes = await resolve_effective_scopes(
+                        db=db,
+                        user=user,
+                        organization_id=organization.id,
+                        project_id=project.id,
+                    )
+                    return {
+                        "type": "user",
+                        "auth_mode": "browser_session",
+                        "user": user,
+                        "user_id": str(user.id),
+                        "tenant_id": str(organization.id),
+                        "organization_id": str(organization.id),
+                        "organization_slug": organization.slug,
+                        "project_id": str(project.id),
+                        "project_slug": project.slug,
+                        "scopes": sorted(scopes),
+                        "auth_token": raw_cookie,
+                    }
+
+        token = credentials.credentials if credentials is not None and credentials.credentials else None
+        if token is None:
+            raise HTTPException(status_code=401, detail="Could not validate principal token")
+
+        user = await get_current_user(request=request, token=token, db=db)
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        tenant_id = payload.get("tenant_id") or await _resolve_default_user_tenant_id(user, db)
+        tenant_id = payload.get("tenant_id")
         if not tenant_id:
-            raise HTTPException(status_code=403, detail="Tenant context required")
-        scopes = await _derive_user_scopes(payload, user, db)
-        if isinstance(payload.get("scope"), list):
-            scopes.update(str(s) for s in payload.get("scope"))
+            raise HTTPException(status_code=403, detail="Organization context required")
+        project_id = payload.get("project_id")
+        scopes = set(str(s) for s in (payload.get("scope") or []) if str(s).strip())
         return {
             "type": "user",
+            "auth_mode": "bearer_token",
             "user": user,
             "user_id": str(user.id),
             "tenant_id": str(tenant_id),
+            "organization_id": str(tenant_id),
+            "project_id": str(project_id) if project_id else None,
             "scopes": sorted(scopes),
             "auth_token": token,
         }
@@ -203,9 +168,16 @@ async def get_current_principal(
 
 
 async def get_current_tenant_api_key_principal(
-    token: str = Depends(_extract_bearer_token),
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
     db: AsyncSession = Depends(get_db),
 ) -> Dict[str, Any]:
+    token = credentials.credentials if credentials is not None and credentials.credentials else None
+    if token is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing bearer token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     service = TenantAPIKeyService(db)
     try:
         api_key = await service.authenticate_token(token)

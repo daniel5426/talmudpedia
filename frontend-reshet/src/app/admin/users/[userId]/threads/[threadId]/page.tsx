@@ -3,7 +3,11 @@
 import { useEffect, useState } from "react"
 import { useParams } from "next/navigation"
 import { AdminPageHeader } from "@/components/admin/AdminPageHeader"
+import { AssistantResponseTimeline } from "@/components/ai-elements/assistant-response-timeline"
+import { MessageResponse } from "@/components/ai-elements/message"
 import { adminService, User } from "@/services"
+import type { ChatRenderBlock } from "@/services/chat-presentation"
+import { extractAssistantTextFromBlocks, sortChatRenderBlocks } from "@/services/chat-presentation"
 import { CustomBreadcrumb } from "@/components/ui/custom-breadcrumb"
 
 type ThreadTurn = {
@@ -12,6 +16,7 @@ type ThreadTurn = {
   turn_index: number;
   user_input_text?: string | null;
   assistant_output_text?: string | null;
+  response_blocks?: ChatRenderBlock[];
   run_usage?: {
     source?: string | null;
     total_tokens?: number | null;
@@ -134,15 +139,30 @@ export default function AdminUserThreadPage() {
                 {turn.user_input_text ? (
                   <div>
                     <div className="text-xs font-medium text-muted-foreground">User</div>
-                    <div className="whitespace-pre-wrap text-sm">{turn.user_input_text}</div>
+                    <MessageResponse>{turn.user_input_text}</MessageResponse>
                   </div>
                 ) : null}
-                {turn.assistant_output_text ? (
+                {(() => {
+                  const responseBlocks = Array.isArray(turn.response_blocks)
+                    ? sortChatRenderBlocks(turn.response_blocks)
+                    : [];
+                  const assistantText =
+                    extractAssistantTextFromBlocks(responseBlocks) ||
+                    String(turn.assistant_output_text || "").trim();
+                  if (!assistantText && responseBlocks.length === 0) {
+                    return null;
+                  }
+                  return (
                   <div>
                     <div className="text-xs font-medium text-muted-foreground">Assistant</div>
-                    <div className="whitespace-pre-wrap text-sm">{turn.assistant_output_text}</div>
+                    {responseBlocks.length > 0 ? (
+                      <AssistantResponseTimeline blocks={responseBlocks} />
+                    ) : (
+                      <MessageResponse>{assistantText}</MessageResponse>
+                    )}
                   </div>
-                ) : null}
+                  );
+                })()}
               </div>
             ))
         )}

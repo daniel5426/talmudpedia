@@ -14,6 +14,23 @@ from app.services.published_app_draft_dev_runtime_client import (
 )
 
 
+def _fake_preview_app_and_revision():
+    return (
+        SimpleNamespace(
+            id="app-1",
+            slug="sefaria",
+            name="Sefaria",
+            description=None,
+            logo_url=None,
+            auth_enabled=True,
+            auth_providers=["password"],
+            auth_template_key="auth-classic",
+            external_auth_oidc=False,
+        ),
+        SimpleNamespace(id="revision-1"),
+    )
+
+
 @pytest.mark.asyncio
 async def test_runtime_client_delegates_start_session_to_selected_sprite_backend(monkeypatch: pytest.MonkeyPatch):
     captured: dict[str, object] = {}
@@ -116,6 +133,11 @@ async def test_builder_preview_proxy_accepts_valid_token_and_forwards_sprite_aut
             return _FakeResponse()
 
     monkeypatch.setattr(preview_proxy_router, "_load_session", _fake_load_session)
+    async def _fake_load_preview_app_and_revision(**kwargs):
+        _ = kwargs
+        return _fake_preview_app_and_revision()
+
+    monkeypatch.setattr(preview_proxy_router, "_load_preview_app_and_revision", _fake_load_preview_app_and_revision)
     monkeypatch.setattr(preview_proxy_router, "decode_published_app_preview_token", _fake_decode)
     monkeypatch.setattr(preview_proxy_router.httpx, "AsyncClient", _FakeAsyncClient)
 
@@ -178,6 +200,11 @@ async def test_builder_preview_proxy_rewrites_vite_html_asset_paths(monkeypatch:
             return _FakeResponse()
 
     monkeypatch.setattr(preview_proxy_router, "_load_session", _fake_load_session)
+    async def _fake_load_preview_app_and_revision(**kwargs):
+        _ = kwargs
+        return _fake_preview_app_and_revision()
+
+    monkeypatch.setattr(preview_proxy_router, "_load_preview_app_and_revision", _fake_load_preview_app_and_revision)
     monkeypatch.setattr(preview_proxy_router, "decode_published_app_preview_token", _fake_decode)
     monkeypatch.setattr(preview_proxy_router.httpx, "AsyncClient", _FakeAsyncClient)
 
@@ -189,6 +216,12 @@ async def test_builder_preview_proxy_rewrites_vite_html_asset_paths(monkeypatch:
     assert '/public/apps-builder/draft-dev/sessions/session-1/preview/@vite/client' in response.text
     assert '/public/apps-builder/draft-dev/sessions/session-1/preview/@react-refresh' in response.text
     assert '/public/apps-builder/draft-dev/sessions/session-1/preview/src/main.tsx' in response.text
+    assert '/public/apps-builder/draft-dev/sessions/session-1/preview/_talmudpedia/chat/stream' in response.text
+    assert "__talmudpediaPreviewPathShimInstalled" in response.text
+    assert "previewBasePath = \"/public/apps-builder/draft-dev/sessions/session-1/preview\"" in response.text
+    assert "previewBootstrapPath = \"/public/apps-builder/draft-dev/sessions/session-1/preview/_talmudpedia/runtime/bootstrap\"" in response.text
+    assert "isPublishedBootstrapPath(next.pathname)" in response.text
+    assert "window.fetch = function(input, init)" in response.text
 
 
 @pytest.mark.asyncio
@@ -237,6 +270,7 @@ async def test_builder_preview_proxy_rewrites_asset_request_to_upstream_path(mon
             return _FakeResponse()
 
     monkeypatch.setattr(preview_proxy_router, "_load_session", _fake_load_session)
+    monkeypatch.setattr(preview_proxy_router, "_load_preview_app_and_revision", lambda **kwargs: _fake_preview_app_and_revision())
     monkeypatch.setattr(preview_proxy_router, "decode_published_app_preview_token", _fake_decode)
     monkeypatch.setattr(preview_proxy_router.httpx, "AsyncClient", _FakeAsyncClient)
 
@@ -307,6 +341,7 @@ async def test_builder_preview_proxy_rewrites_vite_module_imports_and_disables_c
             return _FakeResponse()
 
     monkeypatch.setattr(preview_proxy_router, "_load_session", _fake_load_session)
+    monkeypatch.setattr(preview_proxy_router, "_load_preview_app_and_revision", lambda **kwargs: _fake_preview_app_and_revision())
     monkeypatch.setattr(preview_proxy_router, "decode_published_app_preview_token", _fake_decode)
     monkeypatch.setattr(preview_proxy_router.httpx, "AsyncClient", _FakeAsyncClient)
 
@@ -326,6 +361,58 @@ async def test_builder_preview_proxy_rewrites_vite_module_imports_and_disables_c
     assert response.headers.get("cache-control") == "no-store"
     assert "etag" not in response.headers
     assert "last-modified" not in response.headers
+
+
+@pytest.mark.asyncio
+async def test_builder_preview_proxy_rewrites_css_url_asset_paths(monkeypatch: pytest.MonkeyPatch, client):
+    async def _fake_load_session(*, db, session_id):
+        _ = db, session_id
+        return SimpleNamespace(
+            id="session-1",
+            published_app_id="app-1",
+            revision_id="revision-1",
+            backend_metadata={
+                "preview": {
+                    "upstream_base_url": "https://sprite-host.example",
+                    "base_path": "/public/apps-builder/draft-dev/sessions/session-1/preview/",
+                    "upstream_path": "/",
+                }
+            },
+            draft_workspace=None,
+        )
+
+    def _fake_decode(token: str):
+        assert token == "preview-token-1"
+        return {"app_id": "app-1", "revision_id": "revision-1", "scope": ["apps.preview"]}
+
+    class _FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            _ = args, kwargs
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def request(self, method, url, headers=None, content=None):
+            _ = method, url, headers, content
+            return httpx.Response(
+                200,
+                headers={"content-type": "text/css; charset=utf-8"},
+                text='@font-face{src:url("/node_modules/@fontsource-variable/noto-sans/files/noto-sans-latin-wght-normal.woff2")}',
+            )
+
+    monkeypatch.setattr(preview_proxy_router, "_load_session", _fake_load_session)
+    monkeypatch.setattr(preview_proxy_router, "decode_published_app_preview_token", _fake_decode)
+    monkeypatch.setattr(preview_proxy_router.httpx, "AsyncClient", _FakeAsyncClient)
+
+    response = await client.get(
+        "/public/apps-builder/draft-dev/sessions/session-1/preview/src/index.css?runtime_token=preview-token-1",
+    )
+
+    assert response.status_code == 200
+    assert '/public/apps-builder/draft-dev/sessions/session-1/preview/node_modules/@fontsource-variable/noto-sans/files/noto-sans-latin-wght-normal.woff2' in response.text
 
 
 @pytest.mark.asyncio
@@ -365,6 +452,7 @@ async def test_builder_preview_proxy_returns_504_on_upstream_timeout(monkeypatch
             raise httpx.ConnectTimeout("timed out")
 
     monkeypatch.setattr(preview_proxy_router, "_load_session", _fake_load_session)
+    monkeypatch.setattr(preview_proxy_router, "_load_preview_app_and_revision", lambda **kwargs: _fake_preview_app_and_revision())
     monkeypatch.setattr(preview_proxy_router, "decode_published_app_preview_token", _fake_decode)
     monkeypatch.setattr(preview_proxy_router.httpx, "AsyncClient", _FakeAsyncClient)
 
@@ -418,6 +506,7 @@ async def test_builder_preview_proxy_retries_transient_warmup_errors(monkeypatch
             return httpx.Response(200, headers={"content-type": "application/javascript"}, text="import '/@vite/client'")
 
     monkeypatch.setattr(preview_proxy_router, "_load_session", _fake_load_session)
+    monkeypatch.setattr(preview_proxy_router, "_load_preview_app_and_revision", lambda **kwargs: _fake_preview_app_and_revision())
     monkeypatch.setattr(preview_proxy_router, "decode_published_app_preview_token", _fake_decode)
     monkeypatch.setattr(preview_proxy_router.httpx, "AsyncClient", _FakeAsyncClient)
 
@@ -502,6 +591,11 @@ async def test_builder_preview_proxy_refreshes_stale_upstream_target_after_conne
             return httpx.Response(200, headers={"content-type": "text/html; charset=utf-8"}, text="<html>ok</html>")
 
     monkeypatch.setattr(preview_proxy_router, "_load_session", _fake_load_session)
+    async def _fake_load_preview_app_and_revision(**kwargs):
+        _ = kwargs
+        return _fake_preview_app_and_revision()
+
+    monkeypatch.setattr(preview_proxy_router, "_load_preview_app_and_revision", _fake_load_preview_app_and_revision)
     monkeypatch.setattr(preview_proxy_router, "decode_published_app_preview_token", _fake_decode)
     monkeypatch.setattr(preview_proxy_router.httpx, "AsyncClient", _FakeAsyncClient)
     monkeypatch.setattr(
@@ -518,6 +612,99 @@ async def test_builder_preview_proxy_refreshes_stale_upstream_target_after_conne
     assert attempts[0] == "https://stale-sprite-host.example/"
     assert attempts[1] == "https://fresh-sprite-host.example/"
     assert session.draft_workspace.backend_metadata["preview"]["upstream_base_url"] == "https://fresh-sprite-host.example"
+
+
+@pytest.mark.asyncio
+async def test_builder_preview_proxy_refreshes_stale_upstream_target_after_remote_protocol_error(
+    monkeypatch: pytest.MonkeyPatch,
+    client,
+):
+    workspace = SimpleNamespace(
+        backend_metadata={
+            "preview": {
+                "upstream_base_url": "http://127.0.0.1:41001",
+                "base_path": "/public/apps-builder/draft-dev/sessions/session-1/preview/",
+                "upstream_path": "/",
+            }
+        }
+    )
+    session = SimpleNamespace(
+        id="session-1",
+        published_app_id="app-1",
+        revision_id="revision-1",
+        sandbox_id="sprite-app-1",
+        backend_metadata={},
+        draft_workspace=workspace,
+    )
+
+    async def _fake_load_session(*, db, session_id):
+        _ = db, session_id
+        return session
+
+    def _fake_decode(token: str):
+        assert token == "preview-token-1"
+        return {"app_id": "app-1", "revision_id": "revision-1", "scope": ["apps.preview"]}
+
+    class _FakeRuntimeClient:
+        def build_preview_proxy_path(self, session_id: str) -> str:
+            return f"/public/apps-builder/draft-dev/sessions/{session_id}/preview/"
+
+        async def heartbeat_session(self, *, sandbox_id: str, idle_timeout_seconds: int):
+            assert sandbox_id == "sprite-app-1"
+            assert idle_timeout_seconds == 0
+            return {
+                "sandbox_id": sandbox_id,
+                "status": "serving",
+                "runtime_backend": "sprite",
+                "backend_metadata": {
+                    "preview": {
+                        "upstream_base_url": "http://127.0.0.1:41002",
+                        "base_path": "/public/apps-builder/draft-dev/sessions/session-1/preview/",
+                        "upstream_path": "/",
+                    }
+                },
+            }
+
+    attempts: list[str] = []
+
+    class _FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            _ = args, kwargs
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def request(self, method, url, headers=None, content=None):
+            _ = method, headers, content
+            attempts.append(url)
+            if url == "http://127.0.0.1:41001/":
+                raise httpx.RemoteProtocolError("Server disconnected without sending a response.")
+            return httpx.Response(200, headers={"content-type": "text/html; charset=utf-8"}, text="<html>ok</html>")
+
+    monkeypatch.setattr(preview_proxy_router, "_load_session", _fake_load_session)
+    async def _fake_load_preview_app_and_revision(**kwargs):
+        _ = kwargs
+        return _fake_preview_app_and_revision()
+
+    monkeypatch.setattr(preview_proxy_router, "_load_preview_app_and_revision", _fake_load_preview_app_and_revision)
+    monkeypatch.setattr(preview_proxy_router, "decode_published_app_preview_token", _fake_decode)
+    monkeypatch.setattr(preview_proxy_router.httpx, "AsyncClient", _FakeAsyncClient)
+    monkeypatch.setattr(
+        preview_proxy_router.PublishedAppDraftDevRuntimeClient,
+        "from_env",
+        classmethod(lambda cls: _FakeRuntimeClient()),
+    )
+
+    response = await client.get(
+        "/public/apps-builder/draft-dev/sessions/session-1/preview/?runtime_token=preview-token-1",
+    )
+
+    assert response.status_code == 200
+    assert attempts == ["http://127.0.0.1:41001/", "http://127.0.0.1:41002/"]
+    assert session.draft_workspace.backend_metadata["preview"]["upstream_base_url"] == "http://127.0.0.1:41002"
 
 
 @pytest.mark.asyncio
@@ -587,6 +774,7 @@ async def test_builder_preview_proxy_uses_sprite_tunnel_target_when_sprite_metad
             return "http://127.0.0.1:45678"
 
     monkeypatch.setattr(preview_proxy_router, "_load_session", _fake_load_session)
+    monkeypatch.setattr(preview_proxy_router, "_load_preview_app_and_revision", lambda **kwargs: _fake_preview_app_and_revision())
     monkeypatch.setattr(preview_proxy_router, "decode_published_app_preview_token", _fake_decode)
     monkeypatch.setattr(preview_proxy_router.httpx, "AsyncClient", _FakeAsyncClient)
     monkeypatch.setattr(preview_proxy_router, "get_sprite_proxy_tunnel_manager", lambda: _FakeTunnelManager())
@@ -599,6 +787,68 @@ async def test_builder_preview_proxy_uses_sprite_tunnel_target_when_sprite_metad
     assert response.status_code == 200
     assert captured["url"] == "http://127.0.0.1:45678/"
     assert "Authorization" not in captured["headers"]
+
+
+@pytest.mark.asyncio
+async def test_builder_preview_runtime_bootstrap_uses_preview_internal_prefix(monkeypatch: pytest.MonkeyPatch, client):
+    async def _fake_load_session(*, db, session_id):
+        _ = db, session_id
+        return SimpleNamespace(id="session-1", published_app_id="app-1", revision_id="revision-1")
+
+    def _fake_decode(token: str):
+        assert token == "preview-token-1"
+        return {"app_id": "app-1", "revision_id": "revision-1", "scope": ["apps.preview"]}
+
+    async def _fake_load_preview_app_and_revision(*, db, session):
+        _ = db, session
+        return _fake_preview_app_and_revision()
+
+    monkeypatch.setattr(preview_proxy_router, "_load_session", _fake_load_session)
+    monkeypatch.setattr(preview_proxy_router, "_load_preview_app_and_revision", _fake_load_preview_app_and_revision)
+    monkeypatch.setattr(preview_proxy_router, "decode_published_app_preview_token", _fake_decode)
+
+    response = await client.get(
+        "/public/apps-builder/draft-dev/sessions/session-1/preview/_talmudpedia/runtime/bootstrap?runtime_token=preview-token-1",
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["mode"] == "builder-preview"
+    assert payload["chat_stream_path"] == "/public/apps-builder/draft-dev/sessions/session-1/preview/_talmudpedia/chat/stream"
+
+
+@pytest.mark.asyncio
+async def test_builder_preview_auth_state_uses_preview_namespace(monkeypatch: pytest.MonkeyPatch, client):
+    async def _fake_load_session(*, db, session_id):
+        _ = db, session_id
+        return SimpleNamespace(id="session-1", published_app_id="app-1", revision_id="revision-1")
+
+    def _fake_decode(token: str):
+        assert token == "preview-token-1"
+        return {"app_id": "app-1", "revision_id": "revision-1", "scope": ["apps.preview"]}
+
+    async def _fake_load_preview_app_and_revision(*, db, session):
+        _ = db, session
+        return _fake_preview_app_and_revision()
+
+    async def _fake_resolve_principal_from_cookie(*, db, request, expected_app):
+        _ = db, request, expected_app
+        return None, False
+
+    monkeypatch.setattr(preview_proxy_router, "_load_session", _fake_load_session)
+    monkeypatch.setattr(preview_proxy_router, "_load_preview_app_and_revision", _fake_load_preview_app_and_revision)
+    monkeypatch.setattr(preview_proxy_router, "decode_published_app_preview_token", _fake_decode)
+    monkeypatch.setattr(preview_proxy_router, "_resolve_optional_principal_from_cookie", _fake_resolve_principal_from_cookie)
+
+    response = await client.get(
+        "/public/apps-builder/draft-dev/sessions/session-1/preview/_talmudpedia/auth/state?runtime_token=preview-token-1",
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["authenticated"] is False
+    assert payload["auth_enabled"] is True
+    assert payload["app"]["slug"] == "sefaria"
 
 
 def test_builder_preview_websocket_connect_options_forward_sprite_headers():

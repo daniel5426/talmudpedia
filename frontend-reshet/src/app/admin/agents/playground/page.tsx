@@ -125,6 +125,10 @@ function PlaygroundContent() {
                         setAgents(listData.agents);
                         setAgent(null);
                         setIsMetadataLoading(false);
+                        const visibleList = listData.agents.filter((item) => item.show_in_playground !== false);
+                        if (visibleList.length > 0) {
+                            router.replace(`/admin/agents/playground?agentId=${visibleList[0].id}`, { scroll: false });
+                        }
                     }
                 }
             } else {

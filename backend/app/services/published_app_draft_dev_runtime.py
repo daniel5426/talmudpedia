@@ -25,6 +25,7 @@ from app.db.postgres.models.published_apps import (
     PublishedAppRevision,
 )
 from app.services.apps_builder_trace import apps_builder_trace
+from app.services.published_app_builder_snapshot_filter import filter_and_validate_builder_snapshot_files
 from app.services.published_app_draft_dev_runtime_client import (
     PublishedAppDraftDevRuntimeClient,
     PublishedAppDraftDevRuntimeClientError,
@@ -181,14 +182,29 @@ class PublishedAppDraftDevRuntimeService:
         refreshed = dict(refreshed_metadata or {}) if isinstance(refreshed_metadata, dict) else {}
         if not refreshed:
             return existing
+        merged = dict(existing)
+        merged.update(refreshed)
         existing_preview = existing.get("preview") if isinstance(existing.get("preview"), dict) else {}
         refreshed_preview = dict(refreshed.get("preview") or {}) if isinstance(refreshed.get("preview"), dict) else {}
         preserved_base_path = str(preview_base_path or refreshed_preview.get("base_path") or existing_preview.get("base_path") or "").strip()
         if preserved_base_path:
             refreshed_preview["base_path"] = preserved_base_path
         if refreshed_preview:
-            refreshed["preview"] = refreshed_preview
-        return refreshed
+            merged["preview"] = {
+                **existing_preview,
+                **refreshed_preview,
+            }
+        for key in ("workspace", "services", "preview_runtime", "live_workspace_snapshot"):
+            existing_value = existing.get(key)
+            refreshed_value = refreshed.get(key)
+            if isinstance(existing_value, dict) and isinstance(refreshed_value, dict):
+                merged[key] = {
+                    **existing_value,
+                    **refreshed_value,
+                }
+            elif isinstance(existing_value, dict) and refreshed_value is None:
+                merged[key] = dict(existing_value)
+        return merged
 
     @staticmethod
     def _merge_live_workspace_revision_token(
@@ -232,14 +248,13 @@ class PublishedAppDraftDevRuntimeService:
         workspace_fingerprint: str | None,
     ) -> dict[str, Any]:
         metadata = dict(existing_metadata or {}) if isinstance(existing_metadata, dict) else {}
-        normalized_files = {
-            str(path): str(content if isinstance(content, str) else str(content))
-            for path, content in (files or {}).items()
-            if isinstance(path, str) and str(path).strip()
-        }
+        normalized_files = filter_and_validate_builder_snapshot_files(files or {})
+        normalized_entry_file = str(entry_file or "").strip() or "src/main.tsx"
+        if normalized_entry_file not in normalized_files and normalized_files:
+            normalized_entry_file = next(iter(sorted(normalized_files.keys())))
         metadata["live_workspace_snapshot"] = {
             "revision_id": str(revision_id) if revision_id else None,
-            "entry_file": str(entry_file or "").strip() or "src/main.tsx",
+            "entry_file": normalized_entry_file,
             "files": normalized_files,
             "revision_token": str(revision_token or "").strip() or None,
             "workspace_fingerprint": str(workspace_fingerprint or "").strip() or None,
@@ -264,6 +279,65 @@ class PublishedAppDraftDevRuntimeService:
         if revision_id is not None and snapshot_revision_id not in {None, str(revision_id)}:
             return None
         return snapshot
+
+    async def _restore_live_workspace_snapshot_from_runtime(
+        self,
+        *,
+        app_id: UUID,
+        workspace: PublishedAppDraftWorkspace,
+        session: PublishedAppDraftDevSession,
+        revision: PublishedAppRevision,
+    ) -> None:
+        sandbox_id = str(workspace.sandbox_id or "").strip()
+        if not sandbox_id:
+            return
+        snapshot = self._get_live_workspace_snapshot_for_revision(
+            metadata=workspace.backend_metadata,
+            revision_id=revision.id,
+        )
+        if snapshot is not None:
+            return
+        try:
+            payload = await self.client.snapshot_files(sandbox_id=sandbox_id)
+            raw_files = payload.get("files") if isinstance(payload, dict) else {}
+            files = filter_and_validate_builder_snapshot_files(raw_files if isinstance(raw_files, dict) else {})
+            if not files:
+                return
+            revision_token = str(payload.get("revision_token") or "").strip() or None
+            await self.record_workspace_live_snapshot(
+                app_id=app_id,
+                revision_id=revision.id,
+                entry_file=revision.entry_file,
+                files=files,
+                revision_token=revision_token,
+                workspace_fingerprint=None,
+            )
+            await self.record_live_workspace_revision_token(
+                session=session,
+                revision_token=revision_token,
+            )
+            apps_builder_trace(
+                "workspace.snapshot_restored_from_runtime",
+                domain="draft_dev.runtime",
+                app_id=str(app_id),
+                session_id=str(session.id),
+                workspace_id=str(workspace.id),
+                sandbox_id=sandbox_id,
+                file_count=len(files),
+                revision_id=str(revision.id),
+            )
+        except Exception as exc:
+            apps_builder_trace(
+                "workspace.snapshot_restore_failed",
+                domain="draft_dev.runtime",
+                app_id=str(app_id),
+                session_id=str(session.id),
+                workspace_id=str(workspace.id),
+                sandbox_id=sandbox_id,
+                revision_id=str(revision.id),
+                error=str(exc),
+                error_type=exc.__class__.__name__,
+            )
 
     @staticmethod
     def _session_load_options():
@@ -780,6 +854,12 @@ class PublishedAppDraftDevRuntimeService:
                     refreshed_metadata=heartbeat_result.get("backend_metadata"),
                     preview_base_path=str(workspace.preview_url or "").strip() or str(session.preview_url or "").strip() or "/",
                 )
+            await self._restore_live_workspace_snapshot_from_runtime(
+                app_id=app.id,
+                workspace=workspace,
+                session=session,
+                revision=revision,
+            )
 
             apps_builder_trace(
                 "workspace.ensure_active.reused_live",
@@ -848,6 +928,12 @@ class PublishedAppDraftDevRuntimeService:
                 refreshed_metadata=heartbeat_result.get("backend_metadata"),
                 preview_base_path=str(workspace.preview_url or "").strip() or str(session.preview_url or "").strip() or "/",
             )
+        await self._restore_live_workspace_snapshot_from_runtime(
+            app_id=app.id,
+            workspace=workspace,
+            session=session,
+            revision=revision,
+        )
 
         attached = self._attach_session(
             session=session,
@@ -999,6 +1085,7 @@ class PublishedAppDraftDevRuntimeService:
             session.status = PublishedAppDraftDevSessionStatus.error
             session.last_error = "Shared draft workspace is unavailable."
             return session
+        revision = await self.db.get(PublishedAppRevision, session.revision_id) if session.revision_id is not None else None
 
         now = self._now()
         session.last_activity_at = now
@@ -1028,6 +1115,13 @@ class PublishedAppDraftDevRuntimeService:
                     str(workspace.preview_url or "").strip()
                     or str(session.preview_url or "").strip()
                 ),
+            )
+        if revision is not None:
+            await self._restore_live_workspace_snapshot_from_runtime(
+                app_id=workspace.published_app_id,
+                workspace=workspace,
+                session=session,
+                revision=revision,
             )
         session.status = PublishedAppDraftDevSessionStatus.serving
         session.sandbox_id = self._normalize_runtime_sandbox_id(workspace.sandbox_id)

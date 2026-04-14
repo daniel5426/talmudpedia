@@ -123,7 +123,7 @@ async def test_builder_agent_contract_includes_ui_blocks_frontend_requirements(
     tool = ToolRegistry(
         tenant_id=tenant.id,
         name="UI Blocks",
-        slug="builtin-ui-blocks",
+        slug=f"builtin-ui-blocks-{uuid4().hex[:8]}",
         description="Validate UI blocks payloads",
         scope=ToolDefinitionScope.TENANT,
         schema={
@@ -132,7 +132,7 @@ async def test_builder_agent_contract_includes_ui_blocks_frontend_requirements(
         },
         config_schema={
             "implementation": {"type": "builtin", "builtin": "ui_blocks"},
-            "execution": {"strict_input_schema": True},
+            "execution": {"validation_mode": "strict"},
         },
         status=ToolStatus.PUBLISHED,
         implementation_type=ToolImplementationType.CUSTOM,

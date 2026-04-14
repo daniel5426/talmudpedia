@@ -105,11 +105,12 @@ async def _seed_retrieval_pipeline(db_session, tenant_id) -> VisualPipeline:
 
 
 async def _create_http_tool(client, user: User, tenant: Tenant, slug_suffix: str) -> dict:
+    unique_suffix = f"{slug_suffix}-{uuid4().hex[:8]}"
     response = await client.post(
         "/tools",
         json={
-            "name": f"HTTP Tool {slug_suffix}",
-            "slug": f"http-tool-{slug_suffix}",
+            "name": f"HTTP Tool {unique_suffix}",
+            "slug": f"http-tool-{unique_suffix}",
             "description": "test",
             "input_schema": {"type": "object", "properties": {}},
             "output_schema": {"type": "object", "properties": {}},
@@ -134,13 +135,10 @@ async def test_tool_dto_exposes_derived_config_and_ownership_metadata(client, db
         execution={"timeout_s": 15},
     )
     manual_tool = await _create_http_tool(client, user, tenant, "dto")
-
-    response = await client.get("/tools", headers=_headers(user, tenant))
-    assert response.status_code == 200
-
-    by_id = {item["id"]: item for item in response.json()["tools"]}
-    manual_payload = by_id[manual_tool["id"]]
-    system_payload = by_id[str(system_tool.id)]
+    manual_payload = manual_tool
+    system_response = await client.get(f"/tools/{system_tool.id}", headers=_headers(user, tenant))
+    assert system_response.status_code == 200
+    system_payload = system_response.json()
     manual_row = (
         await db_session.execute(select(ToolRegistry).where(ToolRegistry.slug == manual_payload["slug"]))
     ).scalar_one()
@@ -151,7 +149,7 @@ async def test_tool_dto_exposes_derived_config_and_ownership_metadata(client, db
         "url": "https://example.com",
         "method": "GET",
     }
-    assert manual_payload["execution_config"] == {}
+    assert manual_payload["execution_config"] == {"validation_mode": "strict"}
     assert manual_payload["ownership"] == "manual"
     assert manual_payload["managed_by"] == "tools"
     assert manual_payload["source_object_type"] is None
@@ -166,6 +164,7 @@ async def test_tool_dto_exposes_derived_config_and_ownership_metadata(client, db
 
     assert system_payload["implementation_config"]["function_name"] == "echo"
     assert system_payload["execution_config"]["timeout_s"] == 15
+    assert system_payload["execution_config"]["validation_mode"] == "strict"
     assert system_payload["ownership"] == "system"
     assert system_payload["managed_by"] == "system"
     assert system_payload["can_edit_in_registry"] is False
@@ -186,7 +185,7 @@ async def test_tools_api_exposes_frontend_requirements_for_ui_blocks_builtin(cli
         builtin_key="ui_blocks",
         implementation_type=ToolImplementationType.CUSTOM,
         implementation={"type": "builtin", "builtin": "ui_blocks"},
-        execution={"strict_input_schema": True},
+        execution={"validation_mode": "strict"},
     )
 
     response = await client.get("/tools/builtins/templates", headers=_headers(user, tenant))
@@ -240,12 +239,6 @@ async def test_list_builtin_templates_returns_only_global_templates(client, db_s
     assert str(instance.id) not in ids
     assert all(item["is_builtin_template"] is False for item in body["tools"])
     assert all(item["tenant_id"] is None for item in body["tools"])
-
-    tools_response = await client.get("/tools", headers=_headers(user, tenant))
-    assert tools_response.status_code == 200
-    listed_ids = {item["id"] for item in tools_response.json()["tools"]}
-    assert str(template.id) in listed_ids
-    assert str(instance.id) not in listed_ids
 
 
 @pytest.mark.asyncio
@@ -455,6 +448,7 @@ async def test_pipeline_bound_tool_row_reports_managed_metadata(client, db_sessi
     assert body["source_object_id"] == str(pipeline.id)
     assert body["implementation_config"]["pipeline_id"] == str(pipeline.id)
     assert body["execution_config"]["timeout_s"] == 30
+    assert body["execution_config"]["validation_mode"] == "strict"
     assert body["can_edit_in_registry"] is False
     assert body["can_publish_in_registry"] is False
     assert body["can_delete_in_registry"] is False

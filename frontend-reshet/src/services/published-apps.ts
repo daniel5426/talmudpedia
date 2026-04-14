@@ -192,6 +192,14 @@ export interface DraftDevSessionResponse {
   idle_timeout_seconds: number;
   last_activity_at?: string | null;
   last_error?: string | null;
+  live_workspace_snapshot?: {
+    revision_id?: string | null;
+    entry_file?: string | null;
+    files?: Record<string, string> | null;
+    revision_token?: string | null;
+    workspace_fingerprint?: string | null;
+    updated_at?: string | null;
+  } | null;
 }
 
 export interface DraftDevSyncRequest {
@@ -707,20 +715,10 @@ export const publishedAppsService = {
       : /^https?:\/\//i.test(backendBase)
         ? backendBase
         : "http://127.0.0.1:8026";
-    const { useAuthStore } = await import("@/lib/store/useAuthStore");
-    const authState = useAuthStore.getState();
-    const token = authState.token;
-    const tenantId = authState.user?.tenant_id;
     const headers: Record<string, string> = {
       Accept: "text/event-stream",
       "Cache-Control": "no-cache",
     };
-    if (token) {
-      headers.Authorization = `Bearer ${token}`;
-    }
-    if (tenantId) {
-      headers["X-Tenant-ID"] = tenantId;
-    }
     const url = new URL(
       `/admin/apps/${encodeURIComponent(appId)}/coding-agent/v2/runs/${encodeURIComponent(runId)}/stream`,
       directBackendUrl,
@@ -769,7 +767,7 @@ export const publishedAppsService = {
       return null;
     }
     if (response.status === 401) {
-      useAuthStore.getState().logout();
+      useAuthStore.getState().clearSession();
     }
     if (!response.ok) {
       let message = "Request failed";

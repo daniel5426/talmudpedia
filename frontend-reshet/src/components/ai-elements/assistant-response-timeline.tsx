@@ -13,6 +13,7 @@ import {
 import type {
   ChatApprovalRequestBlock,
   ChatRenderBlock,
+  ChatUIBlocksBlock,
   ChatToolCallBlock,
 } from "@/services/chat-presentation";
 import { Button } from "@/components/ui/button";
@@ -183,6 +184,44 @@ function renderApprovalBlock(
   );
 }
 
+function renderUIBlocksBlock(block: ChatUIBlocksBlock) {
+  const bundle =
+    block.ui.bundle && typeof block.ui.bundle === "object"
+      ? (block.ui.bundle as Record<string, unknown>)
+      : null;
+  const title = typeof bundle?.title === "string" ? bundle.title : "UI Block";
+  const subtitle = typeof bundle?.subtitle === "string" ? bundle.subtitle : "";
+  const rows = Array.isArray(bundle?.rows) ? bundle.rows.length : 0;
+
+  if (block.status === "running") {
+    return (
+      <Task key={block.id} defaultOpen className="w-full">
+        <TaskItem className="text-sm text-muted-foreground">
+          <Shimmer className="text-sm">Rendering UI block</Shimmer>
+        </TaskItem>
+      </Task>
+    );
+  }
+
+  if (block.status === "error") {
+    return (
+      <div key={block.id} className="text-sm text-destructive">
+        {block.ui.error || "Failed to render UI block."}
+      </div>
+    );
+  }
+
+  return (
+    <div key={block.id} className="rounded-xl border bg-muted/30 p-3">
+      <div className="text-sm font-medium text-foreground">{title}</div>
+      {subtitle ? <div className="mt-1 text-sm text-muted-foreground">{subtitle}</div> : null}
+      <div className="mt-2 text-xs text-muted-foreground">
+        {rows > 0 ? `${rows} row${rows === 1 ? "" : "s"} of UI content` : "Structured UI content"}
+      </div>
+    </div>
+  );
+}
+
 export function AssistantResponseTimeline({
   blocks,
   getToolChildCount,
@@ -297,6 +336,12 @@ export function AssistantResponseTimeline({
             subthreadContent: isSubthreadExpanded ? renderToolSubthread?.(block) : null,
           }),
         );
+        index += 1;
+        continue;
+      }
+
+      if (block.kind === "ui_blocks") {
+        items.push(renderUIBlocksBlock(block));
         index += 1;
         continue;
       }

@@ -375,6 +375,39 @@ describe("playground trace sidebar", () => {
     });
   });
 
+  it("redirects to the first visible agent when the deep-linked agent no longer exists", async () => {
+    mockSearchState.agentId = "agent-missing";
+    mockedAgentService.listAgents.mockResolvedValue({
+      agents: [
+        {
+          id: "agent-visible",
+          tenant_id: "tenant-1",
+          name: "Visible agent",
+          slug: "visible-agent",
+          show_in_playground: true,
+          status: "draft",
+          version: 1,
+          created_at: "2026-03-12T10:00:00Z",
+          updated_at: "2026-03-12T10:00:00Z",
+        },
+      ],
+      total: 1,
+    } as any);
+    mockedAgentService.getAgent.mockRejectedValue(new Error("Agent agent-missing not found"));
+
+    render(<PlaygroundPage />);
+
+    await waitFor(() => {
+      expect(
+        mockReplace.mock.calls.some(
+          ([path, options]) =>
+            path === "/admin/agents/playground?agentId=agent-visible"
+            && JSON.stringify(options) === JSON.stringify({ scroll: false }),
+        ),
+      ).toBe(true);
+    });
+  });
+
   it("syncs the active thread id into the URL for reload persistence", async () => {
     mockControllerState.currentThreadId = "thread-live-1";
 

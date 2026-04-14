@@ -1,6 +1,6 @@
 # Tool Execution Tests
 
-Last Updated: 2026-04-12
+Last Updated: 2026-04-13
 
 ## Scope
 Validate MCP/function/agent-call execution paths in the `ToolNodeExecutor`.
@@ -26,6 +26,11 @@ Validate MCP/function/agent-call execution paths in the `ToolNodeExecutor`.
 - Hidden `tool.child_run_started` payloads now include the target agent id/name so the runtime overlay can label child-run nodes with the called agent's name.
 - Function-tool execution propagates architect runtime context (`tenant_id`, `requested_scopes`, `architect_mode`, `architect_effective_scopes`) into nested function payloads.
 - Missing function tool name raises a clear error
+- Tool execution now uses a shared invocation envelope that separates compiled model input from runtime context before backend dispatch.
+- Strict validation is now the default for function/MCP/HTTP/tool backends unless `execution.validation_mode = none`.
+- Runtime metadata leakage from executor context into strict platform-tool validation is now stripped before compilation, fixing architect/native platform tool regressions.
+- Generic wrapper recovery has been removed from the executor path; wrapped payloads now fail compilation instead of being flattened.
+- Reasoning-tool normalization now preserves non-dict tool args only as opaque raw input and no longer fabricates executor compatibility wrappers.
 - Reasoning-node tool input coercion maps file/path aliases (`file_path`, `filePath`, `fromPath`, `toPath`) to canonical tool schema keys.
 - Reasoning-node input coercion also maps aliases inside wrapper payloads (`parameters`, `payload`, `args`) for path-bearing tools.
 - Reasoning-node input coercion decodes JSON-string `value` payloads and maps embedded path aliases.
@@ -35,9 +40,7 @@ Validate MCP/function/agent-call execution paths in the `ToolNodeExecutor`.
 - LangChain/Gemini `response_metadata.usage_metadata` is normalized into exact shared token-usage payloads for executor accounting.
 - LangChain adapter now aggregates streamed `usage_metadata` across chunks instead of keeping only the last chunk.
 - Pre-bind tool schema validation rejects null/malformed property schema nodes before provider invocation and preserves nested object/array shapes in generated LangChain args schemas.
-- Function tool execution merges `args` payload with top-level execution context (preserves runtime metadata like `run_id`).
-- Function tool execution also decodes JSON-string `args` payloads before merge.
-- Coding-agent function tools fail fast with deterministic `TOOL_INPUT_VALIDATION_FAILED` when required fields are missing.
+- Coding-agent function tools now fail at the shared compile boundary when canonical required fields are missing.
 - Coding-agent policy failures are normalized into stable error envelopes (`code/message/field`) instead of raw exception text.
 - Coding-agent path resolution supports nested alias shapes (for example nested `relativePath`, `source.path`, `destination.toPath`).
 - Coding-agent path resolution also supports JSON-string wrappers (`args`, `input`, `parameters`, `payload`, `value`).
@@ -46,11 +49,9 @@ Validate MCP/function/agent-call execution paths in the `ToolNodeExecutor`.
 - Targeted-test command payload normalization accepts string commands (for example `"npm run build"`) and rejects invalid command payload types.
 - Coding-agent content resolution now supports nested/wrapped aliases (`code`, `text`, `body`, `fileContent`) for write-file calls.
 - Required-field validation for coding-agent string fields now resolves wrappers/aliases before reporting missing fields.
-- Function-tool execution now flattens wrapper payloads (`args`, `input`, `parameters`, `payload`, `data`, `arguments`, `value`) before validation and dispatch.
 - Function-tool execution now propagates delegation/runtime context fields (`tenant_id`, `grant_id`, `requested_scopes`, agent metadata) into the nested function payload context.
 - Strict function-tool execution now validates canonical model-authored payloads before dispatch, rejects unknown fields deterministically, and strips executor-owned runtime metadata from schema validation.
 - Strict function-tool validation errors now return explicit, agent-friendly summaries for missing required fields, wrong types, unexpected fields, and schema-union mismatches instead of raw JSON Schema-only wording.
-- Strict `platform-*` function tools now reject raw scalar args and `value` / `query` / `text` wrapped payloads with `NON_CANONICAL_PLATFORM_SDK_INPUT` before generic schema validation.
 - Strict local `platform-*` function tools now execute through native backend control-plane dispatch while still receiving executor-owned auth/runtime context through `__tool_runtime_context__`.
 - Reasoning tool-call normalization now preserves direct argument fields when no `input/args/parameters` wrapper is present.
 - Reasoning executor now emits internal trace events when it infers a tool call from assistant JSON fallback instead of a native provider tool call.
@@ -182,3 +183,6 @@ Validate MCP/function/agent-call execution paths in the `ToolNodeExecutor`.
 ## Known Gaps / Follow-ups
 - Add coverage for `agent_call` payload mode variants beyond sync (`spawn`/future orchestration modes).
 - Add API-level regression coverage for tool updates that clear and repin `artifact_revision_id`.
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/tool_execution/test_function_tool_execution.py backend/tests/tool_execution/test_mcp_tool_execution.py backend/tests/tool_execution/test_reasoning_tool_call_chunk_buffering.py backend/tests/builtin_tool_execution/test_builtin_tool_executor.py backend/tests/builtin_tools_registry/test_builtin_registry_api.py backend/tests/tools_guardrails/test_tools_api_guardrails.py backend/tests/tools_guardrails/test_tool_tenant_scoping.py backend/tests/published_apps/test_builder_agent_integration_contract.py::test_builder_agent_contract_includes_ui_blocks_frontend_requirements`
+- Date/Time: 2026-04-13 Asia/Hebron
+- Result: PASS (`70 passed, 9 warnings`)

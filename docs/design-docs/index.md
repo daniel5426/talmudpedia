@@ -1,6 +1,6 @@
 # Design Docs Index
 
-Last Updated: 2026-03-31
+Last Updated: 2026-04-13
 
 This section is for architecture and design documents that explain system shape, constraints, and tradeoffs.
 
@@ -50,6 +50,8 @@ This section is for architecture and design documents that explain system shape,
   - Current architect artifact delegation model and responsibilities.
 - `artifact_coding_agent_direct_use_current.md`
   - Current direct artifact-usage model in coding-agent flows.
+- `tool_invocation_layer_current.md`
+  - Current unified tool invocation envelope, validation model, compile path, and trace anatomy.
 - `voice_runtime_current.md`
   - Current voice websocket/provider runtime shape and security reality.
 - `prompt_library_shared_resource_design.md`

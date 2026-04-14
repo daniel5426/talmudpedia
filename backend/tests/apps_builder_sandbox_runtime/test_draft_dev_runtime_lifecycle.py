@@ -376,6 +376,181 @@ async def test_heartbeat_preserves_existing_preview_base_path_when_refresh_retur
 
 
 @pytest.mark.asyncio
+async def test_heartbeat_preserves_live_workspace_snapshot_metadata(
+    client,
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
+    headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
+    fake_client = _FakeSpriteRuntimeClient()
+
+    monkeypatch.setattr(runtime_module.PublishedAppDraftDevRuntimeService, "_acquire_scope_lock", _noop_scope_lock)
+    monkeypatch.setattr(
+        runtime_module.PublishedAppDraftDevRuntimeClient,
+        "from_env",
+        classmethod(lambda cls: fake_client),
+    )
+
+    app_id = await _create_builder_app(client, headers, str(agent.id), name="Heartbeat Snapshot Preserve App")
+
+    ensure_resp = await client.post(f"/admin/apps/{app_id}/builder/draft-dev/session/ensure", headers=headers)
+    assert ensure_resp.status_code == 200
+    payload = ensure_resp.json()
+    session_id = UUID(str(payload["session_id"]))
+
+    app = await db_session.get(PublishedApp, UUID(app_id))
+    assert app is not None
+    runtime_service = PublishedAppDraftDevRuntimeService(db_session)
+    await runtime_service.record_workspace_live_snapshot(
+        app_id=app.id,
+        revision_id=app.current_draft_revision_id,
+        entry_file="src/App.tsx",
+        files={"src/App.tsx": "export default function App() { return <div>hi</div>; }"},
+        revision_token="snapshot-token",
+        workspace_fingerprint="fingerprint-1",
+    )
+    await db_session.commit()
+
+    heartbeat_resp = await client.post(f"/admin/apps/{app_id}/builder/draft-dev/session/heartbeat", headers=headers)
+    assert heartbeat_resp.status_code == 200
+
+    session = await db_session.get(PublishedAppDraftDevSession, session_id)
+    assert session is not None
+    workspace = await db_session.get(PublishedAppDraftWorkspace, session.draft_workspace_id)
+    assert workspace is not None
+    assert session.backend_metadata["live_workspace_snapshot"]["entry_file"] == "src/App.tsx"
+    assert session.backend_metadata["live_workspace_snapshot"]["files"]["src/App.tsx"].startswith("export default")
+    assert workspace.backend_metadata["live_workspace_snapshot"]["revision_token"] == "snapshot-token"
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_restores_missing_live_workspace_snapshot_from_runtime(
+    client,
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
+    headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
+    fake_client = _FakeSpriteRuntimeClient()
+
+    async def _snapshot_files(**kwargs):
+        _ = kwargs
+        return {
+            "files": {
+                "src/App.tsx": "export default function App() { return <div>restored</div>; }",
+                "index.html": "<html></html>",
+            },
+            "revision_token": "restored-token",
+        }
+
+    fake_client.snapshot_files = _snapshot_files
+
+    monkeypatch.setattr(runtime_module.PublishedAppDraftDevRuntimeService, "_acquire_scope_lock", _noop_scope_lock)
+    monkeypatch.setattr(
+        runtime_module.PublishedAppDraftDevRuntimeClient,
+        "from_env",
+        classmethod(lambda cls: fake_client),
+    )
+
+    app_id = await _create_builder_app(client, headers, str(agent.id), name="Heartbeat Snapshot Restore App")
+
+    ensure_resp = await client.post(f"/admin/apps/{app_id}/builder/draft-dev/session/ensure", headers=headers)
+    assert ensure_resp.status_code == 200
+    payload = ensure_resp.json()
+    session_id = UUID(str(payload["session_id"]))
+
+    session = await db_session.get(PublishedAppDraftDevSession, session_id)
+    assert session is not None
+    workspace = await db_session.get(PublishedAppDraftWorkspace, session.draft_workspace_id)
+    assert workspace is not None
+    session.backend_metadata = {
+        key: value for key, value in dict(session.backend_metadata or {}).items() if key != "live_workspace_snapshot"
+    }
+    workspace.backend_metadata = {
+        key: value for key, value in dict(workspace.backend_metadata or {}).items() if key != "live_workspace_snapshot"
+    }
+    await db_session.commit()
+
+    heartbeat_resp = await client.post(f"/admin/apps/{app_id}/builder/draft-dev/session/heartbeat", headers=headers)
+    assert heartbeat_resp.status_code == 200
+    heartbeat_payload = heartbeat_resp.json()
+    assert heartbeat_payload["live_workspace_snapshot"]["files"]["src/App.tsx"].endswith("restored</div>; }")
+
+    session = await db_session.get(PublishedAppDraftDevSession, session_id)
+    assert session is not None
+    workspace = await db_session.get(PublishedAppDraftWorkspace, session.draft_workspace_id)
+    assert workspace is not None
+    assert session.backend_metadata["live_workspace_snapshot"]["revision_token"] == "restored-token"
+    assert workspace.backend_metadata["live_workspace_snapshot"]["files"]["src/App.tsx"].endswith("restored</div>; }")
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_restores_live_snapshot_with_shared_builder_file_policy(
+    client,
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
+    headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
+    fake_client = _FakeSpriteRuntimeClient()
+
+    async def _snapshot_files(**kwargs):
+        _ = kwargs
+        return {
+            "files": {
+                "src/App.tsx": "export default function App() { return <div>restored</div>; }",
+                "README": "no extension should be dropped",
+                "node_modules/pkg/index.js": "ignored artifact",
+                "src/routes.tsx": "export const routes = ['/chat'];",
+            },
+            "revision_token": "restored-token-2",
+        }
+
+    fake_client.snapshot_files = _snapshot_files
+
+    monkeypatch.setattr(runtime_module.PublishedAppDraftDevRuntimeService, "_acquire_scope_lock", _noop_scope_lock)
+    monkeypatch.setattr(
+        runtime_module.PublishedAppDraftDevRuntimeClient,
+        "from_env",
+        classmethod(lambda cls: fake_client),
+    )
+
+    app_id = await _create_builder_app(client, headers, str(agent.id), name="Heartbeat Snapshot Policy App")
+
+    ensure_resp = await client.post(f"/admin/apps/{app_id}/builder/draft-dev/session/ensure", headers=headers)
+    assert ensure_resp.status_code == 200
+    session_id = UUID(str(ensure_resp.json()["session_id"]))
+
+    session = await db_session.get(PublishedAppDraftDevSession, session_id)
+    assert session is not None
+    workspace = await db_session.get(PublishedAppDraftWorkspace, session.draft_workspace_id)
+    assert workspace is not None
+    session.backend_metadata = {
+        key: value for key, value in dict(session.backend_metadata or {}).items() if key != "live_workspace_snapshot"
+    }
+    workspace.backend_metadata = {
+        key: value for key, value in dict(workspace.backend_metadata or {}).items() if key != "live_workspace_snapshot"
+    }
+    await db_session.commit()
+
+    heartbeat_resp = await client.post(f"/admin/apps/{app_id}/builder/draft-dev/session/heartbeat", headers=headers)
+    assert heartbeat_resp.status_code == 200
+    payload = heartbeat_resp.json()["live_workspace_snapshot"]
+
+    assert sorted(payload["files"].keys()) == ["src/App.tsx", "src/routes.tsx"]
+    assert payload["entry_file"] == "src/App.tsx"
+    assert payload["revision_token"] == "restored-token-2"
+
+    session = await db_session.get(PublishedAppDraftDevSession, session_id)
+    assert session is not None
+    workspace = await db_session.get(PublishedAppDraftWorkspace, session.draft_workspace_id)
+    assert workspace is not None
+    assert sorted(session.backend_metadata["live_workspace_snapshot"]["files"].keys()) == ["src/App.tsx", "src/routes.tsx"]
+    assert workspace.backend_metadata["live_workspace_snapshot"]["entry_file"] == "src/App.tsx"
+
+
+@pytest.mark.asyncio
 async def test_stop_detaches_sessions_and_sweeper_destroys_dormant_workspace(client, db_session, monkeypatch: pytest.MonkeyPatch):
     tenant, user_a, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
     user_b = await _seed_second_owner(db_session, tenant_id=tenant.id, org_unit_id=org_unit.id)

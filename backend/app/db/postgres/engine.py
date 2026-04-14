@@ -31,12 +31,12 @@ def _build_legacy_postgres_url() -> str:
 
 def _resolve_database_url() -> tuple[str, str]:
     """
-    Resolve DB URL with one-variable target switching.
+    Resolve DB URL with explicit target switching.
 
     DB_TARGET values:
     - local: use DATABASE_URL_LOCAL if provided, else LOCAL_POSTGRES_* defaults
     - remote/supabase/prod: use DATABASE_URL_REMOTE, fallback DATABASE_URL
-    - unset/other: keep legacy behavior (DATABASE_URL first, else local POSTGRES_*)
+    - unset/other: default to local
     """
     target = (os.getenv("DB_TARGET") or "").strip().lower()
 
@@ -48,12 +48,10 @@ def _resolve_database_url() -> tuple[str, str]:
         remote_url = (os.getenv("DATABASE_URL_REMOTE") or os.getenv("DATABASE_URL") or "").strip()
         if remote_url:
             return (remote_url, "remote")
-        return (_build_local_database_url(), "local-fallback")
+        raise RuntimeError("DB_TARGET is set to remote, but DATABASE_URL_REMOTE or DATABASE_URL is not configured.")
 
-    legacy_url = (os.getenv("DATABASE_URL") or "").strip()
-    if legacy_url:
-        return (legacy_url, "legacy-database-url")
-    return (_build_legacy_postgres_url(), "legacy-postgres-vars")
+    local_url = (os.getenv("DATABASE_URL_LOCAL") or "").strip()
+    return (local_url or _build_local_database_url(), "local-default")
 
 
 def _normalize_database_url(raw_url: str) -> str:

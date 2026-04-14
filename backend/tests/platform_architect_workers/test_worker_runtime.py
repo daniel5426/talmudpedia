@@ -66,8 +66,8 @@ async def test_architect_worker_tools_seed_expected_slugs(db_session):
     }
     assert by_slug["architect-worker-spawn"].implementation_type == ToolImplementationType.FUNCTION
     assert by_slug["architect-worker-spawn"].config_schema["implementation"]["function_name"] == "architect_worker_spawn"
-    assert by_slug["architect-worker-spawn"].config_schema["execution"]["strict_input_schema"] is True
-    assert by_slug["architect-worker-binding-prepare"].config_schema["execution"]["strict_input_schema"] is True
+    assert by_slug["architect-worker-spawn"].config_schema["execution"]["validation_mode"] == "strict"
+    assert by_slug["architect-worker-binding-prepare"].config_schema["execution"]["validation_mode"] == "strict"
 
     spawn_schema = by_slug["architect-worker-spawn"].schema["input"]
     assert "task" not in spawn_schema["properties"]
@@ -229,6 +229,7 @@ async def test_spawn_schema_reports_missing_worker_agent_slug_or_binding_ref_exp
 
     assert errors == [
         {
+            "code": "schema_branch_mismatch",
             "path": "",
             "message": (
                 "`input` must satisfy one of these field sets: "

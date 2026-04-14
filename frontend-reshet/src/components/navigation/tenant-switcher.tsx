@@ -1,9 +1,8 @@
 "use client"
 
 import * as React from "react"
-import { ChevronsUpDown, Building2, Landmark, Users } from "lucide-react"
-import { useTenant, Tenant, OrgUnit } from "@/contexts/TenantContext"
-import { orgUnitsService } from "@/services/org-units"
+import { ChevronsUpDown, Building2, FolderKanban, Landmark } from "lucide-react"
+import { useTenant } from "@/contexts/TenantContext"
 
 import {
   DropdownMenu,
@@ -12,10 +11,6 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-  DropdownMenuSub,
-  DropdownMenuSubTrigger,
-  DropdownMenuSubContent,
-  DropdownMenuPortal,
 } from "@/components/ui/dropdown-menu"
 import {
   SidebarMenu,
@@ -27,27 +22,15 @@ import { Skeleton } from "@/components/ui/skeleton"
 
 export function TenantSwitcher() {
   const { isMobile } = useSidebar()
-  const { 
-    currentTenant, 
-    currentOrgUnit, 
-    tenants, 
+  const {
+    currentTenant,
+    currentProject,
+    tenants,
+    projects,
     isLoading,
-    setCurrentTenant, 
-    setCurrentOrgUnit 
+    setCurrentTenant,
+    setCurrentProject,
   } = useTenant()
-  
-  const [orgUnits, setOrgUnits] = React.useState<OrgUnit[]>([])
-  const [isUnitsLoading, setIsUnitsLoading] = React.useState(false)
-
-  React.useEffect(() => {
-    if (currentTenant) {
-      setIsUnitsLoading(true)
-      orgUnitsService.listOrgUnits(currentTenant.slug)
-        .then(setOrgUnits)
-        .catch(console.error)
-        .finally(() => setIsUnitsLoading(false))
-    }
-  }, [currentTenant])
 
   if (isLoading) {
     return (
@@ -58,6 +41,8 @@ export function TenantSwitcher() {
   }
 
   if (tenants.length === 0) return null
+
+  const currentProjectLabel = currentProject?.name || "No project selected"
 
   return (
     <SidebarMenu>
@@ -73,10 +58,10 @@ export function TenantSwitcher() {
               </div>
               <div className="grid flex-1 text-left text-sm leading-tight">
                 <span className="truncate font-semibold">
-                  {currentTenant?.name || "Select Tenant"}
+                  {currentTenant?.name || "Select Organization"}
                 </span>
                 <span className="truncate text-xs text-muted-foreground">
-                  {currentOrgUnit?.name || "No Org Unit selected"}
+                  {currentProjectLabel}
                 </span>
               </div>
               <ChevronsUpDown className="ml-auto size-4 opacity-50" />
@@ -89,56 +74,46 @@ export function TenantSwitcher() {
             sideOffset={4}
           >
             <DropdownMenuLabel className="text-xs text-muted-foreground">
-              Available Tenants
+              Organizations
             </DropdownMenuLabel>
             {tenants.map((tenant) => (
-              <DropdownMenuSub key={tenant.id}>
-                <DropdownMenuSubTrigger
-                  onClick={() => setCurrentTenant(tenant)}
+              <DropdownMenuItem
+                key={tenant.id}
+                onClick={() => setCurrentTenant(tenant)}
+                className="gap-2 p-2 cursor-pointer"
+              >
+                <div className="flex size-6 items-center justify-center rounded-sm border">
+                  <Building2 className="size-4 shrink-0" />
+                </div>
+                <span className="flex-1">{tenant.name}</span>
+                {tenant.slug === currentTenant?.slug ? (
+                  <span className="text-[10px] uppercase opacity-60">Active</span>
+                ) : null}
+              </DropdownMenuItem>
+            ))}
+            <DropdownMenuSeparator />
+            <DropdownMenuLabel className="text-xs text-muted-foreground">
+              Projects
+            </DropdownMenuLabel>
+            {projects.length === 0 ? (
+              <div className="p-2 text-xs text-muted-foreground">No projects found</div>
+            ) : (
+              projects.map((project) => (
+                <DropdownMenuItem
+                  key={project.id}
+                  onClick={() => setCurrentProject(project)}
                   className="gap-2 p-2 cursor-pointer"
                 >
                   <div className="flex size-6 items-center justify-center rounded-sm border">
-                    <Building2 className="size-4 shrink-0" />
+                    {project.is_default ? <Landmark className="size-4 shrink-0" /> : <FolderKanban className="size-4 shrink-0" />}
                   </div>
-                  <span className="flex-1">{tenant.name}</span>
-                </DropdownMenuSubTrigger>
-                <DropdownMenuPortal>
-                  <DropdownMenuSubContent className="min-w-48">
-                    <DropdownMenuLabel className="text-xs">Org Units</DropdownMenuLabel>
-                    <DropdownMenuSeparator />
-                    {isUnitsLoading ? (
-                      <div className="p-2 space-y-1">
-                        <Skeleton className="h-8 w-full" />
-                        <Skeleton className="h-8 w-full" />
-                      </div>
-                    ) : orgUnits.length === 0 ? (
-                      <div className="p-2 text-xs text-muted-foreground">No units found</div>
-                    ) : (
-                      orgUnits.map((unit) => (
-                        <DropdownMenuItem
-                          key={unit.id}
-                          onClick={() => {
-                            setCurrentTenant(tenant)
-                            setCurrentOrgUnit(unit)
-                          }}
-                          className="gap-2 p-2 cursor-pointer"
-                        >
-                          <div className="flex size-4 items-center justify-center">
-                            {unit.type === "org" && <Landmark className="size-3" />}
-                            {unit.type === "dept" && <Building2 className="size-3" />}
-                            {unit.type === "team" && <Users className="size-3" />}
-                          </div>
-                          <span>{unit.name}</span>
-                          <span className="ml-auto text-[10px] uppercase opacity-50">
-                            {unit.type}
-                          </span>
-                        </DropdownMenuItem>
-                      ))
-                    )}
-                  </DropdownMenuSubContent>
-                </DropdownMenuPortal>
-              </DropdownMenuSub>
-            ))}
+                  <span className="flex-1">{project.name}</span>
+                  {project.slug === currentProject?.slug ? (
+                    <span className="text-[10px] uppercase opacity-60">Active</span>
+                  ) : null}
+                </DropdownMenuItem>
+              ))
+            )}
           </DropdownMenuContent>
         </DropdownMenu>
       </SidebarMenuItem>

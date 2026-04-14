@@ -3,13 +3,13 @@ import { cn } from "@/lib/utils"
 import { useState } from "react"
 import { useRouter } from "next/navigation"
 import { authService } from "@/services"
-import { useAuthStore } from "@/lib/store/useAuthStore"
 import { GoogleLogin } from "@react-oauth/google"
 import Link from "next/link"
 import Image from "next/image"
 import { useAuthAccess } from "@/components/auth/auth-access-context"
 import { LegalLinks } from "@/components/auth/legal-links"
 import { BetaAccessPanel } from "@/components/marketing/beta-access-panel"
+import { applyAuthSession, clearAuthSession } from "@/lib/auth-session"
 
 export function LoginForm({
   className,
@@ -21,22 +21,18 @@ export function LoginForm({
   const [error, setError] = useState("")
   const [loading, setLoading] = useState(false)
   const router = useRouter()
-  const setAuth = useAuthStore((state) => state.setAuth)
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError("")
     setLoading(true)
 
     try {
-      const { access_token } = await authService.login(email, password)
-      useAuthStore.getState().setAuth(null as any, access_token)
-      const user = await authService.getProfile()
-      setAuth(user, access_token)
+      const session = await authService.login(email, password)
+      applyAuthSession(session)
       router.push("/admin/agents/playground")
     } catch (err: any) {
       setError(err.message || "Login failed")
-      useAuthStore.getState().logout()
+      clearAuthSession()
     } finally {
       setLoading(false)
     }
@@ -47,13 +43,12 @@ export function LoginForm({
     setLoading(true);
     setError("");
     try {
-      const { access_token } = await authService.googleLogin(credentialResponse.credential);
-      useAuthStore.getState().setAuth(null as any, access_token);
-      const user = await authService.getProfile();
-      setAuth(user, access_token);
+      const session = await authService.googleLogin(credentialResponse.credential);
+      applyAuthSession(session);
       router.push("/admin/agents/playground");
     } catch (err: any) {
       setError(err.message || "Google login failed");
+      clearAuthSession();
     } finally {
       setLoading(false);
     }

@@ -1,6 +1,6 @@
 # Runtime SDK Frontend Tests
 
-Last Updated: 2026-04-12
+Last Updated: 2026-04-13
 
 ## Scope of the feature
 - Runtime SDK transport behavior from template/frontend usage perspective.
@@ -20,11 +20,15 @@ Last Updated: 2026-04-12
 - Published app auth/history helpers target external bearer-token routes.
 - Normalized event helper falls back from `payload.content` when direct `content` is absent.
 - Normalized stream events expose canonical `responseBlocks` and `assistantOutputText` from backend payloads.
+- Normalized stream events preserve explicit canonical `ui_blocks` response blocks.
 
 ## Last run command + date/time + result
 - Command: `cd frontend-reshet && npm test -- --runInBand src/__tests__/runtime_sdk/runtime_sdk_core.test.ts`
 - Date: 2026-03-16
 - Result: PASS (1 suite, 6 tests)
+- Command: `pnpm --dir frontend-reshet test -- --runInBand src/__tests__/runtime_sdk/runtime_sdk_core.test.ts src/__tests__/embed_sdk/embedded_agent_sdk.test.ts`
+- Date: 2026-04-13 Asia/Hebron
+- Result: PASS (`2 suites, 13 tests`)
 - Command: `cd frontend-reshet && npm test -- --runInBand src/__tests__/runtime_sdk/runtime_sdk_core.test.ts`
 - Date: 2026-03-02
 - Result: PASS (1 suite, 4 tests)

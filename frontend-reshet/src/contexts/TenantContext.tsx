@@ -1,8 +1,11 @@
 "use client"
 
-import React, { createContext, useContext, useState, useEffect, useCallback } from "react"
-import { httpClient } from "@/services/http"
+import React, { createContext, useContext, useMemo, useState } from "react"
+
+import { applyAuthSession, clearAuthSession } from "@/lib/auth-session"
 import { useAuthStore } from "@/lib/store/useAuthStore"
+import { authService } from "@/services/auth"
+import { HttpRequestError } from "@/services/http"
 
 export interface Tenant {
   id: string
@@ -10,6 +13,16 @@ export interface Tenant {
   slug: string
   status: string
   created_at: string
+}
+
+export interface Project {
+  id: string
+  organization_id: string
+  name: string
+  slug: string
+  description?: string | null
+  status: string
+  is_default: boolean
 }
 
 export interface OrgUnit {
@@ -36,11 +49,14 @@ export interface UserPermissions {
 
 interface TenantContextType {
   currentTenant: Tenant | null
+  currentProject: Project | null
   currentOrgUnit: OrgUnit | null
   tenants: Tenant[]
+  projects: Project[]
   permissions: UserPermissions | null
   isLoading: boolean
   setCurrentTenant: (tenant: Tenant | null) => void
+  setCurrentProject: (project: Project | null) => void
   setCurrentOrgUnit: (orgUnit: OrgUnit | null) => void
   refreshTenants: () => Promise<void>
   refreshPermissions: () => Promise<void>
@@ -49,126 +65,126 @@ interface TenantContextType {
 
 const TenantContext = createContext<TenantContextType | undefined>(undefined)
 
+function toTenant(input: {
+  id: string
+  name: string
+  slug: string
+  status: string
+}): Tenant {
+  return {
+    ...input,
+    created_at: "",
+  }
+}
+
+function toProject(input: {
+  id: string
+  organization_id: string
+  name: string
+  slug: string
+  description?: string | null
+  status: string
+  is_default: boolean
+}): Project {
+  return { ...input }
+}
+
+async function refreshSessionState(): Promise<void> {
+  try {
+    const session = await authService.getCurrentSession()
+    applyAuthSession(session)
+  } catch (error) {
+    if (error instanceof HttpRequestError && error.status === 401) {
+      clearAuthSession()
+      return
+    }
+    throw error
+  }
+}
+
 export function TenantProvider({ children }: { children: React.ReactNode }) {
-  const [currentTenant, setCurrentTenant] = useState<Tenant | null>(null)
   const [currentOrgUnit, setCurrentOrgUnit] = useState<OrgUnit | null>(null)
-  const [tenants, setTenants] = useState<Tenant[]>([])
-  const [permissions, setPermissions] = useState<UserPermissions | null>(null)
-  const [isLoading, setIsLoading] = useState(true)
-  
-  const user = useAuthStore((state) => state.user)
-  const token = useAuthStore((state) => state.token)
 
-  const refreshTenants = useCallback(async () => {
-    if (!token) {
-      setTenants([])
+  const activeOrganization = useAuthStore((state) => state.activeOrganization)
+  const activeProject = useAuthStore((state) => state.activeProject)
+  const organizations = useAuthStore((state) => state.organizations)
+  const projects = useAuthStore((state) => state.projects)
+  const effectiveScopes = useAuthStore((state) => state.effectiveScopes)
+  const hydrated = useAuthStore((state) => state.hydrated)
+  const sessionChecked = useAuthStore((state) => state.sessionChecked)
+
+  const currentTenant = activeOrganization ? toTenant(activeOrganization) : null
+  const currentProject = activeProject ? toProject(activeProject) : null
+  const tenants = organizations.map(toTenant)
+  const projectList = projects.map(toProject)
+
+  const permissions = useMemo<UserPermissions | null>(() => {
+    if (!effectiveScopes.length) {
+      return null
+    }
+    return {
+      permissions: effectiveScopes,
+      scopes: [],
+    }
+  }, [effectiveScopes])
+
+  const setCurrentTenant = (tenant: Tenant | null) => {
+    if (!tenant || tenant.slug === currentTenant?.slug) {
       return
     }
-    
-    try {
-      const data = await httpClient.get<Tenant[]>("/api/tenants")
-      setTenants(data)
-      
-      if (data.length > 0 && !currentTenant) {
-        const savedSlug = localStorage.getItem("currentTenantSlug")
-        const savedTenant = data.find((t: Tenant) => t.slug === savedSlug) || data[0]
-        setCurrentTenant(savedTenant)
-      }
-    } catch (error) {
-      console.error("Failed to fetch tenants:", error)
-    }
-  }, [token, currentTenant])
-
-  const refreshPermissions = useCallback(async () => {
-    if (!currentTenant || !user || !token) {
-      setPermissions(null)
-      return
-    }
-
-    try {
-      const data = await httpClient.get<UserPermissions>(
-        `/api/tenants/${currentTenant.slug}/users/${user.id}/permissions`
-      )
-      setPermissions(data)
-    } catch (error) {
-      console.error("Failed to fetch permissions:", error)
-    }
-  }, [currentTenant, user, token])
-
-  const hasPermission = useCallback(
-    (resourceType: string, action: string): boolean => {
-      if (user?.role === "admin" || user?.role === "system_admin" || user?.role === "system") return true
-      if (!permissions) return false
-      const wanted = resolveRequestedScope(resourceType, action)
-      return permissions.permissions.includes(wanted)
-    },
-    [permissions, user]
-  )
-
-  useEffect(() => {
-    const loadTenants = async () => {
-      if (!token) {
-        setTenants([])
-        setCurrentTenant(null)
+    void authService
+      .switchOrganization(tenant.slug)
+      .then((session) => {
         setCurrentOrgUnit(null)
-        setPermissions(null)
-        setIsLoading(false)
-        return
-      }
+        applyAuthSession(session)
+      })
+      .catch((error) => {
+        console.error("Failed to switch organization", error)
+      })
+  }
 
-      setIsLoading(true)
-      try {
-        const data = await httpClient.get<Tenant[]>("/api/tenants")
-        setTenants(data)
-
-        if (data.length > 0 && !currentTenant) {
-          const savedSlug = localStorage.getItem("currentTenantSlug")
-          const savedTenant = data.find((t: Tenant) => t.slug === savedSlug) || data[0]
-          setCurrentTenant(savedTenant)
-        }
-      } catch (error) {
-        console.error("Failed to fetch tenants:", error)
-      } finally {
-        setIsLoading(false)
-      }
+  const setCurrentProject = (project: Project | null) => {
+    if (!project || project.slug === currentProject?.slug) {
+      return
     }
+    void authService
+      .switchProject(project.slug)
+      .then((session) => {
+        applyAuthSession(session)
+      })
+      .catch((error) => {
+        console.error("Failed to switch project", error)
+      })
+  }
 
-    loadTenants()
-  }, [token, currentTenant])
+  const refreshTenants = async () => {
+    await refreshSessionState()
+  }
 
-  const currentTenantRef = React.useRef<string | null>(null)
+  const refreshPermissions = async () => {
+    await refreshSessionState()
+  }
 
-  useEffect(() => {
-    const loadPermissions = async () => {
-      if (!currentTenant || !user || !token || currentTenant.id === currentTenantRef.current) {
-        return
-      }
-
-      localStorage.setItem("currentTenantSlug", currentTenant.slug)
-      currentTenantRef.current = currentTenant.id
-
-      try {
-        const data = await httpClient.get<UserPermissions>(
-          `/api/tenants/${currentTenant.slug}/users/${user.id}/permissions`
-        )
-        setPermissions(data)
-      } catch (error) {
-        console.error("Failed to fetch permissions:", error)
-      }
+  const hasPermission = (resourceType: string, action: string): boolean => {
+    const granted = new Set(effectiveScopes)
+    if (granted.has("*")) {
+      return true
     }
-
-    loadPermissions()
-  }, [currentTenant, user, token])
+    return granted.has(resolveRequestedScope(resourceType, action))
+  }
 
   return (
     <TenantContext.Provider
       value={{
         currentTenant,
+        currentProject,
         currentOrgUnit,
         tenants,
+        projects: projectList,
         permissions,
-        isLoading,
+        isLoading: !hydrated || !sessionChecked,
         setCurrentTenant,
+        setCurrentProject,
         setCurrentOrgUnit,
         refreshTenants,
         refreshPermissions,
@@ -187,6 +203,7 @@ export function useTenant() {
   }
   return context
 }
+
 const LEGACY_PERMISSION_TO_SCOPE: Record<string, string> = {
   "index.read": "pipelines.catalog.read",
   "index.write": "pipelines.write",
@@ -197,19 +214,19 @@ const LEGACY_PERMISSION_TO_SCOPE: Record<string, string> = {
   "job.read": "pipelines.read",
   "job.write": "pipelines.write",
   "job.delete": "pipelines.delete",
-  "tenant.read": "tenants.read",
-  "tenant.write": "tenants.write",
-  "tenant.admin": "tenants.write",
-  "org_unit.read": "membership.read",
-  "org_unit.write": "membership.write",
-  "org_unit.delete": "membership.delete",
+  "tenant.read": "organizations.read",
+  "tenant.write": "organizations.write",
+  "tenant.admin": "organizations.write",
+  "org_unit.read": "organization_units.read",
+  "org_unit.write": "organization_units.write",
+  "org_unit.delete": "organization_units.delete",
   "role.read": "roles.read",
   "role.write": "roles.write",
   "role.delete": "roles.write",
   "role.admin": "roles.assign",
-  "membership.read": "membership.read",
-  "membership.write": "membership.write",
-  "membership.delete": "membership.delete",
+  "membership.read": "organization_members.read",
+  "membership.write": "organization_members.write",
+  "membership.delete": "organization_members.delete",
   "audit.read": "audit.read",
 }
 

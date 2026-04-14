@@ -10,19 +10,48 @@ from uuid import UUID
 
 import httpx
 import websockets
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse, RedirectResponse
 from starlette.websockets import WebSocketState
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.security import decode_published_app_preview_token
-from app.db.postgres.models.published_apps import PublishedAppDraftDevSession
+from app.db.postgres.models.agent_threads import AgentThreadSurface
+from app.db.postgres.models.published_apps import PublishedApp, PublishedAppDraftDevSession, PublishedAppRevision
 from app.db.postgres.session import get_db
 from app.services.apps_builder_trace import apps_builder_trace
+from app.services.published_app_auth_service import PublishedAppAuthError, PublishedAppAuthService
 from app.services.published_app_draft_dev_runtime_client import PublishedAppDraftDevRuntimeClient
 from app.services.published_app_sandbox_backend_factory import load_published_app_sandbox_backend_config
 from app.services.published_app_sprite_proxy_tunnel import get_sprite_proxy_tunnel_manager
+from app.services.runtime_attachment_service import RuntimeAttachmentOwner
+from app.services.thread_service import ThreadService
+
+from .published_apps_host_runtime import (
+    INTERNAL_PREFIX,
+    _clear_session_cookie,
+    _normalize_return_to_for_host,
+    _request_origin_from_base_url,
+    _resolve_optional_principal_from_cookie,
+    _serialize_thread_detail,
+    _serialize_thread_summary,
+    _set_session_cookie,
+    _user_payload,
+)
+from .published_apps_public import (
+    PublicAuthExchangeRequest,
+    PublicAuthRequest,
+    PublicChatStreamRequest,
+    RuntimeBootstrapAuthResponse,
+    RuntimeBootstrapResponse,
+    _inject_runtime_context_into_html,
+    _is_enabled,
+    _stream_chat_for_app,
+    _upload_published_app_attachments,
+)
 
 
 router = APIRouter(tags=["published-apps-builder-preview-proxy"])
@@ -34,6 +63,9 @@ _PREVIEW_HTTP_RETRY_DELAYS_SECONDS = (0.0, 0.35, 0.75, 1.5)
 _HTML_URL_ATTR_PATTERN = re.compile(r"""(?P<prefix>\b(?:src|href)=["'])(?P<path>/[^"'?#]+(?:[?#][^"']*)?)""")
 _INLINE_VITE_PATH_PATTERN = re.compile(
     r"""(?P<quote>["'])(?P<path>/(?:@vite|@react-refresh|src/|node_modules/|runtime-sdk/|__vite)[^"']*)(?P=quote)"""
+)
+_CSS_URL_PATH_PATTERN = re.compile(
+    r"""url\((?P<quote>["']?)(?P<path>/(?:@vite|@react-refresh|src/|node_modules/|runtime-sdk/|__vite)[^)"']*)(?P=quote)\)"""
 )
 _HMR_OWNER_PATH_PATTERN = re.compile(
     r'(?P<prefix>__vite__createHotContext\()'
@@ -55,6 +87,155 @@ _VITE_CLIENT_HMR_ASSIGNMENTS = re.compile(
 _VITE_CLIENT_BASE_ASSIGNMENT = re.compile(r"const base = .*?;", re.DOTALL)
 _HTML_BODY_CLOSE_PATTERN = re.compile(r"</body\s*>", re.IGNORECASE)
 _HTML_HEAD_CLOSE_PATTERN = re.compile(r"</head\s*>", re.IGNORECASE)
+
+
+def _normalize_preview_route(value: str | None) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return "/"
+    path = raw.split("?", 1)[0].split("#", 1)[0].strip()
+    if not path:
+        return "/"
+    normalized = path if path.startswith("/") else f"/{path}"
+    normalized = re.sub(r"/{2,}", "/", normalized)
+    if normalized != "/" and normalized.endswith("/"):
+        normalized = normalized[:-1]
+    return normalized or "/"
+
+
+def _build_preview_path_shim(*, target: dict[str, str], preview_route: str) -> str:
+    base_path = str(target.get("base_path") or "/").strip() or "/"
+    if not base_path.startswith("/"):
+        base_path = f"/{base_path}"
+    normalized_base_path = base_path[:-1] if base_path.endswith("/") and base_path != "/" else base_path
+    base_path_literal = json.dumps(normalized_base_path)
+    preview_bootstrap_path_literal = json.dumps(f"{normalized_base_path}/_talmudpedia/runtime/bootstrap")
+    preview_route_literal = json.dumps(_normalize_preview_route(preview_route))
+    return (
+        "<script>\n"
+        "(function(){\n"
+        "  if (window.__talmudpediaPreviewPathShimInstalled) return;\n"
+        "  window.__talmudpediaPreviewPathShimInstalled = true;\n"
+        f"  const previewBasePath = {base_path_literal};\n"
+        f"  const previewBootstrapPath = {preview_bootstrap_path_literal};\n"
+        f"  const initialPreviewRoute = {preview_route_literal};\n"
+        "  const normalizeAppPath = (pathname) => {\n"
+        "    const raw = String(pathname || '').trim();\n"
+        "    if (!raw) return '/';\n"
+        "    const normalized = raw.startsWith('/') ? raw : '/' + raw;\n"
+        "    if (normalized !== '/' && normalized.endsWith('/')) return normalized.slice(0, -1) || '/';\n"
+        "    return normalized || '/';\n"
+        "  };\n"
+        "  const currentPreviewRoute = () => {\n"
+        "    try {\n"
+        "      const current = new URL(window.location.href);\n"
+        "      const queryRoute = current.searchParams.get('preview_route');\n"
+        "      return normalizeAppPath(queryRoute || initialPreviewRoute || '/');\n"
+        "    } catch {\n"
+        "      return normalizeAppPath(initialPreviewRoute || '/');\n"
+        "    }\n"
+        "  };\n"
+        "  const isPublishedBootstrapPath = (pathname) => {\n"
+        "    const path = String(pathname || '').trim();\n"
+        "    return /^\\/api\\/py\\/public\\/apps\\/[^/]+\\/runtime\\/bootstrap$/i.test(path)\n"
+        "      || /^\\/public\\/apps\\/[^/]+\\/runtime\\/bootstrap$/i.test(path);\n"
+        "  };\n"
+        "  const rewritePublishedBootstrapUrl = (value) => {\n"
+        "    if (value == null || value === '') return value;\n"
+        "    try {\n"
+        "      const current = new URL(window.location.href);\n"
+        "      const next = new URL(String(value), current);\n"
+        "      if (next.origin !== current.origin) return value;\n"
+        "      if (!isPublishedBootstrapPath(next.pathname)) return value;\n"
+        "      next.pathname = previewBootstrapPath;\n"
+        "      return next.pathname + next.search + next.hash;\n"
+        "    } catch {\n"
+        "      return value;\n"
+        "    }\n"
+        "  };\n"
+        "  const toProxyUrl = (value) => {\n"
+        "    if (value == null || value === '') return value;\n"
+        "    try {\n"
+        "      const current = new URL(window.location.href);\n"
+        "      const next = new URL(String(value), current);\n"
+        "      if (next.origin !== current.origin) return value;\n"
+        "      if (isPublishedBootstrapPath(next.pathname)) return rewritePublishedBootstrapUrl(value);\n"
+        "      const nextRoute = normalizeAppPath(next.pathname || '/');\n"
+        "      next.pathname = previewBasePath;\n"
+        "      next.searchParams.set('preview_route', nextRoute);\n"
+        "      for (const [key, itemValue] of current.searchParams.entries()) {\n"
+        "        if (String(key) === 'preview_route') continue;\n"
+        "        if (!String(key).startsWith('runtime_')) continue;\n"
+        "        if (!next.searchParams.has(key)) next.searchParams.set(key, itemValue);\n"
+        "      }\n"
+        "      return next.pathname + next.search + next.hash;\n"
+        "    } catch {\n"
+        "      return String(value);\n"
+        "    }\n"
+        "  };\n"
+        "  try {\n"
+        "    const proto = Object.getPrototypeOf(window.location);\n"
+        "    const descriptor = Object.getOwnPropertyDescriptor(proto, 'pathname');\n"
+        "    if (descriptor && descriptor.configurable && typeof descriptor.get === 'function') {\n"
+        "      Object.defineProperty(proto, 'pathname', {\n"
+        "        configurable: true,\n"
+        "        enumerable: descriptor.enumerable,\n"
+        "        get: function() {\n"
+        "          return currentPreviewRoute();\n"
+        "        },\n"
+        "        set: typeof descriptor.set === 'function'\n"
+        "          ? function(value) {\n"
+        "              return descriptor.set.call(window.location, toProxyUrl(value));\n"
+        "            }\n"
+        "          : undefined,\n"
+        "      });\n"
+        "    }\n"
+        "  } catch {}\n"
+        "  try {\n"
+        "    const originalFetch = window.fetch.bind(window);\n"
+        "    window.fetch = function(input, init) {\n"
+        "      try {\n"
+        "        if (typeof input === 'string' || input instanceof URL) {\n"
+        "          return originalFetch(rewritePublishedBootstrapUrl(input), init);\n"
+        "        }\n"
+        "        if (input && typeof input === 'object' && 'url' in input) {\n"
+        "          const rewrittenUrl = rewritePublishedBootstrapUrl(input.url);\n"
+        "          if (typeof rewrittenUrl === 'string' && rewrittenUrl !== input.url) {\n"
+        "            return originalFetch(new Request(rewrittenUrl, input), init);\n"
+        "          }\n"
+        "        }\n"
+        "      } catch {}\n"
+        "      return originalFetch(input, init);\n"
+        "    };\n"
+        "  } catch {}\n"
+        "  try {\n"
+        "    const assign = window.location.assign.bind(window.location);\n"
+        "    const replace = window.location.replace.bind(window.location);\n"
+        "    window.location.assign = function(value) { assign(toProxyUrl(value)); };\n"
+        "    window.location.replace = function(value) { replace(toProxyUrl(value)); };\n"
+        "  } catch {}\n"
+        "  for (const methodName of ['pushState', 'replaceState']) {\n"
+        "    const original = window.history[methodName];\n"
+        "    if (typeof original !== 'function') continue;\n"
+        "    window.history[methodName] = function(state, unused, url) {\n"
+        "      const nextUrl = typeof url === 'string' || url instanceof URL ? toProxyUrl(url) : url;\n"
+        "      return original.call(this, state, unused, nextUrl);\n"
+        "    };\n"
+        "  }\n"
+        "})();\n"
+        "</script>\n"
+    )
+
+
+def _inject_preview_path_shim(*, html: str, target: dict[str, str], preview_route: str) -> str:
+    if "__talmudpediaPreviewPathShimInstalled" in html:
+        return html
+    shim = _build_preview_path_shim(target=target, preview_route=preview_route)
+    if _HTML_HEAD_CLOSE_PATTERN.search(html):
+        return _HTML_HEAD_CLOSE_PATTERN.sub(lambda _match: f"{shim}</head>", html, count=1)
+    if _HTML_BODY_CLOSE_PATTERN.search(html):
+        return _HTML_BODY_CLOSE_PATTERN.sub(lambda _match: f"{shim}</body>", html, count=1)
+    return shim + html
 
 
 def _build_preview_debug_probe(*, runtime_token: str | None) -> str:
@@ -277,6 +458,53 @@ async def _load_session(*, db: AsyncSession, session_id: str) -> PublishedAppDra
     return session
 
 
+async def _load_preview_app_and_revision(
+    *,
+    db: AsyncSession,
+    session: PublishedAppDraftDevSession,
+) -> tuple[PublishedApp, PublishedAppRevision]:
+    app = await db.get(PublishedApp, session.published_app_id)
+    if app is None:
+        raise HTTPException(status_code=404, detail="Published app not found")
+    revision_id = session.revision_id
+    if revision_id is None:
+        raise HTTPException(status_code=404, detail="Preview revision not found")
+    revision = await db.get(PublishedAppRevision, revision_id)
+    if revision is None or str(revision.published_app_id) != str(app.id):
+        raise HTTPException(status_code=404, detail="Preview revision not found")
+    return app, revision
+
+
+def _builder_preview_internal_prefix(*, session_id: str) -> str:
+    return f"/public/apps-builder/draft-dev/sessions/{session_id}/preview{INTERNAL_PREFIX}"
+
+
+def _build_builder_preview_bootstrap(
+    *,
+    request: Request,
+    session: PublishedAppDraftDevSession,
+    app: PublishedApp,
+    revision: PublishedAppRevision,
+) -> RuntimeBootstrapResponse:
+    origin = _request_origin_from_base_url(str(request.base_url))
+    internal_prefix = _builder_preview_internal_prefix(session_id=str(session.id))
+    return RuntimeBootstrapResponse(
+        app_id=str(app.id),
+        slug=app.slug,
+        revision_id=str(revision.id),
+        mode="builder-preview",
+        api_base_path="/",
+        api_base_url=origin,
+        chat_stream_path=f"{internal_prefix}/chat/stream",
+        chat_stream_url=f"{origin}{internal_prefix}/chat/stream",
+        auth=RuntimeBootstrapAuthResponse(
+            enabled=bool(app.auth_enabled),
+            providers=list(app.auth_providers or []),
+            exchange_enabled=bool(app.external_auth_oidc),
+        ),
+    )
+
+
 async def _resolve_preview_target(session: PublishedAppDraftDevSession) -> dict[str, str]:
     workspace = getattr(session, "draft_workspace", None)
     workspace_metadata = getattr(workspace, "backend_metadata", None)
@@ -335,6 +563,8 @@ async def _resolve_preview_target(session: PublishedAppDraftDevSession) -> dict[
 
 def _is_refreshable_preview_error(exc: Exception) -> bool:
     if isinstance(exc, httpx.ConnectError):
+        return True
+    if isinstance(exc, httpx.RemoteProtocolError):
         return True
     message = str(exc or "").lower()
     return "certificate verify failed" in message or "hostname mismatch" in message
@@ -464,7 +694,7 @@ def _upstream_url(*, path: str, query_params: Any, target: dict[str, str]) -> st
     forwarded_query = [
         (key, value)
         for key, value in query_params.multi_items()
-        if str(key) != "runtime_token"
+        if str(key) not in {"runtime_token", "runtime_mode", "runtime_base_path", "runtime_bootstrap_url", "preview_route", "__reload"}
     ]
     query_string = urlencode(forwarded_query)
     parsed = urlparse(target["upstream_base_url"])
@@ -502,6 +732,19 @@ def _rewrite_inline_vite_paths(*, target: dict[str, str], text: str, runtime_tok
         return f"{quote}{rewritten}{quote}"
 
     return _INLINE_VITE_PATH_PATTERN.sub(_replace_inline, text)
+
+
+def _rewrite_css_url_paths(*, target: dict[str, str], text: str, runtime_token: str | None) -> str:
+    def _replace_css_url(match: re.Match[str]) -> str:
+        quote = str(match.group("quote") or "")
+        original = str(match.group("path") or "")
+        if original.startswith("//"):
+            return match.group(0)
+        rewritten = _compose_proxy_path(target=target, resource_path=original)
+        rewritten = _append_runtime_token_to_path(path=rewritten, runtime_token=runtime_token)
+        return f"url({quote}{rewritten}{quote})"
+
+    return _CSS_URL_PATH_PATTERN.sub(_replace_css_url, text)
 
 
 def _rewrite_vite_client_hmr_runtime(*, target: dict[str, str], text: str, runtime_token: str | None) -> str:
@@ -664,7 +907,14 @@ def _restore_hmr_owner_paths(*, text: str) -> str:
     return _HMR_OWNER_PATH_PATTERN.sub(_replace_owner, text)
 
 
-def _rewrite_html_preview_content(*, target: dict[str, str], content: bytes, runtime_token: str | None) -> bytes:
+def _rewrite_html_preview_content(
+    *,
+    target: dict[str, str],
+    content: bytes,
+    runtime_token: str | None,
+    runtime_context: RuntimeBootstrapResponse | None,
+    preview_route: str,
+) -> bytes:
     try:
         text = content.decode("utf-8")
     except UnicodeDecodeError:
@@ -680,6 +930,10 @@ def _rewrite_html_preview_content(*, target: dict[str, str], content: bytes, run
 
     rewritten = _HTML_URL_ATTR_PATTERN.sub(_replace_attr, text)
     rewritten = _rewrite_inline_vite_paths(target=target, text=rewritten, runtime_token=runtime_token)
+    rewritten = _rewrite_css_url_paths(target=target, text=rewritten, runtime_token=runtime_token)
+    if runtime_context is not None:
+        rewritten = _inject_runtime_context_into_html(rewritten, runtime_context)
+    rewritten = _inject_preview_path_shim(html=rewritten, target=target, preview_route=preview_route)
     rewritten = _inject_preview_debug_probe(html=rewritten, runtime_token=runtime_token)
     return rewritten.encode("utf-8")
 
@@ -691,6 +945,8 @@ def _rewrite_text_preview_content(
     content_type: str,
     content: bytes,
     runtime_token: str | None,
+    runtime_context: RuntimeBootstrapResponse | None,
+    preview_route: str,
 ) -> tuple[bytes, bool]:
     normalized_content_type = str(content_type or "").split(";", 1)[0].strip().lower()
     if not normalized_content_type.startswith(_REWRITABLE_TEXT_PREFIXES):
@@ -700,9 +956,16 @@ def _rewrite_text_preview_content(
     except UnicodeDecodeError:
         return content, False
     if normalized_content_type == "text/html":
-        rewritten = _rewrite_html_preview_content(target=target, content=content, runtime_token=runtime_token)
+        rewritten = _rewrite_html_preview_content(
+            target=target,
+            content=content,
+            runtime_token=runtime_token,
+            runtime_context=runtime_context,
+            preview_route=preview_route,
+        )
         return rewritten, rewritten != content
     rewritten_text = _rewrite_inline_vite_paths(target=target, text=text, runtime_token=runtime_token)
+    rewritten_text = _rewrite_css_url_paths(target=target, text=rewritten_text, runtime_token=runtime_token)
     rewritten_text = _restore_hmr_owner_paths(text=rewritten_text)
     is_vite_client = str(path).strip().lstrip("/") == "@vite/client"
     if normalized_content_type in {"application/javascript", "text/javascript"} and (
@@ -790,6 +1053,384 @@ def _set_preview_cookie(response: Response, *, request: Request, token: str) -> 
     )
 
 
+async def _load_preview_request_context(
+    *,
+    db: AsyncSession,
+    request: Request,
+    session_id: str,
+) -> tuple[PublishedAppDraftDevSession, PublishedApp, PublishedAppRevision, dict[str, Any], str]:
+    session = await _load_session(db=db, session_id=session_id)
+    token = _extract_preview_token(request=request)
+    if not token:
+        raise HTTPException(status_code=401, detail="Preview authentication required")
+    payload = _validate_preview_token(token)
+    _assert_preview_scope_matches_session(payload, session)
+    app, revision = await _load_preview_app_and_revision(db=db, session=session)
+    return session, app, revision, payload, token
+
+
+@router.get("/public/apps-builder/draft-dev/sessions/{session_id}/preview/_talmudpedia/auth/state")
+async def builder_preview_auth_state(
+    session_id: str,
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+):
+    session, app, _, _, _ = await _load_preview_request_context(db=db, request=request, session_id=session_id)
+    principal, stale_cookie = await _resolve_optional_principal_from_cookie(db=db, request=request, expected_app=app)
+    if stale_cookie:
+        _clear_session_cookie(response=response, request=request)
+    return {
+        "authenticated": principal is not None,
+        "auth_enabled": bool(app.auth_enabled),
+        "providers": list(app.auth_providers or []),
+        "app": {
+            "id": str(app.id),
+            "slug": app.slug,
+            "name": app.name,
+            "description": app.description,
+            "logo_url": app.logo_url,
+            "auth_template_key": app.auth_template_key or "auth-classic",
+        },
+        "user": _user_payload(principal["user"]) if principal is not None else None,
+        "preview_session_id": str(session.id),
+    }
+
+
+@router.post("/public/apps-builder/draft-dev/sessions/{session_id}/preview/_talmudpedia/auth/signup")
+async def builder_preview_signup(
+    session_id: str,
+    request: Request,
+    payload: PublicAuthRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    _, app, _, _, _ = await _load_preview_request_context(db=db, request=request, session_id=session_id)
+    if not app.auth_enabled:
+        raise HTTPException(status_code=400, detail="Auth is disabled for this app")
+    if "password" not in set(app.auth_providers or []):
+        raise HTTPException(status_code=400, detail="Password auth is disabled for this app")
+    auth_service = PublishedAppAuthService(db)
+    try:
+        result = await auth_service.signup_with_password(
+            app=app,
+            email=payload.email.lower(),
+            password=payload.password,
+            full_name=payload.full_name,
+        )
+    except PublishedAppAuthError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    response = JSONResponse({"status": "ok", "user": _user_payload(result.account)})
+    _set_session_cookie(response=response, request=request, token=result.token)
+    return response
+
+
+@router.post("/public/apps-builder/draft-dev/sessions/{session_id}/preview/_talmudpedia/auth/login")
+async def builder_preview_login(
+    session_id: str,
+    request: Request,
+    payload: PublicAuthRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    _, app, _, _, _ = await _load_preview_request_context(db=db, request=request, session_id=session_id)
+    if not app.auth_enabled:
+        raise HTTPException(status_code=400, detail="Auth is disabled for this app")
+    if "password" not in set(app.auth_providers or []):
+        raise HTTPException(status_code=400, detail="Password auth is disabled for this app")
+    auth_service = PublishedAppAuthService(db)
+    try:
+        result = await auth_service.login_with_password(
+            app=app,
+            email=payload.email.lower(),
+            password=payload.password,
+        )
+    except PublishedAppAuthError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    response = JSONResponse({"status": "ok", "user": _user_payload(result.account)})
+    _set_session_cookie(response=response, request=request, token=result.token)
+    return response
+
+
+@router.post("/public/apps-builder/draft-dev/sessions/{session_id}/preview/_talmudpedia/auth/exchange")
+async def builder_preview_exchange_auth_token(
+    session_id: str,
+    request: Request,
+    payload: PublicAuthExchangeRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    _, app, _, _, _ = await _load_preview_request_context(db=db, request=request, session_id=session_id)
+    if not app.auth_enabled:
+        raise HTTPException(status_code=400, detail="Auth is disabled for this app")
+    auth_service = PublishedAppAuthService(db)
+    try:
+        result = await auth_service.exchange_external_oidc(app=app, token=payload.token)
+    except PublishedAppAuthError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    response = JSONResponse({"status": "ok", "user": _user_payload(result.account)})
+    _set_session_cookie(response=response, request=request, token=result.token)
+    return response
+
+
+@router.post("/public/apps-builder/draft-dev/sessions/{session_id}/preview/_talmudpedia/auth/logout")
+async def builder_preview_logout(
+    session_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    _, app, _, _, _ = await _load_preview_request_context(db=db, request=request, session_id=session_id)
+    principal, stale_cookie = await _resolve_optional_principal_from_cookie(db=db, request=request, expected_app=app)
+    if principal is not None:
+        service = PublishedAppAuthService(db)
+        await service.revoke_session(
+            session_id=UUID(principal["session_id"]),
+            app_account_id=UUID(principal["app_account_id"]),
+            app_id=UUID(principal["app_id"]),
+        )
+    response = JSONResponse({"status": "logged_out"})
+    if principal is not None or stale_cookie:
+        _clear_session_cookie(response=response, request=request)
+    return response
+
+
+@router.get("/public/apps-builder/draft-dev/sessions/{session_id}/preview/_talmudpedia/auth/google/start")
+async def builder_preview_google_start(
+    session_id: str,
+    request: Request,
+    return_to: str | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    _, app, _, _, _ = await _load_preview_request_context(db=db, request=request, session_id=session_id)
+    if not _is_enabled("PUBLISHED_APPS_GOOGLE_AUTH_ENABLED", "1"):
+        raise HTTPException(status_code=404, detail="Google auth is disabled")
+    if not app.auth_enabled:
+        raise HTTPException(status_code=400, detail="Auth is disabled for this app")
+    if "google" not in set(app.auth_providers or []):
+        raise HTTPException(status_code=400, detail="Google auth is disabled for this app")
+    auth_service = PublishedAppAuthService(db)
+    credential = await auth_service.get_google_credential(app.tenant_id)
+    if credential is None:
+        raise HTTPException(status_code=400, detail="Tenant Google OAuth credentials are missing")
+    creds = credential.credentials or {}
+    client_id = creds.get("client_id")
+    redirect_uri = creds.get("redirect_uri")
+    if not client_id or not redirect_uri:
+        raise HTTPException(status_code=400, detail="Google OAuth credentials are incomplete")
+    normalized_return = _normalize_return_to_for_host(str(request.base_url), return_to) or "/"
+    target_abs = f"{_request_origin_from_base_url(str(request.base_url))}{normalized_return}"
+    auth_url = auth_service.build_google_auth_url(
+        client_id=client_id,
+        redirect_uri=redirect_uri,
+        app_slug=app.slug,
+        return_to=target_abs,
+    )
+    return RedirectResponse(url=auth_url, status_code=302)
+
+
+@router.get("/public/apps-builder/draft-dev/sessions/{session_id}/preview/_talmudpedia/auth/google/callback")
+async def builder_preview_google_callback(
+    session_id: str,
+    request: Request,
+    code: str = Query(...),
+    state: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+):
+    _, app, _, _, _ = await _load_preview_request_context(db=db, request=request, session_id=session_id)
+    auth_service = PublishedAppAuthService(db)
+    credential = await auth_service.get_google_credential(app.tenant_id)
+    if credential is None:
+        raise HTTPException(status_code=400, detail="Tenant Google OAuth credentials are missing")
+    creds = credential.credentials or {}
+    client_id = creds.get("client_id")
+    client_secret = creds.get("client_secret")
+    redirect_uri = creds.get("redirect_uri")
+    if not client_id or not client_secret or not redirect_uri:
+        raise HTTPException(status_code=400, detail="Google OAuth credentials are incomplete")
+    try:
+        state_payload = auth_service.parse_google_state(state)
+        if state_payload.get("app_slug") != app.slug:
+            raise PublishedAppAuthError("OAuth state app slug mismatch")
+        token_response = auth_service.exchange_google_code(
+            code=code,
+            client_id=client_id,
+            client_secret=client_secret,
+            redirect_uri=redirect_uri,
+        )
+        profile = auth_service.verify_google_id_token(
+            token_value=token_response["id_token"],
+            client_id=client_id,
+        )
+        account = await auth_service.get_or_create_google_account(
+            app=app,
+            email=str(profile.get("email", "")).lower(),
+            google_id=str(profile.get("sub")),
+            full_name=profile.get("name"),
+            avatar=profile.get("picture"),
+        )
+        result = await auth_service.issue_auth_result(
+            app=app,
+            account=account,
+            provider="google",
+            metadata={"google_sub": str(profile.get("sub"))},
+        )
+    except PublishedAppAuthError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return_to = _normalize_return_to_for_host(str(request.base_url), state_payload.get("return_to"))  # type: ignore[name-defined]
+    redirect = RedirectResponse(url=return_to or "/", status_code=302)
+    _set_session_cookie(response=redirect, request=request, token=result.token)
+    return redirect
+
+
+@router.get("/public/apps-builder/draft-dev/sessions/{session_id}/preview/_talmudpedia/runtime/bootstrap")
+async def builder_preview_runtime_bootstrap(
+    session_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    session, app, revision, _, _ = await _load_preview_request_context(db=db, request=request, session_id=session_id)
+    bootstrap = _build_builder_preview_bootstrap(request=request, session=session, app=app, revision=revision)
+    return JSONResponse(bootstrap.model_dump())
+
+
+@router.post("/public/apps-builder/draft-dev/sessions/{session_id}/preview/_talmudpedia/chat/stream")
+async def builder_preview_chat_stream(
+    session_id: str,
+    request: Request,
+    payload: PublicChatStreamRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    session, app, _, principal_payload, _ = await _load_preview_request_context(db=db, request=request, session_id=session_id)
+    principal, stale_cookie = await _resolve_optional_principal_from_cookie(db=db, request=request, expected_app=app)
+    if app.auth_enabled and principal is None:
+        response = JSONResponse(status_code=401, content={"detail": "Authentication required"})
+        if stale_cookie:
+            _clear_session_cookie(response=response, request=request)
+        return response
+    stream_response = await _stream_chat_for_app(
+        app=app,
+        payload=payload,
+        db=db,
+        principal=principal,
+        enforce_app_auth=bool(app.auth_enabled),
+        allow_chat_persistence=True,
+        request_user_id=str(principal["app_account_id"]) if principal else None,
+        extra_context={
+            "builder_preview": True,
+            "builder_preview_session_id": str(session.id),
+            "published_app_preview_user_id": str(principal_payload.get("user_id") or "") or None,
+        },
+    )
+    if stale_cookie:
+        _clear_session_cookie(response=stream_response, request=request)
+    return stream_response
+
+
+@router.post("/public/apps-builder/draft-dev/sessions/{session_id}/preview/_talmudpedia/attachments/upload")
+async def builder_preview_upload_attachments(
+    session_id: str,
+    request: Request,
+    files: list[UploadFile] = File(...),
+    thread_id: UUID | None = Form(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    _, app, _, _, _ = await _load_preview_request_context(db=db, request=request, session_id=session_id)
+    principal, stale_cookie = await _resolve_optional_principal_from_cookie(db=db, request=request, expected_app=app)
+    if app.auth_enabled and principal is None:
+        response = JSONResponse(status_code=401, content={"detail": "Authentication required"})
+        if stale_cookie:
+            _clear_session_cookie(response=response, request=request)
+        return response
+    owner = RuntimeAttachmentOwner(
+        tenant_id=app.tenant_id,
+        surface=AgentThreadSurface.published_host_runtime,
+        app_account_id=UUID(str(principal["app_account_id"])) if principal else None,
+        published_app_id=app.id,
+        thread_id=thread_id,
+    )
+    payload = await _upload_published_app_attachments(app=app, owner=owner, files=files, db=db)
+    response = JSONResponse(payload)
+    if stale_cookie:
+        _clear_session_cookie(response=response, request=request)
+    return response
+
+
+@router.get("/public/apps-builder/draft-dev/sessions/{session_id}/preview/_talmudpedia/threads")
+async def builder_preview_list_threads(
+    session_id: str,
+    request: Request,
+    skip: int = 0,
+    limit: int = 20,
+    db: AsyncSession = Depends(get_db),
+):
+    _, app, _, _, _ = await _load_preview_request_context(db=db, request=request, session_id=session_id)
+    principal, stale_cookie = await _resolve_optional_principal_from_cookie(db=db, request=request, expected_app=app)
+    if principal is None:
+        response = JSONResponse(status_code=401, content={"detail": "Authentication required"})
+        if stale_cookie:
+            _clear_session_cookie(response=response, request=request)
+        return response
+    service = ThreadService(db)
+    threads, total = await service.list_threads(
+        tenant_id=app.tenant_id,
+        app_account_id=UUID(principal["app_account_id"]),
+        published_app_id=app.id,
+        skip=skip,
+        limit=limit,
+    )
+    payload = {
+        "items": [_serialize_thread_summary(thread) for thread in threads],
+        "total": int(total),
+        "page": (skip // limit) + 1 if limit > 0 else 1,
+        "pages": ((total + limit - 1) // limit) if limit > 0 else 1,
+    }
+    response = JSONResponse(jsonable_encoder(payload))
+    if stale_cookie:
+        _clear_session_cookie(response=response, request=request)
+    return response
+
+
+@router.get("/public/apps-builder/draft-dev/sessions/{session_id}/preview/_talmudpedia/threads/{thread_id}")
+async def builder_preview_get_thread(
+    session_id: str,
+    thread_id: UUID,
+    request: Request,
+    before_turn_index: int | None = Query(default=None, ge=0),
+    limit: int = Query(default=20, ge=1, le=100),
+    include_subthreads: bool = Query(default=False),
+    subthread_depth: int = Query(default=1, ge=1, le=5),
+    subthread_turn_limit: int | None = Query(default=None, ge=1, le=100),
+    subthread_child_limit: int = Query(default=20, ge=1, le=50),
+    db: AsyncSession = Depends(get_db),
+):
+    _, app, _, _, _ = await _load_preview_request_context(db=db, request=request, session_id=session_id)
+    principal, stale_cookie = await _resolve_optional_principal_from_cookie(db=db, request=request, expected_app=app)
+    if principal is None:
+        response = JSONResponse(status_code=401, content={"detail": "Authentication required"})
+        if stale_cookie:
+            _clear_session_cookie(response=response, request=request)
+        return response
+    service = ThreadService(db)
+    page_result = await service.get_thread_page(
+        tenant_id=app.tenant_id,
+        thread_id=thread_id,
+        app_account_id=UUID(principal["app_account_id"]),
+        published_app_id=app.id,
+        before_turn_index=before_turn_index,
+        limit=limit,
+        include_subthreads=include_subthreads,
+        subthread_depth=subthread_depth,
+        subthread_turn_limit=subthread_turn_limit,
+        subthread_child_limit=subthread_child_limit,
+    )
+    response = JSONResponse(jsonable_encoder(await _serialize_thread_detail(
+        db=db,
+        thread=page_result.thread,
+        page=page_result.page,
+        subthread_tree=page_result.subthread_tree,
+    )))
+    if stale_cookie:
+        _clear_session_cookie(response=response, request=request)
+    return response
+
+
 @router.api_route(
     "/public/apps-builder/draft-dev/sessions/{session_id}/preview",
     methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
@@ -830,6 +1471,16 @@ async def proxy_builder_preview(
         target_base_path=str(target.get("base_path") or ""),
         target_upstream_path=str(target.get("upstream_path") or ""),
     )
+    preview_route = _normalize_preview_route(request.query_params.get("preview_route"))
+    runtime_context: RuntimeBootstrapResponse | None = None
+    if request.method.upper() == "GET" and not path:
+        app, revision = await _load_preview_app_and_revision(db=db, session=session)
+        runtime_context = _build_builder_preview_bootstrap(
+            request=request,
+            session=session,
+            app=app,
+            revision=revision,
+        )
     body = await request.body()
     try:
         try:
@@ -912,6 +1563,8 @@ async def proxy_builder_preview(
             content_type=content_type,
             content=upstream.content,
             runtime_token=token,
+            runtime_context=runtime_context,
+            preview_route=preview_route,
         )
     excluded_headers = {"content-encoding", "transfer-encoding", "connection", "content-length"}
     if content_rewritten:

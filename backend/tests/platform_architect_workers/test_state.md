@@ -1,6 +1,6 @@
 # Platform Architect Workers Tests State
 
-Last Updated: 2026-03-25
+Last Updated: 2026-04-13
 
 ## Scope of the feature
 Focused coverage for the architect-specific async worker runtime, binding-backed artifact delegation flow, and seeded architect DB-backed orchestration behavior.
@@ -25,6 +25,7 @@ Focused coverage for the architect-specific async worker runtime, binding-backed
 - DB-backed seeded architect run that attempts a second mutating spawn on the same binding and reports the active-binding blocker cleanly.
 - Strict architect worker tool schemas reject malformed model payloads before runtime dispatch, including the observed bad binding-create guesses (`create`, `files`, `entrypoint`, `text`), while still allowing executor-owned runtime metadata to flow separately.
 - Architect worker spawn/binding schema failures now expose explicit branch/type diagnostics, including missing `worker_agent_slug` or `binding_ref` and wrong `objective` types.
+- Shared tool-schema validation now returns stable per-issue codes (for example `schema_branch_mismatch`) alongside worker-schema diagnostics.
 - Architect replies sent through `architect-worker-respond` now continue worker conversations as model-facing `user` turns instead of `system` turns, so worker question/answer follow-ups match native chat semantics.
 - Binding-exported artifact payloads remain available for inspection/debugging, but the normal worker-backed persistence path is now runtime-owned instead of model pass-through.
 - Spawned architect worker context now carries the canonical `artifact_coding_shared_draft_id` derived from the prepared binding session.

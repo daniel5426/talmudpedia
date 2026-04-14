@@ -36,8 +36,12 @@ Playground-specific trace inspection behavior for assistant responses, execute-p
 - Starting a new chat from the history controls clears the stale `threadId` from the URL.
 - Hidden agents are filtered out of the playground selector/bootstrap flow.
 - Deep-linking to a hidden playground agent redirects to the first visible agent when available.
+- Deep-linking to a missing/stale playground agent id redirects to the first visible agent instead of leaving the page broken.
 
 ## Last Run
+- Command: `pnpm -C frontend-reshet test -- --runTestsByPath src/__tests__/agent_playground/playground_page_trace.test.tsx --watch=false`
+- Date: 2026-04-14 Asia/Hebron
+- Result: Pass (1 suite, 8 tests)
 - Command: `pnpm --dir frontend-reshet test -- --runInBand src/__tests__/agent_thread_history/useAgentThreadHistory.test.tsx src/__tests__/agent_playground/useAgentRunController.test.tsx src/__tests__/assistant_response_ui/normalizer.test.ts`
 - Date: 2026-04-12 Asia/Hebron
 - Result: Pass (`25 passed`)

@@ -1,4 +1,4 @@
-Last Updated: 2026-03-17
+Last Updated: 2026-04-14
 
 # Apps Builder Sandbox Runtime Tests
 
@@ -23,10 +23,14 @@ Last Updated: 2026-03-17
 - The preview proxy retries transient `404/5xx/timeout` warmup failures for GET/HEAD preview assets so Sprite wake/service warmup does not immediately white-screen the iframe.
 - For Sprite-backed draft-dev sessions, the preview proxy resolves a local Sprite control-plane tunnel and proxies preview traffic through that tunnel instead of dialing the provider HTTPS hostname directly.
 - The preview proxy now refreshes stale Sprite preview metadata on connect/TLS failures and retries once against the refreshed upstream URL.
+- The preview proxy also refreshes stale preview metadata on upstream remote-protocol disconnects before failing the iframe request.
 - The preview proxy rewrites asset requests against the Sprite upstream path instead of the backend API route path.
 - The preview websocket proxy forwards auth headers, browser origin, user-agent, and requested subprotocols into the upstream websocket handshake.
 - Sprite heartbeat waits for preview readiness without restarting the services on every reopen.
 - Sprite heartbeat returns refreshed backend preview metadata, and the draft-dev runtime persists that refreshed metadata on session heartbeat.
+- Sprite heartbeat preserves `live_workspace_snapshot` metadata that was recorded after coding-run reconciliation, instead of wiping it on the next refresh.
+- Sprite heartbeat can repopulate a missing `live_workspace_snapshot` from the live workspace when an older session has already lost that metadata.
+- Restored live workspace snapshots use the same builder file policy as save/materialization paths, so invalid files like no-extension roots never enter builder state.
 - Stage-to-live promotion now mirrors files into the existing live workspace instead of deleting the live root and restarting preview services.
 - Sprite workspace snapshots filter generated/high-noise paths before serializing payloads back to the backend.
 - Sprite live sync preserves `node_modules/` across no-op file syncs, and start/sync can force a dependency repair plus Vite cache rebuild when preview readiness fails.
@@ -70,6 +74,18 @@ Last Updated: 2026-03-17
 - Command: `PYTHONPATH=. pytest -q backend/tests/apps_builder_sandbox_runtime/test_runtime_client_and_preview_proxy.py backend/tests/apps_builder_sandbox_runtime/test_draft_dev_runtime_lifecycle.py backend/tests/apps_builder_sandbox_runtime/test_sprite_backend_config.py`
 - Date: 2026-03-09 22:19 EET
 - Result: PASS (25 passed, 6 warnings)
+- Command: `cd backend && PYTHONPATH=. pytest -q tests/apps_builder_sandbox_runtime/test_draft_dev_runtime_lifecycle.py -k 'heartbeat_preserves_existing_preview_base_path_when_refresh_returns_root or heartbeat_preserves_live_workspace_snapshot_metadata'`
+- Date: 2026-04-14
+- Result: PASS
+- Command: `cd backend && PYTHONPATH=. python3 -m pytest -q tests/apps_builder_sandbox_runtime/test_draft_dev_runtime_lifecycle.py -k 'heartbeat_preserves_existing_preview_base_path_when_refresh_returns_root or heartbeat_preserves_live_workspace_snapshot_metadata or heartbeat_restores_missing_live_workspace_snapshot_from_runtime'`
+- Date: 2026-04-14
+- Result: PASS
+- Command: `cd backend && PYTHONPATH=. pytest -q tests/apps_builder_sandbox_runtime/test_draft_dev_runtime_lifecycle.py -k 'heartbeat_restores_missing_live_workspace_snapshot_from_runtime or heartbeat_restores_live_snapshot_with_shared_builder_file_policy'`
+- Date: 2026-04-14
+- Result: PASS
+- Command: `cd backend && PYTHONPATH=. python3 -m pytest -q tests/apps_builder_sandbox_runtime/test_runtime_client_and_preview_proxy.py -k 'refreshes_stale_upstream_target_after_connect_error or refreshes_stale_upstream_target_after_remote_protocol_error'`
+- Date: 2026-04-14
+- Result: PASS
 
 ## Known gaps or follow-ups
 - Add live websocket/HMR coverage against the Sprite preview path.

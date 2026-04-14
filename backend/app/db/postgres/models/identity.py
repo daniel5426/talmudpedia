@@ -121,6 +121,7 @@ class OrgInvite(Base):
     email = Column(String, nullable=False, index=True)
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False)
     role = Column(SQLEnum(OrgRole), default=OrgRole.member, nullable=False)
+    project_ids = Column(JSONB, default=list, nullable=False)
     token = Column(String, unique=True, nullable=False)
     expires_at = Column(DateTime(timezone=True), nullable=False)
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
@@ -131,4 +132,3 @@ class OrgInvite(Base):
     # Relationships
     tenant = relationship("Tenant")
     creator = relationship("User")
-

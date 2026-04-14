@@ -1,6 +1,6 @@
 # Architecture Tree (Curated)
 
-Last Updated: 2026-04-12
+Last Updated: 2026-04-13
 
 This file is a backend-only architecture map optimized for agent context efficiency.
 
@@ -89,6 +89,7 @@ backend/app/agent/execution/stream_contract_v2.py
 backend/app/agent/execution/tool_event_metadata.py
 backend/app/agent/execution/tool_error_details.py
 backend/app/agent/execution/tool_input_contracts.py
+backend/app/agent/execution/tool_invocation.py
 backend/app/agent/execution/types.py
 
 backend/app/agent/executors/
@@ -148,6 +149,7 @@ backend/app/services/model_runtime/interfaces.py
 backend/app/services/model_runtime/registry.py
 backend/app/services/model_runtime/adapters.py
 backend/app/services/model_runtime/types.py
+backend/app/services/control_plane/
 backend/app/services/run_invocation_service.py
 backend/app/services/resource_policy_service.py
 backend/app/services/resource_policy_quota_service.py

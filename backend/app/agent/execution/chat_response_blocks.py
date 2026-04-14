@@ -7,6 +7,12 @@ from typing import Any
 from app.agent.execution.adapter import StreamAdapter
 from app.agent.execution.stream_contract_v2 import normalize_filtered_event_to_v2
 from app.agent.execution.types import ExecutionMode
+from app.services.ui_blocks import (
+    UI_BLOCKS_OUTPUT_KIND,
+    UI_BLOCKS_RENDERER_KIND,
+    UI_BLOCKS_TOOL_SLUG,
+    validate_ui_blocks_bundle,
+)
 
 
 ChatRenderBlock = dict[str, Any]
@@ -49,7 +55,7 @@ def _is_provider_structured_tool_delta_text(value: Any) -> bool:
     return any(f"'type': '{item}'" in normalized for item in structured_types)
 
 
-def strip_provider_structured_tool_delta_text(value: str) -> str:
+def strip_provider_structured_tool_delta_text(value: str, *, preserve_edge_whitespace: bool = False) -> str:
     if not value:
         return ""
 
@@ -66,7 +72,8 @@ def strip_provider_structured_tool_delta_text(value: str) -> str:
     for pattern in patterns:
         next_value = pattern.sub("", next_value)
 
-    return re.sub(r"[ \t]{2,}", " ", next_value.replace("}{", "")).strip()
+    next_value = re.sub(r"[ \t]{2,}", " ", next_value.replace("}{", ""))
+    return next_value if preserve_edge_whitespace else next_value.strip()
 
 
 def _extract_structured_response_payload(value: Any) -> tuple[str, bool]:
@@ -221,6 +228,80 @@ def _tool_title(payload: dict[str, Any], tool_name: str) -> str:
     return tool_name or "Tool"
 
 
+def _is_ui_blocks_payload(payload: dict[str, Any], existing: ChatRenderBlock | None = None) -> bool:
+    renderer_kind = _to_text(payload.get("renderer_kind")).strip().lower()
+    tool_slug = _to_text(payload.get("tool_slug")).strip().lower()
+    output_kind = _to_text(payload.get("output_kind")).strip().lower()
+    if renderer_kind == UI_BLOCKS_RENDERER_KIND:
+        return True
+    if tool_slug == UI_BLOCKS_TOOL_SLUG:
+        return True
+    if output_kind == UI_BLOCKS_OUTPUT_KIND:
+        return True
+    if existing and existing.get("kind") == "ui_blocks":
+        return True
+    return False
+
+
+def _unwrap_ui_blocks_output(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    if value.get("kind") == UI_BLOCKS_OUTPUT_KIND and isinstance(value.get("bundle"), dict):
+        return value
+    for key in ("body", "result", "context", "output", "payload", "data"):
+        nested = value.get(key)
+        if isinstance(nested, dict):
+            unwrapped = _unwrap_ui_blocks_output(nested)
+            if unwrapped is not None:
+                return unwrapped
+    return None
+
+
+def _ui_blocks_bundle_from_payload(payload: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
+    output = _unwrap_ui_blocks_output(payload.get("output"))
+    if output is None:
+        return None, None
+    bundle = output.get("bundle")
+    if not isinstance(bundle, dict):
+        return None, "UI Blocks output is missing a bundle."
+    try:
+        return validate_ui_blocks_bundle(bundle), None
+    except Exception as exc:
+        return None, str(exc) or "Invalid UI Blocks bundle."
+
+
+def _create_ui_blocks_block(
+    *,
+    block_id: str,
+    run_id: str | None,
+    seq: int,
+    status: str,
+    ts: str | None = None,
+    bundle: dict[str, Any] | None = None,
+    contract_version: str | None = None,
+    error: str | None = None,
+    tool_call_id: str | None = None,
+) -> ChatRenderBlock:
+    block: ChatRenderBlock = {
+        "id": block_id,
+        "kind": "ui_blocks",
+        "runId": run_id,
+        "seq": seq,
+        "status": status,
+        "ts": ts,
+        "source": {"event": "tool.ui_blocks", "stage": "tool"},
+    }
+    if tool_call_id:
+        block["toolCallId"] = tool_call_id
+    if bundle is not None:
+        block["bundle"] = bundle
+    if contract_version:
+        block["contractVersion"] = contract_version
+    if error:
+        block["error"] = error
+    return block
+
+
 def apply_stream_v2_event_to_response_blocks(
     blocks: list[ChatRenderBlock],
     *,
@@ -236,7 +317,10 @@ def apply_stream_v2_event_to_response_blocks(
     diagnostics = diagnostics or []
 
     if event == "assistant.delta":
-        content = strip_provider_structured_tool_delta_text(_to_text(payload.get("content")))
+        content = strip_provider_structured_tool_delta_text(
+            _to_text(payload.get("content")),
+            preserve_edge_whitespace=True,
+        )
         if not content or _is_provider_structured_tool_delta_text(content):
             return blocks
         next_blocks = list(blocks)
@@ -264,6 +348,28 @@ def apply_stream_v2_event_to_response_blocks(
         tool_name = _to_text(payload.get("tool")).strip() or "tool"
         tool_call_id = _to_text(payload.get("span_id")).strip() or None
         block_id = tool_call_id or f"tool:{seq}:{tool_name}"
+        if _is_ui_blocks_payload(payload):
+            ui_block = _create_ui_blocks_block(
+                block_id=block_id,
+                run_id=run_id,
+                seq=seq,
+                status="running",
+                ts=ts,
+                tool_call_id=tool_call_id,
+            )
+            existing_index = next(
+                (
+                    idx
+                    for idx, item in enumerate(next_blocks)
+                    if item.get("id") == block_id and item.get("kind") == "ui_blocks"
+                ),
+                -1,
+            )
+            if existing_index >= 0:
+                next_blocks[existing_index] = ui_block
+                return next_blocks
+            next_blocks.append(ui_block)
+            return next_blocks
         tool_block = {
             "id": block_id,
             "kind": "tool_call",
@@ -299,9 +405,27 @@ def apply_stream_v2_event_to_response_blocks(
         next_blocks = _complete_streaming_assistant_blocks(blocks)
         tool_name = _to_text(payload.get("tool")).strip() or "tool"
         tool_call_id = _to_text(payload.get("span_id")).strip() or None
-        existing_index = next((idx for idx, item in enumerate(next_blocks) if item.get("kind") == "tool_call" and item.get("id") == (tool_call_id or "")), -1)
+        existing_index = next((idx for idx, item in enumerate(next_blocks) if item.get("id") == (tool_call_id or "")), -1)
         existing_tool = next_blocks[existing_index] if existing_index >= 0 else None
         status = "error" if event == "tool.failed" else "complete"
+        if _is_ui_blocks_payload(payload, existing_tool):
+            bundle, ui_error = _ui_blocks_bundle_from_payload(payload)
+            ui_block = _create_ui_blocks_block(
+                block_id=(existing_tool or {}).get("id") or tool_call_id or f"tool:{seq}:{tool_name}",
+                run_id=run_id,
+                seq=int((existing_tool or {}).get("seq") or seq),
+                status="error" if event == "tool.failed" or ui_error else "complete",
+                ts=ts,
+                bundle=bundle,
+                contract_version=_to_text((_unwrap_ui_blocks_output(payload.get("output")) or {}).get("contract_version")).strip() or None,
+                error=_to_text(payload.get("error")).strip() or ui_error,
+                tool_call_id=tool_call_id or _to_text((existing_tool or {}).get("toolCallId")).strip() or None,
+            )
+            if existing_index >= 0:
+                next_blocks[existing_index] = ui_block
+                return next_blocks
+            next_blocks.append(ui_block)
+            return next_blocks
         tool_block = {
             "id": (existing_tool or {}).get("id") or tool_call_id or f"tool:{seq}:{tool_name}",
             "kind": "tool_call",
@@ -409,6 +533,8 @@ def finalize_response_blocks(
     for block in blocks:
         next_block = dict(block)
         if next_block.get("kind") == "tool_call" and next_block.get("status") == "running":
+            next_block["status"] = "complete"
+        elif next_block.get("kind") == "ui_blocks" and next_block.get("status") == "running":
             next_block["status"] = "complete"
         elif next_block.get("kind") == "assistant_text" and next_block.get("status") in {"running", "streaming"}:
             next_block["status"] = "complete"

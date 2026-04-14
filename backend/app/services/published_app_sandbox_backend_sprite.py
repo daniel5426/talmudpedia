@@ -57,6 +57,10 @@ class SpriteSandboxBackend(PublishedAppSandboxBackend):
     backend_name = "sprite"
     is_remote = True
 
+    def __init__(self, config):
+        super().__init__(config)
+        self._opencode_clients_by_sandbox: dict[str, Any] = {}
+
     @staticmethod
     def _trace(event: str, **fields: Any) -> None:
         apps_builder_trace(
@@ -971,6 +975,7 @@ print(json.dumps({{
 
     async def stop_session(self, *, sandbox_id: str) -> Dict[str, Any]:
         sprite_name = str(sandbox_id or "").strip()
+        self._opencode_clients_by_sandbox.pop(sprite_name, None)
         await self._request("DELETE", f"/v1/sprites/{sprite_name}", json_payload={}, expect_json=False)
         return {
             "sandbox_id": sprite_name,
@@ -1203,16 +1208,20 @@ print(json.dumps({{
 
     async def write_file(self, *, sandbox_id: str, path: str, content: str) -> Dict[str, Any]:
         normalized = str(path or "").strip().lstrip("/")
-        encoded = base64.b64encode(str(content if isinstance(content, str) else str(content)).encode("utf-8")).decode("ascii")
-        await self._exec(
+        destination = f"{self._live_workspace_path()}/{normalized}"
+        write_script = "\n".join(
+            [
+                "import pathlib",
+                "import sys",
+                f"destination = pathlib.Path({json.dumps(destination)})",
+                "destination.parent.mkdir(parents=True, exist_ok=True)",
+                "destination.write_text(sys.stdin.read(), encoding='utf-8')",
+            ]
+        )
+        await self._exec_with_stdin(
             sprite_name=sandbox_id,
-            command=[
-                "bash",
-                "-lc",
-                f"mkdir -p {shlex.quote(os.path.dirname(f'{self._live_workspace_path()}/{normalized}') or self._live_workspace_path())} && "
-                f"python3 - <<'PY' > {shlex.quote(f'{self._live_workspace_path()}/{normalized}')}\n"
-                f"import base64; print(base64.b64decode({json.dumps(encoded)}).decode('utf-8'), end='')\nPY",
-            ],
+            command=["python3", "-c", write_script],
+            stdin_text=str(content if isinstance(content, str) else str(content)),
             timeout_seconds=30,
             max_output_bytes=4000,
         )
@@ -1444,14 +1453,22 @@ print(json.dumps({{
         _ = sandbox_id
         return self._live_workspace_path()
 
-    async def _build_opencode_client(self, *, sandbox_id: str):
+    async def _build_opencode_client(self, *, sandbox_id: str, force_refresh: bool = False):
         from app.services.opencode_server_client import OpenCodeServerClient, OpenCodeServerClientConfig
 
-        await self._ensure_opencode_service(sprite_name=sandbox_id)
+        cache_key = str(sandbox_id or "").strip()
+        if not cache_key:
+            raise PublishedAppSandboxBackendError("Sandbox id is required for Sprite OpenCode client.")
+        if not force_refresh:
+            cached = self._opencode_clients_by_sandbox.get(cache_key)
+            if cached is not None:
+                return cached
+
+        await self._ensure_opencode_service(sprite_name=cache_key)
         tunnel_base_url = await get_sprite_proxy_tunnel_manager().ensure_tunnel(
             api_base_url=self._api_base(),
             api_token=self._api_token(),
-            sprite_name=sandbox_id,
+            sprite_name=cache_key,
             remote_host="127.0.0.1",
             remote_port=self._opencode_port(),
         )
@@ -1468,6 +1485,7 @@ print(json.dumps({{
             )
         )
         client._api_mode = None
+        self._opencode_clients_by_sandbox[cache_key] = client
         return client
 
     async def start_opencode_run(

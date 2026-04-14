@@ -139,6 +139,50 @@ describe("runtime-sdk core", () => {
     ]);
   });
 
+  test("normalizes explicit ui_blocks response blocks", () => {
+    const normalized = normalizeRuntimeEvent({
+      version: "run-stream.v2",
+      event: "tool.completed",
+      payload: {
+        response_blocks: [
+          {
+            id: "ui-1",
+            kind: "ui_blocks",
+            seq: 2,
+            status: "complete",
+            toolCallId: "call-1",
+            contractVersion: "v1",
+            bundle: {
+              title: "Overview",
+              rows: [
+                {
+                  blocks: [
+                    {
+                      id: "kpi-1",
+                      kind: "kpi",
+                      title: "Users",
+                      value: "42",
+                      span: 12,
+                    },
+                  ],
+                },
+              ],
+            },
+          },
+        ],
+      },
+    });
+
+    expect(normalized.responseBlocks).toMatchObject([
+      {
+        id: "ui-1",
+        kind: "ui_blocks",
+        toolCallId: "call-1",
+        contractVersion: "v1",
+      },
+    ]);
+  });
+
   test("fetchRuntimeBootstrap sends preview auth via Authorization header only", async () => {
     const fetchImpl = jest.fn().mockResolvedValue({
       ok: true,

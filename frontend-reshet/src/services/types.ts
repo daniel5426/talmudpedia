@@ -93,9 +93,30 @@ export interface User {
   is_manageable?: boolean;
 }
 
-export interface AuthResponse {
-  access_token: string;
-  token_type: string;
+export interface OrganizationSummary {
+  id: string;
+  name: string;
+  slug: string;
+  status: string;
+}
+
+export interface ProjectSummary {
+  id: string;
+  organization_id: string;
+  name: string;
+  slug: string;
+  description?: string | null;
+  status: string;
+  is_default: boolean;
+}
+
+export interface AuthSessionResponse {
+  user: User;
+  active_organization: OrganizationSummary;
+  active_project: ProjectSummary;
+  organizations: OrganizationSummary[];
+  projects: ProjectSummary[];
+  effective_scopes: string[];
 }
 
 export interface AdminStats {

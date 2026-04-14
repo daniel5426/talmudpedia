@@ -25,7 +25,7 @@ from app.db.postgres.models.published_apps import (
 )
 from app.services.apps_builder_trace import apps_builder_trace
 from app.services.apps_builder_dependency_policy import validate_builder_dependency_policy
-from app.services.published_app_builder_snapshot_filter import filter_builder_snapshot_files
+from app.services.published_app_builder_snapshot_filter import filter_and_validate_builder_snapshot_files
 from app.services.published_app_bundle_storage import PublishedAppBundleStorage
 from app.services.published_app_draft_dev_runtime import PublishedAppDraftDevRuntimeService
 from app.services.published_app_templates import TemplateRuntimeContext, apply_runtime_bootstrap_overlay
@@ -317,7 +317,7 @@ class PublishedAppWorkspaceBuildService:
                 str(path): str(content if isinstance(content, str) else str(content))
                 for path, content in dict(snapshot.get("files") or {}).items()
             }
-            source_files = filter_builder_snapshot_files(raw_files)
+            source_files = filter_and_validate_builder_snapshot_files(raw_files)
             workspace_revision_token = str(snapshot.get("revision_token") or "").strip() or None
             dependency_hash = self.runtime_service._dependency_hash(source_files)
             build_files = apply_runtime_bootstrap_overlay(dict(source_files), runtime_context=runtime_context)

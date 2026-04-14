@@ -3,8 +3,6 @@
 import React, { Suspense } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useLayoutStore } from '@/lib/store/useLayoutStore';
-import { useAuthStore } from '@/lib/store/useAuthStore';
-import { authService } from '@/services';
 import { cn } from '@/lib/utils';
 import { ChatPane } from '@/components/layout/ChatPane';
 import { SourceListPane } from '@/components/layout/SourceListPane';
@@ -32,7 +30,6 @@ function LayoutShellContent({ children }: { children?: React.ReactNode }) {
   const setActiveSource = useLayoutStore((state) => state.setActiveSource);
   const isMobile = useIsMobile();
 
-  const { token, setAuth } = useAuthStore();
   const [lastActiveSource, setLastActiveSource] = React.useState<string | null>(null);
   const [isResizing, setIsResizing] = React.useState(false);
   const sourceViewerRef = React.useRef<HTMLDivElement>(null);
@@ -44,16 +41,6 @@ function LayoutShellContent({ children }: { children?: React.ReactNode }) {
   const chatController = useChatController();
   const { direction } = useDirection();
   const isChatRoute = pathname?.startsWith('/chat');
-
-  React.useEffect(() => {
-    if (token) {
-      authService.getProfile().then((userData) => {
-        setAuth(userData, token);
-      }).catch((err) => {
-        console.error("Failed to refresh user profile", err);
-      });
-    }
-  }, [token, setAuth]);
 
   const isUpdatingFromUrlRef = React.useRef(false);
   const lastUrlChatIdRef = React.useRef<string | null>(null);

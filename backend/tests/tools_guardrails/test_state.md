@@ -1,6 +1,6 @@
 # Tools Guardrails Tests
 
-Last Updated: 2026-03-19
+Last Updated: 2026-04-13
 
 ## Scope
 Covers tool control-plane guardrails and tenant-isolation behavior.
@@ -13,6 +13,8 @@ Covers tool control-plane guardrails and tenant-isolation behavior.
 ## Key scenarios covered
 - `POST /tools` rejects non-tenant scope requests.
 - `POST /tools` rejects direct `PUBLISHED` status creation.
+- `POST /tools` now defaults `execution.validation_mode` to `strict`.
+- `POST /tools` rejects removed `execution.strict_input_schema` in favor of `execution.validation_mode`.
 - `POST /tools` rejects direct `ARTIFACT` / `RAG_PIPELINE` creation because those tool types are domain-owned.
 - `PUT /tools/{id}` rejects direct publish attempts; `POST /tools/{id}/publish` remains valid.
 - Agent-bound exported tools reject registry-side update / publish / delete lifecycle actions, including when ownership is provided from persisted metadata rather than config-derived binding hints.
@@ -24,6 +26,9 @@ Covers tool control-plane guardrails and tenant-isolation behavior.
 - Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/builtin_tools_registry/test_builtin_registry_api.py backend/tests/tools_guardrails/test_tools_api_guardrails.py backend/tests/tool_bindings/test_domain_owned_tool_bindings.py backend/tests/tool_bindings/test_agent_tool_bindings.py`
 - Date/Time: 2026-03-19 14:36 EET
 - Result: pass (`22 passed`)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/tools_guardrails/test_tools_api_guardrails.py backend/tests/tools_guardrails/test_tool_tenant_scoping.py`
+- Date/Time: 2026-04-13 Asia/Hebron
+- Result: PASS (`12 passed, 9 warnings`)
 
 ## Known gaps / follow-ups
 - Add coverage for workload-principal publish/delete approval gates on `/tools` routes.

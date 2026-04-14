@@ -1,6 +1,7 @@
 
 import os
 import json
+import hashlib
 from pathlib import Path
 from datetime import datetime
 import uuid
@@ -38,6 +39,21 @@ from app.services.artifact_coding_agent_profile import ensure_artifact_coding_ag
 # Backward-compatible exports for tests and internal callers.
 _build_architect_graph_definition = build_architect_graph_definition
 _build_platform_domain_tool_schema = build_platform_domain_tool_schema
+
+DEFAULT_PLATFORM_ARCHITECT_MODEL_SYSTEM_KEY = "grok-4-1-fast-reasoning"
+
+
+def _is_postgres_session(db) -> bool:
+    bind = db.get_bind()
+    return str(getattr(getattr(bind, "dialect", None), "name", "") or "").lower() == "postgresql"
+
+
+async def _acquire_registry_seed_lock(db, *, scope: str = "tool_registry") -> None:
+    if not _is_postgres_session(db):
+        return
+    digest = hashlib.sha256(f"registry-seeding:{scope}".encode("utf-8")).digest()
+    key = int.from_bytes(digest[:8], "big") & 0x7FFFFFFFFFFFFFFF
+    await db.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": key})
 
 async def seed_global_models(db):
     """
@@ -155,19 +171,13 @@ async def _normalize_tool_status_values(db):
     used by the database. Safe for Postgres and SQLite.
     """
     labels = await _get_enum_labels(db, "toolstatus")
+    status_expr = "lower(status::text)" if _is_postgres_session(db) else "lower(status)"
     for old in ("draft", "published", "deprecated", "disabled"):
         new = _resolve_enum_value(labels, old)
-        try:
-            await db.execute(
-                text("UPDATE tool_registry SET status=:new WHERE lower(status::text)=:old"),
-                {"new": new, "old": old},
-            )
-        except Exception:
-            await db.execute(
-                text("UPDATE tool_registry SET status=:new WHERE lower(status)=:old"),
-                {"new": new, "old": old},
-            )
-    await db.commit()
+        await db.execute(
+            text(f"UPDATE tool_registry SET status=:new WHERE {status_expr}=:old"),
+            {"new": new, "old": old},
+        )
 
 
 async def _normalize_tool_impl_values(db):
@@ -175,6 +185,7 @@ async def _normalize_tool_impl_values(db):
     Align lowercase implementation_type values with uppercase ENUM literals.
     """
     labels = await _get_enum_labels(db, "toolimplementationtype")
+    impl_expr = "lower(implementation_type::text)" if _is_postgres_session(db) else "lower(implementation_type)"
     replacements = {
         "internal": "internal",
         "http": "http",
@@ -190,21 +201,15 @@ async def _normalize_tool_impl_values(db):
         new = _resolve_enum_value(labels, old)
         if old == "rag_retrieval":
             new = _resolve_enum_value(labels, preferred)
-        try:
-            await db.execute(
-                text("UPDATE tool_registry SET implementation_type=:new WHERE lower(implementation_type::text)=:old"),
-                {"new": new, "old": old},
-            )
-        except Exception:
-            await db.execute(
-                text("UPDATE tool_registry SET implementation_type=:new WHERE lower(implementation_type)=:old"),
-                {"new": new, "old": old},
-            )
-    await db.commit()
+        await db.execute(
+            text(f"UPDATE tool_registry SET implementation_type=:new WHERE {impl_expr}=:old"),
+            {"new": new, "old": old},
+        )
 
 
 async def seed_platform_sdk_tool(db):
     """Seed the Platform SDK system artifact and the global tool that binds to it."""
+    await _acquire_registry_seed_lock(db)
     await _normalize_tool_status_values(db)
     await _normalize_tool_impl_values(db)
 
@@ -392,6 +397,7 @@ async def seed_builtin_tool_templates(db):
     if not is_builtin_tools_v1_enabled():
         return []
 
+    await _acquire_registry_seed_lock(db)
     await _normalize_tool_status_values(db)
     await _normalize_tool_impl_values(db)
 
@@ -516,7 +522,7 @@ async def seed_platform_architect_domain_tools(db) -> dict[str, str]:
                 "is_pure": False,
                 "concurrency_group": "platform_sdk_local",
                 "max_concurrency": 4,
-                "strict_input_schema": True,
+                "validation_mode": "strict",
                 "allowed_actions": list(spec["actions"].keys()),
             },
         }
@@ -578,18 +584,23 @@ async def seed_platform_architect_domain_tools(db) -> dict[str, str]:
     return seeded
 
 
-async def seed_platform_architect_agent(db):
+async def ensure_platform_architect_agent(
+    db,
+    tenant_id,
+    *,
+    actor_user_id=None,
+):
     """
-    Seeds a tenant-scoped Platform Architect single-agent runtime (v1).
+    Ensure the canonical platform architect agent exists for a specific tenant/organization.
     """
+    await _acquire_registry_seed_lock(db)
     # Prevent enum mismatches when loading tool references
     await _normalize_tool_status_values(db)
     await _normalize_tool_impl_values(db)
 
-    tenant_result = await db.execute(select(Tenant).limit(1))
-    tenant = tenant_result.scalar_one_or_none()
-    if not tenant:
-        print("No tenant found; skipping Platform Architect agent seed.")
+    tenant = await db.get(Tenant, tenant_id)
+    if tenant is None:
+        print(f"Tenant {tenant_id} not found; skipping Platform Architect agent seed.")
         return None
 
     tool_ids = await seed_platform_architect_domain_tools(db)
@@ -597,24 +608,6 @@ async def seed_platform_architect_agent(db):
     if not all(tool_ids.get(slug) for slug in expected_slugs):
         print("Platform architect domain tools missing; skipping Platform Architect agent seed.")
         return None
-    worker_tool_ids = await ensure_platform_architect_worker_tools(
-        db,
-        tenant_id=tenant.id,
-    )
-
-    model_id = await _resolve_default_chat_model_id(db, tenant.id)
-    if not model_id:
-        print("No chat model available; skipping Platform Architect agent seed.")
-        return None
-
-    architect_tool_ids = [
-        *[tool_ids[slug] for slug in expected_slugs],
-        *worker_tool_ids,
-    ]
-    graph_definition = build_architect_graph_definition(
-        model_id=model_id,
-        tool_ids=architect_tool_ids,
-    )
 
     agent_columns = await _get_table_columns(db, "agents")
     minimal_agent_cols = {"id", "tenant_id", "name", "slug", "description", "graph_definition"}
@@ -648,6 +641,23 @@ async def seed_platform_architect_agent(db):
         "created_by",
     }
 
+    worker_tool_ids = await ensure_platform_architect_worker_tools(
+        db,
+        tenant_id=tenant.id,
+    )
+    model_id = await _resolve_platform_architect_model_id(db, tenant.id)
+    if not model_id:
+        print(f"No chat model available; skipping Platform Architect agent seed for tenant {tenant.id}.")
+        return None
+
+    architect_tool_ids = [
+        *[tool_ids[slug] for slug in expected_slugs],
+        *worker_tool_ids,
+    ]
+    graph_definition = build_architect_graph_definition(
+        model_id=model_id,
+        tool_ids=architect_tool_ids,
+    )
     use_orm = full_agent_cols.issubset(agent_columns)
     agent = None
     if use_orm:
@@ -676,6 +686,7 @@ async def seed_platform_architect_agent(db):
                 status=AgentStatus.published,
                 is_active=True,
                 is_public=False,
+                created_by=actor_user_id,
             )
             db.add(agent)
         else:
@@ -687,6 +698,8 @@ async def seed_platform_architect_agent(db):
             agent.status = AgentStatus.published
             agent.is_active = True
             agent.is_public = False
+            if actor_user_id is not None and getattr(agent, "created_by", None) is None:
+                agent.created_by = actor_user_id
 
         await db.commit()
         await ensure_platform_architect_worker_orchestration_policy(
@@ -698,7 +711,13 @@ async def seed_platform_architect_agent(db):
         return agent
 
     await db.rollback()
-    agent = await _seed_platform_architect_agent_legacy(db, tenant.id, graph_definition, architect_tool_ids, agent_columns)
+    agent = await _seed_platform_architect_agent_legacy(
+        db,
+        tenant.id,
+        graph_definition,
+        architect_tool_ids,
+        agent_columns,
+    )
     if agent is not None:
         await ensure_platform_architect_worker_orchestration_policy(
             db,
@@ -709,8 +728,20 @@ async def seed_platform_architect_agent(db):
     return agent
 
 
+async def seed_platform_architect_agent(db):
+    """
+    Backward-compatible explicit seeding helper for tests/internal callers.
+    """
+    tenant_result = await db.execute(select(Tenant).order_by(Tenant.created_at.asc()).limit(1))
+    tenant = tenant_result.scalar_one_or_none()
+    if tenant is None:
+        print("No tenant found; skipping Platform Architect agent seed.")
+        return None
+    return await ensure_platform_architect_agent(db, tenant.id)
+
+
 async def seed_artifact_coding_agent(db):
-    tenant_result = await db.execute(select(Tenant).limit(1))
+    tenant_result = await db.execute(select(Tenant).order_by(Tenant.created_at.asc()).limit(1))
     tenant = tenant_result.scalar_one_or_none()
     if not tenant:
         print("No tenant found; skipping Artifact Coding agent seed.")
@@ -751,6 +782,28 @@ async def _resolve_default_chat_model_id(db, tenant_id):
     res = await db.execute(fallback_stmt)
     model = res.scalars().first()
     return str(model.id) if model else None
+
+
+async def _resolve_platform_architect_model_id(db, tenant_id):
+    preferred_system_key = str(
+        os.getenv("PLATFORM_ARCHITECT_MODEL_SYSTEM_KEY") or DEFAULT_PLATFORM_ARCHITECT_MODEL_SYSTEM_KEY
+    ).strip() or DEFAULT_PLATFORM_ARCHITECT_MODEL_SYSTEM_KEY
+
+    preferred_stmt = (
+        select(ModelRegistry)
+        .where(
+            ModelRegistry.system_key == preferred_system_key,
+            ModelRegistry.capability_type == ModelCapabilityType.CHAT,
+            ModelRegistry.is_active == True,
+            or_(ModelRegistry.tenant_id == tenant_id, ModelRegistry.tenant_id == None),
+        )
+        .order_by(ModelRegistry.tenant_id.is_not(None).desc(), ModelRegistry.updated_at.desc())
+    )
+    preferred = (await db.execute(preferred_stmt)).scalars().first()
+    if preferred is not None:
+        return str(preferred.id)
+
+    return await _resolve_default_chat_model_id(db, tenant_id)
 
 
 async def _get_table_columns(db, table_name: str) -> set:

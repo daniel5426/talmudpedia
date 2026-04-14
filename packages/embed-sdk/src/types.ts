@@ -12,6 +12,18 @@ export type EmbeddedAgentResponseBlock =
     }
   | {
       id: string;
+      kind: "ui_blocks";
+      runId?: string | null;
+      seq: number;
+      status: string;
+      ts?: string | null;
+      toolCallId?: string | null;
+      contractVersion?: string | null;
+      bundle?: Record<string, unknown>;
+      error?: string | null;
+    }
+  | {
+      id: string;
       kind: "tool_call";
       runId?: string | null;
       seq: number;

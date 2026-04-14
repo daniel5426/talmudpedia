@@ -55,6 +55,7 @@ from app.services.runtime_attachment_service import RuntimeAttachmentOwner, Runt
 from app.services.context_window_service import ContextWindowService
 from app.services.model_accounting import usage_payload_from_run
 from app.services.orchestration_kernel_service import OrchestrationKernelService
+from app.services.organization_bootstrap_service import OrganizationBootstrapService
 router = APIRouter(prefix="/agents", tags=["agents"])
 
 
@@ -129,6 +130,7 @@ async def get_agent_context(
     return {
         "user": current_user,
         "tenant_id": resolved_tenant,
+        "project_id": _optional_uuid(context.get("project_id")),
         "auth_token": token,
         "is_service": False,
         "scopes": context.get("scopes", []),
@@ -445,6 +447,20 @@ async def list_agents(
 ):
     """List all agents."""
     tenant_id = context["tenant_id"]
+    project_id = context.get("project_id")
+    bootstrap = OrganizationBootstrapService(db)
+    did_backfill = await bootstrap.ensure_organization_default_agents_if_missing(
+        organization_id=tenant_id,
+        actor_user_id=getattr(context.get("user"), "id", None),
+    )
+    if project_id is not None:
+        did_backfill = await bootstrap.ensure_project_default_agents_if_missing(
+            organization_id=tenant_id,
+            project_id=project_id,
+            actor_user_id=getattr(context.get("user"), "id", None),
+        ) or did_backfill
+    if did_backfill or db.new or db.dirty:
+        await db.commit()
     service = AgentService(db=db, tenant_id=tenant_id)
     
     agents, total = await service.list_agents(status=status, skip=skip, limit=limit, compact=compact)

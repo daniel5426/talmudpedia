@@ -1118,12 +1118,11 @@ export function ChatPane({ controller, chatId, noHeader = false }: ChatPaneProps
   // Construct WebSocket URL
   const backendUrl = process.env.NEXT_PUBLIC_API_URL || "";
   const wsBackendUrl = backendUrl.replace(/^http/, 'ws');
-  const token = useAuthStore((state) => state.token);
   // API path in backend/main.py is mounted at /api/voice/session (via include_router prefix=/api/voice)
   // Wait, in main.py: app.include_router(voice_ws.router, prefix="/api/voice", tags=["voice"])
   // And in voice_ws.py: @router.websocket("/session")
   // So the full path is /api/voice/session
-  const voiceUrl = `${wsBackendUrl}/api/voice/session?chat_id=${effectiveChatId || ''}${token ? `&token=${encodeURIComponent(token)}` : ""}`;
+  const voiceUrl = `${wsBackendUrl}/api/voice/session?chat_id=${effectiveChatId || ''}`;
 
   const { upsertLiveVoiceMessage } = chatController;
 

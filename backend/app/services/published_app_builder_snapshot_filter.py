@@ -4,8 +4,49 @@ from pathlib import PurePosixPath
 from typing import Mapping
 
 try:
-    from app.api.routers.published_apps_admin_shared import BUILDER_BLOCKED_DIR_PREFIXES
+    from app.api.routers.published_apps_admin_shared import (
+        BUILDER_ALLOWED_DIR_ROOTS,
+        BUILDER_ALLOWED_EXTENSIONS,
+        BUILDER_ALLOWED_ROOT_FILES,
+        BUILDER_ALLOWED_ROOT_GLOBS,
+        BUILDER_BLOCKED_DIR_PREFIXES,
+    )
 except Exception:
+    BUILDER_ALLOWED_DIR_ROOTS = ()
+    BUILDER_ALLOWED_EXTENSIONS = (
+        ".css",
+        ".html",
+        ".js",
+        ".json",
+        ".jsx",
+        ".md",
+        ".mdx",
+        ".mjs",
+        ".mts",
+        ".png",
+        ".svg",
+        ".ts",
+        ".tsx",
+        ".txt",
+        ".webp",
+        ".yaml",
+        ".yml",
+    )
+    BUILDER_ALLOWED_ROOT_FILES = (
+        "package.json",
+        "package-lock.json",
+        "pnpm-lock.yaml",
+        "tsconfig.json",
+        "vite.config.ts",
+        "vite.config.js",
+        "postcss.config.js",
+        "postcss.config.cjs",
+        "tailwind.config.js",
+        "tailwind.config.ts",
+        "components.json",
+        ".env.example",
+    )
+    BUILDER_ALLOWED_ROOT_GLOBS = ()
     BUILDER_BLOCKED_DIR_PREFIXES = (
         "node_modules/",
         ".talmudpedia/",
@@ -92,3 +133,44 @@ def filter_builder_snapshot_files(files: Mapping[str, object]) -> dict[str, str]
             continue
         filtered[normalized_path] = raw_content if isinstance(raw_content, str) else str(raw_content)
     return filtered
+
+
+def is_builder_snapshot_allowed_path(path: str) -> bool:
+    normalized_path = normalize_builder_snapshot_path(path)
+    if not normalized_path:
+        return False
+    lowered = normalized_path.lower()
+    segments = [segment for segment in lowered.split("/") if segment]
+    if "node_modules" in segments:
+        return False
+    if lowered.startswith(".opencode/.bun/") or lowered == ".opencode/.bun":
+        return False
+    blocked_prefix = next(
+        (
+            prefix
+            for prefix in BUILDER_BLOCKED_DIR_PREFIXES
+            if lowered == prefix.rstrip("/") or lowered.startswith(prefix)
+        ),
+        None,
+    )
+    if blocked_prefix:
+        return False
+    if BUILDER_ALLOWED_DIR_ROOTS:
+        in_allowed_dir = any(normalized_path.startswith(root) for root in BUILDER_ALLOWED_DIR_ROOTS)
+        if not in_allowed_dir:
+            is_root_file = "/" not in normalized_path
+            matches_root_file = normalized_path in BUILDER_ALLOWED_ROOT_FILES
+            matches_root_glob = any(PurePosixPath(normalized_path).match(pattern) for pattern in BUILDER_ALLOWED_ROOT_GLOBS)
+            if not (is_root_file and (matches_root_file or matches_root_glob)):
+                return False
+    suffix = PurePosixPath(normalized_path).suffix.lower()
+    return suffix in BUILDER_ALLOWED_EXTENSIONS
+
+
+def filter_and_validate_builder_snapshot_files(files: Mapping[str, object]) -> dict[str, str]:
+    filtered = filter_builder_snapshot_files(files)
+    return {
+        path: content
+        for path, content in filtered.items()
+        if is_builder_snapshot_allowed_path(path)
+    }

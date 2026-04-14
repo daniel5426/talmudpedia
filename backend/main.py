@@ -925,8 +925,6 @@ async def lifespan(app: FastAPI):
         seed_global_models,
         seed_platform_sdk_tool,
         seed_builtin_tool_templates,
-        seed_platform_architect_agent,
-        seed_artifact_coding_agent,
     )
     seed_timeout_seconds = float(os.getenv("STARTUP_SEED_TIMEOUT_SECONDS", "8"))
 
@@ -954,8 +952,6 @@ async def lifespan(app: FastAPI):
         await _safe_seed("global model registry bootstrap", seed_global_models, db)
         await _safe_seed("platform sdk tool bootstrap", seed_platform_sdk_tool, db)
         await _safe_seed("builtin tool templates bootstrap", seed_builtin_tool_templates, db)
-        await _safe_seed("platform architect bootstrap", seed_platform_architect_agent, db)
-        await _safe_seed("artifact coding agent bootstrap", seed_artifact_coding_agent, db)
     
     # Start LiveKit worker in separate process if credentials are configured
     # worker_process = None
@@ -1082,6 +1078,7 @@ from app.api.routers import published_apps_public as published_apps_public_route
 from app.api.routers import published_apps_host_runtime as published_apps_host_runtime_router
 from app.api.routers import published_apps_builder_preview_proxy as published_apps_builder_preview_proxy_router
 from app.api.routers import sandbox_controller_dev_shim as sandbox_controller_dev_shim_router
+from app.api.routers import organizations as organizations_router
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
 app.include_router(agents_router)
 app.include_router(agent_tool_exports_router.router)
@@ -1115,6 +1112,7 @@ app.include_router(models_router.router, tags=["models"])
 app.include_router(prompts_router.router, tags=["prompts"])
 app.include_router(tools_router.router, tags=["tools"])
 app.include_router(mcp_router.router)
+app.include_router(organizations_router.router)
 app.include_router(org_units_router.router, prefix="/api", tags=["org-units"])
 app.include_router(rbac_router.router, prefix="/api", tags=["rbac"])
 app.include_router(audit_router.router, prefix="/api", tags=["audit"])

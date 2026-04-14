@@ -8,6 +8,7 @@ from app.services.apps_builder_dependency_policy import validate_builder_depende
 from app.services.published_app_builder_snapshot_filter import (
     BUILDER_SNAPSHOT_IGNORED_FILE_NAMES,
     BUILDER_SNAPSHOT_IGNORED_SUFFIXES,
+    filter_and_validate_builder_snapshot_files,
     filter_builder_snapshot_files,
     is_builder_snapshot_artifact_path,
     normalize_builder_snapshot_path,
@@ -90,15 +91,7 @@ def _is_builder_snapshot_artifact_path(path: str) -> bool:
 
 
 def _filter_builder_snapshot_files(files: Dict[str, object]) -> Dict[str, str]:
-    filtered = filter_builder_snapshot_files(files)
-    validated: Dict[str, str] = {}
-    for normalized_path, content in filtered.items():
-        try:
-            _assert_builder_path_allowed(normalized_path, field="files")
-        except HTTPException:
-            continue
-        validated[normalized_path] = content
-    return validated
+    return filter_and_validate_builder_snapshot_files(files)
 
 
 def _resolve_local_project_import(import_path: str, importer_path: str, files: Dict[str, str]) -> Optional[str]:

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import {
   ArrowLeft,
   Camera,
@@ -36,13 +36,8 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { Command, CommandEmpty, CommandGroup, CommandItem, CommandList } from "@/components/ui/command";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useSidebar } from "@/components/ui/sidebar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
@@ -91,19 +86,206 @@ type WorkspaceProps = {
 };
 
 type ConfigSection = "overview" | "users" | "domains" | "code";
+type WorkspaceSource = "live_session" | "durable_revision" | "materialized_run";
 
-/** Extract route paths from app source files by matching common React Router patterns. */
+type BuilderWorkspaceState = {
+  files: Record<string, string>;
+  entryFile: string;
+  selectedFile: string | null;
+  revisionId: string | null;
+  workspaceRevisionToken: string | null;
+  workspaceSource: WorkspaceSource;
+  dirty: boolean;
+  conflict: boolean;
+  notice: string | null;
+};
+
+type BuilderWorkspaceHydrationPayload = {
+  files: Record<string, string>;
+  entryFile: string;
+  revisionId?: string | null;
+  workspaceRevisionToken?: string | null;
+  workspaceSource: WorkspaceSource;
+  notice?: string | null;
+  conflict?: boolean;
+  preserveSelection?: boolean;
+};
+
+type BuilderWorkspaceAction =
+  | { type: "reset" }
+  | { type: "hydrate"; payload: BuilderWorkspaceHydrationPayload }
+  | { type: "update_file"; path: string; content: string }
+  | { type: "delete_file"; path: string }
+  | { type: "select_file"; path: string | null }
+  | { type: "clear_notice" };
+
+const DEFAULT_ENTRY_FILE = "src/main.tsx";
+
+function firstWorkspaceFile(files: Record<string, string>): string | null {
+  return Object.keys(files).sort()[0] || null;
+}
+
+function resolveWorkspaceSelection(
+  files: Record<string, string>,
+  nextSelected: string | null | undefined,
+  fallbackSelected: string | null | undefined,
+): string | null {
+  const primary = String(nextSelected || "").trim();
+  if (primary && files[primary] !== undefined) {
+    return primary;
+  }
+  const fallback = String(fallbackSelected || "").trim();
+  if (fallback && files[fallback] !== undefined) {
+    return fallback;
+  }
+  return firstWorkspaceFile(files);
+}
+
+function createEmptyWorkspaceState(): BuilderWorkspaceState {
+  return {
+    files: {},
+    entryFile: DEFAULT_ENTRY_FILE,
+    selectedFile: null,
+    revisionId: null,
+    workspaceRevisionToken: null,
+    workspaceSource: "durable_revision",
+    dirty: false,
+    conflict: false,
+    notice: null,
+  };
+}
+
+function builderWorkspaceReducer(state: BuilderWorkspaceState, action: BuilderWorkspaceAction): BuilderWorkspaceState {
+  switch (action.type) {
+    case "reset":
+      return createEmptyWorkspaceState();
+    case "hydrate": {
+      const nextFiles = filterAppsBuilderFiles(action.payload.files || {});
+      const nextEntryFile = String(action.payload.entryFile || DEFAULT_ENTRY_FILE).trim() || DEFAULT_ENTRY_FILE;
+      return {
+        files: nextFiles,
+        entryFile: nextEntryFile,
+        selectedFile: action.payload.preserveSelection
+          ? resolveWorkspaceSelection(nextFiles, state.selectedFile, state.selectedFile)
+          : resolveWorkspaceSelection(nextFiles, null, null),
+        revisionId: String(action.payload.revisionId || "").trim() || null,
+        workspaceRevisionToken: String(action.payload.workspaceRevisionToken || "").trim() || null,
+        workspaceSource: action.payload.workspaceSource,
+        dirty: false,
+        conflict: Boolean(action.payload.conflict),
+        notice: action.payload.notice || null,
+      };
+    }
+    case "update_file": {
+      const nextFiles = {
+        ...state.files,
+        [action.path]: action.content,
+      };
+      return {
+        ...state,
+        files: nextFiles,
+        selectedFile: resolveWorkspaceSelection(nextFiles, action.path, state.selectedFile),
+        dirty: true,
+        conflict: false,
+        notice: null,
+      };
+    }
+    case "delete_file": {
+      const nextFiles = { ...state.files };
+      delete nextFiles[action.path];
+      return {
+        ...state,
+        files: nextFiles,
+        selectedFile: resolveWorkspaceSelection(nextFiles, null, state.selectedFile === action.path ? null : state.selectedFile),
+        dirty: true,
+        conflict: false,
+        notice: null,
+      };
+    }
+    case "select_file":
+      return {
+        ...state,
+        selectedFile: action.path,
+      };
+    case "clear_notice":
+      return {
+        ...state,
+        notice: null,
+        conflict: false,
+      };
+    default:
+      return state;
+  }
+}
+
+function normalizeRoutePath(route: string): string | null {
+  const trimmed = String(route || "").trim();
+  if (!trimmed || trimmed.includes("${")) return null;
+  const [pathname] = trimmed.split(/[?#]/);
+  if (!pathname) return null;
+  const normalized = pathname.startsWith("/") ? pathname : `/${pathname}`;
+  const compact = normalized.replace(/\/{2,}/g, "/");
+  if (compact !== "/" && compact.endsWith("/")) {
+    return compact.slice(0, -1);
+  }
+  return compact || "/";
+}
+
+function isAssetLikeRoute(route: string): boolean {
+  if (!route || route === "/") return false;
+  const lastSegment = route.split("/").filter(Boolean).pop() || "";
+  return /\.[a-z0-9]{2,8}$/i.test(lastSegment);
+}
+
+function routeFromFilePath(filePath: string): string | null {
+  const normalized = filePath.replace(/\\/g, "/");
+  const appMatch = normalized.match(/(?:^|\/)(?:src\/)?app\/(.+)\/page\.(?:tsx|ts|jsx|js|mdx)$/);
+  if (appMatch) {
+    const segments = appMatch[1]
+      .split("/")
+      .filter(Boolean)
+      .filter((segment) => !segment.startsWith("(") && !segment.startsWith("@"));
+    if (segments.some((segment) => segment.startsWith("[") || segment.startsWith(":"))) {
+      return null;
+    }
+    return normalizeRoutePath(`/${segments.join("/")}`);
+  }
+
+  const pagesMatch = normalized.match(/(?:^|\/)(?:src\/)?pages\/(.+)\.(?:tsx|ts|jsx|js|mdx)$/);
+  if (pagesMatch) {
+    const relativePath = pagesMatch[1].replace(/\/index$/, "");
+    if (!relativePath || relativePath === "index") {
+      return "/";
+    }
+    if (relativePath.startsWith("api/")) {
+      return null;
+    }
+    if (relativePath.split("/").some((segment) => segment.startsWith("[") || segment.startsWith(":"))) {
+      return null;
+    }
+    return normalizeRoutePath(`/${relativePath}`);
+  }
+
+  return null;
+}
+
+/** Extract route paths from app source files by matching router usage and file-based routes. */
 function extractRoutesFromFiles(files: Record<string, string>): string[] {
   const routes = new Set<string>();
   routes.add("/");
 
-  for (const content of Object.values(files)) {
+  for (const [filePath, content] of Object.entries(files)) {
+    const fileRoute = routeFromFilePath(filePath);
+    if (fileRoute && !isAssetLikeRoute(fileRoute)) {
+      routes.add(fileRoute);
+    }
+
     // Match <Route path="/something" ... />
     const jsxRouteRe = /path\s*[=:]\s*["'`](\/[^"'`]*)["'`]/g;
     let match: RegExpExecArray | null;
     while ((match = jsxRouteRe.exec(content)) !== null) {
-      const route = match[1].split(/[?#]/)[0]; // strip query/hash
-      if (route && !route.includes("${") && !route.includes(":")) {
+      const route = normalizeRoutePath(match[1]);
+      if (route && !route.includes(":") && !isAssetLikeRoute(route)) {
         routes.add(route);
       }
     }
@@ -111,17 +293,17 @@ function extractRoutesFromFiles(files: Record<string, string>): string[] {
     // Match navigate("/something")
     const navigateRe = /navigate\(\s*["'`](\/[^"'`]*)["'`]/g;
     while ((match = navigateRe.exec(content)) !== null) {
-      const route = match[1].split(/[?#]/)[0];
-      if (route && !route.includes("${") && !route.includes(":")) {
+      const route = normalizeRoutePath(match[1]);
+      if (route && !route.includes(":") && !isAssetLikeRoute(route)) {
         routes.add(route);
       }
     }
 
-    // Match to="/something" (Link components)
-    const linkToRe = /to\s*=\s*["'`](\/[^"'`]*)["'`]/g;
+    // Match href="/something", to="/something", pathname: "/something"
+    const linkToRe = /(?:href|to|pathname)\s*[:=]\s*["'`](\/[^"'`]*)["'`]/g;
     while ((match = linkToRe.exec(content)) !== null) {
-      const route = match[1].split(/[?#]/)[0];
-      if (route && !route.includes("${") && !route.includes(":")) {
+      const route = normalizeRoutePath(match[1]);
+      if (route && !route.includes(":") && !isAssetLikeRoute(route)) {
         routes.add(route);
       }
     }
@@ -144,20 +326,19 @@ function buildDraftDevSyncFingerprint(entry: string, nextFiles: Record<string, s
 function buildPreviewFrameUrl(baseUrl: string, route: string, reloadToken: number): string {
   try {
     const parsed = new URL(baseUrl);
-    if (route !== "/") {
-      const basePath = parsed.pathname.endsWith("/") ? parsed.pathname.slice(0, -1) : parsed.pathname;
-      parsed.pathname = `${basePath}${route}`;
-    }
+    parsed.searchParams.set("preview_route", normalizeRoutePath(route) || "/");
     if (reloadToken > 0) {
       parsed.searchParams.set("__reload", String(reloadToken));
+    } else {
+      parsed.searchParams.delete("__reload");
     }
     return parsed.toString();
   } catch {
-    const normalizedRoute = route === "/" ? "" : route;
-    const normalizedBase = route === "/" ? baseUrl : baseUrl.replace(/\/+$/, "");
+    const normalizedBase = baseUrl;
     const separator = normalizedBase.includes("?") ? "&" : "?";
-    const suffix = reloadToken > 0 ? `${separator}__reload=${reloadToken}` : "";
-    return `${normalizedBase}${normalizedRoute}${suffix}`;
+    const previewRoute = encodeURIComponent(normalizeRoutePath(route) || "/");
+    const reloadSuffix = reloadToken > 0 ? `&__reload=${reloadToken}` : "";
+    return `${normalizedBase}${separator}preview_route=${previewRoute}${reloadSuffix}`;
   }
 }
 
@@ -174,17 +355,43 @@ function appendRuntimeTokenToUrl(url: string, token?: string | null): string {
   }
 }
 
+function extractLiveWorkspaceSnapshot(session?: DraftDevSessionResponse | null): PublishedAppRevision | null {
+  const snapshot = session?.live_workspace_snapshot;
+  if (!snapshot || !snapshot.files || typeof snapshot.files !== "object") {
+    return null;
+  }
+  return {
+    id: String(snapshot.revision_id || session?.revision_id || ""),
+    published_app_id: String(session?.app_id || ""),
+    kind: "draft",
+    template_key: "classic-chat",
+    entry_file: String(snapshot.entry_file || "src/main.tsx"),
+    files: Object.fromEntries(
+      Object.entries(snapshot.files).map(([path, content]) => [String(path), String(content ?? "")]),
+    ),
+    created_at: String(snapshot.updated_at || new Date().toISOString()),
+  };
+}
+
 export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
   const { setOpen } = useSidebar();
   const [state, setState] = useState<BuilderStateResponse | null>(null);
   const [activeTab, setActiveTab] = useState<"preview" | "config">("preview");
   const [configSection, setConfigSection] = useState<ConfigSection>("overview");
   const [lastNonCodeConfigSection, setLastNonCodeConfigSection] = useState<Exclude<ConfigSection, "code">>("overview");
-  const [files, setFiles] = useState<Record<string, string>>({});
-  const [entryFile, setEntryFile] = useState("src/main.tsx");
-  const [selectedFile, setSelectedFile] = useState<string | null>(null);
+  const [workspaceState, dispatchWorkspace] = useReducer(builderWorkspaceReducer, undefined, createEmptyWorkspaceState);
+  const {
+    files,
+    entryFile,
+    selectedFile,
+    revisionId: currentRevisionId,
+    workspaceRevisionToken,
+    workspaceSource,
+    dirty: hasUnsavedManualCodeChanges,
+    conflict: workspaceConflict,
+    notice: workspaceNotice,
+  } = workspaceState;
   const [selectedVersionCodeFile, setSelectedVersionCodeFile] = useState<string | null>(null);
-  const [currentRevisionId, setCurrentRevisionId] = useState<string | null>(null);
   const [isInitialLoading, setIsInitialLoading] = useState(true);
   const [isAuthTemplatesLoading, setIsAuthTemplatesLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -194,6 +401,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
   const [availableAgents, setAvailableAgents] = useState<Agent[]>([]);
   const [users, setUsers] = useState<PublishedAppUser[]>([]);
   const [domains, setDomains] = useState<PublishedAppDomain[]>([]);
+  const draftDevSession = state?.draft_dev ?? null;
   const [hasLoadedUsers, setHasLoadedUsers] = useState(false);
   const [hasLoadedDomains, setHasLoadedDomains] = useState(false);
   const [isUsersLoading, setIsUsersLoading] = useState(false);
@@ -203,8 +411,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
   const [domainNotesInput, setDomainNotesInput] = useState("");
   const [pendingUserUpdateId, setPendingUserUpdateId] = useState<string | null>(null);
   const [pendingDomainDeleteId, setPendingDomainDeleteId] = useState<string | null>(null);
-  const [hasUnsavedManualCodeChanges, setHasUnsavedManualCodeChanges] = useState(false);
-  const hasActiveCodingRunLock = Boolean(state?.draft_dev?.has_active_coding_runs);
+  const hasActiveCodingRunLock = Boolean(draftDevSession?.has_active_coding_runs);
   const [postRunHydrationPending, setPostRunHydrationPending] = useState(false);
   const saveBlockedByBackendLock = hasActiveCodingRunLock || postRunHydrationPending;
   const [isOpeningApp, setIsOpeningApp] = useState(false);
@@ -212,6 +419,8 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
   const [exportOptions, setExportOptions] = useState<PublishedAppExportOptions | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [previewRoute, setPreviewRoute] = useState("/");
+  const [previewRouteInput, setPreviewRouteInput] = useState("/");
+  const [isPreviewRoutePickerOpen, setIsPreviewRoutePickerOpen] = useState(false);
   const [previewReloadToken, setPreviewReloadToken] = useState(0);
   const [previewMode, setPreviewMode] = useState<"preview" | "version_code">("preview");
   const [previewViewport, setPreviewViewport] = useState<"desktop" | "mobile">("desktop");
@@ -229,8 +438,10 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     setHasLoadedUsers(false);
     setHasLoadedDomains(false);
     setPreviewRoute("/");
+    setPreviewRouteInput("/");
     setPreviewReloadToken(0);
     setPostRunHydrationPending(false);
+    dispatchWorkspace({ type: "reset" });
   }, [appId]);
 
   const syncCurrentRevisionFromDraftDevSession = useCallback((revisionId: string) => {
@@ -239,7 +450,17 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     }
     const normalizedRevisionId = revisionId.trim();
     if (!normalizedRevisionId) return;
-    setCurrentRevisionId(normalizedRevisionId);
+    dispatchWorkspace({
+      type: "hydrate",
+      payload: {
+        files,
+        entryFile,
+        revisionId: normalizedRevisionId,
+        workspaceRevisionToken,
+        workspaceSource,
+        preserveSelection: true,
+      },
+    });
     setState((prev) => {
       if (!prev) return prev;
       if (prev.app.current_draft_revision_id === normalizedRevisionId) {
@@ -253,7 +474,19 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
         },
       };
     });
-  }, [currentRevisionId]);
+  }, [currentRevisionId, entryFile, files, workspaceRevisionToken, workspaceSource]);
+
+  const hydrateWorkspaceFromRevision = useCallback((revision?: PublishedAppRevision | null) => {
+    dispatchWorkspace({
+      type: "hydrate",
+      payload: {
+        files: filterAppsBuilderFiles(revision?.files || {}),
+        entryFile: revision?.entry_file || DEFAULT_ENTRY_FILE,
+        revisionId: revision?.id || null,
+        workspaceSource: "durable_revision",
+      },
+    });
+  }, []);
 
   const applyDraftDevSessionToBuilderState = useCallback((session: DraftDevSessionResponse | null) => {
     setState((prev) => {
@@ -263,7 +496,30 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
         draft_dev: session,
       };
     });
-  }, []);
+    const liveSnapshotRevision = extractLiveWorkspaceSnapshot(session);
+    if (!liveSnapshotRevision) {
+      return;
+    }
+    const nextFiles = filterAppsBuilderFiles(liveSnapshotRevision.files || {});
+    const nextEntry = liveSnapshotRevision.entry_file || DEFAULT_ENTRY_FILE;
+    const nextFingerprint = buildDraftDevSyncFingerprint(nextEntry, nextFiles);
+    const currentFingerprint = buildDraftDevSyncFingerprint(entryFile, files);
+    const replacedDirtyLocalState = workspaceState.dirty && nextFingerprint !== currentFingerprint;
+    dispatchWorkspace({
+      type: "hydrate",
+      payload: {
+        files: nextFiles,
+        entryFile: nextEntry,
+        revisionId: liveSnapshotRevision.id || null,
+        workspaceRevisionToken: session?.workspace_revision_token || session?.live_workspace_snapshot?.revision_token || null,
+        workspaceSource: postRunHydrationPending ? "materialized_run" : "live_session",
+        preserveSelection: true,
+        notice: replacedDirtyLocalState ? "Workspace refreshed from live sandbox changes." : null,
+        conflict: replacedDirtyLocalState,
+      },
+    });
+    lastSavedCodeFingerprintRef.current = nextFingerprint;
+  }, [entryFile, files, postRunHydrationPending, workspaceState.dirty]);
 
   const {
     phase: sandboxPhase,
@@ -293,6 +549,13 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
   const sendBlockedReason = sandboxActionDisabledReason || "Waiting for preview sandbox...";
 
   const appRoutes = useMemo(() => extractRoutesFromFiles(files), [files]);
+  const filteredAppRoutes = useMemo(() => {
+    const query = previewRouteInput.trim().toLowerCase();
+    if (!query) {
+      return appRoutes;
+    }
+    return appRoutes.filter((route) => route.toLowerCase().includes(query));
+  }, [appRoutes, previewRouteInput]);
   const orderedTemplates = useMemo(() => sortTemplates(state?.templates || []), [state?.templates]);
   const platformDomain = useMemo(
     () => `${state?.app.slug || "app"}.${process.env.NEXT_PUBLIC_APPS_BASE_DOMAIN || "apps.localhost"}`,
@@ -305,23 +568,19 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     return buildPreviewFrameUrl(previewAssetUrl, previewRoute, previewReloadToken);
   }, [previewAssetUrl, previewReloadToken, previewRoute]);
   const navigatePreview = useCallback((route: string) => {
-    setPreviewRoute(route);
+    const normalizedRoute = normalizeRoutePath(route) || "/";
+    setPreviewRoute(normalizedRoute);
+    setPreviewRouteInput(normalizedRoute);
+    setIsPreviewRoutePickerOpen(false);
   }, []);
 
   const reloadPreview = useCallback(() => {
     setPreviewReloadToken((current) => current + 1);
   }, []);
 
-  const hydrateFromRevision = useCallback((revision?: PublishedAppRevision | null) => {
-    const nextFiles = filterAppsBuilderFiles(revision?.files || {});
-    const nextEntry = revision?.entry_file || "src/main.tsx";
-    setFiles(nextFiles);
-    setEntryFile(nextEntry);
-    setSelectedFile(Object.keys(nextFiles).sort()[0] || null);
-    setCurrentRevisionId(revision?.id || null);
-    lastSavedCodeFingerprintRef.current = buildDraftDevSyncFingerprint(nextEntry, nextFiles);
-    setHasUnsavedManualCodeChanges(false);
-  }, []);
+  useEffect(() => {
+    setPreviewRouteInput(previewRoute);
+  }, [previewRoute]);
 
   const loadState = useCallback(async ({ showInitialSkeleton = false }: { showInitialSkeleton?: boolean } = {}) => {
     if (showInitialSkeleton) {
@@ -335,8 +594,12 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
       ]);
       setState(response);
       setExportOptions(exportState);
-      hydrateFromRevision(response.current_draft_revision);
-      hydrateFromBuilderSession(response.draft_dev);
+      if (response.draft_dev?.live_workspace_snapshot?.files) {
+        hydrateFromBuilderSession(response.draft_dev);
+      } else {
+        hydrateWorkspaceFromRevision(response.current_draft_revision);
+        hydrateFromBuilderSession(response.draft_dev);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load builder state");
     } finally {
@@ -344,7 +607,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
         setIsInitialLoading(false);
       }
     }
-  }, [appId, hydrateFromBuilderSession, hydrateFromRevision]);
+  }, [appId, hydrateFromBuilderSession, hydrateWorkspaceFromRevision]);
 
   const loadAuthTemplates = useCallback(async () => {
     setIsAuthTemplatesLoading(true);
@@ -378,12 +641,16 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
       ]);
       setState(response);
       setExportOptions(exportState);
-      setCurrentRevisionId(response.current_draft_revision?.id || null);
-      hydrateFromBuilderSession(response.draft_dev);
+      if (response.draft_dev?.live_workspace_snapshot?.files) {
+        hydrateFromBuilderSession(response.draft_dev);
+      } else {
+        hydrateWorkspaceFromRevision(response.current_draft_revision);
+        hydrateFromBuilderSession(response.draft_dev);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to refresh builder state");
     }
-  }, [appId, hydrateFromBuilderSession]);
+  }, [appId, hydrateFromBuilderSession, hydrateWorkspaceFromRevision]);
 
   const {
     versions,
@@ -407,7 +674,9 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     appId,
     currentRevisionId,
     onApplyRevision: (revision) => {
-      hydrateFromRevision(revision);
+      if (!draftDevSession?.live_workspace_snapshot?.files) {
+        hydrateWorkspaceFromRevision(revision);
+      }
       setState((prev) => {
         if (!prev) return prev;
         return {
@@ -474,6 +743,16 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     void loadAuthTemplates();
     void loadAgents();
   }, [loadAgents, loadAuthTemplates, loadState]);
+
+  useEffect(() => {
+    if (!workspaceNotice) {
+      return;
+    }
+    const timeoutId = window.setTimeout(() => {
+      dispatchWorkspace({ type: "clear_notice" });
+    }, 3200);
+    return () => window.clearTimeout(timeoutId);
+  }, [workspaceNotice]);
 
   useEffect(() => {
     if (!isInspectingVersion) {
@@ -665,8 +944,17 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
         entry_file: entryFile,
       });
       lastSavedCodeFingerprintRef.current = buildDraftDevSyncFingerprint(entryFile, files);
-      setHasUnsavedManualCodeChanges(false);
-      setCurrentRevisionId(revision.id);
+      dispatchWorkspace({
+        type: "hydrate",
+        payload: {
+          files,
+          entryFile,
+          revisionId: revision.id,
+          workspaceRevisionToken,
+          workspaceSource: "durable_revision",
+          preserveSelection: true,
+        },
+      });
       setState((prev) => {
         if (!prev) return prev;
         return {
@@ -695,7 +983,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     } finally {
       setIsSaving(false);
     }
-  }, [appId, currentRevisionId, ensureDraftDevSession, entryFile, files, loadState, saveBlockedByBackendLock]);
+  }, [appId, currentRevisionId, ensureDraftDevSession, entryFile, files, loadState, saveBlockedByBackendLock, workspaceRevisionToken]);
 
   const publish = useCallback(async () => {
     if (sandboxActionsBlocked) {
@@ -739,12 +1027,12 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
             current_draft_revision: revision,
           };
         });
-        hydrateFromRevision(revision);
+        hydrateWorkspaceFromRevision(revision);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to switch template");
       }
     },
-    [appId, hydrateFromRevision],
+    [appId, hydrateWorkspaceFromRevision],
   );
 
   const ensureDraftDevSessionForChat = useCallback(async () => {
@@ -789,7 +1077,19 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     ensureDraftDevSession: ensureDraftDevSessionForChat,
     refreshStateSilently,
     onPostRunHydrationStateChange: setPostRunHydrationPending,
-    onSetCurrentRevisionId: setCurrentRevisionId,
+    onSetCurrentRevisionId: (revisionId) => {
+      dispatchWorkspace({
+        type: "hydrate",
+        payload: {
+          files,
+          entryFile,
+          revisionId,
+          workspaceRevisionToken,
+          workspaceSource,
+          preserveSelection: true,
+        },
+      });
+    },
     onError: setError,
     initialActiveRunId: null,
   });
@@ -808,10 +1108,10 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     }
 
     const inMemoryPreviewUrl =
-      isDraftDevServingStatus(draftDevStatus) ? previewFrameUrl || state?.draft_dev?.preview_url || null : null;
+      isDraftDevServingStatus(draftDevStatus) ? previewFrameUrl || draftDevSession?.preview_url || null : null;
     if (inMemoryPreviewUrl) {
       window.open(
-        appendRuntimeTokenToUrl(inMemoryPreviewUrl, previewAuthToken || state?.draft_dev?.preview_auth_token || null),
+        appendRuntimeTokenToUrl(inMemoryPreviewUrl, previewAuthToken || draftDevSession?.preview_auth_token || null),
         "_blank",
         "noopener,noreferrer",
       );
@@ -821,7 +1121,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     setIsOpeningApp(true);
     try {
       const ensuredSession = await ensureDraftDevSession({ force: true });
-      const session = ensuredSession || state?.draft_dev || null;
+      const session = ensuredSession || draftDevSession;
       if (!session?.preview_url) {
         throw new Error("Draft preview URL is unavailable");
       }
@@ -836,28 +1136,17 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
       setIsOpeningApp(false);
     }
   }, [
+    draftDevSession,
     ensureDraftDevSession,
     state?.app.published_url,
     state?.app.status,
-    state?.draft_dev?.preview_auth_token,
-    state?.draft_dev?.preview_url,
     previewAuthToken,
     previewFrameUrl,
     draftDevStatus,
   ]);
 
   const deleteFile = (path: string) => {
-    setFiles((prev) => {
-      const next = { ...prev };
-      delete next[path];
-      const fingerprint = buildDraftDevSyncFingerprint(entryFile, next);
-      setHasUnsavedManualCodeChanges(fingerprint !== lastSavedCodeFingerprintRef.current);
-      return next;
-    });
-    if (selectedFile === path) {
-      const rest = Object.keys(files).filter((item) => item !== path).sort();
-      setSelectedFile(rest[0] || null);
-    }
+    dispatchWorkspace({ type: "delete_file", path });
   };
 
   const handleConfigSectionChange = useCallback((section: ConfigSection) => {
@@ -897,10 +1186,10 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     <Tabs
       value={activeTab}
       onValueChange={(value) => setActiveTab(value as "preview" | "config")}
-      className="flex h-dvh min-h-0 w-full overflow-hidden gap-0 bg-background"
+      className="flex h-dvh min-h-0 w-full gap-0 overflow-visible bg-background"
     >
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <header className="flex h-11 border-b shrink-0  items-center gap-3 px-3">
+        <header className="relative z-[110] flex h-11 shrink-0 items-center gap-3 border-b px-3 overflow-visible">
           {/* Left: back + app name + status dot */}
           <div className="flex min-w-0 items-center gap-3">
             <Link
@@ -936,8 +1225,8 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
           </div>
 
           {/* Center: tabs stay fixed; preview controls are out of flow */}
-          <div className="relative flex min-w-0 flex-1 items-center justify-center">
-            <div className="relative flex items-center">
+          <div className="relative flex min-w-0 flex-1 items-center justify-center overflow-visible">
+            <div className="relative flex items-center overflow-visible">
               <TabsList className="h-7 rounded-md p-0.5">
                 <TabsTrigger value="preview" className="h-6 rounded-[5px] px-2.5 text-xs">Preview</TabsTrigger>
                 <TabsTrigger value="config" className="h-6 rounded-[5px] px-2.5 text-xs">Config</TabsTrigger>
@@ -978,18 +1267,68 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
                       </Button>
                     </div>
                   ) : (
-                    <Select value={previewRoute} onValueChange={navigatePreview}>
-                      <SelectTrigger className="data-[size=default]:h-7 h-7 w-36 gap-1 rounded-md border-border/50 bg-transparent px-2 py-0 text-xs font-medium shadow-none">
-                        <SelectValue placeholder="/" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {appRoutes.map((route) => (
-                          <SelectItem key={route} value={route}>
-                            {route}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <div className="relative w-56">
+                      <Input
+                        value={previewRouteInput}
+                        onChange={(event) => {
+                          setPreviewRouteInput(event.target.value);
+                          setIsPreviewRoutePickerOpen(true);
+                        }}
+                        onFocus={() => setIsPreviewRoutePickerOpen(true)}
+                        onBlur={() => {
+                          window.setTimeout(() => {
+                            setIsPreviewRoutePickerOpen(false);
+                          }, 120);
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            event.preventDefault();
+                            navigatePreview(previewRouteInput);
+                          }
+                          if (event.key === "Escape") {
+                            setPreviewRouteInput(previewRoute);
+                            setIsPreviewRoutePickerOpen(false);
+                          }
+                        }}
+                        placeholder="/"
+                        className="h-7 border-border/50 bg-transparent px-2 py-0 text-xs font-medium shadow-none"
+                      />
+                      {isPreviewRoutePickerOpen ? (
+                        <div className="absolute top-full left-0 z-[120] mt-1 w-full overflow-hidden rounded-md border border-border/60 bg-popover shadow-md">
+                          <Command shouldFilter={false}>
+                            <CommandList className="max-h-56">
+                              <CommandEmpty className="py-3 text-center text-xs text-muted-foreground">
+                                No routes found
+                              </CommandEmpty>
+                              <CommandGroup>
+                                {filteredAppRoutes.map((route) => (
+                                  <CommandItem
+                                    key={route}
+                                    value={route}
+                                    onSelect={() => navigatePreview(route)}
+                                    className="flex items-center justify-between text-xs"
+                                  >
+                                    <span>{route}</span>
+                                    {route === previewRoute ? <Check className="h-3.5 w-3.5 text-muted-foreground" /> : null}
+                                  </CommandItem>
+                                ))}
+                                {normalizeRoutePath(previewRouteInput)
+                                  && !filteredAppRoutes.includes(normalizeRoutePath(previewRouteInput) as string) ? (
+                                    <CommandItem
+                                      value={previewRouteInput}
+                                      onSelect={() => navigatePreview(previewRouteInput)}
+                                      className="flex items-center justify-between text-xs"
+                                    >
+                                      <span>{normalizeRoutePath(previewRouteInput)}</span>
+                                      <span className="text-[10px] text-muted-foreground">go</span>
+                                    </CommandItem>
+                                  ) : null}
+                              </CommandGroup>
+                            </CommandList>
+                          </Command>
+                        </div>
+                      ) : null}
+                    </div>
                   )}
 
                   <Tooltip>
@@ -1191,7 +1530,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
                     onBackFromCode={handleBackFromCode}
                     files={files}
                     selectedFile={selectedFile}
-                    onSelectFile={setSelectedFile}
+                    onSelectFile={(path) => dispatchWorkspace({ type: "select_file", path })}
                     onDeleteFile={deleteFile}
                     showCodeSaveButton={hasUnsavedManualCodeChanges}
                     onSaveCodeDraft={() => {
@@ -1627,12 +1966,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
                         onUpdateFile={(path, content) => {
                           if (codeEditingLocked) return;
                           if (isAppsBuilderBlockedFilePath(path)) return;
-                          setFiles((prev) => {
-                            const next = { ...prev, [path]: content };
-                            const fingerprint = buildDraftDevSyncFingerprint(entryFile, next);
-                            setHasUnsavedManualCodeChanges(fingerprint !== lastSavedCodeFingerprintRef.current);
-                            return next;
-                          });
+                          dispatchWorkspace({ type: "update_file", path, content });
                         }}
                         readOnly={codeEditingLocked}
                       />
@@ -1730,6 +2064,16 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
               <X className="h-3.5 w-3.5" />
             </button>
             <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        </div>
+      ) : null}
+      {workspaceNotice ? (
+        <div className="pointer-events-none fixed bottom-4 left-4 z-50 w-full max-w-sm px-4 sm:px-0">
+          <Alert className="pointer-events-auto border-border/70 bg-background shadow-lg">
+            <AlertDescription>
+              {workspaceNotice}
+              {workspaceConflict ? ` Source: ${workspaceSource === "materialized_run" ? "materialized run" : "live workspace"}.` : ""}
+            </AlertDescription>
           </Alert>
         </div>
       ) : null}

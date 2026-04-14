@@ -24,6 +24,35 @@ from app.services.integration_provider_catalog import (
     is_model_provider_supported,
     is_tenant_managed_pricing_provider,
 )
+from app.services.control_plane.context import ControlPlaneContext
+from app.services.control_plane.errors import ControlPlaneError
+from app.services.control_plane.models_service import (
+    CreateModelInput,
+    ListModelsInput,
+    ModelRegistryService,
+    UpdateModelInput,
+    apply_default_invariant,
+    enum_filter,
+    enum_value,
+    model_scope_clause,
+    validate_default_state,
+    validate_provider_support,
+    validate_registry_pricing_policy,
+)
+
+
+def _validate_provider_support(*, provider: ModelProviderType, capability_type: ModelCapabilityType) -> None:
+    try:
+        validate_provider_support(provider=provider, capability_type=capability_type)
+    except ControlPlaneError as exc:
+        raise HTTPException(status_code=exc.http_status, detail=exc.message) from exc
+
+
+def _validate_registry_pricing_policy(*, provider: ModelProviderType, pricing_config: dict | None) -> dict:
+    try:
+        return validate_registry_pricing_policy(provider=provider, pricing_config=pricing_config)
+    except ControlPlaneError as exc:
+        raise HTTPException(status_code=exc.http_status, detail=exc.message) from exc
 
 router = APIRouter(prefix="/models", tags=["models"])
 
@@ -132,27 +161,14 @@ def _serialize_model(model: ModelRegistry) -> ModelResponse:
     )
 
 
-def _model_scope_clause(tenant_id: uuid.UUID):
-    return or_(ModelRegistry.tenant_id == tenant_id, ModelRegistry.tenant_id.is_(None))
-
-
-def _enum_value(value: Any) -> str:
-    return str(getattr(value, "value", value)).strip().lower()
-
-
-def _enum_filter(column, value):
-    if value is None:
-        return None
-    enum_str = str(value)
-    value_str = str(getattr(value, "value", value))
-    name_str = str(getattr(value, "name", value))
-    lowered = value_str.lower()
-    return or_(
-        column == value,
-        cast(column, String) == enum_str,
-        cast(column, String) == value_str,
-        cast(column, String) == name_str,
-        func.lower(cast(column, String)) == lowered,
+def _service_context(*, tenant_ctx: dict[str, Any], principal: dict[str, Any]) -> ControlPlaneContext:
+    return ControlPlaneContext.from_tenant_context(
+        tenant_ctx,
+        user=principal.get("user"),
+        user_id=uuid.UUID(str(principal["user_id"])) if principal.get("user_id") else None,
+        auth_token=principal.get("auth_token"),
+        scopes=principal.get("scopes"),
+        is_service=bool(principal.get("type") == "workload"),
     )
 
 
@@ -163,7 +179,7 @@ def _model_filters(
     status: ModelStatus | None,
     is_active: bool | None,
 ):
-    filters: list[Any] = [_model_scope_clause(tenant_id)]
+    filters: list[Any] = [model_scope_clause(tenant_id)]
     if capability_type is not None:
         filters.append(_enum_filter(ModelRegistry.capability_type, capability_type))
     if status is not None:
@@ -185,57 +201,6 @@ async def _get_tenant_owned_model(
         .options(selectinload(ModelRegistry.providers))
     )
     return result.scalar_one_or_none()
-
-
-async def _apply_default_invariant(
-    *,
-    db: AsyncSession,
-    tenant_id: uuid.UUID | None,
-    capability_type: ModelCapabilityType,
-    selected_model_id: uuid.UUID,
-) -> None:
-    await db.execute(
-        update(ModelRegistry)
-        .where(
-            ModelRegistry.id != selected_model_id,
-            ModelRegistry.capability_type == capability_type,
-            (
-                ModelRegistry.tenant_id == tenant_id
-                if tenant_id is not None
-                else ModelRegistry.tenant_id.is_(None)
-            ),
-            ModelRegistry.is_default.is_(True),
-        )
-        .values(is_default=False)
-    )
-
-
-def _validate_default_state(
-    *,
-    is_default: bool,
-    is_active: bool,
-    status: ModelStatus,
-) -> None:
-    if is_default and (not is_active or status == ModelStatus.DISABLED):
-        raise HTTPException(
-            status_code=400,
-            detail="Default models must remain active and cannot be disabled",
-        )
-
-
-def _validate_provider_support(
-    *,
-    provider: ModelProviderType,
-    capability_type: ModelCapabilityType,
-) -> None:
-    if not is_model_provider_supported(provider=provider, capability=capability_type):
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                f"Provider '{provider.value}' is not supported for "
-                f"capability '{capability_type.value}'"
-            ),
-        )
 
 
 _SUPPORTED_BILLING_MODES = {
@@ -311,20 +276,6 @@ def _validate_pricing_config(pricing_config: dict | None) -> dict:
     return normalized
 
 
-def _validate_registry_pricing_policy(
-    *,
-    provider: ModelProviderType,
-    pricing_config: dict | None,
-) -> dict:
-    normalized = _validate_pricing_config(pricing_config)
-    if normalized and not is_tenant_managed_pricing_provider(provider):
-        raise HTTPException(
-            status_code=422,
-            detail=f"Pricing is platform-managed for provider '{provider.value}'",
-        )
-    return normalized
-
-
 @router.get("", response_model=ModelListResponse)
 async def list_models(
     capability_type: ModelCapabilityType | None = Query(None),
@@ -337,38 +288,20 @@ async def list_models(
     _: dict[str, Any] = Depends(require_scopes("models.read")),
     principal: dict[str, Any] = Depends(get_current_principal),
 ):
-    del principal
-    tenant_id = uuid.UUID(tenant_ctx["tenant_id"])
-    result = await db.execute(
-        select(ModelRegistry)
-        .where(_model_scope_clause(tenant_id))
-        .options(selectinload(ModelRegistry.providers))
-        .order_by(ModelRegistry.name.asc())
-    )
-    scoped_models = result.scalars().all()
-    filtered_models = [
-        model
-        for model in scoped_models
-        if (
-            capability_type is None
-            or _enum_value(model.capability_type) == _enum_value(capability_type)
+    try:
+        models, total = await ModelRegistryService(db).list_models(
+            ctx=_service_context(tenant_ctx=tenant_ctx, principal=principal),
+            params=ListModelsInput(
+                capability_type=capability_type,
+                status=status,
+                is_active=is_active,
+                skip=skip,
+                limit=limit,
+            ),
         )
-        and (
-            status is None
-            or _enum_value(model.status) == _enum_value(status)
-        )
-        and (
-            is_active is None
-            or bool(model.is_active) is is_active
-        )
-    ]
-    models = filtered_models[skip : skip + limit]
-    total = len(filtered_models)
-
-    return ModelListResponse(
-        models=[_serialize_model(model) for model in models],
-        total=total,
-    )
+        return ModelListResponse(models=[_serialize_model(model) for model in models], total=total)
+    except ControlPlaneError as exc:
+        raise exc.to_http_exception() from exc
 
 
 @router.post("", response_model=ModelResponse)
@@ -379,45 +312,23 @@ async def create_model(
     _: dict[str, Any] = Depends(require_scopes("models.write")),
     principal: dict[str, Any] = Depends(get_current_principal),
 ):
-    del principal
-    tenant_id = uuid.UUID(tenant_ctx["tenant_id"])
-    _validate_default_state(
-        is_default=request.is_default,
-        is_active=request.is_active,
-        status=request.status,
-    )
-
-    model = ModelRegistry(
-        tenant_id=tenant_id,
-        name=request.name.strip(),
-        description=request.description,
-        capability_type=request.capability_type,
-        status=request.status,
-        metadata_=request.metadata or {},
-        default_resolution_policy=request.default_resolution_policy or {},
-        is_active=request.is_active,
-        is_default=False,
-    )
-    db.add(model)
-    await db.flush()
-
-    if request.is_default:
-        await _apply_default_invariant(
-            db=db,
-            tenant_id=tenant_id,
-            capability_type=model.capability_type,
-            selected_model_id=model.id,
-        )
-        model.is_default = True
-
     try:
-        await db.commit()
-    except IntegrityError as exc:
-        await db.rollback()
-        raise HTTPException(status_code=409, detail="Model registry invariant violation") from exc
-
-    stored = await _get_model_response_record(db=db, model_id=model.id, tenant_id=tenant_id)
-    return _serialize_model(stored)
+        model = await ModelRegistryService(db).create_model(
+            ctx=_service_context(tenant_ctx=tenant_ctx, principal=principal),
+            params=CreateModelInput(
+                name=request.name,
+                description=request.description,
+                capability_type=request.capability_type,
+                metadata=request.metadata,
+                default_resolution_policy=request.default_resolution_policy,
+                is_default=request.is_default,
+                is_active=request.is_active,
+                status=request.status,
+            ),
+        )
+        return _serialize_model(model)
+    except ControlPlaneError as exc:
+        raise exc.to_http_exception() from exc
 
 
 async def _get_model_response_record(
@@ -445,10 +356,14 @@ async def get_model(
     _: dict[str, Any] = Depends(require_scopes("models.read")),
     principal: dict[str, Any] = Depends(get_current_principal),
 ):
-    del principal
-    tenant_id = uuid.UUID(tenant_ctx["tenant_id"])
-    model = await _get_model_response_record(db=db, model_id=model_id, tenant_id=tenant_id)
-    return _serialize_model(model)
+    try:
+        model = await ModelRegistryService(db).get_model(
+            ctx=_service_context(tenant_ctx=tenant_ctx, principal=principal),
+            model_id=model_id,
+        )
+        return _serialize_model(model)
+    except ControlPlaneError as exc:
+        raise exc.to_http_exception() from exc
 
 
 @router.put("/{model_id}", response_model=ModelResponse)
@@ -460,49 +375,23 @@ async def update_model(
     _: dict[str, Any] = Depends(require_scopes("models.write")),
     principal: dict[str, Any] = Depends(get_current_principal),
 ):
-    del principal
-    tenant_id = uuid.UUID(tenant_ctx["tenant_id"])
-    model = await _get_tenant_owned_model(db=db, model_id=model_id, tenant_id=tenant_id)
-    if model is None:
-        raise HTTPException(status_code=404, detail="Model not found or permission denied")
-
-    if request.name is not None:
-        model.name = request.name.strip()
-    if request.description is not None:
-        model.description = request.description
-    if request.status is not None:
-        model.status = request.status
-    if request.is_active is not None:
-        model.is_active = request.is_active
-    if request.metadata is not None:
-        model.metadata_ = request.metadata
-    if request.default_resolution_policy is not None:
-        model.default_resolution_policy = request.default_resolution_policy
-    _validate_default_state(
-        is_default=request.is_default if request.is_default is not None else model.is_default,
-        is_active=model.is_active,
-        status=model.status,
-    )
-
-    if request.is_default is True:
-        await _apply_default_invariant(
-            db=db,
-            tenant_id=tenant_id,
-            capability_type=model.capability_type,
-            selected_model_id=model.id,
-        )
-        model.is_default = True
-    elif request.is_default is False:
-        model.is_default = False
-
     try:
-        await db.commit()
-    except IntegrityError as exc:
-        await db.rollback()
-        raise HTTPException(status_code=409, detail="Model registry invariant violation") from exc
-
-    stored = await _get_model_response_record(db=db, model_id=model.id, tenant_id=tenant_id)
-    return _serialize_model(stored)
+        model = await ModelRegistryService(db).update_model(
+            ctx=_service_context(tenant_ctx=tenant_ctx, principal=principal),
+            model_id=model_id,
+            params=UpdateModelInput(
+                name=request.name,
+                description=request.description,
+                status=request.status,
+                is_active=request.is_active,
+                is_default=request.is_default,
+                metadata=request.metadata,
+                default_resolution_policy=request.default_resolution_policy,
+            ),
+        )
+        return _serialize_model(model)
+    except ControlPlaneError as exc:
+        raise exc.to_http_exception() from exc
 
 
 @router.delete("/{model_id}")

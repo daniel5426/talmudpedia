@@ -165,11 +165,14 @@ Returned turn shape includes:
 - `status`
 - `usage_tokens`
 - `metadata`
+- `response_blocks`
 - `created_at`
 - `completed_at`
 - `run_events`
 
-`run_events` contains ordered historical non-text `run-stream.v2` events for that turn, intended for replaying tool and reasoning activity on old chats.
+`response_blocks` is the canonical assistant rendering contract. `assistant_output_text` is only a projection.
+
+`run_events` is debug/history data and should not be used as the primary rendering source for normal chat replay.
 
 ### `deleteAgentThread(agentId, threadId, options)`
 

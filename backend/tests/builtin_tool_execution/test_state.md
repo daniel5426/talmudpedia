@@ -1,6 +1,6 @@
 # Built-in Tool Execution Tests
 
-Last Updated: 2026-03-29
+Last Updated: 2026-04-13
 
 ## Scope
 Covers runtime behavior of Built-in Tools v1 dispatch and mode-based execution guardrails.
@@ -13,6 +13,7 @@ Covers runtime behavior of Built-in Tools v1 dispatch and mode-based execution g
 - `retrieval_pipeline` accepts query passed as scalar `input` payload.
 - Unknown implementation types return explicit execution errors.
 - Production mode blocks draft tools while debug mode allows execution.
+- Built-in HTTP dispatch now receives the shared compiled invocation envelope instead of raw mixed executor input.
 - `web_fetch` happy/error paths.
 - `web_search` provider dispatch wiring for `serper`, `tavily`, and `exa`.
 - `web_search` tenant credentials lookup via default Integration Credentials (`category=tool_provider`) when tool-local key is absent.
@@ -25,6 +26,9 @@ Covers runtime behavior of Built-in Tools v1 dispatch and mode-based execution g
 - Command: `PYTHONPATH=/Users/danielbenassaya/Code/personal/talmudpedia/backend python3 -m pytest -q /Users/danielbenassaya/Code/personal/talmudpedia/backend/tests/builtin_tool_execution/test_builtin_tool_executor.py`
 - Date/Time: 2026-03-19 15:18 Asia/Hebron
 - Result: pass (15 passed)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/builtin_tool_execution/test_builtin_tool_executor.py`
+- Date/Time: 2026-04-13 Asia/Hebron
+- Result: PASS (`15 passed`)
 
 ## Known gaps or follow-ups
 - Add regression coverage for provider-specific malformed chunk payloads across SDK versions.

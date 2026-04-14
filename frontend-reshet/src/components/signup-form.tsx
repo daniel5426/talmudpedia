@@ -3,13 +3,13 @@ import { cn } from "@/lib/utils"
 import { useState } from "react"
 import { useRouter } from "next/navigation"
 import { authService } from "@/services"
-import { useAuthStore } from "@/lib/store/useAuthStore"
 import { GoogleLogin } from "@react-oauth/google"
 import Link from "next/link"
 import Image from "next/image"
 import { useAuthAccess } from "@/components/auth/auth-access-context"
 import { LegalLinks } from "@/components/auth/legal-links"
 import { BetaAccessPanel } from "@/components/marketing/beta-access-panel"
+import { applyAuthSession, clearAuthSession } from "@/lib/auth-session"
 
 export function SignupForm({
   className,
@@ -29,14 +29,12 @@ export function SignupForm({
     setLoading(true)
 
     try {
-      await authService.register(email, password, fullName)
-      const { access_token } = await authService.login(email, password)
-      useAuthStore.getState().setAuth(null as any, access_token)
-      const user = await authService.getProfile()
-      useAuthStore.getState().setAuth(user, access_token)
+      const session = await authService.register(email, password, fullName)
+      applyAuthSession(session)
       router.push("/admin/agents/playground")
     } catch (err: any) {
       setError(err.message || "Registration failed")
+      clearAuthSession()
     } finally {
       setLoading(false)
     }
@@ -47,13 +45,12 @@ export function SignupForm({
     setLoading(true);
     setError("");
     try {
-      const { access_token } = await authService.googleLogin(credentialResponse.credential);
-      useAuthStore.getState().setAuth(null as any, access_token);
-      const user = await authService.getProfile();
-      useAuthStore.getState().setAuth(user, access_token);
+      const session = await authService.googleLogin(credentialResponse.credential);
+      applyAuthSession(session);
       router.push("/admin/agents/playground");
     } catch (err: any) {
       setError(err.message || "Google signup failed");
+      clearAuthSession();
     } finally {
       setLoading(false);
     }

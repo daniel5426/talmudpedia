@@ -94,69 +94,110 @@ ACTION_REQUIRED_SCOPES: dict[str, list[str]] = {
     "respond": [],
 }
 
-# Shared scope set used by control-plane APIs and RBAC.
-ALL_SCOPES: list[str] = sorted(
+# Shared scope sets used by control-plane APIs and RBAC.
+ORGANIZATION_SCOPES: set[str] = {
+    "organizations.read",
+    "organizations.write",
+    "organization_members.read",
+    "organization_members.write",
+    "organization_members.delete",
+    "organization_invites.read",
+    "organization_invites.write",
+    "organization_invites.delete",
+    "organization_units.read",
+    "organization_units.write",
+    "organization_units.delete",
+    "projects.read",
+    "projects.write",
+    "projects.archive",
+    "roles.read",
+    "roles.write",
+    "roles.assign",
+    "audit.read",
+    "stats.read",
+    "users.read",
+    "users.write",
+}
+
+PROJECT_SCOPES: set[str] = {
+    scope
+    for scopes in ACTION_REQUIRED_SCOPES.values()
+    for scope in scopes
+}.union(
     {
-        scope
-        for scopes in ACTION_REQUIRED_SCOPES.values()
-        for scope in scopes
-    }.union(
+        "apps.read",
+        "apps.write",
+        "pipelines.delete",
+        "agents.delete",
+        "tools.delete",
+        "artifacts.delete",
+        "threads.read",
+        "threads.write",
+        "api_keys.read",
+        "api_keys.write",
+        "agents.embed",
+    }
+)
+
+ALL_SCOPES: list[str] = sorted(ORGANIZATION_SCOPES.union(PROJECT_SCOPES))
+
+ORGANIZATION_DEFAULT_ROLE_SCOPES: dict[str, list[str]] = {
+    "organization_owner": sorted(set(ORGANIZATION_SCOPES)),
+    "organization_admin": sorted(set(ORGANIZATION_SCOPES) - {"organizations.write"}),
+    "organization_member": sorted({"organizations.read", "projects.read"}),
+}
+
+PROJECT_DEFAULT_ROLE_SCOPES: dict[str, list[str]] = {
+    "project_owner": sorted(set(PROJECT_SCOPES)),
+    "project_admin": sorted(set(PROJECT_SCOPES) - {"api_keys.write"}),
+    "project_editor": sorted(
         {
             "apps.read",
             "apps.write",
-            "pipelines.delete",
-            "agents.delete",
-            "tools.delete",
-            "artifacts.delete",
-            "roles.read",
-            "roles.write",
-            "roles.assign",
-            "membership.read",
-            "membership.write",
-            "membership.delete",
-            "audit.read",
-            "stats.read",
-            "users.read",
-            "users.write",
+            "pipelines.catalog.read",
+            "pipelines.read",
+            "pipelines.write",
+            "agents.read",
+            "agents.write",
+            "agents.execute",
+            "artifacts.read",
+            "artifacts.write",
+            "tools.read",
+            "tools.write",
+            "models.read",
+            "knowledge_stores.read",
+            "knowledge_stores.write",
+            "credentials.read",
+            "prompts.read",
+            "prompts.write",
             "threads.read",
             "threads.write",
-            "tenants.read",
-            "tenants.write",
-            "api_keys.read",
-            "api_keys.write",
-            "agents.embed",
-        }
-    )
-)
-
-# Default tenant role bundles (immutable seeded system roles).
-TENANT_DEFAULT_ROLE_SCOPES: dict[str, list[str]] = {
-    "owner": sorted(set(ALL_SCOPES)),
-    "admin": sorted(
-        {
-            s
-            for s in ALL_SCOPES
-            if not s.startswith("auth.")
+            "apps.read",
+            "apps.write",
         }
     ),
-    "member": sorted(
+    "project_viewer": sorted(
         {
+            "apps.read",
             "pipelines.catalog.read",
             "pipelines.read",
             "agents.read",
-        "agents.execute",
-        "agents.embed",
-        "artifacts.read",
+            "artifacts.read",
             "tools.read",
             "models.read",
             "knowledge_stores.read",
             "credentials.read",
             "threads.read",
-            "users.read",
-            "stats.read",
-            "apps.read",
         }
     ),
+}
+
+# Legacy export name kept as the active organization-role seed set for code paths
+# that have not yet been renamed.
+TENANT_DEFAULT_ROLE_SCOPES: dict[str, list[str]] = {
+    "owner": list(ORGANIZATION_DEFAULT_ROLE_SCOPES["organization_owner"]),
+    "admin": list(ORGANIZATION_DEFAULT_ROLE_SCOPES["organization_admin"]),
+    "member": list(ORGANIZATION_DEFAULT_ROLE_SCOPES["organization_member"]),
 }
 
 # Legacy RBAC migration bridge: existing enum permissions -> canonical scope keys.
@@ -170,19 +211,19 @@ LEGACY_PERMISSION_TO_SCOPE: dict[tuple[str, str], str] = {
     ("job", "read"): "pipelines.read",
     ("job", "write"): "pipelines.write",
     ("job", "delete"): "pipelines.delete",
-    ("tenant", "read"): "tenants.read",
-    ("tenant", "write"): "tenants.write",
-    ("tenant", "admin"): "tenants.write",
-    ("org_unit", "read"): "membership.read",
-    ("org_unit", "write"): "membership.write",
-    ("org_unit", "delete"): "membership.delete",
+    ("tenant", "read"): "organizations.read",
+    ("tenant", "write"): "organizations.write",
+    ("tenant", "admin"): "organizations.write",
+    ("org_unit", "read"): "organization_units.read",
+    ("org_unit", "write"): "organization_units.write",
+    ("org_unit", "delete"): "organization_units.delete",
     ("role", "read"): "roles.read",
     ("role", "write"): "roles.write",
     ("role", "delete"): "roles.write",
     ("role", "admin"): "roles.assign",
-    ("membership", "read"): "membership.read",
-    ("membership", "write"): "membership.write",
-    ("membership", "delete"): "membership.delete",
+    ("membership", "read"): "organization_members.read",
+    ("membership", "write"): "organization_members.write",
+    ("membership", "delete"): "organization_members.delete",
     ("audit", "read"): "audit.read",
 }
 
@@ -214,7 +255,10 @@ def build_scope_catalog() -> dict[str, Any]:
     return {
         "groups": {k: sorted(v) for k, v in sorted(grouped.items())},
         "all_scopes": list(ALL_SCOPES),
-        "default_roles": {k: list(v) for k, v in TENANT_DEFAULT_ROLE_SCOPES.items()},
+        "default_roles": {
+            **{k: list(v) for k, v in ORGANIZATION_DEFAULT_ROLE_SCOPES.items()},
+            **{k: list(v) for k, v in PROJECT_DEFAULT_ROLE_SCOPES.items()},
+        },
     }
 
 

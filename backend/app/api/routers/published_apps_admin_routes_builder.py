@@ -79,6 +79,12 @@ def _append_query(url: str, params: dict[str, str]) -> str:
     return urlunparse(parsed._replace(query=urlencode(current)))
 
 
+def _builder_preview_bootstrap_url(preview_url: str) -> str:
+    parsed = urlparse(preview_url)
+    normalized_path = parsed.path.rstrip("/")
+    return urlunparse(parsed._replace(path=f"{normalized_path}/_talmudpedia/runtime/bootstrap", query="", fragment=""))
+
+
 async def _decorate_draft_dev_session_response(
     *,
     db: AsyncSession,
@@ -119,13 +125,11 @@ async def _decorate_draft_dev_session_response(
         scopes=["apps.preview"],
         expires_delta=timedelta(hours=2),
     )
-    runtime_api_base = _resolve_runtime_api_base_url(request)
-    runtime_base_path = f"{runtime_api_base}/public/apps/preview/revisions/{effective_revision_id}"
     response.preview_url = _append_query(
         preview_url,
         {
             "runtime_mode": "builder-preview",
-            "runtime_base_path": runtime_base_path,
+            "runtime_bootstrap_url": _builder_preview_bootstrap_url(preview_url),
         },
     )
     response.preview_auth_token = preview_auth_token

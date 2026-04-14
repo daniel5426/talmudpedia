@@ -58,21 +58,22 @@ def upgrade() -> None:
                 sa.Column("context_window_json", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
             )
 
-        bind = op.get_bind()
-        bind.execute(
-            sa.text(
-                """
-                UPDATE agent_runs
-                SET usage_source = CASE
-                    WHEN usage_source IN ('provider_reported', 'sdk_reported') THEN 'exact'
-                    WHEN usage_source IN ('estimated', 'legacy_estimated') THEN 'estimated'
-                    WHEN usage_source IN ('unknown', 'legacy_unknown') THEN 'unknown'
-                    WHEN usage_source IS NULL AND COALESCE(total_tokens, usage_tokens, 0) > 0 THEN 'estimated'
-                    ELSE 'unknown'
-                END
-                """
+        if "usage_source" in run_columns:
+            bind = op.get_bind()
+            bind.execute(
+                sa.text(
+                    """
+                    UPDATE agent_runs
+                    SET usage_source = CASE
+                        WHEN usage_source IN ('provider_reported', 'sdk_reported') THEN 'exact'
+                        WHEN usage_source IN ('estimated', 'legacy_estimated') THEN 'estimated'
+                        WHEN usage_source IN ('unknown', 'legacy_unknown') THEN 'unknown'
+                        WHEN usage_source IS NULL AND COALESCE(total_tokens, usage_tokens, 0) > 0 THEN 'estimated'
+                        ELSE 'unknown'
+                    END
+                    """
+                )
             )
-        )
 
     if "agent_run_invocations" not in tables:
         op.create_table(

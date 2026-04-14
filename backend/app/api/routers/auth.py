@@ -1,337 +1,489 @@
-from typing import Any, Optional, Dict
-import time
-from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from pydantic import BaseModel, EmailStr
-from sqlalchemy import select, or_
-from sqlalchemy.ext.asyncio import AsyncSession
-import jwt
-import os
-from google.oauth2 import id_token
-from google.auth.transport import requests as google_requests
+from __future__ import annotations
 
-from app.db.postgres.models.identity import User, UserRole, Tenant, OrgUnit, OrgMembership, OrgUnitType, OrgRole, MembershipStatus
+import os
+import re
+import time
+from typing import Any, Dict, Optional
+from uuid import UUID
+
+import jwt
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from google.auth.transport import requests as google_requests
+from google.oauth2 import id_token
+from pydantic import BaseModel, EmailStr
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.security import ALGORITHM, SECRET_KEY, create_access_token, get_password_hash, verify_password
+from app.db.postgres.models.identity import OrgMembership, OrgInvite, Tenant, User
+from app.db.postgres.models.workspace import BrowserSession, Project
 from app.db.postgres.session import get_db
-from app.core.security import verify_password, get_password_hash, create_access_token, SECRET_KEY, ALGORITHM
-from app.services.security_bootstrap_service import SecurityBootstrapService
+from app.services.auth_context_service import (
+    list_organization_projects,
+    list_user_organizations,
+    resolve_effective_scopes,
+    serialize_organization_summary,
+    serialize_project_summary,
+    serialize_user_summary,
+)
+from app.services.browser_session_service import (
+    SESSION_COOKIE_NAME,
+    BrowserSessionService,
+)
+from app.services.organization_bootstrap_service import OrganizationBootstrapService
 
 router = APIRouter()
 
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login", auto_error=False)
 
-class UserCreate(BaseModel):
+
+class SessionUserResponse(BaseModel):
+    id: str
+    email: EmailStr
+    full_name: str | None = None
+    avatar: str | None = None
+    role: str = "user"
+
+
+class OrganizationSummaryResponse(BaseModel):
+    id: str
+    name: str
+    slug: str
+    status: str
+
+
+class ProjectSummaryResponse(BaseModel):
+    id: str
+    organization_id: str
+    name: str
+    slug: str
+    description: str | None = None
+    status: str
+    is_default: bool = False
+
+
+class SessionResponse(BaseModel):
+    user: SessionUserResponse
+    active_organization: OrganizationSummaryResponse
+    active_project: ProjectSummaryResponse
+    organizations: list[OrganizationSummaryResponse]
+    projects: list[ProjectSummaryResponse]
+    effective_scopes: list[str]
+
+
+class SignupRequest(BaseModel):
     email: EmailStr
     password: str
-    full_name: str = None
+    full_name: str | None = None
 
-class Token(BaseModel):
-    access_token: str
-    token_type: str
 
 class GoogleToken(BaseModel):
     credential: str
 
-class UserResponse(BaseModel):
-    id: str
-    email: EmailStr
-    full_name: str = None
-    avatar: str = None
-    role: str = "user" # System role
-    tenant_id: Optional[str] = None
-    org_unit_id: Optional[str] = None
-    org_role: Optional[str] = None # Role within the tenant (owner, admin, member)
+
+class SwitchOrganizationRequest(BaseModel):
+    organization_slug: str
 
 
-# Simple in-memory cache: {user_id: (User, expires_at)}
+class SwitchProjectRequest(BaseModel):
+    project_slug: str
+
+
+class _SessionBundle(BaseModel):
+    user: SessionUserResponse
+    active_organization: OrganizationSummaryResponse
+    active_project: ProjectSummaryResponse
+    organizations: list[OrganizationSummaryResponse]
+    projects: list[ProjectSummaryResponse]
+    effective_scopes: list[str]
+
+
 _user_cache: Dict[str, Any] = {}
-CACHE_TTL = 300  # 5 minutes
+CACHE_TTL = 300
 
-async def get_current_user(
-    token: str = Depends(oauth2_scheme),
-    db: AsyncSession = Depends(get_db)  # Kept for initial fetch and dependency compatibility
-) -> User:
+
+def _slugify(value: str, *, fallback: str) -> str:
+    cleaned = re.sub(r"[^a-z0-9]+", "-", str(value or "").strip().lower()).strip("-")
+    return cleaned[:48] or fallback
+
+
+def _set_session_cookie(*, response: Response, request: Request, token: str) -> None:
+    response.set_cookie(
+        key=SESSION_COOKIE_NAME,
+        value=token,
+        httponly=True,
+        secure=request.url.scheme == "https",
+        samesite="lax",
+        path="/",
+    )
+
+
+def _clear_session_cookie(*, response: Response, request: Request) -> None:
+    response.delete_cookie(
+        key=SESSION_COOKIE_NAME,
+        path="/",
+        secure=request.url.scheme == "https",
+        samesite="lax",
+    )
+
+
+async def _resolve_user_from_access_token(token: str, db: AsyncSession) -> User:
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
-    # start_time = time.time()
     try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id_str: str = payload.get("sub")
+        if user_id_str is None:
+            raise credentials_exception
+
+        now = time.time()
+        if user_id_str in _user_cache:
+            cached_user, expires_at = _user_cache[user_id_str]
+            if now < expires_at:
+                return cached_user
+            del _user_cache[user_id_str]
+
         try:
-            payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-            user_id_str: str = payload.get("sub")
-            if user_id_str is None:
-                raise credentials_exception
-            
-            # Check Cache
-            now = time.time()
-            if user_id_str in _user_cache:
-                cached_user, expires_at = _user_cache[user_id_str]
-                if now < expires_at:
-                    # print(f"DEBUG: get_current_user cache hit for {user_id_str}")
-                    return cached_user
-                else:
-                    del _user_cache[user_id_str]
+            user_id = UUID(user_id_str)
+        except ValueError as exc:
+            raise credentials_exception from exc
+    except jwt.PyJWTError as exc:
+        raise credentials_exception from exc
 
-            try:
-                user_id = UUID(user_id_str)
-            except ValueError:
-                raise credentials_exception
-                
-        except jwt.PyJWTError:
-            raise credentials_exception
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise credentials_exception
+    db.expunge(user)
+    _user_cache[user_id_str] = (user, time.time() + CACHE_TTL)
+    return user
 
-        result = await db.execute(select(User).where(User.id == user_id))
-        user = result.scalar_one_or_none()
-        if user is None:
-            raise credentials_exception
-        
-        # Expunge from session to make it safe to cache and reuse across sessions
-        db.expunge(user)
-        
-        # Update Cache
-        _user_cache[user_id_str] = (user, now + CACHE_TTL)
-        
-        # duration = time.time() - start_time
-        # print(f"DEBUG: get_current_user took {duration:.4f} seconds (Cache Miss)")
-        return user
-    except Exception as e:
-        # duration = time.time() - start_time
-        # print(f"DEBUG: get_current_user failed after {duration:.4f} seconds with error: {e}")
-        raise e
 
-@router.post("/register", response_model=UserResponse)
-async def register(user_in: UserCreate, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(User).where(User.email == user_in.email))
-    existing_user = result.scalar_one_or_none()
-    if existing_user:
-        raise HTTPException(
-            status_code=400,
-            detail="The user with this email already exists in the system.",
-        )
+async def get_current_user(
+    request: Request,
+    token: Optional[str] = Depends(oauth2_scheme),
+    db: AsyncSession = Depends(get_db),
+) -> User:
+    if token:
+        return await _resolve_user_from_access_token(token, db)
+
+    cookie_token = str(request.cookies.get(SESSION_COOKIE_NAME) or "").strip()
+    if cookie_token:
+        session = await BrowserSessionService(db).resolve_session(cookie_token)
+        if session is not None:
+            user = await db.get(User, session.user_id)
+            if user is not None:
+                return user
+
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Authentication required",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+
+async def _load_browser_session_bundle(request: Request, db: AsyncSession) -> tuple[BrowserSession, _SessionBundle]:
+    raw_token = str(request.cookies.get(SESSION_COOKIE_NAME) or "").strip()
+    if not raw_token:
+        raise HTTPException(status_code=401, detail="No active browser session")
+
+    session = await BrowserSessionService(db).resolve_session(raw_token)
+    if session is None:
+        raise HTTPException(status_code=401, detail="Browser session expired")
+
+    user = await db.get(User, session.user_id)
+    organization = await db.get(Tenant, session.organization_id)
+    project = await db.get(Project, session.project_id)
+    if user is None or organization is None or project is None:
+        raise HTTPException(status_code=401, detail="Browser session is invalid")
+
+    organizations = await list_user_organizations(db=db, user_id=user.id)
+    projects = await list_organization_projects(db=db, organization_id=organization.id)
+    effective_scopes = await resolve_effective_scopes(
+        db=db,
+        user=user,
+        organization_id=organization.id,
+        project_id=project.id,
+    )
+    return session, _SessionBundle(
+        user=SessionUserResponse.model_validate(serialize_user_summary(user)),
+        active_organization=OrganizationSummaryResponse.model_validate(serialize_organization_summary(organization)),
+        active_project=ProjectSummaryResponse.model_validate(serialize_project_summary(project)),
+        organizations=[OrganizationSummaryResponse.model_validate(serialize_organization_summary(item)) for item in organizations],
+        projects=[ProjectSummaryResponse.model_validate(serialize_project_summary(item)) for item in projects],
+        effective_scopes=effective_scopes,
+    )
+
+
+async def _create_browser_session_response(
+    *,
+    request: Request,
+    response: Response,
+    db: AsyncSession,
+    user: User,
+    organization: Tenant,
+    project: Project,
+) -> SessionResponse:
+    _session, raw_token = await BrowserSessionService(db).create_session(
+        user=user,
+        organization=organization,
+        project=project,
+    )
+    _set_session_cookie(response=response, request=request, token=raw_token)
+    organizations = await list_user_organizations(db=db, user_id=user.id)
+    projects = await list_organization_projects(db=db, organization_id=organization.id)
+    effective_scopes = await resolve_effective_scopes(
+        db=db,
+        user=user,
+        organization_id=organization.id,
+        project_id=project.id,
+    )
+    await db.commit()
+    return SessionResponse(
+        user=SessionUserResponse.model_validate(serialize_user_summary(user)),
+        active_organization=OrganizationSummaryResponse.model_validate(serialize_organization_summary(organization)),
+        active_project=ProjectSummaryResponse.model_validate(serialize_project_summary(project)),
+        organizations=[OrganizationSummaryResponse.model_validate(serialize_organization_summary(item)) for item in organizations],
+        projects=[ProjectSummaryResponse.model_validate(serialize_project_summary(item)) for item in projects],
+        effective_scopes=effective_scopes,
+    )
+
+
+@router.post("/signup", response_model=SessionResponse, status_code=status.HTTP_201_CREATED)
+async def signup(
+    payload: SignupRequest,
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+):
+    existing_user = (await db.execute(select(User).where(User.email == payload.email))).scalar_one_or_none()
+    if existing_user is not None:
+        raise HTTPException(status_code=400, detail="User with this email already exists")
 
     user = User(
-        email=user_in.email,
-        hashed_password=get_password_hash(user_in.password),
-        full_name=user_in.full_name,
+        email=payload.email,
+        hashed_password=get_password_hash(payload.password),
+        full_name=payload.full_name,
         role="user",
-        avatar=f"https://api.dicebear.com/7.x/initials/svg?seed={user_in.full_name or user_in.email}"
+        avatar=f"https://api.dicebear.com/7.x/initials/svg?seed={payload.full_name or payload.email}",
     )
     db.add(user)
-    await db.flush() # Get user.id
-
-    # Create default tenant and org unit for the new user
-    tenant = Tenant(
-        name=f"{user.full_name or user.email}'s Organization",
-        slug=f"org-{str(user.id)[:8]}"
-    )
-    db.add(tenant)
     await db.flush()
 
-    org_unit = OrgUnit(
-        tenant_id=tenant.id,
-        name="Root",
-        slug="root",
-        type=OrgUnitType.org
+    owner_label = payload.full_name or payload.email.split("@", 1)[0]
+    organization_slug = _slugify(owner_label, fallback=f"org-{str(user.id)[:8]}")
+    organization, project = await OrganizationBootstrapService(db).create_organization_with_default_project(
+        owner=user,
+        name=f"{owner_label}'s Organization",
+        slug=organization_slug,
     )
-    db.add(org_unit)
-    await db.flush()
-
-    membership = OrgMembership(
-        tenant_id=tenant.id,
-        user_id=user.id,
-        org_unit_id=org_unit.id,
-        role=OrgRole.owner,
-        status=MembershipStatus.active
-    )
-    db.add(membership)
-    security_bootstrap = SecurityBootstrapService(db)
-    await security_bootstrap.ensure_default_roles(tenant.id)
-    await security_bootstrap.ensure_owner_assignment(tenant_id=tenant.id, user_id=user.id, assigned_by=user.id)
-    
-    await db.commit()
-    
-    return UserResponse(
-        id=str(user.id), 
-        email=user.email, 
-        full_name=user.full_name, 
-        avatar=user.avatar, 
-        role=user.role,
-        tenant_id=str(tenant.id),
-        org_unit_id=str(org_unit.id),
-        org_role=OrgRole.owner.value
+    return await _create_browser_session_response(
+        request=request,
+        response=response,
+        db=db,
+        user=user,
+        organization=organization,
+        project=project,
     )
 
-@router.post("/login", response_model=Token)
-async def login(db: AsyncSession = Depends(get_db), form_data: OAuth2PasswordRequestForm = Depends()):
-    result = await db.execute(select(User).where(User.email == form_data.username))
-    user = result.scalar_one_or_none()
-    if not user or not verify_password(form_data.password, user.hashed_password):
+
+@router.post("/register", response_model=SessionResponse, status_code=status.HTTP_201_CREATED)
+async def register_alias(
+    payload: SignupRequest,
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+):
+    return await signup(payload=payload, request=request, response=response, db=db)
+
+
+@router.post("/login", response_model=SessionResponse)
+async def login(
+    request: Request,
+    response: Response,
+    form_data: OAuth2PasswordRequestForm = Depends(),
+    db: AsyncSession = Depends(get_db),
+):
+    user = (await db.execute(select(User).where(User.email == form_data.username))).scalar_one_or_none()
+    if user is None or not user.hashed_password or not verify_password(form_data.password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    # Get user membership for context
-    msg_result = await db.execute(
-        select(OrgMembership).where(OrgMembership.user_id == user.id).limit(1)
-    )
-    membership = msg_result.scalar_one_or_none()
-    
-    tenant_id = str(membership.tenant_id) if membership else None
-    org_unit_id = str(membership.org_unit_id) if membership else None
-    org_role = membership.role.value if membership and hasattr(membership, 'role') else None
 
-    # If role is Enum, we access .value, if it's string (legacy or fallback) it's direct.
-    # In Pydantic response we need string.
-    
-    access_token = create_access_token(
-        subject=str(user.id),
-        tenant_id=tenant_id,
-        org_unit_id=org_unit_id,
-        org_role=org_role
+    organizations = await list_user_organizations(db=db, user_id=user.id)
+    if not organizations:
+        raise HTTPException(status_code=403, detail="User does not belong to any organization")
+    organization = organizations[0]
+    projects = await list_organization_projects(db=db, organization_id=organization.id)
+    if not projects:
+        raise HTTPException(status_code=403, detail="Organization has no active project")
+    project = projects[0]
+    return await _create_browser_session_response(
+        request=request,
+        response=response,
+        db=db,
+        user=user,
+        organization=organization,
+        project=project,
     )
-    return {"access_token": access_token, "token_type": "bearer"}
 
-@router.post("/google", response_model=Token)
-async def google_auth(token_in: GoogleToken, db: AsyncSession = Depends(get_db)):
+
+@router.post("/google", response_model=SessionResponse)
+async def google_auth(
+    payload: GoogleToken,
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+):
     try:
-        # Verify the ID token
-        id_info = id_token.verify_oauth2_token(
-            token_in.credential, 
-            google_requests.Request(), 
-            GOOGLE_CLIENT_ID
+        info = id_token.verify_oauth2_token(
+            payload.credential,
+            google_requests.Request(),
+            GOOGLE_CLIENT_ID,
         )
+        if info["iss"] not in ["accounts.google.com", "https://accounts.google.com"]:
+            raise ValueError("Wrong issuer")
+    except Exception as exc:  # pragma: no cover - external verifier
+        raise HTTPException(status_code=401, detail=f"Invalid Google token: {exc}") from exc
 
-        if id_info['iss'] not in ['accounts.google.com', 'https://accounts.google.com']:
-            raise ValueError('Wrong issuer.')
+    email = info["email"]
+    google_id = info["sub"]
+    full_name = info.get("name")
+    avatar = info.get("picture")
 
-        email = id_info['email']
-        google_id = id_info['sub']
-        full_name = id_info.get('name')
-        avatar = id_info.get('picture')
+    user = (
+        await db.execute(select(User).where((User.google_id == google_id) | (User.email == email)))
+    ).scalar_one_or_none()
 
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Invalid Google token: {str(e)}",
-        )
-
-    result = await db.execute(select(User).where(or_(User.google_id == google_id, User.email == email)))
-    user = result.scalar_one_or_none()
-    
-    if not user:
-        # Create new user
+    if user is None:
         user = User(
             email=email,
             google_id=google_id,
             full_name=full_name,
             role="user",
-            avatar=avatar or f"https://api.dicebear.com/7.x/initials/svg?seed={full_name or email}"
+            avatar=avatar or f"https://api.dicebear.com/7.x/initials/svg?seed={full_name or email}",
         )
         db.add(user)
         await db.flush()
-
-        # Create default tenant and org unit for the new user
-        tenant = Tenant(
-            name=f"{user.full_name or user.email}'s Organization",
-            slug=f"org-{str(user.id)[:8]}"
+        owner_label = full_name or email.split("@", 1)[0]
+        organization, project = await OrganizationBootstrapService(db).create_organization_with_default_project(
+            owner=user,
+            name=f"{owner_label}'s Organization",
+            slug=_slugify(owner_label, fallback=f"org-{str(user.id)[:8]}"),
         )
-        db.add(tenant)
+        return await _create_browser_session_response(
+            request=request,
+            response=response,
+            db=db,
+            user=user,
+            organization=organization,
+            project=project,
+        )
+
+    if not user.google_id:
+        user.google_id = google_id
         await db.flush()
 
-        org_unit = OrgUnit(
-            tenant_id=tenant.id,
-            name="Root",
-            slug="root",
-            type=OrgUnitType.org
-        )
-        db.add(org_unit)
-        await db.flush()
+    organizations = await list_user_organizations(db=db, user_id=user.id)
+    if not organizations:
+        raise HTTPException(status_code=403, detail="User does not belong to any organization")
+    organization = organizations[0]
+    projects = await list_organization_projects(db=db, organization_id=organization.id)
+    if not projects:
+        raise HTTPException(status_code=403, detail="Organization has no active project")
+    project = projects[0]
+    return await _create_browser_session_response(
+        request=request,
+        response=response,
+        db=db,
+        user=user,
+        organization=organization,
+        project=project,
+    )
 
-        membership = OrgMembership(
-            tenant_id=tenant.id,
-            user_id=user.id,
-            org_unit_id=org_unit.id,
-            role=OrgRole.owner,
-            status=MembershipStatus.active
-        )
-        db.add(membership)
-        security_bootstrap = SecurityBootstrapService(db)
-        await security_bootstrap.ensure_default_roles(tenant.id)
-        await security_bootstrap.ensure_owner_assignment(tenant_id=tenant.id, user_id=user.id, assigned_by=user.id)
-        
+
+@router.get("/session", response_model=SessionResponse)
+async def get_current_session(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    _session, bundle = await _load_browser_session_bundle(request, db)
+    await db.commit()
+    return SessionResponse.model_validate(bundle.model_dump())
+
+
+@router.get("/me", response_model=SessionUserResponse)
+async def read_current_user(
+    current_user: User = Depends(get_current_user),
+):
+    return SessionUserResponse.model_validate(serialize_user_summary(current_user))
+
+
+@router.post("/logout")
+async def logout(
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+):
+    raw_token = str(request.cookies.get(SESSION_COOKIE_NAME) or "").strip()
+    if raw_token:
+        await BrowserSessionService(db).revoke_session(raw_token)
         await db.commit()
-        await db.refresh(user)
-        user_id = str(user.id)
-    else:
-        user_id = str(user.id)
-        # Update google_id if it was missing (e.g. user existed with email but first time using Google)
-        if not user.google_id:
-            user.google_id = google_id
-            await db.commit()
+    _clear_session_cookie(response=response, request=request)
+    return {"status": "logged_out"}
 
-    # Get user membership for context
-    try:
-        if isinstance(user_id, str):
-            user_id = UUID(user_id)
-    except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid user ID format"
-        )
 
-    msg_result = await db.execute(
-        select(OrgMembership).where(OrgMembership.user_id == user_id).limit(1)
-    )
-    membership = msg_result.scalar_one_or_none()
-    
-    tenant_id = str(membership.tenant_id) if membership else None
-    org_unit_id = str(membership.org_unit_id) if membership else None
-    org_role = membership.role.value if membership and hasattr(membership, 'role') else None
+@router.post("/context/organization", response_model=SessionResponse)
+async def switch_active_organization(
+    payload: SwitchOrganizationRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    session, _bundle = await _load_browser_session_bundle(request, db)
+    organizations = await list_user_organizations(db=db, user_id=session.user_id)
+    organization = next((item for item in organizations if item.slug == payload.organization_slug), None)
+    if organization is None:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    await BrowserSessionService(db).switch_organization(session=session, organization_id=organization.id)
+    await db.commit()
+    _session, bundle = await _load_browser_session_bundle(request, db)
+    return SessionResponse.model_validate(bundle.model_dump())
 
-    access_token = create_access_token(
-        subject=user_id,
-        tenant_id=tenant_id,
-        org_unit_id=org_unit_id,
-        org_role=org_role
-    )
-    return {"access_token": access_token, "token_type": "bearer"}
 
-@router.get("/me", response_model=UserResponse)
-async def read_users_me(
+@router.post("/context/project", response_model=SessionResponse)
+async def switch_active_project(
+    payload: SwitchProjectRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    session, _bundle = await _load_browser_session_bundle(request, db)
+    projects = await list_organization_projects(db=db, organization_id=session.organization_id)
+    project = next((item for item in projects if item.slug == payload.project_slug), None)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    await BrowserSessionService(db).switch_project(session=session, project_id=project.id)
+    await db.commit()
+    _session, bundle = await _load_browser_session_bundle(request, db)
+    return SessionResponse.model_validate(bundle.model_dump())
+
+
+@router.post("/token")
+async def create_programmatic_user_token(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-    token: str = Depends(oauth2_scheme)
 ):
-    # Extract context from token if available, or fetch from DB
-    payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-    tenant_id = payload.get("tenant_id")
-    org_unit_id = payload.get("org_unit_id")
-
-    org_role = payload.get("org_role")
-
-    if not tenant_id or not org_role:
-        result = await db.execute(
-            select(OrgMembership).where(OrgMembership.user_id == current_user.id).limit(1)
-        )
-        membership = result.scalar_one_or_none()
-        if membership:
-            tenant_id = str(membership.tenant_id)
-            org_unit_id = str(membership.org_unit_id)
-            # Ensure we get the string value of the Enum
-            org_role = membership.role.value if hasattr(membership.role, "value") else str(membership.role)
-
-    return UserResponse(
-        id=str(current_user.id), 
-        email=current_user.email, 
-        full_name=current_user.full_name, 
-        avatar=current_user.avatar, 
-        role=current_user.role,
-        tenant_id=tenant_id,
-        org_unit_id=org_unit_id,
-        org_role=org_role
+    organizations = await list_user_organizations(db=db, user_id=current_user.id)
+    organization = organizations[0] if organizations else None
+    access_token = create_access_token(
+        subject=str(current_user.id),
+        tenant_id=str(organization.id) if organization else None,
     )
+    return {"access_token": access_token, "token_type": "bearer"}

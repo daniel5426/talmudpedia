@@ -248,13 +248,146 @@ async def test_sprite_inner_opencode_client_skips_host_workspace_bootstrap(monke
 
     from app.services import published_app_sandbox_backend_sprite as sprite_backend_module
 
+    async def fake_ensure_opencode_service(*, sprite_name: str) -> None:
+        assert sprite_name == "sprite-app-1"
+
+    monkeypatch.setattr(backend, "_ensure_opencode_service", fake_ensure_opencode_service)
     monkeypatch.setattr(sprite_backend_module, "get_sprite_proxy_tunnel_manager", lambda: _TunnelManagerStub())
 
     client = await backend._build_opencode_client(sandbox_id="sprite-app-1")
 
     assert client._config.base_url == "http://127.0.0.1:40141"
     assert client._config.skip_workspace_bootstrap is True
-    assert client._config.sandbox_controller_mode_override is False
+
+
+@pytest.mark.asyncio
+async def test_sprite_write_file_streams_content_over_stdin(monkeypatch: pytest.MonkeyPatch):
+    backend = SpriteSandboxBackend(
+        PublishedAppSandboxBackendConfig(
+            backend="sprite",
+            controller_url=None,
+            controller_token=None,
+            request_timeout_seconds=15,
+            local_preview_base_url="http://127.0.0.1:5173",
+            embedded_local_enabled=False,
+            preview_proxy_base_path="/public/apps-builder/draft-dev/sessions",
+            e2b_template=None,
+            e2b_template_tag=None,
+            e2b_timeout_seconds=1800,
+            e2b_workspace_path="/workspace",
+            e2b_preview_port=4173,
+            e2b_opencode_port=4141,
+            e2b_secure=True,
+            e2b_allow_internet_access=True,
+            e2b_auto_pause=False,
+            sprite_api_base_url="https://api.sprites.dev",
+            sprite_api_token="sprite-token",
+            sprite_name_prefix="app-builder",
+            sprite_workspace_path="/home/sprite/app",
+            sprite_stage_workspace_path="/home/sprite/.talmudpedia/stage/current/workspace",
+            sprite_publish_workspace_path="/home/sprite/.talmudpedia/publish/current/workspace",
+            sprite_preview_port=8080,
+            sprite_opencode_port=4141,
+            sprite_preview_service_name="builder-preview",
+            sprite_opencode_service_name="opencode",
+            sprite_opencode_command=None,
+            sprite_command_timeout_seconds=900,
+            sprite_retention_seconds=21600,
+            sprite_network_policy=None,
+        )
+    )
+
+    captured: dict[str, object] = {}
+
+    async def fake_exec_with_stdin(*, sprite_name: str, command: list[str], stdin_text: str, **kwargs):
+        captured["sprite_name"] = sprite_name
+        captured["command"] = command
+        captured["stdin_text"] = stdin_text
+        captured["kwargs"] = kwargs
+        return ("", 0)
+
+    async def fake_bump_revision_token(*, sprite_name: str, workspace_path: str) -> str:
+        assert sprite_name == "sprite-app-1"
+        assert workspace_path == "/home/sprite/app"
+        return "rev-1"
+
+    monkeypatch.setattr(backend, "_exec_with_stdin", fake_exec_with_stdin)
+    monkeypatch.setattr(backend, "_bump_revision_token", fake_bump_revision_token)
+
+    result = await backend.write_file(
+        sandbox_id="sprite-app-1",
+        path="src/App.tsx",
+        content="x" * 250_000,
+    )
+
+    assert captured["sprite_name"] == "sprite-app-1"
+    assert captured["stdin_text"] == "x" * 250_000
+    assert captured["command"][:2] == ["python3", "-c"]
+    assert "destination.write_text(sys.stdin.read(), encoding='utf-8')" in str(captured["command"][2])
+    assert result["revision_token"] == "rev-1"
+
+
+@pytest.mark.asyncio
+async def test_sprite_build_opencode_client_reuses_cached_service_and_tunnel(monkeypatch: pytest.MonkeyPatch):
+    backend = SpriteSandboxBackend(
+        PublishedAppSandboxBackendConfig(
+            backend="sprite",
+            controller_url=None,
+            controller_token=None,
+            request_timeout_seconds=15,
+            local_preview_base_url="http://127.0.0.1:5173",
+            embedded_local_enabled=False,
+            preview_proxy_base_path="/public/apps-builder/draft-dev/sessions",
+            e2b_template=None,
+            e2b_template_tag=None,
+            e2b_timeout_seconds=1800,
+            e2b_workspace_path="/workspace",
+            e2b_preview_port=4173,
+            e2b_opencode_port=4141,
+            e2b_secure=True,
+            e2b_allow_internet_access=True,
+            e2b_auto_pause=False,
+            sprite_api_base_url="https://api.sprites.dev",
+            sprite_api_token="sprite-token",
+            sprite_name_prefix="app-builder",
+            sprite_workspace_path="/home/sprite/app",
+            sprite_stage_workspace_path="/home/sprite/.talmudpedia/stage/current/workspace",
+            sprite_publish_workspace_path="/home/sprite/.talmudpedia/publish/current/workspace",
+            sprite_preview_port=8080,
+            sprite_opencode_port=4141,
+            sprite_preview_service_name="builder-preview",
+            sprite_opencode_service_name="opencode",
+            sprite_opencode_command=None,
+            sprite_command_timeout_seconds=900,
+            sprite_retention_seconds=21600,
+            sprite_network_policy=None,
+        )
+    )
+
+    ensure_service_calls: list[str] = []
+    tunnel_calls: list[str] = []
+
+    async def fake_ensure_opencode_service(*, sprite_name: str) -> None:
+        ensure_service_calls.append(sprite_name)
+
+    class _TunnelManagerStub:
+        async def ensure_tunnel(self, *, api_base_url: str, api_token: str, sprite_name: str, remote_host: str, remote_port: int) -> str:
+            tunnel_calls.append(sprite_name)
+            return "http://127.0.0.1:40141"
+
+    from app.services import published_app_sandbox_backend_sprite as sprite_backend_module
+
+    monkeypatch.setattr(backend, "_ensure_opencode_service", fake_ensure_opencode_service)
+    monkeypatch.setattr(sprite_backend_module, "get_sprite_proxy_tunnel_manager", lambda: _TunnelManagerStub())
+
+    first = await backend._build_opencode_client(sandbox_id="sprite-app-1")
+    second = await backend._build_opencode_client(sandbox_id="sprite-app-1")
+    third = await backend._build_opencode_client(sandbox_id="sprite-app-1", force_refresh=True)
+
+    assert first is second
+    assert third is not first
+    assert ensure_service_calls == ["sprite-app-1", "sprite-app-1"]
+    assert tunnel_calls == ["sprite-app-1", "sprite-app-1"]
 
 
 @pytest.mark.asyncio
@@ -1777,6 +1910,80 @@ async def test_official_mode_closed_no_terminal_recovers_via_snapshot_polling(mo
     )
     assert events[-1].get("event") == "run.completed"
     assert not any(item.get("event") == "run.failed" for item in events)
+
+
+@pytest.mark.asyncio
+async def test_official_mode_global_event_stream_falls_back_quickly_when_only_heartbeats_arrive(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    session_id = "sess-heartbeats-only"
+    monotonic_values = iter([0.0, 0.0, 0.2, 0.9, 1.8, 2.7, 3.6, 4.5, 5.4])
+
+    def fake_monotonic() -> float:
+        try:
+            return next(monotonic_values)
+        except StopIteration:
+            return 6.0
+
+    sse_text = "".join(
+        [
+            'data: {"payload":{"type":"server.connected","properties":{}}}\n\n',
+            'data: {"payload":{"type":"server.heartbeat","properties":{}}}\n\n',
+            'data: {"payload":{"type":"server.heartbeat","properties":{}}}\n\n',
+        ]
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/global/health":
+            return httpx.Response(200, json={"success": True, "data": {"ok": True}})
+        if request.url.path == "/session":
+            return httpx.Response(200, json={"success": True, "data": {"id": session_id}})
+        if request.url.path == f"/session/{session_id}/prompt_async":
+            return httpx.Response(204, text="")
+        if request.url.path == "/global/event":
+            return httpx.Response(200, text=sse_text, headers={"content-type": "text/event-stream"})
+        if request.url.path == "/question":
+            return httpx.Response(200, json=[])
+        if request.url.path == f"/session/{session_id}/message" and request.method == "GET":
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "info": {
+                            "id": "msg-assistant",
+                            "sessionID": session_id,
+                            "role": "assistant",
+                            "time": {"created": 1, "completed": 2},
+                        },
+                        "parts": [{"id": "part-text", "type": "text", "text": "Recovered after missed live events."}],
+                    }
+                ],
+            )
+        raise AssertionError(f"Unexpected request path: {request.url.path} ({request.method})")
+
+    _patch_async_client(monkeypatch, handler)
+    monkeypatch.setenv("APPS_CODING_AGENT_OPENCODE_OFFICIAL_GLOBAL_NO_MATCH_GRACE_SECONDS", "1")
+    monkeypatch.setenv("APPS_CODING_AGENT_OPENCODE_OFFICIAL_POLL_INTERVAL_SECONDS", "0.1")
+    monkeypatch.setenv("APPS_CODING_AGENT_OPENCODE_OFFICIAL_STREAM_SETTLE_SECONDS", "0.2")
+    monkeypatch.setattr("app.services.opencode_server_client.time.monotonic", fake_monotonic)
+    client = _client()
+
+    run_ref = await client.start_run(
+        run_id="run-heartbeats-only",
+        app_id="app-1",
+        sandbox_id="sandbox-1",
+        workspace_path="/tmp/sandbox-1",
+        model_id="",
+        prompt="Reply",
+        messages=[{"role": "user", "content": "Reply"}],
+    )
+    events = [item async for item in client.stream_run_events(run_ref=run_ref)]
+    assert any(
+        item.get("event") == "assistant.delta"
+        and "Recovered after missed live events." in str(item.get("payload", {}).get("content") or "")
+        for item in events
+    )
+    assert events[-1].get("event") == "run.completed"
 
 
 @pytest.mark.asyncio

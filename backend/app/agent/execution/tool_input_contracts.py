@@ -193,8 +193,15 @@ def get_tool_execution_config(tool: Any) -> dict[str, Any]:
     return execution if isinstance(execution, dict) else {}
 
 
+def get_tool_validation_mode(tool: Any) -> str:
+    mode = str(get_tool_execution_config(tool).get("validation_mode") or "strict").strip().lower()
+    if mode == "none":
+        return "none"
+    return "strict"
+
+
 def is_strict_tool_input(tool: Any) -> bool:
-    return bool(get_tool_execution_config(tool).get("strict_input_schema"))
+    return get_tool_validation_mode(tool) == "strict"
 
 
 def _path_parts(err: ValidationError) -> list[str]:
@@ -338,6 +345,20 @@ def _format_validation_message(err: ValidationError) -> str:
     return err.message
 
 
+def _validation_issue_code(err: ValidationError) -> str:
+    if err.validator == "required":
+        return "missing_required_field"
+    if err.validator == "additionalProperties":
+        return "unexpected_field"
+    if err.validator == "type":
+        return "wrong_type"
+    if err.validator == "enum":
+        return "invalid_enum"
+    if err.validator in {"anyOf", "oneOf"}:
+        return "schema_branch_mismatch"
+    return "invalid_value"
+
+
 def summarize_validation_errors(validation_errors: list[dict[str, str]]) -> str | None:
     messages: list[str] = []
     seen: set[str] = set()
@@ -354,32 +375,57 @@ def summarize_validation_errors(validation_errors: list[dict[str, str]]) -> str 
     return " ".join(messages[:3])
 
 
-def validate_tool_input_schema(tool: Any, input_data: Any) -> list[dict[str, str]]:
-    input_schema = get_tool_input_schema(tool)
+def validate_tool_input_against_schema(
+    input_schema: dict[str, Any],
+    input_data: Any,
+    *,
+    tool_name: str | None = None,
+) -> list[dict[str, Any]]:
     if not input_schema:
         return []
 
     try:
-        input_schema = sanitize_schema_dict(input_schema, tool_name=getattr(tool, "slug", None) or getattr(tool, "name", None))
+        input_schema = sanitize_schema_dict(input_schema, tool_name=tool_name)
         validator_cls = validator_for(input_schema)
         validator_cls.check_schema(input_schema)
         validator = validator_cls(input_schema)
     except ToolSchemaValidationError as exc:
-        return [{"path": exc.schema_path or "input", "message": str(exc)}]
+        return [
+            {
+                "code": "invalid_tool_schema",
+                "path": exc.schema_path or "input",
+                "message": str(exc),
+            }
+        ]
     except Exception as exc:
-        return [{"path": "", "message": f"Invalid tool input schema: {exc}"}]
+        return [
+            {
+                "code": "invalid_tool_schema",
+                "path": "",
+                "message": f"Invalid tool input schema: {exc}",
+            }
+        ]
 
     errors: list[ValidationError] = sorted(
         validator.iter_errors(input_data),
         key=lambda err: list(err.path),
     )
-    normalized: list[dict[str, str]] = []
+    normalized: list[dict[str, Any]] = []
     for err in errors:
         path = ".".join(str(part) for part in err.path)
         normalized.append(
             {
+                "code": _validation_issue_code(err),
                 "path": path,
                 "message": _format_validation_message(err),
             }
         )
     return normalized
+
+
+def validate_tool_input_schema(tool: Any, input_data: Any) -> list[dict[str, str]]:
+    return validate_tool_input_against_schema(
+        get_tool_input_schema(tool),
+        input_data,
+        tool_name=getattr(tool, "slug", None) or getattr(tool, "name", None),
+    )

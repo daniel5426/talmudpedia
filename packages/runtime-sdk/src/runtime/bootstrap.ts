@@ -4,6 +4,7 @@ export type RuntimeBootstrapRequest = {
   apiBaseUrl?: string;
   appSlug?: string;
   revisionId?: string;
+  bootstrapUrl?: string;
   previewToken?: string;
   fetchImpl?: typeof fetch;
 };
@@ -12,14 +13,35 @@ function trimTrailingSlash(value: string): string {
   return value.endsWith("/") ? value.slice(0, -1) : value;
 }
 
+function isAbsoluteUrl(value: string): boolean {
+  return /^https?:\/\//i.test(value);
+}
+
+function resolveBuilderPreviewBootstrapUrl(): string | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  const params = new URLSearchParams(window.location.search);
+  if (params.get("runtime_mode") !== "builder-preview") {
+    return null;
+  }
+  const bootstrapUrl = String(params.get("runtime_bootstrap_url") || "").trim();
+  return bootstrapUrl || null;
+}
+
 function resolveBootstrapPath(request: RuntimeBootstrapRequest): string {
+  const explicitBootstrapUrl =
+    String(request.bootstrapUrl || "").trim() || resolveBuilderPreviewBootstrapUrl() || "";
+  if (explicitBootstrapUrl) {
+    return explicitBootstrapUrl;
+  }
   if (request.revisionId) {
     return `/public/apps/preview/revisions/${encodeURIComponent(request.revisionId)}/runtime/bootstrap`;
   }
   if (request.appSlug) {
     return `/public/external/apps/${encodeURIComponent(request.appSlug)}/runtime/bootstrap`;
   }
-  throw new Error("Runtime bootstrap requires appSlug or revisionId.");
+  throw new Error("Runtime bootstrap requires bootstrapUrl, appSlug, or revisionId.");
 }
 
 export async function fetchRuntimeBootstrap(request: RuntimeBootstrapRequest): Promise<RuntimeBootstrap> {
@@ -30,7 +52,7 @@ export async function fetchRuntimeBootstrap(request: RuntimeBootstrapRequest): P
 
   const base = trimTrailingSlash(request.apiBaseUrl || "/api/py");
   const path = resolveBootstrapPath(request);
-  const url = `${base}${path}`;
+  const url = isAbsoluteUrl(path) ? path : `${base}${path}`;
   const headers: Record<string, string> = {};
   if (request.previewToken) {
     headers.Authorization = `Bearer ${request.previewToken}`;

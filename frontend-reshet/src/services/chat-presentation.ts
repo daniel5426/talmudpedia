@@ -10,6 +10,7 @@ import {
 export type ChatRenderBlockKind =
   | "assistant_text"
   | "tool_call"
+  | "ui_blocks"
   | "reasoning_note"
   | "approval_request"
   | "error"
@@ -39,6 +40,13 @@ export type ChatToolPresentation = {
   output?: unknown;
 };
 
+export type ChatUIBlocksPresentation = {
+  toolCallId?: string;
+  contractVersion?: string;
+  bundle?: Record<string, unknown>;
+  error?: string | null;
+};
+
 type ChatRenderBlockBase = {
   id: string;
   kind: ChatRenderBlockKind;
@@ -60,6 +68,11 @@ export type ChatAssistantTextBlock = ChatRenderBlockBase & {
 export type ChatToolCallBlock = ChatRenderBlockBase & {
   kind: "tool_call";
   tool: ChatToolPresentation;
+};
+
+export type ChatUIBlocksBlock = ChatRenderBlockBase & {
+  kind: "ui_blocks";
+  ui: ChatUIBlocksPresentation;
 };
 
 export type ChatReasoningNoteBlock = ChatRenderBlockBase & {
@@ -92,6 +105,7 @@ export type ChatUserMessageBlock = ChatRenderBlockBase & {
 export type ChatRenderBlock =
   | ChatAssistantTextBlock
   | ChatToolCallBlock
+  | ChatUIBlocksBlock
   | ChatReasoningNoteBlock
   | ChatApprovalRequestBlock
   | ChatErrorBlock

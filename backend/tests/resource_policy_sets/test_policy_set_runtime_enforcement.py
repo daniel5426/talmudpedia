@@ -5,6 +5,7 @@ from uuid import uuid4
 import pytest
 
 from app.agent.execution.service import AgentExecutorService
+from app.agent.execution.tool_invocation import build_tool_invocation_envelope
 from app.agent.executors.tool import ToolNodeExecutor
 from app.db.postgres.models.agents import AgentRun, AgentStatus, RunStatus
 from app.db.postgres.models.resource_policies import ResourcePolicyPrincipalType, ResourcePolicyResourceType
@@ -327,17 +328,38 @@ async def test_nested_agent_call_propagates_frozen_policy_snapshot_even_if_assig
     )
     await db_session.commit()
 
-    result = await tool_executor._execute_agent_call_tool(
-        None,
-        input_data={"input": "hello"},
-        implementation_config={"target_agent_id": str(child_agent.id)},
-        execution_config={},
+    envelope = build_tool_invocation_envelope(
+        tool=type(
+            "_Tool",
+            (),
+            {
+                "id": uuid4(),
+                "slug": "agent-call-test",
+                "name": "agent-call-test",
+                "schema": {"input": {"type": "object", "properties": {"input": {"type": "string"}}}},
+                "config_schema": {
+                    "implementation": {"target_agent_id": str(child_agent.id)},
+                    "execution": {"validation_mode": "strict"},
+                },
+            },
+        )(),
+        raw_input={"input": "hello"},
         node_context={
             "user_id": str(user.id),
             "resource_policy_snapshot": frozen_snapshot.to_payload(),
             "resource_policy_principal": frozen_snapshot.principal.to_payload(),
         },
+        implementation_type="agent_call",
+        config_schema={
+            "implementation": {"target_agent_id": str(child_agent.id)},
+            "execution": {"validation_mode": "strict"},
+        },
+        implementation_config={"target_agent_id": str(child_agent.id)},
+        execution_config={"validation_mode": "strict"},
     )
+    envelope.model_input_compiled = {"input": "hello"}
+
+    result = await tool_executor._execute_agent_call_tool(None, envelope)
 
     assert result["target_agent_id"] == str(child_agent.id)
     assert captured["agent_id"] == child_agent.id

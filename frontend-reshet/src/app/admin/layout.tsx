@@ -9,60 +9,40 @@ import { useEffect, useState } from "react"
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const { direction } = useDirection()
-  const { user, isAuthenticated } = useAuthStore()
+  const user = useAuthStore((state) => state.user)
+  const hydrated = useAuthStore((state) => state.hydrated)
+  const sessionChecked = useAuthStore((state) => state.sessionChecked)
+  const effectiveScopes = useAuthStore((state) => state.effectiveScopes)
   const router = useRouter()
   const pathname = usePathname()
   const [isAuthorized, setIsAuthorized] = useState(false)
 
-  const [isHydrated, setIsHydrated] = useState(false)
-
   useEffect(() => {
-    // Handle hydration state safely
-    const checkHydration = () => {
-      if (useAuthStore.persist.hasHydrated()) {
-        setIsHydrated(true)
-      }
+    if (!hydrated || !sessionChecked) {
+      return
     }
 
-    // Check immediately
-    checkHydration()
-
-    // Listen for hydration finish if available
-    const unsub = useAuthStore.persist.onFinishHydration?.(() => {
-      setIsHydrated(true)
-    })
-
-    return () => {
-      if (typeof unsub === 'function') unsub()
-    }
-  }, [])
-
-  useEffect(() => {
-    // Don't check auth until hydration is complete
-    if (!isHydrated) return;
-
-    if (!isAuthenticated() || !user) {
-      console.log("AdminLayout: Redirecting to login", { isAuthenticated: isAuthenticated(), hasUser: !!user })
-      router.push("/auth/login")
+    if (!user) {
+      router.replace("/auth/login")
       return
     }
 
     const hasAccess =
+      effectiveScopes.length > 0 ||
       user.role === "admin" ||
-      user.org_role === "owner" ||
-      user.org_role === "admin";
+      user.role === "system_admin" ||
+      user.role === "system"
 
     if (!hasAccess) {
-      console.log("AdminLayout: Redirecting to root (No Access)", { role: user.role, org_role: user.org_role })
-      router.push("/")
+      router.replace("/")
       return
     }
 
     setIsAuthorized(true)
-  }, [user, isAuthenticated, router, isHydrated])
+  }, [effectiveScopes.length, hydrated, router, sessionChecked, user])
 
   if (!isAuthorized) {
-    return null // Or a loading spinner
+    return null
   }
 
   const isAppsBuilderRoute =

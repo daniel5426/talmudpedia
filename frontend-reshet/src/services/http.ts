@@ -69,9 +69,6 @@ class HttpClient {
   }
 
   buildHeaders(headers?: HeadersInit, body?: BodyInit | null): HeadersInit {
-    const authState = useAuthStore.getState();
-    const token = authState.token;
-    const tenantId = authState.user?.tenant_id;
     const nextHeaders: Record<string, string> = {};
 
     if (headers) {
@@ -85,33 +82,19 @@ class HttpClient {
       nextHeaders["Content-Type"] = "application/json";
     }
 
-    if (token) {
-      nextHeaders["Authorization"] = `Bearer ${token}`;
-    }
-    if (tenantId && !nextHeaders["X-Tenant-ID"]) {
-      nextHeaders["X-Tenant-ID"] = tenantId;
-    }
-
     return nextHeaders;
   }
 
   async request<T>(path: string, init: RequestInit = {}): Promise<T> {
     const headers = this.buildHeaders(init.headers, init.body ?? null);
     const url = `${this.baseUrl}${path}`;
-    
-    console.log(`[HttpClient] Request: ${init.method || 'GET'} ${url}`, {
-      headers,
-      body: init.body ? (typeof init.body === 'string' ? JSON.parse(init.body) : 'FormData/Binary') : null
-    });
 
     try {
-      const response = await fetch(url, { ...init, headers });
-      
-      console.log(`[HttpClient] Response: ${response.status} ${response.statusText} for ${url}`);
+      const response = await fetch(url, { ...init, headers, credentials: "include" });
 
       if (!response.ok) {
         if (response.status === 401) {
-          useAuthStore.getState().logout();
+          useAuthStore.getState().clearSession();
         }
         let message: any = "Request failed";
         let parsedErrorPayload: unknown = null;
@@ -133,13 +116,6 @@ class HttpClient {
           message = response.statusText || message;
         }
         const errorMsg = typeof message === 'object' ? JSON.stringify(message) : String(message);
-        if (!this.shouldSuppressErrorLogging(errorMsg)) {
-          if (parsedErrorPayload !== null) {
-            console.error(`[HttpClient] Error Data for ${url}:`, parsedErrorPayload);
-          } else {
-            console.error(`[HttpClient] Error Response for ${url}:`, errorMsg);
-          }
-        }
         throw new HttpRequestError(
           errorMsg,
           response.status,
@@ -150,14 +126,11 @@ class HttpClient {
       if (response.status === 204) {
         return undefined as T;
       }
-
-      const result = await response.json();
-      console.log(`[HttpClient] Result for ${url}:`, result);
-      return result;
+      return response.json();
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error || "");
       if (!this.shouldSuppressErrorLogging(errorMessage)) {
-        console.error(`[HttpClient] Fetch Error for ${url}:`, error);
+        console.error(`[HttpClient] Request failed for ${url}:`, error);
       }
       throw error;
     }
@@ -192,7 +165,7 @@ class HttpClient {
   async requestRaw(path: string, init: RequestInit = {}): Promise<Response> {
     const headers = this.buildHeaders(init.headers, init.body ?? null);
     const url = `${this.baseUrl}${path}`;
-    return fetch(url, { ...init, headers });
+    return fetch(url, { ...init, headers, credentials: "include" });
   }
 }
 

@@ -11,22 +11,28 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.requests import Request
 
 from app.api.dependencies import get_current_principal
-from app.api.routers import agent_graph_mutations, agents, artifacts, knowledge_stores, models, orchestration_internal, rag_graph_mutations, rag_operator_contracts, rag_pipelines, settings, tools
+from app.api.routers import agent_graph_mutations, agents, artifacts, orchestration_internal, rag_graph_mutations, rag_operator_contracts, rag_pipelines
 from app.api.schemas.artifacts import ArtifactConvertKindRequest, ArtifactCreate, ArtifactTestRequest, ArtifactUpdate
 from app.api.routers.agents import CreateAgentRequest, ExecuteAgentRequest, NodeSchemaRequest, UpdateAgentRequest, get_node_schemas, list_node_catalog
 from app.api.routers.agent_graph_mutations import AddToolRequest, GraphPatchRequest as AgentGraphPatchRequest, RemoveToolRequest, SetInstructionsRequest, SetModelRequest
-from app.api.routers.knowledge_stores import CreateKnowledgeStoreRequest, UpdateKnowledgeStoreRequest
-from app.api.routers.models import CreateModelRequest, UpdateModelRequest
 from app.api.routers.orchestration_internal import CancelSubtreeRequest, EvaluateAndReplanRequest, JoinRequest
 from app.api.routers.rag_graph_mutations import AttachKnowledgeStoreRequest, GraphPatchRequest as RagGraphPatchRequest, SetPipelineNodeConfigRequest
 from app.api.routers.rag_operator_contracts import OperatorSchemaRequest
 from app.api.routers.rag_pipelines import CreateJobRequest, CreatePipelineRequest, UpdatePipelineRequest, compile_pipeline, create_pipeline_job, get_executable_pipeline, get_executable_pipeline_input_schema, get_pipeline_context, get_pipeline_job
-from app.api.routers.settings import CreateCredentialRequest, UpdateCredentialRequest, list_credentials, create_credential, update_credential
-from app.api.routers.tools import CreateToolRequest, UpdateToolRequest
+from app.api.routers.knowledge_stores import CreateKnowledgeStoreRequest, UpdateKnowledgeStoreRequest, store_to_response
+from app.api.routers.models import CreateModelRequest, ModelListResponse, UpdateModelRequest, _serialize_model
+from app.api.routers.settings import CreateCredentialRequest, UpdateCredentialRequest, _credential_to_response
+from app.api.routers.tools import CreateToolRequest, ToolListResponse, ToolResponse, UpdateToolRequest
 from app.core.scope_registry import get_required_scopes_for_action
 from app.db.postgres.engine import sessionmaker as get_session
 from app.db.postgres.models.registry import ToolStatus
 from app.services.agent_graph_mutation_service import AgentGraphMutationService
+from app.services.control_plane.context import ControlPlaneContext
+from app.services.control_plane.credentials_admin_service import CredentialsAdminService
+from app.services.control_plane.errors import ControlPlaneError
+from app.services.control_plane.knowledge_store_admin_service import KnowledgeStoreAdminService
+from app.services.control_plane.models_service import CreateModelInput, ListModelsInput, ModelRegistryService, UpdateModelInput
+from app.services.control_plane.tool_registry_admin_service import ToolRegistryAdminService, serialize_tool
 from app.services.orchestration_policy_service import ORCHESTRATION_SURFACE_OPTION_B, is_orchestration_surface_enabled
 from app.services.platform_architect_contracts import PLATFORM_ARCHITECT_DOMAIN_TOOLS
 from app.services.rag_graph_mutation_service import RagGraphMutationService
@@ -40,6 +46,7 @@ PLATFORM_NATIVE_FUNCTIONS: dict[str, str] = {
     "platform-assets": "platform_native_platform_assets",
     "platform-governance": "platform_native_platform_governance",
 }
+PLATFORM_NATIVE_TRACE_VERSION = "platform-native-debug-2026-04-14-1"
 
 ACTION_ALIASES = {
     "fetch_catalog": "catalog.list_capabilities",
@@ -214,6 +221,7 @@ def _finalize_success(*, action: str, dry_run: bool, result: Any, inputs: dict[s
         "dry_run": dry_run,
         "meta": _extract_meta(inputs=inputs, payload=payload, tool_slug=tool_slug),
     }
+    output["meta"]["trace_version"] = PLATFORM_NATIVE_TRACE_VERSION
     return output
 
 
@@ -228,6 +236,7 @@ def _finalize_error(*, action: str, dry_run: bool, error: dict[str, Any], inputs
         "dry_run": dry_run,
         "meta": _extract_meta(inputs=inputs, payload=payload, tool_slug=tool_slug),
     }
+    output["meta"]["trace_version"] = PLATFORM_NATIVE_TRACE_VERSION
     return output
 
 
@@ -305,6 +314,20 @@ class NativePlatformToolRuntime:
         principal = await self.resolve_principal()
         return {"tenant_id": str(principal.get("tenant_id")) if principal.get("tenant_id") else None}
 
+    async def build_control_plane_context(self) -> ControlPlaneContext:
+        principal = await self.resolve_principal()
+        tenant_ctx = await self.build_tools_context()
+        user = principal.get("user") or tenant_ctx.get("user")
+        user_id = _parse_uuid(principal.get("user_id") or getattr(user, "id", None))
+        return ControlPlaneContext.from_tenant_context(
+            tenant_ctx,
+            user=user,
+            user_id=user_id,
+            auth_token=principal.get("auth_token"),
+            scopes=principal.get("scopes"),
+            is_service=bool(tenant_ctx.get("is_service")),
+        )
+
     async def validate(self) -> None:
         if not self.tool_slug:
             raise HTTPException(status_code=400, detail={"code": "MISSING_TOOL_SLUG", "message": "Missing tool slug"})
@@ -361,6 +384,8 @@ class NativePlatformToolRuntime:
             return _finalize_error(action=self.action, dry_run=self.dry_run, error=_validation_error_payload(exc), inputs=self.inputs, payload=self.payload, tool_slug=self.tool_slug)
         except HTTPException as exc:
             return _finalize_error(action=self.action, dry_run=self.dry_run, error=_http_error_payload(exc), inputs=self.inputs, payload=self.payload, tool_slug=self.tool_slug)
+        except ControlPlaneError as exc:
+            return _finalize_error(action=self.action, dry_run=self.dry_run, error=_http_error_payload(exc.to_http_exception()), inputs=self.inputs, payload=self.payload, tool_slug=self.tool_slug)
 
 
 def _pipeline_shell_graph() -> dict[str, Any]:
@@ -836,96 +861,149 @@ async def _artifacts_delete(rt: NativePlatformToolRuntime) -> Any:
 
 
 async def _tools_list(rt: NativePlatformToolRuntime) -> Any:
-    tenant_ctx = await rt.build_tools_context()
-    return await tools.list_tools(scope=rt.payload.get("scope"), is_active=rt.payload.get("is_active", True), status=rt.payload.get("status"), implementation_type=rt.payload.get("implementation_type"), tool_type=rt.payload.get("tool_type"), skip=int(rt.payload.get("skip") or 0), limit=int(rt.payload.get("limit") or 50), db=rt.db, tenant_ctx=tenant_ctx)
+    ctx = await rt.build_control_plane_context()
+    tools, total = await ToolRegistryAdminService(rt.db).list_tools(
+        ctx=ctx,
+        scope=rt.payload.get("scope"),
+        is_active=rt.payload.get("is_active", True),
+        status=rt.payload.get("status"),
+        implementation_type=rt.payload.get("implementation_type"),
+        tool_type=rt.payload.get("tool_type"),
+        skip=int(rt.payload.get("skip") or 0),
+        limit=int(rt.payload.get("limit") or 50),
+    )
+    return ToolListResponse(tools=[ToolResponse(**serialize_tool(tool)) for tool in tools], total=total)
 
 
 async def _tools_get(rt: NativePlatformToolRuntime) -> Any:
-    tenant_ctx = await rt.build_tools_context()
+    ctx = await rt.build_control_plane_context()
     tool_id = _parse_uuid(rt.payload.get("tool_id") or rt.payload.get("id"))
-    return await tools.get_tool(tool_id=tool_id, db=rt.db, tenant_ctx=tenant_ctx)
+    tool = await ToolRegistryAdminService(rt.db).get_tool(ctx=ctx, tool_id=tool_id)
+    return ToolResponse(**serialize_tool(tool))
 
 
 async def _tools_create_or_update(rt: NativePlatformToolRuntime) -> Any:
-    tenant_ctx = await rt.build_tools_context()
+    ctx = await rt.build_control_plane_context()
     if rt.dry_run:
         return {"status": "skipped", "dry_run": True, "name": rt.payload.get("name")}
     if rt.payload.get("tool_id") or rt.payload.get("id"):
         tool_id = _parse_uuid(rt.payload.get("tool_id") or rt.payload.get("id"))
         patch = dict(rt.payload.get("patch")) if isinstance(rt.payload.get("patch"), dict) else dict(rt.payload)
         request = UpdateToolRequest(**{key: value for key, value in patch.items() if key in UpdateToolRequest.model_fields})
-        return await tools.update_tool(tool_id=tool_id, request=request, _={}, db=rt.db, tenant_ctx=tenant_ctx)
+        tool = await ToolRegistryAdminService(rt.db).update_tool(ctx=ctx, tool_id=tool_id, request=request)
+        return ToolResponse(**serialize_tool(tool))
     request = CreateToolRequest(**{key: value for key, value in rt.payload.items() if key in CreateToolRequest.model_fields})
-    return await tools.create_tool(request=request, _={}, db=rt.db, tenant_ctx=tenant_ctx)
+    tool = await ToolRegistryAdminService(rt.db).create_tool(ctx=ctx, request=request)
+    return ToolResponse(**serialize_tool(tool))
 
 
 async def _tools_publish(rt: NativePlatformToolRuntime) -> Any:
-    tenant_ctx = await rt.build_tools_context()
-    principal = await rt.resolve_principal()
+    ctx = await rt.build_control_plane_context()
     tool_id = _parse_uuid(rt.payload.get("tool_id") or rt.payload.get("id"))
     if rt.dry_run:
         return {"status": "skipped", "dry_run": True, "tool_id": str(tool_id)}
-    return await tools.publish_tool(tool_id=tool_id, principal=principal, _={}, db=rt.db, tenant_ctx=tenant_ctx)
+    tool = await ToolRegistryAdminService(rt.db).publish_tool(ctx=ctx, tool_id=tool_id)
+    return ToolResponse(**serialize_tool(tool))
 
 
 async def _models_list(rt: NativePlatformToolRuntime) -> Any:
-    tenant_ctx = await rt.build_tenant_context()
-    principal = await rt.resolve_principal()
-    return await models.list_models(capability_type=rt.payload.get("capability_type"), is_active=rt.payload.get("is_active", True), skip=int(rt.payload.get("skip") or 0), limit=int(rt.payload.get("limit") or 50), db=rt.db, tenant_ctx=tenant_ctx, _={}, principal=principal)
+    ctx = await rt.build_control_plane_context()
+    models, total = await ModelRegistryService(rt.db).list_models(
+        ctx=ctx,
+        params=ListModelsInput(
+            capability_type=rt.payload.get("capability_type"),
+            status=rt.payload.get("status"),
+            is_active=rt.payload.get("is_active", True),
+            skip=int(rt.payload.get("skip") or 0),
+            limit=int(rt.payload.get("limit") or 50),
+        ),
+    )
+    return ModelListResponse(models=[_serialize_model(model) for model in models], total=total)
 
 
 async def _models_create_or_update(rt: NativePlatformToolRuntime) -> Any:
-    tenant_ctx = await rt.build_tenant_context()
-    principal = await rt.resolve_principal()
+    ctx = await rt.build_control_plane_context()
     if rt.dry_run:
         return {"status": "skipped", "dry_run": True, "name": rt.payload.get("name")}
     model_id = _parse_uuid(rt.payload.get("model_id") or rt.payload.get("id"))
     if model_id is not None:
         patch = dict(rt.payload.get("patch")) if isinstance(rt.payload.get("patch"), dict) else dict(rt.payload)
-        request = UpdateModelRequest(**{key: value for key, value in patch.items() if key in UpdateModelRequest.model_fields})
-        return await models.update_model(model_id=model_id, request=request, db=rt.db, tenant_ctx=tenant_ctx, _={}, principal=principal)
-    request = CreateModelRequest(**{key: value for key, value in rt.payload.items() if key in CreateModelRequest.model_fields})
-    return await models.create_model(request=request, db=rt.db, tenant_ctx=tenant_ctx, _={}, principal=principal)
+        model = await ModelRegistryService(rt.db).update_model(
+            ctx=ctx,
+            model_id=model_id,
+            params=UpdateModelInput(**{key: value for key, value in patch.items() if key in UpdateModelRequest.model_fields}),
+        )
+        return _serialize_model(model)
+    model = await ModelRegistryService(rt.db).create_model(
+        ctx=ctx,
+        params=CreateModelInput(**{key: value for key, value in rt.payload.items() if key in CreateModelRequest.model_fields}),
+    )
+    return _serialize_model(model)
 
 
 async def _credentials_list(rt: NativePlatformToolRuntime) -> Any:
-    tenant_ctx = await rt.build_tenant_context()
-    principal = await rt.resolve_principal()
-    return await list_credentials(category=rt.payload.get("category"), db=rt.db, tenant_ctx=tenant_ctx, current_user=principal.get("user"))
+    ctx = await rt.build_control_plane_context()
+    credentials = await CredentialsAdminService(rt.db).list_credentials(ctx=ctx, category=rt.payload.get("category"))
+    return [_credential_to_response(item) for item in credentials]
 
 
 async def _credentials_create_or_update(rt: NativePlatformToolRuntime) -> Any:
-    tenant_ctx = await rt.build_tenant_context()
-    principal = await rt.resolve_principal()
+    ctx = await rt.build_control_plane_context()
     if rt.dry_run:
         return {"status": "skipped", "dry_run": True, "display_name": rt.payload.get("display_name")}
     credential_id = _parse_uuid(rt.payload.get("credential_id") or rt.payload.get("id"))
     if credential_id is not None:
         patch = dict(rt.payload.get("patch")) if isinstance(rt.payload.get("patch"), dict) else dict(rt.payload)
-        request = UpdateCredentialRequest(**{key: value for key, value in patch.items() if key in UpdateCredentialRequest.model_fields})
-        return await update_credential(credential_id=credential_id, request=request, db=rt.db, tenant_ctx=tenant_ctx, current_user=principal.get("user"))
+        credential = await CredentialsAdminService(rt.db).update_credential(ctx=ctx, credential_id=credential_id, patch={key: value for key, value in patch.items() if key in UpdateCredentialRequest.model_fields})
+        return _credential_to_response(credential)
     request = CreateCredentialRequest(**{key: value for key, value in rt.payload.items() if key in CreateCredentialRequest.model_fields})
-    return await create_credential(request=request, db=rt.db, tenant_ctx=tenant_ctx, current_user=principal.get("user"))
+    credential = await CredentialsAdminService(rt.db).create_credential(
+        ctx=ctx,
+        category=request.category,
+        provider_key=request.provider_key,
+        provider_variant=request.provider_variant,
+        display_name=request.display_name,
+        credentials=request.credentials,
+        is_enabled=request.is_enabled,
+        is_default=request.is_default,
+    )
+    return _credential_to_response(credential)
 
 
 async def _knowledge_stores_list(rt: NativePlatformToolRuntime) -> Any:
-    tenant_ctx = await rt.build_tenant_context()
-    principal = await rt.resolve_principal()
-    return await knowledge_stores.list_knowledge_stores(tenant_slug=rt.payload.get("tenant_slug"), db=rt.db, tenant_ctx=tenant_ctx, _={}, principal=principal)
+    ctx = await rt.build_control_plane_context()
+    stores = await KnowledgeStoreAdminService(rt.db).list_stores(ctx=ctx, tenant_slug=rt.payload.get("tenant_slug"))
+    return [store_to_response(store) for store in stores]
 
 
 async def _knowledge_stores_create_or_update(rt: NativePlatformToolRuntime) -> Any:
-    tenant_ctx = await rt.build_tenant_context()
-    principal = await rt.resolve_principal()
+    ctx = await rt.build_control_plane_context()
     if rt.dry_run:
         return {"status": "skipped", "dry_run": True, "name": rt.payload.get("name")}
     store_id = _parse_uuid(rt.payload.get("store_id") or rt.payload.get("knowledge_store_id") or rt.payload.get("id"))
     if store_id is not None:
         patch = dict(rt.payload.get("patch")) if isinstance(rt.payload.get("patch"), dict) else dict(rt.payload)
-        request = UpdateKnowledgeStoreRequest(**{key: value for key, value in patch.items() if key in UpdateKnowledgeStoreRequest.model_fields})
-        return await knowledge_stores.update_knowledge_store(store_id=store_id, request=request, tenant_slug=rt.payload.get("tenant_slug"), db=rt.db, tenant_ctx=tenant_ctx, _={}, principal=principal)
+        store = await KnowledgeStoreAdminService(rt.db).update_store(
+            ctx=ctx,
+            store_id=store_id,
+            tenant_slug=rt.payload.get("tenant_slug"),
+            patch={key: value for key, value in patch.items() if key in UpdateKnowledgeStoreRequest.model_fields},
+        )
+        return store_to_response(store)
     request = CreateKnowledgeStoreRequest(**{key: value for key, value in rt.payload.items() if key in CreateKnowledgeStoreRequest.model_fields})
-    return await knowledge_stores.create_knowledge_store(request=request, tenant_slug=rt.payload.get("tenant_slug"), db=rt.db, tenant_ctx=tenant_ctx, _={}, principal=principal)
+    store = await KnowledgeStoreAdminService(rt.db).create_store(
+        ctx=ctx,
+        tenant_slug=rt.payload.get("tenant_slug"),
+        name=request.name,
+        description=request.description,
+        embedding_model_id=request.embedding_model_id,
+        chunking_strategy=request.chunking_strategy.model_dump() if request.chunking_strategy else None,
+        retrieval_policy=request.retrieval_policy,
+        backend=request.backend,
+        backend_config=request.backend_config,
+        credentials_ref=request.credentials_ref,
+    )
+    return store_to_response(store)
 
 
 async def _orchestration_join(rt: NativePlatformToolRuntime) -> Any:

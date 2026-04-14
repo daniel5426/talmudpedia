@@ -1,7 +1,6 @@
 from types import SimpleNamespace
 
 from app.agent.executors.standard import (
-    STRICT_PLATFORM_RAW_INPUT_KEY,
     ReasoningNodeExecutor,
     _normalize_model_tool_args,
 )
@@ -84,23 +83,23 @@ def test_normalize_tool_call_keeps_direct_input_fields_when_wrappers_absent() ->
     assert normalized["input"]["content"] == "export const App = () => <div/>;"
 
 
-def test_normalize_model_tool_args_preserves_raw_input_for_strict_platform_tools() -> None:
+def test_normalize_model_tool_args_wraps_non_dict_payload_as_raw_input() -> None:
     tool = SimpleNamespace(
         slug="platform-assets",
-        config_schema={"execution": {"strict_input_schema": True}},
+        config_schema={"execution": {"validation_mode": "strict"}},
     )
 
     normalized = _normalize_model_tool_args('{"action":"artifacts.create","payload":{}}', tool)
 
-    assert normalized == {STRICT_PLATFORM_RAW_INPUT_KEY: '{"action":"artifacts.create","payload":{}}'}
+    assert normalized == {"raw_input": '{"action":"artifacts.create","payload":{}}'}
 
 
-def test_normalize_model_tool_args_keeps_value_wrapper_for_non_strict_tools() -> None:
+def test_normalize_model_tool_args_wraps_scalar_payload_without_legacy_value_wrapper() -> None:
     tool = SimpleNamespace(
         slug="write_file",
-        config_schema={"execution": {"strict_input_schema": False}},
+        config_schema={"execution": {"validation_mode": "none"}},
     )
 
     normalized = _normalize_model_tool_args("hello", tool)
 
-    assert normalized == {"value": "hello"}
+    assert normalized == {"raw_input": "hello"}

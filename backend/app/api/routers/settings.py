@@ -20,6 +20,9 @@ from app.db.postgres.models.registry import ModelProviderBinding
 from app.db.postgres.models.rag import KnowledgeStore
 from app.services.credentials_service import CredentialsService
 from app.services.integration_provider_catalog import is_provider_key_allowed
+from app.services.control_plane.context import ControlPlaneContext
+from app.services.control_plane.credentials_admin_service import CredentialsAdminService
+from app.services.control_plane.errors import ControlPlaneError
 
 router = APIRouter()
 
@@ -134,6 +137,14 @@ def _normalize_provider_key(category: IntegrationCredentialCategory, provider_ke
     return key
 
 
+def _service_context(*, tenant_ctx: Dict[str, Any], current_user: Any) -> ControlPlaneContext:
+    return ControlPlaneContext.from_tenant_context(
+        tenant_ctx,
+        user=current_user,
+        user_id=getattr(current_user, "id", None),
+    )
+
+
 async def _get_credential_usage(
     db: AsyncSession,
     tenant_id: uuid.UUID,
@@ -229,14 +240,14 @@ async def list_credentials(
     tenant_ctx=Depends(get_tenant_context),
     current_user=Depends(get_current_user),
 ):
-    tid = uuid.UUID(tenant_ctx["tenant_id"])
-    stmt = select(IntegrationCredential).where(IntegrationCredential.tenant_id == tid)
-    if category:
-        stmt = stmt.where(IntegrationCredential.category == category)
-    stmt = stmt.order_by(IntegrationCredential.provider_key.asc(), IntegrationCredential.display_name.asc())
-    res = await db.execute(stmt)
-    credentials = res.scalars().all()
-    return [_credential_to_response(c) for c in credentials]
+    try:
+        credentials = await CredentialsAdminService(db).list_credentials(
+            ctx=_service_context(tenant_ctx=tenant_ctx, current_user=current_user),
+            category=category,
+        )
+        return [_credential_to_response(c) for c in credentials]
+    except ControlPlaneError as exc:
+        raise exc.to_http_exception() from exc
 
 
 @router.post("/credentials", response_model=CredentialResponse, status_code=status.HTTP_201_CREATED)
@@ -246,24 +257,20 @@ async def create_credential(
     tenant_ctx=Depends(get_tenant_context),
     current_user=Depends(get_current_user),
 ):
-    tid = uuid.UUID(tenant_ctx["tenant_id"])
-    provider_key = _normalize_provider_key(request.category, request.provider_key)
-    credential = IntegrationCredential(
-        tenant_id=tid,
-        category=request.category,
-        provider_key=provider_key,
-        provider_variant=request.provider_variant,
-        display_name=request.display_name,
-        credentials=request.credentials or {},
-        is_enabled=request.is_enabled,
-        is_default=request.is_default,
-    )
-    db.add(credential)
-    with db.no_autoflush:
-        await CredentialsService(db, tid).enforce_single_default(credential)
-    await db.commit()
-    await db.refresh(credential)
-    return _credential_to_response(credential)
+    try:
+        credential = await CredentialsAdminService(db).create_credential(
+            ctx=_service_context(tenant_ctx=tenant_ctx, current_user=current_user),
+            category=request.category,
+            provider_key=request.provider_key,
+            provider_variant=request.provider_variant,
+            display_name=request.display_name,
+            credentials=request.credentials,
+            is_enabled=request.is_enabled,
+            is_default=request.is_default,
+        )
+        return _credential_to_response(credential)
+    except ControlPlaneError as exc:
+        raise exc.to_http_exception() from exc
 
 
 @router.patch("/credentials/{credential_id}", response_model=CredentialResponse)
@@ -274,38 +281,16 @@ async def update_credential(
     tenant_ctx=Depends(get_tenant_context),
     current_user=Depends(get_current_user),
 ):
-    tid = uuid.UUID(tenant_ctx["tenant_id"])
-    stmt = select(IntegrationCredential).where(
-        and_(IntegrationCredential.id == credential_id, IntegrationCredential.tenant_id == tid)
-    )
-    res = await db.execute(stmt)
-    credential = res.scalar_one_or_none()
-    if not credential:
-        raise HTTPException(status_code=404, detail="Credential not found")
-
-    if request.category is not None:
-        credential.category = request.category
-        if request.provider_key is None:
-            credential.provider_key = _normalize_provider_key(credential.category, credential.provider_key)
-    if request.provider_key is not None:
-        effective_category = request.category if request.category is not None else credential.category
-        credential.provider_key = _normalize_provider_key(effective_category, request.provider_key)
-    if "provider_variant" in request.model_fields_set:
-        credential.provider_variant = request.provider_variant
-    if request.display_name is not None:
-        credential.display_name = request.display_name
-    if request.credentials is not None:
-        credential.credentials = request.credentials
-    if request.is_enabled is not None:
-        credential.is_enabled = request.is_enabled
-    if request.is_default is not None:
-        credential.is_default = request.is_default
-
-    with db.no_autoflush:
-        await CredentialsService(db, tid).enforce_single_default(credential)
-    await db.commit()
-    await db.refresh(credential)
-    return _credential_to_response(credential)
+    try:
+        patch = request.model_dump(exclude_unset=True)
+        credential = await CredentialsAdminService(db).update_credential(
+            ctx=_service_context(tenant_ctx=tenant_ctx, current_user=current_user),
+            credential_id=credential_id,
+            patch=patch,
+        )
+        return _credential_to_response(credential)
+    except ControlPlaneError as exc:
+        raise exc.to_http_exception() from exc
 
 
 @router.delete("/credentials/{credential_id}")

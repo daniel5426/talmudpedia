@@ -122,6 +122,47 @@ async def test_create_tool_rejects_direct_published_status(client, db_session):
 
 
 @pytest.mark.asyncio
+async def test_create_tool_defaults_execution_validation_mode_to_strict(client, db_session):
+    tenant, user = await _seed_tenant_and_user(db_session)
+
+    payload = {
+        "name": "Strict Default",
+        "slug": f"strict-default-{uuid4().hex[:8]}",
+        "description": "should default",
+        "input_schema": {"type": "object", "properties": {}},
+        "output_schema": {"type": "object", "properties": {}},
+        "implementation_type": "HTTP",
+        "implementation_config": {"type": "http", "method": "POST", "url": "https://example.com"},
+    }
+
+    response = await client.post("/tools", json=payload, headers=_headers(user, tenant))
+
+    assert response.status_code == 200
+    assert response.json()["execution_config"]["validation_mode"] == "strict"
+
+
+@pytest.mark.asyncio
+async def test_create_tool_rejects_removed_strict_input_schema_flag(client, db_session):
+    tenant, user = await _seed_tenant_and_user(db_session)
+
+    payload = {
+        "name": "Legacy Strict Flag",
+        "slug": f"legacy-strict-flag-{uuid4().hex[:8]}",
+        "description": "should fail",
+        "input_schema": {"type": "object", "properties": {}},
+        "output_schema": {"type": "object", "properties": {}},
+        "implementation_type": "HTTP",
+        "implementation_config": {"type": "http", "method": "POST", "url": "https://example.com"},
+        "execution_config": {"strict_input_schema": True},
+    }
+
+    response = await client.post("/tools", json=payload, headers=_headers(user, tenant))
+
+    assert response.status_code == 400
+    assert "validation_mode" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("implementation_type", ["ARTIFACT", "RAG_PIPELINE"])
 async def test_create_tool_rejects_domain_owned_types(client, db_session, implementation_type: str):
     tenant, user = await _seed_tenant_and_user(db_session)

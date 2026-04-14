@@ -3,31 +3,35 @@
 import { useEffect, useRef } from "react"
 import { useAuthStore } from "@/lib/store/useAuthStore"
 import { authService } from "@/services/auth"
+import { HttpRequestError } from "@/services/http"
+import { applyAuthSession, clearAuthSession } from "@/lib/auth-session"
 
 export function AuthRefresher() {
-    const { token, setAuth, logout } = useAuthStore()
+    const hydrated = useAuthStore((state) => state.hydrated)
+    const markSessionChecked = useAuthStore((state) => state.markSessionChecked)
     const hasRefreshed = useRef(false)
 
     useEffect(() => {
-        // Only run if we have a token and haven't refreshed yet this session
-        if (!token || hasRefreshed.current) return
+        if (!hydrated || hasRefreshed.current) return
 
-        const refreshProfile = async () => {
+        const refreshSession = async () => {
             try {
                 hasRefreshed.current = true
-                const user = await authService.getProfile()
-                // Update store with fresh user data (preserving token)
-                setAuth(user, token)
-                console.log("DEBUG: Profile refreshed with org_role:", user.org_role)
+                const session = await authService.getCurrentSession()
+                applyAuthSession(session)
             } catch (error) {
-                console.error("Failed to refresh profile", error)
-                // If 401, we should probably logout, but let's be careful not to loop
-                // logout() 
+                if (error instanceof HttpRequestError && error.status === 401) {
+                    clearAuthSession()
+                } else {
+                    console.error("Failed to refresh browser session", error)
+                }
+            } finally {
+                markSessionChecked()
             }
         }
 
-        refreshProfile()
-    }, [token, setAuth])
+        refreshSession()
+    }, [hydrated, markSessionChecked])
 
     return null
 }

@@ -322,7 +322,10 @@ async def test_models_get_returns_seeded_global_binding_pricing_config(client, d
     db_session.add_all([tenant, user])
     await db_session.flush()
 
-    model = ModelRegistry(
+    existing = (
+        await db_session.execute(select(ModelRegistry).where(ModelRegistry.system_key == "gpt-5-4"))
+    ).scalar_one_or_none()
+    model = existing or ModelRegistry(
         tenant_id=None,
         system_key="gpt-5-4",
         name="GPT-5.4",
@@ -331,24 +334,35 @@ async def test_models_get_returns_seeded_global_binding_pricing_config(client, d
         is_active=True,
         metadata_={},
     )
-    db_session.add(model)
-    await db_session.flush()
-    db_session.add(
-        ModelProviderBinding(
-            model_id=model.id,
-            tenant_id=None,
-            provider=ModelProviderType.OPENAI,
-            provider_model_id="gpt-5.4",
-            priority=0,
-            config={},
-            is_enabled=True,
-            pricing_config={
-                "currency": "USD",
-                "billing_mode": "per_1k_tokens",
-                "rates": {"input": 0.00125, "output": 0.01},
-            },
+    if existing is None:
+        db_session.add(model)
+        await db_session.flush()
+    existing_binding = (
+        await db_session.execute(
+            select(ModelProviderBinding).where(
+                ModelProviderBinding.model_id == model.id,
+                ModelProviderBinding.provider == ModelProviderType.OPENAI,
+                ModelProviderBinding.provider_model_id == "gpt-5.4",
+            )
         )
-    )
+    ).scalar_one_or_none()
+    if existing_binding is None:
+        db_session.add(
+            ModelProviderBinding(
+                model_id=model.id,
+                tenant_id=None,
+                provider=ModelProviderType.OPENAI,
+                provider_model_id="gpt-5.4",
+                priority=0,
+                config={},
+                is_enabled=True,
+                pricing_config={
+                    "currency": "USD",
+                    "billing_mode": "per_1k_tokens",
+                    "rates": {"input": 0.00125, "output": 0.01},
+                },
+            )
+        )
     await db_session.commit()
 
     from main import app

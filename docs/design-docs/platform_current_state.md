@@ -1,12 +1,12 @@
 # Platform Current State
 
-Last Updated: 2026-04-13
+Last Updated: 2026-04-14
 
 This document is the canonical high-level overview of the Talmudpedia platform. It is the best single entry point when someone needs to understand what the platform is, which domains it contains, and which technical concepts shape the system.
 
 ## Platform Definition
 
-Talmudpedia is a multi-tenant AI platform for building, governing, and running AI systems across several related product surfaces.
+Talmudpedia is a multi-organization AI platform for building, governing, and running AI systems across several related product surfaces.
 
 At a platform level, it combines:
 - agent authoring and execution
@@ -126,16 +126,31 @@ See:
 
 The main technical concepts that define the platform are:
 
-### Multi-Tenant Control Plane
+### Organization And Project Control Plane
 
 The platform centrally manages:
-- tenants and org boundaries
+- organizations, projects, and membership boundaries
 - models and provider bindings
 - tools and visibility rules
 - credentials and integrations
 - runtime policies and permissions
 
 This is the shared control layer behind every domain.
+
+### Session-Based Active Context
+
+The browser control plane now resolves identity and active context from secure HTTP-only sessions.
+
+The active session carries:
+- authenticated user identity
+- active organization
+- active project
+
+Browser requests are expected to resolve org/project context from that server-side session, not from local bearer tokens, first-membership inference, or `X-Tenant-ID` headers.
+
+### Lifecycle-Materialized System Profiles
+
+Canonical system agent profiles are expected to materialize from organization/project lifecycle flows and idempotent ensure paths, not from startup-time scans across existing organizations.
 
 ### Builder To Compiler To Runtime Flow
 
@@ -152,7 +167,7 @@ This pattern appears in both Agent and RAG, and also influences published-app an
 
 Models, tools, artifacts, credentials, and knowledge resources are shared platform objects, not page-local implementation details.
 
-That lets multiple domains reuse the same resources while preserving tenant scope and governance rules.
+That lets multiple domains reuse the same resources while preserving organization governance and project runtime ownership rules.
 
 ### Multiple Execution Surfaces
 
@@ -170,7 +185,7 @@ This is why the architecture is closer to an AI operating platform than a single
 
 Governance is built into the platform through:
 - auth and internal auth
-- RBAC and tenant scoping
+- RBAC split across organization scopes and project scopes
 - workload identity
 - delegated execution policies
 - audit and security enforcement
@@ -210,7 +225,7 @@ Important current realities:
 
 For CV or experience framing, the platform can be described as:
 
-Talmudpedia is a multi-tenant AI platform that combines agent orchestration, RAG pipelines, shared tool and artifact infrastructure, published app hosting, embedded runtimes, and platform-wide governance/observability into one backend system.
+Talmudpedia is a multi-organization AI platform that combines agent orchestration, RAG pipelines, shared tool and artifact infrastructure, published app hosting, embedded runtimes, and platform-wide governance/observability into one backend system.
 
 ## Related Canonical Docs
 

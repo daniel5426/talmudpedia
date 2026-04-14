@@ -25,6 +25,9 @@ from app.db.postgres.models import (
     Tenant,
 )
 from app.services.credentials_service import CredentialsService
+from app.services.control_plane.context import ControlPlaneContext
+from app.services.control_plane.errors import ControlPlaneError
+from app.services.control_plane.knowledge_store_admin_service import KnowledgeStoreAdminService
 
 
 router = APIRouter()
@@ -123,6 +126,18 @@ async def resolve_request_tenant(
     return tenant
 
 
+def _service_context(*, tenant_ctx: Dict[str, Any], principal: Dict[str, Any], tenant_slug: Optional[str]) -> ControlPlaneContext:
+    created_by = UUID(str(principal["user_id"])) if principal.get("type") == "user" and principal.get("user_id") else None
+    return ControlPlaneContext.from_tenant_context(
+        tenant_ctx,
+        user=principal.get("user"),
+        user_id=created_by,
+        auth_token=principal.get("auth_token"),
+        scopes=principal.get("scopes"),
+        tenant_slug=tenant_slug,
+    )
+
+
 async def validate_vector_store_credential(
     db: AsyncSession,
     tenant_id: UUID,
@@ -173,21 +188,14 @@ async def list_knowledge_stores(
     _: Dict[str, Any] = Depends(require_scopes("knowledge_stores.read")),
     principal: Dict[str, Any] = Depends(get_current_principal),
 ):
-    """List all knowledge stores for the tenant."""
-    del principal
-    tenant = await resolve_request_tenant(db=db, tenant_ctx=tenant_ctx, tenant_slug=tenant_slug)
-    tenant_id = tenant.id
-    
-    stmt = (
-        select(KnowledgeStore)
-        .where(KnowledgeStore.tenant_id == tenant_id)
-        .where(KnowledgeStore.status != KnowledgeStoreStatus.ARCHIVED)
-        .order_by(KnowledgeStore.created_at.desc())
-    )
-    result = await db.execute(stmt)
-    stores = result.scalars().all()
-    
-    return [store_to_response(s) for s in stores]
+    try:
+        stores = await KnowledgeStoreAdminService(db).list_stores(
+            ctx=_service_context(tenant_ctx=tenant_ctx, principal=principal, tenant_slug=tenant_slug),
+            tenant_slug=tenant_slug,
+        )
+        return [store_to_response(s) for s in stores]
+    except ControlPlaneError as exc:
+        raise exc.to_http_exception() from exc
 
 
 @router.post("", response_model=KnowledgeStoreResponse, status_code=status.HTTP_201_CREATED)
@@ -199,53 +207,22 @@ async def create_knowledge_store(
     _: Dict[str, Any] = Depends(require_scopes("knowledge_stores.write")),
     principal: Dict[str, Any] = Depends(get_current_principal),
 ):
-    """Create a new knowledge store."""
-    tenant = await resolve_request_tenant(db=db, tenant_ctx=tenant_ctx, tenant_slug=tenant_slug)
-    created_by = UUID(str(principal["user_id"])) if principal.get("type") == "user" and principal.get("user_id") else None
-
-    validated_credential_ref = await validate_vector_store_credential(
-        db=db,
-        tenant_id=tenant.id,
-        backend=request.backend,
-        credentials_ref=request.credentials_ref,
-    )
-    
-    # Build chunking strategy
-    chunking = request.chunking_strategy.model_dump() if request.chunking_strategy else {
-        "strategy": "recursive",
-        "chunk_size": 512,
-        "chunk_overlap": 50
-    }
-    
-    # Generate backend config if not provided
-    backend_config = request.backend_config
-    if not backend_config:
-        # Auto-generate index/collection name
-        safe_name = request.name.lower().replace(" ", "_").replace("-", "_")[:32]
-        backend_config = {
-            "index_name": f"ks_{safe_name}_{str(tenant.id)[:8]}",
-            "namespace": "default"
-        }
-    
-    store = KnowledgeStore(
-        tenant_id=tenant.id,
-        name=request.name,
-        description=request.description,
-        embedding_model_id=request.embedding_model_id,
-        chunking_strategy=chunking,
-        retrieval_policy=request.retrieval_policy,
-        backend=request.backend,
-        backend_config=backend_config,
-        credentials_ref=validated_credential_ref,
-        status=KnowledgeStoreStatus.ACTIVE,
-        created_by=created_by,
-    )
-    
-    db.add(store)
-    await db.commit()
-    await db.refresh(store)
-    
-    return store_to_response(store)
+    try:
+        store = await KnowledgeStoreAdminService(db).create_store(
+            ctx=_service_context(tenant_ctx=tenant_ctx, principal=principal, tenant_slug=tenant_slug),
+            tenant_slug=tenant_slug,
+            name=request.name,
+            description=request.description,
+            embedding_model_id=request.embedding_model_id,
+            chunking_strategy=request.chunking_strategy.model_dump() if request.chunking_strategy else None,
+            retrieval_policy=request.retrieval_policy,
+            backend=request.backend,
+            backend_config=request.backend_config,
+            credentials_ref=request.credentials_ref,
+        )
+        return store_to_response(store)
+    except ControlPlaneError as exc:
+        raise exc.to_http_exception() from exc
 
 
 @router.get("/{store_id}", response_model=KnowledgeStoreResponse)
@@ -257,17 +234,15 @@ async def get_knowledge_store(
     _: Dict[str, Any] = Depends(require_scopes("knowledge_stores.read")),
     principal: Dict[str, Any] = Depends(get_current_principal),
 ):
-    """Get a specific knowledge store by ID."""
-    del principal
-    tenant = await resolve_request_tenant(db=db, tenant_ctx=tenant_ctx, tenant_slug=tenant_slug)
-    store = await db.get(KnowledgeStore, store_id)
-    if not store:
-        raise HTTPException(status_code=404, detail="Knowledge store not found")
-    
-    if store.tenant_id != tenant.id:
-        raise HTTPException(status_code=404, detail="Knowledge store not found")
-    
-    return store_to_response(store)
+    try:
+        store = await KnowledgeStoreAdminService(db).get_store(
+            ctx=_service_context(tenant_ctx=tenant_ctx, principal=principal, tenant_slug=tenant_slug),
+            store_id=store_id,
+            tenant_slug=tenant_slug,
+        )
+        return store_to_response(store)
+    except ControlPlaneError as exc:
+        raise exc.to_http_exception() from exc
 
 
 @router.patch("/{store_id}", response_model=KnowledgeStoreResponse)
@@ -280,36 +255,16 @@ async def update_knowledge_store(
     _: Dict[str, Any] = Depends(require_scopes("knowledge_stores.write")),
     principal: Dict[str, Any] = Depends(get_current_principal),
 ):
-    """Update a knowledge store. Note: embedding_model_id and backend are immutable."""
-    del principal
-    tenant = await resolve_request_tenant(db=db, tenant_ctx=tenant_ctx, tenant_slug=tenant_slug)
-    store = await db.get(KnowledgeStore, store_id)
-    if not store:
-        raise HTTPException(status_code=404, detail="Knowledge store not found")
-    
-    if store.tenant_id != tenant.id:
-        raise HTTPException(status_code=404, detail="Knowledge store not found")
-    
-    # Apply updates
-    if request.name is not None:
-        store.name = request.name
-    if request.description is not None:
-        store.description = request.description
-    if request.retrieval_policy is not None:
-        store.retrieval_policy = request.retrieval_policy
-    if "credentials_ref" in request.model_fields_set:
-        validated_credential_ref = await validate_vector_store_credential(
-            db=db,
-            tenant_id=store.tenant_id,
-            backend=store.backend,
-            credentials_ref=request.credentials_ref,
+    try:
+        store = await KnowledgeStoreAdminService(db).update_store(
+            ctx=_service_context(tenant_ctx=tenant_ctx, principal=principal, tenant_slug=tenant_slug),
+            store_id=store_id,
+            tenant_slug=tenant_slug,
+            patch=request.model_dump(exclude_unset=True),
         )
-        store.credentials_ref = validated_credential_ref
-    
-    await db.commit()
-    await db.refresh(store)
-    
-    return store_to_response(store)
+        return store_to_response(store)
+    except ControlPlaneError as exc:
+        raise exc.to_http_exception() from exc
 
 
 @router.delete("/{store_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -321,21 +276,15 @@ async def delete_knowledge_store(
     _: Dict[str, Any] = Depends(require_scopes("knowledge_stores.write")),
     principal: Dict[str, Any] = Depends(get_current_principal),
 ):
-    """Delete (archive) a knowledge store."""
-    del principal
-    tenant = await resolve_request_tenant(db=db, tenant_ctx=tenant_ctx, tenant_slug=tenant_slug)
-    store = await db.get(KnowledgeStore, store_id)
-    if not store:
-        raise HTTPException(status_code=404, detail="Knowledge store not found")
-    
-    if store.tenant_id != tenant.id:
-        raise HTTPException(status_code=404, detail="Knowledge store not found")
-    
-    # Soft delete - mark as archived
-    store.status = KnowledgeStoreStatus.ARCHIVED
-    await db.commit()
-    
-    return None
+    try:
+        await KnowledgeStoreAdminService(db).delete_store(
+            ctx=_service_context(tenant_ctx=tenant_ctx, principal=principal, tenant_slug=tenant_slug),
+            store_id=store_id,
+            tenant_slug=tenant_slug,
+        )
+        return None
+    except ControlPlaneError as exc:
+        raise exc.to_http_exception() from exc
 
 
 @router.get("/{store_id}/stats")

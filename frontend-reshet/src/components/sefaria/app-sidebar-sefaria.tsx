@@ -425,7 +425,6 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             email: user.email,
             avatar: user.avatar || "/avatars/shadcn.jpg",
             role: user.role,
-            org_role: user.org_role
           }} />
         ) : (
           <SidebarMenu dir={direction}>

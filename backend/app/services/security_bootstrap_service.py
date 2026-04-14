@@ -6,14 +6,27 @@ from uuid import UUID
 from sqlalchemy import and_, delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.scope_registry import TENANT_DEFAULT_ROLE_SCOPES, normalize_scope_list
+from app.core.scope_registry import (
+    ORGANIZATION_DEFAULT_ROLE_SCOPES,
+    PROJECT_DEFAULT_ROLE_SCOPES,
+    TENANT_DEFAULT_ROLE_SCOPES,
+    normalize_scope_list,
+)
 from app.db.postgres.models.rbac import ActorType, Role, RoleAssignment, RolePermission
 
 
 class SecurityBootstrapService:
     """Seeds immutable default RBAC roles and baseline assignments for a tenant."""
 
-    SYSTEM_ROLE_ORDER = ("owner", "admin", "member")
+    SYSTEM_ROLE_ORDER = (
+        "organization_owner",
+        "organization_admin",
+        "organization_member",
+        "project_owner",
+        "project_admin",
+        "project_editor",
+        "project_viewer",
+    )
 
     def __init__(self, db: AsyncSession):
         self.db = db
@@ -48,25 +61,38 @@ class SecurityBootstrapService:
 
             await self._sync_role_permissions(
                 role_id=role.id,
-                permissions=TENANT_DEFAULT_ROLE_SCOPES.get(role_name, []),
+                permissions=self._role_scope_bundle(role_name),
             )
 
         await self.db.flush()
         return roles_by_name
 
-    async def ensure_owner_assignment(self, *, tenant_id: UUID, user_id: UUID, assigned_by: UUID | None = None) -> None:
-        roles = await self.ensure_default_roles(tenant_id)
-        owner_role = roles["owner"]
+    def _role_scope_bundle(self, role_name: str) -> list[str]:
+        return (
+            ORGANIZATION_DEFAULT_ROLE_SCOPES.get(role_name)
+            or PROJECT_DEFAULT_ROLE_SCOPES.get(role_name)
+            or TENANT_DEFAULT_ROLE_SCOPES.get(role_name, [])
+        )
+
+    async def ensure_organization_owner_assignment(
+        self,
+        *,
+        organization_id: UUID,
+        user_id: UUID,
+        assigned_by: UUID | None = None,
+    ) -> None:
+        roles = await self.ensure_default_roles(organization_id)
+        owner_role = roles["organization_owner"]
 
         exists = (
             await self.db.execute(
                 select(RoleAssignment).where(
                     and_(
-                        RoleAssignment.tenant_id == tenant_id,
+                        RoleAssignment.tenant_id == organization_id,
                         RoleAssignment.user_id == user_id,
                         RoleAssignment.role_id == owner_role.id,
-                        RoleAssignment.scope_id == tenant_id,
-                        RoleAssignment.scope_type == "tenant",
+                        RoleAssignment.scope_id == organization_id,
+                        RoleAssignment.scope_type == "organization",
                     )
                 )
             )
@@ -76,30 +102,36 @@ class SecurityBootstrapService:
 
         self.db.add(
             RoleAssignment(
-                tenant_id=tenant_id,
+                tenant_id=organization_id,
                 role_id=owner_role.id,
                 user_id=user_id,
                 actor_type=ActorType.USER,
-                scope_id=tenant_id,
-                scope_type="tenant",
+                scope_id=organization_id,
+                scope_type="organization",
                 assigned_by=assigned_by or user_id,
             )
         )
         await self.db.flush()
 
-    async def ensure_member_assignment(self, *, tenant_id: UUID, user_id: UUID, assigned_by: UUID | None = None) -> None:
-        roles = await self.ensure_default_roles(tenant_id)
-        member_role = roles["member"]
+    async def ensure_organization_member_assignment(
+        self,
+        *,
+        organization_id: UUID,
+        user_id: UUID,
+        assigned_by: UUID | None = None,
+    ) -> None:
+        roles = await self.ensure_default_roles(organization_id)
+        member_role = roles["organization_member"]
 
         exists = (
             await self.db.execute(
                 select(RoleAssignment).where(
                     and_(
-                        RoleAssignment.tenant_id == tenant_id,
+                        RoleAssignment.tenant_id == organization_id,
                         RoleAssignment.user_id == user_id,
                         RoleAssignment.role_id == member_role.id,
-                        RoleAssignment.scope_id == tenant_id,
-                        RoleAssignment.scope_type == "tenant",
+                        RoleAssignment.scope_id == organization_id,
+                        RoleAssignment.scope_type == "organization",
                     )
                 )
             )
@@ -109,16 +141,102 @@ class SecurityBootstrapService:
 
         self.db.add(
             RoleAssignment(
-                tenant_id=tenant_id,
+                tenant_id=organization_id,
                 role_id=member_role.id,
                 user_id=user_id,
                 actor_type=ActorType.USER,
-                scope_id=tenant_id,
-                scope_type="tenant",
+                scope_id=organization_id,
+                scope_type="organization",
                 assigned_by=assigned_by or user_id,
             )
         )
         await self.db.flush()
+
+    async def ensure_project_owner_assignment(
+        self,
+        *,
+        organization_id: UUID,
+        project_id: UUID,
+        user_id: UUID,
+        assigned_by: UUID | None = None,
+    ) -> None:
+        await self._ensure_project_assignment(
+            organization_id=organization_id,
+            project_id=project_id,
+            user_id=user_id,
+            role_name="project_owner",
+            assigned_by=assigned_by,
+        )
+
+    async def ensure_project_viewer_assignment(
+        self,
+        *,
+        organization_id: UUID,
+        project_id: UUID,
+        user_id: UUID,
+        assigned_by: UUID | None = None,
+    ) -> None:
+        await self._ensure_project_assignment(
+            organization_id=organization_id,
+            project_id=project_id,
+            user_id=user_id,
+            role_name="project_viewer",
+            assigned_by=assigned_by,
+        )
+
+    async def _ensure_project_assignment(
+        self,
+        *,
+        organization_id: UUID,
+        project_id: UUID,
+        user_id: UUID,
+        role_name: str,
+        assigned_by: UUID | None = None,
+    ) -> None:
+        roles = await self.ensure_default_roles(organization_id)
+        role = roles[role_name]
+        exists = (
+            await self.db.execute(
+                select(RoleAssignment).where(
+                    and_(
+                        RoleAssignment.tenant_id == organization_id,
+                        RoleAssignment.user_id == user_id,
+                        RoleAssignment.role_id == role.id,
+                        RoleAssignment.scope_id == project_id,
+                        RoleAssignment.scope_type == "project",
+                    )
+                )
+            )
+        ).scalar_one_or_none()
+        if exists:
+            return
+        self.db.add(
+            RoleAssignment(
+                tenant_id=organization_id,
+                role_id=role.id,
+                user_id=user_id,
+                actor_type=ActorType.USER,
+                scope_id=project_id,
+                scope_type="project",
+                assigned_by=assigned_by or user_id,
+            )
+        )
+        await self.db.flush()
+
+    # Legacy wrappers kept for still-unmigrated code paths.
+    async def ensure_owner_assignment(self, *, tenant_id: UUID, user_id: UUID, assigned_by: UUID | None = None) -> None:
+        await self.ensure_organization_owner_assignment(
+            organization_id=tenant_id,
+            user_id=user_id,
+            assigned_by=assigned_by,
+        )
+
+    async def ensure_member_assignment(self, *, tenant_id: UUID, user_id: UUID, assigned_by: UUID | None = None) -> None:
+        await self.ensure_organization_member_assignment(
+            organization_id=tenant_id,
+            user_id=user_id,
+            assigned_by=assigned_by,
+        )
 
     async def reset_tenant_roles(self, tenant_id: UUID) -> None:
         role_ids = (

@@ -90,8 +90,8 @@ async def test_tool_executor_enforces_tenant_scope(db_session, monkeypatch):
     async def has_columns(_self):
         return True
 
-    async def fake_http_tool(_self, _tool, input_data, _implementation_config, _context):
-        return {"ok": True, "echo": input_data}
+    async def fake_http_tool(_self, _tool, envelope):
+        return {"ok": True, "echo": envelope.model_input_compiled}
 
     monkeypatch.setattr(ToolNodeExecutor, "_has_artifact_columns", has_columns)
     monkeypatch.setattr(ToolNodeExecutor, "_execute_http_tool", fake_http_tool)

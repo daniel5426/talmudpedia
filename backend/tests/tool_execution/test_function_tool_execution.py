@@ -59,7 +59,7 @@ def make_platform_tool(tool_id, slug, function_name):
         },
         config_schema={
             "implementation": {"type": "function", "function_name": function_name},
-            "execution": {"strict_input_schema": True},
+            "execution": {"validation_mode": "strict"},
         },
         is_active=True,
         is_system=False,
@@ -140,7 +140,7 @@ async def test_function_tool_missing_name(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_function_tool_merges_args_with_context(monkeypatch):
+async def test_function_tool_separates_runtime_context_from_canonical_input(monkeypatch):
     captured = {}
 
     @register_tool_function("unit_test_capture_payload")
@@ -163,31 +163,45 @@ async def test_function_tool_merges_args_with_context(monkeypatch):
     await executor.execute(
         {
             "context": {
-                "run_id": "run-123",
-                "args": {"path": "src/Sidebar.tsx", "content": "next"},
+                "path": "src/Sidebar.tsx",
+                "content": "next",
             }
         },
         {"tool_id": str(tool_id)},
-        {"node_id": "tool-node"},
+        {"node_id": "tool-node", "run_id": "run-123"},
     )
 
-    assert captured["run_id"] == "run-123"
     assert captured["path"] == "src/Sidebar.tsx"
     assert captured["content"] == "next"
+    assert captured["context"]["run_id"] == "run-123"
 
 
 @pytest.mark.asyncio
-async def test_function_tool_merges_json_string_args_with_context(monkeypatch):
-    captured = {}
+async def test_function_tool_rejects_wrapper_payloads_under_strict_default(monkeypatch):
+    captured = {"called": False}
 
-    @register_tool_function("unit_test_capture_json_args_payload")
-    def unit_test_capture_json_args_payload(payload):
-        captured.update(payload)
+    @register_tool_function("unit_test_capture_wrapped_payload")
+    def unit_test_capture_wrapped_payload(_payload):
+        captured["called"] = True
         return {"ok": True}
 
     tool_id = uuid4()
-    config_schema = {"implementation": {"type": "function", "function_name": "unit_test_capture_json_args_payload"}}
-    tool = make_tool(tool_id, config_schema)
+    config_schema = {"implementation": {"type": "function", "function_name": "unit_test_capture_wrapped_payload"}}
+    tool = make_tool(
+        tool_id,
+        config_schema,
+        schema={
+            "input": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "content": {"type": "string"},
+                },
+                "required": ["path", "content"],
+                "additionalProperties": False,
+            }
+        },
+    )
     db = FakeDB(tool)
 
     executor = ToolNodeExecutor(tenant_id=None, db=db)
@@ -197,10 +211,9 @@ async def test_function_tool_merges_json_string_args_with_context(monkeypatch):
 
     monkeypatch.setattr(ToolNodeExecutor, "_has_artifact_columns", has_columns)
 
-    await executor.execute(
+    result = await executor.execute(
         {
             "context": {
-                "run_id": "run-json-456",
                 "args": "{\"path\":\"src/Sidebar.tsx\",\"content\":\"next-json\"}",
             }
         },
@@ -208,46 +221,9 @@ async def test_function_tool_merges_json_string_args_with_context(monkeypatch):
         {"node_id": "tool-node"},
     )
 
-    assert captured["run_id"] == "run-json-456"
-    assert captured["path"] == "src/Sidebar.tsx"
-    assert captured["content"] == "next-json"
-
-
-@pytest.mark.asyncio
-async def test_function_tool_merges_input_wrapper_with_context(monkeypatch):
-    captured = {}
-
-    @register_tool_function("unit_test_capture_input_wrapper_payload")
-    def unit_test_capture_input_wrapper_payload(payload):
-        captured.update(payload)
-        return {"ok": True}
-
-    tool_id = uuid4()
-    config_schema = {"implementation": {"type": "function", "function_name": "unit_test_capture_input_wrapper_payload"}}
-    tool = make_tool(tool_id, config_schema)
-    db = FakeDB(tool)
-
-    executor = ToolNodeExecutor(tenant_id=None, db=db)
-
-    async def has_columns(_self):
-        return True
-
-    monkeypatch.setattr(ToolNodeExecutor, "_has_artifact_columns", has_columns)
-
-    await executor.execute(
-        {
-            "context": {
-                "run_id": "run-input-789",
-                "input": {"filePath": "src/Sidebar.tsx", "code": "next-from-input"},
-            }
-        },
-        {"tool_id": str(tool_id)},
-        {"node_id": "tool-node"},
-    )
-
-    assert captured["run_id"] == "run-input-789"
-    assert captured["filePath"] == "src/Sidebar.tsx"
-    assert captured["code"] == "next-from-input"
+    assert captured["called"] is False
+    assert result["context"]["code"] == "TOOL_ARGUMENT_COMPILE_FAILED"
+    assert any(item["code"] == "unexpected_field" for item in result["context"]["validation_errors"])
 
 
 @pytest.mark.asyncio
@@ -316,14 +292,13 @@ async def test_coding_agent_function_tool_missing_required_fields_returns_valida
     monkeypatch.setattr(ToolNodeExecutor, "_has_artifact_columns", has_columns)
 
     result = await executor.execute(
-        {"context": {"run_id": "run-1", "args": {}}},
+        {"context": {}},
         {"tool_id": str(tool_id)},
         {"node_id": "tool-node"},
     )
 
-    assert result["context"]["code"] == "TOOL_INPUT_VALIDATION_FAILED"
-    assert result["context"]["fields"] == ["path"]
-    assert "Missing required fields" in result["context"]["error"]
+    assert result["context"]["code"] == "TOOL_ARGUMENT_COMPILE_FAILED"
+    assert result["context"]["compile_error_code"] == "missing_required_field"
     assert "received_keys" in result["context"]
 
 
@@ -351,7 +326,7 @@ async def test_coding_agent_function_tool_policy_error_is_normalized(monkeypatch
     monkeypatch.setattr(ToolNodeExecutor, "_has_artifact_columns", has_columns)
 
     result = await executor.execute(
-        {"context": {"run_id": "run-1", "args": {"path": "/etc/passwd"}}},
+        {"context": {"path": "/etc/passwd"}},
         {"tool_id": str(tool_id)},
         {"node_id": "tool-node"},
     )
@@ -376,7 +351,7 @@ async def test_strict_function_tool_rejects_missing_required_field_before_dispat
     tool_id = uuid4()
     config_schema = {
         "implementation": {"type": "function", "function_name": "unit_test_strict_objective"},
-        "execution": {"strict_input_schema": True},
+        "execution": {"validation_mode": "strict"},
     }
     tool = make_tool(
         tool_id,
@@ -405,10 +380,9 @@ async def test_strict_function_tool_rejects_missing_required_field_before_dispat
     )
 
     assert captured["called"] is False
-    assert result["context"]["code"] == "TOOL_INPUT_VALIDATION_FAILED"
+    assert result["context"]["code"] == "TOOL_ARGUMENT_COMPILE_FAILED"
     assert "Missing required field `objective`." in result["context"]["validation_summary"]
-    assert "Unexpected field `args`." in result["context"]["validation_summary"]
-    assert any("objective" in item["message"] for item in result["context"]["validation_errors"])
+    assert any(item["code"] == "unexpected_field" for item in result["context"]["validation_errors"])
 
 
 @pytest.mark.asyncio
@@ -423,7 +397,7 @@ async def test_strict_function_tool_rejects_unknown_fields_before_dispatch(monke
     tool_id = uuid4()
     config_schema = {
         "implementation": {"type": "function", "function_name": "unit_test_strict_no_extras"},
-        "execution": {"strict_input_schema": True},
+        "execution": {"validation_mode": "strict"},
     }
     tool = make_tool(
         tool_id,
@@ -452,9 +426,8 @@ async def test_strict_function_tool_rejects_unknown_fields_before_dispatch(monke
     )
 
     assert captured["called"] is False
-    assert result["context"]["code"] == "TOOL_INPUT_VALIDATION_FAILED"
-    assert "Unexpected field `args`." in result["context"]["validation_summary"]
-    assert any("Unexpected field `args`." in item["message"] for item in result["context"]["validation_errors"])
+    assert result["context"]["code"] == "TOOL_ARGUMENT_COMPILE_FAILED"
+    assert any(item["code"] == "unexpected_field" for item in result["context"]["validation_errors"])
 
 
 @pytest.mark.asyncio
@@ -469,7 +442,7 @@ async def test_strict_function_tool_rejects_wrong_type_with_explicit_message(mon
     tool_id = uuid4()
     config_schema = {
         "implementation": {"type": "function", "function_name": "unit_test_strict_type"},
-        "execution": {"strict_input_schema": True},
+        "execution": {"validation_mode": "strict"},
     }
     tool = make_tool(
         tool_id,
@@ -498,9 +471,8 @@ async def test_strict_function_tool_rejects_wrong_type_with_explicit_message(mon
     )
 
     assert captured["called"] is False
-    assert result["context"]["code"] == "TOOL_INPUT_VALIDATION_FAILED"
-    assert "Unexpected field `args`." in result["context"]["validation_summary"]
-    assert any("Missing required field `objective`." in item["message"] for item in result["context"]["validation_errors"])
+    assert result["context"]["code"] == "TOOL_ARGUMENT_COMPILE_FAILED"
+    assert any(item["code"] == "unexpected_field" for item in result["context"]["validation_errors"])
 
 
 @pytest.mark.asyncio
@@ -515,7 +487,7 @@ async def test_strict_function_tool_ignores_executor_runtime_metadata_before_dis
     tool_id = uuid4()
     config_schema = {
         "implementation": {"type": "function", "function_name": "unit_test_strict_runtime_metadata"},
-        "execution": {"strict_input_schema": True},
+        "execution": {"validation_mode": "strict"},
     }
     tool = make_tool(
         tool_id,
@@ -613,7 +585,7 @@ async def test_strict_platform_tool_forwards_internal_auth_context_to_local_sdk(
         ("platform-governance", "platform_native_platform_governance", "value", "auth.get_current_user"),
     ],
 )
-async def test_strict_platform_tools_reject_wrapped_input_with_noncanonical_error(
+async def test_strict_platform_tools_reject_wrapped_input_with_compile_error(
     monkeypatch,
     tool_slug,
     function_name,
@@ -636,16 +608,13 @@ async def test_strict_platform_tools_reject_wrapped_input_with_noncanonical_erro
         {"node_id": "tool-node"},
     )
 
-    assert result["context"]["action"] == attempted_action
-    assert result["context"]["result"]["reason"] == "non_canonical_input"
-    err = result["context"]["errors"][0]
-    assert err["code"] == "NON_CANONICAL_PLATFORM_SDK_INPUT"
-    assert err["source_field"] == wrapper_key
-    assert err["attempted_action"] == attempted_action
+    assert result["context"]["code"] == "TOOL_ARGUMENT_COMPILE_FAILED"
+    assert any(item["code"] == "unexpected_field" for item in result["context"]["validation_errors"])
+    assert any(item["code"] == "missing_required_field" for item in result["context"]["validation_errors"])
 
 
 @pytest.mark.asyncio
-async def test_strict_platform_tool_rejects_raw_scalar_args_with_noncanonical_error(monkeypatch):
+async def test_strict_platform_tool_rejects_raw_scalar_args_with_compile_error(monkeypatch):
     tool_id = uuid4()
     tool = make_platform_tool(tool_id, "platform-assets", "platform_native_platform_assets")
     db = FakeDB(tool)
@@ -662,9 +631,5 @@ async def test_strict_platform_tool_rejects_raw_scalar_args_with_noncanonical_er
         {"node_id": "tool-node"},
     )
 
-    assert result["context"]["action"] == "artifacts.create"
-    assert result["context"]["result"]["reason"] == "non_canonical_input"
-    err = result["context"]["errors"][0]
-    assert err["code"] == "NON_CANONICAL_PLATFORM_SDK_INPUT"
-    assert err["source_field"] == "raw_input"
-    assert err["attempted_action"] == "artifacts.create"
+    assert result["context"]["code"] == "TOOL_ARGUMENT_COMPILE_FAILED"
+    assert any(item["code"] == "unexpected_field" for item in result["context"]["validation_errors"])

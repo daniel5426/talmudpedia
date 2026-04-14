@@ -16,8 +16,6 @@ import type {
 } from "./types";
 
 const FALLBACK_PREVIEW = "Start a new conversation.";
-const UI_BLOCKS_RENDERER_KIND = "ui_blocks";
-const UI_BLOCKS_TOOL_SLUG = "builtin-ui-blocks";
 
 export function createId() {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
@@ -181,12 +179,6 @@ function unwrapUIBlocksOutput(value: unknown): Record<string, unknown> | null {
   return null;
 }
 
-function isUIBlocksTool(tool: Record<string, unknown>): boolean {
-  const rendererKind = String(tool.rendererKind || "").trim().toLowerCase();
-  const toolSlug = String(tool.toolSlug || "").trim().toLowerCase();
-  return rendererKind === UI_BLOCKS_RENDERER_KIND || toolSlug === UI_BLOCKS_TOOL_SLUG;
-}
-
 function extractUIBlocksToolResult(tool: Record<string, unknown>): { bundle: unknown } | null {
   const output = unwrapUIBlocksOutput(tool.output);
   if (!output) return null;
@@ -252,29 +244,37 @@ export function mapCanonicalResponseBlocks(
       continue;
     }
 
+    if (block.kind === "ui_blocks") {
+      if (block.status === "running") {
+        mappedBlocks.push({
+          id: block.id,
+          kind: "ui_blocks_loading",
+          spanId: typeof block.toolCallId === "string" ? block.toolCallId : undefined,
+        });
+        continue;
+      }
+      const parsed = validateUIBlocksBundle(block.bundle ?? null);
+      mappedBlocks.push(
+        parsed.ok
+          ? { id: block.id, kind: "ui_blocks_bundle", bundle: parsed.bundle }
+          : { id: `${block.id}-invalid`, kind: "text", content: block.error || "Unable to render UI blocks bundle." },
+      );
+      continue;
+    }
+
     if (block.kind !== "tool_call") {
       continue;
     }
 
     const tool = block.tool && typeof block.tool === "object" ? (block.tool as Record<string, unknown>) : {};
     const uiBlocksResult = extractUIBlocksToolResult(tool);
-    if (isUIBlocksTool(tool)) {
-      if (block.status === "running") {
-        mappedBlocks.push({
-          id: block.id,
-          kind: "ui_blocks_loading",
-          spanId: typeof tool.toolCallId === "string" ? tool.toolCallId : undefined,
-        });
-        continue;
-      }
-      if (uiBlocksResult) {
-        const parsed = validateUIBlocksBundle(uiBlocksResult.bundle);
-        mappedBlocks.push(
-          parsed.ok
-            ? { id: block.id, kind: "ui_blocks_bundle", bundle: parsed.bundle }
-            : { id: `${block.id}-invalid`, kind: "text", content: "Unable to render UI blocks bundle." },
-        );
-      }
+    if (uiBlocksResult) {
+      const parsed = validateUIBlocksBundle(uiBlocksResult.bundle);
+      mappedBlocks.push(
+        parsed.ok
+          ? { id: block.id, kind: "ui_blocks_bundle", bundle: parsed.bundle }
+          : { id: `${block.id}-invalid`, kind: "text", content: "Unable to render UI blocks bundle." },
+      );
       continue;
     }
 

@@ -260,7 +260,7 @@ def _specs() -> list[BuiltinToolTemplateSpec]:
                 "is_pure": True,
                 "concurrency_group": "transform",
                 "max_concurrency": 8,
-                "strict_input_schema": True,
+                "validation_mode": "strict",
             },
             input_schema=ui_blocks_tool_input_schema(),
             output_schema=ui_blocks_tool_output_schema(),
