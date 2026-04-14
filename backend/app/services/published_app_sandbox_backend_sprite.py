@@ -147,11 +147,14 @@ class SpriteSandboxBackend(PublishedAppSandboxBackend):
                     content=content,
                 )
         except Exception as exc:
-            raise PublishedAppSandboxBackendError(f"Sprite request failed: {exc}") from exc
+            detail = str(exc).strip() or repr(exc) or exc.__class__.__name__
+            raise PublishedAppSandboxBackendError(
+                f"Sprite request failed for {method.upper()} {path}: {detail}"
+            ) from exc
         if response.status_code >= 400:
             detail = response.text.strip() or response.reason_phrase
             raise PublishedAppSandboxBackendError(
-                f"Sprite request failed ({response.status_code}) for {path}: {detail}"
+                f"Sprite request failed ({response.status_code}) for {method.upper()} {path}: {detail}"
             )
         if not expect_json:
             return response.text
@@ -307,6 +310,12 @@ class SpriteSandboxBackend(PublishedAppSandboxBackend):
         )
 
     async def _wait_for_preview_ready(self, *, sprite_name: str) -> None:
+        self._trace(
+            "sprite.preview.wait_ready.begin",
+            sprite_name=sprite_name,
+            preview_service_name=self._preview_service_name(),
+            preview_port=self._preview_port(),
+        )
         script = f"""
 import sys
 import time
@@ -333,12 +342,29 @@ while time.time() < deadline:
 print(last_error)
 sys.exit(1)
 """.strip()
-        await self._exec_with_stdin(
+        try:
+            await self._exec_with_stdin(
+                sprite_name=sprite_name,
+                command=["python3", "-"],
+                stdin_text=script,
+                timeout_seconds=60,
+                max_output_bytes=4000,
+            )
+        except Exception as exc:
+            self._trace(
+                "sprite.preview.wait_ready.failed",
+                sprite_name=sprite_name,
+                preview_service_name=self._preview_service_name(),
+                preview_port=self._preview_port(),
+                error=str(exc),
+                error_type=exc.__class__.__name__,
+            )
+            raise
+        self._trace(
+            "sprite.preview.wait_ready.done",
             sprite_name=sprite_name,
-            command=["python3", "-"],
-            stdin_text=script,
-            timeout_seconds=60,
-            max_output_bytes=4000,
+            preview_service_name=self._preview_service_name(),
+            preview_port=self._preview_port(),
         )
 
     async def _mirror_workspace(self, *, sprite_name: str, source_workspace_path: str, target_workspace_path: str) -> None:
@@ -534,7 +560,7 @@ print(json.dumps({{"status": "ok"}}, sort_keys=True))
             max_output_bytes=2000,
         )
 
-    async def _sync_files_to_workspace(self, *, sprite_name: str, workspace_path: str, files: Dict[str, str]) -> str:
+    async def _sync_files_to_workspace(self, *, sprite_name: str, workspace_path: str, files: Dict[str, str]) -> dict[str, Any]:
         encoded = base64.b64encode(json.dumps(files, ensure_ascii=True, sort_keys=True).encode("utf-8")).decode("ascii")
         script = f"""
 import base64
@@ -546,14 +572,26 @@ workspace = pathlib.Path({json.dumps(workspace_path)})
 workspace.mkdir(parents=True, exist_ok=True)
 payload = json.loads(base64.b64decode({json.dumps(encoded)}).decode("utf-8"))
 managed = set()
+wrote_count = 0
+skipped_count = 0
+deleted_count = 0
 for rel_path, content in payload.items():
     rel = str(rel_path or "").replace("\\\\", "/").lstrip("/")
     if not rel:
         continue
     managed.add(rel)
     target = workspace / rel
+    rendered = str(content)
+    if target.exists() and target.is_file():
+        try:
+            if target.read_text(encoding="utf-8") == rendered:
+                skipped_count += 1
+                continue
+        except Exception:
+            pass
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(str(content), encoding="utf-8")
+    target.write_text(rendered, encoding="utf-8")
+    wrote_count += 1
 
 ignore_prefixes = tuple(
     prefix for prefix in {json.dumps(":".join(_SYNC_IGNORE_PREFIXES))}.split(":") if prefix
@@ -567,6 +605,7 @@ for existing in sorted(workspace.rglob("*")):
     if any(rel.startswith(prefix) for prefix in ignore_prefixes):
         continue
     existing.unlink(missing_ok=True)
+    deleted_count += 1
     parent = existing.parent
     while parent != workspace and parent.exists():
         try:
@@ -575,11 +614,20 @@ for existing in sorted(workspace.rglob("*")):
             break
         parent = parent.parent
 
-revision_token = base64.urlsafe_b64encode(os.urandom(12)).decode("ascii").rstrip("=")
 revision_path = workspace / {json.dumps(_REVISION_FILE)}
 revision_path.parent.mkdir(parents=True, exist_ok=True)
-revision_path.write_text(revision_token, encoding="utf-8")
-print(json.dumps({{"revision_token": revision_token}}, sort_keys=True))
+existing_revision_token = revision_path.read_text(encoding="utf-8", errors="replace").strip() if revision_path.exists() else ""
+if wrote_count or deleted_count or not existing_revision_token:
+    revision_token = base64.urlsafe_b64encode(os.urandom(12)).decode("ascii").rstrip("=")
+    revision_path.write_text(revision_token, encoding="utf-8")
+else:
+    revision_token = existing_revision_token
+print(json.dumps({{
+    "revision_token": revision_token,
+    "wrote_count": wrote_count,
+    "skipped_count": skipped_count,
+    "deleted_count": deleted_count,
+}}, sort_keys=True))
 """.strip()
         output, _ = await self._exec_with_stdin(
             sprite_name=sprite_name,
@@ -592,7 +640,15 @@ print(json.dumps({{"revision_token": revision_token}}, sort_keys=True))
             normalized = json.loads(output or "{}")
         except Exception as exc:
             raise PublishedAppSandboxBackendError(f"Sprite sync failed: {output[:280]}") from exc
-        return str(normalized.get("revision_token") or "").strip()
+        revision_token = str(normalized.get("revision_token") or "").strip()
+        if not revision_token:
+            raise PublishedAppSandboxBackendError("Sprite sync did not return a revision token.")
+        return {
+            "revision_token": revision_token,
+            "wrote_count": max(0, int(normalized.get("wrote_count") or 0)),
+            "skipped_count": max(0, int(normalized.get("skipped_count") or 0)),
+            "deleted_count": max(0, int(normalized.get("deleted_count") or 0)),
+        }
 
     async def _read_revision_token(self, *, sprite_name: str, workspace_path: str) -> str | None:
         output, exit_code = await self._exec(
@@ -735,7 +791,15 @@ print(json.dumps({{"revision_token": revision_token}}, sort_keys=True))
         try:
             await self._wait_for_preview_ready(sprite_name=sprite_name)
             return
-        except Exception:
+        except Exception as exc:
+            self._trace(
+                "sprite.preview.repair.begin",
+                sprite_name=sprite_name,
+                workspace_path=workspace_path,
+                dependency_hash=dependency_hash,
+                error=str(exc),
+                error_type=exc.__class__.__name__,
+            )
             await self._install_dependencies_if_needed(
                 sprite_name=sprite_name,
                 workspace_path=workspace_path,
@@ -744,6 +808,11 @@ print(json.dumps({{"revision_token": revision_token}}, sort_keys=True))
             )
             await self._ensure_preview_service(sprite_name=sprite_name)
             await self._wait_for_preview_ready(sprite_name=sprite_name)
+            self._trace(
+                "sprite.preview.repair.done",
+                sprite_name=sprite_name,
+                workspace_path=workspace_path,
+            )
 
     def _backend_metadata(
         self,
@@ -789,6 +858,17 @@ print(json.dumps({{"revision_token": revision_token}}, sort_keys=True))
         if sprite is None:
             raise PublishedAppSandboxBackendError(f"Sprite request failed (404) for /v1/sprites/{sprite_name}: not found")
         sprite_url = str(sprite.get("url") or "").strip() or f"https://{sprite_name}.sprites.app"
+        preview_service = await self._get_service(
+            sprite_name=sprite_name,
+            service_name=self._preview_service_name(),
+        )
+        self._trace(
+            "sprite.preview.heartbeat_state",
+            sprite_name=sprite_name,
+            preview_service_name=self._preview_service_name(),
+            preview_state=preview_service.get("state") if isinstance(preview_service, dict) else None,
+            preview_http_port=preview_service.get("http_port") if isinstance(preview_service, dict) else None,
+        )
         return self._backend_metadata(
             sprite_name=sprite_name,
             sprite_url=sprite_url,
@@ -873,12 +953,20 @@ print(json.dumps({{
         self._trace("sprite.start_session.sprite_ready", sprite_name=sprite_name, sprite_url=sprite_url)
         await self._ensure_workspace_dirs(sprite_name=sprite_name)
         self._trace("sprite.start_session.workspace_dirs_ready", sprite_name=sprite_name)
-        revision_token = await self._sync_files_to_workspace(
+        sync_result = await self._sync_files_to_workspace(
             sprite_name=sprite_name,
             workspace_path=self._live_workspace_path(),
             files=dict(files or {}),
         )
-        self._trace("sprite.start_session.files_synced", sprite_name=sprite_name, revision_token=revision_token)
+        revision_token = str(sync_result.get("revision_token") or "").strip()
+        self._trace(
+            "sprite.start_session.files_synced",
+            sprite_name=sprite_name,
+            revision_token=revision_token,
+            wrote_count=int(sync_result.get("wrote_count") or 0),
+            skipped_count=int(sync_result.get("skipped_count") or 0),
+            deleted_count=int(sync_result.get("deleted_count") or 0),
+        )
         await self._install_dependencies_if_needed(
             sprite_name=sprite_name,
             workspace_path=self._live_workspace_path(),
@@ -929,12 +1017,20 @@ print(json.dumps({{
         self._trace("sprite.sync_session.sprite_ready", sprite_name=sprite_name, sprite_url=sprite_url)
         await self._ensure_workspace_dirs(sprite_name=sprite_name)
         self._trace("sprite.sync_session.workspace_dirs_ready", sprite_name=sprite_name)
-        revision_token = await self._sync_files_to_workspace(
+        sync_result = await self._sync_files_to_workspace(
             sprite_name=sprite_name,
             workspace_path=self._live_workspace_path(),
             files=dict(files or {}),
         )
-        self._trace("sprite.sync_session.files_synced", sprite_name=sprite_name, revision_token=revision_token)
+        revision_token = str(sync_result.get("revision_token") or "").strip()
+        self._trace(
+            "sprite.sync_session.files_synced",
+            sprite_name=sprite_name,
+            revision_token=revision_token,
+            wrote_count=int(sync_result.get("wrote_count") or 0),
+            skipped_count=int(sync_result.get("skipped_count") or 0),
+            deleted_count=int(sync_result.get("deleted_count") or 0),
+        )
         await self._install_dependencies_if_needed(
             sprite_name=sprite_name,
             workspace_path=self._live_workspace_path(),
@@ -965,7 +1061,21 @@ print(json.dumps({{
         _ = idle_timeout_seconds
         sprite_name = str(sandbox_id or "").strip()
         metadata = await self._heartbeat_metadata(sprite_name=sprite_name)
-        await self._wait_for_preview_ready(sprite_name=sprite_name)
+        try:
+            await self._wait_for_preview_ready(sprite_name=sprite_name)
+        except Exception as exc:
+            self._trace(
+                "sprite.preview.heartbeat_repair.begin",
+                sprite_name=sprite_name,
+                error=str(exc),
+                error_type=exc.__class__.__name__,
+            )
+            await self._ensure_preview_service(sprite_name=sprite_name)
+            await self._wait_for_preview_ready(sprite_name=sprite_name)
+            self._trace(
+                "sprite.preview.heartbeat_repair.done",
+                sprite_name=sprite_name,
+            )
         return {
             "sandbox_id": sprite_name,
             "status": "serving",

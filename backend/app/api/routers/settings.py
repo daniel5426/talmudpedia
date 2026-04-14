@@ -21,6 +21,8 @@ from app.db.postgres.models.rag import KnowledgeStore
 from app.services.credentials_service import CredentialsService
 from app.services.integration_provider_catalog import is_provider_key_allowed
 from app.services.control_plane.context import ControlPlaneContext
+from app.services.control_plane.contracts import ListQuery
+from app.services.control_plane.credentials_admin_service import serialize_credential
 from app.services.control_plane.credentials_admin_service import CredentialsAdminService
 from app.services.control_plane.errors import ControlPlaneError
 
@@ -233,19 +235,31 @@ async def _get_credential_usage(
 # Endpoints
 # =============================================================================
 
-@router.get("/credentials", response_model=List[CredentialResponse])
+@router.get("/credentials", response_model=Dict[str, Any])
 async def list_credentials(
     category: Optional[IntegrationCredentialCategory] = Query(None),
+    skip: int = 0,
+    limit: int = 20,
+    view: str = "summary",
     db: AsyncSession = Depends(get_db),
     tenant_ctx=Depends(get_tenant_context),
     current_user=Depends(get_current_user),
 ):
     try:
+        query = ListQuery.from_payload({"skip": skip, "limit": limit, "view": view})
         credentials = await CredentialsAdminService(db).list_credentials(
             ctx=_service_context(tenant_ctx=tenant_ctx, current_user=current_user),
             category=category,
         )
-        return [_credential_to_response(c) for c in credentials]
+        sliced = credentials[query.skip: query.skip + query.limit]
+        return {
+            "items": [serialize_credential(c, view=query.view) for c in sliced],
+            "total": len(credentials),
+            "has_more": query.skip + len(sliced) < len(credentials),
+            "skip": query.skip,
+            "limit": query.limit,
+            "view": query.view,
+        }
     except ControlPlaneError as exc:
         raise exc.to_http_exception() from exc
 

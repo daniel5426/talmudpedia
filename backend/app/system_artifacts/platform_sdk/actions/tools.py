@@ -21,7 +21,8 @@ def list_tools(
         "implementation_type": payload.get("implementation_type"),
         "tool_type": payload.get("tool_type"),
         "skip": int(payload.get("skip", 0) or 0),
-        "limit": int(payload.get("limit", 50) or 50),
+        "limit": int(payload.get("limit", 20) or 20),
+        "view": str(payload.get("view") or "summary"),
     }
 
     try:

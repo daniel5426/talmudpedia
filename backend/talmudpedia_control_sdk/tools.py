@@ -18,9 +18,10 @@ class ToolsAPI:
         implementation_type: Optional[str] = None,
         tool_type: Optional[str] = None,
         skip: int = 0,
-        limit: int = 50,
+        limit: int = 20,
+        view: str = "summary",
     ) -> ResponseEnvelope:
-        params: Dict[str, Any] = {"skip": skip, "limit": limit}
+        params: Dict[str, Any] = {"skip": skip, "limit": limit, "view": view}
         if scope is not None:
             params["scope"] = scope
         if is_active is not None:

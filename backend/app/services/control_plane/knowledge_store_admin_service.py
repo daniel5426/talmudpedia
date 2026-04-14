@@ -67,6 +67,34 @@ async def validate_vector_store_credential(
     return cred.id
 
 
+def serialize_store(store: KnowledgeStore, *, view: str = "full") -> dict[str, Any]:
+    payload = {
+        "id": str(store.id),
+        "tenant_id": str(store.tenant_id),
+        "name": store.name,
+        "description": store.description,
+        "embedding_model_id": store.embedding_model_id,
+        "retrieval_policy": getattr(store.retrieval_policy, "value", store.retrieval_policy),
+        "backend": getattr(store.backend, "value", store.backend),
+        "status": getattr(store.status, "value", store.status),
+        "document_count": int(store.document_count or 0),
+        "chunk_count": int(store.chunk_count or 0),
+        "created_at": store.created_at.isoformat() if store.created_at else None,
+        "updated_at": store.updated_at.isoformat() if store.updated_at else None,
+    }
+    if view == "summary":
+        return payload
+    payload.update(
+        {
+            "chunking_strategy": store.chunking_strategy or {},
+            "backend_config": store.backend_config or {},
+            "credentials_ref": str(store.credentials_ref) if store.credentials_ref else None,
+            "created_by": str(store.created_by) if store.created_by else None,
+        }
+    )
+    return payload
+
+
 class KnowledgeStoreAdminService:
     def __init__(self, db: AsyncSession):
         self.db = db

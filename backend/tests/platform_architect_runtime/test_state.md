@@ -1,6 +1,6 @@
 # Platform Architect Runtime Tests
 
-Last Updated: 2026-03-17
+Last Updated: 2026-04-15
 
 ## Scope
 - Platform Architect v1.2 direct domain-tool loop runtime (no `architect.run` path).
@@ -10,6 +10,7 @@ Last Updated: 2026-03-17
 - test_platform_architect_runtime.py
 - test_architect_seeding.py
 - test_native_platform_tools.py
+- test_native_platform_assets_actions.py
 
 ## Key scenarios covered
 - Happy path executes direct `rag.*` and `agents.*` calls for create/compile/validate/execute.
@@ -24,6 +25,7 @@ Last Updated: 2026-03-17
 - Missing tenant context for mutations fails with deterministic `TENANT_REQUIRED`.
 - Runtime tenant context is sufficient for mutations even when payload omits `tenant_id`.
 - Explicit payload tenant override is rejected when it conflicts with runtime tenant context.
+- Platform SDK tool output meta now includes redacted auth context for runtime debugging without leaking bearer tokens.
 - Replay path reuses existing resources rather than duplicating them.
 - `agents.create` propagates structured SDK validation details (including normalized `validation_errors`) for deterministic repair.
 - Platform architect domain schema includes `agents.nodes.catalog/schema/validate` action contracts.
@@ -38,6 +40,8 @@ Last Updated: 2026-03-17
 - Seeded artifact-coding worker instructions now spell out the required draft fields for a new artifact before the architect can persist it.
 - Architect domain tools now bind to native backend control-plane function dispatch instead of the runtime SDK shim.
 - Native `platform-*` dispatch preserves runtime auth/tenant context and rejects cross-domain action mismatch before execution.
+- Native `platform-*` list actions now default to bounded `view=summary` responses with the shared `items/total/has_more/skip/limit/view` envelope.
+- Seeded architect domain-tool registry schema now matches the shared list contract, including `view`, `limit<=100`, and removal of stale `agents.list.compact`.
 
 ## Last run command + date/time + result
 - Command: `cd backend && PYTHONPATH=. pytest -q tests/platform_architect_runtime/test_architect_seeding.py`
@@ -76,6 +80,16 @@ Last Updated: 2026-03-17
 - Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/platform_architect_runtime/test_architect_seeding.py backend/tests/platform_architect_runtime/test_native_platform_tools.py backend/tests/tool_execution/test_function_tool_execution.py backend/tests/platform_architect_runtime/test_platform_architect_runtime.py backend/tests/platform_architect_workers/test_worker_runtime.py backend/tests/platform_sdk_tool/test_platform_sdk_actions.py`
 - Date/Time: 2026-03-17 18:32 Asia/Hebron
 - Result: passed (`65 passed, 7 warnings`)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/platform_architect_runtime/test_native_platform_tools.py backend/tests/platform_architect_runtime/test_native_platform_assets_actions.py`
+- Date/Time: 2026-04-14 Asia/Hebron
+- Result: passed (`8 passed, 6 warnings`)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/platform_architect_runtime/test_platform_architect_runtime.py -k 'redacted_auth_context or models or tenant_and_scope_denial_paths'`
+- Date/Time: 2026-04-14 Asia/Hebron
+- Result: passed (`2 passed, 12 deselected, 1 warning`)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/platform_architect_runtime/test_architect_seeding.py`
+- Date/Time: 2026-04-15 00:07 EEST
+- Result: passed (`4 passed, 6 warnings`)
 
 ## Known gaps or follow-ups
 - Add integration coverage that exercises seeded `platform-architect` graph with real tool resolution in DB-backed test environment.
+- Add deeper live/runtime coverage beyond direct native `platform-assets` action adapter tests for publish and execution-heavy flows.

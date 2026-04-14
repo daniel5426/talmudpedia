@@ -1,6 +1,5 @@
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
-from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 from uuid import UUID
 
 from fastapi import Depends, HTTPException, Query, Request
@@ -23,7 +22,9 @@ from app.db.postgres.session import get_db
 from app.services.published_app_agent_integration_contract import (
     build_published_app_agent_integration_contract,
 )
+from app.services.apps_builder_trace import apps_builder_trace
 from app.services.published_app_draft_dev_runtime import PublishedAppDraftDevRuntimeDisabled, PublishedAppDraftDevRuntimeService
+from app.services.published_app_draft_dev_runtime_client import PublishedAppDraftDevRuntimeClientError
 from app.services.published_app_revision_store import PublishedAppRevisionStore
 from app.services.published_app_templates import build_template_files, get_template, list_templates
 from app.services.published_app_versioning import create_app_version
@@ -71,20 +72,6 @@ from .published_apps_admin_shared import (
     router,
 )
 
-
-def _append_query(url: str, params: dict[str, str]) -> str:
-    parsed = urlparse(url)
-    current = dict(parse_qsl(parsed.query, keep_blank_values=True))
-    current.update({k: v for k, v in params.items() if v})
-    return urlunparse(parsed._replace(query=urlencode(current)))
-
-
-def _builder_preview_bootstrap_url(preview_url: str) -> str:
-    parsed = urlparse(preview_url)
-    normalized_path = parsed.path.rstrip("/")
-    return urlunparse(parsed._replace(path=f"{normalized_path}/_talmudpedia/runtime/bootstrap", query="", fragment=""))
-
-
 async def _decorate_draft_dev_session_response(
     *,
     db: AsyncSession,
@@ -125,16 +112,71 @@ async def _decorate_draft_dev_session_response(
         scopes=["apps.preview"],
         expires_delta=timedelta(hours=2),
     )
-    response.preview_url = _append_query(
-        preview_url,
-        {
-            "runtime_mode": "builder-preview",
-            "runtime_bootstrap_url": _builder_preview_bootstrap_url(preview_url),
-        },
-    )
+    response.preview_url = preview_url
     response.preview_auth_token = preview_auth_token
     response.preview_auth_expires_at = preview_auth_expires_at
     return response
+
+
+async def _delete_runtime_file_if_present(
+    *,
+    runtime_service: PublishedAppDraftDevRuntimeService,
+    sandbox_id: str,
+    path: str,
+    session: PublishedAppDraftDevSession,
+    app: PublishedApp,
+) -> Dict[str, Any]:
+    try:
+        return await runtime_service.client.delete_file(
+            sandbox_id=sandbox_id,
+            path=path,
+        )
+    except PublishedAppDraftDevRuntimeClientError as exc:
+        detail = str(exc).strip() or exc.__class__.__name__
+        snapshot_error: str | None = None
+        live_files: dict[str, Any] = {}
+        revision_token: str | None = None
+        try:
+            snapshot = await runtime_service.client.snapshot_files(sandbox_id=sandbox_id)
+            live_files = dict(snapshot.get("files") or {}) if isinstance(snapshot.get("files"), dict) else {}
+            revision_token = str(snapshot.get("revision_token") or "").strip() or None
+        except PublishedAppDraftDevRuntimeClientError as snapshot_exc:
+            snapshot_error = str(snapshot_exc).strip() or snapshot_exc.__class__.__name__
+
+        if path not in live_files:
+            apps_builder_trace(
+                "draft_dev.sync.delete_absent_ignored",
+                domain="draft_dev.api",
+                app_id=str(app.id),
+                session_id=str(session.id),
+                sandbox_id=sandbox_id,
+                path=path,
+                delete_error=detail,
+                snapshot_error=snapshot_error,
+            )
+            return {
+                "sandbox_id": sandbox_id,
+                "path": path,
+                "status": "deleted_missing",
+                "revision_token": revision_token,
+            }
+
+        apps_builder_trace(
+            "draft_dev.sync.delete_failed",
+            domain="draft_dev.api",
+            app_id=str(app.id),
+            session_id=str(session.id),
+            sandbox_id=sandbox_id,
+            path=path,
+            delete_error=detail,
+            snapshot_error=snapshot_error,
+        )
+        if snapshot_error:
+            detail = f"{detail} (snapshot fallback failed: {snapshot_error})"
+        raise HTTPException(
+            status_code=502,
+            detail=f"Failed to delete live sandbox file `{path}`: {detail}",
+        ) from exc
 
 
 async def _assert_no_active_coding_run_for_scope(
@@ -328,10 +370,12 @@ async def ensure_builder_draft_dev_session(
     draft = await _ensure_current_draft_revision(db, app, actor.id)
     runtime_service = PublishedAppDraftDevRuntimeService(db)
     try:
-        session = await runtime_service.ensure_session(
+        session = await runtime_service.ensure_active_session(
             app=app,
             revision=draft,
             user_id=actor.id,
+            prefer_live_workspace=True,
+            trace_source="builder.ensure_route",
         )
     except PublishedAppDraftDevRuntimeDisabled as exc:
         raise HTTPException(status_code=409, detail=str(exc))
@@ -402,9 +446,12 @@ async def sync_builder_draft_dev_session(
             elif operation.op == "delete_file" and operation.path:
                 normalized_path = _normalize_builder_path(operation.path)
                 _assert_builder_path_allowed(normalized_path, field="operations.path")
-                result = await runtime_service.client.delete_file(
+                result = await _delete_runtime_file_if_present(
+                    runtime_service=runtime_service,
                     sandbox_id=sandbox_id,
                     path=normalized_path,
+                    session=session,
+                    app=app,
                 )
                 next_files.pop(normalized_path, None)
             elif operation.op == "rename_file" and operation.from_path and operation.to_path:
@@ -484,11 +531,30 @@ async def heartbeat_builder_draft_dev_session(
     if actor is None:
         raise HTTPException(status_code=403, detail="Draft dev session requires a user principal")
     app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
+    apps_builder_trace(
+        "session.heartbeat.requested",
+        domain="draft_dev.api",
+        app_id=str(app.id),
+        user_id=str(actor.id),
+    )
     session = await _get_draft_dev_session_for_scope(db, app_id=app.id, user_id=actor.id)
     if session is None:
+        apps_builder_trace(
+            "session.heartbeat.missing_session",
+            domain="draft_dev.api",
+            app_id=str(app.id),
+            user_id=str(actor.id),
+        )
         raise HTTPException(status_code=404, detail="Draft dev session not found")
     active_publish = await _get_active_publish_job_for_app(db, app_id=app.id)
     if active_publish is not None:
+        apps_builder_trace(
+            "session.heartbeat.publish_locked",
+            domain="draft_dev.api",
+            app_id=str(app.id),
+            user_id=str(actor.id),
+            active_publish_job_id=str(active_publish.id),
+        )
         raise HTTPException(
             status_code=409,
             detail={
@@ -504,6 +570,15 @@ async def heartbeat_builder_draft_dev_session(
     except PublishedAppDraftDevRuntimeDisabled as exc:
         raise HTTPException(status_code=409, detail=str(exc))
     await db.commit()
+    apps_builder_trace(
+        "session.heartbeat.completed",
+        domain="draft_dev.api",
+        app_id=str(app.id),
+        user_id=str(actor.id),
+        session_id=str(session.id),
+        status=str(getattr(session.status, "value", session.status) or ""),
+        sandbox_id=str(session.sandbox_id or "") or None,
+    )
     return await _decorate_draft_dev_session_response(
         db=db,
         request=request,

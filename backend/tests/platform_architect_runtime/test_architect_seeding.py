@@ -73,8 +73,8 @@ def test_platform_architect_domain_tools_bind_to_native_platform_functions():
 
 def test_platform_domain_schema_is_action_specific_one_of():
     agents_spec = registry_seeding.PLATFORM_ARCHITECT_DOMAIN_TOOLS["platform-agents"]
-    schema = registry_seeding._build_platform_domain_tool_schema("platform-agents", agents_spec)
-    input_schema = schema["input"]
+    agents_schema = registry_seeding._build_platform_domain_tool_schema("platform-agents", agents_spec)
+    input_schema = agents_schema["input"]
     variants = input_schema["oneOf"]
     by_action = {variant["properties"]["action"]["const"]: variant for variant in variants}
 
@@ -97,3 +97,27 @@ def test_platform_domain_schema_is_action_specific_one_of():
     assert "node_types" in by_action["agents.nodes.schema"]["properties"]["payload"]["required"]
     assert "idempotency_key" not in by_action["agents.nodes.catalog"]["required"]
     assert "idempotency_key" not in by_action["agents.get"]["required"]
+
+    agents_list_payload = by_action["agents.list"]["properties"]["payload"]
+    assert "compact" not in agents_list_payload["properties"]
+    assert agents_list_payload["properties"]["view"]["enum"] == ["summary", "full"]
+    assert agents_list_payload["properties"]["limit"]["maximum"] == 100
+
+    assets_spec = registry_seeding.PLATFORM_ARCHITECT_DOMAIN_TOOLS["platform-assets"]
+    assets_schema = registry_seeding._build_platform_domain_tool_schema("platform-assets", assets_spec)
+    assets_variants = assets_schema["input"]["oneOf"]
+    assets_by_action = {variant["properties"]["action"]["const"]: variant for variant in assets_variants}
+
+    models_list_payload = assets_by_action["models.list"]["properties"]["payload"]
+    assert models_list_payload["properties"]["view"]["enum"] == ["summary", "full"]
+    assert models_list_payload["properties"]["status"]["type"] == "string"
+    assert models_list_payload["properties"]["limit"]["maximum"] == 100
+
+    tools_list_payload = assets_by_action["tools.list"]["properties"]["payload"]
+    assert tools_list_payload["properties"]["view"]["enum"] == ["summary", "full"]
+    assert "status" in tools_list_payload["properties"]
+    assert "implementation_type" in tools_list_payload["properties"]
+
+    knowledge_stores_list_payload = assets_by_action["knowledge_stores.list"]["properties"]["payload"]
+    assert knowledge_stores_list_payload["required"] == ["tenant_slug"]
+    assert knowledge_stores_list_payload["properties"]["view"]["enum"] == ["summary", "full"]

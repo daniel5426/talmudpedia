@@ -15,8 +15,17 @@ class ArtifactsAPI:
     def __init__(self, client: Any) -> None:
         self._client = client
 
-    def list(self, tenant_slug: Optional[str] = None) -> ResponseEnvelope:
-        return self._client.request("GET", "/admin/artifacts", params=_tenant_params(tenant_slug))
+    def list(
+        self,
+        tenant_slug: Optional[str] = None,
+        *,
+        skip: int = 0,
+        limit: int = 20,
+        view: str = "summary",
+    ) -> ResponseEnvelope:
+        params = _tenant_params(tenant_slug)
+        params.update({"skip": skip, "limit": limit, "view": view})
+        return self._client.request("GET", "/admin/artifacts", params=params)
 
     def get(self, artifact_id: str, tenant_slug: Optional[str] = None) -> ResponseEnvelope:
         return self._client.request(

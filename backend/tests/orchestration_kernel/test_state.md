@@ -1,6 +1,6 @@
 # Orchestration Kernel Tests
 
-Last Updated: 2026-02-08
+Last Updated: 2026-04-14
 
 Scope:
 - Kernel-backed runtime orchestration primitives and run-tree lineage behavior.
@@ -12,11 +12,12 @@ Test files present:
 Key scenarios covered:
 - `spawn_run` idempotency (same `parent_run_id` + `spawn_key` returns existing child run).
 - Run tree query includes spawned descendants under the root run.
+- Parent-run thread lineage is preserved so child orchestration runs can resolve thread ancestry.
 - Non-allowlisted target spawn is denied.
 
-Last run command: `pytest -q backend/tests/orchestration_kernel/test_kernel_spawn_and_tree.py`
-Last run date: 2026-02-08
-Last run result: pass (2 passed)
+Last run command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/orchestration_kernel/test_kernel_spawn_and_tree.py`
+Last run date: 2026-04-14 Asia/Hebron
+Last run result: pass (`2 passed, 1 warning`)
 
 Known gaps / follow-ups:
 - Add tests for `spawn_group`, `join` modes (`all`, `quorum`, `first_success`), and timeout behavior.

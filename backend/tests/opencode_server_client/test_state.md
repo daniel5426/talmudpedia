@@ -1,4 +1,4 @@
-Last Updated: 2026-03-09
+Last Updated: 2026-04-14
 
 ## Scope
 - OpenCode server client transport compatibility for coding-agent engine runs.
@@ -45,6 +45,9 @@ Last Updated: 2026-03-09
 - Command: `cd backend && set -a && source .env >/dev/null 2>&1 && PYTHONPATH=. pytest -q tests/opencode_server_client/test_opencode_server_client.py -k 'test_build_official_session_permission_rules_includes_workspace_patterns or test_official_mode_seeds_custom_tools_before_start or test_host_mode_can_skip_workspace_bootstrap or test_sprite_inner_opencode_client_skips_host_workspace_bootstrap' tests/opencode_server_client/test_sprite_proxy_tunnel.py`
 - Date/Time: 2026-03-09 01:36 EET
 - Result: Pass (5 passed, 34 deselected, 1 warning)
+- Command: `cd backend && PYTHONPATH=. python3 -m pytest -q tests/opencode_server_client/test_sprite_proxy_tunnel.py`
+- Date/Time: 2026-04-14 18:20 EEST
+- Result: Pass (1 passed, 1 warning)
 - Command: `cd backend && PYTHONPATH=. pytest -q tests/opencode_server_client/test_opencode_server_client.py -k "sandbox_mode_seeds_custom_tools_before_start or e2b_backend_auto_selects_sandbox_mode_without_controller_url or sandbox_mode_refreshes_context_when_contract_changes or sandbox_mode_fails_closed_when_seed_write_fails"`
 - Date/Time: 2026-03-08
 - Result: Pass (4 passed, 32 deselected, 1 warning)

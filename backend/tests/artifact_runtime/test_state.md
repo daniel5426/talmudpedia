@@ -1,4 +1,4 @@
-Last Updated: 2026-03-29
+Last Updated: 2026-04-14
 
 # Test State
 
@@ -24,7 +24,7 @@ Artifact runtime revision, deploy, and dispatch-time credential lifecycle.
 - allow neutral non-code files in artifact source trees while still enforcing that the active entry module matches the artifact language lane
 - skip draft revision creation for no-op artifact saves
 - publish the latest draft revision
-- list saved artifact revisions through the admin API
+- list saved artifact revisions through the admin API with deployment mocked at the test boundary
 - keep artifact version-list responses limited to list-item fields even when revisions carry detail-only metadata
 - fetch one historical artifact revision snapshot through the admin API
 - duplicate an artifact into a new tenant draft with Google Drive-style incremented names
@@ -61,6 +61,7 @@ Artifact runtime revision, deploy, and dispatch-time credential lifecycle.
 - return a persisted failed test run instead of bubbling an eager dispatch crash as the only caller-visible failure
 - promote nested dispatch-worker upstream detail into a visible root-cause payload for debugging
 - pass artifact test-run input payloads through to the worker without wrapping them under `value`
+- return structured `422` validation payloads for artifact save/test-run contract errors
 
 ## Last Run
 
@@ -139,11 +140,13 @@ Artifact runtime revision, deploy, and dispatch-time credential lifecycle.
 - Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/artifact_runtime/test_revision_service.py backend/tests/artifact_runtime/test_execution_service.py`
 - Date: 2026-03-29 Asia/Hebron
 - Result: Pass (`29 passed, 2 warnings`)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/artifact_runtime/test_artifact_working_draft_api.py backend/tests/artifact_runtime/test_artifact_versions_api.py backend/tests/artifact_runtime/test_revision_service.py backend/tests/artifact_runtime/test_execution_service.py backend/tests/artifact_test_runs/test_artifact_test_run_api.py backend/tests/tool_execution/test_artifact_runtime_tool_execution.py`
+- Date: 2026-04-14 Asia/Hebron
+- Result: Pass (`47 passed, 9 warnings`)
 
 ## Known Gaps
 
 - no real Cloudflare deploy API integration coverage yet
-- `test_artifact_versions_api.py` still contains an older publish-path test that currently requires Cloudflare deploy config in this local environment
 - no migration script execution coverage yet
 - no live deployed end-to-end `context.credentials` dispatch-injection smoke test in CI yet
 - no automated guard yet to reject heavyweight but installable Python SDKs that still fail inside Cloudflare Python Workers at import time

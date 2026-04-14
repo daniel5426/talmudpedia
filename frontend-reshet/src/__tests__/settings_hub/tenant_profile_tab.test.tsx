@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import SettingsPage from "@/app/admin/settings/page"
 import { credentialsService, orgUnitsService, modelsService } from "@/services"
 
-let mockUser: any = { role: "admin", org_role: "owner" }
+let mockScopes = ["organizations.write", "credentials.write"]
 let mockSearch = ""
 const replaceMock = jest.fn((href: string) => {
   mockSearch = href.split("?")[1] ?? ""
@@ -45,12 +45,16 @@ jest.mock("@/components/direction-provider", () => ({
 }))
 
 jest.mock("@/lib/store/useAuthStore", () => ({
-  useAuthStore: (selector: (state: any) => any) => selector({ user: mockUser }),
+  useAuthStore: (selector: (state: any) => any) =>
+    selector({
+      user: { role: "user" },
+      hasScope: (scope: string) => mockScopes.includes(scope),
+    }),
 }))
 
 describe("Tenant Profile Tab", () => {
   beforeEach(() => {
-    mockUser = { role: "admin", org_role: "owner" }
+    mockScopes = ["organizations.write", "credentials.write"]
     mockSearch = ""
     replaceMock.mockReset()
     ;(orgUnitsService.getTenant as jest.Mock).mockResolvedValue({
@@ -65,8 +69,8 @@ describe("Tenant Profile Tab", () => {
       default_embedding_model_id: null,
       default_retrieval_policy: null,
     })
-    ;(credentialsService.listCredentials as jest.Mock).mockResolvedValue([])
-    ;(modelsService.listModels as jest.Mock).mockResolvedValue({ models: [], total: 0 })
+    ;(credentialsService.listCredentials as jest.Mock).mockResolvedValue({ items: [], total: 0, has_more: false, skip: 0, limit: 100, view: "summary" })
+    ;(modelsService.listModels as jest.Mock).mockResolvedValue({ items: [], total: 0, has_more: false, skip: 0, limit: 100, view: "full" })
     ;(orgUnitsService.updateTenant as jest.Mock).mockResolvedValue({
       id: "tenant-1",
       name: "Tenant Updated",
@@ -85,12 +89,12 @@ describe("Tenant Profile Tab", () => {
 
     await waitFor(() => expect(orgUnitsService.getTenant).toHaveBeenCalled())
     await waitFor(() => expect(screen.getAllByRole("button", { name: "General" }).length).toBeGreaterThan(0))
-    await waitFor(() => expect(screen.getByText("Save")).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText("Save Changes")).toBeInTheDocument())
 
     const nameInput = screen.getAllByRole("textbox")[0]
     fireEvent.change(nameInput, { target: { value: "Tenant Updated" } })
 
-    const saveButton = screen.getByText("Save")
+    const saveButton = screen.getByText("Save Changes")
     fireEvent.click(saveButton)
 
     await waitFor(() => expect(orgUnitsService.updateTenant).toHaveBeenCalledWith("tenant-1", {
@@ -101,13 +105,13 @@ describe("Tenant Profile Tab", () => {
   })
 
   it("renders read-only mode when user is not tenant admin", async () => {
-    mockUser = { role: "user", org_role: "member" }
+    mockScopes = []
 
     render(<SettingsPage />)
 
     await waitFor(() => expect(orgUnitsService.getTenant).toHaveBeenCalled())
     await waitFor(() => expect(screen.getByText("Read-only access. Contact an admin to make changes.")).toBeInTheDocument())
 
-    expect(screen.getByText("Save")).toBeDisabled()
+    expect(screen.getByText("Save Changes")).toBeDisabled()
   })
 })

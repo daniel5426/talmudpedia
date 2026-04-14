@@ -90,6 +90,10 @@ class AgentGraphValidationError(AgentServiceError):
         self.errors = errors
 
 
+class AgentInputValidationError(AgentServiceError):
+    """Raised when agent create/update input is invalid."""
+
+
 class AgentService:
     """
     Service layer for agent management.
@@ -487,6 +491,12 @@ class AgentService:
 
     async def create_agent(self, data: CreateAgentData, user_id: Optional[UUID] = None) -> Agent:
         """Create a new agent."""
+        data.name = str(data.name or "").strip()
+        data.slug = str(data.slug or "").strip()
+        if not data.name:
+            raise AgentInputValidationError("Agent name is required")
+        if not data.slug:
+            raise AgentInputValidationError("Agent slug is required")
         # Check if slug exists in this tenant
         existing = await self.db.execute(
             select(Agent).where(and_(Agent.slug == data.slug, Agent.tenant_id == self.tenant_id))
@@ -533,6 +543,8 @@ class AgentService:
             pass
 
         if data.name is not None:
+            if not str(data.name).strip():
+                raise AgentInputValidationError("Agent name cannot be blank")
             agent.name = data.name
         if data.description is not None:
             agent.description = data.description

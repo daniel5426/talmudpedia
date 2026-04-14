@@ -55,7 +55,7 @@ describe("agents page delete action", () => {
       },
     })
     listAgentsMock.mockResolvedValue({
-      agents: [
+      items: [
         {
           id: "agent-1",
           tenant_id: "tenant-1",
@@ -68,6 +68,10 @@ describe("agents page delete action", () => {
         },
       ],
       total: 1,
+      has_more: false,
+      skip: 0,
+      limit: 100,
+      view: "summary",
     })
     getStatsSummaryMock.mockResolvedValue({
       agents: {

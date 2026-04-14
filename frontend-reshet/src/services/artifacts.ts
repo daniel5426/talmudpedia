@@ -1,6 +1,7 @@
 import { httpClient } from "./http";
 import { useAuthStore } from "@/lib/store/useAuthStore";
 import type { ContextWindow } from "./context-window";
+import type { ControlPlaneListResponse, ControlPlaneListView } from "./types";
 
 export type ArtifactType = "draft" | "published";
 export type ArtifactKind = "agent_node" | "rag_operator" | "tool_impl";
@@ -398,9 +399,16 @@ export interface ArtifactCodingModelOption {
 }
 
 export const artifactsService = {
-  list: async (tenantSlug?: string): Promise<Artifact[]> => {
-    const url = tenantSlug ? `/admin/artifacts?tenant_slug=${tenantSlug}` : "/admin/artifacts";
-    return httpClient.get<Artifact[]>(url);
+  list: async (
+    tenantSlug?: string,
+    params?: { skip?: number; limit?: number; view?: ControlPlaneListView }
+  ): Promise<ControlPlaneListResponse<Artifact>> => {
+    const query = new URLSearchParams();
+    if (tenantSlug) query.set("tenant_slug", tenantSlug);
+    query.set("skip", String(params?.skip ?? 0));
+    query.set("limit", String(params?.limit ?? 20));
+    query.set("view", params?.view ?? "summary");
+    return httpClient.get<ControlPlaneListResponse<Artifact>>(`/admin/artifacts?${query.toString()}`);
   },
 
   get: async (id: string, tenantSlug?: string): Promise<Artifact> => {

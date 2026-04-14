@@ -32,8 +32,8 @@ async def _timed_get(client, path: str, headers: dict[str, str]) -> TimedFetch:
     if isinstance(payload, list):
         item_count = len(payload)
     elif isinstance(payload, dict):
-        if isinstance(payload.get("agents"), list):
-            item_count = len(payload["agents"])
+        if isinstance(payload.get("items"), list):
+            item_count = len(payload["items"])
         total = payload.get("total")
         if isinstance(total, int):
             total_count = total
@@ -71,7 +71,7 @@ async def _run_apps_page_probe(client, headers: dict[str, str]) -> tuple[list[Ti
     paths = [
         "/admin/apps",
         "/admin/apps/stats?days=7",
-        "/agents?limit=500&compact=true",
+        "/agents?limit=500&view=summary",
         "/admin/apps/templates",
         "/admin/apps/auth/templates",
     ]
@@ -133,7 +133,7 @@ async def test_apps_page_fetch_probe_smoke(db_session):
 
     apps_result = next(result for result in sequential_results if result.path == "/admin/apps")
     agents_result = next(
-        result for result in sequential_results if result.path == "/agents?limit=500&compact=true"
+        result for result in sequential_results if result.path == "/agents?limit=500&view=summary"
     )
     assert apps_result.item_count is not None and apps_result.item_count >= 1
     assert agents_result.item_count is not None and agents_result.item_count >= 1

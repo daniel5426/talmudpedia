@@ -17,6 +17,24 @@ def _payload_schema(
     }
 
 
+def _list_payload_schema(
+    *,
+    properties: Dict[str, Any] | None = None,
+    required: list[str] | None = None,
+) -> Dict[str, Any]:
+    base_properties: Dict[str, Any] = {
+        "skip": {"type": "integer", "minimum": 0},
+        "limit": {"type": "integer", "minimum": 1, "maximum": 100},
+        "view": {"type": "string", "enum": ["summary", "full"]},
+    }
+    base_properties.update(properties or {})
+    return _payload_schema(
+        properties=base_properties,
+        required=required,
+        additional_properties=False,
+    )
+
+
 PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
     "platform-rag": {
         "name": "Platform RAG",
@@ -24,13 +42,11 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
         "actions": {
             "rag.list_visual_pipelines": {
                 "mutation": False,
-                "payload_schema": _payload_schema(
-                    properties={"tenant_slug": {"type": "string"}},
-                ),
+                "payload_schema": _list_payload_schema(),
                 "contract": {
                     "summary": "List visual pipelines for a tenant scope.",
                     "required_fields": [],
-                    "example_payload": {"tenant_slug": "acme"},
+                    "example_payload": {"limit": 20, "skip": 0, "view": "summary"},
                     "failure_codes": ["UNAUTHORIZED", "TENANT_MISMATCH"],
                 },
             },
@@ -353,18 +369,15 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
         "actions": {
             "agents.list": {
                 "mutation": False,
-                "payload_schema": _payload_schema(
+                "payload_schema": _list_payload_schema(
                     properties={
                         "status": {"type": "string"},
-                        "skip": {"type": "integer", "minimum": 0},
-                        "limit": {"type": "integer", "minimum": 1, "maximum": 200},
-                        "compact": {"type": "boolean"},
                     }
                 ),
                 "contract": {
                     "summary": "List agents.",
                     "required_fields": [],
-                    "example_payload": {"status": "draft", "limit": 50, "skip": 0},
+                    "example_payload": {"status": "draft", "limit": 20, "skip": 0, "view": "summary"},
                     "failure_codes": ["UNAUTHORIZED"],
                 },
             },
@@ -710,7 +723,24 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
         "name": "Platform Assets",
         "description": "Domain tool for tools, artifacts, models, credentials, and knowledge stores.",
         "actions": {
-            "tools.list": {"mutation": False, "payload_schema": _payload_schema(properties={}), "contract": {"summary": "List tools.", "required_fields": [], "example_payload": {}, "failure_codes": []}},
+            "tools.list": {
+                "mutation": False,
+                "payload_schema": _list_payload_schema(
+                    properties={
+                        "scope": {"type": "string"},
+                        "is_active": {"type": "boolean"},
+                        "status": {"type": "string"},
+                        "implementation_type": {"type": "string"},
+                        "tool_type": {"type": "string"},
+                    }
+                ),
+                "contract": {
+                    "summary": "List tools.",
+                    "required_fields": [],
+                    "example_payload": {"limit": 20, "skip": 0, "view": "summary", "is_active": True},
+                    "failure_codes": [],
+                },
+            },
             "tools.get": {
                 "mutation": False,
                 "payload_schema": _payload_schema(properties={"tool_id": {"type": "string"}, "id": {"type": "string"}}),
@@ -729,7 +759,16 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
                 "payload_schema": _payload_schema(properties={"tool_id": {"type": "string"}, "id": {"type": "string"}}),
                 "contract": {"summary": "Publish tool version (explicit publish intent required).", "required_fields": ["tool_id|id"], "example_payload": {"tool_id": "tool-123"}, "failure_codes": ["DRAFT_FIRST_POLICY_DENIED", "SENSITIVE_ACTION_APPROVAL_REQUIRED"]},
             },
-            "artifacts.list": {"mutation": False, "payload_schema": _payload_schema(properties={}), "contract": {"summary": "List artifacts.", "required_fields": [], "example_payload": {}, "failure_codes": []}},
+            "artifacts.list": {
+                "mutation": False,
+                "payload_schema": _list_payload_schema(),
+                "contract": {
+                    "summary": "List artifacts.",
+                    "required_fields": [],
+                    "example_payload": {"limit": 20, "skip": 0, "view": "summary"},
+                    "failure_codes": [],
+                },
+            },
             "artifacts.get": {
                 "mutation": False,
                 "payload_schema": _payload_schema(properties={"artifact_id": {"type": "string"}, "id": {"type": "string"}}),
@@ -889,19 +928,17 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
             },
             "models.list": {
                 "mutation": False,
-                "payload_schema": _payload_schema(
+                "payload_schema": _list_payload_schema(
                     properties={
                         "capability_type": {"type": "string"},
+                        "status": {"type": "string"},
                         "is_active": {"type": "boolean"},
-                        "skip": {"type": "integer", "minimum": 0},
-                        "limit": {"type": "integer", "minimum": 1, "maximum": 200},
                     },
-                    additional_properties=False,
                 ),
                 "contract": {
                     "summary": "List models.",
                     "required_fields": [],
-                    "example_payload": {"capability_type": "chat", "is_active": True, "limit": 50},
+                    "example_payload": {"capability_type": "chat", "is_active": True, "limit": 20, "skip": 0, "view": "summary"},
                     "failure_codes": [],
                 },
             },
@@ -910,7 +947,16 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
                 "payload_schema": _payload_schema(properties={"model_id": {"type": "string"}, "id": {"type": "string"}, "name": {"type": "string"}, "slug": {"type": "string"}}, additional_properties=True),
                 "contract": {"summary": "Create or update model.", "required_fields": ["name|model_id"], "example_payload": {"name": "Model A", "slug": "model-a"}, "failure_codes": ["VALIDATION_ERROR"]},
             },
-            "credentials.list": {"mutation": False, "payload_schema": _payload_schema(properties={}), "contract": {"summary": "List credentials.", "required_fields": [], "example_payload": {}, "failure_codes": []}},
+            "credentials.list": {
+                "mutation": False,
+                "payload_schema": _list_payload_schema(properties={"category": {"type": "string"}}),
+                "contract": {
+                    "summary": "List credentials.",
+                    "required_fields": [],
+                    "example_payload": {"category": "api", "limit": 20, "skip": 0, "view": "summary"},
+                    "failure_codes": [],
+                },
+            },
             "credentials.create_or_update": {
                 "mutation": True,
                 "payload_schema": _payload_schema(properties={"credential_id": {"type": "string"}, "id": {"type": "string"}, "name": {"type": "string"}, "category": {"type": "string"}}, additional_properties=True),
@@ -918,8 +964,13 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
             },
             "knowledge_stores.list": {
                 "mutation": False,
-                "payload_schema": _payload_schema(properties={"tenant_slug": {"type": "string"}}, additional_properties=False),
-                "contract": {"summary": "List knowledge stores.", "required_fields": ["tenant_slug"], "example_payload": {"tenant_slug": "acme"}, "failure_codes": []},
+                "payload_schema": _list_payload_schema(properties={"tenant_slug": {"type": "string"}}, required=["tenant_slug"]),
+                "contract": {
+                    "summary": "List knowledge stores.",
+                    "required_fields": ["tenant_slug"],
+                    "example_payload": {"tenant_slug": "acme", "limit": 20, "skip": 0, "view": "summary"},
+                    "failure_codes": [],
+                },
             },
             "knowledge_stores.create_or_update": {
                 "mutation": True,

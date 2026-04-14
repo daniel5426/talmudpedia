@@ -1,6 +1,6 @@
 # Published Apps Frontend Tests
 
-Last Updated: 2026-03-29
+Last Updated: 2026-04-14
 
 ## Scope
 Frontend coverage for published-apps admin and public runtime surfaces outside the new versions module.
@@ -25,6 +25,9 @@ Frontend coverage for published-apps admin and public runtime surfaces outside t
 - Coding-agent stream speed/coalescing expectations.
 - Preview auth token channel updates and iframe src stability across token refreshes.
 - Preview keeps the iframe mounted during same-session transient pending/recovering states instead of immediately blanking it.
+- Preview stages same-session route changes behind the current iframe and swaps only after the new document loads.
+- Preview cold-boot loading now renders explicit staged progress instead of a generic blank spinner.
+- Preview keeps the full warmup overlay visible until the iframe is actually usable, instead of disappearing as soon as the iframe node is mounted.
 
 ## Last Run
 - Command: `pnpm --dir frontend-reshet test -- --runInBand src/__tests__/published_apps/chat_panel_behaviors.test.tsx`
@@ -36,6 +39,15 @@ Frontend coverage for published-apps admin and public runtime surfaces outside t
 - Command: `cd frontend-reshet && npm test -- --runInBand src/__tests__/published_apps/preview_canvas_auth_channel.test.tsx --watch=false`
 - Date: 2026-03-17
 - Result: PASS (3 passed)
+- Command: `cd frontend-reshet && npm test -- --runInBand src/__tests__/published_apps/preview_canvas_auth_channel.test.tsx`
+- Date: 2026-04-14 Asia/Hebron
+- Result: PASS (`1 suite, 4 tests`)
+- Command: `cd frontend-reshet && npm test -- --runInBand src/__tests__/published_apps/preview_canvas_auth_channel.test.tsx`
+- Date: 2026-04-14 18:31 EEST
+- Result: PASS (`1 suite, 5 tests`)
+- Command: `cd frontend-reshet && npm test -- --runInBand src/__tests__/published_apps/preview_canvas_auth_channel.test.tsx`
+- Date: 2026-04-15 00:19 EEST
+- Result: PASS (`1 suite, 6 tests`)
 - Command: `cd frontend-reshet && npm test -- --runInBand src/__tests__/published_apps/apps_admin_page.test.tsx --watch=false`
 - Date: 2026-03-22
 - Result: PASS (7 passed — 3 existing + 4 new stats tests)

@@ -295,13 +295,31 @@ def execute(state: Dict[str, Any], config: Dict[str, Any], context: Dict[str, An
             ],
         }
 
+    auth_context = _build_safe_auth_context(
+        inputs=inputs,
+        payload=payload,
+        state=state,
+        context=context,
+        action=canonical_action,
+        required_scopes=required_scopes,
+        base_url=base_url,
+        tenant_id=tenant_id,
+        api_key=api_key,
+        extra_headers=extra_headers,
+    )
     output = {
         "result": result,
         "errors": errors,
         "action": canonical_action,
         "dry_run": dry_run,
     }
-    return _finalize_output(output, inputs=inputs, payload=payload, tool_slug=tool_slug)
+    return _finalize_output(
+        output,
+        inputs=inputs,
+        payload=payload,
+        tool_slug=tool_slug,
+        auth_context=auth_context,
+    )
 
 
 def _extract_explicit_action(inputs: Dict[str, Any]) -> Optional[str]:
@@ -571,14 +589,64 @@ def _extract_meta(inputs: Dict[str, Any], payload: Dict[str, Any], tool_slug: Op
     }
 
 
+def _build_safe_auth_context(
+    *,
+    inputs: Dict[str, Any],
+    payload: Dict[str, Any],
+    state: Optional[Dict[str, Any]],
+    context: Optional[Dict[str, Any]],
+    action: str,
+    required_scopes: List[str],
+    base_url: str,
+    tenant_id: Optional[str],
+    api_key: Optional[str],
+    extra_headers: Dict[str, str],
+) -> Dict[str, Any]:
+    state_ctx = state.get("context") if isinstance(state, dict) and isinstance(state.get("context"), dict) else {}
+    tool_ctx = context if isinstance(context, dict) else {}
+    auth_ctx = tool_ctx.get("auth") if isinstance(tool_ctx.get("auth"), dict) else {}
+    explicit_tenant_id = _resolve_explicit_tenant_id(inputs, payload)
+    runtime_tenant_id = _resolve_runtime_tenant_id(state, context)
+    token_sources = {
+        "payload_token": bool(payload.get("token")),
+        "payload_api_key": bool(payload.get("api_key")),
+        "payload_bearer_token": bool(payload.get("bearer_token")),
+        "inputs_token": bool(inputs.get("token")),
+        "inputs_api_key": bool(inputs.get("api_key")),
+        "inputs_bearer_token": bool(inputs.get("bearer_token")),
+        "state_context_token": bool(state_ctx.get("token")),
+        "tool_context_token": bool(tool_ctx.get("token")),
+        "auth_context_token": bool(auth_ctx.get("token")),
+        "auth_context_bearer_token": bool(auth_ctx.get("bearer_token")),
+        "auth_context_mint_token": callable(auth_ctx.get("mint_token")),
+    }
+    return {
+        "action": action,
+        "base_url": str(base_url or "").rstrip("/"),
+        "tenant_id": str(tenant_id) if tenant_id else None,
+        "runtime_tenant_id": str(runtime_tenant_id) if runtime_tenant_id else None,
+        "explicit_tenant_id": str(explicit_tenant_id) if explicit_tenant_id else None,
+        "required_scopes": list(required_scopes or []),
+        "token_present": bool(api_key),
+        "token_source_candidates": token_sources,
+        "extra_header_keys": sorted(str(key) for key in extra_headers.keys()),
+        "client_header_keys": sorted(
+            {"Authorization", "X-SDK-Contract", *(str(key) for key in extra_headers.keys())}
+        ),
+    }
+
+
 def _finalize_output(
     output: Dict[str, Any],
     *,
     inputs: Dict[str, Any],
     payload: Dict[str, Any],
     tool_slug: Optional[str],
+    auth_context: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     output["meta"] = _extract_meta(inputs=inputs, payload=payload, tool_slug=tool_slug)
+    if auth_context is not None:
+        output["meta"]["auth_context"] = auth_context
     return {"context": output, "tool_outputs": [output]}
 
 

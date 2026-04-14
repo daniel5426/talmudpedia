@@ -20,7 +20,12 @@ def list_knowledge_stores(
 
     try:
         sdk_client = control_client_factory(client)
-        response = sdk_client.knowledge_stores.list(str(tenant_slug))
+        response = sdk_client.knowledge_stores.list(
+            str(tenant_slug),
+            skip=int(payload.get("skip", 0) or 0),
+            limit=int(payload.get("limit", 20) or 20),
+            view=str(payload.get("view") or "summary"),
+        )
         return response.get("data"), []
     except ControlPlaneSDKError as exc:
         return None, [{"error": "list_knowledge_stores_failed", "detail": str(exc), "code": exc.code, "http_status": exc.http_status}]

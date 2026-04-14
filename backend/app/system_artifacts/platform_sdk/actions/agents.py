@@ -77,8 +77,8 @@ def list_agents(
     kwargs = {
         "status": payload.get("status"),
         "skip": int(payload.get("skip", 0) or 0),
-        "limit": int(payload.get("limit", 50) or 50),
-        "compact": bool(payload.get("compact", False)),
+        "limit": int(payload.get("limit", 20) or 20),
+        "view": str(payload.get("view") or "summary"),
     }
     try:
         sdk_client = control_client_factory(client)

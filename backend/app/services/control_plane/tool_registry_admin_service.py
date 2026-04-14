@@ -342,7 +342,7 @@ async def validate_pipeline_config_if_needed(
     await validate_pipeline_binding_for_tenant(db, tenant_id=tenant_id, pipeline_id_raw=pipeline_id)
 
 
-def serialize_tool(tool: ToolRegistry | object) -> dict[str, Any]:
+def serialize_tool(tool: ToolRegistry | object, *, view: str = "full") -> dict[str, Any]:
     impl_type = get_tool_impl_type(tool)
     ownership, managed_by, source_object_type, source_object_id = resolve_tool_metadata(tool, impl_type)
     config_schema = getattr(tool, "config_schema", {}) or {}
@@ -351,18 +351,13 @@ def serialize_tool(tool: ToolRegistry | object) -> dict[str, Any]:
     config_schema["execution"] = normalize_execution_config(config_schema.get("execution"))
     implementation_config = redact_sensitive_config((config_schema.get("implementation") if isinstance(config_schema, dict) else {}) or {})
     execution_config = redact_sensitive_config((config_schema.get("execution") if isinstance(config_schema, dict) else {}) or {})
-    return {
+    payload = {
         "id": getattr(tool, "id"),
         "tenant_id": getattr(tool, "tenant_id", None),
         "name": getattr(tool, "name"),
         "slug": getattr(tool, "slug"),
         "description": getattr(tool, "description", None),
         "scope": serialize_scope(getattr(tool, "scope", None)),
-        "input_schema": ((getattr(tool, "schema", None) or {}).get("input", {})),
-        "output_schema": ((getattr(tool, "schema", None) or {}).get("output", {})),
-        "config_schema": redact_sensitive_config(config_schema),
-        "implementation_config": implementation_config,
-        "execution_config": execution_config,
         "status": getattr(tool, "status"),
         "version": str(getattr(tool, "version", "1.0.0")),
         "implementation_type": impl_type,
@@ -390,6 +385,18 @@ def serialize_tool(tool: ToolRegistry | object) -> dict[str, Any]:
         "created_at": getattr(tool, "created_at"),
         "updated_at": getattr(tool, "updated_at"),
     }
+    if view == "summary":
+        return payload
+    payload.update(
+        {
+            "input_schema": ((getattr(tool, "schema", None) or {}).get("input", {})),
+            "output_schema": ((getattr(tool, "schema", None) or {}).get("output", {})),
+            "config_schema": redact_sensitive_config(config_schema),
+            "implementation_config": implementation_config,
+            "execution_config": execution_config,
+        }
+    )
+    return payload
 
 
 class ToolRegistryAdminService:

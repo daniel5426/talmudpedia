@@ -1,5 +1,6 @@
 import { httpClient } from "./http";
 import { LogicalModel, ModelsListResponse, ModelCapabilityType, ModelStatus, CreateModelRequest, UpdateModelRequest, ModelProviderSummary, CreateProviderRequest, UpdateProviderRequest } from "./agent";
+import type { ControlPlaneListView } from "./types";
 
 // We re-export types that were previously in agent-resources from agent.ts 
 // so we don't need to change imports in many places.
@@ -9,13 +10,15 @@ export const modelsService = {
     capabilityType?: ModelCapabilityType,
     status?: ModelStatus,
     skip = 0,
-    limit = 50
+    limit = 20,
+    view: ControlPlaneListView = "summary",
   ): Promise<ModelsListResponse> {
     const query = new URLSearchParams();
     if (capabilityType) query.set("capability_type", capabilityType);
     if (status) query.set("status", status);
     query.set("skip", String(skip));
     query.set("limit", String(limit));
+    query.set("view", view);
     const queryString = query.toString();
     
     return httpClient.get<ModelsListResponse>(`/models?${queryString}`);

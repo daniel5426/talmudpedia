@@ -9,8 +9,15 @@ class CredentialsAPI:
     def __init__(self, client: Any) -> None:
         self._client = client
 
-    def list(self, category: Optional[str] = None) -> ResponseEnvelope:
-        params: Dict[str, Any] = {}
+    def list(
+        self,
+        category: Optional[str] = None,
+        *,
+        skip: int = 0,
+        limit: int = 20,
+        view: str = "summary",
+    ) -> ResponseEnvelope:
+        params: Dict[str, Any] = {"skip": skip, "limit": limit, "view": view}
         if category:
             params["category"] = category
         return self._client.request("GET", "/admin/settings/credentials", params=params)

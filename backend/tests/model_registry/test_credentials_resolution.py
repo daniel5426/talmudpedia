@@ -1,6 +1,7 @@
 import pytest
 from uuid import uuid4
 
+from app.db.postgres.models.identity import Tenant
 from app.db.postgres.models.registry import (
     ModelRegistry,
     ModelProviderBinding,
@@ -14,9 +15,17 @@ from app.services.model_resolver import ModelResolver
 from app.rag.providers.embedding.openai import OpenAIEmbeddingProvider
 
 
+async def _seed_tenant(db_session, tenant_id):
+    tenant = Tenant(id=tenant_id, name=f"Tenant {tenant_id.hex[:8]}", slug=f"tenant-{tenant_id.hex[:8]}")
+    db_session.add(tenant)
+    await db_session.flush()
+    return tenant
+
+
 @pytest.mark.asyncio
 async def test_resolve_credentials_prefers_integration_credentials(db_session):
     tenant_id = uuid4()
+    await _seed_tenant(db_session, tenant_id)
     model = ModelRegistry(
         tenant_id=tenant_id,
         name="Test Chat",
@@ -66,6 +75,7 @@ async def test_resolve_credentials_prefers_tenant_default_over_env_fallback(db_s
     tenant_id = uuid4()
     provider_variant = f"tenant-{uuid4().hex[:8]}"
     monkeypatch.setenv("OPENAI_API_KEY", "env-default-key")
+    await _seed_tenant(db_session, tenant_id)
     model = ModelRegistry(
         tenant_id=tenant_id,
         name="Test Chat",
@@ -114,6 +124,7 @@ async def test_resolve_credentials_falls_back_to_env_platform_default(db_session
     tenant_id = uuid4()
     provider_variant = f"platform-{uuid4().hex[:8]}"
     monkeypatch.setenv("OPENAI_API_KEY", "platform-default-key")
+    await _seed_tenant(db_session, tenant_id)
     model = ModelRegistry(
         tenant_id=tenant_id,
         name="Test Chat",
@@ -148,6 +159,7 @@ async def test_resolve_credentials_falls_back_to_env_platform_default(db_session
 @pytest.mark.asyncio
 async def test_resolve_embedding_uses_integration_credentials(db_session):
     tenant_id = uuid4()
+    await _seed_tenant(db_session, tenant_id)
     model = ModelRegistry(
         tenant_id=tenant_id,
         name="Test Embed",

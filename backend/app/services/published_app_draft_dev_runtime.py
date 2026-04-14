@@ -700,6 +700,7 @@ class PublishedAppDraftDevRuntimeService:
         user_id: UUID,
         files: Optional[Dict[str, str]] = None,
         entry_file: Optional[str] = None,
+        trace_source: str | None = None,
     ) -> PublishedAppDraftDevSession:
         if not self.settings.enabled:
             raise PublishedAppDraftDevRuntimeDisabled("Draft dev mode is disabled (`APPS_BUILDER_DRAFT_DEV_ENABLED=0`).")
@@ -762,6 +763,7 @@ class PublishedAppDraftDevRuntimeService:
             existing_workspace_status=str(getattr(workspace.status, "value", workspace.status) or ""),
             dependency_hash=dependency_hash,
             backend_name=self.client.backend_name,
+            trace_source=str(trace_source or "").strip() or None,
         )
 
         try:
@@ -801,6 +803,7 @@ class PublishedAppDraftDevRuntimeService:
         revision: PublishedAppRevision,
         user_id: UUID,
         prefer_live_workspace: bool = False,
+        trace_source: str | None = None,
     ) -> PublishedAppDraftDevSession:
         if not self.settings.enabled:
             raise PublishedAppDraftDevRuntimeDisabled("Draft dev mode is disabled (`APPS_BUILDER_DRAFT_DEV_ENABLED=0`).")
@@ -817,6 +820,25 @@ class PublishedAppDraftDevRuntimeService:
             and str(getattr(workspace.status, "value", workspace.status) or "").strip().lower()
             in self._workspace_active_statuses()
         )
+        apps_builder_trace(
+            "workspace.ensure_active.evaluated",
+            domain="draft_dev.runtime",
+            app_id=str(app.id),
+            revision_id=str(revision.id),
+            user_id=str(user_id),
+            prefer_live_workspace=bool(prefer_live_workspace),
+            trace_source=str(trace_source or "").strip() or None,
+            session_found=bool(session is not None),
+            workspace_found=bool(workspace is not None),
+            workspace_is_active=bool(workspace_is_active),
+            session_id=str(session.id) if session is not None else None,
+            workspace_id=str(workspace.id) if workspace is not None else None,
+            session_workspace_id=str(session.draft_workspace_id) if session is not None and session.draft_workspace_id is not None else None,
+            session_revision_id=str(session.revision_id) if session is not None and session.revision_id is not None else None,
+            workspace_revision_id=str(workspace.revision_id) if workspace is not None and workspace.revision_id is not None else None,
+            workspace_status=str(getattr(workspace.status, "value", workspace.status) or "") if workspace is not None else None,
+            sandbox_id=str(workspace.sandbox_id or "") if workspace is not None and workspace.sandbox_id is not None else None,
+        )
         if (
             prefer_live_workspace
             and session is not None
@@ -824,6 +846,19 @@ class PublishedAppDraftDevRuntimeService:
             and session.draft_workspace_id == workspace.id
             and workspace_is_active
         ):
+            apps_builder_trace(
+                "workspace.ensure_active.reuse_live.attempt",
+                domain="draft_dev.runtime",
+                app_id=str(app.id),
+                revision_id=str(revision.id),
+                user_id=str(user_id),
+                trace_source=str(trace_source or "").strip() or None,
+                session_id=str(session.id),
+                workspace_id=str(workspace.id),
+                sandbox_id=str(workspace.sandbox_id or "") or None,
+                session_revision_id=str(session.revision_id or "") or None,
+                workspace_revision_id=str(workspace.revision_id or "") or None,
+            )
             session.last_activity_at = now
             session.expires_at = self._session_expires_at(now)
             workspace.last_activity_at = now
@@ -834,6 +869,21 @@ class PublishedAppDraftDevRuntimeService:
                     idle_timeout_seconds=self.settings.idle_timeout_seconds,
                 )
             except PublishedAppDraftDevRuntimeClientError as exc:
+                apps_builder_trace(
+                    "workspace.ensure_active.reuse_live.heartbeat_failed",
+                    domain="draft_dev.runtime",
+                    app_id=str(app.id),
+                    revision_id=str(revision.id),
+                    user_id=str(user_id),
+                    trace_source=str(trace_source or "").strip() or None,
+                    session_id=str(session.id),
+                    workspace_id=str(workspace.id),
+                    sandbox_id=str(workspace.sandbox_id or "") or None,
+                    error=str(exc),
+                    error_type=exc.__class__.__name__,
+                    classified_runtime_not_running=bool(self._is_runtime_not_running_error(exc)),
+                    classified_transient=bool(self._is_transient_remote_error(exc)),
+                )
                 if self._is_runtime_not_running_error(exc):
                     return await self.ensure_session(
                         app=app,
@@ -841,6 +891,7 @@ class PublishedAppDraftDevRuntimeService:
                         user_id=user_id,
                         files=dict(revision.files or {}),
                         entry_file=revision.entry_file,
+                        trace_source=trace_source or "ensure_active.runtime_not_running",
                     )
                 if self._is_transient_remote_error(exc):
                     self._mark_workspace_degraded(workspace, exc)
@@ -872,6 +923,7 @@ class PublishedAppDraftDevRuntimeService:
                 workspace_id=str(workspace.id),
                 sandbox_id=str(workspace.sandbox_id or "") or None,
                 user_id=str(user_id),
+                trace_source=str(trace_source or "").strip() or None,
             )
             return self._attach_session(
                 session=session,
@@ -890,12 +942,42 @@ class PublishedAppDraftDevRuntimeService:
             or str(getattr(workspace.status, "value", workspace.status) or "").strip().lower()
             not in self._workspace_active_statuses()
         ):
+            fallback_reasons: list[str] = []
+            if session is None:
+                fallback_reasons.append("missing_session")
+            if workspace is None:
+                fallback_reasons.append("missing_workspace")
+            if session is not None and workspace is not None and session.draft_workspace_id != workspace.id:
+                fallback_reasons.append("workspace_mismatch")
+            if session is not None and session.revision_id != revision.id:
+                fallback_reasons.append("revision_mismatch")
+            if workspace is not None and not str(workspace.sandbox_id or "").strip():
+                fallback_reasons.append("missing_sandbox_id")
+            if workspace is not None and str(getattr(workspace.status, "value", workspace.status) or "").strip().lower() not in self._workspace_active_statuses():
+                fallback_reasons.append("workspace_not_active")
+            apps_builder_trace(
+                "workspace.ensure_active.fallback_to_ensure_session",
+                domain="draft_dev.runtime",
+                app_id=str(app.id),
+                revision_id=str(revision.id),
+                user_id=str(user_id),
+                trace_source=str(trace_source or "").strip() or None,
+                fallback_reasons=fallback_reasons,
+                session_id=str(session.id) if session is not None else None,
+                workspace_id=str(workspace.id) if workspace is not None else None,
+                session_workspace_id=str(session.draft_workspace_id) if session is not None and session.draft_workspace_id is not None else None,
+                session_revision_id=str(session.revision_id) if session is not None and session.revision_id is not None else None,
+                workspace_revision_id=str(workspace.revision_id) if workspace is not None and workspace.revision_id is not None else None,
+                workspace_status=str(getattr(workspace.status, "value", workspace.status) or "") if workspace is not None else None,
+                sandbox_id=str(workspace.sandbox_id or "") if workspace is not None and workspace.sandbox_id is not None else None,
+            )
             return await self.ensure_session(
                 app=app,
                 revision=revision,
                 user_id=user_id,
                 files=dict(revision.files or {}),
                 entry_file=revision.entry_file,
+                trace_source=trace_source,
             )
 
         session.last_activity_at = now
@@ -908,6 +990,21 @@ class PublishedAppDraftDevRuntimeService:
                 idle_timeout_seconds=self.settings.idle_timeout_seconds,
             )
         except PublishedAppDraftDevRuntimeClientError as exc:
+            apps_builder_trace(
+                "workspace.ensure_active.standard_heartbeat_failed",
+                domain="draft_dev.runtime",
+                app_id=str(app.id),
+                revision_id=str(revision.id),
+                user_id=str(user_id),
+                trace_source=str(trace_source or "").strip() or None,
+                session_id=str(session.id),
+                workspace_id=str(workspace.id),
+                sandbox_id=str(workspace.sandbox_id or "") or None,
+                error=str(exc),
+                error_type=exc.__class__.__name__,
+                classified_runtime_not_running=bool(self._is_runtime_not_running_error(exc)),
+                classified_transient=bool(self._is_transient_remote_error(exc)),
+            )
             if self._is_runtime_not_running_error(exc):
                 return await self.ensure_session(
                     app=app,
@@ -915,6 +1012,7 @@ class PublishedAppDraftDevRuntimeService:
                     user_id=user_id,
                     files=dict(revision.files or {}),
                     entry_file=revision.entry_file,
+                    trace_source=trace_source or "ensure_active.standard_runtime_not_running",
                 )
             if self._is_transient_remote_error(exc):
                 self._mark_workspace_degraded(workspace, exc)
@@ -1072,18 +1170,67 @@ class PublishedAppDraftDevRuntimeService:
                 session.backend_metadata = dict(workspace.backend_metadata or {})
         return session
 
+    async def touch_session_activity(
+        self,
+        *,
+        session: PublishedAppDraftDevSession,
+        throttle_seconds: int = 30,
+    ) -> bool:
+        now = self._now()
+        last_activity = self._normalize_utc(getattr(session, "last_activity_at", None))
+        if (
+            throttle_seconds > 0
+            and last_activity is not None
+            and (now - last_activity).total_seconds() < throttle_seconds
+        ):
+            return False
+        session.last_activity_at = now
+        session.expires_at = self._session_expires_at(now)
+        draft_workspace_id = getattr(session, "draft_workspace_id", None)
+        if draft_workspace_id is not None:
+            workspace = await self.db.get(PublishedAppDraftWorkspace, draft_workspace_id)
+            if workspace is not None:
+                workspace.last_activity_at = now
+                workspace.detached_at = None
+        return True
+
     async def heartbeat_session(self, *, session: PublishedAppDraftDevSession) -> PublishedAppDraftDevSession:
         if not self.settings.enabled:
             raise PublishedAppDraftDevRuntimeDisabled("Draft dev mode is disabled (`APPS_BUILDER_DRAFT_DEV_ENABLED=0`).")
+        apps_builder_trace(
+            "session.heartbeat.runtime.requested",
+            domain="draft_dev.runtime",
+            app_id=str(session.published_app_id),
+            user_id=str(session.user_id),
+            session_id=str(session.id),
+            workspace_id=str(session.draft_workspace_id or "") or None,
+            sandbox_id=str(session.sandbox_id or "") or None,
+            status=str(getattr(session.status, "value", session.status) or ""),
+        )
         if session.draft_workspace_id is None:
             session.status = PublishedAppDraftDevSessionStatus.error
             session.last_error = "Draft dev session is detached from the shared workspace."
+            apps_builder_trace(
+                "session.heartbeat.runtime.detached",
+                domain="draft_dev.runtime",
+                app_id=str(session.published_app_id),
+                user_id=str(session.user_id),
+                session_id=str(session.id),
+            )
             return session
 
         workspace = await self.db.get(PublishedAppDraftWorkspace, session.draft_workspace_id)
         if workspace is None or not str(workspace.sandbox_id or "").strip():
             session.status = PublishedAppDraftDevSessionStatus.error
             session.last_error = "Shared draft workspace is unavailable."
+            apps_builder_trace(
+                "session.heartbeat.runtime.workspace_unavailable",
+                domain="draft_dev.runtime",
+                app_id=str(session.published_app_id),
+                user_id=str(session.user_id),
+                session_id=str(session.id),
+                workspace_id=str(session.draft_workspace_id or "") or None,
+            )
             return session
         revision = await self.db.get(PublishedAppRevision, session.revision_id) if session.revision_id is not None else None
 
@@ -1098,6 +1245,19 @@ class PublishedAppDraftDevRuntimeService:
                 idle_timeout_seconds=self.settings.idle_timeout_seconds,
             )
         except PublishedAppDraftDevRuntimeClientError as exc:
+            apps_builder_trace(
+                "session.heartbeat.runtime.failed",
+                domain="draft_dev.runtime",
+                app_id=str(session.published_app_id),
+                user_id=str(session.user_id),
+                session_id=str(session.id),
+                workspace_id=str(workspace.id),
+                sandbox_id=str(workspace.sandbox_id or "") or None,
+                error=str(exc),
+                error_type=exc.__class__.__name__,
+                classified_runtime_not_running=bool(self._is_runtime_not_running_error(exc)),
+                classified_transient=bool(self._is_transient_remote_error(exc)),
+            )
             if self._is_runtime_not_running_error(exc):
                 self._mark_workspace_error(workspace, exc)
                 return self._mark_session_error(session, exc)
@@ -1133,6 +1293,16 @@ class PublishedAppDraftDevRuntimeService:
             else {}
         )
         session.last_error = str(preview_runtime.get("last_error") or "").strip() or None
+        apps_builder_trace(
+            "session.heartbeat.runtime.completed",
+            domain="draft_dev.runtime",
+            app_id=str(session.published_app_id),
+            user_id=str(session.user_id),
+            session_id=str(session.id),
+            workspace_id=str(workspace.id),
+            sandbox_id=str(workspace.sandbox_id or "") or None,
+            status=str(getattr(session.status, "value", session.status) or ""),
+        )
         return session
 
     async def get_publish_ready_session(

@@ -17,7 +17,12 @@ def list_artifacts(
     try:
         tenant_slug = payload.get("tenant_slug")
         sdk_client = control_client_factory(client)
-        response = sdk_client.artifacts.list(tenant_slug=tenant_slug)
+        response = sdk_client.artifacts.list(
+            tenant_slug=tenant_slug,
+            skip=int(payload.get("skip", 0) or 0),
+            limit=int(payload.get("limit", 20) or 20),
+            view=str(payload.get("view") or "summary"),
+        )
         return response.get("data"), []
     except ControlPlaneSDKError as exc:
         return None, [{

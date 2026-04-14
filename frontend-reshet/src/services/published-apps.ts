@@ -185,6 +185,7 @@ export interface DraftDevSessionResponse {
   has_active_coding_runs: boolean;
   active_coding_run_count: number;
   preview_url?: string | null;
+  preview_transport_generation?: number | null;
   preview_auth_token?: string | null;
   preview_auth_expires_at?: string | null;
   workspace_revision_token?: string | null;

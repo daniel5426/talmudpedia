@@ -529,13 +529,13 @@ export default function KnowledgeStoresPage() {
         setLoading(true)
         try {
             const [storesData, modelsData, credentialsData] = await Promise.all([
-                knowledgeStoresService.list(currentTenant.slug),
-                modelsService.listModels("embedding"),
-                credentialsService.listCredentials("vector_store"),
+                knowledgeStoresService.list(currentTenant.slug, { limit: 100, view: "summary" }),
+                modelsService.listModels("embedding", undefined, 0, 100, "summary"),
+                credentialsService.listCredentials("vector_store", { limit: 100, view: "summary" }),
             ])
-            setStores(storesData)
-            setEmbeddingModels(modelsData.models)
-            setVectorStoreCredentials(credentialsData)
+            setStores(storesData.items)
+            setEmbeddingModels(modelsData.items)
+            setVectorStoreCredentials(credentialsData.items)
         } catch (error) {
             console.error("Failed to fetch knowledge stores", error)
         } finally {

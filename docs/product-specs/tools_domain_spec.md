@@ -1,6 +1,6 @@
 # Tools Domain Spec
 
-Last Updated: 2026-04-13
+Last Updated: 2026-04-14
 
 This document is the canonical product/specification overview for the tools domain.
 
@@ -125,6 +125,14 @@ Current invocation rules:
 - generic wrapper recovery is removed; wrapped payloads such as `args`, `input`, `parameters`, `payload`, `data`, `arguments`, and `value` are not executor-supported compatibility shapes
 - compile-time failures return a shared `TOOL_ARGUMENT_COMPILE_FAILED` envelope with stable structured issue codes
 
+Current control-plane native-tool rules:
+- architect-visible control-plane tools use canonical `action` + `payload`
+- action aliases are not part of the supported contract
+- native control-plane dispatch is service-backed, not router-function-backed
+- list-style control-plane requests use shared `skip`, `limit`, and `view` fields
+- list-style control-plane results now expose `items`, `total`, `has_more`, `skip`, `limit`, and `view`
+- long-running control-plane actions may return a canonical `operation` envelope
+
 ## Current Notable Tool Behaviors
 
 ### Retrieval tools
@@ -222,3 +230,4 @@ Current MCP runtime policy:
 - `backend/app/services/artifact_runtime/registry_service.py`
 - `backend/app/services/artifact_runtime/execution_service.py`
 - `backend/app/services/platform_native_tools.py`
+- `backend/app/services/platform_native/`

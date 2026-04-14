@@ -3,6 +3,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from app.db.postgres.models.agent_threads import AgentThread, AgentThreadSurface
 from app.db.postgres.models.agents import Agent, AgentRun, AgentStatus, RunStatus
 from app.db.postgres.models.identity import Tenant, User
 from app.db.postgres.models.orchestration import OrchestratorPolicy, OrchestratorTargetAllowlist
@@ -32,12 +33,23 @@ async def _setup_fixture(db_session):
     db_session.add_all([orchestrator, target])
     await db_session.flush()
 
+    root_thread = AgentThread(
+        tenant_id=tenant.id,
+        user_id=user.id,
+        agent_id=orchestrator.id,
+        surface=AgentThreadSurface.internal,
+        title="Join Root Thread",
+    )
+    db_session.add(root_thread)
+    await db_session.flush()
+
     root_run = AgentRun(
         tenant_id=tenant.id,
         agent_id=orchestrator.id,
         user_id=user.id,
         initiator_user_id=user.id,
         status=RunStatus.running,
+        thread_id=root_thread.id,
         input_params={"messages": [], "context": {"scopes": ["agents.execute"]}},
         depth=0,
     )

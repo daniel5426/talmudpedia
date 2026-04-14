@@ -145,8 +145,8 @@ export function ThreadsTable({
   useEffect(() => {
     const loadAgents = async () => {
       try {
-        const data = await agentService.listAgents({ compact: true })
-        setAgents(data.agents)
+        const data = await agentService.listAgents({ view: "summary", limit: 100 })
+        setAgents(data.items)
       } catch (error) {
         console.error("Failed to load agents for filter", error)
       }

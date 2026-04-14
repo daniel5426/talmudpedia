@@ -29,6 +29,29 @@ def normalize_provider_key(category: IntegrationCredentialCategory, provider_key
     return key
 
 
+def serialize_credential(credential: IntegrationCredential, *, view: str = "full") -> dict[str, Any]:
+    payload = {
+        "id": str(credential.id),
+        "category": getattr(credential.category, "value", credential.category),
+        "provider_key": credential.provider_key,
+        "provider_variant": credential.provider_variant,
+        "display_name": credential.display_name,
+        "is_enabled": bool(credential.is_enabled),
+        "is_default": bool(credential.is_default),
+        "created_at": credential.created_at.isoformat() if credential.created_at else None,
+        "updated_at": credential.updated_at.isoformat() if credential.updated_at else None,
+    }
+    if view == "summary":
+        return payload
+    payload.update(
+        {
+            "tenant_id": str(credential.tenant_id) if credential.tenant_id else None,
+            "credential_keys": list((credential.credentials or {}).keys()),
+        }
+    )
+    return payload
+
+
 class CredentialsAdminService:
     def __init__(self, db: AsyncSession):
         self.db = db

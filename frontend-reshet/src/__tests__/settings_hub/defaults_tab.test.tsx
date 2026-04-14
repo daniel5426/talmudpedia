@@ -59,7 +59,11 @@ jest.mock("@/components/direction-provider", () => ({
 }))
 
 jest.mock("@/lib/store/useAuthStore", () => ({
-  useAuthStore: (selector: (state: any) => any) => selector({ user: { role: "admin", org_role: "owner" } }),
+  useAuthStore: (selector: (state: any) => any) =>
+    selector({
+      user: { role: "user" },
+      hasScope: (scope: string) => ["organizations.write", "credentials.write"].includes(scope),
+    }),
 }))
 
 describe("Defaults Tab", () => {
@@ -103,15 +107,14 @@ describe("Defaults Tab", () => {
   })
 
   it("saves defaults payload", async () => {
-    mockSearch = "tab=defaults"
     render(<SettingsPage />)
 
     await waitFor(() => expect(orgUnitsService.getTenant).toHaveBeenCalled())
     await waitFor(() => expect(screen.getByText("Retrieval Policy")).toBeInTheDocument())
 
-    fireEvent.click(screen.getAllByTestId("mock-select")[0])
+    fireEvent.click(screen.getAllByTestId("mock-select")[1])
 
-    fireEvent.click(screen.getByText("Save"))
+    fireEvent.click(screen.getByText("Save Changes"))
 
     await waitFor(() => {
       expect(orgUnitsService.updateTenantSettings).toHaveBeenCalledWith("tenant-1", {
@@ -127,8 +130,8 @@ describe("Defaults Tab", () => {
 
     await waitFor(() => expect(orgUnitsService.getTenant).toHaveBeenCalled())
 
-    fireEvent.click(screen.getAllByRole("button", { name: "Defaults" })[0])
+    fireEvent.click(screen.getAllByRole("button", { name: "Credentials" })[0])
 
-    expect(replaceMock).toHaveBeenCalledWith("/admin/settings?tab=defaults", { scroll: false })
+    expect(replaceMock).toHaveBeenCalledWith("/admin/settings?tab=integrations", { scroll: false })
   })
 })

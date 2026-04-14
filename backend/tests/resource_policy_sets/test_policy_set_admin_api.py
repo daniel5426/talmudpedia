@@ -410,8 +410,9 @@ async def test_default_policy_ids_are_exposed_by_apps_and_agents_list_endpoints(
         assert list_apps_resp.status_code == 200, list_apps_resp.text
         assert list_apps_resp.json()[0]["default_policy_set_id"] == str(default_set.id)
 
-        list_agents_resp = await client.get("/agents?compact=true")
+        list_agents_resp = await client.get("/agents?view=summary")
         assert list_agents_resp.status_code == 200, list_agents_resp.text
-        assert list_agents_resp.json()["agents"][0]["default_embed_policy_set_id"] == str(default_set.id)
+        listed_agent = next(item for item in list_agents_resp.json()["items"] if item["id"] == str(agent.id))
+        assert listed_agent["default_embed_policy_set_id"] == str(default_set.id)
     finally:
         app.dependency_overrides.clear()

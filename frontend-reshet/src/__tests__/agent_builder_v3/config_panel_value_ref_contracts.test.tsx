@@ -7,16 +7,16 @@ import type { AgentGraphAnalysis } from "@/services/agent"
 
 jest.mock("@/services", () => ({
   modelsService: {
-    listModels: jest.fn(async () => ({ models: [], total: 0 })),
+    listModels: jest.fn(async () => ({ items: [], total: 0, has_more: false, skip: 0, limit: 100, view: "full" })),
   },
   toolsService: {
-    listTools: jest.fn(async () => ({ tools: [], total: 0 })),
+    listTools: jest.fn(async () => ({ items: [], total: 0, has_more: false, skip: 0, limit: 100, view: "summary" })),
   },
   ragAdminService: {
-    listVisualPipelines: jest.fn(async () => ({ pipelines: [] })),
+    listVisualPipelines: jest.fn(async () => ({ items: [], total: 0, has_more: false, skip: 0, limit: 100, view: "summary" })),
   },
   agentService: {
-    listAgents: jest.fn(async () => ({ agents: [], total: 0 })),
+    listAgents: jest.fn(async () => ({ items: [], total: 0, has_more: false, skip: 0, limit: 100, view: "summary" })),
     listOperators: jest.fn(async () => ([
       {
         type: "classify",

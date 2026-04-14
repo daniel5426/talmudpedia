@@ -45,8 +45,8 @@ export default function ArtifactsPage() {
   const fetchArtifacts = useCallback(async () => {
     setLoading(true)
     try {
-      const data = await artifactsService.list(currentTenant?.slug)
-      setArtifacts(data)
+      const data = await artifactsService.list(currentTenant?.slug, { limit: 100, view: "summary" })
+      setArtifacts(data.items)
     } catch (error) {
       console.error("Failed to fetch artifacts", error)
     } finally {

@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from urllib.parse import urlparse
 from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import select
 
+from app.api.routers import published_apps_admin_routes_builder as builder_routes_module
 from app.core.security import get_password_hash
 from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, User
 from app.db.postgres.models.published_apps import (
@@ -314,6 +317,187 @@ async def test_prefer_live_workspace_reuses_healthy_session_across_revision_mism
     assert reused.revision_id == first_revision.id
     assert len(fake_client.start_calls) == 1
     assert len(fake_client.sync_calls) == 0
+
+
+@pytest.mark.asyncio
+async def test_touch_session_activity_renews_expiry_without_detaching_workspace(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    db = AsyncMock()
+    runtime_service = PublishedAppDraftDevRuntimeService(db)
+    previous_activity = datetime.now(timezone.utc) - timedelta(seconds=120)
+    previous_expiry = previous_activity + timedelta(seconds=30)
+    workspace = SimpleNamespace(last_activity_at=None, detached_at=datetime.now(timezone.utc))
+    db.get.return_value = workspace
+    session = SimpleNamespace(
+        id=uuid4(),
+        draft_workspace_id=uuid4(),
+        last_activity_at=previous_activity,
+        expires_at=previous_expiry,
+    )
+    changed = await runtime_service.touch_session_activity(session=session, throttle_seconds=0)
+    assert changed is True
+    assert session.draft_workspace_id is not None
+    assert session.expires_at is not None
+    assert session.expires_at >= previous_expiry
+    assert workspace.last_activity_at == session.last_activity_at
+    assert workspace.detached_at is None
+
+
+@pytest.mark.asyncio
+async def test_ensure_endpoint_reuses_live_session_without_calling_legacy_ensure_session(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    tenant_id = uuid4()
+    user_id = uuid4()
+    app_id = uuid4()
+    revision_id = uuid4()
+    session_id = uuid4()
+    ctx = {"tenant_id": tenant_id, "user": SimpleNamespace(id=user_id)}
+    app = SimpleNamespace(id=app_id, tenant_id=tenant_id)
+    revision = SimpleNamespace(id=revision_id)
+    session = SimpleNamespace(id=session_id)
+    db = AsyncMock()
+    request = SimpleNamespace()
+    ensure_active_calls: list[dict[str, object]] = []
+
+    async def _fake_ensure_active_session(
+        self,
+        *,
+        app,
+        revision,
+        user_id,
+        prefer_live_workspace=False,
+        trace_source=None,
+    ):
+        ensure_active_calls.append(
+            {
+                "app_id": app.id,
+                "revision_id": revision.id,
+                "user_id": user_id,
+                "prefer_live_workspace": prefer_live_workspace,
+                "trace_source": trace_source,
+            }
+        )
+        return session
+
+    async def _unexpected_ensure_session(*args, **kwargs):
+        raise AssertionError("legacy ensure_session should not be called by the ensure route")
+
+    monkeypatch.setattr(builder_routes_module, "_resolve_tenant_admin_context", AsyncMock(return_value=ctx))
+    monkeypatch.setattr(builder_routes_module, "_assert_can_manage_apps", lambda resolved_ctx: None)
+    monkeypatch.setattr(builder_routes_module, "_assert_no_active_coding_run_for_scope", AsyncMock(return_value=None))
+    monkeypatch.setattr(builder_routes_module, "_get_app_for_tenant", AsyncMock(return_value=app))
+    monkeypatch.setattr(builder_routes_module, "_ensure_current_draft_revision", AsyncMock(return_value=revision))
+    monkeypatch.setattr(
+        runtime_module.PublishedAppDraftDevRuntimeService,
+        "ensure_active_session",
+        _fake_ensure_active_session,
+    )
+    monkeypatch.setattr(
+        runtime_module.PublishedAppDraftDevRuntimeService,
+        "ensure_session",
+        _unexpected_ensure_session,
+    )
+    monkeypatch.setattr(
+        builder_routes_module,
+        "_decorate_draft_dev_session_response",
+        AsyncMock(return_value={"session_id": str(session_id)}),
+    )
+
+    result = await builder_routes_module.ensure_builder_draft_dev_session(
+        app_id=app_id,
+        request=request,
+        _={},
+        principal={},
+        db=db,
+    )
+
+    assert result == {"session_id": str(session_id)}
+    assert ensure_active_calls == [
+        {
+            "app_id": app_id,
+            "revision_id": revision_id,
+            "user_id": user_id,
+            "prefer_live_workspace": True,
+            "trace_source": "builder.ensure_route",
+        }
+    ]
+    db.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_sync_route_ignores_delete_error_when_file_is_already_absent(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    tenant_id = uuid4()
+    user_id = uuid4()
+    app_id = uuid4()
+    revision_id = uuid4()
+    session_id = uuid4()
+    sandbox_id = "sprite-sandbox-1"
+    ctx = {"tenant_id": tenant_id, "user": SimpleNamespace(id=user_id)}
+    app = SimpleNamespace(id=app_id, tenant_id=tenant_id)
+    revision = SimpleNamespace(id=revision_id, files={"src/App.tsx": "app"}, entry_file="src/App.tsx")
+    session = SimpleNamespace(
+        id=session_id,
+        sandbox_id=sandbox_id,
+        revision_id=revision_id,
+        backend_metadata={
+            "live_workspace_snapshot": {
+                "entry_file": "src/App.tsx",
+                "files": {
+                    "src/App.tsx": "app",
+                    "src/deleted.tsx": "stale",
+                },
+            }
+        },
+    )
+    db = AsyncMock()
+    request = SimpleNamespace()
+    fake_client = SimpleNamespace(
+        delete_file=AsyncMock(side_effect=PublishedAppDraftDevRuntimeClientError("Sprite request failed: ")),
+        snapshot_files=AsyncMock(return_value={"files": {"src/App.tsx": "app"}, "revision_token": "snap-1"}),
+    )
+    fake_runtime_service = SimpleNamespace(
+        client=fake_client,
+        record_workspace_live_snapshot=AsyncMock(return_value=None),
+        record_live_workspace_revision_token=AsyncMock(return_value=session),
+    )
+
+    monkeypatch.setattr(builder_routes_module, "_resolve_tenant_admin_context", AsyncMock(return_value=ctx))
+    monkeypatch.setattr(builder_routes_module, "_assert_can_manage_apps", lambda resolved_ctx: None)
+    monkeypatch.setattr(builder_routes_module, "_assert_no_active_coding_run_for_scope", AsyncMock(return_value=None))
+    monkeypatch.setattr(builder_routes_module, "_get_app_for_tenant", AsyncMock(return_value=app))
+    monkeypatch.setattr(builder_routes_module, "_ensure_current_draft_revision", AsyncMock(return_value=revision))
+    monkeypatch.setattr(builder_routes_module, "_get_draft_dev_session_for_scope", AsyncMock(return_value=session))
+    monkeypatch.setattr(builder_routes_module, "PublishedAppDraftDevRuntimeService", lambda db: fake_runtime_service)
+    monkeypatch.setattr(
+        builder_routes_module,
+        "_decorate_draft_dev_session_response",
+        AsyncMock(return_value={"session_id": str(session_id)}),
+    )
+
+    result = await builder_routes_module.sync_builder_draft_dev_session(
+        app_id=app_id,
+        payload=builder_routes_module.DraftDevSyncRequest(
+            operations=[{"op": "delete_file", "path": "src/deleted.tsx"}],
+        ),
+        request=request,
+        _={},
+        principal={},
+        db=db,
+    )
+
+    assert result == {"session_id": str(session_id)}
+    fake_client.delete_file.assert_awaited_once_with(
+        sandbox_id=sandbox_id,
+        path="src/deleted.tsx",
+    )
+    fake_client.snapshot_files.assert_awaited_once_with(sandbox_id=sandbox_id)
+    fake_runtime_service.record_workspace_live_snapshot.assert_awaited_once()
+    fake_runtime_service.record_live_workspace_revision_token.assert_awaited_once()
+    db.commit.assert_awaited_once()
 
 
 @pytest.mark.asyncio

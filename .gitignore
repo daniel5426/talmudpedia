@@ -46,9 +46,11 @@ talmudpedia-standalone/server/prico-demo/frozen_snapshot/json/*
 *.pem
 *.pyc
 __pycache__/
+**/__pycache__/
 **/.cache/
 **/.parcel-cache/
 **/.turbo/
+backend/artifacts/platform_architect_live/*.json
 
 # debug
 npm-debug.log*

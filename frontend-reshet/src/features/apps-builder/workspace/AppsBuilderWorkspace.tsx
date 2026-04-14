@@ -67,6 +67,12 @@ import { filterAppsBuilderFiles, isAppsBuilderBlockedFilePath } from "@/services
 import { cn } from "@/lib/utils";
 import { sortTemplates } from "@/features/apps-builder/templates";
 import { PreviewCanvas } from "@/features/apps-builder/preview/PreviewCanvas";
+import { buildBuilderPreviewLoadingState } from "@/features/apps-builder/preview/previewLoadingState";
+import {
+  buildBuilderPreviewDocumentUrl,
+  logBuilderPreviewDebug,
+} from "@/features/apps-builder/preview/previewTransport";
+import { useBuilderPreviewTransport } from "@/features/apps-builder/preview/useBuilderPreviewTransport";
 import { CodeEditorPanel } from "@/features/apps-builder/editor/CodeEditorPanel";
 import { FileTree } from "@/features/apps-builder/editor/FileTree";
 import { ConfigSidebar } from "@/features/apps-builder/workspace/ConfigSidebar";
@@ -323,38 +329,6 @@ function buildDraftDevSyncFingerprint(entry: string, nextFiles: Record<string, s
   });
 }
 
-function buildPreviewFrameUrl(baseUrl: string, route: string, reloadToken: number): string {
-  try {
-    const parsed = new URL(baseUrl);
-    parsed.searchParams.set("preview_route", normalizeRoutePath(route) || "/");
-    if (reloadToken > 0) {
-      parsed.searchParams.set("__reload", String(reloadToken));
-    } else {
-      parsed.searchParams.delete("__reload");
-    }
-    return parsed.toString();
-  } catch {
-    const normalizedBase = baseUrl;
-    const separator = normalizedBase.includes("?") ? "&" : "?";
-    const previewRoute = encodeURIComponent(normalizeRoutePath(route) || "/");
-    const reloadSuffix = reloadToken > 0 ? `&__reload=${reloadToken}` : "";
-    return `${normalizedBase}${separator}preview_route=${previewRoute}${reloadSuffix}`;
-  }
-}
-
-function appendRuntimeTokenToUrl(url: string, token?: string | null): string {
-  const trimmedToken = String(token || "").trim();
-  if (!trimmedToken) return url;
-  try {
-    const parsed = new URL(url);
-    parsed.searchParams.set("runtime_token", trimmedToken);
-    return parsed.toString();
-  } catch {
-    const separator = url.includes("?") ? "&" : "?";
-    return `${url}${separator}runtime_token=${encodeURIComponent(trimmedToken)}`;
-  }
-}
-
 function extractLiveWorkspaceSnapshot(session?: DraftDevSessionResponse | null): PublishedAppRevision | null {
   const snapshot = session?.live_workspace_snapshot;
   if (!snapshot || !snapshot.files || typeof snapshot.files !== "object") {
@@ -526,6 +500,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     draftDevStatus,
     draftDevError,
     previewAssetUrl,
+    previewTransportGeneration,
     previewAuthToken,
     previewLoadingMessage,
     publishLockMessage,
@@ -561,12 +536,17 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     () => `${state?.app.slug || "app"}.${process.env.NEXT_PUBLIC_APPS_BASE_DOMAIN || "apps.localhost"}`,
     [state?.app.slug],
   );
-  const previewFrameUrl = useMemo(() => {
-    if (!previewAssetUrl) {
-      return null;
-    }
-    return buildPreviewFrameUrl(previewAssetUrl, previewRoute, previewReloadToken);
-  }, [previewAssetUrl, previewReloadToken, previewRoute]);
+  const livePreviewTransport = useBuilderPreviewTransport({
+    sessionId: draftDevSession?.session_id || null,
+    previewBaseUrl: previewAssetUrl,
+    previewAuthToken,
+    previewRoute,
+    previewTransportGeneration,
+    hardReloadToken: previewReloadToken,
+    draftDevStatus,
+    lifecyclePhase: sandboxPhase,
+    lastError: draftDevError,
+  });
   const navigatePreview = useCallback((route: string) => {
     const normalizedRoute = normalizeRoutePath(route) || "/";
     setPreviewRoute(normalizedRoute);
@@ -624,8 +604,8 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
   const loadAgents = useCallback(async () => {
     setIsAgentsLoading(true);
     try {
-      const response = await agentService.listAgents({ limit: 500, compact: true, status: "published" });
-      setAvailableAgents(response.agents || []);
+      const response = await agentService.listAgents({ limit: 100, view: "summary", status: "published" });
+      setAvailableAgents(response.items || []);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load agents");
     } finally {
@@ -729,14 +709,99 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
       return `${inspectedPreviewUrl}${separator}__reload=${previewReloadToken}`;
     }
   }, [inspectedPreviewUrl, previewReloadToken]);
-  const effectivePreviewUrl = isInspectingVersion ? inspectedPreviewFrameUrl : previewFrameUrl;
+  const inspectedPreviewTransportStatus = useMemo(() => {
+    if (inspectedPreviewNotice) {
+      return "failed" as const;
+    }
+    if (isLoadingVersionPreview) {
+      return "booting" as const;
+    }
+    if (inspectedPreviewFrameUrl) {
+      return "ready" as const;
+    }
+    return "idle" as const;
+  }, [inspectedPreviewFrameUrl, inspectedPreviewNotice, isLoadingVersionPreview]);
+  const effectivePreviewUrl = isInspectingVersion ? inspectedPreviewFrameUrl : livePreviewTransport.documentUrl;
   const effectivePreviewToken = isInspectingVersion ? inspectedRuntimeToken : previewAuthToken;
-  const effectivePreviewStatus = isInspectingVersion ? "running" : draftDevStatus;
   const effectivePreviewError = isInspectingVersion ? inspectedPreviewNotice : draftDevError;
-  const effectivePreviewPhase = isInspectingVersion ? null : sandboxPhase;
+  const effectivePreviewTransportKey = isInspectingVersion
+    ? (inspectedPreviewFrameUrl ? `version:${inspectedVersionId || "preview"}:${previewReloadToken}` : null)
+    : livePreviewTransport.transportKey;
+  const effectivePreviewTransportStatus = isInspectingVersion ? inspectedPreviewTransportStatus : livePreviewTransport.status;
+  const effectivePreviewHasUsableFrame = isInspectingVersion
+    ? Boolean(inspectedPreviewFrameUrl) && inspectedPreviewTransportStatus === "ready"
+    : livePreviewTransport.hasUsableFrame;
   const effectivePreviewLoadingMessage = isInspectingVersion
     ? (isLoadingVersionPreview ? "Loading selected version preview..." : null)
     : previewLoadingMessage;
+  const effectivePreviewLoadingState = useMemo(() => {
+    if (isInspectingVersion) {
+      if (!isLoadingVersionPreview) {
+        return null;
+      }
+      return {
+        title: "Loading selected version",
+        detail: "Preparing the published snapshot preview...",
+        steps: [
+          { label: "Load version snapshot", status: "complete" as const },
+          { label: "Start preview frame", status: "current" as const },
+        ],
+      };
+    }
+    return buildBuilderPreviewLoadingState({
+      lifecyclePhase: sandboxPhase,
+      draftDevStatus,
+      transportStatus: effectivePreviewTransportStatus,
+      loadingMessage: effectivePreviewLoadingMessage,
+      errorMessage: effectivePreviewError,
+    });
+  }, [
+    draftDevStatus,
+    effectivePreviewError,
+    effectivePreviewLoadingMessage,
+    effectivePreviewTransportStatus,
+    isInspectingVersion,
+    isLoadingVersionPreview,
+    sandboxPhase,
+  ]);
+
+  useEffect(() => {
+    logBuilderPreviewDebug("workspace-preview", "effective_state", {
+      activeTab,
+      previewMode,
+      previewRoute,
+      previewRouteInput,
+      isInspectingVersion,
+      sandboxPhase,
+      draftDevStatus,
+      draftDevSessionId: draftDevSession?.session_id || null,
+      previewTransportGeneration,
+      effectivePreviewTransportKey,
+      effectivePreviewTransportStatus,
+      effectivePreviewHasUsableFrame,
+      effectivePreviewUrl,
+      effectivePreviewError: effectivePreviewError || null,
+      effectivePreviewLoadingMessage: effectivePreviewLoadingMessage || null,
+      effectivePreviewLoadingTitle: effectivePreviewLoadingState?.title || null,
+    });
+  }, [
+    activeTab,
+    draftDevSession,
+    draftDevStatus,
+    effectivePreviewError,
+    effectivePreviewHasUsableFrame,
+    effectivePreviewLoadingMessage,
+    effectivePreviewLoadingState,
+    effectivePreviewTransportKey,
+    effectivePreviewTransportStatus,
+    effectivePreviewUrl,
+    isInspectingVersion,
+    previewMode,
+    previewRoute,
+    previewRouteInput,
+    previewTransportGeneration,
+    sandboxPhase,
+  ]);
 
   useEffect(() => {
     void loadState({ showInitialSkeleton: true });
@@ -1108,10 +1173,23 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     }
 
     const inMemoryPreviewUrl =
-      isDraftDevServingStatus(draftDevStatus) ? previewFrameUrl || draftDevSession?.preview_url || null : null;
+      isDraftDevServingStatus(draftDevStatus)
+        ? (
+            livePreviewTransport.documentUrl
+            || (
+              draftDevSession?.preview_url
+                ? buildBuilderPreviewDocumentUrl({
+                    baseUrl: draftDevSession.preview_url,
+                    route: previewRoute,
+                    runtimeToken: previewAuthToken || draftDevSession?.preview_auth_token || null,
+                  })
+                : null
+            )
+          )
+        : null;
     if (inMemoryPreviewUrl) {
       window.open(
-        appendRuntimeTokenToUrl(inMemoryPreviewUrl, previewAuthToken || draftDevSession?.preview_auth_token || null),
+        inMemoryPreviewUrl,
         "_blank",
         "noopener,noreferrer",
       );
@@ -1126,7 +1204,11 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
         throw new Error("Draft preview URL is unavailable");
       }
       window.open(
-        appendRuntimeTokenToUrl(session.preview_url, session.preview_auth_token || previewAuthToken),
+        buildBuilderPreviewDocumentUrl({
+          baseUrl: session.preview_url,
+          route: previewRoute,
+          runtimeToken: session.preview_auth_token || previewAuthToken,
+        }),
         "_blank",
         "noopener,noreferrer",
       );
@@ -1141,8 +1223,9 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     state?.app.published_url,
     state?.app.status,
     previewAuthToken,
-    previewFrameUrl,
     draftDevStatus,
+    livePreviewTransport.documentUrl,
+    previewRoute,
   ]);
 
   const deleteFile = (path: string) => {
@@ -1189,7 +1272,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
       className="flex h-dvh min-h-0 w-full gap-0 overflow-visible bg-background"
     >
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <header className="relative z-[110] flex h-11 shrink-0 items-center gap-3 border-b px-3 overflow-visible">
+        <header className="relative z-10 flex h-11 shrink-0 items-center gap-3 overflow-visible border-b px-3">
           {/* Left: back + app name + status dot */}
           <div className="flex min-w-0 items-center gap-3">
             <Link
@@ -1294,7 +1377,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
                         className="h-7 border-border/50 bg-transparent px-2 py-0 text-xs font-medium shadow-none"
                       />
                       {isPreviewRoutePickerOpen ? (
-                        <div className="absolute top-full left-0 z-[120] mt-1 w-full overflow-hidden rounded-md border border-border/60 bg-popover shadow-md">
+                        <div className="absolute top-full left-0 z-20 mt-1 w-full overflow-hidden rounded-md border border-border/60 bg-popover shadow-md">
                           <Command shouldFilter={false}>
                             <CommandList className="max-h-56">
                               <CommandEmpty className="py-3 text-center text-xs text-muted-foreground">
@@ -1476,7 +1559,12 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
         <div className="flex min-h-0 flex-1">
           <main className="flex min-h-0 min-w-0 flex-1 flex-col">
             <div className="min-h-0 flex-1">
-              {activeTab === "preview" ? (
+              <div
+                className={cn(
+                  "h-full",
+                  activeTab === "preview" ? "block" : "hidden",
+                )}
+              >
                 <div className={cn(
                   "flex h-full w-full items-start justify-center",
                   previewViewport === "mobile" ? "bg-muted/30 p-4" : "",
@@ -1509,12 +1597,15 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
                       <PreviewCanvas
                         previewUrl={effectivePreviewUrl}
                         previewAuthToken={effectivePreviewToken}
-                        forceReady={isInspectingVersion}
-                        devStatus={effectivePreviewStatus}
-                        devError={effectivePreviewError}
-                        lifecyclePhase={effectivePreviewPhase}
+                        transportKey={effectivePreviewTransportKey}
+                        transportStatus={effectivePreviewTransportStatus}
+                        hasUsableFrame={effectivePreviewHasUsableFrame}
+                        errorMessage={effectivePreviewError}
                         loadingMessage={effectivePreviewLoadingMessage}
+                        loadingState={effectivePreviewLoadingState}
                         canRetry={!isInspectingVersion && canRetrySandboxLifecycle}
+                        onFrameReady={isInspectingVersion ? null : livePreviewTransport.markFrameUsable}
+                        onFrameCleared={isInspectingVersion ? null : livePreviewTransport.clearUsableFrame}
                         onRetry={isInspectingVersion ? null : () => {
                           void retryEnsureDraftDevSession();
                         }}
@@ -1522,7 +1613,14 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
                     )}
                   </div>
                 </div>
-              ) : (
+              </div>
+
+              <div
+                className={cn(
+                  "h-full min-h-0",
+                  activeTab === "config" ? "block" : "hidden",
+                )}
+              >
                 <div className="flex h-full min-h-0">
                   <ConfigSidebar
                     configSection={configSection}
@@ -1973,7 +2071,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
                     )}
                   </section>
                 </div>
-              )}
+              </div>
             </div>
           </main>
 

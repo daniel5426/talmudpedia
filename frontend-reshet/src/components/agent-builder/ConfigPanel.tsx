@@ -1692,29 +1692,29 @@ export function ConfigPanel({
             try {
                 const modelCapability = modelCapabilityForNode(data.nodeType)
                 const [modelsRes, toolsRes, pipelinesRes, agentsRes] = await Promise.all([
-                    modelsService.listModels(modelCapability, "active", 0, 100),
-                    toolsService.listTools(undefined, "published", undefined, 0, 100),
-                    ragAdminService.listVisualPipelines(currentTenant?.slug),
-                    agentService.listAgents({ skip: 0, limit: 500 }),
+                    modelsService.listModels(modelCapability, "active", 0, 100, "full"),
+                    toolsService.listTools(undefined, "published", undefined, 0, 100, "summary"),
+                    ragAdminService.listVisualPipelines(currentTenant?.slug, { skip: 0, limit: 100, view: "summary" }),
+                    agentService.listAgents({ skip: 0, limit: 100, view: "summary" }),
                 ])
-                setModels(modelsRes.models.map(m => ({
+                setModels(modelsRes.items.map(m => ({
                     value: m.id,
                     label: m.name,
                     providerInfo: `${m.providers?.[0]?.provider} • ${m.providers?.[0]?.provider_model_id}`,
                 })))
-                setToolCatalog(toolsRes.tools || [])
-                setToolOptions((toolsRes.tools || []).map(t => ({
+                setToolCatalog(toolsRes.items || [])
+                setToolOptions((toolsRes.items || []).map(t => ({
                     value: t.id,
                     label: t.name,
                     providerInfo: t.implementation_type
                 })))
-                setNamespaces((pipelinesRes.pipelines || [])
+                setNamespaces((pipelinesRes.items || [])
                     .filter(p => p.pipeline_type === "retrieval")
                     .map(p => ({
                         value: p.id,
                         label: p.name || (p as any).slug || "Unnamed Pipeline"
                     })))
-                setAgentOptions((agentsRes.agents || []).map((agent) => ({
+                setAgentOptions((agentsRes.items || []).map((agent) => ({
                     value: agent.id,
                     label: agent.name,
                     slug: agent.slug,

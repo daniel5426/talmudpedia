@@ -56,6 +56,44 @@ class UpdateModelInput:
     default_resolution_policy: dict | None = None
 
 
+def serialize_model(model: ModelRegistry, *, view: str = "full") -> dict[str, Any]:
+    payload = {
+        "id": str(model.id),
+        "tenant_id": str(model.tenant_id) if model.tenant_id else None,
+        "name": model.name,
+        "description": model.description,
+        "capability_type": getattr(model.capability_type, "value", model.capability_type),
+        "status": getattr(model.status, "value", model.status),
+        "is_active": bool(model.is_active),
+        "is_default": bool(model.is_default),
+        "created_at": model.created_at.isoformat() if model.created_at else None,
+        "updated_at": model.updated_at.isoformat() if model.updated_at else None,
+    }
+    if view == "summary":
+        return payload
+    payload.update(
+        {
+            "version": model.version,
+            "metadata": model.metadata_ or {},
+            "default_resolution_policy": model.default_resolution_policy or {},
+            "providers": [
+                {
+                    "id": str(binding.id),
+                    "provider": getattr(binding.provider, "value", binding.provider),
+                    "provider_model_id": binding.provider_model_id,
+                    "priority": binding.priority,
+                    "is_enabled": bool(binding.is_enabled),
+                    "config": binding.config or {},
+                    "credentials_ref": str(binding.credentials_ref) if binding.credentials_ref else None,
+                    "pricing_config": binding.pricing_config or {},
+                }
+                for binding in list(model.providers or [])
+            ],
+        }
+    )
+    return payload
+
+
 def enum_value(value: Any) -> str:
     return str(getattr(value, "value", value)).strip().lower()
 

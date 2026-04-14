@@ -159,6 +159,7 @@ class PublishedAppCodingAgentRuntimeSandboxMixin:
                 revision=base_revision,
                 user_id=actor_id,
                 prefer_live_workspace=True,
+                trace_source="coding_agent.create_run",
             )
         except PublishedAppDraftDevRuntimeDisabled as exc:
             raise self._engine_unsupported_runtime_error(str(exc)) from exc

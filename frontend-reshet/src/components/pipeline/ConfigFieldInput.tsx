@@ -33,8 +33,8 @@ export function ModelSelectField({
     async function loadModels() {
       try {
         setIsLoading(true)
-        const response = await modelsService.listModels(capability as any)
-        setModels(response.models)
+        const response = await modelsService.listModels(capability as any, undefined, 0, 100, "full")
+        setModels(response.items)
       } catch (error) {
         console.error("Failed to load models:", error)
       } finally {

@@ -1,6 +1,6 @@
 # Canonical Docs Guide
 
-Last Updated: 2026-03-26
+Last Updated: 2026-04-14
 
 This guide lists the current canonical documentation entry points after the first documentation-system refactor.
 
@@ -53,7 +53,9 @@ This guide lists the current canonical documentation entry points after the firs
 - `docs/product-specs/embedded_agent_runtime_spec.md`
   - Agent-native external embed/plugin runtime contract.
 - `docs/product-specs/settings_hub_spec.md`
-  - Tenant settings hub behavior and APIs.
+  - Organization-backed settings hub behavior and APIs.
+- `docs/product-specs/organization_and_project_workflow_spec.md`
+  - Canonical browser signup/sign-in, active organization/project context, and org/project admin workflow.
 - `docs/product-specs/runtime_sdk_host_anywhere_spec.md`
   - Published-app runtime SDK contract.
 - `docs/product-specs/agent_graph_spec.md`

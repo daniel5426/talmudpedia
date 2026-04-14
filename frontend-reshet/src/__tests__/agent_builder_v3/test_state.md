@@ -1,6 +1,6 @@
 # Test State: Agent Builder v3
 
-Last Updated: 2026-04-01
+Last Updated: 2026-04-14
 
 **Scope**
 Graph Spec 4.0 frontend serialization defaults, Start-as-projection contract editing, canonical workflow modality toggles, graph-analysis hook behavior, scoped ValueRef picker behavior, and ConfigPanel contract-driven filtering for the agent builder.
@@ -37,8 +37,12 @@ Graph Spec 4.0 frontend serialization defaults, Start-as-projection contract edi
 - Start state-variable modal blocks duplicate state-variable keys before save and shows an inline validation error
 - ConfigPanel renders artifact field-mapping inputs from backend-provided artifact operator contracts
 - The frontend node registry is derived from the canonical built-in node specs, so renderer coverage cannot drift for built-in nodes like `speech_to_text`
+- ConfigPanel resource loaders now consume canonical control-plane list envelopes for models, tools, pipelines, and agents.
 
 **Last Run**
+- Command: `pnpm exec jest src/__tests__/agent_builder_v3/config_panel_value_ref_contracts.test.tsx src/__tests__/agent_builder_v3/config_panel_artifact_contracts.test.tsx --runInBand`
+- Date: 2026-04-14 23:18 EEST
+- Result: Pass (2 suites, 3 tests)
 - Command: `pnpm -C frontend-reshet test -- --runTestsByPath src/__tests__/agent_builder_v3/graphspec_v3_serialization.test.ts --watch=false`
 - Date: 2026-03-31 Asia/Hebron
 - Result: Pass (1 suite, 5 tests)

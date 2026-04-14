@@ -1,6 +1,6 @@
 # Architecture Tree (Curated)
 
-Last Updated: 2026-04-13
+Last Updated: 2026-04-14
 
 This file is a backend-only architecture map optimized for agent context efficiency.
 
@@ -150,6 +150,13 @@ backend/app/services/model_runtime/registry.py
 backend/app/services/model_runtime/adapters.py
 backend/app/services/model_runtime/types.py
 backend/app/services/control_plane/
+backend/app/services/control_plane/contracts.py
+backend/app/services/control_plane/errors.py
+backend/app/services/control_plane/context.py
+backend/app/services/control_plane/agents_admin_service.py
+backend/app/services/control_plane/rag_admin_service.py
+backend/app/services/control_plane/artifact_admin_service.py
+backend/app/services/control_plane/orchestration_admin_service.py
 backend/app/services/run_invocation_service.py
 backend/app/services/resource_policy_service.py
 backend/app/services/resource_policy_quota_service.py
@@ -169,10 +176,18 @@ backend/app/services/artifact_coding_agent_test_tools.py
 backend/app/services/artifact_coding_agent_profile.py
 backend/app/services/artifact_coding_runtime_service.py
 backend/app/services/platform_architect_contracts.py
+backend/app/services/platform_architect_live_harness.py
 backend/app/services/platform_architect_worker_bindings.py
 backend/app/services/platform_architect_worker_runtime_service.py
 backend/app/services/platform_architect_worker_tools.py
 backend/app/services/platform_native_tools.py
+backend/app/services/platform_native/
+backend/app/services/platform_native/runtime.py
+backend/app/services/platform_native/registry.py
+backend/app/services/platform_native/agents.py
+backend/app/services/platform_native/rag.py
+backend/app/services/platform_native/assets.py
+backend/app/services/platform_native/governance.py
 backend/app/services/platform_architect_guardrails.py
 backend/app/services/graph_mutation_service.py
 backend/app/services/agent_graph_mutation_service.py
@@ -218,6 +233,7 @@ backend/app/services/apps_builder_trace.py
 backend/app/services/published_app_builder_snapshot_filter.py
 backend/app/services/published_app_auth_service.py
 backend/app/services/published_app_auth_shell_renderer.py
+backend/app/workers/
 backend/app/services/published_app_host_runtime_support.py
 backend/app/services/published_app_bundle_storage.py
 backend/app/services/published_app_sandbox_backend.py

@@ -45,8 +45,8 @@ export function KnowledgeStoreSelect({
         async function loadStores() {
             try {
                 setLoading(true)
-                const data = await knowledgeStoresService.list(currentTenant?.slug)
-                setStores(data)
+                const data = await knowledgeStoresService.list(currentTenant?.slug, { limit: 100, view: "summary" })
+                setStores(data.items)
             } catch (error) {
                 console.error("Failed to load knowledge stores:", error)
             } finally {

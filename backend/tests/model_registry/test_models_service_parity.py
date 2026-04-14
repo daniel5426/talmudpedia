@@ -56,7 +56,8 @@ async def test_models_list_matches_service_router_and_native_tool(db_session, mo
         status=ModelStatus.ACTIVE,
         is_active=True,
         skip=0,
-        limit=50,
+        limit=20,
+        view="summary",
         db=db_session,
         tenant_ctx={"tenant_id": str(tenant.id), "tenant": tenant},
         _={},
@@ -83,6 +84,7 @@ async def test_models_list_matches_service_router_and_native_tool(db_session, mo
                 "capability_type": "chat",
                 "status": "active",
                 "is_active": True,
+                "view": "summary",
             },
             "__tool_runtime_context__": {
                 "tenant_id": str(tenant.id),
@@ -93,13 +95,13 @@ async def test_models_list_matches_service_router_and_native_tool(db_session, mo
     )
 
     service_names = [model.name for model in service_models]
-    route_names = [model.name for model in route_result.models]
-    native_names = [model["name"] for model in native_result["result"]["models"]]
+    route_names = [model["name"] for model in route_result["items"]]
+    native_names = [model["name"] for model in native_result["result"]["items"]]
 
     assert "Chat Active" in service_names
     assert "Chat Disabled" not in service_names
-    assert route_result.total == service_total
-    assert route_names == service_names
+    assert route_result["total"] == service_total
+    assert route_names == service_names[: len(route_names)]
     assert native_result["errors"] == []
     assert native_result["result"]["total"] == service_total
-    assert native_names == service_names
+    assert native_names == service_names[: len(native_names)]

@@ -429,8 +429,8 @@ export default function AdminStatsPage() {
   useEffect(() => {
     const loadAgents = async () => {
       try {
-        const data = await agentService.listAgents({ compact: true })
-        setAgentOptions(data.agents)
+        const data = await agentService.listAgents({ view: "summary", limit: 100 })
+        setAgentOptions(data.items)
       } catch (error) {
         console.error("Failed to load agent options", error)
       }

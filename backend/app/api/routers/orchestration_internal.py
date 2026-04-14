@@ -9,6 +9,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_current_principal, require_scopes
 from app.db.postgres.session import get_db
+from app.services.control_plane.context import ControlPlaneContext
+from app.services.control_plane.errors import ControlPlaneError
+from app.services.control_plane.orchestration_admin_service import OrchestrationAdminService
 from app.services.orchestration_kernel_service import (
     OrchestrationKernelService,
     OrchestrationPolicyError,
@@ -95,6 +98,18 @@ def _assert_option_b_enabled(tenant_id: UUID | str) -> None:
     )
 
 
+def _control_plane_ctx(principal: dict[str, Any], tenant_id: UUID | str) -> ControlPlaneContext:
+    user = principal.get("user")
+    return ControlPlaneContext(
+        tenant_id=UUID(str(tenant_id)),
+        user=user,
+        user_id=getattr(user, "id", None),
+        auth_token=principal.get("auth_token"),
+        scopes=tuple(principal.get("scopes") or ()),
+        is_service=bool(principal.get("type") == "workload"),
+    )
+
+
 @router.post("/spawn-run")
 async def spawn_run(
     request: SpawnRunRequest,
@@ -108,7 +123,7 @@ async def spawn_run(
         _assert_tenant(principal, caller.tenant_id)
         _assert_option_b_enabled(caller.tenant_id)
 
-        return await kernel.spawn_run(
+        return await OrchestrationAdminService(db).spawn_run(
             caller_run_id=request.caller_run_id,
             parent_node_id=request.parent_node_id,
             target_agent_id=request.target_agent_id,
@@ -122,6 +137,8 @@ async def spawn_run(
         )
     except OrchestrationPolicyError as exc:
         raise HTTPException(status_code=403, detail=str(exc))
+    except ControlPlaneError as exc:
+        raise exc.to_http_exception() from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -139,7 +156,7 @@ async def spawn_group(
         _assert_tenant(principal, caller.tenant_id)
         _assert_option_b_enabled(caller.tenant_id)
 
-        return await kernel.spawn_group(
+        return await OrchestrationAdminService(db).spawn_group(
             caller_run_id=request.caller_run_id,
             parent_node_id=request.parent_node_id,
             targets=[t.model_dump() for t in request.targets],
@@ -153,6 +170,8 @@ async def spawn_group(
         )
     except OrchestrationPolicyError as exc:
         raise HTTPException(status_code=403, detail=str(exc))
+    except ControlPlaneError as exc:
+        raise exc.to_http_exception() from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -170,15 +189,18 @@ async def join(
         _assert_tenant(principal, caller.tenant_id)
         _assert_option_b_enabled(caller.tenant_id)
 
-        return await kernel.join(
+        operation = await OrchestrationAdminService(db).join(
             caller_run_id=request.caller_run_id,
             orchestration_group_id=request.orchestration_group_id,
             mode=request.mode,
             quorum_threshold=request.quorum_threshold,
             timeout_s=request.timeout_s,
         )
+        return operation["result"]
     except OrchestrationPolicyError as exc:
         raise HTTPException(status_code=403, detail=str(exc))
+    except ControlPlaneError as exc:
+        raise exc.to_http_exception() from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -196,14 +218,17 @@ async def cancel_subtree(
         _assert_tenant(principal, caller.tenant_id)
         _assert_option_b_enabled(caller.tenant_id)
 
-        return await kernel.cancel_subtree(
+        operation = await OrchestrationAdminService(db).cancel_subtree(
             caller_run_id=request.caller_run_id,
             run_id=request.run_id,
             include_root=request.include_root,
             reason=request.reason,
         )
+        return operation["result"]
     except OrchestrationPolicyError as exc:
         raise HTTPException(status_code=403, detail=str(exc))
+    except ControlPlaneError as exc:
+        raise exc.to_http_exception() from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -221,12 +246,15 @@ async def evaluate_and_replan(
         _assert_tenant(principal, caller.tenant_id)
         _assert_option_b_enabled(caller.tenant_id)
 
-        return await kernel.evaluate_and_replan(
+        operation = await OrchestrationAdminService(db).evaluate_and_replan(
             caller_run_id=request.caller_run_id,
             run_id=request.run_id,
         )
+        return operation["result"]
     except OrchestrationPolicyError as exc:
         raise HTTPException(status_code=403, detail=str(exc))
+    except ControlPlaneError as exc:
+        raise exc.to_http_exception() from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -238,11 +266,13 @@ async def query_tree(
     _: dict[str, Any] = Depends(require_scopes("agents.execute")),
     db: AsyncSession = Depends(get_db),
 ):
-    kernel = OrchestrationKernelService(db)
     try:
+        kernel = OrchestrationKernelService(db)
         run = await kernel._require_run(run_id)
         _assert_tenant(principal, run.tenant_id)
         _assert_option_b_enabled(run.tenant_id)
-        return await kernel.query_tree(run_id=run_id)
+        return await OrchestrationAdminService(db).query_tree(run_id=run_id)
+    except ControlPlaneError as exc:
+        raise exc.to_http_exception() from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))

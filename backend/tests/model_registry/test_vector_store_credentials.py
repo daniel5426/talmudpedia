@@ -1,14 +1,23 @@
 import pytest
 from uuid import uuid4
 
+from app.db.postgres.models.identity import Tenant
 from app.db.postgres.models.registry import IntegrationCredential, IntegrationCredentialCategory
 from app.db.postgres.models.rag import KnowledgeStore, StorageBackend, RetrievalPolicy, KnowledgeStoreStatus
 from app.services.retrieval_service import RetrievalService
 
 
+async def _seed_tenant(db_session, tenant_id):
+    tenant = Tenant(id=tenant_id, name=f"Tenant {tenant_id.hex[:8]}", slug=f"tenant-{tenant_id.hex[:8]}")
+    db_session.add(tenant)
+    await db_session.flush()
+    return tenant
+
+
 @pytest.mark.asyncio
 async def test_vector_store_credentials_merge(db_session):
     tenant_id = uuid4()
+    await _seed_tenant(db_session, tenant_id)
     credential = IntegrationCredential(
         tenant_id=tenant_id,
         category=IntegrationCredentialCategory.VECTOR_STORE,
@@ -47,6 +56,7 @@ async def test_vector_store_credentials_merge(db_session):
 @pytest.mark.asyncio
 async def test_vector_store_credentials_disabled_raises(db_session):
     tenant_id = uuid4()
+    await _seed_tenant(db_session, tenant_id)
     credential = IntegrationCredential(
         tenant_id=tenant_id,
         category=IntegrationCredentialCategory.VECTOR_STORE,

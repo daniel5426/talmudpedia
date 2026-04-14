@@ -5,7 +5,7 @@ import re
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -46,10 +46,34 @@ from app.services.artifact_runtime.registry_service import ArtifactRegistryServi
 from app.services.artifact_runtime.revision_service import ArtifactRevisionService
 from app.services.artifact_runtime.runtime_secret_service import validate_source_files_for_editor
 from app.services.artifact_runtime.tool_contracts import ToolContractValidationError, parse_tool_contract_json
+from app.services.control_plane.artifact_admin_service import (
+    ArtifactAdminService,
+    ArtifactRuntimeInput as ControlPlaneArtifactRuntimeInput,
+    CreateArtifactInput as ControlPlaneCreateArtifactInput,
+    UpdateArtifactInput as ControlPlaneUpdateArtifactInput,
+)
+from app.services.control_plane.contracts import ListQuery
+from app.services.control_plane.context import ControlPlaneContext
+from app.services.control_plane.errors import ControlPlaneError
 from app.services.tool_binding_service import ToolBindingService
 
 router = APIRouter(prefix="/admin/artifacts", tags=["artifacts"])
 _DUPLICATE_NAME_SUFFIX_RE = re.compile(r"^(?P<base>.*?)(?: \((?P<index>\d+)\))?$")
+
+
+def _artifact_control_plane_context(*, tenant: Tenant | None, user: Any | None, context: Dict[str, Any] | None = None) -> ControlPlaneContext:
+    if tenant is None:
+        raise HTTPException(status_code=400, detail="Tenant context required")
+    principal = context or {}
+    return ControlPlaneContext(
+        tenant_id=tenant.id,
+        user=user,
+        user_id=getattr(user, "id", None),
+        auth_token=principal.get("auth_token"),
+        scopes=tuple(principal.get("scopes") or ()),
+        is_service=bool(principal.get("type") == "workload"),
+        tenant_slug=tenant.slug,
+    )
 
 
 async def _resolve_tenant_from_artifact_if_missing(
@@ -315,15 +339,21 @@ def _artifact_revision_to_version_list_item(
     )
 
 
-@router.get("", response_model=List[ArtifactSchema])
+@router.get("", response_model=dict[str, Any])
 async def list_artifacts(
     tenant_slug: Optional[str] = None,
+    skip: int = 0,
+    limit: int = 20,
+    view: str = "summary",
     artifact_ctx=Depends(get_artifact_context),
 ):
-    tenant, _user, db = artifact_ctx
-    registry = ArtifactRegistryService(db)
-    artifacts = await registry.list_accessible_artifacts(tenant_id=tenant.id if tenant is not None else None)
-    return [_artifact_to_schema(artifact) for artifact in artifacts]
+    tenant, user, db = artifact_ctx
+    query = ListQuery.from_payload({"skip": skip, "limit": limit, "view": view})
+    page = await ArtifactAdminService(db).list_artifacts(
+        ctx=_artifact_control_plane_context(tenant=tenant, user=user),
+        query=query,
+    )
+    return page.to_payload()
 
 
 @router.get("/{artifact_id}", response_model=ArtifactSchema)
@@ -538,42 +568,37 @@ async def create_artifact_draft(
     artifact_ctx=Depends(get_artifact_context),
 ):
     tenant, user, db = artifact_ctx
-    if tenant is None:
-        raise HTTPException(status_code=400, detail="Tenant context required")
     try:
-        artifact = await ArtifactRevisionService(db).create_artifact(
-            tenant_id=tenant.id,
-            created_by=user.id if user else None,
-            display_name=request.display_name,
-            description=request.description,
-            kind=request.kind.value,
-            owner_type=ArtifactOwnerType.TENANT.value,
-            source_files=[_model_dump(item) for item in request.runtime.source_files],
-            entry_module_path=request.runtime.entry_module_path,
-            language=getattr(request.runtime.language, "value", request.runtime.language),
-            dependencies=list(request.runtime.dependencies or []),
-            runtime_target=request.runtime.runtime_target,
-            capabilities=_model_dump(request.capabilities),
-            config_schema=dict(request.config_schema or {}),
-            agent_contract=_model_dump(request.agent_contract) if request.agent_contract is not None else None,
-            rag_contract=_model_dump(request.rag_contract) if request.rag_contract is not None else None,
-            tool_contract=_model_dump(request.tool_contract) if request.tool_contract is not None else None,
+        payload = await ArtifactAdminService(db).create_artifact(
+            ctx=_artifact_control_plane_context(tenant=tenant, user=user),
+            params=ControlPlaneCreateArtifactInput(
+                display_name=request.display_name,
+                description=request.description,
+                kind=request.kind.value,
+                runtime=ControlPlaneArtifactRuntimeInput(
+                    language=getattr(request.runtime.language, "value", request.runtime.language),
+                    source_files=[_model_dump(item) for item in request.runtime.source_files],
+                    entry_module_path=request.runtime.entry_module_path,
+                    dependencies=list(request.runtime.dependencies or []),
+                    runtime_target=request.runtime.runtime_target,
+                ),
+                capabilities=_model_dump(request.capabilities),
+                config_schema=dict(request.config_schema or {}),
+                agent_contract=_model_dump(request.agent_contract) if request.agent_contract is not None else None,
+                rag_contract=_model_dump(request.rag_contract) if request.rag_contract is not None else None,
+                tool_contract=_model_dump(request.tool_contract) if request.tool_contract is not None else None,
+            ),
         )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    try:
-        await ToolBindingService(db).sync_artifact_tool_binding(artifact)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ControlPlaneError as exc:
+        raise exc.to_http_exception() from exc
     await _link_artifact_coding_scope_to_saved_artifact(
         db=db,
         tenant_id=tenant.id,
-        artifact_id=artifact.id,
+        artifact_id=UUID(str(payload["id"])),
         draft_key=request.draft_key,
     )
     await db.commit()
-    refreshed = await ArtifactRegistryService(db).get_tenant_artifact(artifact_id=artifact.id, tenant_id=tenant.id)
-    return _artifact_to_schema(refreshed, include_code=True)
+    return ArtifactSchema(**payload)
 
 
 @router.put("/{artifact_id}", response_model=ArtifactSchema)
@@ -585,51 +610,42 @@ async def update_artifact(
     artifact_ctx=Depends(get_artifact_context),
 ):
     tenant, user, db = artifact_ctx
-    if tenant is None:
-        raise HTTPException(status_code=400, detail="Tenant context required")
     artifact_uuid = _parse_artifact_uuid(artifact_id)
     if artifact_uuid is None:
         raise HTTPException(status_code=404, detail="Artifact not found")
-    artifact = await ArtifactRegistryService(db).get_tenant_artifact(artifact_id=artifact_uuid, tenant_id=tenant.id)
-    if artifact is None:
-        raise HTTPException(status_code=404, detail="Artifact not found")
-    current_revision = artifact.latest_draft_revision or artifact.latest_published_revision
-    if current_revision is None:
-        raise HTTPException(status_code=409, detail="Artifact is missing a current revision")
     payload = _model_dump(update_data, exclude_unset=True)
     runtime = payload.get("runtime") or {}
     try:
-        await ArtifactRevisionService(db).update_artifact(
-            artifact,
-            updated_by=user.id if user else None,
-            display_name=payload.get("display_name", artifact.display_name),
-            description=payload.get("description", artifact.description),
-            source_files=runtime.get("source_files", current_revision.source_files),
-            entry_module_path=runtime.get("entry_module_path", current_revision.entry_module_path),
-            language=str(runtime.get("language", getattr(current_revision.language, "value", current_revision.language) or "python")),
-            dependencies=list(runtime.get("dependencies", current_revision.python_dependencies or [])),
-            runtime_target=runtime.get("runtime_target", current_revision.runtime_target),
-            capabilities=dict(payload.get("capabilities", current_revision.capabilities or {})),
-            config_schema=dict(payload.get("config_schema", current_revision.config_schema or {})),
-            agent_contract=payload.get("agent_contract", dict(current_revision.agent_contract or {}) if current_revision.agent_contract is not None else None),
-            rag_contract=payload.get("rag_contract", dict(current_revision.rag_contract or {}) if current_revision.rag_contract is not None else None),
-            tool_contract=payload.get("tool_contract", dict(current_revision.tool_contract or {}) if current_revision.tool_contract is not None else None),
+        response_payload = await ArtifactAdminService(db).update_artifact(
+            ctx=_artifact_control_plane_context(tenant=tenant, user=user),
+            artifact_id=artifact_uuid,
+            params=ControlPlaneUpdateArtifactInput(
+                display_name=payload.get("display_name"),
+                description=payload.get("description"),
+                runtime=ControlPlaneArtifactRuntimeInput(
+                    language=str(runtime.get("language", "python")),
+                    source_files=list(runtime.get("source_files") or []),
+                    entry_module_path=str(runtime.get("entry_module_path") or "main.py"),
+                    dependencies=list(runtime.get("dependencies") or []),
+                    runtime_target=str(runtime.get("runtime_target") or "cloudflare_workers"),
+                ) if runtime else None,
+                capabilities=dict(payload.get("capabilities")) if isinstance(payload.get("capabilities"), dict) else None,
+                config_schema=dict(payload.get("config_schema")) if isinstance(payload.get("config_schema"), dict) else None,
+                agent_contract=payload.get("agent_contract") if isinstance(payload.get("agent_contract"), dict) else None,
+                rag_contract=payload.get("rag_contract") if isinstance(payload.get("rag_contract"), dict) else None,
+                tool_contract=payload.get("tool_contract") if isinstance(payload.get("tool_contract"), dict) else None,
+            ),
         )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    try:
-        await ToolBindingService(db).sync_artifact_tool_binding(artifact)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ControlPlaneError as exc:
+        raise exc.to_http_exception() from exc
     await _link_artifact_coding_scope_to_saved_artifact(
         db=db,
         tenant_id=tenant.id,
-        artifact_id=artifact.id,
+        artifact_id=artifact_uuid,
         draft_key=update_data.draft_key,
     )
     await db.commit()
-    refreshed = await ArtifactRegistryService(db).get_tenant_artifact(artifact_id=artifact.id, tenant_id=tenant.id)
-    return _artifact_to_schema(refreshed, include_code=True)
+    return ArtifactSchema(**response_payload)
 
 
 @router.post("/{artifact_id}/publish", response_model=ArtifactPublishResponse)
@@ -641,12 +657,10 @@ async def publish_artifact(
     artifact_ctx=Depends(get_artifact_context),
 ):
     tenant, _user, db = artifact_ctx
-    if tenant is None:
-        raise HTTPException(status_code=400, detail="Tenant context required")
     artifact_uuid = _parse_artifact_uuid(artifact_id)
     if artifact_uuid is None:
         raise HTTPException(status_code=404, detail="Artifact not found")
-    artifact = await ArtifactRegistryService(db).get_tenant_artifact(artifact_id=artifact_uuid, tenant_id=tenant.id)
+    artifact = await ArtifactRegistryService(db).get_tenant_artifact(artifact_id=artifact_uuid, tenant_id=tenant.id if tenant else None)
     if artifact is None:
         raise HTTPException(status_code=404, detail="Artifact not found")
     await ensure_sensitive_action_approved(
@@ -658,28 +672,13 @@ async def publish_artifact(
         db=db,
     )
     try:
-        revision = await ArtifactRevisionService(db).publish_latest_draft(artifact)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    await ArtifactDeploymentService(db).ensure_deployment(
-        revision=revision,
-        namespace="production",
-        tenant_id=tenant.id,
-    )
-    try:
-        await ToolBindingService(db).publish_artifact_tool_binding(
-            artifact=artifact,
-            revision=revision,
-            created_by=getattr(_user, "id", None),
+        payload = await ArtifactAdminService(db).publish_artifact(
+            ctx=_artifact_control_plane_context(tenant=tenant, user=_user, context=principal),
+            artifact_id=artifact_uuid,
         )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    await db.commit()
-    return ArtifactPublishResponse(
-        artifact_id=str(artifact.id),
-        revision_id=str(revision.id),
-        version=revision.version_label,
-    )
+    except ControlPlaneError as exc:
+        raise exc.to_http_exception() from exc
+    return ArtifactPublishResponse(**payload)
 
 
 @router.post("/{artifact_id}/convert-kind", response_model=ArtifactSchema)
@@ -691,34 +690,21 @@ async def convert_artifact_kind(
     artifact_ctx=Depends(get_artifact_context),
 ):
     tenant, user, db = artifact_ctx
-    if tenant is None:
-        raise HTTPException(status_code=400, detail="Tenant context required")
     artifact_uuid = _parse_artifact_uuid(artifact_id)
     if artifact_uuid is None:
         raise HTTPException(status_code=404, detail="Artifact not found")
-    artifact = await ArtifactRegistryService(db).get_tenant_artifact(artifact_id=artifact_uuid, tenant_id=tenant.id)
-    if artifact is None:
-        raise HTTPException(status_code=404, detail="Artifact not found")
-    if artifact.latest_published_revision_id is not None:
-        raise HTTPException(status_code=409, detail="Published artifacts cannot change kind in place")
-    binding_service = ToolBindingService(db)
-    if artifact.kind == ArtifactKind.TOOL_IMPL and request.kind.value != ArtifactKind.TOOL_IMPL.value:
-        await binding_service.delete_artifact_tool_binding(artifact.id)
-    await ArtifactRevisionService(db).convert_kind(
-        artifact,
-        updated_by=user.id if user else None,
-        kind=request.kind.value,
-        agent_contract=_model_dump(request.agent_contract) if request.agent_contract is not None else None,
-        rag_contract=_model_dump(request.rag_contract) if request.rag_contract is not None else None,
-        tool_contract=_model_dump(request.tool_contract) if request.tool_contract is not None else None,
-    )
     try:
-        await binding_service.sync_artifact_tool_binding(artifact)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    await db.commit()
-    refreshed = await ArtifactRegistryService(db).get_tenant_artifact(artifact_id=artifact.id, tenant_id=tenant.id)
-    return _artifact_to_schema(refreshed, include_code=True)
+        payload = await ArtifactAdminService(db).convert_kind(
+            ctx=_artifact_control_plane_context(tenant=tenant, user=user),
+            artifact_id=artifact_uuid,
+            kind=request.kind.value,
+            agent_contract=_model_dump(request.agent_contract) if request.agent_contract is not None else None,
+            rag_contract=_model_dump(request.rag_contract) if request.rag_contract is not None else None,
+            tool_contract=_model_dump(request.tool_contract) if request.tool_contract is not None else None,
+        )
+    except ControlPlaneError as exc:
+        raise exc.to_http_exception() from exc
+    return ArtifactSchema(**payload)
 
 
 @router.post("/{artifact_id}/duplicate", response_model=ArtifactSchema)
@@ -785,12 +771,10 @@ async def delete_artifact(
     artifact_ctx=Depends(get_artifact_context),
 ):
     tenant, _user, db = artifact_ctx
-    if tenant is None:
-        raise HTTPException(status_code=400, detail="Tenant context required")
     artifact_uuid = _parse_artifact_uuid(artifact_id)
     if artifact_uuid is None:
         raise HTTPException(status_code=404, detail="Artifact not found")
-    artifact = await ArtifactRegistryService(db).get_tenant_artifact(artifact_id=artifact_uuid, tenant_id=tenant.id)
+    artifact = await ArtifactRegistryService(db).get_tenant_artifact(artifact_id=artifact_uuid, tenant_id=tenant.id if tenant else None)
     if artifact is None:
         raise HTTPException(status_code=404, detail="Artifact not found")
     await ensure_sensitive_action_approved(
@@ -801,10 +785,13 @@ async def delete_artifact(
         action_scope="artifacts.delete",
         db=db,
     )
-    await ToolBindingService(db).delete_artifact_tool_binding(artifact.id)
-    await db.delete(artifact)
-    await db.commit()
-    return {"status": "deleted"}
+    try:
+        return await ArtifactAdminService(db).delete_artifact(
+            ctx=_artifact_control_plane_context(tenant=tenant, user=_user, context=principal),
+            artifact_id=artifact_uuid,
+        )
+    except ControlPlaneError as exc:
+        raise exc.to_http_exception() from exc
 
 
 @router.post("/test-runs", response_model=ArtifactRunCreateResponse)
@@ -821,12 +808,9 @@ async def create_unsaved_test_run(
         db=db,
         artifact_id=request.artifact_id,
     )
-    if tenant is None:
-        raise HTTPException(status_code=400, detail="Tenant context required")
     try:
-        run = await ArtifactExecutionService(db).start_test_run(
-            tenant_id=tenant.id,
-            created_by=user.id if user else None,
+        operation = await ArtifactAdminService(db).create_test_run(
+            ctx=_artifact_control_plane_context(tenant=tenant, user=user),
             artifact_id=_parse_artifact_uuid(request.artifact_id),
             source_files=[_model_dump(item) for item in request.source_files],
             entry_module_path=request.entry_module_path,
@@ -842,13 +826,12 @@ async def create_unsaved_test_run(
             rag_contract=_model_dump(request.rag_contract) if getattr(request, "rag_contract", None) is not None else None,
             tool_contract=_model_dump(request.tool_contract) if getattr(request, "tool_contract", None) is not None else None,
         )
-    except ArtifactConcurrencyLimitExceeded as exc:
-        raise HTTPException(status_code=429, detail=str(exc))
-    except ArtifactEntrypointContractError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return ArtifactRunCreateResponse(run_id=str(run.id), status=str(getattr(run.status, "value", run.status)))
+    except ControlPlaneError as exc:
+        raise exc.to_http_exception() from exc
+    return ArtifactRunCreateResponse(
+        run_id=operation["operation"]["id"],
+        status=operation["operation"]["status"],
+    )
 
 
 @router.post("/{artifact_id}/test-runs", response_model=ArtifactRunCreateResponse)

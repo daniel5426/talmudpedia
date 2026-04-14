@@ -35,6 +35,7 @@ from app.services.builtin_tools import is_builtin_tools_v1_enabled
 from app.services.prompt_reference_resolver import PromptReferenceError, PromptReferenceResolver
 from app.services.ui_blocks import frontend_requirements_for_tool
 from app.services.control_plane.context import ControlPlaneContext
+from app.services.control_plane.contracts import ListQuery
 from app.services.control_plane.errors import ControlPlaneError
 from app.services.control_plane import tool_registry_admin_service as tool_admin
 
@@ -686,7 +687,7 @@ async def _validate_pipeline_config_if_needed(
     )
 
 
-@router.get("", response_model=ToolListResponse)
+@router.get("", response_model=dict[str, Any])
 async def list_tools(
     scope: Optional[ToolDefinitionScope] = None,
     is_active: Optional[bool] = True,
@@ -694,11 +695,13 @@ async def list_tools(
     implementation_type: Optional[ToolImplementationType] = None,
     tool_type: Optional[str] = Query(None, description="Primary tool bucket: built_in, mcp, artifact, custom"),
     skip: int = 0,
-    limit: int = 50,
+    limit: int = 20,
+    view: str = Query("summary"),
     db: AsyncSession = Depends(get_db),
     tenant_ctx=Depends(get_tools_context),
 ):
     try:
+        query = ListQuery.from_payload({"skip": skip, "limit": limit, "view": view})
         tools, total = await tool_admin.ToolRegistryAdminService(db).list_tools(
             ctx=_service_context(tenant_ctx=tenant_ctx),
             scope=scope,
@@ -706,10 +709,17 @@ async def list_tools(
             status=status,
             implementation_type=implementation_type,
             tool_type=tool_type,
-            skip=skip,
-            limit=limit,
+            skip=query.skip,
+            limit=query.limit,
         )
-        return ToolListResponse(tools=[tool_admin.serialize_tool(t) for t in tools], total=total)
+        return {
+            "items": [tool_admin.serialize_tool(t, view=query.view) for t in tools],
+            "total": total,
+            "has_more": query.skip + len(tools) < total,
+            "skip": query.skip,
+            "limit": query.limit,
+            "view": query.view,
+        }
     except ControlPlaneError as exc:
         raise exc.to_http_exception() from exc
 

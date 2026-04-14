@@ -1,7 +1,7 @@
 "use client"
 
-import { useMemo, useState } from "react"
-import { ChevronDown, Dot } from "lucide-react"
+import { useMemo, useState, useEffect } from "react"
+import { ChevronRight } from "lucide-react"
 import { Label } from "@/components/ui/label"
 import { ConfigFieldInput, FileInputRendererProps } from "@/components/pipeline/ConfigFieldInput"
 import {
@@ -30,7 +30,20 @@ export function DynamicOperatorForm({
   showAdvanced = false,
   disabled,
 }: DynamicOperatorFormProps) {
-  const [openSteps, setOpenSteps] = useState<string[]>([])
+  // Track open steps by their ID
+  const [openSteps, setOpenSteps] = useState<Set<string>>(new Set())
+
+  const stepsWithFields = useMemo(
+    () => (schema?.steps || []).filter((step) => (step.fields || []).length > 0),
+    [schema?.steps]
+  )
+
+  // Initialize with all steps open by default
+  useEffect(() => {
+    if (stepsWithFields.length > 0) {
+      setOpenSteps(new Set(stepsWithFields.map(s => s.step_id)))
+    }
+  }, [stepsWithFields])
 
   const stepMap = useMemo(() => {
     const map = new Map<string, ExecutablePipelineInputStep>()
@@ -39,27 +52,6 @@ export function DynamicOperatorForm({
     })
     return map
   }, [schema?.steps])
-
-  const fieldsByStep = useMemo(() => {
-    const grouped = new Map<string, ExecutablePipelineInputField[]>()
-    schema?.steps?.forEach((step) => {
-      grouped.set(step.step_id, step.fields || [])
-    })
-    return grouped
-  }, [schema?.steps])
-
-  const stepsWithFields = useMemo(
-    () => (schema?.steps || []).filter((step) => (step.fields || []).length > 0),
-    [schema?.steps]
-  )
-
-  const visibleOpenSteps = useMemo(() => {
-    if (stepsWithFields.length <= 1) {
-      return stepsWithFields.map((step) => step.step_id)
-    }
-    const validStepIds = new Set(stepsWithFields.map((step) => step.step_id))
-    return openSteps.filter((stepId) => validStepIds.has(stepId))
-  }, [openSteps, stepsWithFields])
 
   const setFieldValue = (stepId: string, name: string, value: unknown) => {
     const stepValues = values[stepId] || {}
@@ -114,30 +106,29 @@ export function DynamicOperatorForm({
     }
   }
 
-  const toggleStep = (stepId: string, nextOpen: boolean) => {
-    setOpenSteps((current) =>
-      nextOpen ? Array.from(new Set([...current, stepId])) : current.filter((id) => id !== stepId)
-    )
+  const toggleStep = (stepId: string) => {
+    setOpenSteps((current) => {
+      const next = new Set(current)
+      if (next.has(stepId)) {
+        next.delete(stepId)
+      } else {
+        next.add(stepId)
+      }
+      return next
+    })
   }
-
-  const hasFields = schema?.steps?.some((step) => (step.fields || []).length > 0)
-  const hasAdvancedFields = schema?.steps?.some((step) =>
-    (step.fields || []).some((field) =>
-      field.operator_id === "query_input" && (field.name === "schema" || field.name === "filters")
-    )
-  )
 
   const isAdvancedField = (field: ExecutablePipelineInputField) =>
     field.operator_id === "query_input" && (field.name === "schema" || field.name === "filters")
 
   const renderField = (stepId: string, field: ExecutablePipelineInputField) => (
-    <div key={`${stepId}-${field.name}`} className="space-y-1.5 px-0.5">
+    <div key={`${stepId}-${field.name}`} className="space-y-1.5">
       <Label className="flex items-center justify-between">
-        <span className="text-[11px] font-bold uppercase tracking-tight text-foreground/50">
+        <span className="text-[11px] font-medium text-foreground/70">
           {field.name}
         </span>
         {field.required && (
-          <span className="rounded border border-foreground/10 px-1 text-[9px] font-medium uppercase tracking-wider text-foreground/30">
+          <span className="text-[9px] font-medium uppercase tracking-wider text-muted-foreground/30">
             Required
           </span>
         )}
@@ -149,69 +140,78 @@ export function DynamicOperatorForm({
         renderFileInput={renderFileInput(stepId)}
       />
       {field.description && (
-        <p className="px-1 text-[10px] leading-tight text-muted-foreground/60">
+        <p className="text-[10px] leading-tight text-muted-foreground/40">
           {field.description}
         </p>
       )}
     </div>
   )
 
-  if (!schema || !hasFields) {
+  if (!schema || stepsWithFields.length === 0) {
     return (
-      <div className="text-sm text-muted-foreground">
-        No runtime inputs are required for this pipeline.
+      <div className="flex flex-col items-center justify-center py-10 text-center">
+        <p className="text-[13px] font-medium text-muted-foreground/60">
+          No runtime inputs required
+        </p>
+        <p className="text-xs text-muted-foreground/30 mt-1 px-4 max-w-[240px]">
+          This pipeline is ready to run with its pre-configured settings.
+        </p>
       </div>
     )
   }
 
   return (
-    <div className="space-y-3">
-      {Array.from(fieldsByStep.entries()).map(([stepId, fields]) => {
-        const step = stepMap.get(stepId)
+    <div className="space-y-3 pb-4">
+      {stepsWithFields.map((step) => {
+        const stepId = step.step_id
+        const fields = step.fields || []
         const basicFields = fields.filter((field) => !isAdvancedField(field))
         const advancedFields = fields.filter((field) => isAdvancedField(field))
-        const inputCount = basicFields.length + advancedFields.length
-        const isOpen = visibleOpenSteps.includes(stepId)
+        const isOpen = openSteps.has(stepId)
+        
         return (
-          <Collapsible
-            key={stepId}
-            open={isOpen}
-            onOpenChange={(nextOpen) => toggleStep(stepId, nextOpen)}
-            className="overflow-hidden rounded-2xl border border-border/70 bg-gradient-to-br from-background via-muted/15 to-muted/35 shadow-sm"
-          >
-            <CollapsibleTrigger className="group w-full text-left">
-              <div className="flex items-center justify-between gap-3 px-4 py-3.5">
-                <div className="min-w-0 space-y-1">
-                  <div className="text-xs font-semibold uppercase tracking-[0.18em] text-foreground/65">
+          <div key={stepId} className="flex flex-col gap-0 border border-border/30 rounded-lg bg-background/50 overflow-hidden">
+            <button
+              onClick={() => toggleStep(stepId)}
+              className="flex items-center justify-between gap-3 px-4 py-3 leading-none transition-colors hover:bg-muted/30"
+            >
+              <div className="flex items-center gap-2.5 min-w-0">
+                <ChevronRight
+                  className={cn(
+                    "h-3.5 w-3.5 text-muted-foreground/40 shrink-0 transition-transform duration-200",
+                    isOpen && "rotate-90"
+                  )}
+                />
+                <div className="flex flex-col items-start gap-1">
+                  <span className="text-[13px] font-semibold text-foreground/80 tracking-tight leading-none">
                     {step?.operator_display_name || step?.operator_id || "Source Operator"}
-                  </div>
-                  <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                    <Dot className="h-3.5 w-3.5 text-foreground/45" />
-                    <span>{inputCount} {inputCount === 1 ? "input" : "inputs"}</span>
-                  </div>
-                </div>
-                <div className={cn(
-                  "flex h-9 w-9 items-center justify-center rounded-full border border-border/60 bg-background/85 text-muted-foreground shadow-sm transition-transform duration-200",
-                  isOpen && "rotate-180"
-                )}>
-                  <ChevronDown className="h-4 w-4" />
+                  </span>
+                  <span className="text-[10px] text-muted-foreground/50 font-medium uppercase tracking-wider leading-none">
+                    {fields.length} {fields.length === 1 ? "input" : "inputs"}
+                  </span>
                 </div>
               </div>
-            </CollapsibleTrigger>
-            <CollapsibleContent className="data-[state=closed]:animate-accordion-up data-[state=open]:animate-accordion-down">
-              <div className="space-y-4 border-t border-border/60 bg-background/70 px-4 py-4">
+            </button>
+            
+            {isOpen && (
+              <div className="px-4 py-4 border-t border-border/20 space-y-4">
                 {basicFields.map((field) => renderField(stepId, field))}
-                {showAdvanced && hasAdvancedFields && advancedFields.length > 0 && (
-                  <div className="space-y-3 rounded-xl border border-dashed border-border/70 bg-muted/20 p-3">
-                    <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                      Advanced
+                
+                {showAdvanced && advancedFields.length > 0 && (
+                  <div className="mt-4 pt-4 border-t border-border/20 space-y-4">
+                    <div className="flex items-center gap-2">
+                       <div className="h-px flex-1 bg-border/20" />
+                       <span className="text-[9px] font-bold uppercase tracking-[0.2em] text-muted-foreground/30">
+                         Advanced
+                       </span>
+                       <div className="h-px flex-1 bg-border/20" />
                     </div>
                     {advancedFields.map((field) => renderField(stepId, field))}
                   </div>
                 )}
               </div>
-            </CollapsibleContent>
-          </Collapsible>
+            )}
+          </div>
         )
       })}
     </div>

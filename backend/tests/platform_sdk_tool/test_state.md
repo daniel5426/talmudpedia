@@ -1,6 +1,6 @@
 # Platform SDK Tool Tests
 
-Last Updated: 2026-03-30
+Last Updated: 2026-04-14
 
 Scope:
 - Platform SDK contract/parity behavior, explicit-action behavior, and strict canonical input enforcement.
@@ -26,7 +26,10 @@ Key scenarios covered:
 - Non-artifact architect-safety aliases still normalize to canonical domain action IDs where intentionally supported.
 - Additional architect-safety aliases now map common non-canonical planner outputs to canonical IDs (e.g. `create_agent` -> `agents.create`) to prevent avoidable scope mismatch failures.
 - `run_tests` evaluates `contains` and `jsonpath` assertions.
+- `rag.create_pipeline_shell` parity now matches the current retrieval shell graph:
+  `query_input -> model_embedder -> vector_search -> retrieval_result`
 - Runtime primitive action dispatch routes through canonical orchestration action IDs.
+- Control-plane list parity now uses the shared `skip`/`limit`/`view` request contract and `items`/`total`/`has_more` response envelope.
 - Action-to-SDK parity for `artifacts.create`, `artifacts.update`, `artifacts.convert_kind`, `artifacts.create_test_run`, `artifacts.delete`, `tools.create_or_update`, `tools.publish`, `agents.execute`, `agents.start_run`, `agents.get_run_tree`, `orchestration.spawn_run`, and `catalog.list_capabilities`.
 - Action-to-SDK parity now also covers non-start-set canonical domains:
   - `rag.create_job`
@@ -79,8 +82,8 @@ Key scenarios covered:
   These validate persisted-state equivalence across UI HTTP path, SDK path, and tool-action path.
 
 Last run command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/platform_sdk_tool/test_platform_sdk_sdk_parity_additional_actions.py`
-Last run date/time: 2026-03-14 20:39 EET
-Last run result: passed (`61 passed`)
+Last run date/time: 2026-04-14 Asia/Hebron
+Last run result: passed (`67 passed`)
 
 Known gaps / follow-ups:
 - Publish env-gated cross-surface parity runs into CI with controlled credentials to reduce skip-only coverage in default local runs.

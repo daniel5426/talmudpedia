@@ -352,6 +352,7 @@ class DraftDevSessionResponse(BaseModel):
     has_active_coding_runs: bool
     active_coding_run_count: int
     preview_url: Optional[str] = None
+    preview_transport_generation: Optional[int] = None
     preview_auth_token: Optional[str] = None
     preview_auth_expires_at: Optional[datetime] = None
     workspace_revision_token: Optional[str] = None
@@ -733,6 +734,7 @@ def _draft_dev_session_to_response(
         has_active_coding_runs=normalized_active_count > 0,
         active_coding_run_count=normalized_active_count,
         preview_url=session.preview_url,
+        preview_transport_generation=int(session.runtime_generation or 0),
         workspace_revision_token=(
             str(preview_runtime.get("workspace_revision_token") or workspace.get("revision_token") or "").strip()
             or None

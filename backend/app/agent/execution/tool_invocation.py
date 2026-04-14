@@ -14,6 +14,9 @@ VALIDATION_MODE_NONE = "none"
 TOOL_ARGUMENT_COMPILE_FAILED = "TOOL_ARGUMENT_COMPILE_FAILED"
 
 TOOL_RUNTIME_CONTEXT_KEYS = {
+    "node_id",
+    "source_node_id",
+    "tool_call_id",
     "run_id",
     "thread_id",
     "tenant_id",

@@ -55,10 +55,10 @@ export default function AgentsPage() {
         try {
             setIsLoading(true)
             const [data, stats] = await Promise.all([
-                agentService.listAgents(),
+                agentService.listAgents({ view: "summary", limit: 100 }),
                 adminService.getStatsSummary("agents", 14),
             ])
-            setAgents(data.agents)
+            setAgents(data.items)
             const nextMetrics: Record<string, { threads: number; runs: number; failureRate: number; threadTrend: { date: string; value: number }[] }> = {}
             for (const item of stats.agents?.agents || []) {
                 nextMetrics[item.id] = {

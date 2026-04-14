@@ -136,7 +136,12 @@ def list_pipelines(
 ) -> Tuple[Optional[Any], List[Dict[str, Any]]]:
     try:
         sdk_client = control_client_factory(client)
-        response = sdk_client.rag.list_visual_pipelines(tenant_slug=payload.get("tenant_slug"))
+        response = sdk_client.rag.list_visual_pipelines(
+            tenant_slug=payload.get("tenant_slug"),
+            skip=int(payload.get("skip", 0) or 0),
+            limit=int(payload.get("limit", 20) or 20),
+            view=str(payload.get("view") or "summary"),
+        )
         return response.get("data"), []
     except ControlPlaneSDKError as exc:
         return None, [{"error": "list_pipelines_failed", "detail": str(exc), "code": exc.code, "http_status": exc.http_status}]

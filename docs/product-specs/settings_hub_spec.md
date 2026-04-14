@@ -1,15 +1,19 @@
 # Settings Hub Spec
 
-Last Updated: 2026-03-10
+Last Updated: 2026-04-14
 
-This document is the canonical product/specification overview for the tenant settings hub.
+This document is the canonical product/specification overview for the organization-backed settings hub.
+
+For the browser sign-in, org/project context, organization creation, project creation, and invite workflow, see:
+
+- `docs/product-specs/organization_and_project_workflow_spec.md`
 
 ## Purpose
 
-`/admin/settings` is the tenant-centric hub for:
+`/admin/settings` is the focused settings hub for:
 - integration credentials
-- tenant default pointers
-- tenant profile updates
+- organization-scoped default pointers
+- organization profile updates
 
 It should not duplicate stats, audit, or broader organization/security management surfaces that already exist elsewhere.
 
@@ -20,9 +24,9 @@ The settings hub currently covers:
 - credential usage inspection
 - credential status inspection
 - force-disconnect delete flow for linked resources
-- tenant default pointers stored in tenant settings
+- organization-backed default pointers stored in organization settings
 
-It links out to organization and security pages rather than embedding those management UIs directly.
+It links out to organization, project, members/invites, and security pages rather than embedding those management UIs directly.
 
 ## Current Credential Categories
 
@@ -33,14 +37,14 @@ It links out to organization and security pages rather than embedding those mana
 
 ## Current Default Settings
 
-Stored in `Tenant.settings`:
+Currently stored on the organization record (`Tenant.settings` in the current implementation):
 - `default_chat_model_id`
 - `default_embedding_model_id`
 - `default_retrieval_policy`
 
 Current validation behavior:
-- default chat model must resolve to an active chat model in tenant/global scope
-- default embedding model must resolve to an active embedding model in tenant/global scope
+- default chat model must resolve to an active chat model in organization/global scope
+- default embedding model must resolve to an active embedding model in organization/global scope
 - retrieval policy must be valid for the current enum
 
 ## Current API Surface
@@ -58,6 +62,14 @@ Tenant profile/settings APIs:
 - `GET /api/tenants/{tenant_slug}/settings`
 - `PATCH /api/tenants/{tenant_slug}/settings`
 
+Current organization/project workflow APIs live separately under:
+
+- `POST /auth/context/organization`
+- `POST /auth/context/project`
+- `GET /api/organizations`
+- `POST /api/organizations`
+- `GET /api/organizations/{organization_slug}/projects`
+
 ## Current Behavioral Rules
 
 - credential values are not returned directly; only key names are exposed in response payloads
@@ -70,8 +82,14 @@ Tenant profile/settings APIs:
 
 Current precedence is:
 1. explicit `credentials_ref`
-2. tenant default credential
+2. organization default credential
 3. platform environment default
+
+## Current Known Cleanup Boundary
+
+The product model is now organization + project, but this settings surface still uses some `tenant` route shapes and model names internally.
+
+That terminology is implementation debt, not the intended control-plane vocabulary.
 
 ## Canonical Implementation References
 

@@ -10,6 +10,9 @@ from app.api.dependencies import get_current_principal, require_scopes
 from app.api.routers.rag_pipelines import get_pipeline_context, sync_custom_operators
 from app.db.postgres.session import get_db
 from app.rag.pipeline.registry import ConfigFieldType, OperatorRegistry
+from app.services.control_plane.context import ControlPlaneContext
+from app.services.control_plane.errors import ControlPlaneError
+from app.services.control_plane.rag_admin_service import RagAdminService
 
 router = APIRouter()
 
@@ -216,31 +219,38 @@ async def get_operator_schemas(
     _: Dict[str, Any] = Depends(require_scopes("pipelines.catalog.read")),
     db: AsyncSession = Depends(get_db),
 ):
-    registry = OperatorRegistry.get_instance()
     tenant, _user, _db = await get_pipeline_context(
         tenant_slug,
         current_user=context.get("user"),
         db=db,
         context=context,
     )
-
-    tenant_id: Optional[str] = None
-    if tenant is not None:
-        await sync_custom_operators(db, tenant.id)
-        tenant_id = str(tenant.id)
-
-    operator_ids = [str(item).strip() for item in (request.operator_ids or []) if str(item).strip()]
-    schemas: Dict[str, Dict[str, Any]] = {}
-    unknown: list[str] = []
-    for operator_id in operator_ids:
-        spec = registry.get(operator_id, tenant_id=tenant_id)
-        if spec is None:
-            unknown.append(operator_id)
-            continue
-        schemas[operator_id] = _operator_schema_payload(spec)
-
-    return {
-        "schemas": schemas,
-        "unknown": unknown,
-        "pipeline_create_contract": _pipeline_create_contract(),
-    }
+    if tenant is None:
+        registry = OperatorRegistry.get_instance()
+        tenant_id: Optional[str] = None
+        operator_ids = [str(item).strip() for item in (request.operator_ids or []) if str(item).strip()]
+        schemas: Dict[str, Dict[str, Any]] = {}
+        unknown: list[str] = []
+        for operator_id in operator_ids:
+            spec = registry.get(operator_id, tenant_id=tenant_id)
+            if spec is None:
+                unknown.append(operator_id)
+                continue
+            schemas[operator_id] = _operator_schema_payload(spec)
+        return {"schemas": schemas, "unknown": unknown, "pipeline_create_contract": _pipeline_create_contract()}
+    try:
+        result = await RagAdminService(db).operators_schema(
+            ctx=ControlPlaneContext(
+                tenant_id=tenant.id,
+                user=context.get("user"),
+                user_id=getattr(context.get("user"), "id", None),
+                auth_token=context.get("auth_token"),
+                scopes=tuple(context.get("scopes") or ()),
+                is_service=bool(context.get("type") == "workload"),
+                tenant_slug=tenant.slug,
+            ),
+            operator_ids=list(request.operator_ids or []),
+        )
+    except ControlPlaneError as exc:
+        raise exc.to_http_exception() from exc
+    return {"schemas": result["schemas"], "unknown": [], "pipeline_create_contract": _pipeline_create_contract()}

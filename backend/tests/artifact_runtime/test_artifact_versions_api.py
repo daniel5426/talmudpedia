@@ -1,4 +1,5 @@
 import uuid
+from types import SimpleNamespace
 
 import pytest
 
@@ -48,6 +49,20 @@ def _override_principal(tenant_id, user):
 async def test_artifact_version_endpoints_list_and_get_saved_revisions(client, db_session):
     tenant, user = await _seed_tenant_context(db_session)
     app.dependency_overrides[get_current_principal] = _override_principal(tenant.id, user)
+
+    async def fake_ensure_deployment(self, *, revision, namespace, tenant_id=None):
+        return SimpleNamespace(
+            worker_name="prod-worker",
+            deployment_id="dep-1",
+            version_id="ver-1",
+            build_hash=revision.build_hash,
+        )
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(
+        "app.services.artifact_runtime.deployment_service.ArtifactDeploymentService.ensure_deployment",
+        fake_ensure_deployment,
+    )
 
     try:
         create_response = await client.post(
@@ -130,7 +145,7 @@ async def test_artifact_version_endpoints_list_and_get_saved_revisions(client, d
         assert latest_version_response.status_code == 200, latest_version_response.text
         latest_version = latest_version_response.json()
         assert latest_version["runtime"]["entry_module_path"] == "main.py"
-        assert latest_version["runtime"]["python_dependencies"] == ["httpx>=0.27"]
+        assert latest_version["runtime"]["dependencies"] == ["httpx>=0.27"]
         assert {item["path"] for item in latest_version["runtime"]["source_files"]} == {"main.py", "helpers.py"}
         assert latest_version["display_name"] == "Artifact Versions v2"
 
@@ -141,9 +156,10 @@ async def test_artifact_version_endpoints_list_and_get_saved_revisions(client, d
         assert first_version_response.status_code == 200, first_version_response.text
         first_version = first_version_response.json()
         assert first_version["version_label"] == "draft"
-        assert first_version["runtime"]["python_dependencies"] == []
+        assert first_version["runtime"]["dependencies"] == []
         assert first_version["runtime"]["source_files"][0]["content"].strip().endswith("{'step': 1}")
     finally:
+        monkeypatch.undo()
         app.dependency_overrides.pop(get_current_principal, None)
 
 
@@ -339,7 +355,12 @@ async def test_update_artifact_returns_clean_python_syntax_error(client, db_sess
                 },
             },
         )
-        assert update_response.status_code == 400, update_response.text
-        assert update_response.json()["detail"] == "Invalid Python source in `main.py`: invalid syntax"
+        assert update_response.status_code == 422, update_response.text
+        assert update_response.json()["detail"] == {
+            "code": "VALIDATION_ERROR",
+            "message": "Invalid Python source in `main.py`: invalid syntax",
+            "http_status": 422,
+            "retryable": False,
+        }
     finally:
         app.dependency_overrides.pop(get_current_principal, None)

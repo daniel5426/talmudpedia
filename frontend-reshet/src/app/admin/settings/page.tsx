@@ -112,10 +112,11 @@ export default function SettingsPage() {
   const router = useRouter()
   const pathname = usePathname()
   const searchParams = useSearchParams()
-  const user = useAuthStore((state) => state.user)
+  const hasScope = useAuthStore((state) => state.hasScope)
   const { currentTenant, setCurrentTenant, refreshTenants } = useTenant()
 
-  const canEdit = user?.role === "admin" || user?.org_role === "owner" || user?.org_role === "admin"
+  const canManageOrganizationSettings = hasScope("organizations.write")
+  const canManageCredentials = hasScope("credentials.write")
 
   const [activeSection, setActiveSection] = useState<SettingsSection>(() => parseSection(searchParams.get("tab")))
   const [loading, setLoading] = useState(true)
@@ -167,16 +168,16 @@ export default function SettingsPage() {
       const [tenantData, settingsData, credentialsData, chatModelsData, embeddingModelsData] = await Promise.all([
         orgUnitsService.getTenant(currentTenant.slug),
         orgUnitsService.getTenantSettings(currentTenant.slug),
-        credentialsService.listCredentials(),
-        modelsService.listModels("chat", "active", 0, 200),
-        modelsService.listModels("embedding", "active", 0, 200),
+        credentialsService.listCredentials(undefined, { limit: 100, view: "summary" }),
+        modelsService.listModels("chat", "active", 0, 100, "full"),
+        modelsService.listModels("embedding", "active", 0, 100, "full"),
       ])
 
       setTenant(tenantData)
       setTenantSettings(settingsData)
-      setCredentials(credentialsData)
-      setChatModels(chatModelsData.models)
-      setEmbeddingModels(embeddingModelsData.models)
+      setCredentials(credentialsData.items)
+      setChatModels(chatModelsData.items)
+      setEmbeddingModels(embeddingModelsData.items)
       setProfileForm({
         name: tenantData.name,
         slug: tenantData.slug,
@@ -315,7 +316,7 @@ export default function SettingsPage() {
                 <Input
                   value={profileForm.name}
                   onChange={(e) => setProfileForm((prev) => ({ ...prev, name: e.target.value }))}
-                  disabled={!canEdit}
+                  disabled={!canManageOrganizationSettings}
                   className="h-9 w-full"
                 />
               </div>
@@ -325,7 +326,7 @@ export default function SettingsPage() {
                 <Select
                   value={profileForm.status}
                   onValueChange={(value) => setProfileForm((prev) => ({ ...prev, status: value }))}
-                  disabled={!canEdit}
+                  disabled={!canManageOrganizationSettings}
                 >
                   <SelectTrigger className="h-9 w-full">
                     <SelectValue />
@@ -350,7 +351,7 @@ export default function SettingsPage() {
                 <Select
                   value={defaultsForm.default_chat_model_id || "none"}
                   onValueChange={(value) => setDefaultsForm((prev) => ({ ...prev, default_chat_model_id: value === "none" ? null : value }))}
-                  disabled={!canEdit}
+                  disabled={!canManageOrganizationSettings}
                 >
                   <SelectTrigger className="h-9 w-full">
                     <SelectValue placeholder="Select chat model" />
@@ -373,7 +374,7 @@ export default function SettingsPage() {
                   onValueChange={(value) =>
                     setDefaultsForm((prev) => ({ ...prev, default_embedding_model_id: value === "none" ? null : value }))
                   }
-                  disabled={!canEdit}
+                  disabled={!canManageOrganizationSettings}
                 >
                   <SelectTrigger className="h-9 w-full">
                     <SelectValue placeholder="Select embedding model" />
@@ -399,7 +400,7 @@ export default function SettingsPage() {
                       default_retrieval_policy: value === "none" ? null : (value as RetrievalPolicy),
                     }))
                   }
-                  disabled={!canEdit}
+                  disabled={!canManageOrganizationSettings}
                 >
                   <SelectTrigger className="h-9 w-full">
                     <SelectValue placeholder="Select policy" />
@@ -426,7 +427,7 @@ export default function SettingsPage() {
           </div>
         )}
 
-        {!canEdit && (
+        {!canManageOrganizationSettings && (
           <p className="text-xs text-muted-foreground/60 mt-2">Read-only access. Contact an admin to make changes.</p>
         )}
         
@@ -447,7 +448,13 @@ export default function SettingsPage() {
               if (profileDirty) await handleSaveProfile();
               if (defaultsDirty) await handleSaveDefaults();
             }}
-            disabled={!canEdit || (!profileDirty && !defaultsDirty) || !profileForm.name.trim() || profileSaving || defaultsSaving}
+            disabled={
+              !canManageOrganizationSettings ||
+              (!profileDirty && !defaultsDirty) ||
+              !profileForm.name.trim() ||
+              profileSaving ||
+              defaultsSaving
+            }
           >
             {(profileSaving || defaultsSaving) && <Loader2 className="h-3.5 w-3.5 animate-spin mr-2" />}
             Save Changes
@@ -482,7 +489,7 @@ export default function SettingsPage() {
                     <h3 className="text-sm font-medium">{categoryInfo.title}</h3>
                     <p className="text-xs text-muted-foreground/60 mt-0.5">{categoryInfo.description}</p>
                   </div>
-                  <CredentialFormDialog mode="create" category={category} disabled={!canEdit} onSaved={fetchData} />
+                  <CredentialFormDialog mode="create" category={category} disabled={!canManageCredentials} onSaved={fetchData} />
                 </div>
 
                 {items.length === 0 ? (
@@ -523,12 +530,12 @@ export default function SettingsPage() {
                             mode="edit"
                             category={category}
                             credential={cred}
-                            disabled={!canEdit}
+                            disabled={!canManageCredentials}
                             onSaved={fetchData}
                           />
                           <CredentialDeleteDialog
                             credential={cred}
-                            disabled={!canEdit}
+                            disabled={!canManageCredentials}
                             onDeleted={fetchData}
                             onError={(message) => setIntegrationsError(message || null)}
                           />

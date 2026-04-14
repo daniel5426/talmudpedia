@@ -1,4 +1,5 @@
 import { httpClient } from "./http";
+import type { ControlPlaneListResponse, ControlPlaneListView } from "./types";
 import type { FileUIPart } from "ai";
 
 // ============================================================================
@@ -182,10 +183,7 @@ export interface UpdateProviderRequest {
   pricing_config?: PricingConfig;
 }
 
-export interface ModelsListResponse {
-  models: LogicalModel[];
-  total: number;
-}
+export type ModelsListResponse = ControlPlaneListResponse<LogicalModel>;
 
 // Tool Types
 export type ToolImplementationType = "internal" | "http" | "rag_pipeline" | "agent_call" | "function" | "custom" | "artifact" | "mcp";
@@ -268,10 +266,8 @@ export interface UpdateToolRequest {
     status?: ToolStatus;
 }
 
-export interface ToolsListResponse {
-  tools: ToolDefinition[];
-  total: number;
-}
+export type ToolsListResponse = ControlPlaneListResponse<ToolDefinition>;
+export type AgentListResponse = ControlPlaneListResponse<Agent>;
 
 export interface ExportAgentToolRequest {
   name?: string;
@@ -423,16 +419,15 @@ export const agentService = {
     return httpClient.get<AgentOperatorSpec[]>("/agents/operators");
   },
 
-  async listAgents(params?: { status?: string, skip?: number, limit?: number, compact?: boolean }) {
+  async listAgents(params?: { status?: string, skip?: number, limit?: number, view?: ControlPlaneListView }) {
     const query = new URLSearchParams();
     if (params?.status) query.set("status", params.status);
-    if (params?.skip) query.set("skip", String(params.skip));
-    if (params?.limit) query.set("limit", String(params.limit));
-    const compact = params?.compact ?? true;
-    if (compact) query.set("compact", "true");
+    query.set("skip", String(params?.skip ?? 0));
+    query.set("limit", String(params?.limit ?? 20));
+    query.set("view", params?.view ?? "summary");
     const queryString = query.toString();
     const path = `/agents${queryString ? `?${queryString}` : ""}`;
-    return httpClient.get<{ agents: Agent[], total: number }>(path);
+    return httpClient.get<AgentListResponse>(path);
   },
 
   async getAgent(id: string) {

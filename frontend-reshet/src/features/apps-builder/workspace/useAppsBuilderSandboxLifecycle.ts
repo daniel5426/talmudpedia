@@ -18,7 +18,7 @@ import {
 } from "@/features/apps-builder/workspace/draftDevErrors";
 
 const DRAFT_DEV_SYNC_DEBOUNCE_MS = 800;
-const DRAFT_DEV_HEARTBEAT_MS = 45_000;
+const DRAFT_DEV_HEARTBEAT_MS = 30_000;
 const DRAFT_DEV_RECOVERY_ATTEMPTS = 3;
 const DRAFT_DEV_RECOVERY_BACKOFF_MS = 700;
 const DRAFT_DEV_WARMUP_POLL_MS = 2_000;
@@ -48,6 +48,7 @@ type UseAppsBuilderSandboxLifecycleResult = {
   draftDevStatus: DraftDevSessionStatus | null;
   draftDevError: string | null;
   previewAssetUrl: string | null;
+  previewTransportGeneration: number | null;
   previewAuthToken: string | null;
   previewLoadingMessage: string;
   publishLockMessage: string | null;
@@ -150,6 +151,7 @@ export function useAppsBuilderSandboxLifecycle({
   const [draftDevStatus, setDraftDevStatus] = useState<DraftDevSessionStatus | null>(null);
   const [draftDevError, setDraftDevError] = useState<string | null>(null);
   const [previewAssetUrl, setPreviewAssetUrl] = useState<string | null>(null);
+  const [previewTransportGeneration, setPreviewTransportGeneration] = useState<number | null>(null);
   const [previewAuthToken, setPreviewAuthToken] = useState<string | null>(null);
   const [publishLockMessage, setPublishLockMessage] = useState<string | null>(null);
   const [recoveryExhausted, setRecoveryExhausted] = useState(false);
@@ -163,6 +165,8 @@ export function useAppsBuilderSandboxLifecycle({
   const syncedEntryFileRef = useRef<string>("src/main.tsx");
   const latestSessionPayloadRef = useRef<DraftDevSessionResponse | null>(null);
   const draftDevErrorRef = useRef<string | null>(null);
+  const draftDevStatusRef = useRef<DraftDevSessionStatus | null>(null);
+  const applySessionRef = useRef<((session: DraftDevSessionResponse, options?: { markSynced?: boolean }) => void) | null>(null);
   const sessionSnapshotRef = useRef<{
     sessionId: string | null;
     status: DraftDevSessionStatus | null;
@@ -189,6 +193,13 @@ export function useAppsBuilderSandboxLifecycle({
     setDraftDevSessionId(session.session_id || null);
     setDraftDevStatus((session.status as DraftDevSessionStatus | undefined) || null);
     setDraftDevError(warmupRecovery ? null : session.last_error || null);
+    setPreviewTransportGeneration(
+      Number.isFinite(Number(session.preview_transport_generation))
+        ? Number(session.preview_transport_generation)
+        : Number.isFinite(Number((session as DraftDevSessionResponse & { runtime_generation?: number | null }).runtime_generation))
+          ? Number((session as DraftDevSessionResponse & { runtime_generation?: number | null }).runtime_generation)
+          : null,
+    );
     setPreviewAuthToken(session.preview_auth_token || null);
     setRecoveryExhausted(false);
 
@@ -246,7 +257,15 @@ export function useAppsBuilderSandboxLifecycle({
       onRevisionFromSession?.(revisionId);
     }
     onSessionChange?.(session);
-  }, [onRevisionFromSession, onSessionChange]);
+  }, [onRevisionFromSession, onSessionChange, phase]);
+
+  useEffect(() => {
+    draftDevStatusRef.current = draftDevStatus;
+  }, [draftDevStatus]);
+
+  useEffect(() => {
+    applySessionRef.current = applySession;
+  }, [applySession]);
 
   const clearSession = useCallback(() => {
     logSandboxLifecycleDebug("clear_session");
@@ -255,6 +274,7 @@ export function useAppsBuilderSandboxLifecycle({
     setDraftDevStatus(null);
     setDraftDevError(null);
     setPreviewAssetUrl(null);
+    setPreviewTransportGeneration(null);
     setPreviewAuthToken(null);
     setPhase("idle");
     onSessionChange?.(null);
@@ -490,6 +510,7 @@ export function useAppsBuilderSandboxLifecycle({
     setDraftDevStatus(null);
     setDraftDevError(null);
     setPreviewAssetUrl(null);
+    setPreviewTransportGeneration(null);
     setPreviewAuthToken(null);
     setPublishLockMessage(null);
     setRecoveryExhausted(false);
@@ -568,7 +589,13 @@ export function useAppsBuilderSandboxLifecycle({
       return;
     }
 
-    const interval = window.setInterval(() => {
+    const runHeartbeat = () => {
+      const currentStatus = draftDevStatusRef.current;
+      logSandboxLifecycleDebug("heartbeat.tick", {
+        appId,
+        sessionId: draftDevSessionId,
+        status: currentStatus,
+      });
       publishedAppsService
         .heartbeatDraftDevSessionQuiet(appId)
         .then((result) => {
@@ -586,18 +613,25 @@ export function useAppsBuilderSandboxLifecycle({
           }
           if (result.session) {
             setPublishLockMessage(null);
-            applySession(result.session);
+            applySessionRef.current?.(result.session);
           }
         })
-        .catch(() => {
-          // Heartbeat failures should not hard-break editing.
+        .catch((err) => {
+          logSandboxLifecycleDebug("heartbeat.failed", {
+            sessionId: draftDevSessionId,
+            status: currentStatus,
+            error: err instanceof Error ? err.message : String(err),
+          });
         });
-    }, DRAFT_DEV_HEARTBEAT_MS);
+    };
+
+    void Promise.resolve().then(runHeartbeat);
+    const interval = window.setInterval(runHeartbeat, DRAFT_DEV_HEARTBEAT_MS);
 
     return () => {
       window.clearInterval(interval);
     };
-  }, [appId, applySession, draftDevSessionId]);
+  }, [appId, draftDevSessionId]);
 
   useEffect(() => {
     if (!draftDevSessionId) {
@@ -674,6 +708,7 @@ export function useAppsBuilderSandboxLifecycle({
     draftDevStatus,
     draftDevError,
     previewAssetUrl,
+    previewTransportGeneration,
     previewAuthToken,
     previewLoadingMessage,
     publishLockMessage,

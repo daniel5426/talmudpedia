@@ -452,36 +452,44 @@ def _ensure_local_bundle_bucket_if_needed() -> None:
 
 
 def _celery_worker_running() -> bool:
-    if shutil.which("pgrep") is None:
-        return False
-    result = subprocess.run(
-        ["pgrep", "-f", "celery -A app.workers.celery_app.celery_app worker"],
-        check=False,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+    from app.workers.dev_reload import has_matching_worker_processes
+
+    return has_matching_worker_processes(
+        "apps_build,agent_runs,default,ingestion,embedding",
+        managed_only=_celery_dev_autoreload_enabled(),
     )
-    return result.returncode == 0
 
 
 def _artifact_celery_worker_running() -> bool:
-    if shutil.which("pgrep") is None:
-        return False
-    result = subprocess.run(
-        [
-            "pgrep",
-            "-f",
-            "celery -A app.workers.celery_app.celery_app worker.*artifact_test",
-        ],
-        check=False,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+    from app.workers.dev_reload import has_matching_worker_processes
+
+    return has_matching_worker_processes(
+        "artifact_test",
+        managed_only=_celery_dev_autoreload_enabled(),
     )
-    return result.returncode == 0
+
+
+def _celery_dev_autoreload_enabled() -> bool:
+    raw = os.getenv("CELERY_DEV_AUTORELOAD")
+    if raw is not None:
+        return _is_truthy(raw)
+    return (os.getenv("DB_TARGET") or "").strip().lower() == "local"
 
 
 def _ensure_celery_worker_if_needed() -> None:
     if not _is_truthy(os.getenv("APPS_BUILDER_BUILD_AUTOMATION_ENABLED", "0")):
         return
+    queue_fragment = "apps_build,agent_runs,default,ingestion,embedding"
+    if _celery_dev_autoreload_enabled():
+        from app.workers.dev_reload import cleanup_unmanaged_worker_processes
+
+        terminated = cleanup_unmanaged_worker_processes(queue_fragment)
+        if terminated:
+            logger.warning(
+                "Terminated stale unmanaged Celery worker roots for %s: %s",
+                queue_fragment,
+                terminated,
+            )
     if _celery_worker_running():
         return
 
@@ -499,18 +507,18 @@ def _ensure_celery_worker_if_needed() -> None:
 
     celery_log_path = Path(os.getenv("CELERY_LOG_PATH", "/tmp/talmudpedia-celery.log"))
     backend_dir = Path(__file__).resolve().parent
-    celery_cmd = [
-        sys.executable,
-        "-m",
-        "celery",
-        "-A",
-        "app.workers.celery_app.celery_app",
-        "worker",
-        "-Q",
-        "apps_build,agent_runs,default,ingestion,embedding",
-        "-l",
-        "info",
-    ]
+    celery_cmd = [sys.executable, "run_celery.py"]
+    if _celery_dev_autoreload_enabled():
+        celery_cmd.append("--reload")
+    celery_cmd.extend(
+        [
+            "worker",
+            "-Q",
+            "apps_build,agent_runs,default,ingestion,embedding",
+            "-l",
+            "info",
+        ]
+    )
     with celery_log_path.open("ab") as log_file:
         subprocess.Popen(
             celery_cmd,
@@ -533,6 +541,17 @@ def _ensure_artifact_runtime_worker_if_needed() -> None:
     if _is_truthy(os.getenv("ARTIFACT_RUN_TASK_EAGER", "0")):
         logger.info("Artifact runtime is configured for eager execution; skipping artifact Celery bootstrap")
         return
+    queue_fragment = "artifact_test"
+    if _celery_dev_autoreload_enabled():
+        from app.workers.dev_reload import cleanup_unmanaged_worker_processes
+
+        terminated = cleanup_unmanaged_worker_processes(queue_fragment)
+        if terminated:
+            logger.warning(
+                "Terminated stale unmanaged artifact Celery worker roots for %s: %s",
+                queue_fragment,
+                terminated,
+            )
     if _artifact_celery_worker_running():
         return
 
@@ -552,20 +571,20 @@ def _ensure_artifact_runtime_worker_if_needed() -> None:
         os.getenv("ARTIFACT_CELERY_LOG_PATH", "/tmp/talmudpedia-artifact-celery.log")
     )
     backend_dir = Path(__file__).resolve().parent
-    celery_cmd = [
-        sys.executable,
-        "-m",
-        "celery",
-        "-A",
-        "app.workers.celery_app.celery_app",
-        "worker",
-        "-Q",
-        "artifact_test",
-        "-n",
-        "artifact_test@%h",
-        "-l",
-        "info",
-    ]
+    celery_cmd = [sys.executable, "run_celery.py"]
+    if _celery_dev_autoreload_enabled():
+        celery_cmd.append("--reload")
+    celery_cmd.extend(
+        [
+            "worker",
+            "-Q",
+            "artifact_test",
+            "-n",
+            "artifact_test@%h",
+            "-l",
+            "info",
+        ]
+    )
     with artifact_celery_log_path.open("ab") as log_file:
         subprocess.Popen(
             celery_cmd,

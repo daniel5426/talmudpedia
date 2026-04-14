@@ -234,7 +234,7 @@ describe("playground trace sidebar", () => {
     mockStartNewChat.mockReset();
     mockLoadHistoryChat.mockImplementation(async (item: any) => item);
     mockedAgentService.listAgents.mockResolvedValue({
-      agents: [
+      items: [
         {
           id: "agent-1",
           tenant_id: "tenant-1",
@@ -248,6 +248,10 @@ describe("playground trace sidebar", () => {
         },
       ],
       total: 1,
+      has_more: false,
+      skip: 0,
+      limit: 100,
+      view: "summary",
     });
     mockedAgentService.getAgent.mockResolvedValue({
       id: "agent-1",
@@ -282,7 +286,7 @@ describe("playground trace sidebar", () => {
   it("filters hidden agents out of the selector bootstrap redirect", async () => {
     mockSearchState.agentId = null as unknown as string;
     mockedAgentService.listAgents.mockResolvedValue({
-      agents: [
+      items: [
         {
           id: "agent-hidden",
           tenant_id: "tenant-1",
@@ -307,6 +311,10 @@ describe("playground trace sidebar", () => {
         },
       ],
       total: 2,
+      has_more: false,
+      skip: 0,
+      limit: 100,
+      view: "summary",
     } as any);
 
     render(<PlaygroundPage />);
@@ -324,7 +332,7 @@ describe("playground trace sidebar", () => {
 
   it("redirects away from a hidden agent deep link to the first visible agent", async () => {
     mockedAgentService.listAgents.mockResolvedValue({
-      agents: [
+      items: [
         {
           id: "agent-hidden",
           tenant_id: "tenant-1",
@@ -349,6 +357,10 @@ describe("playground trace sidebar", () => {
         },
       ],
       total: 2,
+      has_more: false,
+      skip: 0,
+      limit: 100,
+      view: "summary",
     } as any);
     mockedAgentService.getAgent.mockResolvedValue({
       id: "agent-hidden",
@@ -378,7 +390,7 @@ describe("playground trace sidebar", () => {
   it("redirects to the first visible agent when the deep-linked agent no longer exists", async () => {
     mockSearchState.agentId = "agent-missing";
     mockedAgentService.listAgents.mockResolvedValue({
-      agents: [
+      items: [
         {
           id: "agent-visible",
           tenant_id: "tenant-1",
@@ -392,6 +404,10 @@ describe("playground trace sidebar", () => {
         },
       ],
       total: 1,
+      has_more: false,
+      skip: 0,
+      limit: 100,
+      view: "summary",
     } as any);
     mockedAgentService.getAgent.mockRejectedValue(new Error("Agent agent-missing not found"));
 

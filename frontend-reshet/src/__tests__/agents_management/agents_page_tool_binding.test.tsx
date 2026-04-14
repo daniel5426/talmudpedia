@@ -53,7 +53,7 @@ describe("agents page tool binding flow", () => {
   beforeEach(() => {
     jest.clearAllMocks()
     listAgentsMock.mockResolvedValue({
-      agents: [
+      items: [
         {
           id: "agent-1",
           tenant_id: "tenant-1",
@@ -69,6 +69,10 @@ describe("agents page tool binding flow", () => {
         },
       ],
       total: 1,
+      has_more: false,
+      skip: 0,
+      limit: 100,
+      view: "summary",
     })
     getStatsSummaryMock.mockResolvedValue({
       agents: {
@@ -100,7 +104,7 @@ describe("agents page tool binding flow", () => {
 
   it("shows tool status in the card footer", async () => {
     listAgentsMock.mockResolvedValueOnce({
-      agents: [
+      items: [
         {
           id: "agent-1",
           tenant_id: "tenant-1",
@@ -116,6 +120,10 @@ describe("agents page tool binding flow", () => {
         },
       ],
       total: 1,
+      has_more: false,
+      skip: 0,
+      limit: 100,
+      view: "summary",
     })
 
     render(<AgentsPage />)

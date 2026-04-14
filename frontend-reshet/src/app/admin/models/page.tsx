@@ -327,8 +327,8 @@ export default function ModelsPage() {
         setLoading(true)
         try {
             const capabilityType = filter === "all" ? undefined : filter
-            const response = await modelsService.listModels(capabilityType)
-            setModels(response.models)
+            const response = await modelsService.listModels(capabilityType, undefined, 0, 100, "full")
+            setModels(response.items)
         } catch (error) {
             console.error("Failed to fetch models", error)
         } finally {
@@ -342,8 +342,8 @@ export default function ModelsPage() {
 
     const fetchCredentials = useCallback(async () => {
         try {
-            const response = await credentialsService.listCredentials("llm_provider")
-            setCredentials(response)
+            const response = await credentialsService.listCredentials("llm_provider", { limit: 100, view: "summary" })
+            setCredentials(response.items)
         } catch (error) {
             console.error("Failed to fetch credentials", error)
         }

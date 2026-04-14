@@ -21,12 +21,20 @@ function resolveBuilderPreviewBootstrapUrl(): string | null {
   if (typeof window === "undefined") {
     return null;
   }
-  const params = new URLSearchParams(window.location.search);
-  if (params.get("runtime_mode") !== "builder-preview") {
+  const runtimeWindow = window as Window & {
+    __TALMUDPEDIA_BUILDER_PREVIEW_BASE_PATH?: unknown;
+  };
+  const previewBasePath = String(runtimeWindow.__TALMUDPEDIA_BUILDER_PREVIEW_BASE_PATH || "").trim();
+  if (previewBasePath) {
+    const normalized = previewBasePath.endsWith("/") ? previewBasePath.slice(0, -1) : previewBasePath;
+    return `${normalized}/_talmudpedia/runtime/bootstrap`;
+  }
+  const pathname = String(window.location.pathname || "").trim();
+  const match = pathname.match(/^(\/public\/apps-builder\/draft-dev\/sessions\/[^/]+\/preview)\/?$/);
+  if (!match) {
     return null;
   }
-  const bootstrapUrl = String(params.get("runtime_bootstrap_url") || "").trim();
-  return bootstrapUrl || null;
+  return `${match[1]}/_talmudpedia/runtime/bootstrap`;
 }
 
 function resolveBootstrapPath(request: RuntimeBootstrapRequest): string {

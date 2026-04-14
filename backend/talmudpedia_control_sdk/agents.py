@@ -14,10 +14,10 @@ class AgentsAPI:
         *,
         status: Optional[str] = None,
         skip: int = 0,
-        limit: int = 50,
-        compact: bool = False,
+        limit: int = 20,
+        view: str = "summary",
     ) -> ResponseEnvelope:
-        params: Dict[str, Any] = {"skip": skip, "limit": limit, "compact": compact}
+        params: Dict[str, Any] = {"skip": skip, "limit": limit, "view": view}
         if status:
             params["status"] = status
         return self._client.request("GET", "/agents", params=params)

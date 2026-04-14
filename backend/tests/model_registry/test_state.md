@@ -14,12 +14,13 @@ Model Registry credentials resolution, provider binding updates, and vector stor
 - `backend/tests/model_registry/test_vector_store_credentials.py`
 
 ## Key Scenarios Covered
+- Credential/vector-store tests seed tenant rows explicitly before creating tenant-scoped registry resources.
 - Explicit credential refs resolve provider API keys for LLM bindings.
 - Default credential resolution follows tenant default then env fallback precedence.
 - Embedding resolution uses integration credentials.
 - Resolver ignores disabled tenant bindings when a lower-priority enabled fallback exists.
 - Resolver rejects legacy non-UUID model identifiers.
-- `/models` list responses keep filtered items and `total` aligned.
+- `/models` list responses use the canonical bounded envelope: `items`, `total`, `has_more`, `skip`, `limit`, `view`.
 - `models.list` now returns the same filtered result across the service layer, direct router adapter, and native `platform-assets` tool adapter.
 - `/models` create responses no longer expose slug-based identity.
 - Setting a default model clears the previous default in the same tenant/capability scope.
@@ -35,6 +36,12 @@ Model Registry credentials resolution, provider binding updates, and vector stor
 - Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/model_registry/test_models_api_contract.py backend/tests/model_registry/test_models_service_parity.py backend/tests/platform_architect_runtime/test_native_platform_tools.py`
 - Date/Time: 2026-04-14 Asia/Hebron
 - Result: PASS (`12 passed`)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/model_registry/test_models_api_contract.py backend/tests/model_registry/test_models_service_parity.py backend/tests/control_plane_sdk/test_client_and_modules.py backend/tests/platform_sdk_tool/test_platform_sdk_sdk_parity.py`
+- Date/Time: 2026-04-14 Asia/Hebron
+- Result: PASS (`44 passed`)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/model_registry/test_credentials_resolution.py backend/tests/model_registry/test_vector_store_credentials.py`
+- Date/Time: 2026-04-14 Asia/Hebron
+- Result: PASS (`6 passed`)
 - Command: `PYTHONPATH=/Users/danielbenassaya/Code/personal/talmudpedia python3 -m pytest -q backend/tests/model_registry/test_model_resolution_contract.py`
 - Date/Time: 2026-03-30 Asia/Hebron
 - Result: PASS (`2 passed`)

@@ -142,8 +142,8 @@ export function ArtifactEditorScreen({
 
   const fetchAvailableCredentials = useCallback(async () => {
     try {
-      const items = await credentialsService.listCredentials()
-      setAvailableCredentials(items)
+      const response = await credentialsService.listCredentials(undefined, { limit: 100, view: "summary" })
+      setAvailableCredentials(response.items)
     } catch (error) {
       console.error("Failed to fetch integration credentials", error)
     }

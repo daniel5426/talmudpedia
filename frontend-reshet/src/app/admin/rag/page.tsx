@@ -314,14 +314,14 @@ export default function RAGAdminPage() {
         ragAdminService.getStats(currentTenant?.slug),
         ragAdminService.listIndices(currentTenant?.slug),
         currentTenant ? orgUnitsService.listOrgUnits(currentTenant.slug) : Promise.resolve([]),
-        ragAdminService.listVisualPipelines(currentTenant?.slug),
+        ragAdminService.listVisualPipelines(currentTenant?.slug, { view: "summary", limit: 100 }),
         ragAdminService.listPipelineJobs(undefined, currentTenant?.slug),
         ragAdminService.getOperatorCatalog()
       ])
       setStats(statsData)
       setIndices(indicesData.indices)
       setOrgUnits(unitsData)
-      setPipelines(pipelinesData.pipelines)
+      setPipelines(pipelinesData.items)
       setPipelineJobs(pipelineJobsData.jobs)
 
       setOperatorCatalog(catalogData)

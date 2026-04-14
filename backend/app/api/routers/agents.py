@@ -27,6 +27,7 @@ from app.services.agent_service import (
     AgentNotFoundError,
     AgentSlugExistsError,
     AgentGraphValidationError,
+    AgentInputValidationError,
     AgentPublishedError,
     AgentNotPublishedError,
 )
@@ -56,6 +57,15 @@ from app.services.context_window_service import ContextWindowService
 from app.services.model_accounting import usage_payload_from_run
 from app.services.orchestration_kernel_service import OrchestrationKernelService
 from app.services.organization_bootstrap_service import OrganizationBootstrapService
+from app.services.control_plane.agents_admin_service import (
+    AgentAdminService,
+    CreateAgentInput as ControlPlaneCreateAgentInput,
+    StartAgentRunInput as ControlPlaneStartAgentRunInput,
+    UpdateAgentInput as ControlPlaneUpdateAgentInput,
+)
+from app.services.control_plane.context import ControlPlaneContext
+from app.services.control_plane.contracts import ListQuery
+from app.services.control_plane.errors import ControlPlaneError
 router = APIRouter(prefix="/agents", tags=["agents"])
 
 
@@ -79,6 +89,17 @@ def _optional_uuid(value: Any) -> Optional[UUID]:
 
 def _serialize_run_usage(run: AgentRun) -> dict[str, Any]:
     return usage_payload_from_run(run) or {}
+
+
+def _control_plane_ctx_from_agent_context(context: Dict[str, Any]) -> ControlPlaneContext:
+    return ControlPlaneContext(
+        tenant_id=UUID(str(context["tenant_id"])),
+        user=context.get("user"),
+        user_id=getattr(context.get("user"), "id", None),
+        auth_token=context.get("auth_token"),
+        scopes=tuple(context.get("scopes") or ()),
+        is_service=bool(context.get("is_service", False)),
+    )
 
 
 # =============================================================================
@@ -176,6 +197,14 @@ def handle_service_error(e: AgentServiceError):
                 "code": "VALIDATION_ERROR",
                 "message": "Graph write rejected",
                 "errors": e.errors,
+            },
+        )
+    if isinstance(e, AgentInputValidationError):
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "VALIDATION_ERROR",
+                "message": e.message,
             },
         )
     if isinstance(e, AgentSlugExistsError):
@@ -326,29 +355,11 @@ async def list_node_catalog(
     context: Dict[str, Any] = Depends(get_agent_context),
     db: AsyncSession = Depends(get_db),
 ):
-    del context, db
-    from app.agent.registry import AgentOperatorRegistry
-    from app.agent.executors.standard import register_standard_operators
-
-    register_standard_operators()
-    operators = AgentOperatorRegistry.list_operators()
-    catalog = []
-    for spec in operators:
-        config_schema = spec.config_schema if isinstance(spec.config_schema, dict) else {}
-        required_fields = config_schema.get("required") if isinstance(config_schema.get("required"), list) else []
-        catalog.append(
-            {
-                "type": spec.type,
-                "name": spec.display_name,
-                "description": spec.description,
-                "reads": list(spec.reads or []),
-                "writes": list(spec.writes or []),
-                "config_schema": config_schema,
-                "ui_schema": spec.ui if isinstance(spec.ui, dict) else {},
-                "required_fields": [str(item) for item in required_fields],
-            }
-        )
-    return {"nodes": catalog}
+    del context
+    try:
+        return await AgentAdminService(db).list_node_catalog()
+    except ControlPlaneError as exc:
+        raise exc.to_http_exception() from exc
 
 
 @router.post("/nodes/schema")
@@ -358,90 +369,42 @@ async def get_node_schemas(
     context: Dict[str, Any] = Depends(get_agent_context),
     db: AsyncSession = Depends(get_db),
 ):
-    del context, db
-    node_types = [str(item).strip() for item in (request.node_types or []) if str(item).strip()]
-    if not node_types:
-        raise HTTPException(status_code=422, detail="node_types must be a non-empty array")
-
-    from app.agent.registry import AgentOperatorRegistry
-    from app.agent.executors.standard import register_standard_operators
-
-    register_standard_operators()
-    schemas: Dict[str, Dict[str, Any]] = {}
-    unknown: list[str] = []
-
-    for node_type in node_types:
-        spec = AgentOperatorRegistry.get(node_type)
-        if spec is None:
-            unknown.append(node_type)
-            continue
-        config_schema = spec.config_schema if isinstance(spec.config_schema, dict) else {}
-        required_fields = config_schema.get("required") if isinstance(config_schema.get("required"), list) else []
-        schemas[node_type] = {
-            "config_schema": config_schema,
-            "ui_schema": spec.ui if isinstance(spec.ui, dict) else {},
-            "required_fields": [str(item) for item in required_fields],
-            "reads": list(spec.reads or []),
-            "writes": list(spec.writes or []),
-            "graph_node_contract": {
-                "required_fields": ["id", "type", "position"],
-                "field_shapes": {
+    del context
+    try:
+        result = await AgentAdminService(db).get_node_schemas(node_types=list(request.node_types or []))
+        return {
+            "schemas": result["schemas"],
+            "unknown": [],
+            "graph_create_contract": {
+                "required_fields": ["nodes", "edges"],
+                "node_required_fields": ["id", "type", "position"],
+                "edge_required_fields": ["id", "source", "target"],
+                "edge_field_shapes": {
                     "id": {"type": "string"},
-                    "type": {"type": "string", "const": spec.type},
-                    "position": {
-                        "type": "object",
-                        "properties": {"x": {"type": "number"}, "y": {"type": "number"}},
-                        "required": ["x", "y"],
-                        "additionalProperties": False,
-                    },
+                    "source": {"type": "string"},
+                    "target": {"type": "string"},
+                    "type": {"type": "string", "enum": ["control", "data"]},
+                    "source_handle": {"type": "string"},
+                    "target_handle": {"type": "string"},
                     "label": {"type": "string"},
-                    "config": config_schema,
-                    "data": {"type": "object"},
-                    "input_mappings": {
-                        "type": "object",
-                        "additionalProperties": {"type": "string"},
-                    },
-                },
-                "example_node": {
-                    "id": f"{spec.type}_1",
-                    "type": spec.type,
-                    "position": {"x": 0, "y": 0},
-                    "config": {},
+                    "condition": {"type": "string"},
                 },
             },
         }
-
-    return {
-        "schemas": schemas,
-        "unknown": unknown,
-        "graph_create_contract": {
-            "required_fields": ["nodes", "edges"],
-            "node_required_fields": ["id", "type", "position"],
-            "edge_required_fields": ["id", "source", "target"],
-            "edge_field_shapes": {
-                "id": {"type": "string"},
-                "source": {"type": "string"},
-                "target": {"type": "string"},
-                "type": {"type": "string", "enum": ["control", "data"]},
-                "source_handle": {"type": "string"},
-                "target_handle": {"type": "string"},
-                "label": {"type": "string"},
-                "condition": {"type": "string"},
-            },
-        },
-    }
+    except ControlPlaneError as exc:
+        raise exc.to_http_exception() from exc
 
 
 # =============================================================================
 # CRUD Endpoints
 # =============================================================================
 
-@router.get("", response_model=AgentListResponse)
+@router.get("", response_model=dict[str, Any])
 async def list_agents(
     status: str = None,
     skip: int = 0,
-    limit: int = 50,
-    compact: bool = Query(False),
+    limit: int = 20,
+    view: str = "summary",
     context: Dict[str, Any] = Depends(get_agent_context),
     db: AsyncSession = Depends(get_db),
 ):
@@ -461,36 +424,16 @@ async def list_agents(
         ) or did_backfill
     if did_backfill or db.new or db.dirty:
         await db.commit()
-    service = AgentService(db=db, tenant_id=tenant_id)
-    
-    agents, total = await service.list_agents(status=status, skip=skip, limit=limit, compact=compact)
-    tool_binding_by_agent_id: dict[str, ToolRegistry] = {}
-    if agents:
-        tool_rows = (
-            await db.execute(
-                select(ToolRegistry).where(
-                    ToolRegistry.tenant_id == tenant_id,
-                    ToolRegistry.source_object_type == "agent",
-                    ToolRegistry.source_object_id.in_([str(agent.id) for agent in agents]),
-                )
-            )
-        ).scalars().all()
-        tool_binding_by_agent_id = {
-            str(tool.source_object_id): tool
-            for tool in tool_rows
-            if getattr(tool, "source_object_id", None)
-        }
-    return AgentListResponse(
-        agents=[
-            agent_to_response(
-                a,
-                compact=compact,
-                tool_binding=tool_binding_by_agent_id.get(str(a.id)),
-            )
-            for a in agents
-        ],
-        total=total
-    )
+    try:
+        query = ListQuery.from_payload({"skip": skip, "limit": limit, "view": view})
+        page = await AgentAdminService(db).list_agents(
+            ctx=_control_plane_ctx_from_agent_context(context),
+            query=query,
+            status=status,
+        )
+        return page.to_payload()
+    except ControlPlaneError as exc:
+        raise exc.to_http_exception() from exc
 
 
 @router.post("", response_model=AgentResponse)
@@ -501,12 +444,10 @@ async def create_agent(
     db: AsyncSession = Depends(get_db),
 ):
     """Create a new agent."""
-    tenant_id = context["tenant_id"]
-    service = AgentService(db=db, tenant_id=tenant_id)
-    
     try:
-        agent = await service.create_agent(
-            data=CreateAgentData(
+        payload = await AgentAdminService(db).create_agent(
+            ctx=_control_plane_ctx_from_agent_context(context),
+            params=ControlPlaneCreateAgentInput(
                 name=request.name,
                 slug=request.slug,
                 description=request.description,
@@ -514,11 +455,10 @@ async def create_agent(
                 memory_config=request.memory_config,
                 execution_constraints=request.execution_constraints,
             ),
-            user_id=context["user"].id if context.get("user") else None
         )
-        return agent_to_response(agent)
-    except AgentServiceError as e:
-        handle_service_error(e)
+        return AgentResponse(**payload)
+    except ControlPlaneError as exc:
+        raise exc.to_http_exception() from exc
 
 
 @router.get("/{agent_id}", response_model=AgentResponse)
@@ -528,14 +468,11 @@ async def get_agent(
     db: AsyncSession = Depends(get_db)
 ):
     """Get an agent by ID."""
-    tenant_id = context["tenant_id"]
-    service = AgentService(db=db, tenant_id=tenant_id)
-    
     try:
-        agent = await service.get_agent(agent_id)
-        return agent_to_response(agent)
-    except AgentServiceError as e:
-        handle_service_error(e)
+        payload = await AgentAdminService(db).get_agent(ctx=_control_plane_ctx_from_agent_context(context), agent_id=agent_id)
+        return AgentResponse(**payload)
+    except ControlPlaneError as exc:
+        raise exc.to_http_exception() from exc
 
 
 @router.put("/{agent_id}", response_model=AgentResponse)
@@ -548,20 +485,21 @@ async def update_agent(
     db: AsyncSession = Depends(get_db),
 ):
     """Update an agent."""
-    tenant_id = context["tenant_id"]
-    service = AgentService(db=db, tenant_id=tenant_id)
-    
     try:
-        agent = await service.update_agent(agent_id, UpdateAgentData(
-            name=request.name,
-            description=request.description,
-            graph_definition=request.graph_definition.model_dump() if request.graph_definition else None,
-            memory_config=request.memory_config,
-            execution_constraints=request.execution_constraints,
-        ), user_id=context["user"].id if context.get("user") else None)
-        return agent_to_response(agent)
-    except AgentServiceError as e:
-        handle_service_error(e)
+        payload = await AgentAdminService(db).update_agent(
+            ctx=_control_plane_ctx_from_agent_context(context),
+            agent_id=agent_id,
+            params=ControlPlaneUpdateAgentInput(
+                name=request.name,
+                description=request.description,
+                graph_definition=request.graph_definition.model_dump() if request.graph_definition else None,
+                memory_config=request.memory_config,
+                execution_constraints=request.execution_constraints,
+            ),
+        )
+        return AgentResponse(**payload)
+    except ControlPlaneError as exc:
+        raise exc.to_http_exception() from exc
 @router.put("/{agent_id}/graph", response_model=AgentResponse)
 async def update_graph(
     agent_id: UUID,
@@ -620,14 +558,10 @@ async def validate_agent(
     db: AsyncSession = Depends(get_db)
 ):
     """Validate agent graph."""
-    tenant_id = context["tenant_id"]
-    service = AgentService(db=db, tenant_id=tenant_id)
-    
     try:
-        result = await service.validate_agent(agent_id)
-        return {"valid": result.valid, "errors": result.errors, "warnings": result.warnings}
-    except AgentServiceError as e:
-        handle_service_error(e)
+        return await AgentAdminService(db).validate_agent(ctx=_control_plane_ctx_from_agent_context(context), agent_id=agent_id)
+    except ControlPlaneError as exc:
+        raise exc.to_http_exception() from exc
 
 
 @router.post("/{agent_id}/publish", response_model=AgentResponse)
@@ -640,7 +574,6 @@ async def publish_agent(
 ):
     """Publish an agent."""
     tenant_id = context["tenant_id"]
-    service = AgentService(db=db, tenant_id=tenant_id)
 
     await ensure_sensitive_action_approved(
         principal=principal,
@@ -652,10 +585,10 @@ async def publish_agent(
     )
 
     try:
-        agent = await service.publish_agent(agent_id, user_id=context["user"].id if context.get("user") else None)
-        return agent_to_response(agent)
-    except AgentServiceError as e:
-        handle_service_error(e)
+        payload = await AgentAdminService(db).publish_agent(ctx=_control_plane_ctx_from_agent_context(context), agent_id=agent_id)
+        return AgentResponse(**payload)
+    except ControlPlaneError as exc:
+        raise exc.to_http_exception() from exc
 
 
 # =============================================================================
@@ -870,55 +803,23 @@ async def start_run_v2(
     Start an agent execution using the new AgentExecutorService (Phase 4 engine).
     Returns the Run ID immediately.
     """
-    from app.agent.execution.service import AgentExecutorService
-    
-    tenant_id = context["tenant_id"]
-    # Ensure user has access
-    service = AgentService(db=db, tenant_id=tenant_id)
     try:
-        await service.get_agent(agent_id) # Validates existence and checks ownership implicitly
-    except Exception:
-        raise
-    
-    executor = AgentExecutorService(db=db)
-    
-    # Construct input params
-    # Convert Pydantic messages to dicts
-    current_messages = [msg.model_dump() if hasattr(msg, "model_dump") else msg for msg in request.messages]
-
-    tenant_id = context.get("tenant_id")
-    request_context = dict(request.context or {}) if isinstance(request.context, dict) else {}
-    request_context.setdefault("token", context.get("auth_token"))
-    request_context.setdefault("tenant_id", str(tenant_id) if tenant_id is not None else None)
-    request_context.setdefault("user_id", str(context["user"].id) if context.get("user") else context.get("initiator_user_id"))
-    request_context.setdefault("initiator_user_id", context.get("initiator_user_id"))
-    input_params = {
-        "messages": current_messages,
-        "input": request.input,
-        "attachment_ids": [str(item) for item in request.attachment_ids],
-        "thread_id": str(request.thread_id) if request.thread_id else None,
-        "context": request_context,
-    }
-    
-    try:
-        initiating_user_id = context["user"].id if context.get("user") else None
-        run_id = await executor.start_run(
-            agent_id,
-            input_params,
-            user_id=initiating_user_id,
-            thread_id=request.thread_id,
+        operation = await AgentAdminService(db).start_run(
+            ctx=_control_plane_ctx_from_agent_context(context),
+            agent_id=agent_id,
+            params=ControlPlaneStartAgentRunInput(
+                input=request.input,
+                messages=[msg.model_dump() if hasattr(msg, "model_dump") else msg for msg in request.messages],
+                context=request.context if isinstance(request.context, dict) else {},
+                thread_id=request.thread_id,
+            ),
         )
-        run_row = await db.get(AgentRun, run_id)
         return {
-            "run_id": str(run_id),
-            "thread_id": str(run_row.thread_id) if run_row and run_row.thread_id else None,
+            "run_id": operation["operation"]["id"],
+            "thread_id": operation.get("metadata", {}).get("thread_id"),
         }
-    except (QuotaExceededError, ResourcePolicyQuotaExceeded) as exc:
-        return JSONResponse(status_code=429, content=exc.to_payload())
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except ControlPlaneError as exc:
+        raise exc.to_http_exception() from exc
 
 
 @router.post("/{agent_id}/attachments/upload")
@@ -1073,34 +974,23 @@ async def get_run_status(
     """
     Get the status and result of a run.
     """
-    from app.db.postgres.models.agents import AgentRun, AgentTrace
-    
-    result = await db.execute(select(AgentRun).where(AgentRun.id == run_id))
-    run = result.scalars().first()
-    
-    if not run:
-        raise HTTPException(status_code=404, detail="Run not found")
+    from app.db.postgres.models.agents import AgentTrace
 
-    if str(run.tenant_id) != str(context.get("tenant_id")):
-        raise HTTPException(status_code=403, detail="Tenant mismatch")
-
+    try:
+        operation = await AgentAdminService(db).get_run(ctx=_control_plane_ctx_from_agent_context(context), run_id=run_id)
+    except ControlPlaneError as exc:
+        raise exc.to_http_exception() from exc
     payload = {
-        "id": str(run.id),
-        "status": run.status.value if hasattr(run.status, "value") else run.status,
-        "result": run.output_result,
-        "error": run.error_message,
-        "checkpoint": run.checkpoint,  # Debugging
-        "run_usage": _serialize_run_usage(run),
-        "context_window": ContextWindowService.read_from_run(run),
-        "lineage": {
-            "root_run_id": str(run.root_run_id) if run.root_run_id else None,
-            "parent_run_id": str(run.parent_run_id) if run.parent_run_id else None,
-            "parent_node_id": run.parent_node_id,
-            "depth": int(run.depth or 0),
-            "spawn_key": run.spawn_key,
-            "orchestration_group_id": str(run.orchestration_group_id) if run.orchestration_group_id else None,
-        },
+        "id": operation["operation"]["id"],
+        "status": operation["operation"]["status"],
+        "result": operation.get("result"),
+        "error": (operation.get("error") or {}).get("message"),
+        "checkpoint": operation.get("metadata", {}).get("checkpoint"),
+        "run_usage": operation.get("metadata", {}).get("run_usage") or {},
+        "context_window": operation.get("metadata", {}).get("context_window"),
+        "lineage": operation.get("metadata", {}).get("lineage") or {},
     }
+    run = await db.scalar(select(AgentRun).where(AgentRun.id == run_id))
     if str(payload["status"]) == RunStatus.paused.value:
         from app.agent.execution.service import AgentExecutorService
         from app.services.prompt_reference_resolver import PromptReferenceResolver
@@ -1127,7 +1017,6 @@ async def get_run_status(
                 )
             payload["paused_nodes"] = resolved_next
     if include_tree:
-        from app.services.orchestration_kernel_service import OrchestrationKernelService
         payload["run_tree"] = await OrchestrationKernelService(db).query_tree(run_id=run.id)
     return payload
 

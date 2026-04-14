@@ -172,17 +172,17 @@ export default function ResourcePoliciesPage() {
   const fetchResources = useCallback(async () => {
     try {
       const [agentsRes, modelsRes, toolsRes, ksRes, appsRes, usersRes] = await Promise.allSettled([
-        agentService.listAgents({ limit: 200, compact: true }),
-        modelsService.listModels(),
-        toolsService.listTools(),
-        knowledgeStoresService.list(),
+        agentService.listAgents({ limit: 100, view: "summary" }),
+        modelsService.listModels(undefined, undefined, 0, 100, "summary"),
+        toolsService.listTools(undefined, undefined, undefined, 0, 100, "summary"),
+        knowledgeStoresService.list(undefined, { limit: 100, view: "summary" }),
         publishedAppsService.list(),
         adminService.getUsers(1, 200),
       ])
-      if (agentsRes.status === "fulfilled") setAgents(agentsRes.value.agents || [])
-      if (modelsRes.status === "fulfilled") setModels(modelsRes.value.models || [])
-      if (toolsRes.status === "fulfilled") setTools(toolsRes.value.tools || [])
-      if (ksRes.status === "fulfilled") setKnowledgeStores(ksRes.value || [])
+      if (agentsRes.status === "fulfilled") setAgents(agentsRes.value.items || [])
+      if (modelsRes.status === "fulfilled") setModels(modelsRes.value.items || [])
+      if (toolsRes.status === "fulfilled") setTools(toolsRes.value.items || [])
+      if (ksRes.status === "fulfilled") setKnowledgeStores(ksRes.value.items || [])
       if (appsRes.status === "fulfilled") setPublishedApps(appsRes.value || [])
       if (usersRes.status === "fulfilled") setUsers(usersRes.value.items || [])
     } catch {

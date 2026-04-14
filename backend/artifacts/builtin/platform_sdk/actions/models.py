@@ -20,7 +20,8 @@ def list_models(
             capability_type=payload.get("capability_type"),
             is_active=payload.get("is_active", True),
             skip=int(payload.get("skip", 0) or 0),
-            limit=int(payload.get("limit", 50) or 50),
+            limit=int(payload.get("limit", 20) or 20),
+            view=str(payload.get("view") or "summary"),
         )
         return response.get("data"), []
     except ControlPlaneSDKError as exc:

@@ -94,7 +94,7 @@ async def test_function_tool_execution(monkeypatch):
     )
 
     assert result["context"]["echo"]["x"] == 1
-    assert result["context"]["echo"]["context"] == {}
+    assert result["context"]["echo"]["context"] == {"node_id": "tool-node"}
 
 
 def test_tool_function_registry_bootstrap_is_idempotent(monkeypatch):

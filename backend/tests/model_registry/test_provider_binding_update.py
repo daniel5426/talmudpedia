@@ -16,8 +16,8 @@ from app.api.dependencies import get_current_principal, get_tenant_context
 
 @pytest.mark.asyncio
 async def test_update_provider_binding_endpoint_allows_local_pricing(client, db_session):
-    tenant = Tenant(name="Test Org", slug="test-org")
-    user = User(email="admin@test.org", hashed_password="test", role="admin")
+    tenant = Tenant(name="Test Org", slug=f"test-org-{uuid4().hex[:8]}")
+    user = User(email=f"admin-{uuid4().hex[:8]}@test.org", hashed_password="test", role="admin")
     db_session.add_all([tenant, user])
     await db_session.flush()
 

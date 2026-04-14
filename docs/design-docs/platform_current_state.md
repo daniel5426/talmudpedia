@@ -112,6 +112,7 @@ Published apps are not separate from the platform. They are one of its main runt
 See:
 - `docs/product-specs/published_apps_spec.md`
 - `docs/design-docs/apps_builder_current.md`
+- `docs/product-specs/organization_and_project_workflow_spec.md`
 
 ### 7. Embedded Runtime Domain
 
@@ -147,6 +148,10 @@ The active session carries:
 - active project
 
 Browser requests are expected to resolve org/project context from that server-side session, not from local bearer tokens, first-membership inference, or `X-Tenant-ID` headers.
+
+See:
+- `docs/design-docs/auth_current.md`
+- `docs/product-specs/organization_and_project_workflow_spec.md`
 
 ### Lifecycle-Materialized System Profiles
 

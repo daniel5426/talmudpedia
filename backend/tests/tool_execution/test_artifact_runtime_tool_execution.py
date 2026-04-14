@@ -2,10 +2,18 @@ import uuid
 from types import SimpleNamespace
 
 import pytest
+from sqlalchemy import select
 
 from app.api.dependencies import get_current_principal
 from app.agent.executors.tool import ToolNodeExecutor
 from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Tenant, User
+from app.db.postgres.models.registry import ToolRegistry
+from app.services.control_plane.artifact_admin_service import (
+    ArtifactAdminService,
+    ArtifactRuntimeInput,
+    CreateArtifactInput,
+)
+from app.services.control_plane.context import ControlPlaneContext
 from app.services.artifact_runtime.revision_service import ArtifactRevisionService
 from main import app
 
@@ -73,11 +81,24 @@ async def _create_published_artifact(db_session, tenant_id, created_by):
     return artifact
 
 
+async def _get_bound_artifact_tool(db_session, artifact_id):
+    return (
+        await db_session.execute(
+            select(ToolRegistry).where(ToolRegistry.artifact_id == str(artifact_id))
+        )
+    ).scalar_one_or_none()
+
+
 @pytest.mark.asyncio
-async def test_tool_publish_pins_artifact_revision_id(client, db_session):
+async def test_tool_publish_pins_artifact_revision_id(db_session):
     tenant, user = await _seed_tenant_context(db_session)
-    artifact = await _create_published_artifact(db_session, tenant.id, user.id)
-    app.dependency_overrides[get_current_principal] = _override_principal(tenant.id, user)
+    admin = ArtifactAdminService(db_session)
+    ctx = ControlPlaneContext(
+        tenant_id=tenant.id,
+        user=user,
+        user_id=user.id,
+        scopes=("artifacts.write",),
+    )
 
     async def fake_ensure_deployment(self, *, revision, namespace, tenant_id=None):
         return SimpleNamespace(
@@ -94,27 +115,42 @@ async def test_tool_publish_pins_artifact_revision_id(client, db_session):
     )
 
     try:
-        create_response = await client.post(
-            "/tools",
-            json={
-                "name": "Runtime Tool",
-                "slug": f"runtime-tool-{uuid.uuid4().hex[:6]}",
-                "description": "Tool backed by an artifact",
-                "input_schema": {"type": "object"},
-                "output_schema": {"type": "object"},
-                "scope": "tenant",
-                "artifact_id": str(artifact.id),
-            },
+        artifact_payload = await admin.create_artifact(
+            ctx=ctx,
+            params=CreateArtifactInput(
+                display_name="Runtime Tool",
+                description="Tool backed by an artifact",
+                kind="tool_impl",
+                runtime=ArtifactRuntimeInput(
+                    language="python",
+                    source_files=[{"path": "main.py", "content": "def execute(inputs, config, context):\n    return {'ok': True}\n"}],
+                    entry_module_path="main.py",
+                    dependencies=[],
+                    runtime_target="cloudflare_workers",
+                ),
+                capabilities={},
+                config_schema={},
+                tool_contract={
+                    "input_schema": {"type": "object"},
+                    "output_schema": {"type": "object"},
+                    "side_effects": [],
+                    "execution_mode": "interactive",
+                    "tool_ui": {},
+                },
+            ),
         )
-        assert create_response.status_code == 200, create_response.text
-        tool_id = create_response.json()["id"]
+        artifact_id = uuid.UUID(str(artifact_payload["id"]))
+        draft_tool = await _get_bound_artifact_tool(db_session, artifact_id)
+        assert draft_tool is not None
+        assert draft_tool.artifact_revision_id is None
 
-        publish_response = await client.post(f"/tools/{tool_id}/publish")
-        assert publish_response.status_code == 200, publish_response.text
-        assert publish_response.json()["artifact_revision_id"] == str(artifact.latest_published_revision_id)
+        publish_response = await admin.publish_artifact(ctx=ctx, artifact_id=artifact_id)
+        published_tool = await _get_bound_artifact_tool(db_session, artifact_id)
+
+        assert published_tool is not None
+        assert published_tool.artifact_revision_id == uuid.UUID(str(publish_response["revision_id"]))
     finally:
         monkeypatch.undo()
-        app.dependency_overrides.pop(get_current_principal, None)
 
 
 @pytest.mark.asyncio

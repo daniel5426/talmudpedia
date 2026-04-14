@@ -15,9 +15,10 @@ class ModelsAPI:
         capability_type: Optional[str] = None,
         is_active: Optional[bool] = True,
         skip: int = 0,
-        limit: int = 50,
+        limit: int = 20,
+        view: str = "summary",
     ) -> ResponseEnvelope:
-        params: Dict[str, Any] = {"skip": skip, "limit": limit}
+        params: Dict[str, Any] = {"skip": skip, "limit": limit, "view": view}
         if capability_type is not None:
             params["capability_type"] = capability_type
         if is_active is not None:

@@ -134,15 +134,15 @@ export default function PipelineEditorPage() {
 
                 // If editing existing pipeline, fetch it
                 if (!isNew) {
-                    const pipelinesRes = await ragAdminService.listVisualPipelines(currentTenant.slug)
-                    let foundPipeline = pipelinesRes.pipelines.find(p => p.id === pipelineId)
+                    const pipelinesRes = await ragAdminService.listVisualPipelines(currentTenant.slug, { view: "full", limit: 100 })
+                    let foundPipeline = pipelinesRes.items.find(p => p.id === pipelineId)
 
                     // If not found, it might be an executable_pipeline_id
                     if (!foundPipeline) {
                         try {
                             const execPipeline = await ragAdminService.getExecutablePipeline(pipelineId, currentTenant.slug)
                             if (execPipeline?.visual_pipeline_id) {
-                                foundPipeline = pipelinesRes.pipelines.find(p => p.id === execPipeline.visual_pipeline_id)
+                                foundPipeline = pipelinesRes.items.find(p => p.id === execPipeline.visual_pipeline_id)
                             }
                         } catch (e) {
                             console.error("Failed to fetch executable pipeline", e)
@@ -348,8 +348,8 @@ export default function PipelineEditorPage() {
                     currentTenant?.slug
                 )
                 // Refresh pipeline data
-                const pipelinesRes = await ragAdminService.listVisualPipelines(currentTenant?.slug)
-                const updatedPipeline = pipelinesRes.pipelines.find(p => p.id === pipeline.id)
+                const pipelinesRes = await ragAdminService.listVisualPipelines(currentTenant?.slug, { view: "full", limit: 100 })
+                const updatedPipeline = pipelinesRes.items.find(p => p.id === pipeline.id)
                 if (updatedPipeline) {
                     setPipeline(updatedPipeline)
                     setCompileResult(null)

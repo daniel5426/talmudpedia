@@ -15,11 +15,18 @@ class KnowledgeStoresAPI:
     def __init__(self, client: Any) -> None:
         self._client = client
 
-    def list(self, tenant_slug: str) -> ResponseEnvelope:
+    def list(
+        self,
+        tenant_slug: str,
+        *,
+        skip: int = 0,
+        limit: int = 20,
+        view: str = "summary",
+    ) -> ResponseEnvelope:
         return self._client.request(
             "GET",
             "/admin/knowledge-stores",
-            params={"tenant_slug": tenant_slug},
+            params={"tenant_slug": tenant_slug, "skip": skip, "limit": limit, "view": view},
         )
 
     def create(

@@ -19,6 +19,7 @@ Last Updated: 2026-04-14
 - The preview proxy enforces preview token validation before forwarding to the upstream Sprite URL.
 - The preview proxy strips `runtime_token` from upstream requests, forwards provider-neutral auth headers, and sets the preview auth cookie on successful bootstrap.
 - The preview proxy rewrites Vite dev HTML so `@vite/client`, `@react-refresh`, and `/src/...` requests stay under the draft-dev preview proxy path instead of escaping to the backend root.
+- The preview proxy exposes the canonical builder preview base path to the runtime SDK and no longer depends on query-plumbed runtime bootstrap URLs.
 - The preview proxy rewrites Vite JS module imports like `/src/...` and `/node_modules/.vite/...`, and disables stale conditional caching for rewritten preview assets.
 - The preview proxy retries transient `404/5xx/timeout` warmup failures for GET/HEAD preview assets so Sprite wake/service warmup does not immediately white-screen the iframe.
 - For Sprite-backed draft-dev sessions, the preview proxy resolves a local Sprite control-plane tunnel and proxies preview traffic through that tunnel instead of dialing the provider HTTPS hostname directly.
@@ -36,6 +37,8 @@ Last Updated: 2026-04-14
 - Sprite live sync preserves `node_modules/` across no-op file syncs, and start/sync can force a dependency repair plus Vite cache rebuild when preview readiness fails.
 - Shared app-level draft workspaces are reused across multiple editors on the same app.
 - Coding-run bootstrap can reuse a healthy live workspace even when the saved draft revision has advanced, instead of forcing a revision-driven resync.
+- The public draft-dev `ensure` route reuses an already-serving live workspace via `ensure_active_session(..., prefer_live_workspace=True)` instead of falling back to the legacy full-sync path.
+- Draft-dev incremental sync treats delete operations as idempotent when the target file is already absent in the live sandbox, instead of failing the whole sync on a stale delete.
 - Session stop detaches one editor without destroying the shared Sprite while another editor remains attached.
 - Dormant workspace sweep destroys the shared Sprite only after all sessions detach and retention elapses.
 - App delete destroys the shared Sprite and removes workspace metadata.
@@ -86,6 +89,21 @@ Last Updated: 2026-04-14
 - Command: `cd backend && PYTHONPATH=. python3 -m pytest -q tests/apps_builder_sandbox_runtime/test_runtime_client_and_preview_proxy.py -k 'refreshes_stale_upstream_target_after_connect_error or refreshes_stale_upstream_target_after_remote_protocol_error'`
 - Date: 2026-04-14
 - Result: PASS
+- Command: `cd backend && PYTHONPATH=. python3 -m pytest -q tests/apps_builder_sandbox_runtime/test_runtime_client_and_preview_proxy.py`
+- Date: 2026-04-14 Asia/Hebron
+- Result: PASS (`14 passed, 8 warnings`)
+- Command: `cd backend && PYTHONPATH=. python3 -m pytest -q tests/apps_builder_sandbox_runtime/test_runtime_client_and_preview_proxy.py`
+- Date: 2026-04-14 18:24 EEST
+- Result: PASS (`14 passed, 8 warnings`)
+- Command: `cd backend && PYTHONPATH=. python3 -m pytest -q tests/apps_builder_sandbox_runtime/test_draft_dev_runtime_lifecycle.py -k 'ensure_endpoint_reuses_live_session_without_calling_legacy_ensure_session'`
+- Date: 2026-04-14 18:02 EEST
+- Result: PASS (`1 passed, 10 deselected`)
+- Command: `cd backend && PYTHONPATH=. python3 -m pytest -q tests/apps_builder_sandbox_runtime/test_draft_dev_runtime_lifecycle.py -k 'touch_session_activity_renews_expiry_without_detaching_workspace or ensure_endpoint_reuses_live_session_without_calling_legacy_ensure_session'`
+- Date: 2026-04-14 18:26 EEST
+- Result: PASS (`2 passed, 9 deselected`)
+- Command: `cd backend && PYTHONPATH=. python3 -m pytest -q tests/apps_builder_sandbox_runtime/test_draft_dev_runtime_lifecycle.py -k 'sync_route_ignores_delete_error_when_file_is_already_absent or ensure_endpoint_reuses_live_session_without_calling_legacy_ensure_session'`
+- Date: 2026-04-14 18:43 EEST
+- Result: PASS (`2 passed, 11 deselected`)
 
 ## Known gaps or follow-ups
 - Add live websocket/HMR coverage against the Sprite preview path.

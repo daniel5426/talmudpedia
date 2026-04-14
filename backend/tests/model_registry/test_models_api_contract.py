@@ -75,9 +75,13 @@ async def test_models_list_total_matches_filters_and_response_shape(client, db_s
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["total"] == len(payload["models"])
-    assert "slug" not in payload["models"][0]
-    returned_names = {item["name"] for item in payload["models"]}
+    assert payload["view"] == "summary"
+    assert payload["skip"] == 0
+    assert payload["limit"] == 20
+    assert payload["total"] >= len(payload["items"])
+    assert payload["has_more"] is (payload["total"] > len(payload["items"]))
+    assert "slug" not in payload["items"][0]
+    returned_names = {item["name"] for item in payload["items"]}
     assert "Chat Active" in returned_names
     assert "Chat Disabled" not in returned_names
     assert "Embedding Active" not in returned_names

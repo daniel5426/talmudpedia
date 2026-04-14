@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from dataclasses import dataclass
 from typing import Dict, Tuple
 from urllib.parse import urlparse
@@ -11,6 +12,10 @@ import websockets
 
 class SpriteProxyTunnelError(Exception):
     pass
+
+
+logger = logging.getLogger(__name__)
+_TUNNEL_WS_CONNECT_DELAYS_SECONDS = (0.0, 0.2, 0.6)
 
 
 @dataclass
@@ -51,13 +56,27 @@ class SpriteProxyTunnelManager:
                 ws = None
                 relay_tasks: list[asyncio.Task] = []
                 try:
-                    ws = await websockets.connect(
-                        self._proxy_ws_url(api_base_url=api_base_url, sprite_name=sprite_name),
-                        additional_headers={"Authorization": f"Bearer {api_token}"},
-                        open_timeout=15.0,
-                        close_timeout=5.0,
-                        max_size=None,
-                    )
+                    last_exc: Exception | None = None
+                    for delay in _TUNNEL_WS_CONNECT_DELAYS_SECONDS:
+                        if delay > 0:
+                            await asyncio.sleep(delay)
+                        try:
+                            ws = await websockets.connect(
+                                self._proxy_ws_url(api_base_url=api_base_url, sprite_name=sprite_name),
+                                additional_headers={"Authorization": f"Bearer {api_token}"},
+                                open_timeout=15.0,
+                                close_timeout=5.0,
+                                ping_interval=20.0,
+                                ping_timeout=20.0,
+                                max_size=None,
+                            )
+                            break
+                        except Exception as exc:
+                            last_exc = exc
+                    if ws is None:
+                        raise SpriteProxyTunnelError(
+                            f"Failed to connect Sprite proxy tunnel for {sprite_name}:{remote_port}: {last_exc}"
+                        ) from last_exc
                     await ws.send(json.dumps({"host": remote_host, "port": int(remote_port)}))
                     initial_message = await ws.recv()
                     if isinstance(initial_message, str):
@@ -104,6 +123,14 @@ class SpriteProxyTunnelManager:
                         exc = task.exception()
                         if exc is not None:
                             raise exc
+                except Exception as exc:
+                    logger.debug(
+                        "Sprite proxy tunnel connection failed sprite=%s host=%s port=%s error=%s",
+                        sprite_name,
+                        remote_host,
+                        remote_port,
+                        exc,
+                    )
                 finally:
                     for task in relay_tasks:
                         if not task.done():

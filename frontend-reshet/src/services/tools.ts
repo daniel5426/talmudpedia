@@ -7,6 +7,7 @@ import {
   CreateToolRequest,
   UpdateToolRequest,
 } from "./agent";
+import type { ControlPlaneListView } from "./types";
 
 function toUpperEnum(value?: string): string | undefined {
   return value ? value.toUpperCase() : undefined;
@@ -41,7 +42,8 @@ export const toolsService = {
     status?: ToolStatus,
     toolType?: string,
     skip = 0,
-    limit = 50
+    limit = 20,
+    view: ControlPlaneListView = "summary",
   ): Promise<ToolsListResponse> {
     const query = new URLSearchParams();
     if (implementationType) query.set("implementation_type", toUpperEnum(implementationType)!);
@@ -49,12 +51,13 @@ export const toolsService = {
     if (toolType) query.set("tool_type", toolType);
     query.set("skip", String(skip));
     query.set("limit", String(limit));
+    query.set("view", view);
     const queryString = query.toString();
 
     const response = await httpClient.get<ToolsListResponse>(`/tools?${queryString}`);
     return {
       ...response,
-      tools: response.tools.map(normalizeTool),
+      items: response.items.map(normalizeTool),
     };
   },
 
@@ -91,10 +94,14 @@ export const toolsService = {
     const query = new URLSearchParams();
     query.set("skip", String(skip));
     query.set("limit", String(limit));
-    const response = await httpClient.get<ToolsListResponse>(`/tools/builtins/templates?${query.toString()}`);
+    const response = await httpClient.get<{ tools: ToolDefinition[]; total: number }>(`/tools/builtins/templates?${query.toString()}`);
     return {
-      ...response,
-      tools: response.tools.map(normalizeTool),
+      items: response.tools.map(normalizeTool),
+      total: response.total,
+      has_more: skip + response.tools.length < response.total,
+      skip,
+      limit,
+      view: "summary",
     };
   },
 };

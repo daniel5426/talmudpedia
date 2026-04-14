@@ -191,6 +191,7 @@ async def _resolve_run_tool_context(
                 revision=revision,
                 user_id=actor_id,
                 prefer_live_workspace=True,
+                trace_source="coding_agent.tools_context",
             )
         except PublishedAppDraftDevRuntimeDisabled as exc:
             raise RuntimeError(str(exc)) from exc

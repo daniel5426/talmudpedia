@@ -1,6 +1,6 @@
 # Agents Management Test State
 
-Last Updated: 2026-03-31
+Last Updated: 2026-04-14
 
 ## Scope
 Frontend Agents page management actions, including delete flow wiring and the card-level make-tool bind flow.
@@ -14,8 +14,12 @@ Frontend Agents page management actions, including delete flow wiring and the ca
 - Clicking the per-agent overflow menu copy action writes the agent id to the clipboard.
 - Clicking `Make tool` from the per-agent overflow menu triggers the instant bind/sync action with no export dialog.
 - Agent cards show bound tool status directly in the footer when the backend reports an active agent-bound tool.
+- Agent page mocks now follow the canonical list envelope used by `agentService.listAgents` (`items`, `total`, `has_more`, `skip`, `limit`, `view`).
 
 ## Last run command + date/time + result
+- Command: `pnpm exec jest src/__tests__/agents_management/agents_page_delete_action.test.tsx src/__tests__/agents_management/agents_page_tool_binding.test.tsx --runInBand`
+- Date/Time: 2026-04-14 23:18 EEST
+- Result: pass (`2 suites, 4 tests`)
 - Command: `pnpm -C frontend-reshet test -- --runTestsByPath src/__tests__/agents_management/agents_page_tool_binding.test.tsx --watch=false`
 - Date/Time: 2026-03-31 Asia/Hebron
 - Result: pass (`1 suite, 2 tests`)

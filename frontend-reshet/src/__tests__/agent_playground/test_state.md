@@ -1,4 +1,4 @@
-Last Updated: 2026-04-12
+Last Updated: 2026-04-14
 
 ## Scope
 Playground-specific trace inspection behavior for assistant responses, execute-pane seeded-state submission, and persisted trace replay into the execution sidebar across playground state changes.
@@ -37,8 +37,12 @@ Playground-specific trace inspection behavior for assistant responses, execute-p
 - Hidden agents are filtered out of the playground selector/bootstrap flow.
 - Deep-linking to a hidden playground agent redirects to the first visible agent when available.
 - Deep-linking to a missing/stale playground agent id redirects to the first visible agent instead of leaving the page broken.
+- Playground list-agent bootstrapping now consumes the canonical list envelope from `agentService.listAgents`.
 
 ## Last Run
+- Command: `pnpm exec jest src/__tests__/agent_playground/playground_page_trace.test.tsx --runInBand`
+- Date: 2026-04-14 23:18 EEST
+- Result: Pass (1 suite, 4 tests)
 - Command: `pnpm -C frontend-reshet test -- --runTestsByPath src/__tests__/agent_playground/playground_page_trace.test.tsx --watch=false`
 - Date: 2026-04-14 Asia/Hebron
 - Result: Pass (1 suite, 8 tests)

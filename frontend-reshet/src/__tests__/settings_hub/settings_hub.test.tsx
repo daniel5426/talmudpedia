@@ -44,7 +44,11 @@ jest.mock("@/components/direction-provider", () => ({
 }))
 
 jest.mock("@/lib/store/useAuthStore", () => ({
-  useAuthStore: (selector: (state: any) => any) => selector({ user: { role: "admin", org_role: "owner" } }),
+  useAuthStore: (selector: (state: any) => any) =>
+    selector({
+      user: { role: "user" },
+      hasScope: (scope: string) => ["organizations.write", "credentials.write"].includes(scope),
+    }),
 }))
 
 describe("Settings Hub", () => {
@@ -63,8 +67,8 @@ describe("Settings Hub", () => {
       default_embedding_model_id: null,
       default_retrieval_policy: null,
     })
-    ;(credentialsService.listCredentials as jest.Mock).mockResolvedValue([])
-    ;(modelsService.listModels as jest.Mock).mockResolvedValue({ models: [], total: 0 })
+    ;(credentialsService.listCredentials as jest.Mock).mockResolvedValue({ items: [], total: 0, has_more: false, skip: 0, limit: 100, view: "summary" })
+    ;(modelsService.listModels as jest.Mock).mockResolvedValue({ items: [], total: 0, has_more: false, skip: 0, limit: 100, view: "full" })
   })
 
   afterEach(() => {
@@ -78,16 +82,15 @@ describe("Settings Hub", () => {
     await waitFor(() => expect(screen.getAllByRole("button", { name: "General" }).length).toBeGreaterThan(0))
     expect(screen.getAllByRole("button", { name: "Credentials" }).length).toBeGreaterThan(0)
     expect(screen.getAllByRole("button", { name: "MCP Servers" }).length).toBeGreaterThan(0)
-    expect(screen.getAllByRole("button", { name: "Defaults" }).length).toBeGreaterThan(0)
     expect(screen.getAllByRole("button", { name: "Security" }).length).toBeGreaterThan(0)
   })
 
   it("loads the tab from the query string", async () => {
-    mockSearch = "tab=defaults"
+    mockSearch = "tab=security"
 
     render(<SettingsPage />)
 
     await waitFor(() => expect(orgUnitsService.getTenant).toHaveBeenCalled())
-    await waitFor(() => expect(screen.getByText("Retrieval Policy")).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText("Security & Organization")).toBeInTheDocument())
   })
 })

@@ -1,6 +1,6 @@
 # Platform Architect Workers Tests State
 
-Last Updated: 2026-04-13
+Last Updated: 2026-04-14
 
 ## Scope of the feature
 Focused coverage for the architect-specific async worker runtime, binding-backed artifact delegation flow, and seeded architect DB-backed orchestration behavior.
@@ -22,7 +22,7 @@ Focused coverage for the architect-specific async worker runtime, binding-backed
 - Binding persistence readiness gating prevents create-mode artifact persistence when required metadata like `display_name` is still missing, and artifact persistence no longer depends on a user-authored slug.
 - Binding/session state now exposes a separate `verification_state` for latest artifact test-run status, instead of overloading `persistence_readiness`.
 - DB-backed seeded architect run that prepares an artifact binding, spawns an artifact worker, waits, and persists the canonical artifact successfully without a `platform-assets` artifact-create call in the architect path.
-- DB-backed seeded architect run that attempts a second mutating spawn on the same binding and reports the active-binding blocker cleanly.
+- Worker-runtime integration that proves a second mutating spawn on the same binding is rejected with `BINDING_RUN_ACTIVE`.
 - Strict architect worker tool schemas reject malformed model payloads before runtime dispatch, including the observed bad binding-create guesses (`create`, `files`, `entrypoint`, `text`), while still allowing executor-owned runtime metadata to flow separately.
 - Architect worker spawn/binding schema failures now expose explicit branch/type diagnostics, including missing `worker_agent_slug` or `binding_ref` and wrong `objective` types.
 - Shared tool-schema validation now returns stable per-issue codes (for example `schema_branch_mismatch`) alongside worker-schema diagnostics.
@@ -85,6 +85,9 @@ Focused coverage for the architect-specific async worker runtime, binding-backed
 - Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/platform_architect_workers/test_worker_runtime.py backend/tests/platform_architect_runtime/test_architect_seeding.py`
 - Date/Time: 2026-03-25 12:46 EET
 - Result: PASS (`22 passed, 7 warnings`)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/platform_architect_workers/test_worker_runtime.py backend/tests/platform_architect_workers/test_architect_worker_integration.py`
+- Date/Time: 2026-04-14 Asia/Hebron
+- Result: PASS (`20 passed, 16 warnings`)
 
 ## Known gaps or follow-ups
 - Group fanout is covered at runtime level, but there is not yet a DB-backed seeded architect E2E for parallel multi-binding spawn/join.

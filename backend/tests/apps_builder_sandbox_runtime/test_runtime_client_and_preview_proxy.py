@@ -219,9 +219,7 @@ async def test_builder_preview_proxy_rewrites_vite_html_asset_paths(monkeypatch:
     assert '/public/apps-builder/draft-dev/sessions/session-1/preview/_talmudpedia/chat/stream' in response.text
     assert "__talmudpediaPreviewPathShimInstalled" in response.text
     assert "previewBasePath = \"/public/apps-builder/draft-dev/sessions/session-1/preview\"" in response.text
-    assert "previewBootstrapPath = \"/public/apps-builder/draft-dev/sessions/session-1/preview/_talmudpedia/runtime/bootstrap\"" in response.text
-    assert "isPublishedBootstrapPath(next.pathname)" in response.text
-    assert "window.fetch = function(input, init)" in response.text
+    assert "window.__TALMUDPEDIA_BUILDER_PREVIEW_BASE_PATH = previewBasePath" in response.text
 
 
 @pytest.mark.asyncio
@@ -270,7 +268,11 @@ async def test_builder_preview_proxy_rewrites_asset_request_to_upstream_path(mon
             return _FakeResponse()
 
     monkeypatch.setattr(preview_proxy_router, "_load_session", _fake_load_session)
-    monkeypatch.setattr(preview_proxy_router, "_load_preview_app_and_revision", lambda **kwargs: _fake_preview_app_and_revision())
+    async def _fake_load_preview_app_and_revision(**kwargs):
+        _ = kwargs
+        return _fake_preview_app_and_revision()
+
+    monkeypatch.setattr(preview_proxy_router, "_load_preview_app_and_revision", _fake_load_preview_app_and_revision)
     monkeypatch.setattr(preview_proxy_router, "decode_published_app_preview_token", _fake_decode)
     monkeypatch.setattr(preview_proxy_router.httpx, "AsyncClient", _FakeAsyncClient)
 
@@ -341,7 +343,11 @@ async def test_builder_preview_proxy_rewrites_vite_module_imports_and_disables_c
             return _FakeResponse()
 
     monkeypatch.setattr(preview_proxy_router, "_load_session", _fake_load_session)
-    monkeypatch.setattr(preview_proxy_router, "_load_preview_app_and_revision", lambda **kwargs: _fake_preview_app_and_revision())
+    async def _fake_load_preview_app_and_revision(**kwargs):
+        _ = kwargs
+        return _fake_preview_app_and_revision()
+
+    monkeypatch.setattr(preview_proxy_router, "_load_preview_app_and_revision", _fake_load_preview_app_and_revision)
     monkeypatch.setattr(preview_proxy_router, "decode_published_app_preview_token", _fake_decode)
     monkeypatch.setattr(preview_proxy_router.httpx, "AsyncClient", _FakeAsyncClient)
 
@@ -452,7 +458,11 @@ async def test_builder_preview_proxy_returns_504_on_upstream_timeout(monkeypatch
             raise httpx.ConnectTimeout("timed out")
 
     monkeypatch.setattr(preview_proxy_router, "_load_session", _fake_load_session)
-    monkeypatch.setattr(preview_proxy_router, "_load_preview_app_and_revision", lambda **kwargs: _fake_preview_app_and_revision())
+    async def _fake_load_preview_app_and_revision(**kwargs):
+        _ = kwargs
+        return _fake_preview_app_and_revision()
+
+    monkeypatch.setattr(preview_proxy_router, "_load_preview_app_and_revision", _fake_load_preview_app_and_revision)
     monkeypatch.setattr(preview_proxy_router, "decode_published_app_preview_token", _fake_decode)
     monkeypatch.setattr(preview_proxy_router.httpx, "AsyncClient", _FakeAsyncClient)
 
@@ -506,7 +516,11 @@ async def test_builder_preview_proxy_retries_transient_warmup_errors(monkeypatch
             return httpx.Response(200, headers={"content-type": "application/javascript"}, text="import '/@vite/client'")
 
     monkeypatch.setattr(preview_proxy_router, "_load_session", _fake_load_session)
-    monkeypatch.setattr(preview_proxy_router, "_load_preview_app_and_revision", lambda **kwargs: _fake_preview_app_and_revision())
+    async def _fake_load_preview_app_and_revision(**kwargs):
+        _ = kwargs
+        return _fake_preview_app_and_revision()
+
+    monkeypatch.setattr(preview_proxy_router, "_load_preview_app_and_revision", _fake_load_preview_app_and_revision)
     monkeypatch.setattr(preview_proxy_router, "decode_published_app_preview_token", _fake_decode)
     monkeypatch.setattr(preview_proxy_router.httpx, "AsyncClient", _FakeAsyncClient)
 
@@ -774,7 +788,11 @@ async def test_builder_preview_proxy_uses_sprite_tunnel_target_when_sprite_metad
             return "http://127.0.0.1:45678"
 
     monkeypatch.setattr(preview_proxy_router, "_load_session", _fake_load_session)
-    monkeypatch.setattr(preview_proxy_router, "_load_preview_app_and_revision", lambda **kwargs: _fake_preview_app_and_revision())
+    async def _fake_load_preview_app_and_revision(**kwargs):
+        _ = kwargs
+        return _fake_preview_app_and_revision()
+
+    monkeypatch.setattr(preview_proxy_router, "_load_preview_app_and_revision", _fake_load_preview_app_and_revision)
     monkeypatch.setattr(preview_proxy_router, "decode_published_app_preview_token", _fake_decode)
     monkeypatch.setattr(preview_proxy_router.httpx, "AsyncClient", _FakeAsyncClient)
     monkeypatch.setattr(preview_proxy_router, "get_sprite_proxy_tunnel_manager", lambda: _FakeTunnelManager())

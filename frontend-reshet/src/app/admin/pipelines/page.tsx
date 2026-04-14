@@ -56,8 +56,8 @@ export default function PipelinesPage() {
   const fetchData = useCallback(async () => {
     setLoading(true)
     try {
-      const pipelinesRes = await ragAdminService.listVisualPipelines(currentTenant?.slug)
-      setPipelines(pipelinesRes.pipelines)
+      const pipelinesRes = await ragAdminService.listVisualPipelines(currentTenant?.slug, { view: "summary", limit: 100 })
+      setPipelines(pipelinesRes.items)
     } catch (error) {
       console.error("Failed to fetch pipelines data", error)
     } finally {

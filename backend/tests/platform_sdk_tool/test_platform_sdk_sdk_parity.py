@@ -226,8 +226,8 @@ class _FakeKnowledgeStoresAPI:
     def __init__(self):
         self.calls = []
 
-    def list(self, tenant_slug):
-        self.calls.append({"method": "list", "tenant_slug": tenant_slug})
+    def list(self, tenant_slug, **kwargs):
+        self.calls.append({"method": "list", "tenant_slug": tenant_slug, "kwargs": kwargs})
         return {"data": [{"id": "store-1"}]}
 
 
@@ -737,4 +737,3 @@ def test_knowledge_stores_list_contract_parity(monkeypatch):
     call = fake.knowledge_stores.calls[0]
     assert call["method"] == "list"
     assert call["tenant_slug"] == "tenant-a"
-

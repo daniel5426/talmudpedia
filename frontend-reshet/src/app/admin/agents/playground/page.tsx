@@ -97,9 +97,9 @@ function PlaygroundContent() {
             // before even starting to load the specific agent's metadata.
 
             setIsListingLoading(true);
-            const listPromise = agentService.listAgents().catch(err => {
+            const listPromise = agentService.listAgents({ view: "summary", limit: 100 }).catch(err => {
                 console.error("Failed to load agents list:", err);
-                return { agents: [] };
+                return { items: [] };
             });
 
             if (agentId) {
@@ -110,8 +110,8 @@ function PlaygroundContent() {
                     ]);
 
                     if (isMounted) {
-                        setAgents(listData.agents);
-                        const visibleList = listData.agents.filter((item) => item.show_in_playground !== false);
+                        setAgents(listData.items);
+                        const visibleList = listData.items.filter((item) => item.show_in_playground !== false);
                         setAgent(agentData.show_in_playground === false ? null : agentData);
                         setIsMetadataLoading(false);
                         if (agentData.show_in_playground === false && visibleList.length > 0) {
@@ -122,10 +122,10 @@ function PlaygroundContent() {
                     console.error("Failed to load agent metadata:", err);
                     const listData = await listPromise;
                     if (isMounted) {
-                        setAgents(listData.agents);
+                        setAgents(listData.items);
                         setAgent(null);
                         setIsMetadataLoading(false);
-                        const visibleList = listData.agents.filter((item) => item.show_in_playground !== false);
+                        const visibleList = listData.items.filter((item) => item.show_in_playground !== false);
                         if (visibleList.length > 0) {
                             router.replace(`/admin/agents/playground?agentId=${visibleList[0].id}`, { scroll: false });
                         }
@@ -135,8 +135,8 @@ function PlaygroundContent() {
                 // No agentId, must wait for list to decide which agent to load
                 const listData = await listPromise;
                 if (isMounted) {
-                    setAgents(listData.agents);
-                    const visibleList = listData.agents.filter((item) => item.show_in_playground !== false);
+                    setAgents(listData.items);
+                    const visibleList = listData.items.filter((item) => item.show_in_playground !== false);
                     if (visibleList.length > 0) {
                         // Redirect to the first agent
                         router.replace(`/admin/agents/playground?agentId=${visibleList[0].id}`, { scroll: false });

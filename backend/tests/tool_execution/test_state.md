@@ -1,6 +1,6 @@
 # Tool Execution Tests
 
-Last Updated: 2026-04-13
+Last Updated: 2026-04-14
 
 ## Scope
 Validate MCP/function/agent-call execution paths in the `ToolNodeExecutor`.
@@ -72,11 +72,17 @@ Validate MCP/function/agent-call execution paths in the `ToolNodeExecutor`.
 - tenant artifact-backed tools execute via `ArtifactExecutionService` on `artifact_prod_interactive`
 - tenant artifact-backed tool publish ensures the pinned revision has a production deployment
 - non-UUID artifact bindings are rejected; artifact-backed tools must resolve to UUID-backed tenant or system artifacts
+- agent-call child lineage/events preserve the caller `node_id` through the compiled tool runtime context
+- reasoning-node alias coercion now still normalizes known file/content/rename aliases before strict tool validation
+- artifact-bound tool pinning is verified through the artifact-native publish flow instead of the removed direct `/tools` artifact path
 
 ## Last Run
 - Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/tool_execution/test_mcp_tool_execution.py`
 - Date/Time: 2026-04-12 19:19 EEST
 - Result: PASS (`7 passed, 7 warnings`)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/tool_execution/test_agent_call_tool_execution.py backend/tests/tool_execution/test_reasoning_tool_input_aliases.py backend/tests/tool_execution/test_artifact_runtime_tool_execution.py`
+- Date/Time: 2026-04-14 Asia/Hebron
+- Result: PASS (`27 passed, 9 warnings`)
 - Command: `PYTHONPATH=. pytest -q tests/tool_execution/test_llm_provider_content_blocks.py`
 - Date/Time: 2026-03-30 Asia/Hebron
 - Result: PASS (`7 passed, 2 warnings`)

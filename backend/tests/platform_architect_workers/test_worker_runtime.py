@@ -8,7 +8,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.agent.execution.tool_input_contracts import validate_tool_input_schema
-from app.db.postgres.models.agents import AgentRun, AgentStatus, RunStatus
+from app.db.postgres.models.agent_threads import AgentThread, AgentThreadSurface
+from app.db.postgres.models.agents import Agent, AgentRun, AgentStatus, RunStatus
 from app.db.postgres.models.artifact_runtime import ArtifactCodingSession
 from app.db.postgres.models.identity import Tenant, User
 from app.db.postgres.models.registry import ToolImplementationType, ToolRegistry
@@ -30,6 +31,47 @@ async def _seed_tenant_and_user(db_session):
     await db_session.refresh(tenant)
     await db_session.refresh(user)
     return tenant, user
+
+
+async def _seed_agent(
+    db_session,
+    *,
+    tenant_id: UUID,
+    slug_prefix: str,
+    name: str,
+    status: AgentStatus = AgentStatus.published,
+) -> Agent:
+    agent = Agent(
+        tenant_id=tenant_id,
+        name=name,
+        slug=f"{slug_prefix}-{uuid4().hex[:8]}",
+        status=status,
+        graph_definition={"nodes": [], "edges": []},
+    )
+    db_session.add(agent)
+    await db_session.flush()
+    return agent
+
+
+async def _seed_thread(
+    db_session,
+    *,
+    tenant_id: UUID,
+    user_id: UUID,
+    agent_id: UUID,
+    surface: AgentThreadSurface = AgentThreadSurface.internal,
+    title: str = "Worker Test Thread",
+) -> AgentThread:
+    thread = AgentThread(
+        tenant_id=tenant_id,
+        user_id=user_id,
+        agent_id=agent_id,
+        surface=surface,
+        title=title,
+    )
+    db_session.add(thread)
+    await db_session.flush()
+    return thread
 
 
 async def _get_tool_by_slug(db_session, slug: str) -> ToolRegistry:
@@ -296,6 +338,12 @@ async def test_spawn_group_target_schema_allows_bound_worker_payload_with_explic
 @pytest.mark.asyncio
 async def test_prepare_then_spawn_succeeds_across_separate_tool_sessions(db_session, monkeypatch):
     tenant, user = await _seed_tenant_and_user(db_session)
+    worker_agent = await _seed_agent(
+        db_session,
+        tenant_id=tenant.id,
+        slug_prefix="artifact-worker",
+        name="Artifact Worker",
+    )
     await ensure_platform_architect_worker_tools(
         db_session,
         tenant_id=tenant.id,
@@ -329,7 +377,7 @@ async def test_prepare_then_spawn_succeeds_across_separate_tool_sessions(db_sess
         run = AgentRun(
             id=spawned_run_id,
             tenant_id=tenant.id,
-            agent_id=uuid4(),
+            agent_id=worker_agent.id,
             user_id=user.id,
             initiator_user_id=user.id,
             status=RunStatus.queued,
@@ -365,6 +413,7 @@ async def test_prepare_then_spawn_succeeds_across_separate_tool_sessions(db_sess
             "draft_seed": {"kind": "tool_impl"},
         }
     )
+    await db_session.commit()
 
     spawn_result = await architect_worker_spawn(
         {
@@ -444,9 +493,15 @@ def test_architect_graph_instructions_include_async_worker_flow():
 @pytest.mark.asyncio
 async def test_binding_persist_artifact_auto_create_links_binding_scope(db_session, monkeypatch):
     tenant, user = await _seed_tenant_and_user(db_session)
+    worker_agent = await _seed_agent(
+        db_session,
+        tenant_id=tenant.id,
+        slug_prefix="artifact-worker",
+        name="Artifact Worker",
+    )
     async def _fake_profile(*args, **kwargs):
         del args, kwargs
-        return SimpleNamespace(id=uuid4())
+        return SimpleNamespace(id=worker_agent.id)
     monkeypatch.setattr(
         "app.services.platform_architect_worker_bindings.ensure_artifact_coding_agent_profile",
         _fake_profile,
@@ -493,9 +548,15 @@ async def test_binding_persist_artifact_auto_create_links_binding_scope(db_sessi
 @pytest.mark.asyncio
 async def test_binding_persist_artifact_rejects_forced_update_without_linked_artifact(db_session, monkeypatch):
     tenant, user = await _seed_tenant_and_user(db_session)
+    worker_agent = await _seed_agent(
+        db_session,
+        tenant_id=tenant.id,
+        slug_prefix="artifact-worker",
+        name="Artifact Worker",
+    )
     async def _fake_profile(*args, **kwargs):
         del args, kwargs
-        return SimpleNamespace(id=uuid4())
+        return SimpleNamespace(id=worker_agent.id)
     monkeypatch.setattr(
         "app.services.platform_architect_worker_bindings.ensure_artifact_coding_agent_profile",
         _fake_profile,
@@ -539,10 +600,16 @@ async def test_binding_persist_artifact_rejects_forced_update_without_linked_art
 @pytest.mark.asyncio
 async def test_binding_persist_artifact_rejects_create_without_required_metadata(db_session, monkeypatch):
     tenant, user = await _seed_tenant_and_user(db_session)
+    worker_agent = await _seed_agent(
+        db_session,
+        tenant_id=tenant.id,
+        slug_prefix="artifact-worker",
+        name="Artifact Worker",
+    )
 
     async def _fake_profile(*args, **kwargs):
         del args, kwargs
-        return SimpleNamespace(id=uuid4())
+        return SimpleNamespace(id=worker_agent.id)
 
     monkeypatch.setattr(
         "app.services.platform_architect_worker_bindings.ensure_artifact_coding_agent_profile",
@@ -674,9 +741,11 @@ async def test_spawn_worker_uses_binding_thread_id_for_kernel_child(monkeypatch)
 @pytest.mark.asyncio
 async def test_worker_get_run_returns_binding_ref_from_run_record(db_session):
     tenant, user = await _seed_tenant_and_user(db_session)
+    parent_agent = await _seed_agent(db_session, tenant_id=tenant.id, slug_prefix="parent", name="Parent Agent")
+    child_agent = await _seed_agent(db_session, tenant_id=tenant.id, slug_prefix="child", name="Child Agent")
     parent = AgentRun(
         tenant_id=tenant.id,
-        agent_id=uuid4(),
+        agent_id=parent_agent.id,
         user_id=user.id,
         initiator_user_id=user.id,
         status=RunStatus.running,
@@ -687,7 +756,7 @@ async def test_worker_get_run_returns_binding_ref_from_run_record(db_session):
     parent.root_run_id = parent.id
     child = AgentRun(
         tenant_id=tenant.id,
-        agent_id=uuid4(),
+        agent_id=child_agent.id,
         user_id=user.id,
         initiator_user_id=user.id,
         status=RunStatus.completed,
@@ -726,9 +795,11 @@ async def test_worker_get_run_returns_binding_ref_from_run_record(db_session):
 @pytest.mark.asyncio
 async def test_worker_get_run_detects_blocking_question_waiting_state(db_session):
     tenant, user = await _seed_tenant_and_user(db_session)
+    parent_agent = await _seed_agent(db_session, tenant_id=tenant.id, slug_prefix="parent", name="Parent Agent")
+    child_agent = await _seed_agent(db_session, tenant_id=tenant.id, slug_prefix="child", name="Child Agent")
     parent = AgentRun(
         tenant_id=tenant.id,
-        agent_id=uuid4(),
+        agent_id=parent_agent.id,
         user_id=user.id,
         initiator_user_id=user.id,
         status=RunStatus.running,
@@ -739,7 +810,7 @@ async def test_worker_get_run_detects_blocking_question_waiting_state(db_session
     parent.root_run_id = parent.id
     child = AgentRun(
         tenant_id=tenant.id,
-        agent_id=uuid4(),
+        agent_id=child_agent.id,
         user_id=user.id,
         initiator_user_id=user.id,
         status=RunStatus.completed,
@@ -777,9 +848,11 @@ async def test_worker_get_run_detects_blocking_question_waiting_state(db_session
 @pytest.mark.asyncio
 async def test_worker_await_returns_waiting_state_without_timeout(db_session):
     tenant, user = await _seed_tenant_and_user(db_session)
+    parent_agent = await _seed_agent(db_session, tenant_id=tenant.id, slug_prefix="parent", name="Parent Agent")
+    child_agent = await _seed_agent(db_session, tenant_id=tenant.id, slug_prefix="child", name="Child Agent")
     parent = AgentRun(
         tenant_id=tenant.id,
-        agent_id=uuid4(),
+        agent_id=parent_agent.id,
         user_id=user.id,
         initiator_user_id=user.id,
         status=RunStatus.running,
@@ -790,7 +863,7 @@ async def test_worker_await_returns_waiting_state_without_timeout(db_session):
     parent.root_run_id = parent.id
     child = AgentRun(
         tenant_id=tenant.id,
-        agent_id=uuid4(),
+        agent_id=child_agent.id,
         user_id=user.id,
         initiator_user_id=user.id,
         status=RunStatus.completed,
@@ -824,10 +897,19 @@ async def test_worker_await_returns_waiting_state_without_timeout(db_session):
 @pytest.mark.asyncio
 async def test_worker_respond_continues_completed_blocking_child_natively(db_session):
     tenant, user = await _seed_tenant_and_user(db_session)
-    worker_thread_id = uuid4()
+    parent_agent = await _seed_agent(db_session, tenant_id=tenant.id, slug_prefix="parent", name="Parent Agent")
+    child_agent = await _seed_agent(db_session, tenant_id=tenant.id, slug_prefix="child", name="Child Agent")
+    worker_thread = await _seed_thread(
+        db_session,
+        tenant_id=tenant.id,
+        user_id=user.id,
+        agent_id=child_agent.id,
+        surface=AgentThreadSurface.artifact_admin,
+        title="Worker Continuation Thread",
+    )
     parent = AgentRun(
         tenant_id=tenant.id,
-        agent_id=uuid4(),
+        agent_id=parent_agent.id,
         user_id=user.id,
         initiator_user_id=user.id,
         status=RunStatus.running,
@@ -843,13 +925,13 @@ async def test_worker_respond_continues_completed_blocking_child_natively(db_ses
     }
     child = AgentRun(
         tenant_id=tenant.id,
-        agent_id=uuid4(),
+        agent_id=child_agent.id,
         user_id=user.id,
         initiator_user_id=user.id,
         status=RunStatus.completed,
         root_run_id=parent.id,
         parent_run_id=parent.id,
-        thread_id=worker_thread_id,
+        thread_id=worker_thread.id,
         input_params={
             "context": {
                 "architect_worker_binding_ref": binding_ref,
@@ -875,13 +957,13 @@ async def test_worker_respond_continues_completed_blocking_child_natively(db_ses
             captured["prompt_role"] = prompt_role
             return {
                 "worker_agent_slug": "artifact-coding-agent",
-                "thread_id": str(worker_thread_id),
+                "thread_id": str(worker_thread.id),
                 "mapped_input_payload": {
                     "input": prompt,
                     "messages": [{"role": "system", "content": prompt}],
-                    "thread_id": str(worker_thread_id),
+                    "thread_id": str(worker_thread.id),
                     "context": {
-                        "thread_id": str(worker_thread_id),
+                        "thread_id": str(worker_thread.id),
                         "architect_worker_binding_ref": binding_ref.as_dict(),
                     },
                 },
@@ -898,11 +980,11 @@ async def test_worker_respond_continues_completed_blocking_child_natively(db_ses
         followup = AgentRun(
             id=new_run_id,
             tenant_id=tenant.id,
-            agent_id=uuid4(),
+            agent_id=child_agent.id,
             user_id=user.id,
             initiator_user_id=user.id,
             status=RunStatus.queued,
-            thread_id=worker_thread_id,
+            thread_id=worker_thread.id,
             root_run_id=parent.id,
             parent_run_id=parent.id,
             parent_node_id="architect_worker_respond",
@@ -942,17 +1024,26 @@ async def test_worker_respond_continues_completed_blocking_child_natively(db_ses
     assert captured["prompt_role"] == "user"
     assert result["continuation_of_run_id"] == str(child.id)
     assert result["next_action_hint"] == "await_latest_child_then_persist"
-    assert captured["spawn_kwargs"]["thread_id"] == worker_thread_id
+    assert captured["spawn_kwargs"]["thread_id"] == worker_thread.id
     assert captured["spawn_kwargs"]["parent_node_id"] == "architect_worker_respond"
 
 
 @pytest.mark.asyncio
 async def test_worker_respond_continues_completed_non_waiting_child_natively(db_session):
     tenant, user = await _seed_tenant_and_user(db_session)
-    worker_thread_id = uuid4()
+    parent_agent = await _seed_agent(db_session, tenant_id=tenant.id, slug_prefix="parent", name="Parent Agent")
+    child_agent = await _seed_agent(db_session, tenant_id=tenant.id, slug_prefix="child", name="Child Agent")
+    worker_thread = await _seed_thread(
+        db_session,
+        tenant_id=tenant.id,
+        user_id=user.id,
+        agent_id=child_agent.id,
+        surface=AgentThreadSurface.artifact_admin,
+        title="Worker Continuation Thread",
+    )
     parent = AgentRun(
         tenant_id=tenant.id,
-        agent_id=uuid4(),
+        agent_id=parent_agent.id,
         user_id=user.id,
         initiator_user_id=user.id,
         status=RunStatus.running,
@@ -968,13 +1059,13 @@ async def test_worker_respond_continues_completed_non_waiting_child_natively(db_
     }
     child = AgentRun(
         tenant_id=tenant.id,
-        agent_id=uuid4(),
+        agent_id=child_agent.id,
         user_id=user.id,
         initiator_user_id=user.id,
         status=RunStatus.completed,
         root_run_id=parent.id,
         parent_run_id=parent.id,
-        thread_id=worker_thread_id,
+        thread_id=worker_thread.id,
         input_params={
             "context": {
                 "architect_worker_binding_ref": binding_ref,
@@ -1000,13 +1091,13 @@ async def test_worker_respond_continues_completed_non_waiting_child_natively(db_
             captured["prompt_role"] = prompt_role
             return {
                 "worker_agent_slug": "artifact-coding-agent",
-                "thread_id": str(worker_thread_id),
+                "thread_id": str(worker_thread.id),
                 "mapped_input_payload": {
                     "input": prompt,
                     "messages": [{"role": "system", "content": prompt}],
-                    "thread_id": str(worker_thread_id),
+                    "thread_id": str(worker_thread.id),
                     "context": {
-                        "thread_id": str(worker_thread_id),
+                        "thread_id": str(worker_thread.id),
                         "architect_worker_binding_ref": binding_ref.as_dict(),
                     },
                 },
@@ -1023,11 +1114,11 @@ async def test_worker_respond_continues_completed_non_waiting_child_natively(db_
         followup = AgentRun(
             id=new_run_id,
             tenant_id=tenant.id,
-            agent_id=uuid4(),
+            agent_id=child_agent.id,
             user_id=user.id,
             initiator_user_id=user.id,
             status=RunStatus.queued,
-            thread_id=worker_thread_id,
+            thread_id=worker_thread.id,
             root_run_id=parent.id,
             parent_run_id=parent.id,
             parent_node_id="architect_worker_respond",
@@ -1066,4 +1157,4 @@ async def test_worker_respond_continues_completed_non_waiting_child_natively(db_
     assert captured["message"] == "Add tests, README, and set slug to fibpkg."
     assert captured["prompt_role"] == "user"
     assert result["continuation_of_run_id"] == str(child.id)
-    assert captured["spawn_kwargs"]["thread_id"] == worker_thread_id
+    assert captured["spawn_kwargs"]["thread_id"] == worker_thread.id

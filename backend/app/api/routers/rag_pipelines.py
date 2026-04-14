@@ -44,6 +44,14 @@ from app.rag.pipeline.input_storage import PipelineInputStorage
 from fastapi import BackgroundTasks
 from app.services.tool_binding_service import ToolBindingService
 from app.services.rag_executable_state import StaleExecutablePipelineError, ensure_executable_pipeline_is_current
+from app.services.control_plane.context import ControlPlaneContext
+from app.services.control_plane.errors import ControlPlaneError
+from app.services.control_plane.rag_admin_service import (
+    CreatePipelineInput as ControlPlaneCreatePipelineInput,
+    RagAdminService,
+    UpdatePipelineInput as ControlPlaneUpdatePipelineInput,
+)
+from app.services.control_plane.contracts import ListQuery
 
 router = APIRouter()
 
@@ -54,6 +62,21 @@ async def run_pipeline_job_background(job_id: UUID, artifact_queue_class: str = 
     async with sessionmaker() as session:
         executor = PipelineExecutor(session)
         await executor.execute_job(job_id, artifact_queue_class=artifact_queue_class)
+
+
+def _pipeline_control_plane_ctx(*, tenant, user, context: Dict[str, Any] | None = None) -> ControlPlaneContext:
+    if tenant is None:
+        raise HTTPException(status_code=400, detail="Tenant context required")
+    principal = context or {}
+    return ControlPlaneContext(
+        tenant_id=tenant.id,
+        user=user,
+        user_id=getattr(user, "id", None),
+        auth_token=principal.get("auth_token"),
+        scopes=tuple(principal.get("scopes") or ()),
+        is_service=bool(principal.get("type") == "workload"),
+        tenant_slug=getattr(tenant, "slug", None),
+    )
 
 
 # =============================================================================
@@ -481,27 +504,42 @@ async def list_operator_specs(
     return {spec.operator_id: spec.model_dump() for spec in specs}
 
 
-@router.get("/visual-pipelines")
+@router.get("/visual-pipelines", response_model=Dict[str, Any])
 async def list_visual_pipelines(
     tenant_slug: Optional[str] = None,
+    skip: int = 0,
+    limit: int = 20,
+    view: str = "summary",
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """List all visual pipelines."""
     tenant, user, db = await get_pipeline_context(tenant_slug, current_user, db)
+    list_query = ListQuery.from_payload({"skip": skip, "limit": limit, "view": view})
 
     if not await require_pipeline_permission(tenant, user, Action.READ, db=db):
         raise HTTPException(status_code=403, detail="Permission denied")
-
-    query = select(VisualPipeline)
-    if tenant:
-        query = query.where(VisualPipeline.tenant_id == tenant.id)
-    query = query.order_by(VisualPipeline.updated_at.desc())
-
-    result = await db.execute(query)
-    pipelines = result.scalars().all()
-
-    return {"pipelines": [pipeline_to_dict(p) for p in pipelines]}
+    if tenant is None:
+        stmt = select(VisualPipeline).order_by(VisualPipeline.updated_at.desc())
+        result = await db.execute(stmt)
+        pipelines = result.scalars().all()
+        sliced = pipelines[list_query.skip: list_query.skip + list_query.limit]
+        return {
+            "items": [pipeline_to_dict(p) for p in sliced],
+            "total": len(pipelines),
+            "has_more": list_query.skip + len(sliced) < len(pipelines),
+            "skip": list_query.skip,
+            "limit": list_query.limit,
+            "view": list_query.view,
+        }
+    try:
+        page = await RagAdminService(db).list_visual_pipelines(
+            ctx=_pipeline_control_plane_ctx(tenant=tenant, user=user),
+            query=list_query,
+        )
+        return page.to_payload()
+    except ControlPlaneError as exc:
+        raise exc.to_http_exception() from exc
 
 
 @router.post("/visual-pipelines")
@@ -515,51 +553,38 @@ async def create_visual_pipeline(
 ):
     """Create a new visual pipeline."""
     tenant, user, db = await get_pipeline_context(tenant_slug, current_user=context.get("user"), db=db, context=context)
-
-    if not tenant:
-        raise HTTPException(status_code=400, detail="Tenant context required to create pipeline")
-
     if not await require_pipeline_permission(tenant, user, Action.WRITE, db=db):
         raise HTTPException(status_code=403, detail="Permission denied")
-
-    # Convert nodes and edges to JSONB
-    nodes = [n.model_dump(mode='json') for n in request.nodes]
-    edges = [e.model_dump(mode='json') for e in request.edges]
-
-    org_unit_id = request.org_unit_id
-
-    pipeline = VisualPipeline(
-        tenant_id=tenant.id,
-        org_unit_id=org_unit_id,
-        name=request.name,
-        description=request.description,
-        nodes=nodes,
-        edges=edges,
-        version=1,
-        is_published=False,
-        pipeline_type=request.pipeline_type,
-        created_by=user.id if user else None,
-    )
-
-    db.add(pipeline)
-    await db.commit()
-    await db.refresh(pipeline)
+    try:
+        response_payload = await RagAdminService(db).create_pipeline(
+            ctx=_pipeline_control_plane_ctx(tenant=tenant, user=user, context=context),
+            params=ControlPlaneCreatePipelineInput(
+                name=request.name,
+                description=request.description,
+                pipeline_type=getattr(request.pipeline_type, "value", request.pipeline_type),
+                nodes=[n.model_dump(mode="json") for n in request.nodes],
+                edges=[e.model_dump(mode="json") for e in request.edges],
+                org_unit_id=request.org_unit_id,
+            ),
+        )
+    except ControlPlaneError as exc:
+        raise exc.to_http_exception() from exc
 
     if user:
         await log_simple_action(
             tenant_id=tenant.id,
-            org_unit_id=org_unit_id,
+            org_unit_id=request.org_unit_id,
             actor_id=user.id,
             actor_type=ActorType.USER,
             actor_email=user.email,
             action=Action.WRITE,
             resource_type=ResourceType.PIPELINE,
-            resource_id=str(pipeline.id),
+            resource_id=response_payload["id"],
             resource_name=request.name,
             request=http_request,
         )
 
-    return {"id": str(pipeline.id), "status": "created"}
+    return response_payload
 
 
 @router.get("/visual-pipelines/{pipeline_id}")
@@ -665,67 +690,36 @@ async def update_visual_pipeline(
     if not await require_pipeline_permission(tenant, user, Action.WRITE, pipeline_id=pipeline_id, db=db):
         raise HTTPException(status_code=403, detail="Permission denied")
 
-    query = select(VisualPipeline).where(VisualPipeline.id == pipeline_id)
-    if tenant:
-        query = query.where(VisualPipeline.tenant_id == tenant.id)
-
-    result = await db.execute(query)
-    pipeline = result.scalar_one_or_none()
-
-    if not pipeline:
-        raise HTTPException(status_code=404, detail="Pipeline not found")
-
-    previous_name = pipeline.name
-    previous_description = pipeline.description
-    was_published = pipeline.is_published
-
-    # If pipeline was published, increment version and unpublish
-    if was_published:
-        pipeline.version = pipeline.version + 1
-        pipeline.is_published = False
-
-    if request.name is not None:
-        pipeline.name = request.name
-    if request.description is not None:
-        pipeline.description = request.description
-    if request.nodes is not None:
-        pipeline.nodes = [n.model_dump(mode='json') for n in request.nodes]
-    if request.edges is not None:
-        pipeline.edges = [e.model_dump(mode='json') for e in request.edges]
-    if request.pipeline_type is not None:
-        pipeline.pipeline_type = request.pipeline_type
-
-    pipeline.updated_at = datetime.utcnow()
-    binding_service = ToolBindingService(db)
     try:
-        await binding_service.sync_pipeline_tool_metadata(
-            pipeline=pipeline,
-            previous_name=previous_name,
-            previous_description=previous_description,
+        response_payload = await RagAdminService(db).update_pipeline(
+            ctx=_pipeline_control_plane_ctx(tenant=tenant, user=user, context=context),
+            pipeline_id=pipeline_id,
+            params=ControlPlaneUpdatePipelineInput(
+                name=request.name,
+                description=request.description,
+                pipeline_type=getattr(request.pipeline_type, "value", request.pipeline_type) if request.pipeline_type is not None else None,
+                nodes=[n.model_dump(mode="json") for n in request.nodes] if request.nodes is not None else None,
+                edges=[e.model_dump(mode="json") for e in request.edges] if request.edges is not None else None,
+            ),
         )
-        if was_published:
-            await binding_service.demote_pipeline_tool_binding(pipeline)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    await db.commit()
-    await db.refresh(pipeline)
+    except ControlPlaneError as exc:
+        raise exc.to_http_exception() from exc
 
     if user:
         await log_simple_action(
             tenant_id=tenant.id if tenant else None,
-            org_unit_id=pipeline.org_unit_id,
+            org_unit_id=None,
             actor_id=user.id,
             actor_type=ActorType.USER,
             actor_email=user.email,
             action=Action.WRITE,
             resource_type=ResourceType.PIPELINE,
             resource_id=pipeline_id,
-            resource_name=pipeline.name,
+            resource_name=request.name or str(pipeline_id),
             request=http_request,
         )
 
-    return {"status": "updated", "version": pipeline.version}
+    return response_payload
 
 
 @router.delete("/visual-pipelines/{pipeline_id}")
@@ -800,106 +794,13 @@ async def compile_pipeline(
     if not await require_pipeline_permission(tenant, user, Action.WRITE, pipeline_id=pipeline_id, db=db):
         raise HTTPException(status_code=403, detail="Permission denied")
 
-    query = select(VisualPipeline).where(VisualPipeline.id == pipeline_id)
-    if tenant:
-        query = query.where(VisualPipeline.tenant_id == tenant.id)
-
-    result = await db.execute(query)
-    pipeline = result.scalar_one_or_none()
-
-    if not pipeline:
-        raise HTTPException(status_code=404, detail="Pipeline not found")
-
-    # Sync custom operators
-    await sync_custom_operators(db, tenant.id)
-
-    # Create a mock VisualPipeline object for the compiler
-    # (The compiler expects the old MongoDB model format)
-    class MockVisualPipeline:
-        def __init__(self, p):
-            self.id = p.id
-            self.tenant_id = p.tenant_id
-            self.org_unit_id = p.org_unit_id
-            self.name = p.name
-            self.description = p.description
-            self.nodes = p.nodes or []
-            self.edges = p.edges or []
-            self.version = p.version
-            self.pipeline_type = p.pipeline_type
-    
-    mock_pipeline = MockVisualPipeline(pipeline)
-    
     try:
-        compiler = PipelineCompiler()
-        compiled_by = str(user.id) if user else str(context.get("initiator_user_id") or "")
-        compile_result = compiler.compile(
-            mock_pipeline,
-            compiled_by=compiled_by,
-            tenant_id=str(tenant.id),
-            require_published_artifacts=True,
+        return await RagAdminService(db).compile_pipeline(
+            ctx=_pipeline_control_plane_ctx(tenant=tenant, user=user, context=context),
+            pipeline_id=pipeline_id,
         )
-    except Exception as e:
-        return {
-            "success": False,
-            "errors": [{"message": str(e)}],
-            "warnings": [],
-        }
-
-    if not compile_result.success:
-        return {
-            "success": False,
-            "errors": [e.model_dump() for e in compile_result.errors],
-            "warnings": [w.model_dump() for w in compile_result.warnings],
-        }
-
-    # Create ExecutablePipeline
-    exec_pipeline = ExecutablePipeline(
-        visual_pipeline_id=pipeline.id,
-        tenant_id=pipeline.tenant_id,
-        version=pipeline.version,
-        compiled_graph=compile_result.executable_pipeline.model_dump(mode='json') if hasattr(compile_result.executable_pipeline, 'model_dump') else {},
-        is_valid=True,
-        pipeline_type=pipeline.pipeline_type,
-        compiled_by=user.id if user else None,
-    )
-
-    db.add(exec_pipeline)
-
-    # Mark visual pipeline as published
-    pipeline.is_published = True
-    pipeline.updated_at = datetime.utcnow()
-    try:
-        await ToolBindingService(db).publish_pipeline_tool_binding(
-            pipeline=pipeline,
-            executable_pipeline=exec_pipeline,
-            created_by=user.id if user else None,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    await db.commit()
-    await db.refresh(exec_pipeline)
-
-    if user:
-        await log_simple_action(
-            tenant_id=tenant.id if tenant else None,
-            org_unit_id=pipeline.org_unit_id,
-            actor_id=user.id,
-            actor_type=ActorType.USER,
-            actor_email=user.email,
-            action=Action.WRITE,
-            resource_type=ResourceType.PIPELINE,
-            resource_id=pipeline_id,
-            resource_name=f"{pipeline.name} (compiled v{pipeline.version})",
-            request=http_request,
-        )
-
-    return {
-        "success": True,
-        "executable_pipeline_id": str(exec_pipeline.id),
-        "version": pipeline.version,
-        "warnings": [w.model_dump() for w in compile_result.warnings] if compile_result.warnings else [],
-    }
+    except ControlPlaneError as exc:
+        raise exc.to_http_exception() from exc
 
 
 @router.get("/visual-pipelines/{pipeline_id}/versions")
@@ -946,18 +847,20 @@ async def get_executable_pipeline(
 ):
     """Get an executable pipeline by ID."""
     tenant, user, db = await get_pipeline_context(tenant_slug, current_user, db)
-
-    query = select(ExecutablePipeline).where(ExecutablePipeline.id == exec_id)
-    if tenant:
-        query = query.where(ExecutablePipeline.tenant_id == tenant.id)
-
-    result = await db.execute(query)
-    exec_pipeline = result.scalar_one_or_none()
-
-    if not exec_pipeline:
-        raise HTTPException(status_code=404, detail="Executable pipeline not found")
-
-    return exec_pipeline_to_dict(exec_pipeline)
+    if tenant is None:
+        query = select(ExecutablePipeline).where(ExecutablePipeline.id == exec_id)
+        result = await db.execute(query)
+        exec_pipeline = result.scalar_one_or_none()
+        if not exec_pipeline:
+            raise HTTPException(status_code=404, detail="Executable pipeline not found")
+        return exec_pipeline_to_dict(exec_pipeline)
+    try:
+        return await RagAdminService(db).get_executable_pipeline(
+            ctx=_pipeline_control_plane_ctx(tenant=tenant, user=user),
+            executable_pipeline_id=exec_id,
+        )
+    except ControlPlaneError as exc:
+        raise exc.to_http_exception() from exc
 
 
 class PipelineInputSchemaBuilder:
@@ -1216,27 +1119,17 @@ async def get_executable_pipeline_input_schema(
     db: AsyncSession = Depends(get_db),
 ):
     tenant, user, db = await get_pipeline_context(tenant_slug, current_user, db)
-
     if not await require_pipeline_permission(tenant, user, Action.READ, db=db):
         raise HTTPException(status_code=403, detail="Permission denied")
-
-    query = select(ExecutablePipeline).where(ExecutablePipeline.id == exec_id)
-    if tenant:
-        query = query.where(ExecutablePipeline.tenant_id == tenant.id)
-
-    result = await db.execute(query)
-    exec_pipeline = result.scalar_one_or_none()
-    if not exec_pipeline:
-        raise HTTPException(status_code=404, detail="Executable pipeline not found")
-
-    if tenant:
-        await sync_custom_operators(db, tenant.id)
-
-    compiled_graph = exec_pipeline.compiled_graph or {}
-    dag = compiled_graph.get("dag") or []
-    registry = OperatorRegistry.get_instance()
-    tenant_id = str(tenant.id) if tenant else None
-    return PipelineInputSchemaBuilder(dag, registry, tenant_id).build().model_dump()
+    if tenant is None:
+        raise HTTPException(status_code=400, detail="Tenant context required")
+    try:
+        return await RagAdminService(db).get_executable_input_schema(
+            ctx=_pipeline_control_plane_ctx(tenant=tenant, user=user),
+            executable_pipeline_id=exec_id,
+        )
+    except ControlPlaneError as exc:
+        raise exc.to_http_exception() from exc
 
 
 @router.post("/pipeline-inputs/upload")
@@ -1275,55 +1168,14 @@ async def create_pipeline_job(
     if not tenant:
         raise HTTPException(status_code=400, detail="Tenant context required")
 
-    exec_id = request.executable_pipeline_id
-
-    # Verify executable pipeline exists
-    exec_query = select(ExecutablePipeline).where(
-        ExecutablePipeline.id == exec_id,
-        ExecutablePipeline.tenant_id == tenant.id
-    )
-    exec_result = await db.execute(exec_query)
-    exec_pipeline = exec_result.scalar_one_or_none()
-
-    if not exec_pipeline:
-        raise HTTPException(status_code=404, detail="Executable pipeline not found")
-
-    visual_pipeline = (
-        await db.execute(
-            select(VisualPipeline).where(
-                VisualPipeline.id == exec_pipeline.visual_pipeline_id,
-                VisualPipeline.tenant_id == tenant.id,
-            )
-        )
-    ).scalar_one_or_none()
-    if visual_pipeline is None:
-        raise HTTPException(status_code=404, detail="Visual pipeline not found")
     try:
-        ensure_executable_pipeline_is_current(visual_pipeline, exec_pipeline)
-    except StaleExecutablePipelineError as exc:
-        raise HTTPException(status_code=409, detail=exc.to_detail()) from exc
-
-    await sync_custom_operators(db, tenant.id)
-
-    compiled_graph = exec_pipeline.compiled_graph or {}
-    dag = compiled_graph.get("dag") or []
-    registry = OperatorRegistry.get_instance()
-    validator = PipelineInputValidator(dag, registry, str(tenant.id), PipelineInputStorage())
-    normalized_params, validation_errors = validator.validate(request.input_params)
-    if validation_errors:
-        raise HTTPException(status_code=422, detail={"errors": validation_errors})
-
-    job = PipelineJob(
-        tenant_id=tenant.id,
-        executable_pipeline_id=exec_id,
-        status=PipelineJobStatus.QUEUED,
-        input_params=normalized_params,
-        triggered_by=user.id,
-    )
-
-    db.add(job)
-    await db.commit()
-    await db.refresh(job)
+        operation = await RagAdminService(db).create_job(
+            ctx=_pipeline_control_plane_ctx(tenant=tenant, user=user),
+            executable_pipeline_id=request.executable_pipeline_id,
+            input_params=request.input_params,
+        )
+    except ControlPlaneError as exc:
+        raise exc.to_http_exception() from exc
 
     await log_simple_action(
         tenant_id=tenant.id,
@@ -1333,17 +1185,17 @@ async def create_pipeline_job(
         actor_email=user.email,
         action=Action.WRITE,
         resource_type=ResourceType.JOB,
-        resource_id=str(job.id),
+        resource_id=operation["operation"]["id"],
         resource_name=f"Pipeline Job (exec: {request.executable_pipeline_id})",
         request=http_request,
     )
 
     # Trigger background execution
-    background_tasks.add_task(run_pipeline_job_background, job.id, "artifact_prod_background")
+    background_tasks.add_task(run_pipeline_job_background, UUID(operation["operation"]["id"]), "artifact_prod_background")
 
     return {
-        "job_id": str(job.id),
-        "status": "queued",
+        "job_id": operation["operation"]["id"],
+        "status": operation["operation"]["status"],
         "executable_pipeline_id": request.executable_pipeline_id,
     }
 
@@ -1406,18 +1258,21 @@ async def get_pipeline_job(
 ):
     """Get a pipeline job by ID."""
     tenant, user, db = await get_pipeline_context(tenant_slug, current_user, db)
-
-    query = select(PipelineJob).where(PipelineJob.id == job_id)
-    if tenant:
-        query = query.where(PipelineJob.tenant_id == tenant.id)
-
-    result = await db.execute(query)
-    job = result.scalar_one_or_none()
-
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
-
-    return job_to_dict(job)
+    if tenant is None:
+        query = select(PipelineJob).where(PipelineJob.id == job_id)
+        result = await db.execute(query)
+        job = result.scalar_one_or_none()
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        return job_to_dict(job)
+    try:
+        operation = await RagAdminService(db).get_job(
+            ctx=_pipeline_control_plane_ctx(tenant=tenant, user=user),
+            job_id=job_id,
+        )
+    except ControlPlaneError as exc:
+        raise exc.to_http_exception() from exc
+    return operation["result"]
 
 
 def step_to_dict(s: PipelineStepExecution, lite: bool = False) -> Dict[str, Any]:

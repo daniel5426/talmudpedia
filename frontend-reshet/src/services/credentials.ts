@@ -1,4 +1,5 @@
 import { httpClient } from "./http";
+import type { ControlPlaneListResponse, ControlPlaneListView } from "./types";
 
 export type IntegrationCredentialCategory = "llm_provider" | "vector_store" | "tool_provider" | "custom";
 
@@ -75,12 +76,18 @@ export interface CredentialUsageResponse {
 }
 
 export const credentialsService = {
-  async listCredentials(category?: IntegrationCredentialCategory): Promise<IntegrationCredential[]> {
+  async listCredentials(
+    category?: IntegrationCredentialCategory,
+    params?: { skip?: number; limit?: number; view?: ControlPlaneListView }
+  ): Promise<ControlPlaneListResponse<IntegrationCredential>> {
     const query = new URLSearchParams();
     if (category) query.set("category", category);
+    query.set("skip", String(params?.skip ?? 0));
+    query.set("limit", String(params?.limit ?? 20));
+    query.set("view", params?.view ?? "summary");
     const queryString = query.toString();
     const path = `/admin/settings/credentials${queryString ? `?${queryString}` : ""}`;
-    return httpClient.get<IntegrationCredential[]>(path);
+    return httpClient.get<ControlPlaneListResponse<IntegrationCredential>>(path);
   },
 
   async createCredential(data: CreateCredentialRequest): Promise<IntegrationCredential> {

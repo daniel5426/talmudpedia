@@ -1,4 +1,5 @@
 import { httpClient } from "./http";
+import type { ControlPlaneListResponse, ControlPlaneListView } from "./types";
 import {
   ExecutablePipelineInputField,
   ExecutablePipelineInputSchema,
@@ -323,11 +324,16 @@ class RAGAdminService {
     return httpClient.get<Record<string, OperatorSpec>>(url);
   }
 
-  async listVisualPipelines(tenantSlug?: string): Promise<{ pipelines: VisualPipeline[] }> {
-    const url = tenantSlug
-      ? `/admin/pipelines/visual-pipelines?tenant_slug=${tenantSlug}`
-      : "/admin/pipelines/visual-pipelines";
-    return httpClient.get<{ pipelines: VisualPipeline[] }>(url);
+  async listVisualPipelines(
+    tenantSlug?: string,
+    params?: { skip?: number; limit?: number; view?: ControlPlaneListView }
+  ): Promise<ControlPlaneListResponse<VisualPipeline>> {
+    const query = new URLSearchParams();
+    if (tenantSlug) query.set("tenant_slug", tenantSlug);
+    query.set("skip", String(params?.skip ?? 0));
+    query.set("limit", String(params?.limit ?? 20));
+    query.set("view", params?.view ?? "summary");
+    return httpClient.get<ControlPlaneListResponse<VisualPipeline>>(`/admin/pipelines/visual-pipelines?${query.toString()}`);
   }
 
   async createVisualPipeline(

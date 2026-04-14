@@ -575,6 +575,32 @@ def test_tenant_and_scope_denial_paths(monkeypatch):
     assert scope_denied["errors"][0]["code"] == "SCOPE_DENIED"
 
 
+def test_platform_sdk_outputs_redacted_auth_context(monkeypatch):
+    _patch_auth(monkeypatch)
+    fake = _FakeControlClient()
+    monkeypatch.setattr(handler, "_control_client", lambda _client: fake)
+
+    result = _call(
+        "models.list",
+        {
+            "tenant_id": "tenant-1",
+            "request_metadata": {"trace_id": "trace-auth", "request_id": "req-auth"},
+        },
+        tool_slug="platform-assets",
+    )
+
+    auth_context = result["meta"]["auth_context"]
+    assert auth_context["action"] == "models.list"
+    assert auth_context["tenant_id"] == "tenant-1"
+    assert auth_context["runtime_tenant_id"] is None
+    assert auth_context["explicit_tenant_id"] == "tenant-1"
+    assert auth_context["token_present"] is True
+    assert auth_context["required_scopes"] == ["models.read"]
+    assert "Authorization" in auth_context["client_header_keys"]
+    assert "X-SDK-Contract" in auth_context["client_header_keys"]
+    assert "Bearer token" not in str(auth_context)
+
+
 def test_replay_idempotency_reuses_pipeline(monkeypatch):
     _patch_auth(monkeypatch)
     fake = _FakeControlClient()

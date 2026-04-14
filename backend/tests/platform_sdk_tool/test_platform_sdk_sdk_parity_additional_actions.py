@@ -556,9 +556,17 @@ def test_rag_create_pipeline_shell_builds_minimal_retrieval_graph(monkeypatch):
     assert call["method"] == "create_visual_pipeline"
     request_payload = call["args"][0]
     assert request_payload["pipeline_type"] == "retrieval"
-    assert request_payload["nodes"][0]["operator"] == "query_input"
-    assert request_payload["nodes"][1]["operator"] == "retrieval_result"
-    assert request_payload["edges"][0]["source"] == "query_input_1"
+    assert [node["operator"] for node in request_payload["nodes"]] == [
+        "query_input",
+        "model_embedder",
+        "vector_search",
+        "retrieval_result",
+    ]
+    assert [(edge["source"], edge["target"]) for edge in request_payload["edges"]] == [
+        ("query_input_1", "model_embedder_1"),
+        ("model_embedder_1", "vector_search_1"),
+        ("vector_search_1", "retrieval_result_1"),
+    ]
 
 
 def test_agents_create_shell_builds_minimal_graph(monkeypatch):

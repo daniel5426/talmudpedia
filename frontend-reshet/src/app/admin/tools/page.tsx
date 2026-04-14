@@ -774,8 +774,8 @@ export default function ToolsPage() {
     const fetchTools = useCallback(async () => {
         setLoading(true)
         try {
-            const response = await toolsService.listTools()
-            setTools(response.tools || [])
+            const response = await toolsService.listTools(undefined, undefined, undefined, 0, 100, "summary")
+            setTools(response.items || [])
         } catch (error) {
             console.error("Failed to fetch tools", error)
         } finally {

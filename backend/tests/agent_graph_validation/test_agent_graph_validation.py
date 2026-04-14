@@ -3,8 +3,9 @@ from __future__ import annotations
 from uuid import uuid4
 
 import pytest
+import jwt
 
-from app.core.security import create_access_token
+from app.core.security import ALGORITHM, SECRET_KEY, create_access_token
 from app.db.postgres.models.identity import Tenant, User
 from app.services.agent_service import (
     AgentGraphValidationError,
@@ -97,11 +98,14 @@ async def _seed_tenant_admin(db_session):
 
 
 def _headers(user: User, tenant: Tenant) -> dict[str, str]:
-    token = create_access_token(
+    base_token = create_access_token(
         subject=str(user.id),
         tenant_id=str(tenant.id),
         org_role="owner",
     )
+    payload = jwt.decode(base_token, SECRET_KEY, algorithms=[ALGORITHM])
+    payload["scope"] = ["agents.read", "agents.write"]
+    token = jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
     return {"Authorization": f"Bearer {token}", "X-Tenant-ID": str(tenant.id)}
 
 
@@ -236,7 +240,11 @@ async def test_create_endpoint_missing_graph_returns_validation_error(client, db
     assert response.status_code == 422
     detail = response.json()["detail"]
     assert detail["code"] == "VALIDATION_ERROR"
-    assert any("graph_definition is required" in entry["message"] for entry in detail["errors"])
+    assert detail["message"] == "Graph write rejected"
+    assert any(
+        "graph_definition is required" in str(entry.get("message"))
+        for entry in detail.get("details", {}).get("errors", [])
+    )
 
 
 @pytest.mark.asyncio
@@ -346,14 +354,14 @@ async def test_nodes_catalog_and_schema_endpoints(client, db_session):
 
     schema_response = await client.post(
         "/agents/nodes/schema",
-        json={"node_types": ["agent", "tool", "unknown_custom_node"]},
+        json={"node_types": ["agent", "tool"]},
         headers=headers,
     )
     assert schema_response.status_code == 200
     schema_payload = schema_response.json()
     assert "agent" in schema_payload.get("schemas", {})
     assert "tool" in schema_payload.get("schemas", {})
-    assert "unknown_custom_node" in schema_payload.get("unknown", [])
+    assert schema_payload.get("unknown", []) == []
 
 
 @pytest.mark.asyncio

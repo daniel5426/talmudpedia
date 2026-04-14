@@ -1,6 +1,6 @@
 # Test State: Orchestration Join Policies
 
-Last Updated: 2026-02-08
+Last Updated: 2026-04-14
 
 **Scope**
 Deterministic join semantics for orchestration groups across `best_effort`, `fail_fast`, `quorum`, and `first_success`.
@@ -15,9 +15,9 @@ Deterministic join semantics for orchestration groups across `best_effort`, `fai
 - `best_effort` returns `completed_with_errors` when all children finish with mixed outcomes.
 
 **Last Run**
-- Command: `pytest -q backend/tests/orchestration_graphspec_v2/test_graphspec_v2_orchestration.py backend/tests/orchestration_runtime_primitives/test_runtime_events_and_flags.py backend/tests/orchestration_join_policies/test_join_policies.py backend/tests/orchestration_limits_and_cancellation/test_limits_and_cancellation.py backend/tests/orchestration_kernel/test_kernel_spawn_and_tree.py backend/tests/platform_sdk_tool/test_platform_sdk_orchestration_actions.py`
-- Date: 2026-02-08
-- Result: Pass (`29 passed`)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/orchestration_graphspec_v2/test_graphspec_v2_orchestration.py backend/tests/orchestration_runtime_primitives/test_runtime_events_and_flags.py backend/tests/orchestration_join_policies/test_join_policies.py backend/tests/orchestration_limits_and_cancellation/test_limits_and_cancellation.py backend/tests/orchestration_kernel/test_kernel_spawn_and_tree.py backend/tests/platform_sdk_tool/test_platform_sdk_orchestration_actions.py`
+- Date: 2026-04-14 Asia/Hebron
+- Result: Pass (`29 passed, 17 warnings`)
 
 **Known Gaps / Follow-ups**
 - Add explicit assertions for member-table status transitions (`orchestration_group_members.status`).

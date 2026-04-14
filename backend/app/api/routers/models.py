@@ -38,7 +38,9 @@ from app.services.control_plane.models_service import (
     validate_default_state,
     validate_provider_support,
     validate_registry_pricing_policy,
+    serialize_model,
 )
+from app.services.control_plane.contracts import ListQuery
 
 
 def _validate_provider_support(*, provider: ModelProviderType, capability_type: ModelCapabilityType) -> None:
@@ -122,11 +124,6 @@ class ModelResponse(BaseModel):
     providers: list[ModelProviderSummary] = []
     created_at: datetime
     updated_at: datetime
-
-
-class ModelListResponse(BaseModel):
-    models: list[ModelResponse]
-    total: int
 
 
 def _serialize_provider(binding: ModelProviderBinding) -> ModelProviderSummary:
@@ -276,30 +273,39 @@ def _validate_pricing_config(pricing_config: dict | None) -> dict:
     return normalized
 
 
-@router.get("", response_model=ModelListResponse)
+@router.get("", response_model=dict[str, Any])
 async def list_models(
     capability_type: ModelCapabilityType | None = Query(None),
     status: ModelStatus | None = Query(None),
     is_active: bool | None = Query(default=True),
     skip: int = 0,
-    limit: int = 50,
+    limit: int = 20,
+    view: str = "summary",
     db: AsyncSession = Depends(get_db),
     tenant_ctx=Depends(get_tenant_context),
     _: dict[str, Any] = Depends(require_scopes("models.read")),
     principal: dict[str, Any] = Depends(get_current_principal),
 ):
     try:
+        query = ListQuery.from_payload({"skip": skip, "limit": limit, "view": view})
         models, total = await ModelRegistryService(db).list_models(
             ctx=_service_context(tenant_ctx=tenant_ctx, principal=principal),
             params=ListModelsInput(
                 capability_type=capability_type,
                 status=status,
                 is_active=is_active,
-                skip=skip,
-                limit=limit,
+                skip=query.skip,
+                limit=query.limit,
             ),
         )
-        return ModelListResponse(models=[_serialize_model(model) for model in models], total=total)
+        return {
+            "items": [serialize_model(model, view=query.view) for model in models],
+            "total": total,
+            "has_more": query.skip + len(models) < total,
+            "skip": query.skip,
+            "limit": query.limit,
+            "view": query.view,
+        }
     except ControlPlaneError as exc:
         raise exc.to_http_exception() from exc
 

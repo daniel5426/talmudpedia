@@ -8,7 +8,7 @@ from typing import Optional, List, Dict, Any
 from uuid import UUID
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from pydantic import BaseModel, Field
@@ -26,8 +26,9 @@ from app.db.postgres.models import (
 )
 from app.services.credentials_service import CredentialsService
 from app.services.control_plane.context import ControlPlaneContext
+from app.services.control_plane.contracts import ListQuery
 from app.services.control_plane.errors import ControlPlaneError
-from app.services.control_plane.knowledge_store_admin_service import KnowledgeStoreAdminService
+from app.services.control_plane.knowledge_store_admin_service import KnowledgeStoreAdminService, serialize_store
 
 
 router = APIRouter()
@@ -180,20 +181,32 @@ async def validate_vector_store_credential(
 # Endpoints
 # =============================================================================
 
-@router.get("", response_model=List[KnowledgeStoreResponse])
+@router.get("", response_model=Dict[str, Any])
 async def list_knowledge_stores(
     tenant_slug: Optional[str] = None,
+    skip: int = 0,
+    limit: int = 20,
+    view: str = "summary",
     db: AsyncSession = Depends(get_db),
     tenant_ctx: Dict[str, Any] = Depends(get_tenant_context),
     _: Dict[str, Any] = Depends(require_scopes("knowledge_stores.read")),
     principal: Dict[str, Any] = Depends(get_current_principal),
 ):
     try:
+        query = ListQuery.from_payload({"skip": skip, "limit": limit, "view": view})
         stores = await KnowledgeStoreAdminService(db).list_stores(
             ctx=_service_context(tenant_ctx=tenant_ctx, principal=principal, tenant_slug=tenant_slug),
             tenant_slug=tenant_slug,
         )
-        return [store_to_response(s) for s in stores]
+        sliced = stores[query.skip: query.skip + query.limit]
+        return {
+            "items": [serialize_store(s, view=query.view) for s in sliced],
+            "total": len(stores),
+            "has_more": query.skip + len(sliced) < len(stores),
+            "skip": query.skip,
+            "limit": query.limit,
+            "view": query.view,
+        }
     except ControlPlaneError as exc:
         raise exc.to_http_exception() from exc
 

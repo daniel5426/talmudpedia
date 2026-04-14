@@ -4,8 +4,9 @@ import asyncio
 import json
 import os
 import re
+import time
 from typing import Any
-from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
+from urllib.parse import urlencode, urlparse, urlunparse
 from uuid import UUID
 
 import httpx
@@ -24,6 +25,7 @@ from app.db.postgres.models.published_apps import PublishedApp, PublishedAppDraf
 from app.db.postgres.session import get_db
 from app.services.apps_builder_trace import apps_builder_trace
 from app.services.published_app_auth_service import PublishedAppAuthError, PublishedAppAuthService
+from app.services.published_app_draft_dev_runtime import PublishedAppDraftDevRuntimeService
 from app.services.published_app_draft_dev_runtime_client import PublishedAppDraftDevRuntimeClient
 from app.services.published_app_sandbox_backend_factory import load_published_app_sandbox_backend_config
 from app.services.published_app_sprite_proxy_tunnel import get_sprite_proxy_tunnel_manager
@@ -109,7 +111,6 @@ def _build_preview_path_shim(*, target: dict[str, str], preview_route: str) -> s
         base_path = f"/{base_path}"
     normalized_base_path = base_path[:-1] if base_path.endswith("/") and base_path != "/" else base_path
     base_path_literal = json.dumps(normalized_base_path)
-    preview_bootstrap_path_literal = json.dumps(f"{normalized_base_path}/_talmudpedia/runtime/bootstrap")
     preview_route_literal = json.dumps(_normalize_preview_route(preview_route))
     return (
         "<script>\n"
@@ -117,8 +118,8 @@ def _build_preview_path_shim(*, target: dict[str, str], preview_route: str) -> s
         "  if (window.__talmudpediaPreviewPathShimInstalled) return;\n"
         "  window.__talmudpediaPreviewPathShimInstalled = true;\n"
         f"  const previewBasePath = {base_path_literal};\n"
-        f"  const previewBootstrapPath = {preview_bootstrap_path_literal};\n"
         f"  const initialPreviewRoute = {preview_route_literal};\n"
+        "  window.__TALMUDPEDIA_BUILDER_PREVIEW_BASE_PATH = previewBasePath;\n"
         "  const normalizeAppPath = (pathname) => {\n"
         "    const raw = String(pathname || '').trim();\n"
         "    if (!raw) return '/';\n"
@@ -135,38 +136,20 @@ def _build_preview_path_shim(*, target: dict[str, str], preview_route: str) -> s
         "      return normalizeAppPath(initialPreviewRoute || '/');\n"
         "    }\n"
         "  };\n"
-        "  const isPublishedBootstrapPath = (pathname) => {\n"
-        "    const path = String(pathname || '').trim();\n"
-        "    return /^\\/api\\/py\\/public\\/apps\\/[^/]+\\/runtime\\/bootstrap$/i.test(path)\n"
-        "      || /^\\/public\\/apps\\/[^/]+\\/runtime\\/bootstrap$/i.test(path);\n"
-        "  };\n"
-        "  const rewritePublishedBootstrapUrl = (value) => {\n"
-        "    if (value == null || value === '') return value;\n"
-        "    try {\n"
-        "      const current = new URL(window.location.href);\n"
-        "      const next = new URL(String(value), current);\n"
-        "      if (next.origin !== current.origin) return value;\n"
-        "      if (!isPublishedBootstrapPath(next.pathname)) return value;\n"
-        "      next.pathname = previewBootstrapPath;\n"
-        "      return next.pathname + next.search + next.hash;\n"
-        "    } catch {\n"
-        "      return value;\n"
-        "    }\n"
-        "  };\n"
         "  const toProxyUrl = (value) => {\n"
         "    if (value == null || value === '') return value;\n"
         "    try {\n"
         "      const current = new URL(window.location.href);\n"
         "      const next = new URL(String(value), current);\n"
         "      if (next.origin !== current.origin) return value;\n"
-        "      if (isPublishedBootstrapPath(next.pathname)) return rewritePublishedBootstrapUrl(value);\n"
         "      const nextRoute = normalizeAppPath(next.pathname || '/');\n"
         "      next.pathname = previewBasePath;\n"
         "      next.searchParams.set('preview_route', nextRoute);\n"
         "      for (const [key, itemValue] of current.searchParams.entries()) {\n"
         "        if (String(key) === 'preview_route') continue;\n"
-        "        if (!String(key).startsWith('runtime_')) continue;\n"
-        "        if (!next.searchParams.has(key)) next.searchParams.set(key, itemValue);\n"
+        "        if (String(key) === 'runtime_token' && !next.searchParams.has(key)) {\n"
+        "          next.searchParams.set(key, itemValue);\n"
+        "        }\n"
         "      }\n"
         "      return next.pathname + next.search + next.hash;\n"
         "    } catch {\n"
@@ -190,23 +173,6 @@ def _build_preview_path_shim(*, target: dict[str, str], preview_route: str) -> s
         "          : undefined,\n"
         "      });\n"
         "    }\n"
-        "  } catch {}\n"
-        "  try {\n"
-        "    const originalFetch = window.fetch.bind(window);\n"
-        "    window.fetch = function(input, init) {\n"
-        "      try {\n"
-        "        if (typeof input === 'string' || input instanceof URL) {\n"
-        "          return originalFetch(rewritePublishedBootstrapUrl(input), init);\n"
-        "        }\n"
-        "        if (input && typeof input === 'object' && 'url' in input) {\n"
-        "          const rewrittenUrl = rewritePublishedBootstrapUrl(input.url);\n"
-        "          if (typeof rewrittenUrl === 'string' && rewrittenUrl !== input.url) {\n"
-        "            return originalFetch(new Request(rewrittenUrl, input), init);\n"
-        "          }\n"
-        "        }\n"
-        "      } catch {}\n"
-        "      return originalFetch(input, init);\n"
-        "    };\n"
         "  } catch {}\n"
         "  try {\n"
         "    const assign = window.location.assign.bind(window.location);\n"
@@ -398,13 +364,14 @@ def _summarize_websocket_message(message: Any) -> dict[str, Any]:
     return summary
 
 
-async def _accept_websocket_if_needed(websocket: WebSocket, *, subprotocol: str | None = None) -> None:
-    if getattr(websocket, "application_state", None) == WebSocketState.CONNECTED:
+async def _close_websocket_if_possible(
+    websocket: WebSocket,
+    *,
+    code: int = 1011,
+    accepted: bool = False,
+) -> None:
+    if not accepted:
         return
-    await websocket.accept(subprotocol=subprotocol)
-
-
-async def _close_websocket_if_possible(websocket: WebSocket, *, code: int = 1011) -> None:
     if getattr(websocket, "application_state", None) == WebSocketState.DISCONNECTED:
         return
     if getattr(websocket, "client_state", None) == WebSocketState.DISCONNECTED:
@@ -458,6 +425,32 @@ async def _load_session(*, db: AsyncSession, session_id: str) -> PublishedAppDra
     return session
 
 
+async def _touch_preview_session_activity(
+    *,
+    db: AsyncSession,
+    session: PublishedAppDraftDevSession,
+    reason: str,
+    throttle_seconds: int = 30,
+) -> None:
+    runtime_service = PublishedAppDraftDevRuntimeService(db)
+    touched = await runtime_service.touch_session_activity(
+        session=session,
+        throttle_seconds=throttle_seconds,
+    )
+    if not touched:
+        return
+    await db.commit()
+    apps_builder_trace(
+        "preview.proxy.session_activity_touched",
+        domain="preview.proxy",
+        session_id=str(session.id),
+        app_id=str(session.published_app_id),
+        revision_id=str(session.revision_id or ""),
+        sandbox_id=str(getattr(session, "sandbox_id", "") or ""),
+        reason=reason,
+    )
+
+
 async def _load_preview_app_and_revision(
     *,
     db: AsyncSession,
@@ -505,6 +498,27 @@ def _build_builder_preview_bootstrap(
     )
 
 
+def _preview_request_kind(path: str) -> str:
+    normalized = str(path or "").strip().lstrip("/")
+    if not normalized:
+        return "document"
+    if normalized == "@vite/client":
+        return "vite_client"
+    if normalized == "_talmudpedia/runtime/bootstrap":
+        return "runtime_bootstrap"
+    if normalized == "_talmudpedia/chat/stream":
+        return "chat_stream"
+    if normalized == "_talmudpedia/auth/state":
+        return "auth_state"
+    if normalized.startswith("src/"):
+        return "source_module"
+    if normalized.startswith("node_modules/"):
+        return "node_module"
+    if normalized.endswith(".css"):
+        return "css_asset"
+    return "other"
+
+
 async def _resolve_preview_target(session: PublishedAppDraftDevSession) -> dict[str, str]:
     workspace = getattr(session, "draft_workspace", None)
     workspace_metadata = getattr(workspace, "backend_metadata", None)
@@ -538,6 +552,8 @@ async def _resolve_preview_target(session: PublishedAppDraftDevSession) -> dict[
             "auth_token": "",
             "auth_token_prefix": "",
             "extra_headers": json.dumps({}, sort_keys=True),
+            "resolver_kind": "sprite_tunnel",
+            "provider": provider or "sprite",
         }
     upstream_base_url = str(preview.get("upstream_base_url") or "").strip()
     if not upstream_base_url:
@@ -558,6 +574,8 @@ async def _resolve_preview_target(session: PublishedAppDraftDevSession) -> dict[
         "auth_token": auth_token,
         "auth_token_prefix": auth_token_prefix,
         "extra_headers": json.dumps(extra_headers, sort_keys=True),
+        "resolver_kind": "workspace_preview",
+        "provider": provider or "unknown",
     }
 
 
@@ -632,12 +650,16 @@ async def _request_preview_upstream(
     target: dict[str, str],
     body: bytes,
 ) -> httpx.Response:
+    started_at = time.perf_counter()
     async with httpx.AsyncClient(follow_redirects=False, timeout=60.0) as client:
         upstream = None
         last_error: httpx.HTTPError | None = None
+        attempt_count = 0
         for delay in _PREVIEW_HTTP_RETRY_DELAYS_SECONDS:
+            attempt_count += 1
             if delay > 0:
                 await asyncio.sleep(delay)
+            attempt_started_at = time.perf_counter()
             try:
                 candidate = await client.request(
                     request.method,
@@ -647,11 +669,34 @@ async def _request_preview_upstream(
                 )
             except httpx.HTTPError as exc:
                 last_error = exc
+                apps_builder_trace(
+                    "preview.proxy.upstream_attempt",
+                    domain="preview.proxy",
+                    method=request.method,
+                    upstream_url=upstream_url,
+                    attempt=attempt_count,
+                    delay_ms=int(delay * 1000),
+                    duration_ms=int((time.perf_counter() - attempt_started_at) * 1000),
+                    error=str(exc),
+                    error_type=exc.__class__.__name__,
+                    retryable=_should_retry_preview_request(method=request.method, error=exc),
+                )
                 if _is_refreshable_preview_error(exc):
                     raise
                 if _should_retry_preview_request(method=request.method, error=exc):
                     continue
                 raise
+            apps_builder_trace(
+                "preview.proxy.upstream_attempt",
+                domain="preview.proxy",
+                method=request.method,
+                upstream_url=upstream_url,
+                attempt=attempt_count,
+                delay_ms=int(delay * 1000),
+                duration_ms=int((time.perf_counter() - attempt_started_at) * 1000),
+                status_code=candidate.status_code,
+                retryable=_should_retry_preview_request(method=request.method, status_code=candidate.status_code),
+            )
             if _should_retry_preview_request(method=request.method, status_code=candidate.status_code):
                 upstream = candidate
                 continue
@@ -667,12 +712,42 @@ async def _request_preview_upstream(
         domain="preview.proxy",
         method=request.method,
         upstream_url=upstream_url,
+        attempt_count=attempt_count,
+        total_duration_ms=int((time.perf_counter() - started_at) * 1000),
         status_code=upstream.status_code,
         content_security_policy=str(upstream.headers.get("content-security-policy") or ""),
         x_frame_options=str(upstream.headers.get("x-frame-options") or ""),
         **probe,
     )
     return upstream
+
+
+def _preview_rewrite_summary(
+    *,
+    path: str,
+    content_type: str,
+    original_content: bytes,
+    rewritten_content: bytes,
+    runtime_context: RuntimeBootstrapResponse | None,
+) -> dict[str, Any]:
+    normalized_content_type = str(content_type or "").split(";", 1)[0].strip().lower()
+    text = ""
+    try:
+        text = rewritten_content.decode("utf-8", errors="ignore")
+    except Exception:
+        text = ""
+    return {
+        "request_kind": _preview_request_kind(path),
+        "content_type": normalized_content_type,
+        "byte_delta": len(rewritten_content) - len(original_content),
+        "contains_preview_path_shim": "__talmudpediaPreviewPathShimInstalled" in text,
+        "contains_preview_base_path_global": "__TALMUDPEDIA_BUILDER_PREVIEW_BASE_PATH" in text,
+        "contains_preview_debug_probe": "__talmudpediaPreviewDebugInstalled" in text,
+        "contains_proxy_vite_client_path": "/preview/@vite/client" in text,
+        "contains_proxy_src_path": "/preview/src/" in text,
+        "contains_runtime_bootstrap_path": "/_talmudpedia/runtime/bootstrap" in text,
+        "contains_runtime_context": bool(runtime_context and "/_talmudpedia/chat/stream" in text),
+    }
 
 
 def _assert_preview_scope_matches_session(payload: dict[str, Any], session: PublishedAppDraftDevSession) -> None:
@@ -694,7 +769,7 @@ def _upstream_url(*, path: str, query_params: Any, target: dict[str, str]) -> st
     forwarded_query = [
         (key, value)
         for key, value in query_params.multi_items()
-        if str(key) not in {"runtime_token", "runtime_mode", "runtime_base_path", "runtime_bootstrap_url", "preview_route", "__reload"}
+        if str(key) not in {"runtime_token", "runtime_base_path", "preview_route", "__reload"}
     ]
     query_string = urlencode(forwarded_query)
     parsed = urlparse(target["upstream_base_url"])
@@ -708,19 +783,6 @@ def _compose_proxy_path(*, target: dict[str, str], resource_path: str) -> str:
         base_path = f"/{base_path}"
     return f"{base_path.rstrip('/')}/{str(resource_path or '').lstrip('/')}"
 
-
-def _append_runtime_token_to_path(*, path: str, runtime_token: str | None) -> str:
-    token = str(runtime_token or "").strip()
-    if not token:
-        return path
-    parsed = urlparse(path)
-    query_items = parse_qsl(parsed.query, keep_blank_values=True)
-    if any(str(key) == "runtime_token" for key, _ in query_items):
-        return path
-    query_items.append(("runtime_token", token))
-    return urlunparse(parsed._replace(query=urlencode(query_items)))
-
-
 def _rewrite_inline_vite_paths(*, target: dict[str, str], text: str, runtime_token: str | None) -> str:
     def _replace_inline(match: re.Match[str]) -> str:
         quote = str(match.group("quote") or '"')
@@ -728,7 +790,6 @@ def _rewrite_inline_vite_paths(*, target: dict[str, str], text: str, runtime_tok
         if original.startswith("//"):
             return match.group(0)
         rewritten = _compose_proxy_path(target=target, resource_path=original)
-        rewritten = _append_runtime_token_to_path(path=rewritten, runtime_token=runtime_token)
         return f"{quote}{rewritten}{quote}"
 
     return _INLINE_VITE_PATH_PATTERN.sub(_replace_inline, text)
@@ -741,7 +802,6 @@ def _rewrite_css_url_paths(*, target: dict[str, str], text: str, runtime_token: 
         if original.startswith("//"):
             return match.group(0)
         rewritten = _compose_proxy_path(target=target, resource_path=original)
-        rewritten = _append_runtime_token_to_path(path=rewritten, runtime_token=runtime_token)
         return f"url({quote}{rewritten}{quote})"
 
     return _CSS_URL_PATH_PATTERN.sub(_replace_css_url, text)
@@ -763,16 +823,13 @@ def _rewrite_vite_client_hmr_runtime(*, target: dict[str, str], text: str, runti
     )
     rewritten = _VITE_CLIENT_HMR_ASSIGNMENTS.sub(replacement, text, count=1)
     rewritten = _VITE_CLIENT_BASE_ASSIGNMENT.sub(f"const base = {json.dumps(base_path)};", rewritten, count=1)
-    token_literal = json.dumps(str(runtime_token or "").strip() or None)
     rewritten = re.sub(
         r'(const wsToken = .*?;\n)',
         r"\1"
-        f"const previewRuntimeToken = {token_literal};\n"
-        'const previewRuntimeTokenSuffix = previewRuntimeToken ? `&runtime_token=${encodeURIComponent(previewRuntimeToken)}` : "";\n'
         'const previewBridgeType = "talmudpedia.preview-debug.v1";\n'
         "const __previewHmrLog = (event, fields = {}) => {\n"
         "\ttry {\n"
-        "\t\tconst payload = Object.assign({ event, href: String((typeof location !== \"undefined\" && location.href) || \"\"), runtimeTokenPresent: Boolean(previewRuntimeToken) }, fields || {});\n"
+        "\t\tconst payload = Object.assign({ event, href: String((typeof location !== \"undefined\" && location.href) || \"\") }, fields || {});\n"
         "\t\tconsole.info(\"[apps-builder][iframe]\", payload);\n"
         "\t\tif (typeof window !== \"undefined\" && window.parent && window.parent !== window) {\n"
         "\t\t\twindow.parent.postMessage({ type: previewBridgeType, payload }, \"*\");\n"
@@ -782,14 +839,13 @@ def _rewrite_vite_client_hmr_runtime(*, target: dict[str, str], text: str, runti
         rewritten,
         count=1,
     )
-    rewritten = rewritten.replace("?token=${wsToken}", "?token=${wsToken}${previewRuntimeTokenSuffix}")
     rewritten = rewritten.replace(
-        'createConnection: () => new WebSocket(`${socketProtocol}://${socketHost}?token=${wsToken}${previewRuntimeTokenSuffix}`, "vite-hmr"),',
-        'createConnection: () => (__previewHmrLog("vite.client.websocket_create", { mode: "primary", url: `${socketProtocol}://${socketHost}?token=${wsToken}${previewRuntimeTokenSuffix}` }), new WebSocket(`${socketProtocol}://${socketHost}?token=${wsToken}${previewRuntimeTokenSuffix}`, "vite-hmr")),',
+        'createConnection: () => new WebSocket(`${socketProtocol}://${socketHost}?token=${wsToken}`, "vite-hmr"),',
+        'createConnection: () => (__previewHmrLog("vite.client.websocket_create", { mode: "primary", url: `${socketProtocol}://${socketHost}?token=${wsToken}` }), new WebSocket(`${socketProtocol}://${socketHost}?token=${wsToken}`, "vite-hmr")),',
     )
     rewritten = rewritten.replace(
-        'createConnection: () => new WebSocket(`${socketProtocol}://${directSocketHost}?token=${wsToken}${previewRuntimeTokenSuffix}`, "vite-hmr"),',
-        'createConnection: () => (__previewHmrLog("vite.client.websocket_create", { mode: "fallback", url: `${socketProtocol}://${directSocketHost}?token=${wsToken}${previewRuntimeTokenSuffix}` }), new WebSocket(`${socketProtocol}://${directSocketHost}?token=${wsToken}${previewRuntimeTokenSuffix}`, "vite-hmr")),',
+        'createConnection: () => new WebSocket(`${socketProtocol}://${directSocketHost}?token=${wsToken}`, "vite-hmr"),',
+        'createConnection: () => (__previewHmrLog("vite.client.websocket_create", { mode: "fallback", url: `${socketProtocol}://${directSocketHost}?token=${wsToken}` }), new WebSocket(`${socketProtocol}://${directSocketHost}?token=${wsToken}`, "vite-hmr")),',
     )
     rewritten = rewritten.replace(
         "queueUpdate(payload) {\n"
@@ -925,7 +981,6 @@ def _rewrite_html_preview_content(
         if original.startswith("//"):
             return match.group(0)
         rewritten = _compose_proxy_path(target=target, resource_path=original)
-        rewritten = _append_runtime_token_to_path(path=rewritten, runtime_token=runtime_token)
         return f"{match.group('prefix')}{rewritten}"
 
     rewritten = _HTML_URL_ATTR_PATTERN.sub(_replace_attr, text)
@@ -1445,13 +1500,24 @@ async def proxy_builder_preview(
     path: str = "",
     db: AsyncSession = Depends(get_db),
 ) -> Response:
+    proxy_started_at = time.perf_counter()
     session = await _load_session(db=db, session_id=session_id)
-    token = _extract_preview_token(request=request)
+    query_token = str(request.query_params.get("runtime_token") or "").strip()
+    cookie_token = str(request.cookies.get(PREVIEW_COOKIE_NAME) or "").strip()
+    token_source = "query" if query_token else "cookie" if cookie_token else "missing"
+    token = query_token or cookie_token or None
     if not token:
         raise HTTPException(status_code=401, detail="Preview authentication required")
     payload = _validate_preview_token(token)
     _assert_preview_scope_matches_session(payload, session)
+    await _touch_preview_session_activity(
+        db=db,
+        session=session,
+        reason="http_request",
+        throttle_seconds=30,
+    )
     target = await _resolve_preview_target(session)
+    request_kind = _preview_request_kind(path)
     upstream_url = _upstream_url(
         path=path,
         query_params=request.query_params,
@@ -1466,10 +1532,32 @@ async def proxy_builder_preview(
         sandbox_id=str(getattr(session, "sandbox_id", "") or ""),
         method=request.method,
         path=path,
+        request_kind=request_kind,
+        token_source=token_source,
+        query_keys=sorted(str(key) for key in request.query_params.keys()),
+        preview_route=str(request.query_params.get("preview_route") or ""),
         upstream_url=upstream_url,
         upstream_base_url=str(target.get("upstream_base_url") or ""),
         target_base_path=str(target.get("base_path") or ""),
         target_upstream_path=str(target.get("upstream_path") or ""),
+    )
+    apps_builder_trace(
+        "preview.proxy.target_resolved",
+        domain="preview.proxy",
+        session_id=str(session.id),
+        app_id=str(session.published_app_id),
+        revision_id=str(session.revision_id or ""),
+        sandbox_id=str(getattr(session, "sandbox_id", "") or ""),
+        path=path,
+        request_kind=request_kind,
+        resolver_kind=str(target.get("resolver_kind") or ""),
+        provider=str(target.get("provider") or ""),
+        upstream_base_url=str(target.get("upstream_base_url") or ""),
+        target_base_path=str(target.get("base_path") or ""),
+        target_upstream_path=str(target.get("upstream_path") or ""),
+        has_auth_token=bool(str(target.get("auth_token") or "").strip()),
+        auth_header_name=str(target.get("auth_header_name") or ""),
+        has_extra_headers=bool(str(target.get("extra_headers") or "").strip() not in {"", "{}"}),
     )
     preview_route = _normalize_preview_route(request.query_params.get("preview_route"))
     runtime_context: RuntimeBootstrapResponse | None = None
@@ -1556,6 +1644,7 @@ async def proxy_builder_preview(
     content_type = str(upstream.headers.get("content-type") or "")
     response_content = upstream.content
     content_rewritten = False
+    rewrite_started_at = time.perf_counter()
     if request.method.upper() == "GET" and upstream.status_code == 200:
         response_content, content_rewritten = _rewrite_text_preview_content(
             target=target,
@@ -1566,6 +1655,13 @@ async def proxy_builder_preview(
             runtime_context=runtime_context,
             preview_route=preview_route,
         )
+    rewrite_summary = _preview_rewrite_summary(
+        path=path,
+        content_type=content_type,
+        original_content=upstream.content,
+        rewritten_content=response_content,
+        runtime_context=runtime_context,
+    )
     excluded_headers = {"content-encoding", "transfer-encoding", "connection", "content-length"}
     if content_rewritten:
         excluded_headers.update({"etag", "last-modified"})
@@ -1591,9 +1687,14 @@ async def proxy_builder_preview(
         sandbox_id=str(getattr(session, "sandbox_id", "") or ""),
         method=request.method,
         path=path,
+        request_kind=request_kind,
+        token_source=token_source,
+        proxy_duration_ms=int((time.perf_counter() - proxy_started_at) * 1000),
+        rewrite_duration_ms=int((time.perf_counter() - rewrite_started_at) * 1000),
         status_code=upstream.status_code,
         content_type=content_type,
         content_rewritten=content_rewritten,
+        rewrite_summary=rewrite_summary,
         response_probe=_preview_body_probe(response_content, content_type=content_type),
     )
     return response
@@ -1608,6 +1709,7 @@ async def proxy_builder_preview_websocket(
     path: str = "",
 ) -> None:
     session = await _load_session(db=db, session_id=session_id)
+    request_kind = _preview_request_kind(path)
     apps_builder_trace(
         "preview.proxy.websocket_requested",
         domain="preview.proxy",
@@ -1616,10 +1718,14 @@ async def proxy_builder_preview_websocket(
         revision_id=str(session.revision_id or ""),
         sandbox_id=str(getattr(session, "sandbox_id", "") or ""),
         path=path,
+        request_kind=request_kind,
         query_keys=sorted(str(key) for key in websocket.query_params.keys()),
         has_cookie=bool(str(websocket.cookies.get(PREVIEW_COOKIE_NAME) or "").strip()),
     )
-    token = _extract_preview_token(websocket=websocket)
+    query_token = str(websocket.query_params.get("runtime_token") or "").strip()
+    cookie_token = str(websocket.cookies.get(PREVIEW_COOKIE_NAME) or "").strip()
+    token_source = "query" if query_token else "cookie" if cookie_token else "missing"
+    token = query_token or cookie_token or None
     if not token:
         apps_builder_trace(
             "preview.proxy.websocket_auth_missing",
@@ -1629,6 +1735,7 @@ async def proxy_builder_preview_websocket(
             revision_id=str(session.revision_id or ""),
             sandbox_id=str(getattr(session, "sandbox_id", "") or ""),
             path=path,
+            request_kind=request_kind,
             query_keys=sorted(str(key) for key in websocket.query_params.keys()),
             has_cookie=bool(str(websocket.cookies.get(PREVIEW_COOKIE_NAME) or "").strip()),
         )
@@ -1636,6 +1743,12 @@ async def proxy_builder_preview_websocket(
         return
     payload = _validate_preview_token(token)
     _assert_preview_scope_matches_session(payload, session)
+    await _touch_preview_session_activity(
+        db=db,
+        session=session,
+        reason="websocket_open",
+        throttle_seconds=30,
+    )
     target = await _resolve_preview_target(session)
     apps_builder_trace(
         "preview.proxy.websocket_open",
@@ -1645,6 +1758,10 @@ async def proxy_builder_preview_websocket(
         revision_id=str(session.revision_id or ""),
         sandbox_id=str(getattr(session, "sandbox_id", "") or ""),
         path=path,
+        request_kind=request_kind,
+        token_source=token_source,
+        resolver_kind=str(target.get("resolver_kind") or ""),
+        provider=str(target.get("provider") or ""),
     )
     upstream_url = _upstream_url(
         path=path,
@@ -1658,6 +1775,7 @@ async def proxy_builder_preview_websocket(
     upstream = None
     upstream_message_count = 0
     client_message_count = 0
+    websocket_accepted = False
     try:
         last_exc: Exception | None = None
         for attempt in range(1, _PREVIEW_WEBSOCKET_CONNECT_ATTEMPTS + 1):
@@ -1693,10 +1811,8 @@ async def proxy_builder_preview_websocket(
         if upstream is None:
             raise RuntimeError(str(last_exc or "Failed to connect upstream preview websocket"))
 
-        await _accept_websocket_if_needed(
-            websocket,
-            subprotocol=getattr(upstream, "subprotocol", None),
-        )
+        await websocket.accept(subprotocol=getattr(upstream, "subprotocol", None))
+        websocket_accepted = True
         try:
             async def _client_to_upstream() -> None:
                 nonlocal client_message_count
@@ -1775,7 +1891,7 @@ async def proxy_builder_preview_websocket(
             upstream_message_count=upstream_message_count,
             client_message_count=client_message_count,
         )
-        await _close_websocket_if_possible(websocket, code=1011)
+        await _close_websocket_if_possible(websocket, code=1011, accepted=websocket_accepted)
     else:
         apps_builder_trace(
             "preview.proxy.websocket_closed",

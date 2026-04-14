@@ -1,4 +1,5 @@
 import { httpClient } from './http'
+import type { ControlPlaneListResponse, ControlPlaneListView } from "./types"
 
 // Types
 export interface KnowledgeStore {
@@ -61,9 +62,16 @@ export interface KnowledgeStoreStats {
 class KnowledgeStoresService {
   private basePath = '/admin/knowledge-stores'
 
-  async list(tenantSlug?: string): Promise<KnowledgeStore[]> {
-    const url = tenantSlug ? `${this.basePath}?tenant_slug=${tenantSlug}` : this.basePath
-    return httpClient.get<KnowledgeStore[]>(url)
+  async list(
+    tenantSlug?: string,
+    params?: { skip?: number; limit?: number; view?: ControlPlaneListView }
+  ): Promise<ControlPlaneListResponse<KnowledgeStore>> {
+    const query = new URLSearchParams()
+    if (tenantSlug) query.set("tenant_slug", tenantSlug)
+    query.set("skip", String(params?.skip ?? 0))
+    query.set("limit", String(params?.limit ?? 20))
+    query.set("view", params?.view ?? "summary")
+    return httpClient.get<ControlPlaneListResponse<KnowledgeStore>>(`${this.basePath}?${query.toString()}`)
   }
 
   async get(id: string, tenantSlug?: string): Promise<KnowledgeStore> {

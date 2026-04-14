@@ -6,6 +6,7 @@ import pytest
 from app.api.dependencies import get_current_principal
 from app.db.postgres.models.artifact_runtime import ArtifactRun, ArtifactRunStatus
 from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Tenant, User
+from app.services.artifact_runtime.revision_service import ArtifactRevisionService
 from app.services.artifact_runtime.cloudflare_dispatch_client import CloudflareDispatchHTTPError
 from app.services.artifact_runtime.policy_service import ArtifactConcurrencyLimitExceeded
 from main import app
@@ -56,6 +57,33 @@ def _override_principal(tenant_id, user):
         }
 
     return _inner
+
+
+async def _seed_artifact_revision(db_session, *, tenant_id, created_by):
+    revisions = ArtifactRevisionService(db_session)
+    artifact = await revisions.create_artifact(
+        tenant_id=tenant_id,
+        created_by=created_by,
+        display_name="Runtime Fixture Artifact",
+        description="fixture artifact revision",
+        kind="rag_operator",
+        source_files=[{"path": "main.py", "content": ARTIFACT_CODE}],
+        entry_module_path="main.py",
+        language="python",
+        dependencies=[],
+        runtime_target="cloudflare_workers",
+        capabilities={},
+        config_schema={},
+        rag_contract={
+            "operator_category": "transform",
+            "pipeline_role": "processor",
+            "input_schema": {"type": "object"},
+            "output_schema": {"type": "object"},
+            "execution_mode": "background",
+        },
+    )
+    await db_session.commit()
+    return artifact.latest_draft_revision_id
 
 
 def _mock_dispatch_result(payload):
@@ -251,8 +279,13 @@ async def test_unsaved_artifact_test_run_returns_clean_execute_contract_error(cl
                 },
             },
         )
-        assert run_response.status_code == 400, run_response.text
-        assert run_response.json()["detail"] == "Artifact entry module main.js must export execute(inputs, config, context)"
+        assert run_response.status_code == 422, run_response.text
+        assert run_response.json()["detail"] == {
+            "code": "VALIDATION_ERROR",
+            "message": "Artifact entry module main.js must export execute(inputs, config, context)",
+            "http_status": 422,
+            "retryable": False,
+        }
     finally:
         app.dependency_overrides.pop(get_current_principal, None)
 
@@ -262,6 +295,14 @@ async def test_artifact_test_run_can_be_cancelled_while_queued(client, db_sessio
     monkeypatch.setenv("ARTIFACT_RUN_TASK_EAGER", "0")
     tenant, user = await _seed_tenant_context(db_session)
     app.dependency_overrides[get_current_principal] = _override_principal(tenant.id, user)
+
+    async def fake_enqueue_run(self, run_id):
+        return None
+
+    monkeypatch.setattr(
+        "app.services.artifact_runtime.execution_service.ArtifactExecutionService.enqueue_run",
+        fake_enqueue_run,
+    )
 
     try:
         create_response = await client.post(
@@ -317,10 +358,11 @@ async def test_artifact_runtime_status_endpoint_reports_active_count_and_limit(c
     app.dependency_overrides[get_current_principal] = _override_principal(tenant.id, user)
 
     try:
+        revision_id = await _seed_artifact_revision(db_session, tenant_id=tenant.id, created_by=user.id)
         stale_safe_started_at = datetime.now(timezone.utc) - timedelta(minutes=1)
         run = ArtifactRun(
             tenant_id=tenant.id,
-            revision_id=uuid.uuid4(),
+            revision_id=revision_id,
             domain="test",
             status=ArtifactRunStatus.RUNNING,
             queue_class="artifact_test",
@@ -383,7 +425,12 @@ async def test_unsaved_artifact_test_run_returns_429_when_capacity_is_exhausted(
             },
         )
         assert response.status_code == 429, response.text
-        assert response.json()["detail"] == "Tenant concurrency limit reached for artifact_test: 10/10"
+        assert response.json()["detail"] == {
+            "code": "RATE_LIMITED",
+            "message": "Tenant concurrency limit reached for artifact_test: 10/10",
+            "http_status": 429,
+            "retryable": False,
+        }
     finally:
         app.dependency_overrides.pop(get_current_principal, None)
 

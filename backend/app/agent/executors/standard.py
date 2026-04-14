@@ -719,11 +719,6 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
         return get_tool_input_schema(tool)
 
     def _coerce_tool_input(self, tool_input: Any, tool: Any) -> Dict[str, Any]:
-        if is_strict_tool_input(tool):
-            if isinstance(tool_input, dict):
-                return dict(tool_input)
-            return {"value": tool_input}
-
         def _parse_json_object(raw: Any) -> Optional[Dict[str, Any]]:
             if not isinstance(raw, str):
                 return None

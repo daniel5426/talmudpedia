@@ -1,4 +1,4 @@
-Last Updated: 2026-03-27
+Last Updated: 2026-04-14
 
 # Test State
 
@@ -20,11 +20,13 @@ Artifact test-run APIs and queued execution lifecycle on the modern run-based ar
 - cancel a queued test run
 - return runtime queue status for artifact-page test runs
 - return HTTP 429 when eager artifact-page test execution hits tenant capacity
+- return structured `422` validation errors when `execute(inputs, config, context)` is missing
+- return structured `429` rate-limit payloads when tenant capacity is exhausted
 - return HTTP 200 with a failed run id when eager artifact-page dispatch crashes after run creation
 - resolve or reuse a `staging` deployment and dispatch through the Cloudflare runtime path
 - assert artifact-page test runs stay on `domain="test"` and `queue_class="artifact_test"`
 - pass artifact-page test input through as the raw worker `inputs` payload
-- return a clean HTTP 400 validation error when the entry module is missing/unexporting `execute(inputs, config, context)`
+- keep queued-cancel coverage isolated from real deploy/dispatch by stubbing enqueue at the test boundary
 
 ## Last Run
 
@@ -55,6 +57,9 @@ Artifact test-run APIs and queued execution lifecycle on the modern run-based ar
 - Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/artifact_test_runs/test_artifact_test_run_api.py -k execute_contract_error`
 - Date: 2026-03-27 Asia/Hebron
 - Result: Pass
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/artifact_test_runs/test_artifact_test_run_api.py`
+- Date: 2026-04-14 Asia/Hebron
+- Result: Pass (`7 passed, 8 warnings`)
 
 ## Known Gaps
 

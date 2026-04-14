@@ -24,14 +24,14 @@ function loadCanvasResources(): Promise<ReadyCache> {
   if (!sharedPromise) {
     sharedPromise = (async () => {
       const [modelsRes, toolsRes] = await Promise.all([
-        modelsService.listModels("chat", "active", 0, 100),
-        toolsService.listTools(undefined, "published", undefined, 0, 100),
+        modelsService.listModels("chat", "active", 0, 100, "full"),
+        toolsService.listTools(undefined, "published", undefined, 0, 100, "summary"),
       ])
       const modelLabels = new Map<string, string>()
-      for (const m of modelsRes.models || []) {
+      for (const m of modelsRes.items || []) {
         modelLabels.set(m.id, m.name)
       }
-      const tools = toolsRes.tools || []
+      const tools = toolsRes.items || []
       const next: ReadyCache = { status: "ready", modelLabels, tools }
       sharedReady = next
       return next

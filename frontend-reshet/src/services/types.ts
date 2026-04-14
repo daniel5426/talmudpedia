@@ -72,6 +72,17 @@ export interface ChatFetchParams {
   limit?: number;
 }
 
+export type ControlPlaneListView = "summary" | "full";
+
+export interface ControlPlaneListResponse<T> {
+  items: T[];
+  total: number;
+  has_more: boolean;
+  skip: number;
+  limit: number;
+  view: ControlPlaneListView;
+}
+
 export interface User {
   id: string;
   actor_id?: string;

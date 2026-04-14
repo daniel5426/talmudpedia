@@ -141,10 +141,10 @@ async def test_agents_api_exposes_show_in_playground_and_defaults_true(client, d
     )
     headers = _auth_headers(str(user.id), str(tenant.id), str(org_unit.id))
 
-    list_response = await client.get("/agents?compact=true", headers=headers)
+    list_response = await client.get("/agents?view=summary", headers=headers)
     assert list_response.status_code == 200
     list_payload = list_response.json()
-    listed = next(item for item in list_payload["agents"] if item["id"] == str(agent.id))
+    listed = next(item for item in list_payload["items"] if item["id"] == str(agent.id))
     assert listed["show_in_playground"] is True
 
     get_response = await client.get(f"/agents/{agent.id}", headers=headers)

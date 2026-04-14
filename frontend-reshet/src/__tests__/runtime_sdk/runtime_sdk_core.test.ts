@@ -210,6 +210,36 @@ describe("runtime-sdk core", () => {
     });
   });
 
+  test("fetchRuntimeBootstrap resolves builder preview bootstrap from the preview base path global", async () => {
+    const originalBasePath = (window as Window & { __TALMUDPEDIA_BUILDER_PREVIEW_BASE_PATH?: unknown }).__TALMUDPEDIA_BUILDER_PREVIEW_BASE_PATH;
+    (window as Window & { __TALMUDPEDIA_BUILDER_PREVIEW_BASE_PATH?: unknown }).__TALMUDPEDIA_BUILDER_PREVIEW_BASE_PATH =
+      "/public/apps-builder/draft-dev/sessions/session-1/preview";
+
+    const fetchImpl = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      async json() {
+        return bootstrap;
+      },
+    });
+
+    try {
+      await fetchRuntimeBootstrap({
+        apiBaseUrl: "https://api.example.com/api/py",
+        fetchImpl,
+      });
+    } finally {
+      (window as Window & { __TALMUDPEDIA_BUILDER_PREVIEW_BASE_PATH?: unknown }).__TALMUDPEDIA_BUILDER_PREVIEW_BASE_PATH = originalBasePath;
+    }
+
+    const [url, options] = fetchImpl.mock.calls[0];
+    expect(String(url)).toBe("https://api.example.com/api/py/public/apps-builder/draft-dev/sessions/session-1/preview/_talmudpedia/runtime/bootstrap");
+    expect(options).toMatchObject({
+      method: "GET",
+    });
+  });
+
   test("fetchRuntimeBootstrap uses external published runtime path for app slugs", async () => {
     const fetchImpl = jest.fn().mockResolvedValue({
       ok: true,

@@ -158,11 +158,11 @@ export default function AppsPage() {
     setCreateError(null);
     try {
       const [agentsResponse, templatesResponse, authTemplatesResponse] = await Promise.all([
-        agentService.listAgents({ limit: 500 }),
+        agentService.listAgents({ limit: 100, view: "summary" }),
         publishedAppsService.listTemplates(),
         publishedAppsService.listAuthTemplates(),
       ]);
-      const publishedOnly = (agentsResponse.agents || []).filter(
+      const publishedOnly = agentsResponse.items.filter(
         (agent) => String(agent.status).toLowerCase() === "published"
       );
       setPublishedAgents(publishedOnly);

@@ -16,6 +16,7 @@ Last Updated: 2026-04-13
 - Malformed SSE payloads are ignored without terminating stream processing.
 - `tokenProvider` is invoked and bearer token is attached to stream request headers.
 - Preview bootstrap fetch uses bearer header auth when preview token exists and does not append `preview_token` query params.
+- Builder preview bootstrap resolves from the canonical preview base path global instead of query-plumbed runtime bootstrap URLs.
 - Published runtime bootstrap uses the dedicated external-runtime route family.
 - Published app auth/history helpers target external bearer-token routes.
 - Normalized event helper falls back from `payload.content` when direct `content` is absent.
@@ -29,6 +30,9 @@ Last Updated: 2026-04-13
 - Command: `pnpm --dir frontend-reshet test -- --runInBand src/__tests__/runtime_sdk/runtime_sdk_core.test.ts src/__tests__/embed_sdk/embedded_agent_sdk.test.ts`
 - Date: 2026-04-13 Asia/Hebron
 - Result: PASS (`2 suites, 13 tests`)
+- Command: `cd frontend-reshet && npm test -- --runInBand src/__tests__/runtime_sdk/runtime_sdk_core.test.ts`
+- Date: 2026-04-14 Asia/Hebron
+- Result: PASS (`1 suite, 8 tests`)
 - Command: `cd frontend-reshet && npm test -- --runInBand src/__tests__/runtime_sdk/runtime_sdk_core.test.ts`
 - Date: 2026-03-02
 - Result: PASS (1 suite, 4 tests)
