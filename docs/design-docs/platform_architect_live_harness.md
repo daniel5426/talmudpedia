@@ -190,11 +190,16 @@ Recommended pattern:
 - all subagents should run with `gpt-5.4`
 - all subagents should use `high` reasoning
 - keep subagent execution in fast operator mode: short outputs, action-biased, no long narrative
+- default to a broad first wave, not a minimal one
+- for an active campaign, prefer spawning `4-6` workers in the first batch when the phases are independent enough
 
 Good split:
 - worker A: simple reads and list-contract prompts
 - worker B: mutation prompts
 - worker C: realistic workflow prompts
+- worker D: agent authoring workflows
+- worker E: RAG and knowledge-store workflows
+- worker F: runtime execution and orchestration workflows
 - coordinator: compares results, chooses refactors, decides retest order
 
 Bad split:
@@ -240,6 +245,14 @@ Per phase:
 7. fixes are implemented
 8. failed prompts are rerun first
 9. if stable, the coordinator opens the next phase
+
+When possible, open larger capability phases instead of tiny narrow ones. Prefer:
+- read/discovery surface
+- mutation/create surface
+- agent authoring
+- RAG/pipeline authoring
+- runtime execution
+- orchestration/worker surface
 
 ## Coordination Rule
 Use subagents for breadth, not for shared-state mutation.

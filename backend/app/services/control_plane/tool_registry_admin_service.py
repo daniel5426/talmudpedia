@@ -408,6 +408,8 @@ class ToolRegistryAdminService:
         *,
         ctx: ControlPlaneContext,
         scope: ToolDefinitionScope | None = None,
+        slug: str | None = None,
+        name: str | None = None,
         is_active: bool | None = True,
         status: ToolStatus | None = None,
         implementation_type: ToolImplementationType | None = None,
@@ -419,6 +421,10 @@ class ToolRegistryAdminService:
         conditions.append(~and_(ToolRegistry.tenant_id != None, ToolRegistry.builtin_key != None, ToolRegistry.is_system == False))
         if scope:
             conditions.append(ToolRegistry.scope == scope)
+        if slug is not None and str(slug).strip():
+            conditions.append(func.lower(ToolRegistry.slug) == str(slug).strip().lower())
+        if name is not None and str(name).strip():
+            conditions.append(func.lower(ToolRegistry.name) == str(name).strip().lower())
         if status is not None:
             conditions.append(func.lower(cast(ToolRegistry.status, String)) == status.value.lower())
         elif is_active is not None:
@@ -446,10 +452,17 @@ class ToolRegistryAdminService:
         total = (await self.db.execute(select(func.count(ToolRegistry.id)).where(and_(*conditions)))).scalar() or 0
         return tools, total
 
-    async def get_tool(self, *, ctx: ControlPlaneContext, tool_id: UUID) -> ToolRegistry:
+    async def get_tool(self, *, ctx: ControlPlaneContext, tool_id: UUID | None = None, slug: str | None = None) -> ToolRegistry:
+        conditions = [or_(ToolRegistry.tenant_id == ctx.tenant_id, ToolRegistry.tenant_id == None)]
+        if tool_id is not None:
+            conditions.append(ToolRegistry.id == tool_id)
+        elif slug is not None and str(slug).strip():
+            conditions.append(func.lower(ToolRegistry.slug) == str(slug).strip().lower())
+        else:
+            raise validation("tool_id or slug is required", field="tool_id")
         tool = (
             await self.db.execute(
-                select(ToolRegistry).where(ToolRegistry.id == tool_id, or_(ToolRegistry.tenant_id == ctx.tenant_id, ToolRegistry.tenant_id == None))
+                select(ToolRegistry).where(and_(*conditions))
             )
         ).scalar_one_or_none()
         if tool is None:

@@ -14,7 +14,6 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.postgres.session import get_db
-from app.db.postgres.engine import sessionmaker
 from app.db.postgres.models.identity import User, Tenant, OrgMembership
 from app.db.postgres.models.rag import (
     VisualPipeline,
@@ -39,7 +38,6 @@ from app.api.dependencies import get_current_principal, require_scopes, ensure_s
 from app.core.rbac import check_permission
 from app.core.audit import log_simple_action
 from app.rag.pipeline import PipelineCompiler, OperatorRegistry
-from app.rag.pipeline.executor import PipelineExecutor
 from app.rag.pipeline.input_storage import PipelineInputStorage
 from fastapi import BackgroundTasks
 from app.services.tool_binding_service import ToolBindingService
@@ -50,6 +48,7 @@ from app.services.control_plane.rag_admin_service import (
     CreatePipelineInput as ControlPlaneCreatePipelineInput,
     RagAdminService,
     UpdatePipelineInput as ControlPlaneUpdatePipelineInput,
+    dispatch_pipeline_job_background,
 )
 from app.services.control_plane.contracts import ListQuery
 
@@ -58,10 +57,7 @@ router = APIRouter()
 
 
 async def run_pipeline_job_background(job_id: UUID, artifact_queue_class: str = "artifact_prod_background"):
-    """Execute pipeline job in background with its own DB session."""
-    async with sessionmaker() as session:
-        executor = PipelineExecutor(session)
-        await executor.execute_job(job_id, artifact_queue_class=artifact_queue_class)
+    await dispatch_pipeline_job_background(job_id, artifact_queue_class=artifact_queue_class)
 
 
 def _pipeline_control_plane_ctx(*, tenant, user, context: Dict[str, Any] | None = None) -> ControlPlaneContext:

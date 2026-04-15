@@ -50,7 +50,7 @@ __pycache__/
 **/.cache/
 **/.parcel-cache/
 **/.turbo/
-backend/artifacts/platform_architect_live/*.json
+backend/artifacts/platform_architect_live/
 
 # debug
 npm-debug.log*

@@ -26,12 +26,28 @@ def test_platform_architect_graph_is_single_agent_topology():
     assert "architect-worker-await" in instructions
     assert "architect-worker-respond" in instructions
     assert "platform-governance does not expose raw orchestration.spawn_* actions" in instructions
+    assert "platform domain tool slugs are containers" in instructions
+    assert "answer with canonical action ids under each domain" in instructions
     assert "must not end the run after spawn/join alone" in instructions
     assert "Do not treat successful worker completion as task completion by itself" in instructions
     assert "Never burn tool iterations on repeated immediate architect-worker-get-run calls" in instructions
     assert "Do not invent nested fields like task.instructions" in instructions
     assert "agents.create_shell" in instructions
     assert "rag.create_pipeline_shell" in instructions
+    assert "treat platform tools as canonical action ids" in instructions
+    assert "If the user asks to list platform tools available right now" in instructions
+    assert "prefer canonical shell/create_or_update actions over invented *.create aliases" in instructions
+    assert "default the resource label field to payload.name" in instructions
+    assert "Do not default to display_name" in instructions
+    assert "payload.slug is required alongside payload.name" in instructions
+    assert "use payload.name and optional payload.pipeline_type=retrieval only" in instructions
+    assert "do not send kind, template, display_name, nodes, edges, or graph_definition on the shell action" in instructions
+    assert "payload.name and payload.embedding_model_id are required" in instructions
+    assert "choose an active embedding-capable model" in instructions
+    assert "create_new_draft requires title_prompt plus draft_seed" in instructions
+    assert "return canonical action ids grouped under each platform domain" in instructions
+    assert "Do not answer with only domain slugs" in instructions
+    assert "Do not invent help/list-schema actions against platform domains" in instructions
     assert "draft_seed.kind" in instructions
     assert "draft_seed.language" in instructions
     assert "Language selection belongs to create flow only" in instructions
@@ -43,8 +59,22 @@ def test_platform_architect_graph_is_single_agent_topology():
     assert "exact @{credential-id} string literals" in instructions
     assert "create or update a tool_impl artifact" in instructions
     assert "publish the tool so it pins artifact_revision_id" in instructions
+    assert "use platform-assets with action prompts.list" in instructions
+    assert "If the user says prompt assets, prompt templates, or prompt library entries" in instructions
+    assert "Do not query artifacts.list for fake kinds like prompt or prompt_template" in instructions
     assert "Do not ask a worker to mutate runtime-owned fields like persistence_readiness" in instructions
     assert "agents.graph.add_tool_to_agent_node" in instructions
+    assert "payload.tool_id must be the actual tool row UUID" in instructions
+    assert "resolve the row first with tools.list or tools.get" in instructions
+    assert "payload.node_id plus a concrete payload.model_id chosen from models.list" in instructions
+    assert "the array field is payload.operations, not payload.patch" in instructions
+    assert "use canonical agents.execute or agents.start_run" in instructions
+    assert "poll agents.get_run until the target run reaches a terminal state" in instructions
+    assert "Do not use architect-worker-await for ordinary agent run ids or pipeline job ids" in instructions
+    assert "use rag.create_job with payload.executable_pipeline_id plus payload.input_params only" in instructions
+    assert "do not use payload.pipeline_id, payload.id, payload.input" in instructions
+    assert "call rag.get_executable_input_schema first and map payload.input_params to the returned step-id shape" in instructions
+    assert "poll rag.get_job until the job reaches a terminal state" in instructions
     assert "rag.operators.catalog" in instructions
     assert "rag.operators.schema" in instructions
     assert "Draft-first is mandatory" in instructions
@@ -87,6 +117,7 @@ def test_platform_domain_schema_is_action_specific_one_of():
     assert "rag.operators.catalog" in registry_seeding.PLATFORM_ARCHITECT_DOMAIN_TOOLS["platform-rag"]["actions"]
     assert "rag.operators.schema" in registry_seeding.PLATFORM_ARCHITECT_DOMAIN_TOOLS["platform-rag"]["actions"]
     assert "rag.create_pipeline_shell" in registry_seeding.PLATFORM_ARCHITECT_DOMAIN_TOOLS["platform-rag"]["actions"]
+    assert "rag.create_job" in registry_seeding.PLATFORM_ARCHITECT_DOMAIN_TOOLS["platform-rag"]["actions"]
     assert "agents.publish" in by_action
     assert "rag.graph.apply_patch" in registry_seeding.PLATFORM_ARCHITECT_DOMAIN_TOOLS["platform-rag"]["actions"]
     assert "architect.run" not in by_action
@@ -113,10 +144,25 @@ def test_platform_domain_schema_is_action_specific_one_of():
     assert models_list_payload["properties"]["status"]["type"] == "string"
     assert models_list_payload["properties"]["limit"]["maximum"] == 100
 
+    prompts_list_payload = assets_by_action["prompts.list"]["properties"]["payload"]
+    assert prompts_list_payload["properties"]["view"]["enum"] == ["summary", "full"]
+    assert prompts_list_payload["properties"]["status"]["enum"] == ["active", "archived"]
+    assert prompts_list_payload["properties"]["limit"]["maximum"] == 100
+
     tools_list_payload = assets_by_action["tools.list"]["properties"]["payload"]
     assert tools_list_payload["properties"]["view"]["enum"] == ["summary", "full"]
+    assert tools_list_payload["properties"]["slug"]["type"] == "string"
+    assert tools_list_payload["properties"]["name"]["type"] == "string"
     assert "status" in tools_list_payload["properties"]
     assert "implementation_type" in tools_list_payload["properties"]
+
+    tools_get_payload = assets_by_action["tools.get"]["properties"]["payload"]
+    assert "slug" in tools_get_payload["properties"]
+
+    rag_create_job_payload = registry_seeding.PLATFORM_ARCHITECT_DOMAIN_TOOLS["platform-rag"]["actions"]["rag.create_job"]["payload_schema"]
+    assert rag_create_job_payload["required"] == ["executable_pipeline_id"]
+    assert "tenant_slug" not in rag_create_job_payload["required"]
+    assert rag_create_job_payload["properties"]["input_params"]["type"] == "object"
 
     knowledge_stores_list_payload = assets_by_action["knowledge_stores.list"]["properties"]["payload"]
     assert knowledge_stores_list_payload["required"] == ["tenant_slug"]

@@ -1,10 +1,16 @@
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from app.services.control_plane.contracts import ListQuery
 from app.services.control_plane.errors import not_found
-from app.services.control_plane.rag_admin_service import CreatePipelineInput, RagAdminService, UpdatePipelineInput
+from app.services.control_plane.rag_admin_service import (
+    CreatePipelineInput,
+    RagAdminService,
+    UpdatePipelineInput,
+    dispatch_pipeline_job_background,
+)
 from app.services.rag_graph_mutation_service import RagGraphMutationService
 from app.services.platform_native.runtime import NativePlatformToolRuntime, parse_uuid
 
@@ -206,11 +212,17 @@ async def rag_create_job(rt: NativePlatformToolRuntime) -> Any:
         raise not_found("Executable pipeline not found")
     if rt.dry_run:
         return {"status": "skipped", "dry_run": True}
-    return await RagAdminService(rt.db).create_job(
+    operation = await RagAdminService(rt.db).create_job(
         ctx=await rt.build_control_plane_context(),
         executable_pipeline_id=executable_pipeline_id,
         input_params=rt.payload.get("input_params") if isinstance(rt.payload.get("input_params"), dict) else {},
     )
+    job_id = parse_uuid(((operation.get("operation") or {}).get("id")) if isinstance(operation, dict) else None)
+    if job_id is not None:
+        asyncio.create_task(
+            dispatch_pipeline_job_background(job_id, artifact_queue_class="artifact_prod_background")
+        )
+    return operation
 
 
 async def rag_get_job(rt: NativePlatformToolRuntime) -> Any:

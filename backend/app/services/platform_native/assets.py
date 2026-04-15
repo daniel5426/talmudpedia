@@ -12,6 +12,7 @@ from app.services.control_plane.models_service import CreateModelInput, ListMode
 from app.services.control_plane.tool_registry_admin_service import ToolRegistryAdminService, serialize_tool
 from app.services.control_plane.knowledge_store_admin_service import serialize_store
 from app.services.platform_native.runtime import NativePlatformToolRuntime, parse_uuid
+from app.services.prompt_library_service import PromptLibraryService
 
 
 @dataclass(frozen=True)
@@ -38,6 +39,8 @@ async def tools_list(rt: NativePlatformToolRuntime) -> Any:
     tools, total = await ToolRegistryAdminService(rt.db).list_tools(
         ctx=ctx,
         scope=rt.payload.get("scope"),
+        slug=rt.payload.get("slug"),
+        name=rt.payload.get("name"),
         is_active=rt.payload.get("is_active", True),
         status=rt.payload.get("status"),
         implementation_type=rt.payload.get("implementation_type"),
@@ -59,6 +62,7 @@ async def tools_get(rt: NativePlatformToolRuntime) -> Any:
     tool = await ToolRegistryAdminService(rt.db).get_tool(
         ctx=await rt.build_control_plane_context(),
         tool_id=parse_uuid(rt.payload.get("tool_id") or rt.payload.get("id")),
+        slug=rt.payload.get("slug"),
     )
     return serialize_tool(tool)
 
@@ -142,6 +146,48 @@ async def models_create_or_update(rt: NativePlatformToolRuntime) -> Any:
         "name": model.name,
         "status": getattr(model.status, "value", model.status),
         "is_active": bool(model.is_active),
+    }
+
+
+def _serialize_prompt(prompt: Any, *, view: str) -> dict[str, Any]:
+    payload = {
+        "id": str(prompt.id),
+        "name": str(prompt.name or ""),
+        "description": prompt.description,
+        "scope": str(getattr(prompt.scope, "value", prompt.scope)),
+        "status": str(getattr(prompt.status, "value", prompt.status)),
+        "managed_by": prompt.managed_by,
+        "allowed_surfaces": list(prompt.allowed_surfaces or []),
+        "tags": list(prompt.tags or []),
+        "version": int(prompt.version or 1),
+        "updated_at": prompt.updated_at.isoformat() if getattr(prompt, "updated_at", None) else None,
+    }
+    if str(view or "summary").strip().lower() == "full":
+        payload["content"] = str(prompt.content or "")
+    return payload
+
+
+async def prompts_list(rt: NativePlatformToolRuntime) -> Any:
+    ctx = await rt.build_control_plane_context()
+    query = ListQuery.from_payload(rt.payload)
+    prompts, total = await PromptLibraryService(
+        rt.db,
+        tenant_id=ctx.tenant_id,
+        actor_user_id=ctx.user_id,
+        is_service=ctx.is_service,
+    ).list_prompts(
+        q=rt.payload.get("q"),
+        status=rt.payload.get("status"),
+        limit=query.limit,
+        offset=query.skip,
+    )
+    return {
+        "items": [_serialize_prompt(item, view=query.view) for item in prompts],
+        "total": total,
+        "has_more": query.skip + len(prompts) < total,
+        "skip": query.skip,
+        "limit": query.limit,
+        "view": query.view,
     }
 
 

@@ -73,6 +73,7 @@ ACTION_REQUIRED_SCOPES: dict[str, list[str]] = {
     "models.add_provider": ["models.write"],
     "models.update_provider": ["models.write"],
     "models.delete_provider": ["models.write"],
+    "prompts.list": ["agents.read"],
     "credentials.list": ["credentials.read"],
     "credentials.create_or_update": ["credentials.write"],
     "credentials.delete": ["credentials.write"],

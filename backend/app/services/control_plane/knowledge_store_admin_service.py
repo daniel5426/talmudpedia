@@ -20,6 +20,26 @@ from app.services.control_plane.errors import forbidden, not_found, validation
 from app.services.credentials_service import CredentialsService
 
 
+def _normalize_retrieval_policy(value: RetrievalPolicy | str | None) -> RetrievalPolicy:
+    if isinstance(value, RetrievalPolicy):
+        return value
+    raw = str(value or RetrievalPolicy.SEMANTIC_ONLY.value).strip().lower()
+    try:
+        return RetrievalPolicy(raw)
+    except ValueError as exc:
+        raise validation("Invalid retrieval_policy", field="retrieval_policy", value=raw) from exc
+
+
+def _normalize_storage_backend(value: StorageBackend | str | None) -> StorageBackend:
+    if isinstance(value, StorageBackend):
+        return value
+    raw = str(value or StorageBackend.PGVECTOR.value).strip().lower()
+    try:
+        return StorageBackend(raw)
+    except ValueError as exc:
+        raise validation("Invalid backend", field="backend", value=raw) from exc
+
+
 async def resolve_request_tenant(
     *,
     db: AsyncSession,
@@ -131,28 +151,36 @@ class KnowledgeStoreAdminService:
         credentials_ref: UUID | None,
     ) -> KnowledgeStore:
         tenant = await resolve_request_tenant(db=self.db, ctx=ctx, tenant_slug=tenant_slug)
+        normalized_name = str(name or "").strip()
+        if not normalized_name:
+            raise validation("name is required", field="name")
+        normalized_embedding_model_id = str(embedding_model_id or "").strip()
+        if not normalized_embedding_model_id:
+            raise validation("embedding_model_id is required", field="embedding_model_id")
+        normalized_retrieval_policy = _normalize_retrieval_policy(retrieval_policy)
+        normalized_backend = _normalize_storage_backend(backend)
         validated_credential_ref = await validate_vector_store_credential(
             db=self.db,
             tenant_id=tenant.id,
-            backend=backend,
+            backend=normalized_backend,
             credentials_ref=credentials_ref,
         )
         chunking = chunking_strategy or {"strategy": "recursive", "chunk_size": 512, "chunk_overlap": 50}
         effective_backend_config = dict(backend_config or {})
         if not effective_backend_config:
-            safe_name = name.lower().replace(" ", "_").replace("-", "_")[:32]
+            safe_name = normalized_name.lower().replace(" ", "_").replace("-", "_")[:32]
             effective_backend_config = {
                 "index_name": f"ks_{safe_name}_{str(tenant.id)[:8]}",
                 "namespace": "default",
             }
         store = KnowledgeStore(
             tenant_id=tenant.id,
-            name=name,
+            name=normalized_name,
             description=description,
-            embedding_model_id=embedding_model_id,
+            embedding_model_id=normalized_embedding_model_id,
             chunking_strategy=chunking,
-            retrieval_policy=retrieval_policy,
-            backend=backend,
+            retrieval_policy=normalized_retrieval_policy,
+            backend=normalized_backend,
             backend_config=effective_backend_config,
             credentials_ref=validated_credential_ref,
             status=KnowledgeStoreStatus.ACTIVE,

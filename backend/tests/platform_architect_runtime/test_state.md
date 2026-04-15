@@ -37,10 +37,13 @@ Last Updated: 2026-04-15
 - Seeded architect prompt now instructs artifact binding creation through `title_prompt + draft_seed.kind` and explicitly forbids low-level guesses like `create`, `files`, `entrypoint`, and `text`.
 - Seeded architect prompt now treats artifact-coding delegated workers as draft-mutation-only workers and keeps persistence architect-owned through `architect-worker-binding-persist-artifact`.
 - Seeded architect prompt now forbids asking artifact-coding workers to mutate runtime-owned readiness fields like `persistence_readiness`.
+- Seeded architect prompt now treats ambiguous read-surface prompts more explicitly: prompt/template discovery must use `prompts.list`, and platform tool inventory must treat tools as canonical action ids by domain, not domain container slugs, without inventing `help` actions or leaking architect-worker tools.
+- Seeded architect prompt now makes shell-create payload contracts explicit: `agents.create_shell` must send `name+slug`, `rag.create_pipeline_shell` must use only `name` plus optional `pipeline_type=retrieval`, and knowledge-store create flows must resolve an embedding-capable model before create.
 - Seeded artifact-coding worker instructions now spell out the required draft fields for a new artifact before the architect can persist it.
 - Architect domain tools now bind to native backend control-plane function dispatch instead of the runtime SDK shim.
 - Native `platform-*` dispatch preserves runtime auth/tenant context and rejects cross-domain action mismatch before execution.
 - Native `platform-*` list actions now default to bounded `view=summary` responses with the shared `items/total/has_more/skip/limit/view` envelope.
+- Native `platform-assets` now exposes canonical `prompts.list` reads backed by the prompt library service.
 - Seeded architect domain-tool registry schema now matches the shared list contract, including `view`, `limit<=100`, and removal of stale `agents.list.compact`.
 
 ## Last run command + date/time + result
@@ -88,6 +91,27 @@ Last Updated: 2026-04-15
 - Result: passed (`2 passed, 12 deselected, 1 warning`)
 - Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/platform_architect_runtime/test_architect_seeding.py`
 - Date/Time: 2026-04-15 00:07 EEST
+- Result: passed (`4 passed, 6 warnings`)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/platform_architect_runtime/test_architect_seeding.py backend/tests/platform_architect_runtime/test_native_platform_assets_actions.py`
+- Date/Time: 2026-04-15 01:59 EEST
+- Result: passed (`11 passed, 6 warnings`)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/platform_architect_runtime/test_architect_seeding.py`
+- Date/Time: 2026-04-15 02:15 EEST
+- Result: passed (`4 passed, 6 warnings`)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/platform_architect_runtime/test_architect_seeding.py`
+- Date/Time: 2026-04-15 02:30 EEST
+- Result: passed (`4 passed, 6 warnings`)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/platform_architect_runtime/test_architect_seeding.py`
+- Date/Time: 2026-04-15 02:39 EEST
+- Result: passed (`4 passed, 6 warnings`)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/platform_architect_runtime/test_architect_seeding.py`
+- Date/Time: 2026-04-15 02:46 EEST
+- Result: passed (`4 passed, 6 warnings`)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/platform_architect_runtime/test_native_platform_assets_actions.py`
+- Date/Time: 2026-04-15 02:46 EEST
+- Result: passed (`8 passed, 6 warnings`)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/platform_architect_runtime/test_architect_seeding.py`
+- Date/Time: 2026-04-15 03:00 EEST
 - Result: passed (`4 passed, 6 warnings`)
 
 ## Known gaps or follow-ups

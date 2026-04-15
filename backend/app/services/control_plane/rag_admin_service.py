@@ -8,9 +8,11 @@ from uuid import UUID
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.db.postgres.engine import sessionmaker
 from app.db.postgres.models.rag import ExecutablePipeline, PipelineJob, PipelineJobStatus, PipelineType, VisualPipeline
 from app.rag.pipeline.compiler import PipelineCompiler, VisualPipeline as CompilerVisualPipeline
 from app.rag.pipeline.custom_operator_sync import sync_custom_operators
+from app.rag.pipeline.executor import PipelineExecutor
 from app.rag.pipeline.input_storage import PipelineInputStorage
 from app.rag.pipeline.registry import ConfigFieldType, OperatorRegistry
 from app.services.control_plane.context import ControlPlaneContext
@@ -18,6 +20,17 @@ from app.services.control_plane.contracts import ListPage, ListQuery, OperationR
 from app.services.control_plane.errors import conflict, not_found, validation
 from app.services.rag_executable_state import StaleExecutablePipelineError, ensure_executable_pipeline_is_current
 from app.services.tool_binding_service import ToolBindingService
+
+
+async def dispatch_pipeline_job_background(
+    job_id: UUID,
+    *,
+    artifact_queue_class: str = "artifact_prod_background",
+) -> None:
+    """Execute a pipeline job in its own session so async callers can fire-and-forget."""
+    async with sessionmaker() as session:
+        executor = PipelineExecutor(session)
+        await executor.execute_job(job_id, artifact_queue_class=artifact_queue_class)
 
 
 @dataclass(frozen=True)

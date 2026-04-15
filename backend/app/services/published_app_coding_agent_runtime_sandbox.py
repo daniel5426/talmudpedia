@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 import json
 import logging
 import os
+import re
 import time
 from pathlib import Path
 from typing import Any
@@ -42,13 +43,66 @@ _WORKSPACE_WRITE_TOOL_HINTS = (
     "mv",
     "rm",
     "cp",
-    "bash",
-    "command",
-    "exec",
+)
+_SHELL_LIKE_TOOL_NAMES = {"bash", "command", "exec", "shell", "sh", "zsh"}
+_MUTATING_SHELL_PATTERNS = (
+    re.compile(r"(^|[;&|]\s*)(apply_patch|git\s+apply|patch)\b"),
+    re.compile(r"(^|[;&|]\s*)(mv|cp|rm|mkdir|rmdir|touch|install|chmod|chown|ln)\b"),
+    re.compile(r"\bsed\s+-i\b|\bperl\s+-pi\b"),
+    re.compile(r"\btee\b"),
+    re.compile(r"\b(cat|printf|echo)\b[^\n]*>>?"),
+    re.compile(r"\b(npm\s+(install|i)|pnpm\s+(install|add)|yarn\s+(install|add)|bun\s+add)\b"),
+)
+_PYTHON_MUTATION_SNIPPETS = (
+    ".write_text(",
+    ".write_bytes(",
+    ".mkdir(",
+    ".rename(",
+    ".unlink(",
+    ".replace(",
+    "open(",
 )
 
 
 class PublishedAppCodingAgentRuntimeSandboxMixin:
+    @staticmethod
+    def _stringify_tool_input(value: Any) -> str:
+        if isinstance(value, str):
+            return value
+        if isinstance(value, (list, tuple, set)):
+            return "\n".join(
+                chunk
+                for chunk in (
+                    PublishedAppCodingAgentRuntimeSandboxMixin._stringify_tool_input(item) for item in value
+                )
+                if chunk
+            )
+        if isinstance(value, dict):
+            return "\n".join(
+                chunk
+                for chunk in (
+                    PublishedAppCodingAgentRuntimeSandboxMixin._stringify_tool_input(item)
+                    for item in value.values()
+                )
+                if chunk
+            )
+        return ""
+
+    @classmethod
+    def _is_mutating_shell_input(cls, payload: dict[str, Any] | None) -> bool:
+        input_text = cls._stringify_tool_input((payload or {}).get("input")).strip().lower()
+        if not input_text:
+            return False
+        if any(pattern.search(input_text) for pattern in _MUTATING_SHELL_PATTERNS):
+            return True
+        if "python" in input_text and any(snippet in input_text for snippet in _PYTHON_MUTATION_SNIPPETS):
+            if ".write_" in input_text or any(
+                token in input_text
+                for token in ("'w'", '"w"', "'a'", '"a"', "mkdir(", "rename(", "unlink(", "replace(")
+            ):
+                return True
+        return False
+
     @staticmethod
     def _normalize_workspace_path(path: str | None) -> str:
         return str(path or "").strip().rstrip("/")
@@ -138,6 +192,8 @@ class PublishedAppCodingAgentRuntimeSandboxMixin:
         tool_name = str((payload or {}).get("tool") or "").strip().lower()
         if not tool_name:
             return False
+        if tool_name in _SHELL_LIKE_TOOL_NAMES:
+            return PublishedAppCodingAgentRuntimeSandboxMixin._is_mutating_shell_input(payload)
         return any(hint in tool_name for hint in _WORKSPACE_WRITE_TOOL_HINTS)
 
     async def _ensure_run_sandbox_context(

@@ -1,4 +1,4 @@
-Last Updated: 2026-04-14
+Last Updated: 2026-04-15
 
 # Apps Builder Sandbox Runtime Tests
 
@@ -10,6 +10,7 @@ Last Updated: 2026-04-14
 ## Test files present
 - `backend/tests/apps_builder_sandbox_runtime/test_runtime_client_and_preview_proxy.py`
 - `backend/tests/apps_builder_sandbox_runtime/test_draft_dev_runtime_lifecycle.py`
+- `backend/tests/apps_builder_sandbox_runtime/test_coding_agent_runtime_sandbox.py`
 - `backend/tests/apps_builder_sandbox_runtime/test_sprite_backend_config.py`
 - `backend/tests/apps_builder_sandbox_runtime/test_sprite_live_smoke.py`
 - `backend/tests/apps_builder_sandbox_runtime/test_live_coding_run_e2e.py`
@@ -39,6 +40,7 @@ Last Updated: 2026-04-14
 - Coding-run bootstrap can reuse a healthy live workspace even when the saved draft revision has advanced, instead of forcing a revision-driven resync.
 - The public draft-dev `ensure` route reuses an already-serving live workspace via `ensure_active_session(..., prefer_live_workspace=True)` instead of falling back to the legacy full-sync path.
 - Draft-dev incremental sync treats delete operations as idempotent when the target file is already absent in the live sandbox, instead of failing the whole sync on a stale delete.
+- Coding-agent workspace-write detection ignores read-only `bash` probes like `git status`, while still flagging mutating shell commands and explicit write tools.
 - Session stop detaches one editor without destroying the shared Sprite while another editor remains attached.
 - Dormant workspace sweep destroys the shared Sprite only after all sessions detach and retention elapses.
 - App delete destroys the shared Sprite and removes workspace metadata.
@@ -104,6 +106,9 @@ Last Updated: 2026-04-14
 - Command: `cd backend && PYTHONPATH=. python3 -m pytest -q tests/apps_builder_sandbox_runtime/test_draft_dev_runtime_lifecycle.py -k 'sync_route_ignores_delete_error_when_file_is_already_absent or ensure_endpoint_reuses_live_session_without_calling_legacy_ensure_session'`
 - Date: 2026-04-14 18:43 EEST
 - Result: PASS (`2 passed, 11 deselected`)
+- Command: `cd backend && PYTHONPATH=. python3 -m pytest -q tests/apps_builder_sandbox_runtime/test_coding_agent_runtime_sandbox.py`
+- Date: 2026-04-15 Asia/Hebron
+- Result: PASS
 
 ## Known gaps or follow-ups
 - Add live websocket/HMR coverage against the Sprite preview path.

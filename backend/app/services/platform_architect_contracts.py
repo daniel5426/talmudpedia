@@ -327,21 +327,19 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
                 "payload_schema": _payload_schema(
                     properties={
                         "executable_pipeline_id": {"type": "string"},
-                        "tenant_slug": {"type": "string"},
                         "input_params": {"type": "object"},
                     },
-                    required=["executable_pipeline_id", "tenant_slug"],
+                    required=["executable_pipeline_id"],
                     additional_properties=False,
                 ),
                 "contract": {
                     "summary": "Run a pipeline job against an executable pipeline.",
-                    "required_fields": ["executable_pipeline_id", "tenant_slug"],
+                    "required_fields": ["executable_pipeline_id"],
                     "example_payload": {
                         "executable_pipeline_id": "exec-123",
-                        "tenant_slug": "acme",
-                        "input_params": {"query": "hello"},
+                        "input_params": {"text": "hello"},
                     },
-                    "failure_codes": ["VALIDATION_ERROR", "TENANT_MISMATCH"],
+                    "failure_codes": ["VALIDATION_ERROR"],
                 },
             },
             "rag.get_job": {
@@ -727,6 +725,8 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
                 "mutation": False,
                 "payload_schema": _list_payload_schema(
                     properties={
+                        "slug": {"type": "string"},
+                        "name": {"type": "string"},
                         "scope": {"type": "string"},
                         "is_active": {"type": "boolean"},
                         "status": {"type": "string"},
@@ -737,14 +737,14 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
                 "contract": {
                     "summary": "List tools.",
                     "required_fields": [],
-                    "example_payload": {"limit": 20, "skip": 0, "view": "summary", "is_active": True},
+                    "example_payload": {"slug": "faq-tool", "limit": 20, "skip": 0, "view": "summary", "is_active": True},
                     "failure_codes": [],
                 },
             },
             "tools.get": {
                 "mutation": False,
-                "payload_schema": _payload_schema(properties={"tool_id": {"type": "string"}, "id": {"type": "string"}}),
-                "contract": {"summary": "Get tool.", "required_fields": ["tool_id|id"], "example_payload": {"tool_id": "tool-123"}, "failure_codes": ["NOT_FOUND"]},
+                "payload_schema": _payload_schema(properties={"tool_id": {"type": "string"}, "id": {"type": "string"}, "slug": {"type": "string"}}),
+                "contract": {"summary": "Get tool.", "required_fields": ["tool_id|id|slug"], "example_payload": {"slug": "faq-tool"}, "failure_codes": ["NOT_FOUND"]},
             },
             "tools.create_or_update": {
                 "mutation": True,
@@ -947,6 +947,21 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
                 "payload_schema": _payload_schema(properties={"model_id": {"type": "string"}, "id": {"type": "string"}, "name": {"type": "string"}, "slug": {"type": "string"}}, additional_properties=True),
                 "contract": {"summary": "Create or update model.", "required_fields": ["name|model_id"], "example_payload": {"name": "Model A", "slug": "model-a"}, "failure_codes": ["VALIDATION_ERROR"]},
             },
+            "prompts.list": {
+                "mutation": False,
+                "payload_schema": _list_payload_schema(
+                    properties={
+                        "q": {"type": "string"},
+                        "status": {"type": "string", "enum": ["active", "archived"]},
+                    },
+                ),
+                "contract": {
+                    "summary": "List prompt library records visible in the current tenant scope.",
+                    "required_fields": [],
+                    "example_payload": {"limit": 20, "skip": 0, "view": "summary", "status": "active"},
+                    "failure_codes": [],
+                },
+            },
             "credentials.list": {
                 "mutation": False,
                 "payload_schema": _list_payload_schema(properties={"category": {"type": "string"}}),
@@ -1076,10 +1091,19 @@ def build_architect_graph_definition(model_id: str, tool_ids: list[str] | None =
         "platform-assets, platform-governance, architect-worker-binding-prepare, architect-worker-binding-get-state, architect-worker-binding-persist-artifact, "
         "architect-worker-spawn, architect-worker-spawn-group, architect-worker-get-run, architect-worker-await, "
         "architect-worker-respond, architect-worker-join, architect-worker-cancel. "
+        "The platform domain tool slugs are containers, not the user-facing tool inventory. "
+        "When the user asks what platform tools are available, answer with canonical action ids under each domain, not just platform-rag/platform-agents/platform-assets/platform-governance. "
         "Never call architect.run or any meta action. "
         "Use only exact canonical action IDs from tool schemas (for example: agents.create_shell, rag.create_pipeline_shell, "
         "artifacts.create, artifacts.update, artifacts.create_test_run). Never invent aliases like create_agent/register_asset. "
         "Every Platform SDK call must use canonical top-level action and payload fields. "
+        "For new resource creation, prefer canonical shell/create_or_update actions over invented *.create aliases. "
+        "For new agent shells, RAG pipeline shells, tenant tool rows, and knowledge stores, default the resource label field to payload.name unless the schema explicitly requires another field. "
+        "Do not default to display_name for these canonical create actions. "
+        "For agents.create_shell, payload.slug is required alongside payload.name; if the user only gives a name, derive a slug from that name and send both fields together. "
+        "For rag.create_pipeline_shell, use payload.name and optional payload.pipeline_type=retrieval only; do not send kind, template, display_name, nodes, edges, or graph_definition on the shell action. "
+        "For knowledge_stores.create_or_update create flows, payload.name and payload.embedding_model_id are required; if embedding_model_id is missing, call models.list and choose an active embedding-capable model before creating the store. "
+        "For new artifact draft bindings, create_new_draft requires title_prompt plus draft_seed; do not send null draft_snapshot or omit draft_seed. "
         "Never wrap a tool call inside query, text, value, or markdown. "
         "Workflow policy: extract intent and constraints, build a step plan, prefer direct deterministic domain mutations "
         "for local work, use dedicated architect-worker tools for async or long-running delegated work, validate after "
@@ -1088,11 +1112,25 @@ def build_architect_graph_definition(model_id: str, tool_ids: list[str] | None =
         "agents.graph.set_agent_instructions, rag.graph.attach_knowledge_store_to_node, "
         "rag.graph.set_pipeline_node_config). Use agents.graph.apply_patch or rag.graph.apply_patch only when a helper "
         "does not cover the requested mutation. "
+        "For agents.graph.add_tool_to_agent_node, payload.tool_id must be the actual tool row UUID, not a slug or display name; if the user references a tool by slug or name, resolve the row first with tools.list or tools.get and then attach by id. "
+        "For agents.graph.set_agent_model, send payload.node_id plus a concrete payload.model_id chosen from models.list. "
+        "For agents.graph.apply_patch and rag.graph.apply_patch, the array field is payload.operations, not payload.patch. "
+        "For runtime agent execution, use canonical agents.execute or agents.start_run, never invented aliases like agents.runs.create or agents.create_run. "
+        "After starting an agent run, poll agents.get_run until the target run reaches a terminal state before you report status or summarize output. "
+        "Queued or running is not a completed execution result unless the user explicitly asked for a non-terminal snapshot. "
+        "Do not use architect-worker-await for ordinary agent run ids or pipeline job ids returned by platform tools; keep polling the canonical get_run/get_job actions directly. "
         "For first-time agent creation, prefer agents.create_shell over agents.create unless you intentionally need to supply a full graph_definition. "
         "For first-time RAG pipeline creation, prefer rag.create_pipeline_shell over rag.create_visual_pipeline unless you intentionally need to supply a full nodes/edges graph. "
         "For rag.create_visual_pipeline, pass nodes/edges at payload top-level (graph_definition is backward-compatible only). "
+        "For runtime pipeline execution, use rag.create_job with payload.executable_pipeline_id plus payload.input_params only; do not use payload.pipeline_id, payload.id, payload.input, or stale aliases like jobs.create. "
+        "If the executable input shape is not obvious or includes optional fields like filters or top_k, call rag.get_executable_input_schema first and map payload.input_params to the returned step-id shape. "
+        "After creating a pipeline job, poll rag.get_job until the job reaches a terminal state before you report final job status. "
         "For agent graph discovery use agents.nodes.catalog and agents.nodes.schema only. "
         "For RAG pipeline operator discovery use rag.operators.catalog and rag.operators.schema only. "
+        "For platform tool inventory questions, treat platform tools as canonical action ids, not just the domain container slugs. "
+        "If the user asks to list platform tools available right now or tool names grouped by domain, return canonical action ids grouped under each platform domain from the seeded tool schemas already in context. "
+        "Do not answer with only domain slugs, and do not include architect-worker tools unless the user explicitly asks about worker or orchestration tools. "
+        "Do not invent help/list-schema actions against platform domains just to describe available actions. "
         "Never use agents.nodes.* to discover RAG operators and never invent unsupported actions like rag.nodes.catalog. "
         "Never create empty graphs: agents and pipelines must include a minimal working node/edge skeleton. "
         "For agents.create specifically, graph_definition must include exactly one start node, at least one end node, "
@@ -1103,6 +1141,9 @@ def build_architect_graph_definition(model_id: str, tool_ids: list[str] | None =
         "returned structured errors/warnings. "
         "platform-governance does not expose raw orchestration.spawn_* actions to the architect; use the dedicated architect-worker tools for worker delegation. "
         "For artifact metadata/runtime/contract lifecycle work, use platform-assets canonical artifact actions directly. "
+        "For prompt library discovery, use platform-assets with action prompts.list. Prompt library records are not artifacts. "
+        "If the user says prompt assets, prompt templates, or prompt library entries, treat that as prompt library discovery and use prompts.list. "
+        "Do not query artifacts.list for fake kinds like prompt or prompt_template when the user is asking about prompts or prompt templates. "
         "For code-heavy or multi-file artifact authoring, prepare an artifact_shared_draft binding with architect-worker-binding-prepare using only canonical top-level fields for the selected mode. "
         "The normal new-binding flow is prepare_mode=create_new_draft with title_prompt plus draft_seed.kind, and optionally draft_seed.language when the create flow should start in javascript instead of python. "
         "Language selection belongs to create flow only; do not try to mutate artifact language after persistence. "
