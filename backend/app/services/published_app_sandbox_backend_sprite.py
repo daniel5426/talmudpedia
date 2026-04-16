@@ -7,12 +7,25 @@ import logging
 import os
 import re
 import shlex
+from datetime import datetime, timezone
 from typing import Any, AsyncGenerator, Dict
 from urllib.parse import urlencode
 
 import httpx
 
 from app.services.apps_builder_trace import apps_builder_trace
+from app.services.published_app_live_preview import (
+    LIVE_PREVIEW_MODE,
+    LIVE_PREVIEW_STATUS_BOOTING,
+    LIVE_PREVIEW_STATUS_FAILED_KEEP_LAST_GOOD,
+    LIVE_PREVIEW_STATUS_FAILED_NO_BUILD,
+    LIVE_PREVIEW_STATUS_READY,
+    build_live_preview_context_payload,
+    build_live_preview_static_server_script,
+    build_live_preview_watch_script,
+    build_live_preview_workspace_fingerprint,
+    normalize_live_preview_payload,
+)
 from app.services.published_app_builder_snapshot_filter import (
     BUILDER_SNAPSHOT_IGNORED_FILE_NAMES,
     BUILDER_SNAPSHOT_IGNORED_SUFFIXES,
@@ -28,6 +41,7 @@ logger = logging.getLogger(__name__)
 _EXIT_MARKER = "__CODEX_EXIT_CODE__="
 _REVISION_FILE = ".talmudpedia/runtime-revision-token"
 _DEPENDENCY_HASH_FILE = ".talmudpedia/dependency-hash"
+_LIVE_PREVIEW_ROOT = ".talmudpedia/live-preview"
 _SYNC_IGNORE_PREFIXES = (".talmudpedia/", ".opencode/", "node_modules/")
 _EXEC_CONTROL_TRANSLATION = {
     codepoint: None
@@ -111,6 +125,9 @@ class SpriteSandboxBackend(PublishedAppSandboxBackend):
     def _preview_service_name(self) -> str:
         return str(self.config.sprite_preview_service_name or "builder-preview").strip() or "builder-preview"
 
+    def _build_watch_service_name(self) -> str:
+        return "builder-build-watch"
+
     def _opencode_service_name(self) -> str:
         return str(self.config.sprite_opencode_service_name or "opencode").strip() or "opencode"
 
@@ -122,6 +139,75 @@ class SpriteSandboxBackend(PublishedAppSandboxBackend):
 
     def _preview_poll_interval_ms(self) -> int:
         return max(100, int(os.getenv("APPS_SPRITE_VITE_POLL_INTERVAL_MS", "250")))
+
+    def _live_preview_root_path(self) -> str:
+        return f"{self._live_workspace_path()}/{_LIVE_PREVIEW_ROOT}"
+
+    def _live_preview_status_path(self) -> str:
+        return f"{self._live_preview_root_path()}/status.json"
+
+    def _live_preview_context_path(self) -> str:
+        return f"{self._live_preview_root_path()}/context.json"
+
+    def _live_preview_build_watch_script_path(self) -> str:
+        return f"{self._live_preview_root_path()}/build-watch.mjs"
+
+    def _live_preview_static_server_script_path(self) -> str:
+        return f"{self._live_preview_root_path()}/static-preview-server.py"
+
+    def _live_preview_scripts_version(self) -> str:
+        payload = "\n---\n".join(
+            [
+                build_live_preview_watch_script(
+                    live_workspace_path=self._live_workspace_path(),
+                    live_preview_root_path=self._live_preview_root_path(),
+                ),
+                build_live_preview_static_server_script(
+                    live_preview_root_path=self._live_preview_root_path(),
+                    preview_port=self._preview_port(),
+                ),
+            ]
+        )
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+    def _live_preview_supervisor_summary(
+        self,
+        *,
+        build_watch_service: dict[str, Any] | None,
+        static_preview_service: dict[str, Any] | None,
+        restart_reason: str | None = None,
+        failure_reason: str | None = None,
+    ) -> dict[str, Any]:
+        return {
+            "build_watch_status": str((build_watch_service or {}).get("state") or "").strip().lower() or "unknown",
+            "static_server_status": str((static_preview_service or {}).get("state") or "").strip().lower() or "unknown",
+            "checked_at": datetime.now(timezone.utc).isoformat(),
+            "restart_reason": str(restart_reason or "").strip() or None,
+            "failure_reason": str(failure_reason or "").strip() or None,
+        }
+
+    def _with_live_preview_supervisor(
+        self,
+        *,
+        live_preview: dict[str, Any] | None,
+        supervisor: dict[str, Any],
+    ) -> dict[str, Any]:
+        merged = dict(live_preview or {})
+        merged["supervisor"] = dict(supervisor or {})
+        return normalize_live_preview_payload(merged)
+
+    def _live_preview_needs_service_refresh(self, *, live_preview: dict[str, Any] | None) -> bool:
+        if not isinstance(live_preview, dict) or not live_preview:
+            return True
+        payload = normalize_live_preview_payload(live_preview)
+        supervisor = dict(payload.get("supervisor") or {}) if isinstance(payload.get("supervisor"), dict) else {}
+        build_watch_status = str(supervisor.get("build_watch_status") or "").strip().lower()
+        static_server_status = str(supervisor.get("static_server_status") or "").strip().lower()
+        if build_watch_status and build_watch_status != "running":
+            return True
+        if static_server_status and static_server_status != "running":
+            return True
+        return False
 
     async def _request(
         self,
@@ -184,14 +270,22 @@ class SpriteSandboxBackend(PublishedAppSandboxBackend):
         existing = await self._get_sprite(sprite_name=sprite_name)
         if existing is not None:
             return existing
-        created = await self._request(
-            "POST",
-            "/v1/sprites",
-            json_payload={
-                "name": sprite_name,
-                "url_settings": {"auth": "sprite"},
-            },
-        )
+        try:
+            created = await self._request(
+                "POST",
+                "/v1/sprites",
+                json_payload={
+                    "name": sprite_name,
+                    "url_settings": {"auth": "sprite"},
+                },
+            )
+        except PublishedAppSandboxBackendError as exc:
+            if "(409)" not in str(exc):
+                raise
+            existing = await self._get_sprite(sprite_name=sprite_name)
+            if existing is not None:
+                return existing
+            raise
         if not isinstance(created, dict):
             raise PublishedAppSandboxBackendError(f"Sprite create returned invalid payload for {sprite_name}")
         return created
@@ -243,37 +337,94 @@ class SpriteSandboxBackend(PublishedAppSandboxBackend):
             raise
         return payload if isinstance(payload, dict) else None
 
+    async def _install_live_preview_scripts(self, *, sprite_name: str) -> None:
+        script = f"""
+import json
+import pathlib
+
+root = pathlib.Path({json.dumps(self._live_preview_root_path())})
+root.mkdir(parents=True, exist_ok=True)
+(root / "build-watch.mjs").write_text({json.dumps(build_live_preview_watch_script(
+    live_workspace_path=self._live_workspace_path(),
+    live_preview_root_path=self._live_preview_root_path(),
+))}, encoding="utf-8")
+(root / "static-preview-server.py").write_text({json.dumps(build_live_preview_static_server_script(
+    live_preview_root_path=self._live_preview_root_path(),
+    preview_port=self._preview_port(),
+))}, encoding="utf-8")
+print(json.dumps({{"status": "ok"}}, sort_keys=True))
+""".strip()
+        await self._exec_with_stdin(
+            sprite_name=sprite_name,
+            command=["python3", "-"],
+            stdin_text=script,
+            timeout_seconds=60,
+            max_output_bytes=8_000,
+        )
+
+    async def _ensure_service_running(
+        self,
+        *,
+        sprite_name: str,
+        service_name: str,
+        payload: dict[str, Any],
+    ) -> None:
+        service = await self._get_service(sprite_name=sprite_name, service_name=service_name)
+        expected_http_port = payload.get("http_port")
+        if service is None:
+            await self._put_service(sprite_name=sprite_name, service_name=service_name, payload=payload)
+            await self._start_service(sprite_name=sprite_name, service_name=service_name)
+            return
+        current_cmd = service.get("cmd") if isinstance(service, dict) else None
+        current_args = service.get("args") if isinstance(service, dict) else None
+        current_http_port = service.get("http_port") if isinstance(service, dict) else None
+        needs_reconfigure = (
+            current_cmd != payload.get("cmd")
+            or current_args != payload.get("args")
+            or current_http_port != expected_http_port
+        )
+        if needs_reconfigure:
+            await self._put_service(sprite_name=sprite_name, service_name=service_name, payload=payload)
+            await self._start_service(sprite_name=sprite_name, service_name=service_name)
+            return
+        if str(service.get("state") or "").strip().lower() != "running":
+            await self._start_service(sprite_name=sprite_name, service_name=service_name)
+
     async def _ensure_preview_service(self, *, sprite_name: str) -> None:
-        live_workspace_path = self._live_workspace_path()
-        preview_command = (
-            f"cd {shlex.quote(live_workspace_path)} && "
-            f"export CHOKIDAR_USEPOLLING=1 CHOKIDAR_INTERVAL={self._preview_poll_interval_ms()} "
-            f"__APPS_VITE_USE_POLLING=1 __APPS_VITE_POLL_INTERVAL_MS={self._preview_poll_interval_ms()} && "
-            f"npm run dev -- --host 0.0.0.0 --port {self._preview_port()} --strictPort"
+        await self._install_live_preview_scripts(sprite_name=sprite_name)
+        scripts_version = self._live_preview_scripts_version()
+        build_watch_command = (
+            f"export TALMUDPEDIA_LIVE_PREVIEW_SCRIPTS_VERSION={shlex.quote(scripts_version)} && "
+            f"cd {shlex.quote(self._live_workspace_path())} && "
+            f"node {shlex.quote(self._live_preview_build_watch_script_path())}"
+        )
+        static_preview_command = (
+            f"export TALMUDPEDIA_LIVE_PREVIEW_SCRIPTS_VERSION={shlex.quote(scripts_version)} && "
+            f"cd {shlex.quote(self._live_workspace_path())} && "
+            f"python3 {shlex.quote(self._live_preview_static_server_script_path())}"
         )
         self._trace(
             "sprite.ensure_services.preview_plan",
             sprite_name=sprite_name,
+            build_watch_service_name=self._build_watch_service_name(),
             preview_service_name=self._preview_service_name(),
             preview_port=self._preview_port(),
-            preview_command=preview_command,
+            scripts_version=scripts_version,
         )
-        await self._put_service(
+        await self._ensure_service_running(
+            sprite_name=sprite_name,
+            service_name=self._build_watch_service_name(),
+            payload=self._service_command(build_watch_command),
+        )
+        await self._ensure_service_running(
             sprite_name=sprite_name,
             service_name=self._preview_service_name(),
             payload={
-                **self._service_command(preview_command),
+                **self._service_command(static_preview_command),
                 "http_port": self._preview_port(),
             },
         )
-        await self._start_service(
-            sprite_name=sprite_name,
-            service_name=self._preview_service_name(),
-        )
-        preview_service = await self._get_service(
-            sprite_name=sprite_name,
-            service_name=self._preview_service_name(),
-        )
+        preview_service = await self._get_service(sprite_name=sprite_name, service_name=self._preview_service_name())
         self._trace(
             "sprite.ensure_services.preview_live_service",
             sprite_name=sprite_name,
@@ -319,6 +470,7 @@ class SpriteSandboxBackend(PublishedAppSandboxBackend):
         script = f"""
 import sys
 import time
+import json
 import urllib.request
 
 deadline = time.time() + 45
@@ -331,11 +483,22 @@ def fetch(path: str):
 
 while time.time() < deadline:
     try:
-        root_status, _ = fetch("/")
-        if root_status == 200:
-            print("ready")
-            sys.exit(0)
-        last_error = f"preview root not ready: status={{root_status}}"
+        status_code, raw_status = fetch("/_talmudpedia/status")
+        payload = json.loads(raw_status or "{{}}") if raw_status else {{}}
+        live_status = str(payload.get("status") or "").strip().lower()
+        last_successful_build_id = str(payload.get("last_successful_build_id") or "").strip()
+        if status_code == 200 and last_successful_build_id:
+            root_status, _ = fetch("/")
+            if root_status == 200:
+                print("ready")
+                sys.exit(0)
+            last_error = f"preview root not ready: status={{root_status}}"
+            time.sleep(0.75)
+            continue
+        if status_code == 200 and live_status in {{"failed_keep_last_good", "failed_no_build"}}:
+            last_error = str(payload.get("error") or "preview build failed")
+        else:
+            last_error = f"preview status not ready: status={{status_code}} payload={{payload}}"
     except Exception as exc:
         last_error = str(exc)
     time.sleep(0.75)
@@ -365,6 +528,56 @@ sys.exit(1)
             sprite_name=sprite_name,
             preview_service_name=self._preview_service_name(),
             preview_port=self._preview_port(),
+        )
+
+    async def _read_live_preview_status(self, *, sprite_name: str) -> dict[str, Any]:
+        script = f"""
+import json
+import pathlib
+
+status_path = pathlib.Path({json.dumps(self._live_preview_status_path())})
+if not status_path.exists():
+    print(json.dumps({{"mode": "build_watch_static", "status": "booting"}}, sort_keys=True))
+else:
+    print(status_path.read_text(encoding="utf-8", errors="replace"))
+""".strip()
+        output, _ = await self._exec_with_stdin(
+            sprite_name=sprite_name,
+            command=["python3", "-"],
+            stdin_text=script,
+            timeout_seconds=30,
+            max_output_bytes=64_000,
+        )
+        try:
+            payload = json.loads(output or "{}")
+        except Exception as exc:
+            raise PublishedAppSandboxBackendError(f"Invalid live preview status payload: {output[:280]}") from exc
+        if not isinstance(payload, dict):
+            raise PublishedAppSandboxBackendError("Live preview status payload is invalid.")
+        return normalize_live_preview_payload(payload)
+
+    async def _write_live_preview_context(
+        self,
+        *,
+        sprite_name: str,
+        workspace_fingerprint: str | None,
+    ) -> None:
+        payload = build_live_preview_context_payload(workspace_fingerprint=workspace_fingerprint)
+        script = f"""
+import json
+import pathlib
+
+context_path = pathlib.Path({json.dumps(self._live_preview_context_path())})
+context_path.parent.mkdir(parents=True, exist_ok=True)
+context_path.write_text({json.dumps(json.dumps(payload, sort_keys=True, indent=2))}, encoding="utf-8")
+print(json.dumps({{"status": "ok"}}, sort_keys=True))
+""".strip()
+        await self._exec_with_stdin(
+            sprite_name=sprite_name,
+            command=["python3", "-"],
+            stdin_text=script,
+            timeout_seconds=30,
+            max_output_bytes=4_000,
         )
 
     async def _mirror_workspace(self, *, sprite_name: str, source_workspace_path: str, target_workspace_path: str) -> None:
@@ -555,6 +768,7 @@ print(json.dumps({{"status": "ok"}}, sort_keys=True))
                 self._live_workspace_path(),
                 os.path.dirname(f"{self._live_workspace_path()}/{_REVISION_FILE}"),
                 self._stage_workspace_path(),
+                self._live_preview_root_path(),
             ],
             timeout_seconds=60,
             max_output_bytes=2000,
@@ -716,6 +930,34 @@ print(json.dumps({{"revision_token": revision_token}}, sort_keys=True))
             max_output_bytes=1024,
         )
 
+    @staticmethod
+    def _dependency_install_shell_command(*, prefer_offline: bool = True) -> str:
+        npm_args = "--no-audit --no-fund"
+        if prefer_offline:
+            npm_args = f"{npm_args} --prefer-offline"
+        pnpm_args = "--no-frozen-lockfile"
+        if prefer_offline:
+            pnpm_args = f"{pnpm_args} --prefer-offline"
+        pnpm_cmd = f"pnpm install {pnpm_args}".strip()
+        pnpm_corepack_cmd = f"corepack pnpm install {pnpm_args}".strip()
+        yarn_cmd = "yarn install"
+        yarn_corepack_cmd = "corepack yarn install"
+        npm_ci_cmd = f"npm ci {npm_args}".strip()
+        npm_install_cmd = f"npm install {npm_args}".strip()
+        return (
+            "if [ -f pnpm-lock.yaml ]; then "
+            f"if command -v pnpm >/dev/null 2>&1; then {pnpm_cmd}; "
+            f"elif command -v corepack >/dev/null 2>&1; then {pnpm_corepack_cmd}; "
+            f"else {npm_install_cmd}; fi; "
+            "elif [ -f yarn.lock ]; then "
+            f"if command -v yarn >/dev/null 2>&1; then {yarn_cmd}; "
+            f"elif command -v corepack >/dev/null 2>&1; then {yarn_corepack_cmd}; "
+            f"else {npm_install_cmd}; fi; "
+            f"elif [ -f package-lock.json ]; then {npm_ci_cmd}; "
+            f"elif [ -f package.json ]; then {npm_install_cmd}; "
+            "fi"
+        )
+
     async def _install_dependencies_if_needed(
         self,
         *,
@@ -744,15 +986,7 @@ print(json.dumps({{"revision_token": revision_token}}, sort_keys=True))
         command = [
             "bash",
             "-lc",
-            (
-                "if [ -f pnpm-lock.yaml ] && command -v pnpm >/dev/null 2>&1; then "
-                "pnpm install --frozen-lockfile --prefer-offline; "
-                "elif [ -f package-lock.json ]; then "
-                "npm ci --no-audit --no-fund --prefer-offline; "
-                "elif [ -f package.json ]; then "
-                "npm install --no-audit --no-fund --prefer-offline; "
-                "fi"
-            ),
+            self._dependency_install_shell_command(prefer_offline=True),
         ]
         await self._exec(
             sprite_name=sprite_name,
@@ -821,8 +1055,10 @@ print(json.dumps({{"revision_token": revision_token}}, sort_keys=True))
         sprite_url: str,
         preview_base_path: str,
         revision_token: str | None,
+        live_preview: dict[str, Any] | None = None,
         last_error: str | None = None,
     ) -> dict[str, Any]:
+        normalized_live_preview = normalize_live_preview_payload(live_preview or {})
         return {
             "provider": "sprite",
             "preview": {
@@ -842,15 +1078,17 @@ print(json.dumps({{"revision_token": revision_token}}, sort_keys=True))
             "services": {
                 "preview_service_name": self._preview_service_name(),
                 "preview_port": self._preview_port(),
+                "build_watch_service_name": self._build_watch_service_name(),
                 "opencode_service_name": self._opencode_service_name(),
                 "opencode_port": self._opencode_port(),
                 "opencode_base_url": f"{str(sprite_url).rstrip('/')}:{self._opencode_port()}",
             },
             "preview_runtime": {
-                "mode": "vite_dev",
+                "mode": LIVE_PREVIEW_MODE,
                 "workspace_revision_token": revision_token,
                 "last_error": str(last_error or "").strip() or None,
             },
+            "live_preview": normalized_live_preview,
         }
 
     async def _heartbeat_metadata(self, *, sprite_name: str) -> dict[str, Any]:
@@ -862,12 +1100,24 @@ print(json.dumps({{"revision_token": revision_token}}, sort_keys=True))
             sprite_name=sprite_name,
             service_name=self._preview_service_name(),
         )
+        build_watch_service = await self._get_service(
+            sprite_name=sprite_name,
+            service_name=self._build_watch_service_name(),
+        )
         self._trace(
             "sprite.preview.heartbeat_state",
             sprite_name=sprite_name,
             preview_service_name=self._preview_service_name(),
             preview_state=preview_service.get("state") if isinstance(preview_service, dict) else None,
             preview_http_port=preview_service.get("http_port") if isinstance(preview_service, dict) else None,
+            build_watch_state=build_watch_service.get("state") if isinstance(build_watch_service, dict) else None,
+        )
+        live_preview = self._with_live_preview_supervisor(
+            live_preview=await self._read_live_preview_status(sprite_name=sprite_name),
+            supervisor=self._live_preview_supervisor_summary(
+                build_watch_service=build_watch_service,
+                static_preview_service=preview_service,
+            ),
         )
         return self._backend_metadata(
             sprite_name=sprite_name,
@@ -877,6 +1127,7 @@ print(json.dumps({{"revision_token": revision_token}}, sort_keys=True))
                 sprite_name=sprite_name,
                 workspace_path=self._live_workspace_path(),
             ),
+            live_preview=live_preview,
         )
 
     async def _snapshot_workspace_files(self, *, sprite_name: str, workspace_path: str) -> dict[str, Any]:
@@ -945,8 +1196,12 @@ print(json.dumps({{
         draft_dev_token: str,
         preview_base_path: str,
     ) -> Dict[str, Any]:
-        _ = tenant_id, user_id, revision_id, entry_file, idle_timeout_seconds, draft_dev_token
+        _ = tenant_id, user_id, revision_id, idle_timeout_seconds, draft_dev_token
         sprite_name = self._sprite_name(prefix=self.config.sprite_name_prefix, app_id=app_id)
+        workspace_fingerprint = build_live_preview_workspace_fingerprint(
+            entry_file=entry_file,
+            files=files,
+        )
         self._trace("sprite.start_session.begin", sprite_name=sprite_name, app_id=app_id, runtime_generation=runtime_generation)
         sprite = await self._ensure_sprite(sprite_name=sprite_name)
         sprite_url = str(sprite.get("url") or "").strip() or f"https://{sprite_name}.sprites.app"
@@ -973,11 +1228,28 @@ print(json.dumps({{
             dependency_hash=dependency_hash,
             force_install=False,
         )
+        await self._write_live_preview_context(
+            sprite_name=sprite_name,
+            workspace_fingerprint=workspace_fingerprint,
+        )
         await self._ensure_preview_service(sprite_name=sprite_name)
         await self._ensure_preview_ready_with_repair(
             sprite_name=sprite_name,
             workspace_path=self._live_workspace_path(),
             dependency_hash=dependency_hash,
+        )
+        live_preview = self._with_live_preview_supervisor(
+            live_preview=await self._read_live_preview_status(sprite_name=sprite_name),
+            supervisor=self._live_preview_supervisor_summary(
+                build_watch_service=await self._get_service(
+                    sprite_name=sprite_name,
+                    service_name=self._build_watch_service_name(),
+                ),
+                static_preview_service=await self._get_service(
+                    sprite_name=sprite_name,
+                    service_name=self._preview_service_name(),
+                ),
+            ),
         )
         self._trace("sprite.start_session.preview_ready", sprite_name=sprite_name, revision_token=revision_token)
         return {
@@ -995,6 +1267,7 @@ print(json.dumps({{
                 sprite_url=sprite_url,
                 preview_base_path=preview_base_path,
                 revision_token=revision_token,
+                live_preview=live_preview,
             ),
         }
 
@@ -1009,8 +1282,12 @@ print(json.dumps({{
         install_dependencies: bool,
         preview_base_path: str | None = None,
     ) -> Dict[str, Any]:
-        _ = entry_file, idle_timeout_seconds
+        _ = idle_timeout_seconds
         sprite_name = str(sandbox_id or "").strip()
+        workspace_fingerprint = build_live_preview_workspace_fingerprint(
+            entry_file=entry_file,
+            files=files,
+        )
         self._trace("sprite.sync_session.begin", sprite_name=sprite_name, sandbox_id=sandbox_id)
         sprite = await self._ensure_sprite(sprite_name=sprite_name)
         sprite_url = str(sprite.get("url") or "").strip() or f"https://{sprite_name}.sprites.app"
@@ -1037,18 +1314,36 @@ print(json.dumps({{
             dependency_hash=dependency_hash,
             force_install=bool(install_dependencies),
         )
-        await self._ensure_preview_service(sprite_name=sprite_name)
-        await self._ensure_preview_ready_with_repair(
+        await self._write_live_preview_context(
             sprite_name=sprite_name,
-            workspace_path=self._live_workspace_path(),
-            dependency_hash=dependency_hash,
+            workspace_fingerprint=workspace_fingerprint,
         )
-        self._trace("sprite.sync_session.preview_ready", sprite_name=sprite_name, revision_token=revision_token)
+        live_preview = self._with_live_preview_supervisor(
+            live_preview=await self._read_live_preview_status(sprite_name=sprite_name),
+            supervisor=self._live_preview_supervisor_summary(
+                build_watch_service=await self._get_service(
+                    sprite_name=sprite_name,
+                    service_name=self._build_watch_service_name(),
+                ),
+                static_preview_service=await self._get_service(
+                    sprite_name=sprite_name,
+                    service_name=self._preview_service_name(),
+                ),
+            ),
+        )
+        self._trace(
+            "sprite.sync_session.preview_status",
+            sprite_name=sprite_name,
+            revision_token=revision_token,
+            live_preview_status=live_preview.get("status"),
+            last_successful_build_id=live_preview.get("last_successful_build_id"),
+        )
         metadata = self._backend_metadata(
             sprite_name=sprite_name,
             sprite_url=sprite_url,
             preview_base_path=preview_base_path or "/",
             revision_token=revision_token,
+            live_preview=live_preview,
         )
         return {
             "sandbox_id": sprite_name,
@@ -1061,6 +1356,26 @@ print(json.dumps({{
         _ = idle_timeout_seconds
         sprite_name = str(sandbox_id or "").strip()
         metadata = await self._heartbeat_metadata(sprite_name=sprite_name)
+        if self._live_preview_needs_service_refresh(live_preview=metadata.get("live_preview")):
+            self._trace(
+                "sprite.preview.heartbeat_refresh.begin",
+                sprite_name=sprite_name,
+                reason="service_not_running_or_status_missing",
+            )
+            await self._ensure_preview_service(sprite_name=sprite_name)
+            metadata = await self._heartbeat_metadata(sprite_name=sprite_name)
+            if isinstance(metadata.get("live_preview"), dict):
+                metadata["live_preview"] = self._with_live_preview_supervisor(
+                    live_preview=metadata.get("live_preview"),
+                    supervisor={
+                        **dict(metadata["live_preview"].get("supervisor") or {}),
+                        "restart_reason": "heartbeat_refresh",
+                    },
+                )
+            self._trace(
+                "sprite.preview.heartbeat_refresh.done",
+                sprite_name=sprite_name,
+            )
         try:
             await self._wait_for_preview_ready(sprite_name=sprite_name)
         except Exception as exc:
@@ -1072,6 +1387,16 @@ print(json.dumps({{
             )
             await self._ensure_preview_service(sprite_name=sprite_name)
             await self._wait_for_preview_ready(sprite_name=sprite_name)
+            metadata = await self._heartbeat_metadata(sprite_name=sprite_name)
+            if isinstance(metadata.get("live_preview"), dict):
+                metadata["live_preview"] = self._with_live_preview_supervisor(
+                    live_preview=metadata.get("live_preview"),
+                    supervisor={
+                        **dict(metadata["live_preview"].get("supervisor") or {}),
+                        "restart_reason": "heartbeat_repair",
+                        "failure_reason": str(exc),
+                    },
+                )
             self._trace(
                 "sprite.preview.heartbeat_repair.done",
                 sprite_name=sprite_name,
@@ -1475,7 +1800,7 @@ print(json.dumps({{
                 }
         await self._exec(
             sprite_name=sandbox_id,
-            command=["bash", "-lc", "if [ -f package-lock.json ]; then npm ci; elif [ -f package.json ]; then npm install --no-audit --no-fund; fi"],
+            command=["bash", "-lc", self._dependency_install_shell_command(prefer_offline=False)],
             cwd=normalized_workspace_path,
             timeout_seconds=max(300, self.config.sprite_command_timeout_seconds),
             max_output_bytes=120_000,

@@ -33,6 +33,7 @@ from app.agent.cel_engine import evaluate_template
 from app.agent.execution.trace_recorder import ExecutionTraceRecorder
 from app.db.postgres.models.agent_threads import AgentThreadSurface, AgentThreadTurnStatus
 from app.services.prompt_reference_resolver import PromptReferenceResolver
+from app.services.file_spaces.service import FileSpaceService
 from app.services.runtime_attachment_service import RuntimeAttachmentOwner, RuntimeAttachmentService
 from app.services.runtime_input_preparation_service import RuntimeInputPreparationService
 from app.services.speech_to_text_service import SpeechToTextService
@@ -1002,8 +1003,16 @@ class AgentExecutorService:
                 raise
         context_payload = input_params.get("context") if isinstance(input_params.get("context"), dict) else {}
         context_payload = dict(context_payload)
+        raw_project_id = context_payload.get("project_id") or runtime_context.get("project_id")
+        parsed_project_id: UUID | None = None
+        try:
+            parsed_project_id = UUID(str(raw_project_id)) if raw_project_id else None
+        except Exception:
+            parsed_project_id = None
         context_payload["thread_id"] = str(thread_result.thread.id)
         context_payload["surface"] = surface.value if hasattr(surface, "value") else str(surface)
+        if parsed_project_id is not None:
+            context_payload["project_id"] = str(parsed_project_id)
         if requested_model_ref:
             context_payload["requested_model_id"] = requested_model_ref
         if policy_snapshot is not None:
@@ -1035,6 +1044,13 @@ class AgentExecutorService:
             input_params=input_params,
             runtime_context=context_payload,
         )
+        if not isinstance(context_payload.get("file_spaces"), list):
+            grants = await FileSpaceService(self.db).resolve_agent_file_space_grants(
+                tenant_id=agent.tenant_id,
+                project_id=parsed_project_id,
+                agent_id=agent.id,
+            )
+            context_payload["file_spaces"] = [grant.to_runtime_payload() for grant in grants]
         input_params["context"] = context_payload
         input_params["thread_id"] = str(thread_result.thread.id)
 

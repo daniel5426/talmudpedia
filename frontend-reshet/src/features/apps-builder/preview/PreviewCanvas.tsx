@@ -248,8 +248,8 @@ export const PreviewCanvas = forwardRef<HTMLIFrameElement, PreviewCanvasProps>(
       || Boolean(loadingState)
     );
     const showReconnectOverlay = hasUsableFrame && Boolean(visibleFrame) && (transportStatus === "reconnecting" || Boolean(stagedFrame));
-    const showInlineError = Boolean(visibleFrame) && transportStatus === "failed";
-    const showFullError = !visibleFrame && transportStatus === "failed";
+    const showInlineError = Boolean(visibleFrame) && Boolean(errorMessage) && !showFullLoading;
+    const showFullError = !visibleFrame && Boolean(errorMessage) && transportStatus === "failed";
     const warmupState = loadingState || {
       title: transportStatus === "reconnecting" ? "Reconnecting live preview" : "Preparing draft preview",
       detail: String(loadingMessage || "").trim() || "Loading preview...",

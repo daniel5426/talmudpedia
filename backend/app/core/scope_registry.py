@@ -137,6 +137,8 @@ PROJECT_SCOPES: set[str] = {
         "api_keys.read",
         "api_keys.write",
         "agents.embed",
+        "files.read",
+        "files.write",
     }
 )
 
@@ -168,6 +170,8 @@ PROJECT_DEFAULT_ROLE_SCOPES: dict[str, list[str]] = {
             "models.read",
             "knowledge_stores.read",
             "knowledge_stores.write",
+            "files.read",
+            "files.write",
             "credentials.read",
             "prompts.read",
             "prompts.write",
@@ -187,6 +191,7 @@ PROJECT_DEFAULT_ROLE_SCOPES: dict[str, list[str]] = {
             "tools.read",
             "models.read",
             "knowledge_stores.read",
+            "files.read",
             "credentials.read",
             "threads.read",
         }

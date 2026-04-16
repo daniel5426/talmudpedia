@@ -94,6 +94,7 @@ def _serialize_run_usage(run: AgentRun) -> dict[str, Any]:
 def _control_plane_ctx_from_agent_context(context: Dict[str, Any]) -> ControlPlaneContext:
     return ControlPlaneContext(
         tenant_id=UUID(str(context["tenant_id"])),
+        project_id=_optional_uuid(context.get("project_id")),
         user=context.get("user"),
         user_id=getattr(context.get("user"), "id", None),
         auth_token=context.get("auth_token"),
@@ -741,6 +742,7 @@ async def stream_agent(
         request_context = dict(request.context or {}) if isinstance(request.context, dict) else {}
         request_context.setdefault("token", context.get("auth_token"))
         request_context.setdefault("tenant_id", str(tenant_id) if tenant_id is not None else None)
+        request_context.setdefault("project_id", str(context.get("project_id")) if context.get("project_id") else None)
         request_context.setdefault("user_id", str(context["user"].id) if context.get("user") else context.get("initiator_user_id"))
         # Do not inject caller scope inventory by default.
         # Delegation grants should request either explicit caller-provided scopes

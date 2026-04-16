@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import re
 import time
@@ -29,13 +30,19 @@ from app.services.auth_context_service import (
 )
 from app.services.browser_session_service import (
     SESSION_COOKIE_NAME,
+    SESSION_TTL_DAYS,
     BrowserSessionService,
 )
 from app.services.organization_bootstrap_service import OrganizationBootstrapService
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
+AUTH_SESSION_SLOW_LOG_THRESHOLD_MS = int(
+    (os.getenv("AUTH_SESSION_SLOW_LOG_THRESHOLD_MS") or "500").strip() or "500"
+)
+AUTH_SESSION_LOG_ALL = str(os.getenv("AUTH_SESSION_LOG_ALL") or "").strip().lower() in {"1", "true", "yes", "on"}
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login", auto_error=False)
 
@@ -111,6 +118,7 @@ def _slugify(value: str, *, fallback: str) -> str:
 
 
 def _set_session_cookie(*, response: Response, request: Request, token: str) -> None:
+    max_age_seconds = SESSION_TTL_DAYS * 24 * 60 * 60
     response.set_cookie(
         key=SESSION_COOKIE_NAME,
         value=token,
@@ -118,6 +126,8 @@ def _set_session_cookie(*, response: Response, request: Request, token: str) -> 
         secure=request.url.scheme == "https",
         samesite="lax",
         path="/",
+        max_age=max_age_seconds,
+        expires=max_age_seconds,
     )
 
 
@@ -189,36 +199,92 @@ async def get_current_user(
 
 
 async def _load_browser_session_bundle(request: Request, db: AsyncSession) -> tuple[BrowserSession, _SessionBundle]:
+    started_at = time.perf_counter()
+    timings_ms: dict[str, int] = {}
+
+    def record_timing(step: str, step_started_at: float) -> None:
+        timings_ms[step] = int((time.perf_counter() - step_started_at) * 1000)
+
     raw_token = str(request.cookies.get(SESSION_COOKIE_NAME) or "").strip()
     if not raw_token:
         raise HTTPException(status_code=401, detail="No active browser session")
 
-    session = await BrowserSessionService(db).resolve_session(raw_token)
-    if session is None:
-        raise HTTPException(status_code=401, detail="Browser session expired")
+    session: BrowserSession | None = None
+    user: User | None = None
+    organization: Tenant | None = None
+    project: Project | None = None
+    try:
+        step_started_at = time.perf_counter()
+        session = await BrowserSessionService(db).resolve_session(raw_token)
+        record_timing("resolve_session", step_started_at)
+        if session is None:
+            raise HTTPException(status_code=401, detail="Browser session expired")
 
-    user = await db.get(User, session.user_id)
-    organization = await db.get(Tenant, session.organization_id)
-    project = await db.get(Project, session.project_id)
-    if user is None or organization is None or project is None:
-        raise HTTPException(status_code=401, detail="Browser session is invalid")
+        step_started_at = time.perf_counter()
+        user = await db.get(User, session.user_id)
+        record_timing("load_user", step_started_at)
 
-    organizations = await list_user_organizations(db=db, user_id=user.id)
-    projects = await list_organization_projects(db=db, organization_id=organization.id)
-    effective_scopes = await resolve_effective_scopes(
-        db=db,
-        user=user,
-        organization_id=organization.id,
-        project_id=project.id,
-    )
-    return session, _SessionBundle(
-        user=SessionUserResponse.model_validate(serialize_user_summary(user)),
-        active_organization=OrganizationSummaryResponse.model_validate(serialize_organization_summary(organization)),
-        active_project=ProjectSummaryResponse.model_validate(serialize_project_summary(project)),
-        organizations=[OrganizationSummaryResponse.model_validate(serialize_organization_summary(item)) for item in organizations],
-        projects=[ProjectSummaryResponse.model_validate(serialize_project_summary(item)) for item in projects],
-        effective_scopes=effective_scopes,
-    )
+        step_started_at = time.perf_counter()
+        organization = await db.get(Tenant, session.organization_id)
+        record_timing("load_organization", step_started_at)
+
+        step_started_at = time.perf_counter()
+        project = await db.get(Project, session.project_id)
+        record_timing("load_project", step_started_at)
+        if user is None or organization is None or project is None:
+            raise HTTPException(status_code=401, detail="Browser session is invalid")
+
+        step_started_at = time.perf_counter()
+        organizations = await list_user_organizations(db=db, user_id=user.id)
+        record_timing("list_user_organizations", step_started_at)
+
+        step_started_at = time.perf_counter()
+        projects = await list_organization_projects(db=db, organization_id=organization.id)
+        record_timing("list_organization_projects", step_started_at)
+
+        step_started_at = time.perf_counter()
+        effective_scopes = await resolve_effective_scopes(
+            db=db,
+            user=user,
+            organization_id=organization.id,
+            project_id=project.id,
+        )
+        record_timing("resolve_effective_scopes", step_started_at)
+
+        bundle = _SessionBundle(
+            user=SessionUserResponse.model_validate(serialize_user_summary(user)),
+            active_organization=OrganizationSummaryResponse.model_validate(serialize_organization_summary(organization)),
+            active_project=ProjectSummaryResponse.model_validate(serialize_project_summary(project)),
+            organizations=[OrganizationSummaryResponse.model_validate(serialize_organization_summary(item)) for item in organizations],
+            projects=[ProjectSummaryResponse.model_validate(serialize_project_summary(item)) for item in projects],
+            effective_scopes=effective_scopes,
+        )
+        total_ms = int((time.perf_counter() - started_at) * 1000)
+        if AUTH_SESSION_LOG_ALL or total_ms >= AUTH_SESSION_SLOW_LOG_THRESHOLD_MS:
+            logger.warning(
+                "auth.session_bundle.complete total_ms=%s timings_ms=%s user_id=%s organization_id=%s project_id=%s path=%s",
+                total_ms,
+                timings_ms,
+                str(user.id) if user is not None else None,
+                str(organization.id) if organization is not None else None,
+                str(project.id) if project is not None else None,
+                request.url.path,
+            )
+        return session, bundle
+    except Exception:
+        total_ms = int((time.perf_counter() - started_at) * 1000)
+        logger.warning(
+            "auth.session_bundle.failed total_ms=%s timings_ms=%s session_id=%s user_id=%s organization_id=%s project_id=%s path=%s",
+            total_ms,
+            timings_ms,
+            str(session.id) if session is not None else None,
+            str(user.id) if user is not None else None,
+            str(organization.id) if organization is not None else None,
+            str(project.id) if project is not None else None,
+            request.url.path,
+            exc_info=True,
+        )
+        raise
 
 
 async def _create_browser_session_response(
@@ -415,8 +481,17 @@ async def get_current_session(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ):
+    route_started_at = time.perf_counter()
+    logger.warning(
+        "auth.session.route.enter path=%s has_cookie=%s",
+        request.url.path,
+        bool(str(request.cookies.get(SESSION_COOKIE_NAME) or "").strip()),
+    )
     _session, bundle = await _load_browser_session_bundle(request, db)
     await db.commit()
+    total_ms = int((time.perf_counter() - route_started_at) * 1000)
+    if AUTH_SESSION_LOG_ALL or total_ms >= AUTH_SESSION_SLOW_LOG_THRESHOLD_MS:
+        logger.warning("auth.session.route.complete total_ms=%s path=%s", total_ms, request.url.path)
     return SessionResponse.model_validate(bundle.model_dump())
 
 

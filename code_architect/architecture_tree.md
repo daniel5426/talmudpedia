@@ -1,6 +1,6 @@
 # Architecture Tree (Curated)
 
-Last Updated: 2026-04-14
+Last Updated: 2026-04-15
 
 This file is a backend-only architecture map optimized for agent context efficiency.
 
@@ -215,6 +215,7 @@ backend/app/services/artifact_runtime/cloudflare_dispatch_client.py
 backend/app/services/artifact_runtime/deployment_service.py
 backend/app/services/artifact_runtime/policy_service.py
 backend/app/services/artifact_runtime/handler_runner.py
+backend/app/services/published_app_live_preview.py
 backend/app/services/builtin_tools.py
 backend/app/services/architect_mode_service.py
 backend/app/services/tenant_api_key_service.py

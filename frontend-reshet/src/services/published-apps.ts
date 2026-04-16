@@ -1,5 +1,4 @@
 import { httpClient } from "./http";
-import { useAuthStore } from "@/lib/store/useAuthStore";
 import type { ContextWindow } from "./context-window";
 
 export type PublishedAppStatus = "draft" | "published" | "paused" | "archived";
@@ -193,6 +192,25 @@ export interface DraftDevSessionResponse {
   idle_timeout_seconds: number;
   last_activity_at?: string | null;
   last_error?: string | null;
+  live_preview?: {
+    mode?: string | null;
+    status?: "booting" | "building" | "ready" | "failed_keep_last_good" | "failed_no_build" | "recovering" | null;
+    current_build_id?: string | null;
+    last_successful_build_id?: string | null;
+    workspace_fingerprint?: string | null;
+    dist_path?: string | null;
+    error?: string | null;
+    build_started_at?: string | null;
+    build_finished_at?: string | null;
+    updated_at?: string | null;
+    supervisor?: {
+      build_watch_status?: string | null;
+      static_server_status?: string | null;
+      checked_at?: string | null;
+      restart_reason?: string | null;
+      failure_reason?: string | null;
+    } | null;
+  } | null;
   live_workspace_snapshot?: {
     revision_id?: string | null;
     entry_file?: string | null;
@@ -630,6 +648,35 @@ export const publishedAppsService = {
     throw new Error(typeof message === "string" ? message : JSON.stringify(message));
   },
 
+  async getDraftDevPreviewStatus(
+    previewUrl: string,
+    options?: { previewAuthToken?: string | null },
+  ): Promise<NonNullable<DraftDevSessionResponse["live_preview"]>> {
+    const statusUrl = new URL("_talmudpedia/status", previewUrl);
+    const previewAuthToken = String(options?.previewAuthToken || "").trim();
+    if (previewAuthToken) {
+      statusUrl.searchParams.set("runtime_token", previewAuthToken);
+    }
+    const response = await fetch(statusUrl, {
+      method: "GET",
+      credentials: "include",
+      headers: {
+        Accept: "application/json",
+      },
+    });
+    if (!response.ok) {
+      let message = "Preview status request failed";
+      try {
+        const payload = await response.json() as { detail?: string; message?: string; error?: string };
+        message = String(payload.detail || payload.message || payload.error || message);
+      } catch {
+        message = response.statusText || message;
+      }
+      throw new Error(message);
+    }
+    return response.json() as Promise<NonNullable<DraftDevSessionResponse["live_preview"]>>;
+  },
+
   async stopDraftDevSession(appId: string): Promise<DraftDevSessionResponse> {
     return httpClient.delete<DraftDevSessionResponse>(`/admin/apps/${appId}/builder/draft-dev/session`);
   },
@@ -766,9 +813,6 @@ export const publishedAppsService = {
     );
     if (response.status === 404) {
       return null;
-    }
-    if (response.status === 401) {
-      useAuthStore.getState().clearSession();
     }
     if (!response.ok) {
       let message = "Request failed";

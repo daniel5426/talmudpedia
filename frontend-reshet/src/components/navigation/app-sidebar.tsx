@@ -77,6 +77,12 @@ const data = {
       items: [],
     },
     {
+      title: "Files",
+      url: "/admin/files",
+      icon: FileText,
+      items: [],
+    },
+    {
       title: "Security & Org",
       url: "/admin/organization",
       icon: ShieldCheck,

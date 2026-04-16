@@ -361,6 +361,7 @@ class DraftDevSessionResponse(BaseModel):
     last_activity_at: Optional[datetime] = None
     last_error: Optional[str] = None
     live_workspace_snapshot: Optional[Dict[str, Any]] = None
+    live_preview: Optional[Dict[str, Any]] = None
 
 
 class DraftDevSyncRequest(BaseModel):
@@ -725,6 +726,11 @@ def _draft_dev_session_to_response(
         if isinstance(backend_metadata.get("live_workspace_snapshot"), dict)
         else None
     )
+    live_preview = (
+        backend_metadata.get("live_preview")
+        if isinstance(backend_metadata.get("live_preview"), dict)
+        else None
+    )
     return DraftDevSessionResponse(
         session_id=str(session.id),
         app_id=str(session.published_app_id),
@@ -744,6 +750,7 @@ def _draft_dev_session_to_response(
         last_activity_at=session.last_activity_at,
         last_error=session.last_error,
         live_workspace_snapshot=dict(live_workspace_snapshot) if live_workspace_snapshot else None,
+        live_preview=dict(live_preview) if live_preview else None,
     )
 
 

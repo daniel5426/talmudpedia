@@ -117,7 +117,11 @@ function readInlineBootstrap(): RuntimeBootstrap | null {
 }
 
 async function fetchBootstrapFromConfig(ctx: QueryRuntimeContext): Promise<RuntimeBootstrap> {
-  const previewHeaders = previewAuthToken ? { Authorization: `Bearer ${previewAuthToken}` } : undefined;
+  const isBuilderPreview =
+    Boolean((typeof window !== "undefined" && (window as Window & { __TALMUDPEDIA_BUILDER_PREVIEW_BASE_PATH?: unknown }).__TALMUDPEDIA_BUILDER_PREVIEW_BASE_PATH))
+    || Boolean(ctx.basePath && ctx.basePath.includes("/public/apps-builder/draft-dev/sessions/"))
+    || (typeof window !== "undefined" && window.location.pathname.includes("/public/apps-builder/draft-dev/sessions/"));
+  const previewHeaders = !isBuilderPreview && previewAuthToken ? { Authorization: `Bearer ${previewAuthToken}` } : undefined;
   if (ctx.bootstrapUrl) {
     const response = await fetch(ctx.bootstrapUrl, { headers: previewHeaders });
     if (!response.ok) {
@@ -145,7 +149,7 @@ async function fetchBootstrapFromConfig(ctx: QueryRuntimeContext): Promise<Runti
   return fetchRuntimeBootstrap({
     apiBaseUrl: normalizeApiBaseUrl(config.api_base_url),
     appSlug,
-    previewToken: previewAuthToken || undefined,
+    previewToken: !isBuilderPreview ? (previewAuthToken || undefined) : undefined,
   });
 }
 
@@ -196,14 +200,18 @@ function resolveTokenProvider(basePath?: string) {
   const query = readQueryContext();
   const explicitToken = query.token;
   const resolvedBasePath = basePath || query.basePath || "";
-  const isPreviewMode =
+  const isBuilderPreviewMode =
     query.mode === "builder-preview" ||
+    resolvedBasePath.includes("/public/apps-builder/draft-dev/sessions/") ||
+    (typeof window !== "undefined" && window.location.pathname.includes("/public/apps-builder/draft-dev/sessions/"));
+  const isPublishedRevisionPreviewMode =
     resolvedBasePath.includes("/public/apps/preview/revisions/");
 
   return async () => {
     bindPreviewAuthChannel();
+    if (isBuilderPreviewMode) return null;
     if (explicitToken) return explicitToken;
-    if (isPreviewMode) return previewAuthToken;
+    if (isPublishedRevisionPreviewMode) return previewAuthToken;
     // Published runtime auth uses same-origin HttpOnly cookies via the host runtime gateway.
     return null;
   };

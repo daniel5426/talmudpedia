@@ -1,4 +1,4 @@
-Last Updated: 2026-04-15
+Last Updated: 2026-04-16
 
 # Apps Builder Sandbox Runtime Tests
 
@@ -11,6 +11,8 @@ Last Updated: 2026-04-15
 - `backend/tests/apps_builder_sandbox_runtime/test_runtime_client_and_preview_proxy.py`
 - `backend/tests/apps_builder_sandbox_runtime/test_draft_dev_runtime_lifecycle.py`
 - `backend/tests/apps_builder_sandbox_runtime/test_coding_agent_runtime_sandbox.py`
+- `backend/tests/apps_builder_sandbox_runtime/test_live_preview_helpers.py`
+- `backend/tests/apps_builder_sandbox_runtime/test_live_preview_watch_integration.py`
 - `backend/tests/apps_builder_sandbox_runtime/test_sprite_backend_config.py`
 - `backend/tests/apps_builder_sandbox_runtime/test_sprite_live_smoke.py`
 - `backend/tests/apps_builder_sandbox_runtime/test_live_coding_run_e2e.py`
@@ -19,15 +21,16 @@ Last Updated: 2026-04-15
 - The draft-dev runtime client delegates `start_session` to the selected Sprite backend and injects the stable preview proxy base path.
 - The preview proxy enforces preview token validation before forwarding to the upstream Sprite URL.
 - The preview proxy strips `runtime_token` from upstream requests, forwards provider-neutral auth headers, and sets the preview auth cookie on successful bootstrap.
-- The preview proxy rewrites Vite dev HTML so `@vite/client`, `@react-refresh`, and `/src/...` requests stay under the draft-dev preview proxy path instead of escaping to the backend root.
-- The preview proxy exposes the canonical builder preview base path to the runtime SDK and no longer depends on query-plumbed runtime bootstrap URLs.
-- The preview proxy rewrites Vite JS module imports like `/src/...` and `/node_modules/.vite/...`, and disables stale conditional caching for rewritten preview assets.
+- The preview proxy prefers the preview auth cookie over a stale `runtime_token` query param, so old iframe URLs cannot override the current session scope after bootstrap.
+- The preview proxy falls back to the query `runtime_token` when the preview cookie belongs to a different app, so stale cross-app cookies cannot block a fresh session bootstrap.
+- The preview proxy now behaves as a static builder-preview proxy: it injects runtime context plus the session-scoped route bridge into HTML, and passes built assets through without Vite/HMR rewrites.
+- The preview proxy exposes `/_talmudpedia/status` as a direct backend status contract backed by draft-dev heartbeat metadata instead of proxying preview status through the static server.
+- The preview proxy exposes the canonical builder preview base path to the runtime SDK and no longer depends on query-plumbed runtime bootstrap URLs for steady-state builder preview.
 - The preview proxy retries transient `404/5xx/timeout` warmup failures for GET/HEAD preview assets so Sprite wake/service warmup does not immediately white-screen the iframe.
 - For Sprite-backed draft-dev sessions, the preview proxy resolves a local Sprite control-plane tunnel and proxies preview traffic through that tunnel instead of dialing the provider HTTPS hostname directly.
 - The preview proxy now refreshes stale Sprite preview metadata on connect/TLS failures and retries once against the refreshed upstream URL.
 - The preview proxy also refreshes stale preview metadata on upstream remote-protocol disconnects before failing the iframe request.
 - The preview proxy rewrites asset requests against the Sprite upstream path instead of the backend API route path.
-- The preview websocket proxy forwards auth headers, browser origin, user-agent, and requested subprotocols into the upstream websocket handshake.
 - Sprite heartbeat waits for preview readiness without restarting the services on every reopen.
 - Sprite heartbeat returns refreshed backend preview metadata, and the draft-dev runtime persists that refreshed metadata on session heartbeat.
 - Sprite heartbeat preserves `live_workspace_snapshot` metadata that was recorded after coding-run reconciliation, instead of wiping it on the next refresh.
@@ -39,12 +42,20 @@ Last Updated: 2026-04-15
 - Shared app-level draft workspaces are reused across multiple editors on the same app.
 - Coding-run bootstrap can reuse a healthy live workspace even when the saved draft revision has advanced, instead of forcing a revision-driven resync.
 - The public draft-dev `ensure` route reuses an already-serving live workspace via `ensure_active_session(..., prefer_live_workspace=True)` instead of falling back to the legacy full-sync path.
+- Draft-dev runtime failures now keep the editor session attached to the shared workspace instead of returning a detached zombie session with `draft_workspace_id = null`.
+- Draft-dev heartbeat can reattach a stale detached session row to the existing shared workspace before checking runtime health.
 - Draft-dev incremental sync treats delete operations as idempotent when the target file is already absent in the live sandbox, instead of failing the whole sync on a stale delete.
+- Builder validation now requires a root `index.html`, and incremental sync validates projected patch operations before mutating the live Sprite workspace.
 - Coding-agent workspace-write detection ignores read-only `bash` probes like `git status`, while still flagging mutating shell commands and explicit write tools.
+- Live-preview build status normalization preserves the canonical `build_watch_static` contract, richer preview states (`booting`, `building`, `ready`, `failed_keep_last_good`, `failed_no_build`, `recovering`), supervisor health metadata, and stable workspace fingerprinting for build reuse.
+- The generated live-preview watcher now uses persistent Vite/Rollup watch mode instead of polling a revision token and running fresh builds.
+- The watcher excludes generated paths such as `.talmudpedia/**` so context and status writes do not create rebuild loops.
+- The local watch integration test covers first build, source edit rebuild, ignored context writes, failed rebuild fallback, and keep-last-good promotion behavior.
 - Session stop detaches one editor without destroying the shared Sprite while another editor remains attached.
 - Dormant workspace sweep destroys the shared Sprite only after all sessions detach and retention elapses.
 - App delete destroys the shared Sprite and removes workspace metadata.
 - Sprite backend env validation requires a Sprite token and hard-rejects archived E2B backend selection.
+- Sprite dependency install strategy prefers pnpm/yarn lockfiles over a stray `package-lock.json`, and live builder installs allow pnpm lock drift instead of failing with `ERR_PNPM_OUTDATED_LOCKFILE`.
 - The live Sprite smoke covers create -> ensure -> preview HTML -> proxied Vite asset -> second editor attach -> direct filesystem write/read -> detach/reattach -> provider-side Sprite delete -> recovery ensure -> preview recovery -> app delete -> provider cleanup.
 - The live coding-run e2e covers create -> ensure draft-dev preview -> submit a real coding-agent prompt -> stream the live run -> poll preview/version/run state every second -> send recurring draft-dev heartbeats during long waits -> verify preview source updates without publish -> verify a new draft revision/version is created automatically -> drive the queued revision build in-test when no worker is present -> verify the built preview asset becomes reachable.
 
@@ -109,9 +120,51 @@ Last Updated: 2026-04-15
 - Command: `cd backend && PYTHONPATH=. python3 -m pytest -q tests/apps_builder_sandbox_runtime/test_coding_agent_runtime_sandbox.py`
 - Date: 2026-04-15 Asia/Hebron
 - Result: PASS
+- Command: `cd backend && PYTHONPATH=. python3 -m pytest -q tests/apps_builder_sandbox_runtime/test_live_preview_helpers.py tests/apps_builder_sandbox_runtime/test_runtime_client_and_preview_proxy.py`
+- Date: 2026-04-15 Asia/Hebron
+- Result: PASS
+- Command: `cd backend && PYTHONPATH=. python3 -m pytest -q tests/apps_builder_sandbox_runtime/test_runtime_client_and_preview_proxy.py -k 'prefers_cookie_token_over_stale_query_token or accepts_valid_token_and_forwards_sprite_auth'`
+- Date: 2026-04-15 Asia/Hebron
+- Result: PASS
+- Command: `cd backend && PYTHONPATH=. python3 -m pytest -q tests/apps_builder_sandbox_runtime/test_runtime_client_and_preview_proxy.py -k 'falls_back_to_query_token_when_cookie_is_for_other_app or prefers_cookie_token_over_stale_query_token or accepts_valid_token_and_forwards_sprite_auth'`
+- Date: 2026-04-15 Asia/Hebron
+- Result: PASS
+- Command: `cd backend && PYTHONPATH=. python3 -m pytest -q tests/apps_builder_sandbox_runtime/test_sprite_backend_config.py -k 'dependency_install_command_prefers_pnpm_lock_over_package_lock_and_allows_lock_drift or heartbeat_waits_for_preview_without_restarting_services'`
+- Date: 2026-04-15 Asia/Hebron
+- Result: PASS
+- Command: `cd backend && PYTHONPATH=. python3 -m pytest -q tests/apps_builder_sandbox_runtime/test_draft_dev_runtime_lifecycle.py -k 'heartbeat_reattaches_detached_session_to_existing_workspace or ensure_session_failure_keeps_session_attached_to_workspace or touch_session_activity_renews_expiry_without_detaching_workspace'`
+- Date: 2026-04-15 Asia/Hebron
+- Result: PASS (`3 passed, 12 deselected`)
+- Command: `cd backend && PYTHONPATH=. python3 -m pytest -q tests/apps_builder_sandbox_runtime/test_live_preview_helpers.py tests/apps_builder_sandbox_runtime/test_runtime_client_and_preview_proxy.py`
+- Date: 2026-04-15 Asia/Hebron
+- Result: PASS (`10 passed, 10 warnings`)
+- Command: `cd backend && PYTHONPATH=. python3 -m pytest -q tests/apps_builder_sandbox_runtime/test_draft_dev_runtime_lifecycle.py -k 'builder_project_validation_requires_root_index_html or sync_route_validates_operations_before_mutating_runtime'`
+- Date: 2026-04-16 Asia/Hebron
+- Result: PASS
+- Command: `cd backend && PYTHONPATH=. python3 -m pytest -q tests/apps_builder_sandbox_runtime/test_sprite_backend_config.py -k 'heartbeat_waits_for_preview_without_restarting_services or heartbeat_refreshes_preview_services_when_live_preview_has_no_debug_markers'`
+- Date: 2026-04-16 Asia/Hebron
+- Result: PASS (`2 passed, 10 deselected`)
+- Command: `cd backend && PYTHONPATH=. python3 -m pytest -q tests/apps_builder_sandbox_runtime/test_draft_dev_runtime_lifecycle.py -k 'builder_state_heartbeats_stale_degraded_session_before_serializing or heartbeat_refreshes_workspace_preview_metadata or heartbeat_reattaches_detached_session_to_existing_workspace'`
+- Date: 2026-04-16 Asia/Hebron
+- Result: PASS (`3 passed, 15 deselected`)
+- Command: `cd backend && PYTHONPATH=. python3 -m pytest -q tests/apps_builder_sandbox_runtime/test_live_preview_helpers.py`
+- Date: 2026-04-16 Asia/Hebron
+- Result: PASS (`4 passed, 1 warning`)
+- Command: `cd backend && PYTHONPATH=. python3 -m pytest -q tests/apps_builder_sandbox_runtime/test_live_preview_watch_integration.py`
+- Date: 2026-04-16 Asia/Hebron
+- Result: PASS (`1 passed, 1 warning`)
+- Command: `cd backend && PYTHONPATH=. python3 -m pytest -q tests/apps_builder_sandbox_runtime/test_sprite_backend_config.py`
+- Date: 2026-04-16 Asia/Hebron
+- Result: PASS (`12 passed, 2 warnings`)
+- Command: `cd backend && PYTHONPATH=. python3 -m pytest -q tests/apps_builder_sandbox_runtime/test_runtime_client_and_preview_proxy.py`
+- Date: 2026-04-16 Asia/Hebron
+- Result: PASS (`8 passed, 10 warnings`)
+- Command: `cd backend && PYTHONPATH=. python3 -m pytest -q tests/apps_builder_sandbox_runtime/test_draft_dev_runtime_lifecycle.py`
+- Date: 2026-04-16 Asia/Hebron
+- Result: FAIL (`18 failed, 9 passed, 6 warnings`) during app creation with `403` responses in the current local worktree.
 
 ## Known gaps or follow-ups
-- Add live websocket/HMR coverage against the Sprite preview path.
 - Run the live coding-run e2e regularly in an environment with Sprite + OpenCode credentials so timing regressions are caught before manual QA.
 - The live coding-run e2e currently drives the queued revision build itself because the pytest process does not run a background worker.
 - Add an explicit scheduled sweeper entrypoint so orphan cleanup does not rely only on request-driven best-effort sweeps.
+- The full draft-dev runtime lifecycle suite is currently blocked in this local worktree by unrelated app-creation `403` failures before preview/runtime assertions execute.

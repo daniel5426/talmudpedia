@@ -7,23 +7,46 @@ from urllib.parse import urlparse
 from uuid import UUID, uuid4
 
 import pytest
+from fastapi import HTTPException
 from sqlalchemy import select
 
+from app.api.routers import published_apps_admin_files as builder_files_module
 from app.api.routers import published_apps_admin_routes_builder as builder_routes_module
 from app.core.security import get_password_hash
 from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, User
 from app.db.postgres.models.published_apps import (
     PublishedApp,
     PublishedAppDraftDevSession,
+    PublishedAppDraftDevSessionStatus,
     PublishedAppDraftWorkspace,
+    PublishedAppDraftWorkspaceStatus,
     PublishedAppRevision,
     PublishedAppRevisionKind,
+    PublishedAppStatus,
+    PublishedAppVisibility,
 )
 from app.services import published_app_draft_dev_runtime as runtime_module
 from app.services.published_app_draft_dev_runtime import PublishedAppDraftDevRuntimeService
 from app.services.published_app_draft_dev_runtime_client import PublishedAppDraftDevRuntimeClientError
 from app.services.published_app_versioning import create_app_version
 from tests.published_apps._helpers import admin_headers, seed_admin_tenant_and_agent
+
+
+def test_builder_project_validation_requires_root_index_html():
+    with pytest.raises(HTTPException) as exc_info:
+        builder_files_module._validate_builder_project_or_raise(
+            {
+                "src/main.tsx": "import './App';",
+                "src/App.tsx": "export default function App() { return <div />; }",
+            },
+            "src/main.tsx",
+        )
+
+    assert exc_info.value.status_code == 422
+    assert exc_info.value.detail["code"] == "BUILDER_COMPILE_FAILED"
+    assert exc_info.value.detail["diagnostics"] == [
+        {"path": "index.html", "message": "Required root file is missing"}
+    ]
 
 
 async def _noop_scope_lock(self, *, app_id, user_id):
@@ -45,6 +68,50 @@ async def _create_builder_app(client, headers: dict[str, str], agent_id: str, *,
     )
     assert create_resp.status_code == 200
     return str(create_resp.json()["id"])
+
+
+async def _seed_builder_app_and_revision(
+    db_session,
+    *,
+    tenant_id,
+    agent_id,
+    user_id,
+    name: str,
+):
+    app = PublishedApp(
+        tenant_id=tenant_id,
+        agent_id=agent_id,
+        name=name,
+        slug=f"builder-{uuid4().hex[:10]}",
+        template_key="classic-chat",
+        auth_enabled=True,
+        auth_providers=["password"],
+        auth_template_key="auth-classic",
+        visibility=PublishedAppVisibility.private,
+        status=PublishedAppStatus.draft,
+        created_by=user_id,
+    )
+    db_session.add(app)
+    await db_session.flush()
+    revision = await create_app_version(
+        db_session,
+        app=app,
+        kind=PublishedAppRevisionKind.draft,
+        template_key=app.template_key,
+        entry_file="src/main.tsx",
+        files={
+            "index.html": "<!doctype html><html><body><div id='root'></div><script type='module' src='/src/main.tsx'></script></body></html>",
+            "src/main.tsx": "console.log('hi')\n",
+        },
+        created_by=user_id,
+        source_revision_id=None,
+        origin_kind="test",
+    )
+    app.current_draft_revision_id = revision.id
+    await db_session.commit()
+    await db_session.refresh(app)
+    await db_session.refresh(revision)
+    return app, revision
 
 
 async def _seed_second_owner(db_session, *, tenant_id, org_unit_id) -> User:
@@ -228,7 +295,6 @@ async def test_shared_workspace_is_reused_across_users(client, db_session, monke
 @pytest.mark.asyncio
 async def test_heartbeat_refreshes_workspace_preview_metadata(client, db_session, monkeypatch: pytest.MonkeyPatch):
     tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
-    headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
     fake_client = _FakeSpriteRuntimeClient()
 
     monkeypatch.setattr(runtime_module.PublishedAppDraftDevRuntimeService, "_acquire_scope_lock", _noop_scope_lock)
@@ -238,11 +304,23 @@ async def test_heartbeat_refreshes_workspace_preview_metadata(client, db_session
         classmethod(lambda cls: fake_client),
     )
 
-    app_id = await _create_builder_app(client, headers, str(agent.id), name="Heartbeat Refresh App")
-
-    ensure_resp = await client.post(f"/admin/apps/{app_id}/builder/draft-dev/session/ensure", headers=headers)
-    assert ensure_resp.status_code == 200
-    session_id = UUID(str(ensure_resp.json()["session_id"]))
+    app, revision = await _seed_builder_app_and_revision(
+        db_session,
+        tenant_id=tenant.id,
+        agent_id=agent.id,
+        user_id=user.id,
+        name="Heartbeat Refresh App",
+    )
+    runtime_service = PublishedAppDraftDevRuntimeService(db_session)
+    session = await runtime_service.ensure_session(
+        app=app,
+        revision=revision,
+        user_id=user.id,
+        files=dict(revision.files or {}),
+        entry_file=revision.entry_file,
+    )
+    await db_session.commit()
+    session_id = UUID(str(session.id))
     session = await db_session.get(PublishedAppDraftDevSession, session_id)
     assert session is not None
     workspace = await db_session.get(PublishedAppDraftWorkspace, session.draft_workspace_id)
@@ -256,14 +334,137 @@ async def test_heartbeat_refreshes_workspace_preview_metadata(client, db_session
     }
     await db_session.commit()
 
-    heartbeat_resp = await client.post(f"/admin/apps/{app_id}/builder/draft-dev/session/heartbeat", headers=headers)
-    assert heartbeat_resp.status_code == 200
+    async def _fake_resolve_ctx(request, principal, db):
+        _ = request, principal, db
+        return {"tenant_id": tenant.id, "user": user}
+
+    async def _fake_get_app_for_tenant(db, tenant_id, app_id):
+        _ = db, tenant_id, app_id
+        return app
+
+    async def _fake_get_session_for_scope(db, app_id, user_id):
+        _ = db, app_id, user_id
+        return session
+
+    async def _fake_no_publish_job(db, app_id):
+        _ = db, app_id
+        return None
+
+    monkeypatch.setattr(builder_routes_module, "_resolve_tenant_admin_context", _fake_resolve_ctx)
+    monkeypatch.setattr(builder_routes_module, "_assert_can_manage_apps", lambda ctx: None)
+    monkeypatch.setattr(builder_routes_module, "_get_app_for_tenant", _fake_get_app_for_tenant)
+    monkeypatch.setattr(builder_routes_module, "_get_draft_dev_session_for_scope", _fake_get_session_for_scope)
+    monkeypatch.setattr(builder_routes_module, "_get_active_publish_job_for_app", _fake_no_publish_job)
+
+    heartbeat_resp = await builder_routes_module.heartbeat_builder_draft_dev_session(
+        app_id=app.id,
+        request=SimpleNamespace(
+            base_url="http://testserver/",
+            scope={"root_path": ""},
+            headers={},
+            url=SimpleNamespace(path=f"/admin/apps/{app.id}/builder/draft-dev/session/heartbeat"),
+        ),
+        _={},
+        principal={},
+        db=db_session,
+    )
+    assert heartbeat_resp.status == "serving"
 
     await db_session.refresh(workspace)
     await db_session.refresh(session)
     assert workspace.backend_metadata["preview"]["upstream_base_url"].startswith("https://sprite-")
     assert session.backend_metadata["preview"]["upstream_base_url"] == workspace.backend_metadata["preview"]["upstream_base_url"]
     assert workspace.backend_metadata["preview"]["base_path"] == str(session.preview_url)
+
+
+@pytest.mark.asyncio
+async def test_builder_state_heartbeats_stale_degraded_session_before_serializing(
+    client,
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
+    headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
+    fake_client = _FakeSpriteRuntimeClient()
+
+    monkeypatch.setattr(runtime_module.PublishedAppDraftDevRuntimeService, "_acquire_scope_lock", _noop_scope_lock)
+    monkeypatch.setattr(
+        runtime_module.PublishedAppDraftDevRuntimeClient,
+        "from_env",
+        classmethod(lambda cls: fake_client),
+    )
+
+    app, revision = await _seed_builder_app_and_revision(
+        db_session,
+        tenant_id=tenant.id,
+        agent_id=agent.id,
+        user_id=user.id,
+        name="Builder State Heartbeat App",
+    )
+    runtime_service = PublishedAppDraftDevRuntimeService(db_session)
+    session = await runtime_service.ensure_session(
+        app=app,
+        revision=revision,
+        user_id=user.id,
+        files=dict(revision.files or {}),
+        entry_file=revision.entry_file,
+    )
+    await db_session.commit()
+    session_id = UUID(str(session.id))
+    session = await db_session.get(PublishedAppDraftDevSession, session_id)
+    assert session is not None
+    workspace = await db_session.get(PublishedAppDraftWorkspace, session.draft_workspace_id)
+    assert workspace is not None
+
+    session.status = PublishedAppDraftDevSessionStatus.degraded
+    session.last_error = "stale transient error"
+    workspace.status = PublishedAppDraftWorkspaceStatus.degraded
+    workspace.last_error = "stale transient error"
+    await db_session.commit()
+
+    async def _fake_resolve_ctx(request, principal, db):
+        _ = request, principal, db
+        return {"tenant_id": tenant.id, "user": user}
+
+    async def _fake_get_app_for_tenant(db, tenant_id, app_id):
+        _ = db, tenant_id, app_id
+        return app
+
+    async def _fake_get_revision(db, revision_id):
+        _ = db
+        if revision_id == app.current_draft_revision_id:
+            return revision
+        return None
+
+    async def _fake_get_session_for_scope(db, app_id, user_id):
+        _ = db, app_id, user_id
+        return session
+
+    monkeypatch.setattr(builder_routes_module, "_resolve_tenant_admin_context", _fake_resolve_ctx)
+    monkeypatch.setattr(builder_routes_module, "_assert_can_manage_apps", lambda ctx: None)
+    monkeypatch.setattr(builder_routes_module, "_get_app_for_tenant", _fake_get_app_for_tenant)
+    monkeypatch.setattr(builder_routes_module, "_get_revision", _fake_get_revision)
+    monkeypatch.setattr(builder_routes_module, "_get_draft_dev_session_for_scope", _fake_get_session_for_scope)
+
+    state_resp = await builder_routes_module.get_builder_state(
+        app_id=app.id,
+        request=SimpleNamespace(
+            base_url="http://testserver/",
+            scope={"root_path": ""},
+            headers={},
+            url=SimpleNamespace(path=f"/admin/apps/{app.id}/builder/state"),
+        ),
+        _={},
+        principal={},
+        db=db_session,
+    )
+    assert state_resp.draft_dev is not None
+    assert state_resp.draft_dev.status == "serving"
+
+    await db_session.refresh(session)
+    await db_session.refresh(workspace)
+    assert session.status == PublishedAppDraftDevSessionStatus.serving
+    assert workspace.status == PublishedAppDraftWorkspaceStatus.serving
 
 
 @pytest.mark.asyncio
@@ -342,6 +543,121 @@ async def test_touch_session_activity_renews_expiry_without_detaching_workspace(
     assert session.expires_at >= previous_expiry
     assert workspace.last_activity_at == session.last_activity_at
     assert workspace.detached_at is None
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_reattaches_detached_session_to_existing_workspace():
+    workspace_id = uuid4()
+    sandbox_id = "sprite-reattach-1"
+    workspace = SimpleNamespace(
+        id=workspace_id,
+        published_app_id=uuid4(),
+        sandbox_id=sandbox_id,
+        runtime_backend="sprite",
+        backend_metadata={"preview": {"upstream_base_url": "https://sprite.example"}},
+        preview_url="/public/apps-builder/draft-dev/sessions/current/preview/",
+        last_activity_at=None,
+        detached_at=datetime.now(timezone.utc),
+    )
+    revision = SimpleNamespace(id=uuid4())
+    db = AsyncMock()
+    db.get.return_value = revision
+    runtime_service = PublishedAppDraftDevRuntimeService(db)
+    runtime_service.client = SimpleNamespace(
+        backend_name="sprite",
+        build_preview_proxy_path=lambda session_id: f"/public/apps-builder/draft-dev/sessions/{session_id}/preview/",
+        heartbeat_session=AsyncMock(
+            return_value={
+                "sandbox_id": sandbox_id,
+                "backend_metadata": {"preview": {"upstream_base_url": "https://sprite.example"}},
+            }
+        ),
+    )
+    runtime_service.get_workspace = AsyncMock(return_value=workspace)
+    runtime_service._restore_live_workspace_snapshot_from_runtime = AsyncMock(return_value=None)
+    session = SimpleNamespace(
+        id=uuid4(),
+        published_app_id=workspace.published_app_id,
+        user_id=uuid4(),
+        revision_id=revision.id,
+        draft_workspace_id=None,
+        sandbox_id=None,
+        runtime_generation=0,
+        runtime_backend=None,
+        backend_metadata={},
+        preview_url=None,
+        status=PublishedAppDraftDevSessionStatus.starting,
+        last_error=None,
+    )
+
+    result = await runtime_service.heartbeat_session(session=session)
+
+    assert result.draft_workspace_id == workspace_id
+    assert result.sandbox_id == sandbox_id
+    assert result.status == PublishedAppDraftDevSessionStatus.serving
+    assert result.last_error is None
+    runtime_service.client.heartbeat_session.assert_awaited_once_with(
+        sandbox_id=sandbox_id,
+        idle_timeout_seconds=runtime_service.settings.idle_timeout_seconds,
+    )
+
+
+@pytest.mark.asyncio
+async def test_ensure_session_failure_keeps_session_attached_to_workspace():
+    app = SimpleNamespace(id=uuid4(), tenant_id=uuid4(), slug="app", agent_id=uuid4())
+    revision = SimpleNamespace(id=uuid4(), files={"src/App.tsx": "export default 1;"}, entry_file="src/App.tsx")
+    workspace = SimpleNamespace(
+        id=uuid4(),
+        sandbox_id=None,
+        backend_metadata={},
+        status=PublishedAppDraftWorkspaceStatus.starting,
+        last_error=None,
+        runtime_backend="sprite",
+        dependency_hash=None,
+    )
+    session = SimpleNamespace(
+        id=uuid4(),
+        revision_id=None,
+        draft_workspace_id=None,
+        idle_timeout_seconds=None,
+        last_activity_at=None,
+        expires_at=None,
+        preview_url=None,
+        sandbox_id=None,
+        runtime_generation=0,
+        runtime_backend=None,
+        backend_metadata={},
+        dependency_hash=None,
+        last_error=None,
+        status=PublishedAppDraftDevSessionStatus.starting,
+    )
+    db = AsyncMock()
+    runtime_service = PublishedAppDraftDevRuntimeService(db)
+    runtime_service.client = SimpleNamespace(
+        backend_name="sprite",
+        build_preview_proxy_path=lambda session_id: f"/public/apps-builder/draft-dev/sessions/{session_id}/preview/",
+    )
+    runtime_service._acquire_scope_lock = AsyncMock(return_value=None)
+    runtime_service.expire_idle_sessions = AsyncMock(return_value=None)
+    runtime_service.sweep_dormant_workspaces = AsyncMock(return_value=None)
+    runtime_service._sweep_remote_workspaces_best_effort = AsyncMock(return_value=None)
+    runtime_service._get_or_create_workspace = AsyncMock(return_value=workspace)
+    runtime_service._get_or_create_session = AsyncMock(return_value=session)
+    runtime_service._start_or_sync_workspace = AsyncMock(
+        side_effect=PublishedAppDraftDevRuntimeClientError("ConnectTimeout")
+    )
+
+    result = await runtime_service.ensure_session(
+        app=app,
+        revision=revision,
+        user_id=uuid4(),
+    )
+
+    assert result.draft_workspace_id == workspace.id
+    assert result.status == PublishedAppDraftDevSessionStatus.degraded
+    assert result.last_error == "ConnectTimeout"
+    assert workspace.status == PublishedAppDraftWorkspaceStatus.degraded
+    assert workspace.last_error == "ConnectTimeout"
 
 
 @pytest.mark.asyncio
@@ -438,7 +754,15 @@ async def test_sync_route_ignores_delete_error_when_file_is_already_absent(
     sandbox_id = "sprite-sandbox-1"
     ctx = {"tenant_id": tenant_id, "user": SimpleNamespace(id=user_id)}
     app = SimpleNamespace(id=app_id, tenant_id=tenant_id)
-    revision = SimpleNamespace(id=revision_id, files={"src/App.tsx": "app"}, entry_file="src/App.tsx")
+    revision = SimpleNamespace(
+        id=revision_id,
+        files={
+            "index.html": "<html></html>",
+            "package.json": "{\"name\":\"app\",\"dependencies\":{}}",
+            "src/App.tsx": "app",
+        },
+        entry_file="src/App.tsx",
+    )
     session = SimpleNamespace(
         id=session_id,
         sandbox_id=sandbox_id,
@@ -447,6 +771,8 @@ async def test_sync_route_ignores_delete_error_when_file_is_already_absent(
             "live_workspace_snapshot": {
                 "entry_file": "src/App.tsx",
                 "files": {
+                    "index.html": "<html></html>",
+                    "package.json": "{\"name\":\"app\",\"dependencies\":{}}",
                     "src/App.tsx": "app",
                     "src/deleted.tsx": "stale",
                 },
@@ -457,7 +783,16 @@ async def test_sync_route_ignores_delete_error_when_file_is_already_absent(
     request = SimpleNamespace()
     fake_client = SimpleNamespace(
         delete_file=AsyncMock(side_effect=PublishedAppDraftDevRuntimeClientError("Sprite request failed: ")),
-        snapshot_files=AsyncMock(return_value={"files": {"src/App.tsx": "app"}, "revision_token": "snap-1"}),
+        snapshot_files=AsyncMock(
+            return_value={
+                "files": {
+                    "index.html": "<html></html>",
+                    "package.json": "{\"name\":\"app\",\"dependencies\":{}}",
+                    "src/App.tsx": "app",
+                },
+                "revision_token": "snap-1",
+            }
+        ),
     )
     fake_runtime_service = SimpleNamespace(
         client=fake_client,
@@ -498,6 +833,83 @@ async def test_sync_route_ignores_delete_error_when_file_is_already_absent(
     fake_runtime_service.record_workspace_live_snapshot.assert_awaited_once()
     fake_runtime_service.record_live_workspace_revision_token.assert_awaited_once()
     db.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_sync_route_validates_operations_before_mutating_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    tenant_id = uuid4()
+    user_id = uuid4()
+    app_id = uuid4()
+    revision_id = uuid4()
+    session_id = uuid4()
+    sandbox_id = "sprite-sandbox-1"
+    ctx = {"tenant_id": tenant_id, "user": SimpleNamespace(id=user_id)}
+    app = SimpleNamespace(id=app_id, tenant_id=tenant_id)
+    revision = SimpleNamespace(
+        id=revision_id,
+        files={
+            "index.html": "<html></html>",
+            "src/main.tsx": "import './App';",
+            "src/App.tsx": "export default function App() { return <div />; }",
+        },
+        entry_file="src/main.tsx",
+    )
+    session = SimpleNamespace(
+        id=session_id,
+        sandbox_id=sandbox_id,
+        revision_id=revision_id,
+        backend_metadata={
+            "live_workspace_snapshot": {
+                "entry_file": "src/main.tsx",
+                "files": dict(revision.files),
+            }
+        },
+    )
+    db = AsyncMock()
+    request = SimpleNamespace()
+    fake_client = SimpleNamespace(
+        write_file=AsyncMock(),
+        delete_file=AsyncMock(),
+        rename_file=AsyncMock(),
+    )
+    fake_runtime_service = SimpleNamespace(
+        client=fake_client,
+        record_workspace_live_snapshot=AsyncMock(return_value=None),
+        record_live_workspace_revision_token=AsyncMock(return_value=session),
+    )
+
+    monkeypatch.setattr(builder_routes_module, "_resolve_tenant_admin_context", AsyncMock(return_value=ctx))
+    monkeypatch.setattr(builder_routes_module, "_assert_can_manage_apps", lambda resolved_ctx: None)
+    monkeypatch.setattr(builder_routes_module, "_assert_no_active_coding_run_for_scope", AsyncMock(return_value=None))
+    monkeypatch.setattr(builder_routes_module, "_get_app_for_tenant", AsyncMock(return_value=app))
+    monkeypatch.setattr(builder_routes_module, "_ensure_current_draft_revision", AsyncMock(return_value=revision))
+    monkeypatch.setattr(builder_routes_module, "_get_draft_dev_session_for_scope", AsyncMock(return_value=session))
+    monkeypatch.setattr(builder_routes_module, "PublishedAppDraftDevRuntimeService", lambda db: fake_runtime_service)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await builder_routes_module.sync_builder_draft_dev_session(
+            app_id=app_id,
+            payload=builder_routes_module.DraftDevSyncRequest(
+                operations=[{"op": "delete_file", "path": "index.html"}],
+            ),
+            request=request,
+            _={},
+            principal={},
+            db=db,
+        )
+
+    assert exc_info.value.status_code == 422
+    assert exc_info.value.detail["diagnostics"] == [
+        {"path": "index.html", "message": "Required root file is missing"}
+    ]
+    fake_client.write_file.assert_not_awaited()
+    fake_client.delete_file.assert_not_awaited()
+    fake_client.rename_file.assert_not_awaited()
+    fake_runtime_service.record_workspace_live_snapshot.assert_not_awaited()
+    fake_runtime_service.record_live_workspace_revision_token.assert_not_awaited()
+    db.commit.assert_not_awaited()
 
 
 @pytest.mark.asyncio

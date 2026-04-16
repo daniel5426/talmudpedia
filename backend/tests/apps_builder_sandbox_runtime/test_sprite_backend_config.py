@@ -45,7 +45,7 @@ def test_load_backend_config_defaults_to_sprite(monkeypatch: pytest.MonkeyPatch)
     assert config.sprite_api_token == "sprite-token"
     assert config.sprite_name_prefix == "talmudpedia-builder"
     assert config.sprite_workspace_path == "/home/sprite/app"
-    assert config.sprite_stage_workspace_path == "/home/sprite/.talmudpedia/stage/current/workspace"
+    assert config.sprite_stage_workspace_path is None
     assert config.sprite_preview_service_name == "builder-preview"
 
 
@@ -79,6 +79,22 @@ def test_build_backend_rejects_archived_e2b(monkeypatch: pytest.MonkeyPatch):
         build_published_app_sandbox_backend(config)
 
 
+def test_sprite_dependency_install_command_prefers_pnpm_lock_over_package_lock_and_allows_lock_drift(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("APPS_SPRITE_API_TOKEN", "sprite-token")
+    backend = build_published_app_sandbox_backend(load_published_app_sandbox_backend_config())
+    assert isinstance(backend, SpriteSandboxBackend)
+
+    command = backend._dependency_install_shell_command(prefer_offline=True)  # noqa: SLF001
+
+    assert "if [ -f pnpm-lock.yaml ]" in command
+    assert "pnpm install --no-frozen-lockfile" in command
+    assert "corepack pnpm install --no-frozen-lockfile" in command
+    assert "elif [ -f package-lock.json ]" in command
+    assert command.index("if [ -f pnpm-lock.yaml ]") < command.index("elif [ -f package-lock.json ]")
+
+
 @pytest.mark.asyncio
 async def test_sprite_heartbeat_waits_for_preview_without_restarting_services(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("APPS_SPRITE_API_TOKEN", "sprite-token")
@@ -99,19 +115,108 @@ async def test_sprite_heartbeat_waits_for_preview_without_restarting_services(mo
         _ = kwargs
         return "revision-token-1"
 
+    async def _fake_heartbeat_metadata(*, sprite_name: str):
+        assert sprite_name == "sprite-app-1"
+        return {
+            "preview": {
+                "upstream_base_url": "https://fresh-sprite-host.example",
+            },
+            "live_preview": {
+                "status": "booting",
+                "supervisor": {
+                    "build_watch_status": "running",
+                    "static_server_status": "running",
+                },
+            },
+        }
+
     async def _fail_ensure_services(*, sprite_name: str) -> None:
         raise AssertionError(f"heartbeat should not restart services for {sprite_name}")
 
     monkeypatch.setattr(backend, "_get_sprite", _fake_get_sprite)
     monkeypatch.setattr(backend, "_wait_for_preview_ready", _fake_wait_for_preview_ready)
-    monkeypatch.setattr(backend, "_ensure_services", _fail_ensure_services)
+    monkeypatch.setattr(backend, "_ensure_preview_service", _fail_ensure_services)
     monkeypatch.setattr(backend, "_read_revision_token", _fake_read_revision_token)
+    monkeypatch.setattr(backend, "_heartbeat_metadata", _fake_heartbeat_metadata)
 
     result = await backend.heartbeat_session(sandbox_id="sprite-app-1", idle_timeout_seconds=180)
 
     assert result["status"] == "serving"
     assert waited["called"] is True
     assert result["backend_metadata"]["preview"]["upstream_base_url"] == "https://fresh-sprite-host.example"
+
+
+@pytest.mark.asyncio
+async def test_sprite_heartbeat_refreshes_preview_services_when_preview_services_are_not_running(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("APPS_SPRITE_API_TOKEN", "sprite-token")
+    backend = build_published_app_sandbox_backend(load_published_app_sandbox_backend_config())
+    assert isinstance(backend, SpriteSandboxBackend)
+
+    ensure_calls = {"count": 0}
+    waited = {"count": 0}
+    first_metadata = {
+        "preview": {
+            "upstream_base_url": "https://fresh-sprite-host.example",
+        },
+        "live_preview": {
+            "status": "booting",
+            "current_build_id": "build-2",
+            "last_successful_build_id": "build-1",
+            "workspace_fingerprint": "fp-1",
+            "supervisor": {
+                "build_watch_status": "stopped",
+                "static_server_status": "running",
+            },
+        },
+    }
+    refreshed_metadata = {
+        "preview": {
+            "upstream_base_url": "https://fresh-sprite-host.example",
+        },
+        "live_preview": {
+            "status": "building",
+            "current_build_id": "build-2",
+            "last_successful_build_id": "build-1",
+            "workspace_fingerprint": "fp-1",
+            "supervisor": {
+                "build_watch_status": "running",
+                "static_server_status": "running",
+            },
+        },
+    }
+    metadata_calls = {"count": 0}
+
+    async def _fake_wait_for_preview_ready(*, sprite_name: str) -> None:
+        assert sprite_name == "sprite-app-1"
+        waited["count"] += 1
+
+    async def _fake_read_revision_token(**kwargs) -> str:
+        _ = kwargs
+        return "revision-token-1"
+
+    async def _fake_heartbeat_metadata(*, sprite_name: str):
+        assert sprite_name == "sprite-app-1"
+        metadata_calls["count"] += 1
+        return first_metadata if metadata_calls["count"] == 1 else refreshed_metadata
+
+    async def _fake_ensure_preview_service(*, sprite_name: str) -> None:
+        assert sprite_name == "sprite-app-1"
+        ensure_calls["count"] += 1
+
+    monkeypatch.setattr(backend, "_wait_for_preview_ready", _fake_wait_for_preview_ready)
+    monkeypatch.setattr(backend, "_ensure_preview_service", _fake_ensure_preview_service)
+    monkeypatch.setattr(backend, "_read_revision_token", _fake_read_revision_token)
+    monkeypatch.setattr(backend, "_heartbeat_metadata", _fake_heartbeat_metadata)
+
+    result = await backend.heartbeat_session(sandbox_id="sprite-app-1", idle_timeout_seconds=180)
+
+    assert result["status"] == "serving"
+    assert ensure_calls["count"] == 1
+    assert waited["count"] == 1
+    assert result["backend_metadata"]["live_preview"]["supervisor"]["build_watch_status"] == "running"
+    assert result["backend_metadata"]["live_preview"]["supervisor"]["restart_reason"] == "heartbeat_refresh"
 
 
 @pytest.mark.asyncio
@@ -128,19 +233,14 @@ async def test_sprite_promote_stage_workspace_mirrors_in_place_without_service_r
         mirrored.source = source_workspace_path
         mirrored.target = target_workspace_path
 
-    async def _fail_ensure_services(*, sprite_name: str) -> None:
-        raise AssertionError(f"promote should not restart services for {sprite_name}")
-
     monkeypatch.setattr(backend, "_mirror_workspace", _fake_mirror_workspace)
-    monkeypatch.setattr(backend, "_ensure_services", _fail_ensure_services)
 
     result = await backend.promote_stage_workspace(sandbox_id="sprite-app-1")
 
     assert result["status"] == "promoted"
-    assert mirrored.called is True
-    assert mirrored.sprite_name == "sprite-app-1"
-    assert mirrored.source == backend._stage_workspace_path()
-    assert mirrored.target == backend._live_workspace_path()
+    assert mirrored.called is False
+    assert result["live_workspace_path"] == backend._live_workspace_path()
+    assert result["stage_workspace_path"] == backend._live_workspace_path()
 
 
 @pytest.mark.asyncio
@@ -160,12 +260,17 @@ async def test_sprite_start_repairs_dependencies_when_preview_readiness_initiall
         return None
 
     async def _fake_sync_files_to_workspace(*, sprite_name: str, workspace_path: str, files):
-        return "revision-token-1"
+        return {
+            "revision_token": "revision-token-1",
+            "wrote_count": 1,
+            "skipped_count": 0,
+            "deleted_count": 0,
+        }
 
     async def _fake_install_dependencies_if_needed(*, sprite_name: str, workspace_path: str, dependency_hash: str, force_install: bool):
         install_calls.append(force_install)
 
-    async def _fake_ensure_services(*, sprite_name: str):
+    async def _fake_ensure_preview_service(*, sprite_name: str):
         ensure_calls["count"] += 1
 
     async def _fake_wait_for_preview_ready(*, sprite_name: str):
@@ -173,12 +278,31 @@ async def test_sprite_start_repairs_dependencies_when_preview_readiness_initiall
         if ready_attempts["count"] == 1:
             raise RuntimeError("preview warmup failed")
 
+    async def _fake_write_live_preview_context(*, sprite_name: str, workspace_fingerprint: str | None) -> None:
+        _ = sprite_name, workspace_fingerprint
+
+    async def _fake_read_live_preview_status(*, sprite_name: str):
+        _ = sprite_name
+        return {
+            "status": "ready",
+            "current_build_id": "build-1",
+            "last_successful_build_id": "build-1",
+            "workspace_fingerprint": "fp-1",
+        }
+
+    async def _fake_get_service(*, sprite_name: str, service_name: str):
+        _ = sprite_name, service_name
+        return {"state": "running"}
+
     monkeypatch.setattr(backend, "_ensure_sprite", _fake_ensure_sprite)
     monkeypatch.setattr(backend, "_ensure_workspace_dirs", _fake_ensure_workspace_dirs)
     monkeypatch.setattr(backend, "_sync_files_to_workspace", _fake_sync_files_to_workspace)
     monkeypatch.setattr(backend, "_install_dependencies_if_needed", _fake_install_dependencies_if_needed)
-    monkeypatch.setattr(backend, "_ensure_services", _fake_ensure_services)
+    monkeypatch.setattr(backend, "_ensure_preview_service", _fake_ensure_preview_service)
     monkeypatch.setattr(backend, "_wait_for_preview_ready", _fake_wait_for_preview_ready)
+    monkeypatch.setattr(backend, "_write_live_preview_context", _fake_write_live_preview_context)
+    monkeypatch.setattr(backend, "_read_live_preview_status", _fake_read_live_preview_status)
+    monkeypatch.setattr(backend, "_get_service", _fake_get_service)
 
     result = await backend.start_session(
         session_id="workspace-1",

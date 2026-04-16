@@ -28,6 +28,7 @@ from app.services.apps_builder_dependency_policy import validate_builder_depende
 from app.services.published_app_builder_snapshot_filter import filter_and_validate_builder_snapshot_files
 from app.services.published_app_bundle_storage import PublishedAppBundleStorage
 from app.services.published_app_draft_dev_runtime import PublishedAppDraftDevRuntimeService
+from app.services.published_app_live_preview import build_live_preview_workspace_fingerprint
 from app.services.published_app_templates import TemplateRuntimeContext, apply_runtime_bootstrap_overlay
 
 logger = logging.getLogger(__name__)
@@ -126,13 +127,7 @@ class PublishedAppWorkspaceBuildService:
 
     @staticmethod
     def _build_source_fingerprint(*, entry_file: str, files: Dict[str, str]) -> str:
-        payload = {
-            "entry_file": str(entry_file or "").strip() or "src/main.tsx",
-            "files": {path: files[path] for path in sorted(files)},
-        }
-        return hashlib.sha256(
-            json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode("utf-8")
-        ).hexdigest()
+        return build_live_preview_workspace_fingerprint(entry_file=entry_file, files=files)
 
     @staticmethod
     def _build_dist_manifest(dist_dir: Path) -> Dict[str, Any]:
@@ -453,6 +448,94 @@ class PublishedAppWorkspaceBuildService:
             ).strip()
             if not live_workspace_path:
                 raise PublishedAppWorkspaceBuildError("Live workspace path is unavailable.")
+
+            live_preview_metadata = (
+                dict(workspace.backend_metadata.get("live_preview") or {})
+                if isinstance(workspace.backend_metadata, dict)
+                and isinstance(workspace.backend_metadata.get("live_preview"), dict)
+                else {}
+            )
+            live_preview_dist_path = str(live_preview_metadata.get("dist_path") or "").strip()
+            live_preview_status = str(live_preview_metadata.get("status") or "").strip().lower()
+            live_preview_fingerprint = str(live_preview_metadata.get("workspace_fingerprint") or "").strip()
+            if (
+                live_preview_status == "ready"
+                and live_preview_dist_path
+                and live_preview_fingerprint == source_fingerprint
+            ):
+                self._trace(
+                    "build.reuse_live_preview.begin",
+                    app_id=app.id,
+                    workspace_build_id=str(build.id),
+                    dist_path=live_preview_dist_path,
+                    workspace_fingerprint=source_fingerprint,
+                )
+                try:
+                    archive_response = await self.runtime_service.client.export_workspace_archive(
+                        sandbox_id=sandbox_id,
+                        workspace_path=live_preview_dist_path,
+                        format="tar.gz",
+                    )
+                    archive_bytes = self.runtime_service.client.decode_archive_payload(archive_response)
+                    with tempfile.TemporaryDirectory(prefix=f"apps-live-preview-{str(app.id)[:8]}-") as temp_dir:
+                        extract_dir = Path(temp_dir) / "dist"
+                        extract_dir.mkdir(parents=True, exist_ok=True)
+                        archive_path = Path(temp_dir) / "dist.tar.gz"
+                        archive_path.write_bytes(archive_bytes)
+                        with tarfile.open(archive_path, mode="r:gz") as tar:
+                            tar.extractall(path=extract_dir)
+                        dist_root = self._normalize_extracted_dist_root(extract_dir)
+                        if not dist_root.exists() or not dist_root.is_dir():
+                            raise PublishedAppWorkspaceBuildError("Live preview dist directory is unavailable.")
+                        dist_manifest = self._build_dist_manifest(dist_root)
+                        dist_manifest["source_fingerprint"] = source_fingerprint
+                        dist_manifest["workspace_revision_token"] = workspace_revision_token
+                        dist_manifest["live_preview_build_id"] = str(
+                            live_preview_metadata.get("last_successful_build_id") or ""
+                        ).strip() or None
+                        storage = PublishedAppBundleStorage.from_env()
+                        dist_storage_prefix = PublishedAppBundleStorage.build_workspace_build_dist_prefix(
+                            tenant_id=str(app.tenant_id),
+                            app_id=str(app.id),
+                            workspace_build_id=str(build.id),
+                        )
+                        dist_manifest["uploaded_assets"] = self._upload_dist_dir(
+                            storage=storage,
+                            dist_dir=dist_root,
+                            dist_storage_prefix=dist_storage_prefix,
+                        )
+                        build.dist_storage_prefix = dist_storage_prefix
+                        build.dist_manifest = dist_manifest
+                    build.status = PublishedAppWorkspaceBuildStatus.ready
+                    build.template_runtime = "vite_static"
+                    build.build_finished_at = datetime.now(timezone.utc)
+                    await self.db.flush()
+                    await self.db.commit()
+                    self._trace(
+                        "build.reuse_live_preview.done",
+                        app_id=app.id,
+                        workspace_build_id=str(build.id),
+                        dist_path=live_preview_dist_path,
+                        workspace_fingerprint=source_fingerprint,
+                    )
+                    return ReadyWorkspaceBuildResult(
+                        build=build,
+                        source_files=source_files,
+                        build_files=build_files,
+                        source_fingerprint=source_fingerprint,
+                        workspace_revision_token=workspace_revision_token,
+                        reused=False,
+                    )
+                except Exception as exc:
+                    self._trace(
+                        "build.reuse_live_preview.failed",
+                        app_id=app.id,
+                        workspace_build_id=str(build.id),
+                        dist_path=live_preview_dist_path,
+                        workspace_fingerprint=source_fingerprint,
+                        error=str(exc),
+                        error_type=exc.__class__.__name__,
+                    )
 
             dependency_prepare = await self.runtime_service.client.prepare_publish_dependencies(
                 sandbox_id=sandbox_id,

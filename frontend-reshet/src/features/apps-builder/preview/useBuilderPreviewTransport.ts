@@ -5,7 +5,6 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "r
 import {
   isDraftDevFailureStatus,
   isDraftDevPendingStatus,
-  isDraftDevServingStatus,
   type DraftDevSessionStatus,
 } from "@/services";
 import type { SandboxLifecyclePhase } from "@/features/apps-builder/workspace/useAppsBuilderSandboxLifecycle";
@@ -22,6 +21,9 @@ type UseBuilderPreviewTransportOptions = {
   previewAuthToken: string | null;
   previewRoute: string;
   previewTransportGeneration: number | null;
+  livePreviewStatus: "booting" | "building" | "ready" | "failed_keep_last_good" | "failed_no_build" | "recovering" | null;
+  livePreviewLastSuccessfulBuildId: string | null;
+  livePreviewError: string | null;
   hardReloadToken: number;
   draftDevStatus: DraftDevSessionStatus | null;
   lifecyclePhase: SandboxLifecyclePhase | null;
@@ -51,6 +53,7 @@ type DocumentAction = {
   transportKey: string | null;
   baseDocumentUrl: string | null;
   previewAuthToken: string | null;
+  hasUsableFrame: boolean;
 };
 
 function stripRuntimeToken(value: string | null): string | null {
@@ -70,7 +73,10 @@ function documentStateReducer(state: DocumentState, action: DocumentAction): Doc
   if (action.type !== "sync") {
     return state;
   }
-  const { transportKey, baseDocumentUrl, previewAuthToken } = action;
+  const { transportKey, baseDocumentUrl, previewAuthToken, hasUsableFrame } = action;
+  const nextDocumentUrl = hasUsableFrame
+    ? baseDocumentUrl
+    : appendPreviewRuntimeToken(baseDocumentUrl, previewAuthToken);
   if (!transportKey || !baseDocumentUrl) {
     if (!state.transportKey && !state.documentUrl) {
       return state;
@@ -83,16 +89,19 @@ function documentStateReducer(state: DocumentState, action: DocumentAction): Doc
   if (state.transportKey !== transportKey) {
     return {
       transportKey,
-      documentUrl: appendPreviewRuntimeToken(baseDocumentUrl, previewAuthToken),
+      documentUrl: nextDocumentUrl,
     };
   }
+  if (state.documentUrl === nextDocumentUrl) {
+    return state;
+  }
   const normalizedCurrent = stripRuntimeToken(state.documentUrl);
-  if (normalizedCurrent === baseDocumentUrl) {
+  if (normalizedCurrent === baseDocumentUrl && hasUsableFrame) {
     return state;
   }
   return {
     transportKey,
-    documentUrl: baseDocumentUrl,
+    documentUrl: nextDocumentUrl,
   };
 }
 
@@ -102,6 +111,9 @@ export function useBuilderPreviewTransport({
   previewAuthToken,
   previewRoute,
   previewTransportGeneration,
+  livePreviewStatus,
+  livePreviewLastSuccessfulBuildId,
+  livePreviewError,
   hardReloadToken,
   draftDevStatus,
   lifecyclePhase,
@@ -122,8 +134,9 @@ export function useBuilderPreviewTransport({
       baseUrl: previewBaseUrl,
       route: previewRoute,
       reloadToken: hardReloadToken,
+      buildId: livePreviewLastSuccessfulBuildId,
     });
-  }, [hardReloadToken, previewBaseUrl, previewRoute]);
+  }, [hardReloadToken, livePreviewLastSuccessfulBuildId, previewBaseUrl, previewRoute]);
 
   const transportGeneration = useMemo(() => {
     if (!sessionId) {
@@ -141,18 +154,19 @@ export function useBuilderPreviewTransport({
     return `${sessionId}:${transportGeneration}`;
   }, [sessionId, transportGeneration]);
 
+  const hasUsableFrame = Boolean(transportKey) && usableFrameKey === transportKey;
+
   useEffect(() => {
     dispatchDocumentState({
       type: "sync",
       transportKey,
       baseDocumentUrl,
       previewAuthToken: previewAuthToken || null,
+      hasUsableFrame,
     });
-  }, [baseDocumentUrl, previewAuthToken, transportKey]);
+  }, [baseDocumentUrl, hasUsableFrame, previewAuthToken, transportKey]);
 
   const documentUrl = documentState.documentUrl;
-
-  const hasUsableFrame = Boolean(transportKey) && usableFrameKey === transportKey;
 
   const status = useMemo<PreviewTransportStatus>(() => {
     if (!sessionId) {
@@ -161,25 +175,44 @@ export function useBuilderPreviewTransport({
     if (isDraftDevFailureStatus(draftDevStatus) || lifecyclePhase === "error" || Boolean(lastError)) {
       return hasUsableFrame ? "reconnecting" : "failed";
     }
+    if (livePreviewStatus === "failed_keep_last_good") {
+      return hasUsableFrame ? "ready" : "failed";
+    }
+    if (livePreviewStatus === "failed_no_build") {
+      return "failed";
+    }
+    if (livePreviewStatus === "booting" || livePreviewStatus === "building") {
+      return hasUsableFrame ? "reconnecting" : "booting";
+    }
+    if (livePreviewStatus === "recovering") {
+      return hasUsableFrame ? "reconnecting" : "booting";
+    }
+    if (livePreviewStatus === "ready" && hasUsableFrame) {
+      return "ready";
+    }
     if (
       hasUsableFrame
-      && (
-        isDraftDevPendingStatus(draftDevStatus)
-        || lifecyclePhase === "ensuring"
-        || lifecyclePhase === "recovering"
-        || lifecyclePhase === "syncing"
-      )
+      && !isDraftDevPendingStatus(draftDevStatus)
+      && lifecyclePhase !== "ensuring"
+      && lifecyclePhase !== "recovering"
+      && lifecyclePhase !== "syncing"
+      && livePreviewStatus !== "building"
     ) {
-      return "reconnecting";
-    }
-    if (isDraftDevServingStatus(draftDevStatus) && hasUsableFrame) {
       return "ready";
+    }
+    if (hasUsableFrame && (
+      isDraftDevPendingStatus(draftDevStatus)
+      || lifecyclePhase === "ensuring"
+      || lifecyclePhase === "recovering"
+      || lifecyclePhase === "syncing"
+    )) {
+      return "reconnecting";
     }
     if (documentUrl || isDraftDevPendingStatus(draftDevStatus) || lifecyclePhase === "ensuring" || lifecyclePhase === "recovering" || lifecyclePhase === "syncing") {
       return hasUsableFrame ? "reconnecting" : "booting";
     }
     return hasUsableFrame ? "ready" : "idle";
-  }, [documentUrl, draftDevStatus, hasUsableFrame, lastError, lifecyclePhase, sessionId]);
+  }, [documentUrl, draftDevStatus, hasUsableFrame, lastError, lifecyclePhase, livePreviewStatus, sessionId]);
 
   const markFrameUsable = useCallback((nextTransportKey: string | null) => {
     if (!nextTransportKey) {
@@ -209,6 +242,9 @@ export function useBuilderPreviewTransport({
       previewBaseUrl,
       baseDocumentUrl,
       documentUrl,
+      livePreviewStatus,
+      livePreviewLastSuccessfulBuildId,
+      livePreviewError,
       draftDevStatus,
       lifecyclePhase,
       status,
@@ -229,6 +265,9 @@ export function useBuilderPreviewTransport({
     hasUsableFrame,
     lastError,
     lifecyclePhase,
+    livePreviewError,
+    livePreviewLastSuccessfulBuildId,
+    livePreviewStatus,
     previewAuthToken,
     previewBaseUrl,
     previewRoute,

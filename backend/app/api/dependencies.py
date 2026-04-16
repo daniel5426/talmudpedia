@@ -59,6 +59,12 @@ async def get_tenant_context(
                 tenant_uuid = session.organization_id
     if tenant_uuid is None:
         raise HTTPException(status_code=400, detail="Active organization context is required")
+    project_uuid: UUID | None = None
+    cookie_token = str(request.cookies.get(SESSION_COOKIE_NAME) or "").strip()
+    if cookie_token:
+        session = await BrowserSessionService(db).resolve_session(cookie_token)
+        if session is not None:
+            project_uuid = session.project_id
     result = await db.execute(select(Tenant).where(Tenant.id == tenant_uuid))
     tenant = result.scalar_one_or_none()
     if not tenant:
@@ -68,6 +74,7 @@ async def get_tenant_context(
         "organization_id": str(tenant.id),
         "tenant": tenant,
         "organization": tenant,
+        "project_id": str(project_uuid) if project_uuid else None,
     }
 
 async def get_auth_context(

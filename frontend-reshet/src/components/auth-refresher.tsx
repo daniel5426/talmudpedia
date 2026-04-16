@@ -3,7 +3,7 @@
 import { useEffect, useRef } from "react"
 import { useAuthStore } from "@/lib/store/useAuthStore"
 import { authService } from "@/services/auth"
-import { HttpRequestError } from "@/services/http"
+import { HttpRequestError, HttpRequestTimeoutError } from "@/services/http"
 import { applyAuthSession, clearAuthSession } from "@/lib/auth-session"
 
 export function AuthRefresher() {
@@ -22,6 +22,8 @@ export function AuthRefresher() {
             } catch (error) {
                 if (error instanceof HttpRequestError && error.status === 401) {
                     clearAuthSession()
+                } else if (error instanceof HttpRequestTimeoutError) {
+                    console.error("Timed out while refreshing browser session", error)
                 } else {
                     console.error("Failed to refresh browser session", error)
                 }

@@ -72,6 +72,7 @@ import {
   buildBuilderPreviewDocumentUrl,
   logBuilderPreviewDebug,
 } from "@/features/apps-builder/preview/previewTransport";
+import { useBuilderLivePreviewStatus } from "@/features/apps-builder/preview/useBuilderLivePreviewStatus";
 import { useBuilderPreviewTransport } from "@/features/apps-builder/preview/useBuilderPreviewTransport";
 import { CodeEditorPanel } from "@/features/apps-builder/editor/CodeEditorPanel";
 import { FileTree } from "@/features/apps-builder/editor/FileTree";
@@ -329,6 +330,18 @@ function buildDraftDevSyncFingerprint(entry: string, nextFiles: Record<string, s
   });
 }
 
+const POST_RUN_PREVIEW_POLL_WINDOW_MS = 90_000;
+
+function logBuilderWorkspaceDebug(event: string, fields: Record<string, unknown> = {}): void {
+  if (typeof console === "undefined" || typeof console.info !== "function") {
+    return;
+  }
+  console.info("[apps-builder][workspace-state]", {
+    event,
+    ...fields,
+  });
+}
+
 function extractLiveWorkspaceSnapshot(session?: DraftDevSessionResponse | null): PublishedAppRevision | null {
   const snapshot = session?.live_workspace_snapshot;
   if (!snapshot || !snapshot.files || typeof snapshot.files !== "object") {
@@ -387,6 +400,10 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
   const [pendingDomainDeleteId, setPendingDomainDeleteId] = useState<string | null>(null);
   const hasActiveCodingRunLock = Boolean(draftDevSession?.has_active_coding_runs);
   const [postRunHydrationPending, setPostRunHydrationPending] = useState(false);
+  const [postRunPreviewPollState, setPostRunPreviewPollState] = useState<{
+    until: number;
+    baselineBuildId: string | null;
+  } | null>(null);
   const saveBlockedByBackendLock = hasActiveCodingRunLock || postRunHydrationPending;
   const [isOpeningApp, setIsOpeningApp] = useState(false);
   const [isExportingArchive, setIsExportingArchive] = useState(false);
@@ -401,6 +418,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
   const [isLogoDialogOpen, setIsLogoDialogOpen] = useState(false);
   const [domainCopied, setDomainCopied] = useState(false);
   const lastSavedCodeFingerprintRef = useRef<string>("");
+  const initializedAppIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     setOpen(false);
@@ -471,6 +489,17 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
       };
     });
     const liveSnapshotRevision = extractLiveWorkspaceSnapshot(session);
+    logBuilderWorkspaceDebug("draft_dev_session_applied", {
+      sessionId: session?.session_id || null,
+      draftDevStatus: session?.status || null,
+      livePreviewStatus: session?.live_preview?.status || null,
+      livePreviewCurrentBuildId: session?.live_preview?.current_build_id || null,
+      livePreviewLastSuccessfulBuildId: session?.live_preview?.last_successful_build_id || null,
+      livePreviewUpdatedAt: session?.live_preview?.updated_at || null,
+      liveSnapshotRevisionToken: session?.live_workspace_snapshot?.revision_token || null,
+      liveSnapshotUpdatedAt: session?.live_workspace_snapshot?.updated_at || null,
+      liveSnapshotFileCount: session?.live_workspace_snapshot?.files ? Object.keys(session.live_workspace_snapshot.files).length : 0,
+    });
     if (!liveSnapshotRevision) {
       return;
     }
@@ -522,6 +551,55 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
   });
   const sandboxActionsBlocked = !isSandboxReady || isSandboxBusy;
   const sendBlockedReason = sandboxActionDisabledReason || "Waiting for preview sandbox...";
+  const currentLastSuccessfulBuildId = draftDevSession?.live_preview?.last_successful_build_id || null;
+  const postRunPreviewPollingActive = Boolean(
+    postRunPreviewPollState && postRunPreviewPollState.until > Date.now(),
+  );
+  const livePreviewState = useBuilderLivePreviewStatus({
+    previewBaseUrl: previewAssetUrl,
+    previewAuthToken,
+    sessionLivePreview: draftDevSession?.live_preview,
+    enabled: hasActiveCodingRunLock || postRunPreviewPollingActive || (
+      activeTab === "preview"
+      && draftDevSession?.live_preview?.status !== "ready"
+      && draftDevSession?.live_preview?.status !== "failed_keep_last_good"
+    ),
+  });
+
+  useEffect(() => {
+    if (!postRunPreviewPollState) {
+      return;
+    }
+    const timeoutMs = Math.max(0, postRunPreviewPollState.until - Date.now());
+    const timer = window.setTimeout(() => {
+      setPostRunPreviewPollState((current) => {
+        if (!current) {
+          return current;
+        }
+        return current.until <= Date.now() ? null : current;
+      });
+    }, timeoutMs + 50);
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [postRunPreviewPollState]);
+
+  useEffect(() => {
+    if (!postRunPreviewPollState) {
+      return;
+    }
+    if (!currentLastSuccessfulBuildId) {
+      return;
+    }
+    if (currentLastSuccessfulBuildId === postRunPreviewPollState.baselineBuildId) {
+      return;
+    }
+    logBuilderWorkspaceDebug("post_run_preview_poll.completed", {
+      baselineBuildId: postRunPreviewPollState.baselineBuildId,
+      nextBuildId: currentLastSuccessfulBuildId,
+    });
+    setPostRunPreviewPollState(null);
+  }, [currentLastSuccessfulBuildId, postRunPreviewPollState]);
 
   const appRoutes = useMemo(() => extractRoutesFromFiles(files), [files]);
   const filteredAppRoutes = useMemo(() => {
@@ -542,6 +620,9 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     previewAuthToken,
     previewRoute,
     previewTransportGeneration,
+    livePreviewStatus: livePreviewState?.status || null,
+    livePreviewLastSuccessfulBuildId: livePreviewState?.last_successful_build_id || null,
+    livePreviewError: livePreviewState?.error || null,
     hardReloadToken: previewReloadToken,
     draftDevStatus,
     lifecyclePhase: sandboxPhase,
@@ -572,6 +653,21 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
         publishedAppsService.getBuilderState(appId),
         publishedAppsService.getExportOptions(appId),
       ]);
+      logBuilderWorkspaceDebug("load_state.received", {
+        appId,
+        currentRevisionId: response.current_draft_revision?.id || null,
+        draftDevSessionId: response.draft_dev?.session_id || null,
+        draftDevStatus: response.draft_dev?.status || null,
+        livePreviewStatus: response.draft_dev?.live_preview?.status || null,
+        livePreviewCurrentBuildId: response.draft_dev?.live_preview?.current_build_id || null,
+        livePreviewLastSuccessfulBuildId: response.draft_dev?.live_preview?.last_successful_build_id || null,
+        livePreviewUpdatedAt: response.draft_dev?.live_preview?.updated_at || null,
+        liveSnapshotRevisionToken: response.draft_dev?.live_workspace_snapshot?.revision_token || null,
+        liveSnapshotUpdatedAt: response.draft_dev?.live_workspace_snapshot?.updated_at || null,
+        liveSnapshotFileCount: response.draft_dev?.live_workspace_snapshot?.files
+          ? Object.keys(response.draft_dev.live_workspace_snapshot.files).length
+          : 0,
+      });
       setState(response);
       setExportOptions(exportState);
       if (response.draft_dev?.live_workspace_snapshot?.files) {
@@ -619,6 +715,21 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
         publishedAppsService.getBuilderState(appId),
         publishedAppsService.getExportOptions(appId),
       ]);
+      logBuilderWorkspaceDebug("refresh_state_silently.received", {
+        appId,
+        currentRevisionId: response.current_draft_revision?.id || null,
+        draftDevSessionId: response.draft_dev?.session_id || null,
+        draftDevStatus: response.draft_dev?.status || null,
+        livePreviewStatus: response.draft_dev?.live_preview?.status || null,
+        livePreviewCurrentBuildId: response.draft_dev?.live_preview?.current_build_id || null,
+        livePreviewLastSuccessfulBuildId: response.draft_dev?.live_preview?.last_successful_build_id || null,
+        livePreviewUpdatedAt: response.draft_dev?.live_preview?.updated_at || null,
+        liveSnapshotRevisionToken: response.draft_dev?.live_workspace_snapshot?.revision_token || null,
+        liveSnapshotUpdatedAt: response.draft_dev?.live_workspace_snapshot?.updated_at || null,
+        liveSnapshotFileCount: response.draft_dev?.live_workspace_snapshot?.files
+          ? Object.keys(response.draft_dev.live_workspace_snapshot.files).length
+          : 0,
+      });
       setState(response);
       setExportOptions(exportState);
       if (response.draft_dev?.live_workspace_snapshot?.files) {
@@ -723,7 +834,13 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
   }, [inspectedPreviewFrameUrl, inspectedPreviewNotice, isLoadingVersionPreview]);
   const effectivePreviewUrl = isInspectingVersion ? inspectedPreviewFrameUrl : livePreviewTransport.documentUrl;
   const effectivePreviewToken = isInspectingVersion ? inspectedRuntimeToken : previewAuthToken;
-  const effectivePreviewError = isInspectingVersion ? inspectedPreviewNotice : draftDevError;
+  const livePreviewError = (
+    livePreviewState?.status === "failed_keep_last_good"
+    || livePreviewState?.status === "failed_no_build"
+  ) ? (livePreviewState.error || null) : null;
+  const effectivePreviewError = isInspectingVersion
+    ? inspectedPreviewNotice
+    : (draftDevError || livePreviewError || null);
   const effectivePreviewTransportKey = isInspectingVersion
     ? (inspectedPreviewFrameUrl ? `version:${inspectedVersionId || "preview"}:${previewReloadToken}` : null)
     : livePreviewTransport.transportKey;
@@ -748,13 +865,14 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
         ],
       };
     }
-    return buildBuilderPreviewLoadingState({
-      lifecyclePhase: sandboxPhase,
-      draftDevStatus,
-      transportStatus: effectivePreviewTransportStatus,
-      loadingMessage: effectivePreviewLoadingMessage,
-      errorMessage: effectivePreviewError,
-    });
+      return buildBuilderPreviewLoadingState({
+        lifecyclePhase: sandboxPhase,
+        draftDevStatus,
+        transportStatus: effectivePreviewTransportStatus,
+        loadingMessage: effectivePreviewLoadingMessage,
+        errorMessage: effectivePreviewError,
+        livePreviewStatus: livePreviewState?.status || null,
+      });
   }, [
     draftDevStatus,
     effectivePreviewError,
@@ -762,6 +880,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     effectivePreviewTransportStatus,
     isInspectingVersion,
     isLoadingVersionPreview,
+    livePreviewState?.status,
     sandboxPhase,
   ]);
 
@@ -804,10 +923,14 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
   ]);
 
   useEffect(() => {
+    if (initializedAppIdRef.current === appId) {
+      return;
+    }
+    initializedAppIdRef.current = appId;
     void loadState({ showInitialSkeleton: true });
     void loadAuthTemplates();
     void loadAgents();
-  }, [loadAgents, loadAuthTemplates, loadState]);
+  }, [appId, loadAgents, loadAuthTemplates, loadState]);
 
   useEffect(() => {
     if (!workspaceNotice) {
@@ -1141,7 +1264,23 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     activeTab,
     ensureDraftDevSession: ensureDraftDevSessionForChat,
     refreshStateSilently,
-    onPostRunHydrationStateChange: setPostRunHydrationPending,
+    onPostRunHydrationStateChange: (inProgress) => {
+      setPostRunHydrationPending(inProgress);
+      if (inProgress) {
+        const baselineBuildId =
+          livePreviewState?.last_successful_build_id
+          || draftDevSession?.live_preview?.last_successful_build_id
+          || null;
+        logBuilderWorkspaceDebug("post_run_preview_poll.begin", {
+          baselineBuildId,
+          livePreviewStatus: livePreviewState?.status || draftDevSession?.live_preview?.status || null,
+        });
+        setPostRunPreviewPollState({
+          until: Date.now() + POST_RUN_PREVIEW_POLL_WINDOW_MS,
+          baselineBuildId,
+        });
+      }
+    },
     onSetCurrentRevisionId: (revisionId) => {
       dispatchWorkspace({
         type: "hydrate",
@@ -1182,6 +1321,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
                     baseUrl: draftDevSession.preview_url,
                     route: previewRoute,
                     runtimeToken: previewAuthToken || draftDevSession?.preview_auth_token || null,
+                    buildId: livePreviewState?.last_successful_build_id || null,
                   })
                 : null
             )
@@ -1208,6 +1348,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
           baseUrl: session.preview_url,
           route: previewRoute,
           runtimeToken: session.preview_auth_token || previewAuthToken,
+          buildId: livePreviewState?.last_successful_build_id || null,
         }),
         "_blank",
         "noopener,noreferrer",
@@ -1225,6 +1366,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     previewAuthToken,
     draftDevStatus,
     livePreviewTransport.documentUrl,
+    livePreviewState?.last_successful_build_id,
     previewRoute,
   ]);
 

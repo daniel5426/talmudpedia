@@ -14,6 +14,7 @@ from app.agent.executors.standard import register_standard_operators
 from app.db.postgres.models.agents import AgentRun
 from app.db.postgres.models.registry import ToolRegistry
 from app.services.context_window_service import ContextWindowService
+from app.services.file_spaces.service import FileSpaceService
 from app.services.agent_service import (
     AgentGraphValidationError,
     AgentNotFoundError,
@@ -187,8 +188,15 @@ class AgentAdminService:
         executor = AgentExecutorService(db=self.db)
         input_context = dict(params.context or {})
         input_context.setdefault("tenant_id", str(ctx.tenant_id))
+        input_context.setdefault("project_id", str(ctx.project_id) if ctx.project_id else None)
         input_context.setdefault("user_id", str(ctx.user_id) if ctx.user_id else None)
         input_context.setdefault("token", ctx.auth_token)
+        grants = await FileSpaceService(self.db).resolve_agent_file_space_grants(
+            tenant_id=ctx.tenant_id,
+            project_id=ctx.project_id,
+            agent_id=agent_id,
+        )
+        input_context["file_spaces"] = [grant.to_runtime_payload() for grant in grants]
         run_id = await executor.start_run(
             agent_id,
             {

@@ -72,6 +72,7 @@ export type {
 } from "./prompts";
 export { credentialsService } from "./credentials";
 export { artifactsService } from "./artifacts";
+export { fileSpacesService } from "./file-spaces";
 export { publishedAppsService } from "./published-apps";
 export { mergeContextWindow } from "./context-window";
 export {
@@ -208,6 +209,15 @@ export type {
   ArtifactCodingPromptSubmissionResponse,
   ArtifactCodingRun,
 } from "./artifacts";
+export type {
+  FileSpace,
+  FileSpaceEntry,
+  FileEntryRevision,
+  AgentFileSpaceLink,
+  FileAccessMode,
+  FileEntryType,
+  FileTextReadResponse,
+} from "./file-spaces";
 
 export type {
   IntegrationCredential,

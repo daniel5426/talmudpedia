@@ -191,6 +191,21 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
       ...details,
     });
   };
+  const logRunHydrationDebug = (
+    event: string,
+    details: Record<string, unknown> = {},
+  ): void => {
+    if (typeof console === "undefined" || typeof console.info !== "function") {
+      return;
+    }
+    console.info("[apps-builder][run-hydration]", {
+      event,
+      appId,
+      runId: normalizedRunId,
+      runSessionId: normalizedRunSessionId || null,
+      ...details,
+    });
+  };
   const cancelActiveReader = () => {
     const activeReader = reader;
     if (!activeReader) {
@@ -814,10 +829,21 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
 
       const activeRunCount = await resolveActiveRunCountAfterTerminal();
       const hasActiveRunsInScope = activeRunCount !== null && activeRunCount > 0;
+      logRunHydrationDebug("finalize_after_run.begin", {
+        terminalStatus,
+        activeRunCount,
+        hasActiveRunsInScope,
+        latestResultRevisionId: latestResultRevisionId || null,
+      });
       if (isCurrentAttachment() && isAttachedRun() && !hasActiveRunsInScope) {
         try {
+          logRunHydrationDebug("refresh_state_silently.begin");
           await refreshStateSilently();
+          logRunHydrationDebug("refresh_state_silently.done");
         } catch (err) {
+          logRunHydrationDebug("refresh_state_silently.failed", {
+            error: err instanceof Error ? err.message : String(err || ""),
+          });
           if (!parseRunActiveFromError(err)) {
             throw err;
           }
@@ -836,8 +862,13 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
         && shouldEnsurePreview
       ) {
         try {
+          logRunHydrationDebug("ensure_draft_dev_session.begin");
           await ensureDraftDevSession();
+          logRunHydrationDebug("ensure_draft_dev_session.done");
         } catch (err) {
+          logRunHydrationDebug("ensure_draft_dev_session.failed", {
+            error: err instanceof Error ? err.message : String(err || ""),
+          });
           if (!parseRunActiveFromError(err)) {
             throw err;
           }
@@ -845,9 +876,13 @@ export async function consumeRunStream(options: ConsumeRunStreamOptions): Promis
       }
       if (isCurrentAttachment() && isAttachedRun() && !hasActiveRunsInScope && latestResultRevisionId) {
         onSetCurrentRevisionId(latestResultRevisionId);
+        logRunHydrationDebug("set_current_revision_id", {
+          latestResultRevisionId,
+        });
       }
       if (isCurrentAttachment()) {
         await loadChatSessions();
+        logRunHydrationDebug("load_chat_sessions.done");
       }
     };
 

@@ -14,6 +14,7 @@ import websockets
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse, RedirectResponse
+from starlette.requests import ClientDisconnect
 from starlette.websockets import WebSocketState
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -145,12 +146,6 @@ def _build_preview_path_shim(*, target: dict[str, str], preview_route: str) -> s
         "      const nextRoute = normalizeAppPath(next.pathname || '/');\n"
         "      next.pathname = previewBasePath;\n"
         "      next.searchParams.set('preview_route', nextRoute);\n"
-        "      for (const [key, itemValue] of current.searchParams.entries()) {\n"
-        "        if (String(key) === 'preview_route') continue;\n"
-        "        if (String(key) === 'runtime_token' && !next.searchParams.has(key)) {\n"
-        "          next.searchParams.set(key, itemValue);\n"
-        "        }\n"
-        "      }\n"
         "      return next.pathname + next.search + next.hash;\n"
         "    } catch {\n"
         "      return String(value);\n"
@@ -390,11 +385,47 @@ def _should_retry_preview_request(*, method: str, status_code: int | None = None
 def _extract_preview_token(*, request: Request | None = None, websocket: WebSocket | None = None) -> str | None:
     query_params = request.query_params if request is not None else websocket.query_params
     cookies = request.cookies if request is not None else websocket.cookies
+    cookie_token = str(cookies.get(PREVIEW_COOKIE_NAME) or "").strip()
+    if cookie_token:
+        return cookie_token
     query_token = str(query_params.get("runtime_token") or "").strip()
     if query_token:
         return query_token
+    return None
+
+
+def _resolve_preview_token_for_session(
+    *,
+    session: PublishedAppDraftDevSession,
+    request: Request | None = None,
+    websocket: WebSocket | None = None,
+) -> tuple[str, dict[str, Any], str]:
+    query_params = request.query_params if request is not None else websocket.query_params
+    cookies = request.cookies if request is not None else websocket.cookies
     cookie_token = str(cookies.get(PREVIEW_COOKIE_NAME) or "").strip()
-    return cookie_token or None
+    query_token = str(query_params.get("runtime_token") or "").strip()
+    first_auth_error: HTTPException | None = None
+    scope_mismatch_seen = False
+
+    for source, token in (("cookie", cookie_token), ("query", query_token)):
+        if not token:
+            continue
+        try:
+            payload = _validate_preview_token(token)
+        except HTTPException as exc:
+            if first_auth_error is None:
+                first_auth_error = exc
+            continue
+        if str(payload.get("app_id") or "").strip() != str(session.published_app_id):
+            scope_mismatch_seen = True
+            continue
+        return token, payload, source
+
+    if first_auth_error is not None:
+        raise first_auth_error
+    if scope_mismatch_seen:
+        raise HTTPException(status_code=403, detail="Preview token does not match draft session app scope")
+    raise HTTPException(status_code=401, detail="Preview authentication required")
 
 
 def _validate_preview_token(token: str) -> dict[str, Any]:
@@ -502,18 +533,16 @@ def _preview_request_kind(path: str) -> str:
     normalized = str(path or "").strip().lstrip("/")
     if not normalized:
         return "document"
-    if normalized == "@vite/client":
-        return "vite_client"
+    if normalized == "_talmudpedia/status":
+        return "status"
     if normalized == "_talmudpedia/runtime/bootstrap":
         return "runtime_bootstrap"
     if normalized == "_talmudpedia/chat/stream":
         return "chat_stream"
     if normalized == "_talmudpedia/auth/state":
         return "auth_state"
-    if normalized.startswith("src/"):
-        return "source_module"
-    if normalized.startswith("node_modules/"):
-        return "node_module"
+    if normalized.startswith("assets/"):
+        return "asset"
     if normalized.endswith(".css"):
         return "css_asset"
     return "other"
@@ -532,8 +561,8 @@ async def _resolve_preview_target(session: PublishedAppDraftDevSession) -> dict[
     preview = metadata.get("preview") if isinstance(metadata.get("preview"), dict) else {}
     workspace_state = metadata.get("workspace") if isinstance(metadata.get("workspace"), dict) else {}
     services = metadata.get("services") if isinstance(metadata.get("services"), dict) else {}
-    provider = str(metadata.get("provider") or "").strip().lower()
-    sprite_name = str(workspace_state.get("sprite_name") or "").strip()
+    provider = str(metadata.get("provider") or getattr(session, "runtime_backend", None) or "").strip().lower()
+    sprite_name = str(workspace_state.get("sprite_name") or getattr(session, "sandbox_id", None) or "").strip()
     preview_port = services.get("preview_port")
     if provider == "sprite" and sprite_name and preview_port:
         config = load_published_app_sandbox_backend_config()
@@ -554,6 +583,27 @@ async def _resolve_preview_target(session: PublishedAppDraftDevSession) -> dict[
             "extra_headers": json.dumps({}, sort_keys=True),
             "resolver_kind": "sprite_tunnel",
             "provider": provider or "sprite",
+        }
+    if provider == "sprite" and sprite_name:
+        config = load_published_app_sandbox_backend_config()
+        effective_preview_port = int(preview_port or config.sprite_preview_port or 8080)
+        tunnel_base_url = await get_sprite_proxy_tunnel_manager().ensure_tunnel(
+            api_base_url=config.sprite_api_base_url,
+            api_token=str(config.sprite_api_token or "").strip(),
+            sprite_name=sprite_name,
+            remote_host="127.0.0.1",
+            remote_port=effective_preview_port,
+        )
+        return {
+            "upstream_base_url": tunnel_base_url.rstrip("/"),
+            "base_path": str(preview.get("base_path") or PublishedAppDraftDevRuntimeClient.from_env().build_preview_proxy_path(str(session.id))).strip() or "/",
+            "upstream_path": "/",
+            "auth_header_name": "Authorization",
+            "auth_token": "",
+            "auth_token_prefix": "",
+            "extra_headers": json.dumps({}, sort_keys=True),
+            "resolver_kind": "sprite_tunnel_fallback",
+            "provider": "sprite",
         }
     upstream_base_url = str(preview.get("upstream_base_url") or "").strip()
     if not upstream_base_url:
@@ -975,21 +1025,10 @@ def _rewrite_html_preview_content(
         text = content.decode("utf-8")
     except UnicodeDecodeError:
         return content
-
-    def _replace_attr(match: re.Match[str]) -> str:
-        original = str(match.group("path") or "")
-        if original.startswith("//"):
-            return match.group(0)
-        rewritten = _compose_proxy_path(target=target, resource_path=original)
-        return f"{match.group('prefix')}{rewritten}"
-
-    rewritten = _HTML_URL_ATTR_PATTERN.sub(_replace_attr, text)
-    rewritten = _rewrite_inline_vite_paths(target=target, text=rewritten, runtime_token=runtime_token)
-    rewritten = _rewrite_css_url_paths(target=target, text=rewritten, runtime_token=runtime_token)
+    rewritten = text
     if runtime_context is not None:
         rewritten = _inject_runtime_context_into_html(rewritten, runtime_context)
     rewritten = _inject_preview_path_shim(html=rewritten, target=target, preview_route=preview_route)
-    rewritten = _inject_preview_debug_probe(html=rewritten, runtime_token=runtime_token)
     return rewritten.encode("utf-8")
 
 
@@ -1004,37 +1043,15 @@ def _rewrite_text_preview_content(
     preview_route: str,
 ) -> tuple[bytes, bool]:
     normalized_content_type = str(content_type or "").split(";", 1)[0].strip().lower()
-    if not normalized_content_type.startswith(_REWRITABLE_TEXT_PREFIXES):
+    if normalized_content_type != "text/html":
         return content, False
-    try:
-        text = content.decode("utf-8")
-    except UnicodeDecodeError:
-        return content, False
-    if normalized_content_type == "text/html":
-        rewritten = _rewrite_html_preview_content(
-            target=target,
-            content=content,
-            runtime_token=runtime_token,
-            runtime_context=runtime_context,
-            preview_route=preview_route,
-        )
-        return rewritten, rewritten != content
-    rewritten_text = _rewrite_inline_vite_paths(target=target, text=text, runtime_token=runtime_token)
-    rewritten_text = _rewrite_css_url_paths(target=target, text=rewritten_text, runtime_token=runtime_token)
-    rewritten_text = _restore_hmr_owner_paths(text=rewritten_text)
-    is_vite_client = str(path).strip().lstrip("/") == "@vite/client"
-    if normalized_content_type in {"application/javascript", "text/javascript"} and (
-        is_vite_client
-        or "@vite/client" in rewritten_text
-        or "const wsToken =" in rewritten_text
-        or "new WebSocket(`${socketProtocol}://${socketHost}?token=${wsToken}`" in rewritten_text
-    ):
-        rewritten_text = _rewrite_vite_client_hmr_runtime(
-            target=target,
-            text=rewritten_text,
-            runtime_token=runtime_token,
-        )
-    rewritten = rewritten_text.encode("utf-8")
+    rewritten = _rewrite_html_preview_content(
+        target=target,
+        content=content,
+        runtime_token=runtime_token,
+        runtime_context=runtime_context,
+        preview_route=preview_route,
+    )
     return rewritten, rewritten != content
 
 
@@ -1122,6 +1139,54 @@ async def _load_preview_request_context(
     _assert_preview_scope_matches_session(payload, session)
     app, revision = await _load_preview_app_and_revision(db=db, session=session)
     return session, app, revision, payload, token
+
+
+@router.get("/public/apps-builder/draft-dev/sessions/{session_id}/preview/_talmudpedia/status")
+async def builder_preview_status(
+    session_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    session, _, _, _, token = await _load_preview_request_context(db=db, request=request, session_id=session_id)
+    await _touch_preview_session_activity(
+        db=db,
+        session=session,
+        reason="status_poll",
+        throttle_seconds=15,
+    )
+    runtime_service = PublishedAppDraftDevRuntimeService(db)
+    session = await runtime_service.heartbeat_session(session=session)
+    await db.commit()
+    backend_metadata = dict(session.backend_metadata or {}) if isinstance(session.backend_metadata, dict) else {}
+    live_preview = (
+        dict(backend_metadata.get("live_preview") or {})
+        if isinstance(backend_metadata.get("live_preview"), dict)
+        else {"mode": "build_watch_static", "status": "booting"}
+    )
+    apps_builder_trace(
+        "preview.status.responded",
+        domain="preview.proxy",
+        session_id=str(session.id),
+        app_id=str(session.published_app_id),
+        revision_id=str(session.revision_id or "") or None,
+        status=str(live_preview.get("status") or "").strip() or None,
+        current_build_id=str(live_preview.get("current_build_id") or "").strip() or None,
+        last_successful_build_id=str(live_preview.get("last_successful_build_id") or "").strip() or None,
+        updated_at=live_preview.get("updated_at"),
+        debug_build_sequence=live_preview.get("debug_build_sequence"),
+        debug_last_trigger_reason=str(live_preview.get("debug_last_trigger_reason") or "").strip() or None,
+        debug_last_trigger_revision_token=str(live_preview.get("debug_last_trigger_revision_token") or "").strip() or None,
+        debug_last_trigger_workspace_fingerprint=str(live_preview.get("debug_last_trigger_workspace_fingerprint") or "").strip() or None,
+        debug_last_phase=str(live_preview.get("debug_last_phase") or "").strip() or None,
+        debug_last_phase_at=live_preview.get("debug_last_phase_at"),
+        debug_recent_events=live_preview.get("debug_recent_events"),
+        error=str(live_preview.get("error") or "").strip() or None,
+        token_present=bool(token),
+    )
+    response = JSONResponse(live_preview)
+    if token:
+        _set_preview_cookie(response, request=request, token=token)
+    return response
 
 
 @router.get("/public/apps-builder/draft-dev/sessions/{session_id}/preview/_talmudpedia/auth/state")
@@ -1504,12 +1569,7 @@ async def proxy_builder_preview(
     session = await _load_session(db=db, session_id=session_id)
     query_token = str(request.query_params.get("runtime_token") or "").strip()
     cookie_token = str(request.cookies.get(PREVIEW_COOKIE_NAME) or "").strip()
-    token_source = "query" if query_token else "cookie" if cookie_token else "missing"
-    token = query_token or cookie_token or None
-    if not token:
-        raise HTTPException(status_code=401, detail="Preview authentication required")
-    payload = _validate_preview_token(token)
-    _assert_preview_scope_matches_session(payload, session)
+    token, payload, token_source = _resolve_preview_token_for_session(session=session, request=request)
     await _touch_preview_session_activity(
         db=db,
         session=session,
@@ -1569,7 +1629,23 @@ async def proxy_builder_preview(
             app=app,
             revision=revision,
         )
-    body = await request.body()
+    body = b""
+    if request.method.upper() not in {"GET", "HEAD"}:
+        try:
+            body = await request.body()
+        except ClientDisconnect:
+            apps_builder_trace(
+                "preview.proxy.client_disconnected",
+                domain="preview.proxy",
+                session_id=str(session.id),
+                app_id=str(session.published_app_id),
+                revision_id=str(session.revision_id or ""),
+                sandbox_id=str(getattr(session, "sandbox_id", "") or ""),
+                method=request.method,
+                path=path,
+                request_kind=request_kind,
+            )
+            return Response(status_code=499)
     try:
         try:
             upstream = await _request_preview_upstream(
@@ -1709,199 +1785,14 @@ async def proxy_builder_preview_websocket(
     path: str = "",
 ) -> None:
     session = await _load_session(db=db, session_id=session_id)
-    request_kind = _preview_request_kind(path)
     apps_builder_trace(
-        "preview.proxy.websocket_requested",
+        "preview.proxy.websocket_rejected",
         domain="preview.proxy",
         session_id=str(session.id),
         app_id=str(session.published_app_id),
         revision_id=str(session.revision_id or ""),
         sandbox_id=str(getattr(session, "sandbox_id", "") or ""),
         path=path,
-        request_kind=request_kind,
-        query_keys=sorted(str(key) for key in websocket.query_params.keys()),
-        has_cookie=bool(str(websocket.cookies.get(PREVIEW_COOKIE_NAME) or "").strip()),
+        reason="builder_preview_static_mode",
     )
-    query_token = str(websocket.query_params.get("runtime_token") or "").strip()
-    cookie_token = str(websocket.cookies.get(PREVIEW_COOKIE_NAME) or "").strip()
-    token_source = "query" if query_token else "cookie" if cookie_token else "missing"
-    token = query_token or cookie_token or None
-    if not token:
-        apps_builder_trace(
-            "preview.proxy.websocket_auth_missing",
-            domain="preview.proxy",
-            session_id=str(session.id),
-            app_id=str(session.published_app_id),
-            revision_id=str(session.revision_id or ""),
-            sandbox_id=str(getattr(session, "sandbox_id", "") or ""),
-            path=path,
-            request_kind=request_kind,
-            query_keys=sorted(str(key) for key in websocket.query_params.keys()),
-            has_cookie=bool(str(websocket.cookies.get(PREVIEW_COOKIE_NAME) or "").strip()),
-        )
-        await websocket.close(code=4401)
-        return
-    payload = _validate_preview_token(token)
-    _assert_preview_scope_matches_session(payload, session)
-    await _touch_preview_session_activity(
-        db=db,
-        session=session,
-        reason="websocket_open",
-        throttle_seconds=30,
-    )
-    target = await _resolve_preview_target(session)
-    apps_builder_trace(
-        "preview.proxy.websocket_open",
-        domain="preview.proxy",
-        session_id=str(session.id),
-        app_id=str(session.published_app_id),
-        revision_id=str(session.revision_id or ""),
-        sandbox_id=str(getattr(session, "sandbox_id", "") or ""),
-        path=path,
-        request_kind=request_kind,
-        token_source=token_source,
-        resolver_kind=str(target.get("resolver_kind") or ""),
-        provider=str(target.get("provider") or ""),
-    )
-    upstream_url = _upstream_url(
-        path=path,
-        query_params=websocket.query_params,
-        target=target,
-    )
-    parsed = urlparse(upstream_url)
-    ws_scheme = "wss" if parsed.scheme == "https" else "ws"
-    ws_url = urlunparse(parsed._replace(scheme=ws_scheme))
-    extra_headers, subprotocols = _websocket_proxy_connect_options(websocket, target=target)
-    upstream = None
-    upstream_message_count = 0
-    client_message_count = 0
-    websocket_accepted = False
-    try:
-        last_exc: Exception | None = None
-        for attempt in range(1, _PREVIEW_WEBSOCKET_CONNECT_ATTEMPTS + 1):
-            try:
-                upstream = await websockets.connect(
-                    ws_url,
-                    additional_headers=extra_headers,
-                    subprotocols=subprotocols or None,
-                    open_timeout=_PREVIEW_WEBSOCKET_OPEN_TIMEOUT_SECONDS,
-                    close_timeout=5.0,
-                    ping_interval=20.0,
-                    ping_timeout=20.0,
-                )
-                break
-            except Exception as exc:
-                last_exc = exc
-                apps_builder_trace(
-                    "preview.proxy.websocket_retry",
-                    domain="preview.proxy",
-                    session_id=str(session.id),
-                    app_id=str(session.published_app_id),
-                    revision_id=str(session.revision_id or ""),
-                    sandbox_id=str(getattr(session, "sandbox_id", "") or ""),
-                    path=path,
-                    attempt=attempt,
-                    max_attempts=_PREVIEW_WEBSOCKET_CONNECT_ATTEMPTS,
-                    error=str(exc),
-                    error_type=exc.__class__.__name__,
-                )
-                if attempt >= _PREVIEW_WEBSOCKET_CONNECT_ATTEMPTS:
-                    raise
-                await asyncio.sleep(min(0.5 * attempt, 1.0))
-        if upstream is None:
-            raise RuntimeError(str(last_exc or "Failed to connect upstream preview websocket"))
-
-        await websocket.accept(subprotocol=getattr(upstream, "subprotocol", None))
-        websocket_accepted = True
-        try:
-            async def _client_to_upstream() -> None:
-                nonlocal client_message_count
-                while True:
-                    message = await websocket.receive()
-                    if message.get("type") == "websocket.disconnect":
-                        break
-                    if message.get("text") is not None:
-                        client_message_count += 1
-                        await upstream.send(message["text"])
-                    elif message.get("bytes") is not None:
-                        client_message_count += 1
-                        await upstream.send(message["bytes"])
-
-            async def _upstream_to_client() -> None:
-                nonlocal upstream_message_count
-                async for message in upstream:
-                    upstream_message_count += 1
-                    if upstream_message_count <= 12:
-                        apps_builder_trace(
-                            "preview.proxy.websocket_frame",
-                            domain="preview.proxy",
-                            session_id=str(session.id),
-                            app_id=str(session.published_app_id),
-                            revision_id=str(session.revision_id or ""),
-                            sandbox_id=str(getattr(session, "sandbox_id", "") or ""),
-                            path=path,
-                            direction="upstream_to_client",
-                            ordinal=upstream_message_count,
-                            **_summarize_websocket_message(message),
-                        )
-                    if isinstance(message, bytes):
-                        await websocket.send_bytes(message)
-                    else:
-                        await websocket.send_text(message)
-
-            client_task = asyncio.create_task(_client_to_upstream())
-            upstream_task = asyncio.create_task(_upstream_to_client())
-            done, pending = await asyncio.wait(
-                {client_task, upstream_task},
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-            for task in pending:
-                task.cancel()
-            for task in done:
-                exc = task.exception()
-                if exc and not isinstance(exc, WebSocketDisconnect):
-                    raise exc
-        finally:
-            await upstream.close()
-    except WebSocketDisconnect:
-        apps_builder_trace(
-            "preview.proxy.websocket_closed",
-            domain="preview.proxy",
-            session_id=str(session.id),
-            app_id=str(session.published_app_id),
-            revision_id=str(session.revision_id or ""),
-            sandbox_id=str(getattr(session, "sandbox_id", "") or ""),
-            path=path,
-            reason="client_disconnect",
-            upstream_message_count=upstream_message_count,
-            client_message_count=client_message_count,
-        )
-        return
-    except Exception as exc:
-        apps_builder_trace(
-            "preview.proxy.websocket_failed",
-            domain="preview.proxy",
-            session_id=str(session.id),
-            app_id=str(session.published_app_id),
-            revision_id=str(session.revision_id or ""),
-            sandbox_id=str(getattr(session, "sandbox_id", "") or ""),
-            path=path,
-            error=str(exc),
-            error_type=exc.__class__.__name__,
-            upstream_message_count=upstream_message_count,
-            client_message_count=client_message_count,
-        )
-        await _close_websocket_if_possible(websocket, code=1011, accepted=websocket_accepted)
-    else:
-        apps_builder_trace(
-            "preview.proxy.websocket_closed",
-            domain="preview.proxy",
-            session_id=str(session.id),
-            app_id=str(session.published_app_id),
-            revision_id=str(session.revision_id or ""),
-            sandbox_id=str(getattr(session, "sandbox_id", "") or ""),
-            path=path,
-            reason="completed",
-            upstream_message_count=upstream_message_count,
-            client_message_count=client_message_count,
-        )
+    await websocket.close(code=4404)

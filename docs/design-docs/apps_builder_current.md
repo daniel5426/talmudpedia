@@ -1,6 +1,6 @@
 # Apps Builder Current
 
-Last Updated: 2026-03-22
+Last Updated: 2026-04-16
 
 This document is the canonical current-state overview for the Apps Builder system.
 
@@ -12,10 +12,10 @@ Apps Builder covers draft editing, preview runtime, coding-agent execution, revi
 
 - Draft mode uses one shared draft-dev workspace per app with per-user attachment sessions.
 - The shared live draft-dev workspace is the canonical editable runtime surface; saved revisions are checkpoints, not workspace drivers.
-- Preview is a live Vite dev server running directly against the shared draft-dev workspace.
-- Sprite draft-preview startup now blocks on Vite preview readiness only and defers `opencode` service startup until the coding-agent path actually needs it.
-- Sprite preview uses Vite watch polling, not a custom preview-build snapshot watcher.
-- Coding-agent runs execute against the canonical shared workspace watched by the Vite preview runtime.
+- Preview is a static builder-preview pipeline backed by one persistent Vite/Rollup watch process plus a tiny static file server.
+- Sprite draft-preview startup now blocks on the first successful static preview build and defers `opencode` service startup until the coding-agent path actually needs it.
+- Sprite preview uses real Vite/Rollup watch mode with persistent graph reuse, not a custom poll-and-fresh-build loop.
+- Coding-agent runs execute against the canonical shared workspace watched by the persistent preview build pipeline.
 - Live manual code edits are applied incrementally into the shared draft-dev workspace instead of full-workspace resyncs on every debounce.
 - Manual code edits save through the draft-dev workspace, then materialize a durable draft revision from a cached workspace-build record keyed by the current workspace fingerprint.
 - Published runtime remains static artifact delivery.
@@ -28,8 +28,8 @@ Apps Builder covers draft editing, preview runtime, coding-agent execution, revi
 - Durable dist assets still use the published bundle-storage contract, but local Sprite/dev runtimes now fall back to filesystem-backed bundle storage when the configured local S3 endpoint is unavailable.
 - Revision materialization updates draft revision pointers without reattaching the live draft-dev session to the saved revision snapshot.
 - Session `revision_id` remains lineage metadata for the live workspace and no longer drives live workspace replacement during coding-run startup.
-- The builder preview proxy serves rewritten Vite dev modules and now explicitly rewrites the `@vite/client` websocket target to the session-scoped preview path so HMR can flow through the proxy transport instead of requiring manual reloads.
-- The preview proxy also preserves Vite HMR owner ids such as `__vite__createHotContext("/src/...")`, rewrites the Vite client base path to the session-scoped preview path, and rewrites proxied asset/module paths so hot-update fetches resolve through the preview proxy instead of leaking to site-root `/src/*` or `/node_modules/*` URLs.
+- The builder preview proxy now serves static preview assets from the promoted current build and exposes `/_talmudpedia/status` directly from backend heartbeat metadata.
+- Preview rebuild freshness is driven by watcher status while code-tab freshness remains driven by `live_workspace_snapshot` and `workspace_revision_token`.
 - Publish only flips `current_published_revision_id` to an already materialized revision; it does not build or create a new revision.
 - The previous template catalog was removed, but the repo now includes a new starter pack at `backend/app/templates/published_apps/classic-chat/`.
 - Template infrastructure remains active in backend services and app metadata, and the system is moving toward a single canonical starter rather than a broad multi-template catalog.
@@ -82,6 +82,7 @@ Apps Builder covers draft editing, preview runtime, coding-agent execution, revi
 - The preview iframe is expected to keep a stable URL across routine auth-token refreshes; token rotation should not force full iframe reloads.
 - The builder preview UI now shows a structured warmup/loading state during draft-dev bootstrap instead of a plain unavailable message while no preview URL is attached yet.
 - Draft preview session responses now expose `workspace_revision_token` instead of preview-build ids/sequences.
+- Draft preview session responses keep `live_preview`, `live_workspace_snapshot`, and `workspace_revision_token` as separate contracts; revision-token changes are no longer preview rebuild triggers.
 - Coding-agent APIs live under `/admin/apps/{app_id}/coding-agent/v2/*`.
 - Version preview inspection lives at `GET /admin/apps/{app_id}/versions/{version_id}/preview-runtime`.
 - Publish job status lives at `GET /admin/apps/{app_id}/publish/jobs/{job_id}`.
@@ -100,8 +101,11 @@ Apps Builder covers draft editing, preview runtime, coding-agent execution, revi
 - `docs/product-specs/published_apps_spec.md`
 - `docs/product-specs/runtime_sdk_host_anywhere_spec.md`
 - `docs/design-docs/coding_agent_runtime_current.md`
-- `docs/design-docs/apps_builder_live_workspace_hmr_architecture.md`
 - `docs/references/classic_chat_template_reference.md`
+
+## Historical Context
+
+- `docs/design-docs/apps_builder_live_workspace_hmr_architecture.md` is retained as a historical note for the retired Vite dev-server/HMR design.
 
 ## Runtime Surface Note
 

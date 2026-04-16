@@ -18,6 +18,7 @@ type BuilderPreviewLoadingStateOptions = {
   lifecyclePhase: "idle" | "ensuring" | "syncing" | "running" | "recovering" | "error";
   draftDevStatus: DraftDevSessionStatus | null;
   transportStatus: PreviewTransportStatus | null;
+  livePreviewStatus?: "booting" | "building" | "ready" | "failed_keep_last_good" | "failed_no_build" | "recovering" | null;
   loadingMessage?: string | null;
   errorMessage?: string | null;
 };
@@ -51,8 +52,9 @@ export function buildBuilderPreviewLoadingState(
 ): PreviewLoadingState | null {
   const detail = String(options.loadingMessage || "").trim() || "Loading preview...";
   const errorDetail = String(options.errorMessage || "").trim() || "Draft preview session failed.";
+  const livePreviewFailed = options.livePreviewStatus === "failed_keep_last_good" || options.livePreviewStatus === "failed_no_build";
 
-  if (options.transportStatus === "failed" || options.lifecyclePhase === "error") {
+  if (options.transportStatus === "failed" || options.lifecyclePhase === "error" || options.livePreviewStatus === "failed_no_build") {
     return {
       title: "Preview failed",
       detail: errorDetail,
@@ -60,7 +62,7 @@ export function buildBuilderPreviewLoadingState(
     };
   }
 
-  if (options.transportStatus === "reconnecting" || options.lifecyclePhase === "recovering") {
+  if (options.transportStatus === "reconnecting" || options.lifecyclePhase === "recovering" || options.livePreviewStatus === "recovering") {
     return {
       title: "Recovering live preview",
       detail,
@@ -69,6 +71,13 @@ export function buildBuilderPreviewLoadingState(
   }
 
   if (options.transportStatus === "booting") {
+    if (options.livePreviewStatus === "booting" || options.livePreviewStatus === "building") {
+      return {
+        title: options.livePreviewStatus === "booting" ? "Starting preview runtime" : "Building first preview",
+        detail,
+        steps: createSteps(2),
+      };
+    }
     return {
       title: "Connecting live preview",
       detail,
@@ -109,8 +118,8 @@ export function buildBuilderPreviewLoadingState(
 
   if (options.draftDevStatus === "building" || options.draftDevStatus === "stopping") {
     return {
-      title: "Starting preview runtime",
-      detail,
+      title: livePreviewFailed ? "Preview build failed" : options.livePreviewStatus === "building" ? "Building preview" : "Starting preview runtime",
+      detail: livePreviewFailed ? errorDetail : detail,
       steps: createSteps(2),
     };
   }

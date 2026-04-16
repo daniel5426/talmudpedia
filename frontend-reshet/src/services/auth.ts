@@ -1,7 +1,11 @@
 import { httpClient } from "./http";
 import type { AuthSessionResponse, User } from "./types";
 
+const AUTH_SESSION_TIMEOUT_MS = 8000;
+
 class AuthService {
+  private currentSessionPromise: Promise<AuthSessionResponse> | null = null;
+
   async login(email: string, password: string): Promise<AuthSessionResponse> {
     const formData = new FormData();
     formData.append("username", email);
@@ -22,7 +26,23 @@ class AuthService {
   }
 
   async getCurrentSession(): Promise<AuthSessionResponse> {
-    return httpClient.get<AuthSessionResponse>("/auth/session");
+    if (this.currentSessionPromise) {
+      return this.currentSessionPromise;
+    }
+
+    const request = httpClient.get<AuthSessionResponse>("/auth/session", {
+      clearSessionOn401: true,
+      timeoutMs: AUTH_SESSION_TIMEOUT_MS,
+    });
+    this.currentSessionPromise = request;
+
+    try {
+      return await request;
+    } finally {
+      if (this.currentSessionPromise === request) {
+        this.currentSessionPromise = null;
+      }
+    }
   }
 
   async getProfile(): Promise<User> {

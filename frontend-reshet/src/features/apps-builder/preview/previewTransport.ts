@@ -45,9 +45,11 @@ export function buildBuilderPreviewDocumentUrl(options: {
   route: string;
   runtimeToken?: string | null;
   reloadToken?: number;
+  buildId?: string | null;
 }): string {
   const normalizedRoute = normalizeBuilderPreviewRoute(options.route) || "/";
   const reloadToken = Number(options.reloadToken || 0);
+  const buildId = String(options.buildId || "").trim();
   try {
     const parsed = new URL(options.baseUrl);
     parsed.searchParams.set("preview_route", normalizedRoute);
@@ -56,12 +58,18 @@ export function buildBuilderPreviewDocumentUrl(options: {
     } else {
       parsed.searchParams.delete("__reload");
     }
+    if (buildId) {
+      parsed.searchParams.set("__build", buildId);
+    } else {
+      parsed.searchParams.delete("__build");
+    }
     return appendPreviewRuntimeToken(parsed.toString(), options.runtimeToken);
   } catch {
     const separator = options.baseUrl.includes("?") ? "&" : "?";
     const reloadSuffix = reloadToken > 0 ? `&__reload=${reloadToken}` : "";
+    const buildSuffix = buildId ? `&__build=${encodeURIComponent(buildId)}` : "";
     return appendPreviewRuntimeToken(
-      `${options.baseUrl}${separator}preview_route=${encodeURIComponent(normalizedRoute)}${reloadSuffix}`,
+      `${options.baseUrl}${separator}preview_route=${encodeURIComponent(normalizedRoute)}${reloadSuffix}${buildSuffix}`,
       options.runtimeToken,
     );
   }

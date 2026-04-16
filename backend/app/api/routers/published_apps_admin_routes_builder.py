@@ -224,6 +224,38 @@ async def get_builder_state(
             app_id=app.id,
             user_id=actor_id,
         )
+        if draft_dev_session is not None:
+            session_status = str(getattr(draft_dev_session.status, "value", draft_dev_session.status) or "").strip().lower()
+            if session_status in {
+                PublishedAppDraftDevSessionStatus.starting.value,
+                PublishedAppDraftDevSessionStatus.building.value,
+                PublishedAppDraftDevSessionStatus.serving.value,
+                PublishedAppDraftDevSessionStatus.degraded.value,
+                PublishedAppDraftDevSessionStatus.running.value,
+                PublishedAppDraftDevSessionStatus.stopping.value,
+            }:
+                runtime_service = PublishedAppDraftDevRuntimeService(db)
+                try:
+                    draft_dev_session = await runtime_service.heartbeat_session(session=draft_dev_session)
+                    await db.commit()
+                    apps_builder_trace(
+                        "builder.state.draft_dev_refreshed",
+                        domain="draft_dev.api",
+                        app_id=str(app.id),
+                        user_id=str(actor_id),
+                        session_id=str(draft_dev_session.id),
+                        status=str(getattr(draft_dev_session.status, "value", draft_dev_session.status) or ""),
+                        sandbox_id=str(draft_dev_session.sandbox_id or "") or None,
+                    )
+                except PublishedAppDraftDevRuntimeDisabled:
+                    apps_builder_trace(
+                        "builder.state.draft_dev_refresh_skipped",
+                        domain="draft_dev.api",
+                        app_id=str(app.id),
+                        user_id=str(actor_id),
+                        session_id=str(draft_dev_session.id),
+                        reason="runtime_disabled",
+                    )
 
     preview_token: Optional[str] = None
     if actor_id and draft:
@@ -433,6 +465,11 @@ async def sync_builder_draft_dev_session(
             for path, content in dict(existing_snapshot.get("files") or draft.files or {}).items()
         }
         next_entry_file = str(existing_snapshot.get("entry_file") or draft.entry_file or "").strip() or draft.entry_file
+        next_files, next_entry_file = _apply_patch_operations(
+            next_files,
+            next_entry_file,
+            payload.operations,
+        )
         for operation in payload.operations:
             if operation.op == "upsert_file" and operation.path:
                 normalized_path = _normalize_builder_path(operation.path)
@@ -464,12 +501,7 @@ async def sync_builder_draft_dev_session(
                     from_path=from_path,
                     to_path=to_path,
                 )
-                if from_path in next_files:
-                    next_files[to_path] = next_files.pop(from_path)
             elif operation.op == "set_entry_file" and operation.entry_file:
-                normalized_entry_file = _normalize_builder_path(operation.entry_file)
-                _assert_builder_path_allowed(normalized_entry_file, field="operations.entry_file")
-                next_entry_file = normalized_entry_file
                 continue
             else:
                 continue

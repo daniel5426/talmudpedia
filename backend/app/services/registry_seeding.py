@@ -34,6 +34,7 @@ from app.services.platform_architect_worker_tools import (
     ensure_platform_architect_worker_tools,
 )
 from app.services.platform_native_tools import PLATFORM_NATIVE_FUNCTIONS
+from app.services.file_space_tools import ensure_file_space_tools
 from app.services.artifact_coding_agent_profile import ensure_artifact_coding_agent_profile
 
 # Backward-compatible exports for tests and internal callers.
@@ -483,6 +484,14 @@ async def seed_builtin_tool_templates(db):
 
     await db.commit()
     return seeded
+
+
+async def seed_file_space_tools(db):
+    await _acquire_registry_seed_lock(db, scope="file_space_tools")
+    await _normalize_tool_status_values(db)
+    await _normalize_tool_impl_values(db)
+    await ensure_file_space_tools(db)
+    await db.commit()
 
 
 async def seed_platform_architect_domain_tools(db) -> dict[str, str]:

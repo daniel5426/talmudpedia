@@ -11,6 +11,7 @@ _TOOL_FUNCTIONS: dict[str, Callable[..., Any]] = {}
 _BOOTSTRAPPED_MODULES: set[str] = set()
 _BOOTSTRAP_LOCK = Lock()
 _DEFAULT_TOOL_FUNCTION_MODULES: tuple[str, ...] = (
+    "app.services.file_space_tools",
     "app.services.published_app_coding_agent_tools",
     "app.services.platform_native_tools",
     "app.services.artifact_coding_agent_tools",
@@ -18,6 +19,7 @@ _DEFAULT_TOOL_FUNCTION_MODULES: tuple[str, ...] = (
     "app.services.platform_architect_worker_tools",
 )
 _TOOL_FUNCTION_MODULE_PREFIXES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("files_", ("app.services.file_space_tools",)),
     ("coding_agent_", ("app.services.published_app_coding_agent_tools",)),
     ("platform_native_", ("app.services.platform_native_tools",)),
     (

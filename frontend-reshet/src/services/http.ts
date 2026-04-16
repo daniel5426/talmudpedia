@@ -11,6 +11,21 @@ export class HttpRequestError extends Error {
   }
 }
 
+export class HttpRequestTimeoutError extends Error {
+  constructor(
+    message: string,
+    public readonly timeoutMs: number,
+  ) {
+    super(message);
+    this.name = "HttpRequestTimeoutError";
+  }
+}
+
+type HttpRequestInit = RequestInit & {
+  clearSessionOn401?: boolean;
+  timeoutMs?: number;
+};
+
 export function getHttpErrorDetail(error: unknown): any | null {
   if (error instanceof HttpRequestError) {
     return error.detail;
@@ -85,15 +100,38 @@ class HttpClient {
     return nextHeaders;
   }
 
-  async request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  async request<T>(path: string, init: HttpRequestInit = {}): Promise<T> {
     const headers = this.buildHeaders(init.headers, init.body ?? null);
     const url = `${this.baseUrl}${path}`;
+    const { clearSessionOn401, timeoutMs, signal, ...requestInit } = init;
+    const controller = timeoutMs ? new AbortController() : null;
+    let didTimeout = false;
+    const timeoutId =
+      controller && timeoutMs
+        ? globalThis.setTimeout(() => {
+            didTimeout = true;
+            controller.abort(`Request timed out after ${timeoutMs}ms`);
+          }, timeoutMs)
+        : null;
+
+    if (signal && controller) {
+      if (signal.aborted) {
+        controller.abort(signal.reason);
+      } else {
+        signal.addEventListener("abort", () => controller.abort(signal.reason), { once: true });
+      }
+    }
 
     try {
-      const response = await fetch(url, { ...init, headers, credentials: "include" });
+      const response = await fetch(url, {
+        ...requestInit,
+        headers,
+        credentials: "include",
+        signal: controller?.signal ?? signal,
+      });
 
       if (!response.ok) {
-        if (response.status === 401) {
+        if (response.status === 401 && clearSessionOn401) {
           useAuthStore.getState().clearSession();
         }
         let message: any = "Request failed";
@@ -128,41 +166,51 @@ class HttpClient {
       }
       return response.json();
     } catch (error) {
+      if (didTimeout) {
+        throw new HttpRequestTimeoutError(
+          `Request timed out for ${url} after ${timeoutMs}ms`,
+          timeoutMs ?? 0,
+        );
+      }
       const errorMessage = error instanceof Error ? error.message : String(error || "");
       if (!this.shouldSuppressErrorLogging(errorMessage)) {
         console.error(`[HttpClient] Request failed for ${url}:`, error);
       }
       throw error;
+    } finally {
+      if (timeoutId !== null) {
+        globalThis.clearTimeout(timeoutId);
+      }
     }
   }
 
-  get<T>(path: string, init?: RequestInit) {
+  get<T>(path: string, init?: HttpRequestInit) {
     return this.request<T>(path, { ...init, method: "GET" });
   }
 
-  post<T>(path: string, body?: any, init?: RequestInit) {
+  post<T>(path: string, body?: any, init?: HttpRequestInit) {
     const preparedBody =
       body instanceof FormData ? body : body !== undefined ? JSON.stringify(body) : undefined;
     return this.request<T>(path, { ...init, method: "POST", body: preparedBody });
   }
 
-  put<T>(path: string, body?: any, init?: RequestInit) {
+  put<T>(path: string, body?: any, init?: HttpRequestInit) {
     const preparedBody =
       body instanceof FormData ? body : body !== undefined ? JSON.stringify(body) : undefined;
     return this.request<T>(path, { ...init, method: "PUT", body: preparedBody });
   }
 
-  patch<T>(path: string, body?: any, init?: RequestInit) {
+  patch<T>(path: string, body?: any, init?: HttpRequestInit) {
     const preparedBody =
       body instanceof FormData ? body : body !== undefined ? JSON.stringify(body) : undefined;
     return this.request<T>(path, { ...init, method: "PATCH", body: preparedBody });
   }
 
-  delete<T>(path: string, init?: RequestInit) {
+  delete<T>(path: string, init?: HttpRequestInit) {
     return this.request<T>(path, { ...init, method: "DELETE" });
   }
 
-  async requestRaw(path: string, init: RequestInit = {}): Promise<Response> {
+  async requestRaw(path: string, init: HttpRequestInit = {}): Promise<Response> {
     const headers = this.buildHeaders(init.headers, init.body ?? null);
     const url = `${this.baseUrl}${path}`;
     return fetch(url, { ...init, headers, credentials: "include" });

@@ -194,7 +194,7 @@ class PublishedAppDraftDevRuntimeService:
                 **existing_preview,
                 **refreshed_preview,
             }
-        for key in ("workspace", "services", "preview_runtime", "live_workspace_snapshot"):
+        for key in ("workspace", "services", "preview_runtime", "live_workspace_snapshot", "live_preview"):
             existing_value = existing.get(key)
             refreshed_value = refreshed.get(key)
             if isinstance(existing_value, dict) and isinstance(refreshed_value, dict):
@@ -510,6 +510,15 @@ class PublishedAppDraftDevRuntimeService:
         session.last_error = str(exc)
         return session
 
+    def _mark_workspace_serving(
+        self,
+        workspace: PublishedAppDraftWorkspace,
+        *,
+        last_error: str | None = None,
+    ) -> None:
+        workspace.status = PublishedAppDraftWorkspaceStatus.serving
+        workspace.last_error = str(last_error or "").strip() or None
+
     async def _reconcile_remote_workspace_best_effort(self, *, workspace: PublishedAppDraftWorkspace) -> None:
         if not bool(getattr(self.client, "is_remote_enabled", False)):
             return
@@ -582,16 +591,15 @@ class PublishedAppDraftDevRuntimeService:
             else {}
         )
         preview_runtime_error = str(preview_runtime.get("last_error") or "").strip()
-        session.last_error = (
-            workspace.last_error
-            if workspace.status == PublishedAppDraftWorkspaceStatus.degraded
-            else (preview_runtime_error or None)
-        )
-        session.status = (
-            PublishedAppDraftDevSessionStatus.degraded
-            if workspace.status == PublishedAppDraftWorkspaceStatus.degraded
-            else PublishedAppDraftDevSessionStatus.serving
-        )
+        if workspace.status == PublishedAppDraftWorkspaceStatus.error:
+            session.last_error = workspace.last_error
+            session.status = PublishedAppDraftDevSessionStatus.error
+        elif workspace.status == PublishedAppDraftWorkspaceStatus.degraded:
+            session.last_error = workspace.last_error
+            session.status = PublishedAppDraftDevSessionStatus.degraded
+        else:
+            session.last_error = preview_runtime_error or None
+            session.status = PublishedAppDraftDevSessionStatus.serving
         return session
 
     async def _start_or_sync_workspace(
@@ -783,9 +791,21 @@ class PublishedAppDraftDevRuntimeService:
         except PublishedAppDraftDevRuntimeClientError as exc:
             if not must_restartable_error(exc):
                 self._mark_workspace_degraded(workspace, exc)
-                return self._mark_session_degraded(session, exc)
+                return self._attach_session(
+                    session=session,
+                    workspace=workspace,
+                    revision=revision,
+                    dependency_hash=dependency_hash,
+                    now=now,
+                )
             self._mark_workspace_error(workspace, exc)
-            return self._mark_session_error(session, exc)
+            return self._attach_session(
+                session=session,
+                workspace=workspace,
+                revision=revision,
+                dependency_hash=dependency_hash,
+                now=now,
+            )
 
         attached = self._attach_session(
             session=session,
@@ -895,9 +915,23 @@ class PublishedAppDraftDevRuntimeService:
                     )
                 if self._is_transient_remote_error(exc):
                     self._mark_workspace_degraded(workspace, exc)
-                    return self._mark_session_degraded(session, exc)
+                    return self._attach_session(
+                        session=session,
+                        workspace=workspace,
+                        revision=revision,
+                        dependency_hash=str(workspace.dependency_hash or session.dependency_hash or ""),
+                        now=now,
+                        preserve_live_revision=True,
+                    )
                 self._mark_workspace_error(workspace, exc)
-                return self._mark_session_error(session, exc)
+                return self._attach_session(
+                    session=session,
+                    workspace=workspace,
+                    revision=revision,
+                    dependency_hash=str(workspace.dependency_hash or session.dependency_hash or ""),
+                    now=now,
+                    preserve_live_revision=True,
+                )
 
             if isinstance(heartbeat_result.get("backend_metadata"), dict):
                 workspace.backend_metadata = self._merge_backend_metadata(
@@ -905,6 +939,7 @@ class PublishedAppDraftDevRuntimeService:
                     refreshed_metadata=heartbeat_result.get("backend_metadata"),
                     preview_base_path=str(workspace.preview_url or "").strip() or str(session.preview_url or "").strip() or "/",
                 )
+            self._mark_workspace_serving(workspace)
             await self._restore_live_workspace_snapshot_from_runtime(
                 app_id=app.id,
                 workspace=workspace,
@@ -1016,9 +1051,21 @@ class PublishedAppDraftDevRuntimeService:
                 )
             if self._is_transient_remote_error(exc):
                 self._mark_workspace_degraded(workspace, exc)
-                return self._mark_session_degraded(session, exc)
+                return self._attach_session(
+                    session=session,
+                    workspace=workspace,
+                    revision=revision,
+                    dependency_hash=str(workspace.dependency_hash or session.dependency_hash or ""),
+                    now=now,
+                )
             self._mark_workspace_error(workspace, exc)
-            return self._mark_session_error(session, exc)
+            return self._attach_session(
+                session=session,
+                workspace=workspace,
+                revision=revision,
+                dependency_hash=str(workspace.dependency_hash or session.dependency_hash or ""),
+                now=now,
+            )
 
         if isinstance(heartbeat_result.get("backend_metadata"), dict):
             workspace.backend_metadata = self._merge_backend_metadata(
@@ -1026,6 +1073,7 @@ class PublishedAppDraftDevRuntimeService:
                 refreshed_metadata=heartbeat_result.get("backend_metadata"),
                 preview_base_path=str(workspace.preview_url or "").strip() or str(session.preview_url or "").strip() or "/",
             )
+        self._mark_workspace_serving(workspace)
         await self._restore_live_workspace_snapshot_from_runtime(
             app_id=app.id,
             workspace=workspace,
@@ -1207,19 +1255,39 @@ class PublishedAppDraftDevRuntimeService:
             sandbox_id=str(session.sandbox_id or "") or None,
             status=str(getattr(session.status, "value", session.status) or ""),
         )
+        workspace: PublishedAppDraftWorkspace | None = None
         if session.draft_workspace_id is None:
-            session.status = PublishedAppDraftDevSessionStatus.error
-            session.last_error = "Draft dev session is detached from the shared workspace."
+            workspace = await self.get_workspace(app_id=session.published_app_id)
+            if workspace is None:
+                session.status = PublishedAppDraftDevSessionStatus.error
+                session.last_error = "Draft dev session is detached from the shared workspace."
+                apps_builder_trace(
+                    "session.heartbeat.runtime.detached",
+                    domain="draft_dev.runtime",
+                    app_id=str(session.published_app_id),
+                    user_id=str(session.user_id),
+                    session_id=str(session.id),
+                )
+                return session
+            session.draft_workspace_id = workspace.id
+            session.sandbox_id = self._normalize_runtime_sandbox_id(workspace.sandbox_id)
+            session.runtime_generation = self._runtime_generation_value(workspace)
+            session.runtime_backend = str(workspace.runtime_backend or self.client.backend_name)
+            session.backend_metadata = dict(workspace.backend_metadata or {})
+            if not str(session.preview_url or "").strip():
+                session.preview_url = self.client.build_preview_proxy_path(str(session.id))
             apps_builder_trace(
-                "session.heartbeat.runtime.detached",
+                "session.heartbeat.runtime.reattached",
                 domain="draft_dev.runtime",
                 app_id=str(session.published_app_id),
                 user_id=str(session.user_id),
                 session_id=str(session.id),
+                workspace_id=str(workspace.id),
+                sandbox_id=str(workspace.sandbox_id or "") or None,
             )
-            return session
+        else:
+            workspace = await self.db.get(PublishedAppDraftWorkspace, session.draft_workspace_id)
 
-        workspace = await self.db.get(PublishedAppDraftWorkspace, session.draft_workspace_id)
         if workspace is None or not str(workspace.sandbox_id or "").strip():
             session.status = PublishedAppDraftDevSessionStatus.error
             session.last_error = "Shared draft workspace is unavailable."
@@ -1276,6 +1344,7 @@ class PublishedAppDraftDevRuntimeService:
                     or str(session.preview_url or "").strip()
                 ),
             )
+        self._mark_workspace_serving(workspace)
         if revision is not None:
             await self._restore_live_workspace_snapshot_from_runtime(
                 app_id=workspace.published_app_id,
@@ -1293,6 +1362,18 @@ class PublishedAppDraftDevRuntimeService:
             else {}
         )
         session.last_error = str(preview_runtime.get("last_error") or "").strip() or None
+        live_preview = (
+            workspace.backend_metadata.get("live_preview")
+            if isinstance(workspace.backend_metadata, dict)
+            and isinstance(workspace.backend_metadata.get("live_preview"), dict)
+            else {}
+        )
+        live_snapshot = (
+            workspace.backend_metadata.get("live_workspace_snapshot")
+            if isinstance(workspace.backend_metadata, dict)
+            and isinstance(workspace.backend_metadata.get("live_workspace_snapshot"), dict)
+            else {}
+        )
         apps_builder_trace(
             "session.heartbeat.runtime.completed",
             domain="draft_dev.runtime",
@@ -1302,6 +1383,17 @@ class PublishedAppDraftDevRuntimeService:
             workspace_id=str(workspace.id),
             sandbox_id=str(workspace.sandbox_id or "") or None,
             status=str(getattr(session.status, "value", session.status) or ""),
+            live_preview_status=str(live_preview.get("status") or "").strip() or None,
+            live_preview_current_build_id=str(live_preview.get("current_build_id") or "").strip() or None,
+            live_preview_last_successful_build_id=str(live_preview.get("last_successful_build_id") or "").strip() or None,
+            live_preview_updated_at=live_preview.get("updated_at"),
+            live_preview_debug_build_sequence=live_preview.get("debug_build_sequence"),
+            live_preview_debug_last_trigger_reason=str(live_preview.get("debug_last_trigger_reason") or "").strip() or None,
+            live_preview_debug_last_phase=str(live_preview.get("debug_last_phase") or "").strip() or None,
+            live_preview_debug_last_phase_at=live_preview.get("debug_last_phase_at"),
+            live_preview_debug_recent_events=live_preview.get("debug_recent_events"),
+            live_snapshot_revision_token=str(live_snapshot.get("revision_token") or "").strip() or None,
+            live_snapshot_updated_at=live_snapshot.get("updated_at"),
         )
         return session
 

@@ -8,6 +8,7 @@ from uuid import UUID
 @dataclass(frozen=True)
 class ControlPlaneContext:
     tenant_id: UUID
+    project_id: UUID | None = None
     user: Any | None = None
     user_id: UUID | None = None
     auth_token: str | None = None
@@ -20,6 +21,7 @@ class ControlPlaneContext:
         cls,
         tenant_ctx: dict[str, Any],
         *,
+        project_id: UUID | None = None,
         user: Any | None = None,
         user_id: UUID | None = None,
         auth_token: str | None = None,
@@ -28,8 +30,16 @@ class ControlPlaneContext:
         tenant_slug: str | None = None,
     ) -> "ControlPlaneContext":
         tenant_id = UUID(str(tenant_ctx["tenant_id"]))
+        resolved_project_id = project_id
+        if resolved_project_id is None:
+            raw_project_id = tenant_ctx.get("project_id")
+            try:
+                resolved_project_id = UUID(str(raw_project_id)) if raw_project_id else None
+            except Exception:
+                resolved_project_id = None
         return cls(
             tenant_id=tenant_id,
+            project_id=resolved_project_id,
             user=user,
             user_id=user_id,
             auth_token=auth_token,

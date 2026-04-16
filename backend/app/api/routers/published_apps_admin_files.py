@@ -135,6 +135,12 @@ def _resolve_local_project_import(import_path: str, importer_path: str, files: D
 def _validate_builder_project_or_raise(files: Dict[str, str], entry_file: str) -> List[Dict[str, str]]:
     diagnostics: List[Dict[str, str]] = []
 
+    if "index.html" not in files:
+        raise _builder_compile_error(
+            "Root Vite entry file is missing",
+            diagnostics=[{"path": "index.html", "message": "Required root file is missing"}],
+        )
+
     if entry_file not in files:
         raise _builder_compile_error(
             "Entry file does not exist in project",

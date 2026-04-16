@@ -29,6 +29,15 @@ from .runtime_attachments import (
     RuntimeAttachmentStatus,
     AgentThreadTurnAttachment,
 )
+from .files import (
+    FileSpace,
+    FileSpaceStatus,
+    FileSpaceEntry,
+    FileEntryType,
+    FileEntryRevision,
+    AgentFileSpaceLink,
+    FileAccessMode,
+)
 from .security import (
     TenantAPIKey,
     TenantAPIKeyStatus,
