@@ -1,6 +1,6 @@
 # Published Apps Backend Tests
 
-Last Updated: 2026-04-14
+Last Updated: 2026-04-16
 
 ## Scope of the feature
 - Admin CRUD for published apps and builder state primitives.
@@ -22,7 +22,7 @@ Last Updated: 2026-04-14
 - Tenant admin can create/list/update/delete apps.
 - Apps admin page fetch contract is probe-covered for `/admin/apps`, `/admin/apps/stats`, `/agents?limit=500&view=summary`, `/admin/apps/templates`, and `/admin/apps/auth/templates`.
 - Published-app analytics coverage verifies bootstrap view capture, 30-minute visit dedupe, authenticated bootstrap attribution, and `/admin/apps/stats` aggregation.
-- Initial app-create draft revision (`origin_kind=app_init`) auto-enqueues async build; enqueue failure marks revision build failed without blocking app creation.
+- App creation provisions the shared draft workspace, materializes the first durable `app_init` draft revision, and fails when initial watcher-owned materialization fails.
 - Builder state includes app + template + current draft metadata.
 - Admin export options/archive exposes standalone export readiness and packages the current draft or live workspace snapshot.
 - Canonical app-create and builder tests use `template_key="classic-chat"`.

@@ -1,6 +1,6 @@
 # Published Apps Spec
 
-Last Updated: 2026-04-05
+Last Updated: 2026-04-16
 
 This document is the canonical product/specification overview for published apps.
 
@@ -49,8 +49,8 @@ The current product does not yet include:
 - Auth-disabled runtime supports public ephemeral chat behavior.
 - Preview runtime supports real agent streaming, but preview chat execution is intentionally ephemeral.
 - Runtime chat surfaces support upload-first attachments for `image`, `document`, and `audio`.
-- Version publish is build-aware and asynchronous when build artifacts are missing.
-- If build-wait publish fails, the published pointer remains on the previously working revision.
+- Saved draft versions are always durable, watcher-materialized revisions.
+- Publish is pointer-only against an already materialized revision and fails with `REVISION_NOT_MATERIALIZED` when durable dist is missing.
 
 ## Current Runtime Surface
 

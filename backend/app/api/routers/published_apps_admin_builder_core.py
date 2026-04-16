@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.postgres.models.published_apps import (
     BuilderCheckpointType,
     BuilderConversationTurnStatus,
+    PublishedApp,
     PublishedAppBuilderConversationTurn,
     PublishedAppRevision,
 )

@@ -23,6 +23,7 @@ from .published_apps_admin_access import (
 )
 from .published_apps_admin_shared import (
     APP_SLUG_PATTERN,
+    PublishJobResponse,
     PublishJobStatusResponse,
     PublishRequest,
     PublishedAppResponse,

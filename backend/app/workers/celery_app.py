@@ -70,9 +70,6 @@ celery_app.conf.update(
     task_routes={
         "app.workers.tasks.ingest_documents_task": {"queue": "ingestion"},
         "app.workers.tasks.embed_chunks_task": {"queue": "embedding"},
-        "app.workers.tasks.build_published_app_revision_task": {"queue": "apps_build"},
-        "app.workers.tasks.publish_version_pointer_after_build_task": {"queue": "apps_build"},
-        "app.workers.tasks.publish_published_app_task": {"queue": "apps_build"},
         "app.workers.tasks.execute_agent_run_task": {"queue": "agent_runs"},
         "app.workers.tasks.reap_published_app_draft_dev_sessions_task": {"queue": "default"},
         "app.workers.tasks.expire_usage_quota_reservations_task": {"queue": "default"},

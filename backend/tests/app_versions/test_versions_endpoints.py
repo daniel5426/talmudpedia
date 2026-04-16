@@ -331,7 +331,7 @@ async def test_get_active_publish_job_expires_stale_job(db_session, monkeypatch)
         tenant_id=tenant.id,
         agent_id=agent.id,
         name="Publish Stale Timeout App",
-        slug="publish-stale-timeout-app",
+        slug=f"publish-stale-timeout-app-{uuid4().hex[:8]}",
     )
     db_session.add(app)
     await db_session.flush()

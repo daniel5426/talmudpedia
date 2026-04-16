@@ -61,7 +61,7 @@ Last Updated: 2026-04-16
 - Sprite backend env validation requires a Sprite token and hard-rejects archived E2B backend selection.
 - Sprite dependency install strategy prefers pnpm/yarn lockfiles over a stray `package-lock.json`, and live builder installs allow pnpm lock drift instead of failing with `ERR_PNPM_OUTDATED_LOCKFILE`.
 - The live Sprite smoke covers create -> ensure -> preview HTML -> proxied Vite asset -> second editor attach -> direct filesystem write/read -> detach/reattach -> provider-side Sprite delete -> recovery ensure -> preview recovery -> app delete -> provider cleanup.
-- The live coding-run e2e covers create -> ensure draft-dev preview -> submit a real coding-agent prompt -> stream the live run -> poll preview/version/run state every second -> send recurring draft-dev heartbeats during long waits -> verify preview source updates without publish -> verify a new draft revision/version is created automatically -> drive the queued revision build in-test when no worker is present -> verify the built preview asset becomes reachable.
+- The live coding-run e2e covers create -> ensure draft-dev preview -> submit a real coding-agent prompt -> stream the live run -> poll preview/version/run state every second -> send recurring draft-dev heartbeats during long waits -> verify preview source updates without publish -> verify a new draft revision/version is created automatically from watcher-ready output -> verify the built preview asset becomes reachable.
 
 ## Last run command + date/time + result
 - Command: `cd backend && PYTHONPATH=. pytest -x -q tests/apps_builder_sandbox_runtime/test_draft_dev_runtime_lifecycle.py`
@@ -181,6 +181,6 @@ Last Updated: 2026-04-16
 
 ## Known gaps or follow-ups
 - Run the live coding-run e2e regularly in an environment with Sprite + OpenCode credentials so timing regressions are caught before manual QA.
-- The live coding-run e2e currently drives the queued revision build itself because the pytest process does not run a background worker.
+- Add explicit watcher-ready materialization assertions in the live coding-run e2e once the unrelated local `403` app-create issue is resolved.
 - Add an explicit scheduled sweeper entrypoint so orphan cleanup does not rely only on request-driven best-effort sweeps.
 - The full draft-dev runtime lifecycle suite is currently blocked in this local worktree by unrelated app-creation `403` failures before preview/runtime assertions execute.
