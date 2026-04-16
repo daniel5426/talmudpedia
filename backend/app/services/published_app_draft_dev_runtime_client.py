@@ -258,6 +258,20 @@ class PublishedAppDraftDevRuntimeClient:
         except PublishedAppSandboxBackendError as exc:
             raise PublishedAppDraftDevRuntimeClientError(str(exc)) from exc
 
+    async def update_live_preview_context(
+        self,
+        *,
+        sandbox_id: str,
+        workspace_fingerprint: str | None,
+    ) -> Dict[str, Any]:
+        try:
+            return await self._backend.update_live_preview_context(
+                sandbox_id=sandbox_id,
+                workspace_fingerprint=workspace_fingerprint,
+            )
+        except PublishedAppSandboxBackendError as exc:
+            raise PublishedAppDraftDevRuntimeClientError(str(exc)) from exc
+
     async def list_files(self, *, sandbox_id: str, limit: int = 500) -> Dict[str, Any]:
         try:
             return await self._backend.list_files(sandbox_id=sandbox_id, limit=limit)

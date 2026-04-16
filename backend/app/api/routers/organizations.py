@@ -11,7 +11,7 @@ from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_current_principal, require_scopes
-from app.api.routers.auth import get_current_user
+from app.api.routers.auth import get_current_user, _session_cookie_samesite
 from app.core.security import get_password_hash
 from app.db.postgres.models.identity import OrgInvite, OrgMembership, OrgRole, Tenant, User
 from app.db.postgres.models.workspace import Project, ProjectStatus
@@ -377,7 +377,7 @@ async def accept_invite(
         value=raw_token,
         httponly=True,
         secure=request.url.scheme == "https",
-        samesite="lax",
+        samesite=_session_cookie_samesite(),
         path="/",
     )
     await db.commit()

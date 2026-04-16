@@ -130,6 +130,26 @@ class PublishedAppWorkspaceBuildService:
         return build_live_preview_workspace_fingerprint(entry_file=entry_file, files=files)
 
     @staticmethod
+    def _live_preview_matches_workspace_state(
+        *,
+        live_preview_metadata: Dict[str, Any],
+        workspace_fingerprint: str,
+        workspace_revision_token: str | None,
+    ) -> tuple[bool, str | None]:
+        live_preview_status = str(live_preview_metadata.get("status") or "").strip().lower()
+        live_preview_dist_path = str(live_preview_metadata.get("dist_path") or "").strip()
+        if live_preview_status != "ready" or not live_preview_dist_path:
+            return False, None
+        live_preview_fingerprint = str(live_preview_metadata.get("workspace_fingerprint") or "").strip()
+        if live_preview_fingerprint and live_preview_fingerprint == workspace_fingerprint:
+            return True, "fingerprint"
+        live_preview_revision_token = str(live_preview_metadata.get("debug_last_trigger_revision_token") or "").strip()
+        normalized_revision_token = str(workspace_revision_token or "").strip()
+        if normalized_revision_token and live_preview_revision_token == normalized_revision_token:
+            return True, "revision_token"
+        return False, None
+
+    @staticmethod
     def _build_dist_manifest(dist_dir: Path) -> Dict[str, Any]:
         assets: list[dict[str, Any]] = []
         entry_html = "index.html"
@@ -456,19 +476,23 @@ class PublishedAppWorkspaceBuildService:
                 else {}
             )
             live_preview_dist_path = str(live_preview_metadata.get("dist_path") or "").strip()
-            live_preview_status = str(live_preview_metadata.get("status") or "").strip().lower()
-            live_preview_fingerprint = str(live_preview_metadata.get("workspace_fingerprint") or "").strip()
-            if (
-                live_preview_status == "ready"
-                and live_preview_dist_path
-                and live_preview_fingerprint == source_fingerprint
-            ):
+            live_preview_match, live_preview_match_mode = self._live_preview_matches_workspace_state(
+                live_preview_metadata=live_preview_metadata,
+                workspace_fingerprint=source_fingerprint,
+                workspace_revision_token=workspace_revision_token,
+            )
+            if live_preview_match:
                 self._trace(
                     "build.reuse_live_preview.begin",
                     app_id=app.id,
                     workspace_build_id=str(build.id),
                     dist_path=live_preview_dist_path,
                     workspace_fingerprint=source_fingerprint,
+                    match_mode=live_preview_match_mode,
+                    live_preview_revision_token=str(
+                        live_preview_metadata.get("debug_last_trigger_revision_token") or ""
+                    ).strip()
+                    or None,
                 )
                 try:
                     archive_response = await self.runtime_service.client.export_workspace_archive(
@@ -517,6 +541,7 @@ class PublishedAppWorkspaceBuildService:
                         workspace_build_id=str(build.id),
                         dist_path=live_preview_dist_path,
                         workspace_fingerprint=source_fingerprint,
+                        match_mode=live_preview_match_mode,
                     )
                     return ReadyWorkspaceBuildResult(
                         build=build,

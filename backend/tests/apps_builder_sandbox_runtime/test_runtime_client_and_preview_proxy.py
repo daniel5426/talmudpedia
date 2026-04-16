@@ -101,6 +101,49 @@ async def test_runtime_client_delegates_start_session_to_selected_sprite_backend
 
 
 @pytest.mark.asyncio
+async def test_runtime_client_delegates_live_preview_context_updates_to_selected_backend(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    captured: dict[str, object] = {}
+
+    class _FakeBackend:
+        backend_name = "sprite"
+        is_remote = True
+
+        async def update_live_preview_context(self, **kwargs):
+            captured.update(kwargs)
+            return {"sandbox_id": kwargs["sandbox_id"], "status": "updated"}
+
+    monkeypatch.setattr(runtime_client_module, "build_published_app_sandbox_backend", lambda config: _FakeBackend())
+
+    client = PublishedAppDraftDevRuntimeClient(
+        PublishedAppDraftDevRuntimeClientConfig(
+            controller_url=None,
+            controller_token=None,
+            request_timeout_seconds=15,
+            local_preview_base_url="http://127.0.0.1:5173",
+            embedded_local_enabled=False,
+            backend="sprite",
+            preview_proxy_base_path="/public/apps-builder/draft-dev/sessions",
+            sprite_api_base_url="https://api.sprites.dev",
+            sprite_api_token="sprite-test-token",
+            sprite_name_prefix="apps-builder",
+        )
+    )
+
+    result = await client.update_live_preview_context(
+        sandbox_id="sprite-app-1",
+        workspace_fingerprint="fp-1",
+    )
+
+    assert result["status"] == "updated"
+    assert captured == {
+        "sandbox_id": "sprite-app-1",
+        "workspace_fingerprint": "fp-1",
+    }
+
+
+@pytest.mark.asyncio
 async def test_builder_preview_proxy_accepts_valid_token_and_forwards_sprite_auth(monkeypatch: pytest.MonkeyPatch, client):
     monkeypatch.setenv("APPS_SPRITE_API_TOKEN", "sprite-secret")
 

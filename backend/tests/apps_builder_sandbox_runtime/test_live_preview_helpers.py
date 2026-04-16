@@ -7,6 +7,7 @@ from app.services.published_app_live_preview import (
     build_live_preview_workspace_fingerprint,
     normalize_live_preview_payload,
 )
+from app.services.published_app_workspace_build_service import PublishedAppWorkspaceBuildService
 
 
 def test_normalize_live_preview_payload_preserves_ready_build_metadata():
@@ -79,3 +80,19 @@ def test_build_live_preview_watch_script_uses_vite_watch_and_excludes_generated_
     assert "revision_token_changed" not in script
     for pattern in LIVE_PREVIEW_WATCH_EXCLUDE_GLOBS:
         assert pattern in script
+
+
+def test_live_preview_matcher_accepts_revision_token_when_fingerprint_is_stale():
+    matched, match_mode = PublishedAppWorkspaceBuildService._live_preview_matches_workspace_state(  # noqa: SLF001
+        live_preview_metadata={
+            "status": "ready",
+            "dist_path": "/tmp/dist",
+            "workspace_fingerprint": "stale-fingerprint",
+            "debug_last_trigger_revision_token": "rev-123",
+        },
+        workspace_fingerprint="fresh-fingerprint",
+        workspace_revision_token="rev-123",
+    )
+
+    assert matched is True
+    assert match_mode == "revision_token"

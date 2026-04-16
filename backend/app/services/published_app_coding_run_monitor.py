@@ -25,6 +25,8 @@ from app.services.published_app_draft_revision_materializer import (
     PublishedAppDraftRevisionMaterializerError,
     PublishedAppDraftRevisionMaterializerService,
 )
+from app.services.published_app_live_preview import build_live_preview_overlay_workspace_fingerprint
+from app.services.published_app_templates import TemplateRuntimeContext
 from app.services.published_app_coding_run_monitor_config import (
     monitor_force_terminal_on_inactivity,
     monitor_force_terminal_on_stream_end_without_terminal,
@@ -221,19 +223,44 @@ class PublishedAppCodingRunMonitor:
                 return
             files = _filter_builder_snapshot_files(raw_files)
             revision_token = str(payload.get("revision_token") or "").strip() or None
+            workspace_fingerprint = build_live_preview_overlay_workspace_fingerprint(
+                entry_file=entry_file,
+                files=files,
+                runtime_context=TemplateRuntimeContext(
+                    app_id=str(app.id),
+                    app_slug=str(app.slug or ""),
+                    agent_id=str(app.agent_id or ""),
+                ),
+            )
             await runtime_service.record_workspace_live_snapshot(
                 app_id=app.id,
                 revision_id=source_revision_id or app.current_draft_revision_id,
                 entry_file=entry_file,
                 files=files,
                 revision_token=revision_token,
-                workspace_fingerprint=None,
+                workspace_fingerprint=workspace_fingerprint,
             )
             session = await runtime_service.get_session(app_id=app.id, user_id=actor_id)
             if session is not None:
                 await runtime_service.record_live_workspace_revision_token(
                     session=session,
                     revision_token=revision_token,
+                )
+            try:
+                await runtime_service.client.update_live_preview_context(
+                    sandbox_id=sandbox_id,
+                    workspace_fingerprint=workspace_fingerprint,
+                )
+            except Exception as exc:
+                apps_builder_trace(
+                    "monitor.finalize.workspace_reconcile_context_update_failed",
+                    domain="coding_agent.finalizer",
+                    run_id=str(run.id),
+                    app_id=str(app.id),
+                    sandbox_id=sandbox_id,
+                    workspace_fingerprint=workspace_fingerprint,
+                    error=str(exc),
+                    error_type=exc.__class__.__name__,
                 )
             apps_builder_trace(
                 "monitor.finalize.workspace_reconcile_done",
@@ -243,6 +270,7 @@ class PublishedAppCodingRunMonitor:
                 sandbox_id=sandbox_id,
                 file_count=len(files),
                 revision_token=revision_token,
+                workspace_fingerprint=workspace_fingerprint,
             )
         except Exception as exc:
             apps_builder_trace(

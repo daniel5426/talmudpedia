@@ -117,6 +117,16 @@ def _slugify(value: str, *, fallback: str) -> str:
     return cleaned[:48] or fallback
 
 
+def _session_cookie_samesite() -> str:
+    # Hosted prod currently serves the frontend and API from different sites,
+    # so browser session cookies must be cross-site capable over HTTPS.
+    api_base_url = (os.getenv("API_BASE_URL") or "").strip().lower()
+    platform_base_url = (os.getenv("PLATFORM_BASE_URL") or "").strip().lower()
+    if api_base_url.startswith("https://") and platform_base_url.startswith("https://"):
+        return "none"
+    return "lax"
+
+
 def _set_session_cookie(*, response: Response, request: Request, token: str) -> None:
     max_age_seconds = SESSION_TTL_DAYS * 24 * 60 * 60
     response.set_cookie(
@@ -124,7 +134,7 @@ def _set_session_cookie(*, response: Response, request: Request, token: str) -> 
         value=token,
         httponly=True,
         secure=request.url.scheme == "https",
-        samesite="lax",
+        samesite=_session_cookie_samesite(),
         path="/",
         max_age=max_age_seconds,
         expires=max_age_seconds,
@@ -136,7 +146,7 @@ def _clear_session_cookie(*, response: Response, request: Request) -> None:
         key=SESSION_COOKIE_NAME,
         path="/",
         secure=request.url.scheme == "https",
-        samesite="lax",
+        samesite=_session_cookie_samesite(),
     )
 
 

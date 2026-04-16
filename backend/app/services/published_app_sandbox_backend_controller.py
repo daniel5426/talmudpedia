@@ -201,6 +201,19 @@ class ControllerSandboxBackend(PublishedAppSandboxBackend):
             "runtime_backend": self.backend_name,
         }
 
+    async def update_live_preview_context(
+        self,
+        *,
+        sandbox_id: str,
+        workspace_fingerprint: str | None,
+    ) -> Dict[str, Any]:
+        return {
+            "sandbox_id": sandbox_id,
+            "status": "updated",
+            "workspace_fingerprint": str(workspace_fingerprint or "").strip() or None,
+            "runtime_backend": self.backend_name,
+        }
+
     async def list_files(self, *, sandbox_id: str, limit: int = 500) -> Dict[str, Any]:
         return await self._request("GET", f"/sessions/{sandbox_id}/files", json_payload={"limit": int(limit)})
 

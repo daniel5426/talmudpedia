@@ -1790,6 +1790,22 @@ print(json.dumps({{
             "stage_workspace_path": self._live_workspace_path(),
         }
 
+    async def update_live_preview_context(
+        self,
+        *,
+        sandbox_id: str,
+        workspace_fingerprint: str | None,
+    ) -> Dict[str, Any]:
+        await self._write_live_preview_context(
+            sprite_name=sandbox_id,
+            workspace_fingerprint=workspace_fingerprint,
+        )
+        return {
+            "sandbox_id": sandbox_id,
+            "status": "updated",
+            "workspace_fingerprint": str(workspace_fingerprint or "").strip() or None,
+        }
+
     async def prepare_publish_dependencies(self, *, sandbox_id: str, workspace_path: str) -> Dict[str, Any]:
         live_workspace_path = self._live_workspace_path()
         normalized_workspace_path = str(workspace_path or "").strip() or live_workspace_path

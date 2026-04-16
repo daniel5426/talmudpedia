@@ -19,6 +19,7 @@ Last Updated: 2026-04-16
 
 ## Key scenarios covered
 - The draft-dev runtime client delegates `start_session` to the selected Sprite backend and injects the stable preview proxy base path.
+- The draft-dev runtime client can also push live-preview context updates back to the selected sandbox backend after coding-run reconciliation.
 - The preview proxy enforces preview token validation before forwarding to the upstream Sprite URL.
 - The preview proxy strips `runtime_token` from upstream requests, forwards provider-neutral auth headers, and sets the preview auth cookie on successful bootstrap.
 - The preview proxy prefers the preview auth cookie over a stale `runtime_token` query param, so old iframe URLs cannot override the current session scope after bootstrap.
@@ -50,6 +51,7 @@ Last Updated: 2026-04-16
 - Draft-dev heartbeat now materializes a new durable draft revision automatically once the watcher reports a ready build for the saved workspace fingerprint.
 - Coding-agent workspace-write detection ignores read-only `bash` probes like `git status`, while still flagging mutating shell commands and explicit write tools.
 - Live-preview build status normalization preserves the canonical `build_watch_static` contract, richer preview states (`booting`, `building`, `ready`, `failed_keep_last_good`, `failed_no_build`, `recovering`), supervisor health metadata, and stable workspace fingerprinting for build reuse.
+- Durable workspace builds can now reuse the watcher dist when the watcher fingerprint is stale but its last-trigger revision token matches the current live workspace revision token.
 - The generated live-preview watcher now uses persistent Vite/Rollup watch mode instead of polling a revision token and running fresh builds.
 - The watcher excludes generated paths such as `.talmudpedia/**` so context and status writes do not create rebuild loops.
 - The local watch integration test covers first build, source edit rebuild, ignored context writes, failed rebuild fallback, and keep-last-good promotion behavior.
@@ -170,6 +172,9 @@ Last Updated: 2026-04-16
 - Command: `cd backend && PYTHONPATH=. python3 -m pytest -q tests/apps_builder_sandbox_runtime/test_runtime_client_and_preview_proxy.py`
 - Date: 2026-04-16 Asia/Hebron
 - Result: PASS (`8 passed, 10 warnings`)
+- Command: `cd backend && PYTHONPATH=. python3 -m pytest -q tests/apps_builder_sandbox_runtime/test_live_preview_helpers.py tests/apps_builder_sandbox_runtime/test_runtime_client_and_preview_proxy.py`
+- Date: 2026-04-16 Asia/Hebron
+- Result: PASS (`14 passed, 10 warnings`)
 - Command: `cd backend && PYTHONPATH=. python3 -m pytest -q tests/apps_builder_sandbox_runtime/test_draft_dev_runtime_lifecycle.py`
 - Date: 2026-04-16 Asia/Hebron
 - Result: FAIL (`18 failed, 9 passed, 6 warnings`) during app creation with `403` responses in the current local worktree.
