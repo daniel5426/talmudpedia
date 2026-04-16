@@ -750,6 +750,142 @@ class PublishedAppDraftDevRuntimeService:
         await self._reconcile_remote_workspace_best_effort(workspace=workspace)
         return workspace
 
+    async def provision_workspace_from_files(
+        self,
+        *,
+        app: PublishedApp,
+        user_id: UUID,
+        files: Dict[str, str],
+        entry_file: str,
+        trace_source: str | None = None,
+    ) -> PublishedAppDraftWorkspace:
+        if not self.settings.enabled:
+            raise PublishedAppDraftDevRuntimeDisabled("Draft dev mode is disabled (`APPS_BUILDER_DRAFT_DEV_ENABLED=0`).")
+        if not user_id:
+            raise self._scope_error()
+
+        await self._acquire_scope_lock(app_id=app.id, user_id=user_id)
+        now = self._now()
+        await self.expire_idle_sessions(app_id=app.id)
+        await self.sweep_dormant_workspaces(app_id=app.id)
+        await self._sweep_remote_workspaces_best_effort()
+
+        runtime_context = TemplateRuntimeContext(
+            app_id=str(app.id),
+            app_slug=str(app.slug or ""),
+            agent_id=str(app.agent_id or ""),
+        )
+        normalized_files = filter_and_validate_builder_snapshot_files(files or {})
+        normalized_entry_file = str(entry_file or "").strip() or "src/main.tsx"
+        files_payload = apply_runtime_bootstrap_overlay(
+            dict(normalized_files),
+            runtime_context=runtime_context,
+        )
+        dependency_hash = self._dependency_hash(files_payload)
+        workspace = await self._get_or_create_workspace(app=app)
+        preview_base_path = self.client.build_preview_proxy_path(str(workspace.id))
+        must_start = workspace.status in {
+            PublishedAppDraftWorkspaceStatus.stopped,
+            PublishedAppDraftWorkspaceStatus.error,
+            PublishedAppDraftWorkspaceStatus.stopping,
+        } or not str(workspace.sandbox_id or "").strip()
+
+        workspace.last_activity_at = now
+        workspace.detached_at = None
+        workspace.revision_id = None
+        workspace.preview_url = preview_base_path
+        workspace.backend_metadata = self._merge_live_workspace_snapshot(
+            existing_metadata=workspace.backend_metadata,
+            revision_id=None,
+            entry_file=normalized_entry_file,
+            files=normalized_files,
+            revision_token=(
+                (
+                    dict(workspace.backend_metadata or {}).get("workspace", {})
+                    if isinstance(dict(workspace.backend_metadata or {}).get("workspace"), dict)
+                    else {}
+                ).get("revision_token")
+            ),
+            workspace_fingerprint=None,
+        )
+
+        apps_builder_trace(
+            "workspace.provision.requested",
+            domain="draft_dev.runtime",
+            app_id=str(app.id),
+            user_id=str(user_id),
+            workspace_id=str(workspace.id),
+            existing_sandbox_id=str(workspace.sandbox_id or "") or None,
+            existing_workspace_status=str(getattr(workspace.status, "value", workspace.status) or ""),
+            dependency_hash=dependency_hash,
+            trace_source=str(trace_source or "").strip() or None,
+        )
+
+        if must_start:
+            workspace.runtime_generation = self._runtime_generation_value(workspace) + 1
+            workspace.status = PublishedAppDraftWorkspaceStatus.syncing
+            workspace.last_error = None
+            started = await self.client.start_session(
+                session_id=str(workspace.id),
+                runtime_generation=workspace.runtime_generation,
+                tenant_id=str(app.tenant_id),
+                app_id=str(app.id),
+                user_id=str(user_id),
+                revision_id="",
+                app_slug=str(app.slug or ""),
+                agent_id=str(app.agent_id or ""),
+                entry_file=normalized_entry_file,
+                files=files_payload,
+                idle_timeout_seconds=self.settings.idle_timeout_seconds,
+                dependency_hash=dependency_hash,
+                draft_dev_token=create_published_app_draft_dev_token(
+                    subject=str(user_id),
+                    tenant_id=str(app.tenant_id),
+                    app_id=str(app.id),
+                    user_id=str(user_id),
+                    session_id=str(workspace.id),
+                ),
+                preview_base_path=preview_base_path,
+            )
+            workspace.sandbox_id = self._normalize_runtime_sandbox_id(started.get("sandbox_id")) or workspace.sprite_name
+            workspace.runtime_backend = str(started.get("runtime_backend") or self.client.backend_name)
+            workspace.backend_metadata = dict(started.get("backend_metadata") or {})
+            metadata_workspace = workspace.backend_metadata.get("workspace") if isinstance(workspace.backend_metadata.get("workspace"), dict) else {}
+            services = workspace.backend_metadata.get("services") if isinstance(workspace.backend_metadata.get("services"), dict) else {}
+            workspace.live_workspace_path = str(started.get("live_workspace_path") or metadata_workspace.get("live_workspace_path") or "")
+            workspace.stage_workspace_path = str(started.get("stage_workspace_path") or metadata_workspace.get("stage_workspace_path") or "")
+            workspace.publish_workspace_path = str(started.get("publish_workspace_path") or metadata_workspace.get("publish_workspace_path") or "")
+            workspace.preview_service_name = str(started.get("preview_service_name") or services.get("preview_service_name") or "")
+            workspace.opencode_service_name = str(started.get("opencode_service_name") or services.get("opencode_service_name") or "")
+            workspace.dependency_hash = dependency_hash
+            workspace.status = PublishedAppDraftWorkspaceStatus.serving
+            workspace.last_error = None
+            await self._reconcile_remote_workspace_best_effort(workspace=workspace)
+            return workspace
+
+        install_dependencies = dependency_hash != str(workspace.dependency_hash or "")
+        workspace.status = PublishedAppDraftWorkspaceStatus.syncing
+        sync_result = await self.client.sync_session(
+            sandbox_id=str(workspace.sandbox_id),
+            app_id=str(app.id),
+            app_slug=str(app.slug or ""),
+            agent_id=str(app.agent_id or ""),
+            entry_file=normalized_entry_file,
+            files=files_payload,
+            idle_timeout_seconds=self.settings.idle_timeout_seconds,
+            dependency_hash=dependency_hash,
+            install_dependencies=install_dependencies,
+            preview_base_path=preview_base_path,
+        )
+        workspace.runtime_backend = str(sync_result.get("runtime_backend") or workspace.runtime_backend or self.client.backend_name)
+        if isinstance(sync_result.get("backend_metadata"), dict):
+            workspace.backend_metadata = dict(sync_result.get("backend_metadata") or {})
+        workspace.dependency_hash = dependency_hash
+        workspace.status = PublishedAppDraftWorkspaceStatus.serving
+        workspace.last_error = None
+        await self._reconcile_remote_workspace_best_effort(workspace=workspace)
+        return workspace
+
     async def ensure_session(
         self,
         *,

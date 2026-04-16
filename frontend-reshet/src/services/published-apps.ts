@@ -574,10 +574,6 @@ export const publishedAppsService = {
     return httpClient.get<VersionPreviewRuntimeResponse>(`/admin/apps/${appId}/versions/${versionId}/preview-runtime`);
   },
 
-  async createDraftVersion(appId: string, payload: CreateBuilderRevisionRequest): Promise<PublishedAppRevision> {
-    return httpClient.post<PublishedAppRevision>(`/admin/apps/${appId}/versions/draft`, payload);
-  },
-
   async restoreVersion(appId: string, versionId: string): Promise<PublishedAppRevision> {
     return httpClient.post<PublishedAppRevision>(`/admin/apps/${appId}/versions/${versionId}/restore`, {});
   },

@@ -17,13 +17,7 @@ from app.db.postgres.models.published_apps import (
     PublishedAppPublishJob,
     PublishedAppPublishJobStatus,
     PublishedAppRevision,
-    PublishedAppRevisionBuildStatus,
-    PublishedAppRevisionKind,
 )
-from app.services.published_app_templates import build_template_files, get_template
-from app.services.published_app_versioning import create_app_version
-
-from .published_apps_admin_builder_core import _next_build_seq
 from .published_apps_admin_shared import APP_SLUG_PATTERN, _slugify
 
 CODING_AGENT_SURFACE = "published_app_coding_agent"
@@ -361,58 +355,15 @@ async def _get_custom_domain_for_app(
 
 
 async def _ensure_current_draft_revision(db: AsyncSession, app: PublishedApp, actor_id: Optional[UUID]) -> PublishedAppRevision:
+    _ = actor_id
     draft = await _get_revision(db, app.current_draft_revision_id)
     if draft is not None:
         return draft
-
-    files = build_template_files(
-        app.template_key or "classic-chat",
-        runtime_context={
+    raise HTTPException(
+        status_code=409,
+        detail={
+            "code": "DRAFT_REVISION_MISSING",
+            "message": "Current draft revision is missing. Reopen or recreate the app workspace.",
             "app_id": str(app.id),
-            "app_slug": app.slug,
-            "agent_id": str(app.agent_id),
         },
     )
-    created = await create_app_version(
-        db,
-        app=app,
-        kind=PublishedAppRevisionKind.draft,
-        template_key=app.template_key or "classic-chat",
-        entry_file=get_template(app.template_key or "classic-chat").entry_file,
-        files=files,
-        created_by=actor_id,
-        source_revision_id=None,
-        origin_kind="app_init",
-        build_status=PublishedAppRevisionBuildStatus.queued,
-        build_seq=1,
-        template_runtime="vite_static",
-    )
-    app.current_draft_revision_id = created.id
-    return created
-
-
-async def _create_draft_revision_snapshot(
-    *,
-    db: AsyncSession,
-    app: PublishedApp,
-    current: PublishedAppRevision,
-    actor_id: Optional[UUID],
-    files: Dict[str, str],
-    entry_file: str,
-) -> PublishedAppRevision:
-    revision = await create_app_version(
-        db,
-        app=app,
-        kind=PublishedAppRevisionKind.draft,
-        template_key=app.template_key,
-        entry_file=entry_file,
-        files=files,
-        created_by=actor_id,
-        source_revision_id=current.id,
-        origin_kind="draft_snapshot",
-        build_status=PublishedAppRevisionBuildStatus.queued,
-        build_seq=_next_build_seq(current),
-        template_runtime="vite_static",
-    )
-    app.current_draft_revision_id = revision.id
-    return revision

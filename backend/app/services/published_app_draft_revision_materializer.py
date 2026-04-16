@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict
 from uuid import UUID
 
-from sqlalchemy import select, text
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.postgres.models.agents import AgentRun
@@ -70,25 +70,6 @@ class PublishedAppDraftRevisionMaterializerService:
             {"key": int(self._workspace_lock_key(app_id=app_id))},
         )
 
-    async def _find_existing_revision_for_build(
-        self,
-        *,
-        app_id: UUID,
-        workspace_build_id: UUID,
-    ) -> PublishedAppRevision | None:
-        result = await self.db.execute(
-            select(PublishedAppRevision)
-            .where(
-                PublishedAppRevision.published_app_id == app_id,
-                PublishedAppRevision.kind == PublishedAppRevisionKind.draft,
-                PublishedAppRevision.workspace_build_id == workspace_build_id,
-                PublishedAppRevision.build_status == PublishedAppRevisionBuildStatus.succeeded,
-            )
-            .order_by(PublishedAppRevision.created_at.desc())
-            .limit(1)
-        )
-        return result.scalar_one_or_none()
-
     async def _create_or_reuse_revision_from_build(
         self,
         *,
@@ -100,32 +81,6 @@ class PublishedAppDraftRevisionMaterializerService:
         origin_run_id: UUID | None,
         restored_from_revision_id: UUID | None = None,
     ) -> MaterializedDraftRevisionResult:
-        if restored_from_revision_id is None:
-            existing = await self._find_existing_revision_for_build(
-                app_id=app.id,
-                workspace_build_id=build_result.build.id,
-            )
-            if existing is not None:
-                app.current_draft_revision_id = existing.id
-                await self.runtime_service.bind_live_workspace_snapshot_to_revision(
-                    app_id=app.id,
-                    revision_id=existing.id,
-                )
-                self._trace(
-                    "materialize.reused_existing_revision",
-                    app_id=app.id,
-                    revision_id=str(existing.id),
-                    source_fingerprint=build_result.source_fingerprint,
-                    workspace_revision_token=str(build_result.workspace_revision_token or ""),
-                    workspace_build_id=str(build_result.build.id),
-                )
-                return MaterializedDraftRevisionResult(
-                    revision=existing,
-                    reused=True,
-                    source_fingerprint=build_result.source_fingerprint,
-                    workspace_revision_token=build_result.workspace_revision_token,
-                )
-
         template_runtime_context = TemplateRuntimeContext(
             app_id=str(app.id),
             app_slug=str(app.slug or ""),
@@ -183,7 +138,7 @@ class PublishedAppDraftRevisionMaterializerService:
         )
         return MaterializedDraftRevisionResult(
             revision=revision,
-            reused=False,
+            reused=bool(build_result.reused),
             source_fingerprint=build_result.source_fingerprint,
             workspace_revision_token=build_result.workspace_revision_token,
         )

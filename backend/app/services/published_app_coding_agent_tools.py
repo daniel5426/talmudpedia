@@ -21,7 +21,7 @@ from app.api.routers.published_apps_admin_files import (
 )
 from app.db.postgres.engine import sessionmaker as get_session
 from app.db.postgres.models.agents import AgentRun
-from app.db.postgres.models.published_apps import PublishedApp, PublishedAppDraftDevSessionStatus, PublishedAppRevision, PublishedAppRevisionBuildStatus, PublishedAppRevisionKind
+from app.db.postgres.models.published_apps import PublishedApp, PublishedAppDraftDevSessionStatus, PublishedAppRevision
 from app.db.postgres.models.registry import (
     ToolDefinitionScope,
     ToolImplementationType,
@@ -33,7 +33,6 @@ from app.services.published_app_agent_integration_contract import (
     build_published_app_agent_integration_contract,
 )
 from app.services.published_app_draft_dev_runtime import PublishedAppDraftDevRuntimeDisabled, PublishedAppDraftDevRuntimeService
-from app.services.published_app_versioning import create_app_version
 from app.services.tool_function_registry import register_tool_function
 
 CODING_AGENT_SURFACE = "published_app_coding_agent"
@@ -211,37 +210,6 @@ async def _resolve_run_tool_context(
         sandbox_id=sandbox_id,
         actor_id=actor_id,
     )
-
-
-async def _create_draft_revision_from_files(
-    *,
-    db: AsyncSession,
-    app: PublishedApp,
-    current: PublishedAppRevision,
-    actor_id: UUID | None,
-    files: dict[str, str],
-    entry_file: str,
-) -> PublishedAppRevision:
-    sanitized_files = _filter_builder_snapshot_files(files)
-    _validate_builder_project_or_raise(sanitized_files, entry_file)
-    revision = await create_app_version(
-        db,
-        app=app,
-        kind=PublishedAppRevisionKind.draft,
-        template_key=app.template_key,
-        entry_file=entry_file,
-        files=sanitized_files,
-        created_by=actor_id,
-        source_revision_id=current.id,
-        origin_kind="coding_tool",
-        build_status=PublishedAppRevisionBuildStatus.queued,
-        build_seq=int(current.build_seq or 0) + 1,
-        template_runtime="vite_static",
-    )
-    app.current_draft_revision_id = revision.id
-    return revision
-
-
 async def _snapshot_files(ctx: _RunToolContext) -> dict[str, str]:
     payload = await ctx.runtime_service.client.snapshot_files(sandbox_id=ctx.sandbox_id)
     raw_files = payload.get("files")

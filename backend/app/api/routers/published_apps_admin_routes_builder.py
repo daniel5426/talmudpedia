@@ -15,20 +15,21 @@ from app.db.postgres.models.published_apps import (
     PublishedAppDraftDevSession,
     PublishedAppDraftDevSessionStatus,
     PublishedAppRevision,
-    PublishedAppRevisionBuildStatus,
-    PublishedAppRevisionKind,
 )
 from app.db.postgres.session import get_db
 from app.services.published_app_agent_integration_contract import (
     build_published_app_agent_integration_contract,
 )
 from app.services.apps_builder_trace import apps_builder_trace
+from app.services.published_app_draft_revision_materializer import (
+    PublishedAppDraftRevisionMaterializerError,
+    PublishedAppDraftRevisionMaterializerService,
+)
 from app.services.published_app_draft_dev_runtime import PublishedAppDraftDevRuntimeDisabled, PublishedAppDraftDevRuntimeService
 from app.services.published_app_draft_dev_runtime_client import PublishedAppDraftDevRuntimeClientError
 from app.services.published_app_live_preview import build_live_preview_overlay_workspace_fingerprint
 from app.services.published_app_revision_store import PublishedAppRevisionStore
 from app.services.published_app_templates import TemplateRuntimeContext, build_template_files, get_template, list_templates
-from app.services.published_app_versioning import create_app_version
 
 from .published_apps_admin_access import (
     _assert_can_manage_apps,
@@ -43,9 +44,6 @@ from .published_apps_admin_access import (
 )
 from .published_apps_admin_builder_core import (
     _builder_conversation_to_response,
-    _mark_revision_build_enqueue_failed,
-    _next_build_seq,
-    _enqueue_revision_build,
 )
 from .published_apps_admin_files import (
     _apply_patch_operations,
@@ -342,7 +340,7 @@ async def create_builder_revision(
         status_code=410,
         detail={
             "code": "BUILDER_REVISIONS_ENDPOINT_REMOVED",
-            "message": "Builder revisions API was removed. Use /admin/apps/{app_id}/versions/draft.",
+            "message": "Builder revisions API was removed. Use /admin/apps/{app_id}/builder/draft-dev/session/sync.",
         },
     )
 
@@ -825,39 +823,41 @@ async def reset_builder_template(
             "agent_id": str(app.agent_id),
         },
     )
-    revision = await create_app_version(
-        db,
-        app=app,
-        kind=PublishedAppRevisionKind.draft,
-        template_key=template_key,
-        entry_file=template.entry_file,
-        files=files,
-        created_by=actor_id,
-        source_revision_id=current.id,
-        origin_kind="template_reset",
-        build_status=PublishedAppRevisionBuildStatus.queued,
-        build_seq=_next_build_seq(current),
-        template_runtime="vite_static",
-    )
-
     app.template_key = template_key
-    app.current_draft_revision_id = revision.id
     runtime_service = PublishedAppDraftDevRuntimeService(db)
-    if actor_id is not None:
-        try:
-            await runtime_service.sync_session(
-                app=app,
-                revision=revision,
-                user_id=actor_id,
-                files=dict(revision.files or {}),
-                entry_file=revision.entry_file,
-            )
-        except PublishedAppDraftDevRuntimeDisabled:
-            pass
+    try:
+        await runtime_service.sync_session(
+            app=app,
+            revision=current,
+            user_id=actor_id,
+            files=files,
+            entry_file=template.entry_file,
+        )
+    except PublishedAppDraftDevRuntimeDisabled as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+    materializer = PublishedAppDraftRevisionMaterializerService(db)
+    try:
+        result = await materializer.materialize_live_workspace(
+            app=app,
+            entry_file=template.entry_file,
+            source_revision_id=current.id,
+            created_by=actor_id,
+            origin_kind="template_reset",
+        )
+    except PublishedAppDraftRevisionMaterializerError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "TEMPLATE_RESET_BUILD_FAILED",
+                "message": "Template reset could not materialize a durable draft revision from watcher output.",
+                "reason": str(exc),
+            },
+        ) from exc
 
     await db.commit()
-    await db.refresh(revision)
-    return _revision_to_response(revision)
+    await db.refresh(result.revision)
+    return _revision_to_response(result.revision)
 
 
 @router.get("/{app_id}/builder/conversations", response_model=List[BuilderConversationTurnResponse])

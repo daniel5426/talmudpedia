@@ -14,20 +14,18 @@ from app.db.postgres.models.published_apps import (
     PublishedAppAccountStatus,
     PublishedAppCustomDomain,
     PublishedAppCustomDomainStatus,
-    PublishedAppRevisionBuildStatus,
-    PublishedAppRevisionKind,
     PublishedAppSession,
     PublishedAppStatus,
     PublishedAppVisibility,
 )
 from app.db.postgres.session import get_db
+from app.services.published_app_draft_dev_runtime import PublishedAppDraftDevRuntimeService
+from app.services.published_app_draft_revision_materializer import (
+    PublishedAppDraftRevisionMaterializerError,
+    PublishedAppDraftRevisionMaterializerService,
+)
 from app.services.published_app_templates import build_template_files, get_template, list_templates
 from app.services.published_app_auth_templates import list_auth_templates
-from app.services.published_app_revision_build_dispatch import (
-    enqueue_revision_build,
-    mark_revision_build_enqueue_failed,
-)
-from app.services.published_app_versioning import create_app_version
 
 from .published_apps_admin_access import (
     _assert_can_manage_apps,
@@ -137,6 +135,7 @@ async def create_published_app(
         status=PublishedAppStatus.draft,
     )
     db.add(app)
+    runtime_service = PublishedAppDraftDevRuntimeService(db)
     try:
         await db.flush()
 
@@ -149,33 +148,39 @@ async def create_published_app(
                 "agent_id": str(app.agent_id),
             },
         )
-        revision = await create_app_version(
-            db,
+        await runtime_service.provision_workspace_from_files(
             app=app,
-            kind=PublishedAppRevisionKind.draft,
-            template_key=template_key,
-            entry_file=template.entry_file,
+            user_id=ctx["user"].id if ctx["user"] else None,
             files=files,
-            created_by=ctx["user"].id if ctx["user"] else None,
-            source_revision_id=None,
-            origin_kind="app_init",
-            build_status=PublishedAppRevisionBuildStatus.queued,
-            build_seq=1,
-            template_runtime="vite_static",
+            entry_file=template.entry_file,
+            trace_source="apps.create",
         )
-        enqueue_error = enqueue_revision_build(
-            revision=revision,
+        materializer = PublishedAppDraftRevisionMaterializerService(db)
+        await materializer.materialize_live_workspace(
             app=app,
-            build_kind="app_init",
+            entry_file=template.entry_file,
+            source_revision_id=None,
+            created_by=ctx["user"].id if ctx["user"] else None,
+            origin_kind="app_init",
         )
-        if enqueue_error:
-            mark_revision_build_enqueue_failed(
-                revision=revision,
-                reason=enqueue_error,
-            )
-        app.current_draft_revision_id = revision.id
 
         await db.commit()
+    except PublishedAppDraftRevisionMaterializerError as exc:
+        await db.rollback()
+        try:
+            cleanup_service = PublishedAppDraftDevRuntimeService(db)
+            await cleanup_service.destroy_workspace_for_app(app_id=app.id)
+            await db.commit()
+        except Exception:
+            await db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "APP_INIT_MATERIALIZATION_FAILED",
+                "message": "App creation failed before the first durable draft revision was materialized.",
+                "reason": str(exc),
+            },
+        ) from exc
     except IntegrityError:
         await db.rollback()
         raise HTTPException(status_code=409, detail="Published app slug or name already exists")

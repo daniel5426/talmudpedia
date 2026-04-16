@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -30,11 +31,9 @@ from app.services.published_app_bundle_storage import PublishedAppBundleStorage
 from app.services.published_app_draft_dev_runtime import PublishedAppDraftDevRuntimeService
 from app.services.published_app_live_preview import build_live_preview_workspace_fingerprint
 from app.services.published_app_templates import TemplateRuntimeContext, apply_runtime_bootstrap_overlay
+from app.services.published_app_draft_dev_runtime_client import PublishedAppDraftDevRuntimeClientError
 
 logger = logging.getLogger(__name__)
-
-_NPM_INSTALL_COMMAND = ["npm", "install", "--no-audit", "--no-fund"]
-_NPM_CI_COMMAND = ["npm", "ci"]
 
 
 class PublishedAppWorkspaceBuildError(Exception):
@@ -79,6 +78,24 @@ class PublishedAppWorkspaceBuildService:
             value = 900.0
         return max(60.0, value)
 
+    @staticmethod
+    def _watcher_wait_timeout_seconds() -> float:
+        raw = (os.getenv("APPS_WORKSPACE_BUILD_WATCHER_WAIT_TIMEOUT_SECONDS") or "").strip()
+        try:
+            value = float(raw) if raw else 30.0
+        except Exception:
+            value = 30.0
+        return max(3.0, value)
+
+    @staticmethod
+    def _watcher_poll_interval_seconds() -> float:
+        raw = (os.getenv("APPS_WORKSPACE_BUILD_WATCHER_POLL_INTERVAL_SECONDS") or "").strip()
+        try:
+            value = float(raw) if raw else 0.5
+        except Exception:
+            value = 0.5
+        return max(0.1, value)
+
     @classmethod
     def _is_stale_build(cls, build: PublishedAppWorkspaceBuild) -> bool:
         started_at = build.build_started_at
@@ -98,32 +115,6 @@ class PublishedAppWorkspaceBuildService:
             {"key": int(self._app_lock_key(app_id=app_id))},
         )
         self._trace("build.lock.acquired", app_id=app_id, dialect=dialect_name)
-
-    @staticmethod
-    def _resolve_install_command(files: Dict[str, str]) -> list[str]:
-        if isinstance(files.get("package-lock.json"), str):
-            return list(_NPM_CI_COMMAND)
-        return list(_NPM_INSTALL_COMMAND)
-
-    @staticmethod
-    def _extract_exit_code(result: Dict[str, Any], *, command_name: str) -> int:
-        raw_code = result.get("code", result.get("exit_code"))
-        try:
-            return int(raw_code)
-        except Exception as exc:
-            raise PublishedAppWorkspaceBuildError(
-                f"{command_name} result has invalid exit code: {raw_code!r}"
-            ) from exc
-
-    @classmethod
-    def _assert_command_success(cls, *, result: Dict[str, Any], command_name: str) -> None:
-        code = cls._extract_exit_code(result, command_name=command_name)
-        if code == 0:
-            return
-        stdout = str(result.get("stdout") or result.get("output") or "").strip()
-        stderr = str(result.get("stderr") or "").strip()
-        detail = stderr or stdout or "Command failed"
-        raise PublishedAppWorkspaceBuildError(f"`{command_name}` failed with exit code {code}\n{detail}")
 
     @staticmethod
     def _build_source_fingerprint(*, entry_file: str, files: Dict[str, str]) -> str:
@@ -295,6 +286,188 @@ class PublishedAppWorkspaceBuildService:
         )
         return build
 
+    async def _get_build_by_id(self, *, build_id: UUID) -> PublishedAppWorkspaceBuild | None:
+        return await self.db.get(PublishedAppWorkspaceBuild, build_id)
+
+    async def _wait_for_existing_build_result(
+        self,
+        *,
+        app_id: UUID,
+        build_id: UUID,
+        workspace_fingerprint: str,
+    ) -> PublishedAppWorkspaceBuild:
+        deadline = asyncio.get_running_loop().time() + self._watcher_wait_timeout_seconds()
+        poll_seconds = self._watcher_poll_interval_seconds()
+        while True:
+            await self.db.rollback()
+            build = await self._get_build_by_id(build_id=build_id)
+            if build is None:
+                raise PublishedAppWorkspaceBuildError("Workspace build row disappeared during watcher materialization.")
+            if (
+                build.status == PublishedAppWorkspaceBuildStatus.ready
+                and str(build.dist_storage_prefix or "").strip()
+            ):
+                return build
+            if build.status == PublishedAppWorkspaceBuildStatus.failed:
+                raise PublishedAppWorkspaceBuildError(
+                    str(build.build_error or "Workspace watcher materialization failed.")
+                )
+            if asyncio.get_running_loop().time() >= deadline:
+                raise PublishedAppWorkspaceBuildError(
+                    "Timed out waiting for watcher-owned workspace materialization to finish."
+                )
+            self._trace(
+                "build.wait_existing.pending",
+                app_id=app_id,
+                workspace_build_id=str(build_id),
+                workspace_fingerprint=workspace_fingerprint,
+                status=str(build.status.value if hasattr(build.status, "value") else build.status),
+            )
+            await asyncio.sleep(poll_seconds)
+
+    async def _refresh_workspace_live_preview(
+        self,
+        *,
+        workspace: PublishedAppDraftWorkspace,
+    ) -> Dict[str, Any]:
+        backend_metadata = dict(workspace.backend_metadata or {}) if isinstance(workspace.backend_metadata, dict) else {}
+        live_preview = (
+            dict(backend_metadata.get("live_preview") or {})
+            if isinstance(backend_metadata.get("live_preview"), dict)
+            else {}
+        )
+        sandbox_id = str(workspace.sandbox_id or "").strip()
+        if not sandbox_id:
+            return live_preview
+        try:
+            heartbeat_result = await self.runtime_service.client.heartbeat_session(
+                sandbox_id=sandbox_id,
+                idle_timeout_seconds=self.runtime_service.settings.idle_timeout_seconds,
+            )
+        except PublishedAppDraftDevRuntimeClientError as exc:
+            self._trace(
+                "build.watcher_refresh.failed",
+                app_id=workspace.published_app_id,
+                workspace_id=str(workspace.id),
+                sandbox_id=sandbox_id,
+                error=str(exc),
+                error_type=exc.__class__.__name__,
+            )
+            return live_preview
+
+        refreshed_metadata = (
+            dict(heartbeat_result.get("backend_metadata") or {})
+            if isinstance(heartbeat_result.get("backend_metadata"), dict)
+            else {}
+        )
+        workspace.runtime_backend = str(
+            heartbeat_result.get("runtime_backend") or workspace.runtime_backend or self.runtime_service.client.backend_name
+        )
+        if refreshed_metadata:
+            workspace.backend_metadata = self.runtime_service._merge_backend_metadata(
+                existing_metadata=workspace.backend_metadata,
+                refreshed_metadata=refreshed_metadata,
+                preview_base_path=str(workspace.preview_url or "").strip() or "/",
+            )
+        merged_metadata = dict(workspace.backend_metadata or {}) if isinstance(workspace.backend_metadata, dict) else {}
+        return (
+            dict(merged_metadata.get("live_preview") or {})
+            if isinstance(merged_metadata.get("live_preview"), dict)
+            else {}
+        )
+
+    async def _wait_for_matching_watcher_build(
+        self,
+        *,
+        workspace: PublishedAppDraftWorkspace,
+        app_id: UUID,
+        workspace_fingerprint: str,
+        workspace_revision_token: str | None,
+    ) -> tuple[Dict[str, Any], str]:
+        deadline = asyncio.get_running_loop().time() + self._watcher_wait_timeout_seconds()
+        poll_seconds = self._watcher_poll_interval_seconds()
+        last_status = "unknown"
+        while True:
+            live_preview_metadata = await self._refresh_workspace_live_preview(workspace=workspace)
+            last_status = str(live_preview_metadata.get("status") or "").strip().lower() or last_status
+            matched, match_mode = self._live_preview_matches_workspace_state(
+                live_preview_metadata=live_preview_metadata,
+                workspace_fingerprint=workspace_fingerprint,
+                workspace_revision_token=workspace_revision_token,
+            )
+            if matched:
+                return live_preview_metadata, str(match_mode or "unknown")
+            if asyncio.get_running_loop().time() >= deadline:
+                raise PublishedAppWorkspaceBuildError(
+                    "Timed out waiting for a watcher-ready build that matches the current workspace state."
+                )
+            self._trace(
+                "build.wait_watcher.pending",
+                app_id=app_id,
+                workspace_id=str(workspace.id),
+                workspace_fingerprint=workspace_fingerprint,
+                workspace_revision_token=str(workspace_revision_token or "") or None,
+                live_preview_status=last_status,
+                live_preview_fingerprint=str(live_preview_metadata.get("workspace_fingerprint") or "").strip() or None,
+                live_preview_revision_token=str(
+                    live_preview_metadata.get("debug_last_trigger_revision_token") or ""
+                ).strip()
+                or None,
+            )
+            await asyncio.sleep(poll_seconds)
+
+    async def _promote_live_preview_dist(
+        self,
+        *,
+        app: PublishedApp,
+        build: PublishedAppWorkspaceBuild,
+        source_fingerprint: str,
+        workspace_revision_token: str | None,
+        live_preview_metadata: Dict[str, Any],
+    ) -> None:
+        live_preview_dist_path = str(live_preview_metadata.get("dist_path") or "").strip()
+        sandbox_id = str(build.source_snapshot.get("sandbox_id") or "").strip()
+        if not sandbox_id:
+            workspace = await self._resolve_workspace(app_id=app.id)
+            sandbox_id = str(workspace.sandbox_id or "").strip()
+        if not live_preview_dist_path:
+            raise PublishedAppWorkspaceBuildError("Watcher-ready build is missing a dist path.")
+        archive_response = await self.runtime_service.client.export_workspace_archive(
+            sandbox_id=sandbox_id,
+            workspace_path=live_preview_dist_path,
+            format="tar.gz",
+        )
+        archive_bytes = self.runtime_service.client.decode_archive_payload(archive_response)
+        with tempfile.TemporaryDirectory(prefix=f"apps-live-preview-{str(app.id)[:8]}-") as temp_dir:
+            extract_dir = Path(temp_dir) / "dist"
+            extract_dir.mkdir(parents=True, exist_ok=True)
+            archive_path = Path(temp_dir) / "dist.tar.gz"
+            archive_path.write_bytes(archive_bytes)
+            with tarfile.open(archive_path, mode="r:gz") as tar:
+                tar.extractall(path=extract_dir)
+            dist_root = self._normalize_extracted_dist_root(extract_dir)
+            if not dist_root.exists() or not dist_root.is_dir():
+                raise PublishedAppWorkspaceBuildError("Watcher-ready dist directory is unavailable.")
+            dist_manifest = self._build_dist_manifest(dist_root)
+            dist_manifest["source_fingerprint"] = source_fingerprint
+            dist_manifest["workspace_revision_token"] = workspace_revision_token
+            dist_manifest["live_preview_build_id"] = str(
+                live_preview_metadata.get("last_successful_build_id") or ""
+            ).strip() or None
+            storage = PublishedAppBundleStorage.from_env()
+            dist_storage_prefix = PublishedAppBundleStorage.build_workspace_build_dist_prefix(
+                tenant_id=str(app.tenant_id),
+                app_id=str(app.id),
+                workspace_build_id=str(build.id),
+            )
+            dist_manifest["uploaded_assets"] = self._upload_dist_dir(
+                storage=storage,
+                dist_dir=dist_root,
+                dist_storage_prefix=dist_storage_prefix,
+            )
+            build.dist_storage_prefix = dist_storage_prefix
+            build.dist_manifest = dist_manifest
+
     async def ensure_ready_build(
         self,
         *,
@@ -399,8 +572,18 @@ class PublishedAppWorkspaceBuildService:
                 )
             if build.status == PublishedAppWorkspaceBuildStatus.building:
                 if not self._is_stale_build(build):
-                    raise PublishedAppWorkspaceBuildError(
-                        "Workspace build already in progress for this workspace state."
+                    waited_build = await self._wait_for_existing_build_result(
+                        app_id=app.id,
+                        build_id=build.id,
+                        workspace_fingerprint=source_fingerprint,
+                    )
+                    return ReadyWorkspaceBuildResult(
+                        build=waited_build,
+                        source_files=source_files,
+                        build_files=build_files,
+                        source_fingerprint=source_fingerprint,
+                        workspace_revision_token=workspace_revision_token,
+                        reused=True,
                     )
                 self._trace(
                     "build.reclaim_stale",
@@ -424,6 +607,7 @@ class PublishedAppWorkspaceBuildService:
                 "entry_file": normalized_entry_file,
                 "workspace_revision_token": workspace_revision_token,
                 "workspace_fingerprint": source_fingerprint,
+                "sandbox_id": sandbox_id,
             }
             build.dependency_hash = dependency_hash
             build.source_revision_id = source_revision_id
@@ -461,223 +645,28 @@ class PublishedAppWorkspaceBuildService:
                 workspace_fingerprint=source_fingerprint,
             )
 
-            live_workspace_path = str(
-                snapshot.get("workspace_path")
-                or workspace.live_workspace_path
-                or ""
-            ).strip()
-            if not live_workspace_path:
-                raise PublishedAppWorkspaceBuildError("Live workspace path is unavailable.")
-
-            live_preview_metadata = (
-                dict(workspace.backend_metadata.get("live_preview") or {})
-                if isinstance(workspace.backend_metadata, dict)
-                and isinstance(workspace.backend_metadata.get("live_preview"), dict)
-                else {}
-            )
-            live_preview_dist_path = str(live_preview_metadata.get("dist_path") or "").strip()
-            live_preview_match, live_preview_match_mode = self._live_preview_matches_workspace_state(
-                live_preview_metadata=live_preview_metadata,
+            live_preview_metadata, live_preview_match_mode = await self._wait_for_matching_watcher_build(
+                workspace=workspace,
+                app_id=app.id,
                 workspace_fingerprint=source_fingerprint,
                 workspace_revision_token=workspace_revision_token,
             )
-            if live_preview_match:
-                self._trace(
-                    "build.reuse_live_preview.begin",
-                    app_id=app.id,
-                    workspace_build_id=str(build.id),
-                    dist_path=live_preview_dist_path,
-                    workspace_fingerprint=source_fingerprint,
-                    match_mode=live_preview_match_mode,
-                    live_preview_revision_token=str(
-                        live_preview_metadata.get("debug_last_trigger_revision_token") or ""
-                    ).strip()
-                    or None,
-                )
-                try:
-                    archive_response = await self.runtime_service.client.export_workspace_archive(
-                        sandbox_id=sandbox_id,
-                        workspace_path=live_preview_dist_path,
-                        format="tar.gz",
-                    )
-                    archive_bytes = self.runtime_service.client.decode_archive_payload(archive_response)
-                    with tempfile.TemporaryDirectory(prefix=f"apps-live-preview-{str(app.id)[:8]}-") as temp_dir:
-                        extract_dir = Path(temp_dir) / "dist"
-                        extract_dir.mkdir(parents=True, exist_ok=True)
-                        archive_path = Path(temp_dir) / "dist.tar.gz"
-                        archive_path.write_bytes(archive_bytes)
-                        with tarfile.open(archive_path, mode="r:gz") as tar:
-                            tar.extractall(path=extract_dir)
-                        dist_root = self._normalize_extracted_dist_root(extract_dir)
-                        if not dist_root.exists() or not dist_root.is_dir():
-                            raise PublishedAppWorkspaceBuildError("Live preview dist directory is unavailable.")
-                        dist_manifest = self._build_dist_manifest(dist_root)
-                        dist_manifest["source_fingerprint"] = source_fingerprint
-                        dist_manifest["workspace_revision_token"] = workspace_revision_token
-                        dist_manifest["live_preview_build_id"] = str(
-                            live_preview_metadata.get("last_successful_build_id") or ""
-                        ).strip() or None
-                        storage = PublishedAppBundleStorage.from_env()
-                        dist_storage_prefix = PublishedAppBundleStorage.build_workspace_build_dist_prefix(
-                            tenant_id=str(app.tenant_id),
-                            app_id=str(app.id),
-                            workspace_build_id=str(build.id),
-                        )
-                        dist_manifest["uploaded_assets"] = self._upload_dist_dir(
-                            storage=storage,
-                            dist_dir=dist_root,
-                            dist_storage_prefix=dist_storage_prefix,
-                        )
-                        build.dist_storage_prefix = dist_storage_prefix
-                        build.dist_manifest = dist_manifest
-                    build.status = PublishedAppWorkspaceBuildStatus.ready
-                    build.template_runtime = "vite_static"
-                    build.build_finished_at = datetime.now(timezone.utc)
-                    await self.db.flush()
-                    await self.db.commit()
-                    self._trace(
-                        "build.reuse_live_preview.done",
-                        app_id=app.id,
-                        workspace_build_id=str(build.id),
-                        dist_path=live_preview_dist_path,
-                        workspace_fingerprint=source_fingerprint,
-                        match_mode=live_preview_match_mode,
-                    )
-                    return ReadyWorkspaceBuildResult(
-                        build=build,
-                        source_files=source_files,
-                        build_files=build_files,
-                        source_fingerprint=source_fingerprint,
-                        workspace_revision_token=workspace_revision_token,
-                        reused=False,
-                    )
-                except Exception as exc:
-                    self._trace(
-                        "build.reuse_live_preview.failed",
-                        app_id=app.id,
-                        workspace_build_id=str(build.id),
-                        dist_path=live_preview_dist_path,
-                        workspace_fingerprint=source_fingerprint,
-                        error=str(exc),
-                        error_type=exc.__class__.__name__,
-                    )
-
-            dependency_prepare = await self.runtime_service.client.prepare_publish_dependencies(
-                sandbox_id=sandbox_id,
-                workspace_path=live_workspace_path,
-            )
-            dependency_status = str(dependency_prepare.get("status") or "").strip().lower()
             self._trace(
-                "build.dependencies.done",
+                "build.promote_watcher.begin",
                 app_id=app.id,
                 workspace_build_id=str(build.id),
-                dependency_status=dependency_status,
+                workspace_fingerprint=source_fingerprint,
+                match_mode=live_preview_match_mode,
+                live_preview_build_id=str(live_preview_metadata.get("last_successful_build_id") or "").strip() or None,
             )
-            if dependency_status not in {"reused", "prepared"}:
-                install_command = self._resolve_install_command(build_files)
-                install_result = await self.runtime_service.client.run_command(
-                    sandbox_id=sandbox_id,
-                    command=install_command,
-                    timeout_seconds=int(os.getenv("APPS_BUILD_NPM_INSTALL_TIMEOUT_SECONDS", "360")),
-                    max_output_bytes=int(os.getenv("APPS_PUBLISH_SANDBOX_MAX_OUTPUT_BYTES", "30000")),
-                    workspace_path=live_workspace_path,
-                )
-                self._assert_command_success(result=install_result, command_name=" ".join(install_command))
-
-            build_root = f"{live_workspace_path.rstrip('/')}/.talmudpedia/materialized-build/{build.id}"
-            dist_workspace = f"{build_root}/dist"
-            self._trace(
-                "build.prepare_dir.begin",
-                app_id=app.id,
-                workspace_build_id=str(build.id),
-                build_root=build_root,
-            )
-            prepare_build_dir = await self.runtime_service.client.run_command(
-                sandbox_id=sandbox_id,
-                command=["bash", "-lc", f"rm -rf {json.dumps(build_root)} && mkdir -p {json.dumps(build_root)}"],
-                timeout_seconds=60,
-                max_output_bytes=8000,
-                workspace_path=live_workspace_path,
-            )
-            self._assert_command_success(result=prepare_build_dir, command_name="prepare workspace build dir")
-            self._trace(
-                "build.prepare_dir.done",
-                app_id=app.id,
-                workspace_build_id=str(build.id),
-                build_root=build_root,
-            )
-
-            self._trace(
-                "build.run.begin",
-                app_id=app.id,
-                workspace_build_id=str(build.id),
-                dist_workspace=dist_workspace,
-            )
-            build_result = await self.runtime_service.client.run_command(
-                sandbox_id=sandbox_id,
-                command=["npm", "run", "build", "--", "--outDir", dist_workspace],
-                timeout_seconds=int(os.getenv("APPS_BUILD_NPM_BUILD_TIMEOUT_SECONDS", "300")),
-                max_output_bytes=int(os.getenv("APPS_PUBLISH_SANDBOX_MAX_OUTPUT_BYTES", "30000")),
-                workspace_path=live_workspace_path,
-            )
-            self._assert_command_success(result=build_result, command_name="npm run build")
-            self._trace(
-                "build.run.done",
-                app_id=app.id,
-                workspace_build_id=str(build.id),
-                dist_workspace=dist_workspace,
-                exit_code=self._extract_exit_code(build_result, command_name="npm run build"),
+            await self._promote_live_preview_dist(
+                app=app,
+                build=build,
+                source_fingerprint=source_fingerprint,
+                workspace_revision_token=workspace_revision_token,
+                live_preview_metadata=live_preview_metadata,
             )
             build.build_finished_at = datetime.now(timezone.utc)
-
-            self._trace(
-                "build.export.begin",
-                app_id=app.id,
-                workspace_build_id=str(build.id),
-                dist_workspace=dist_workspace,
-            )
-            archive_response = await self.runtime_service.client.export_workspace_archive(
-                sandbox_id=sandbox_id,
-                workspace_path=dist_workspace,
-                format="tar.gz",
-            )
-            archive_bytes = self.runtime_service.client.decode_archive_payload(archive_response)
-            self._trace(
-                "build.export.done",
-                app_id=app.id,
-                workspace_build_id=str(build.id),
-                archive_bytes=len(archive_bytes),
-            )
-
-            with tempfile.TemporaryDirectory(prefix=f"apps-workspace-build-{str(app.id)[:8]}-") as temp_dir:
-                extract_dir = Path(temp_dir) / "dist"
-                extract_dir.mkdir(parents=True, exist_ok=True)
-                archive_path = Path(temp_dir) / "dist.tar.gz"
-                archive_path.write_bytes(archive_bytes)
-                with tarfile.open(archive_path, mode="r:gz") as tar:
-                    tar.extractall(path=extract_dir)
-                dist_root = self._normalize_extracted_dist_root(extract_dir)
-                if not dist_root.exists() or not dist_root.is_dir():
-                    raise PublishedAppWorkspaceBuildError("Build succeeded but dist directory was not produced.")
-
-                dist_manifest = self._build_dist_manifest(dist_root)
-                dist_manifest["source_fingerprint"] = source_fingerprint
-                dist_manifest["workspace_revision_token"] = workspace_revision_token
-
-                storage = PublishedAppBundleStorage.from_env()
-                dist_storage_prefix = PublishedAppBundleStorage.build_workspace_build_dist_prefix(
-                    tenant_id=str(app.tenant_id),
-                    app_id=str(app.id),
-                    workspace_build_id=str(build.id),
-                )
-                dist_manifest["uploaded_assets"] = self._upload_dist_dir(
-                    storage=storage,
-                    dist_dir=dist_root,
-                    dist_storage_prefix=dist_storage_prefix,
-                )
-                build.dist_storage_prefix = dist_storage_prefix
-                build.dist_manifest = dist_manifest
-
             build.status = PublishedAppWorkspaceBuildStatus.ready
             build.template_runtime = "vite_static"
             self._trace(

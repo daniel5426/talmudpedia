@@ -40,13 +40,6 @@ export type ChatToolPresentation = {
   output?: unknown;
 };
 
-export type ChatUIBlocksPresentation = {
-  toolCallId?: string;
-  contractVersion?: string;
-  bundle?: Record<string, unknown>;
-  error?: string | null;
-};
-
 type ChatRenderBlockBase = {
   id: string;
   kind: ChatRenderBlockKind;
@@ -72,7 +65,10 @@ export type ChatToolCallBlock = ChatRenderBlockBase & {
 
 export type ChatUIBlocksBlock = ChatRenderBlockBase & {
   kind: "ui_blocks";
-  ui: ChatUIBlocksPresentation;
+  toolCallId?: string;
+  contractVersion?: string;
+  bundle?: Record<string, unknown>;
+  error?: string | null;
 };
 
 export type ChatReasoningNoteBlock = ChatRenderBlockBase & {

@@ -14,11 +14,8 @@ from app.db.postgres.models.published_apps import (
     PublishedApp,
     PublishedAppDraftDevSessionStatus,
     PublishedAppRevision,
-    PublishedAppRevisionBuildStatus,
-    PublishedAppRevisionKind,
 )
 from app.services.published_app_draft_dev_runtime import PublishedAppDraftDevRuntimeService
-from app.services.published_app_versioning import create_app_version
 
 from .published_apps_admin_builder_core import (
     _builder_chat_command_allowlist,
@@ -26,7 +23,6 @@ from .published_apps_admin_builder_core import (
     _builder_worker_build_gate_enabled,
     _extract_http_error_details,
     _is_allowed_sandbox_command,
-    _next_build_seq,
     _run_worker_build_preflight,
     _summarize_dist_manifest,
     _truncate_for_context,
@@ -459,32 +455,3 @@ async def _run_allowlisted_sandbox_command(
         "stdout": result.get("stdout"),
         "stderr": result.get("stderr"),
     }
-
-
-async def _create_draft_revision_from_files(
-    db: AsyncSession,
-    *,
-    app: PublishedApp,
-    current: PublishedAppRevision,
-    actor_id: Optional[UUID],
-    files: Dict[str, str],
-    entry_file: str,
-) -> PublishedAppRevision:
-    sanitized_files = _filter_builder_snapshot_files(files)
-    _validate_builder_project_or_raise(sanitized_files, entry_file)
-    revision = await create_app_version(
-        db,
-        app=app,
-        kind=PublishedAppRevisionKind.draft,
-        template_key=app.template_key,
-        entry_file=entry_file,
-        files=sanitized_files,
-        created_by=actor_id,
-        source_revision_id=current.id,
-        origin_kind="builder_tool",
-        build_status=PublishedAppRevisionBuildStatus.queued,
-        build_seq=_next_build_seq(current),
-        template_runtime="vite_static",
-    )
-    app.current_draft_revision_id = revision.id
-    return revision

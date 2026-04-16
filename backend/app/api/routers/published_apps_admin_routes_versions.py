@@ -20,8 +20,6 @@ from app.db.postgres.models.published_apps import (
     PublishedAppPublishJob,
     PublishedAppPublishJobStatus,
     PublishedAppRevision,
-    PublishedAppRevisionBuildStatus,
-    PublishedAppRevisionKind,
 )
 from app.db.postgres.session import get_db
 from app.services.published_app_draft_revision_materializer import (
@@ -29,29 +27,15 @@ from app.services.published_app_draft_revision_materializer import (
     PublishedAppDraftRevisionMaterializerService,
 )
 from app.services.published_app_draft_dev_runtime import PublishedAppDraftDevRuntimeDisabled, PublishedAppDraftDevRuntimeService
-from app.services.published_app_revision_build_dispatch import (
-    enqueue_revision_build,
-    mark_revision_build_enqueue_failed,
-)
 from app.services.published_app_revision_store import PublishedAppRevisionStore
-from app.services.published_app_versioning import create_app_version
 
 from .published_apps_admin_access import (
     _assert_can_manage_apps,
-    _count_active_coding_runs_for_scope,
     _ensure_current_draft_revision,
     _get_active_publish_job_for_app,
     _get_app_for_tenant,
     _get_revision_for_app,
     _resolve_tenant_admin_context,
-)
-from .published_apps_admin_builder_core import _next_build_seq
-from .published_apps_admin_files import (
-    _apply_patch_operations,
-    _assert_builder_path_allowed,
-    _coerce_files_payload,
-    _normalize_builder_path,
-    _validate_builder_project_or_raise,
 )
 from .published_apps_admin_shared import (
     CreateBuilderRevisionRequest,
@@ -165,90 +149,14 @@ async def create_draft_version(
     principal: Dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ):
-    ctx = await _resolve_tenant_admin_context(request, principal, db)
-    _assert_can_manage_apps(ctx)
-    actor = ctx.get("user")
-    if actor is None:
-        raise HTTPException(status_code=403, detail="Manual save requires a user principal")
-
-    app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
-    active_count = await _count_active_coding_runs_for_scope(
-        db,
-        app_id=app.id,
-        user_id=actor.id,
+    _ = (app_id, payload, request, principal, db)
+    raise HTTPException(
+        status_code=410,
+        detail={
+            "code": "VERSIONS_DRAFT_ENDPOINT_REMOVED",
+            "message": "Manual save moved to /admin/apps/{app_id}/builder/draft-dev/session/sync.",
+        },
     )
-    if active_count > 0:
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "code": "CODING_AGENT_RUN_ACTIVE",
-                "message": "Builder edits are locked while a coding-agent run is active for this app.",
-                "active_coding_run_count": active_count,
-            },
-        )
-    current = await _ensure_current_draft_revision(db, app, actor.id)
-    if payload.base_revision_id and str(payload.base_revision_id) != str(current.id):
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "code": "REVISION_CONFLICT",
-                "latest_revision_id": str(current.id),
-                "latest_updated_at": current.created_at.isoformat(),
-                "message": "Draft revision is stale",
-            },
-        )
-
-    if payload.files is not None:
-        files = _coerce_files_payload(payload.files)
-        entry_file = _normalize_builder_path(payload.entry_file or current.entry_file)
-        _assert_builder_path_allowed(entry_file, field="entry_file")
-    else:
-        files, entry_file = _apply_patch_operations(
-            dict(current.files or {}),
-            payload.entry_file or current.entry_file,
-            payload.operations,
-        )
-    _validate_builder_project_or_raise(files, entry_file)
-
-    runtime_service = PublishedAppDraftDevRuntimeService(db)
-    try:
-        await runtime_service.sync_session(
-            app=app,
-            revision=current,
-            user_id=actor.id,
-            files=files,
-            entry_file=entry_file,
-        )
-    except PublishedAppDraftDevRuntimeDisabled as exc:
-        raise HTTPException(status_code=409, detail=str(exc))
-
-    materializer = PublishedAppDraftRevisionMaterializerService(db)
-    try:
-        result = await materializer.materialize_live_workspace(
-            app=app,
-            entry_file=entry_file,
-            source_revision_id=current.id,
-            created_by=actor.id,
-            origin_kind="manual_save",
-        )
-    except PublishedAppDraftRevisionMaterializerError as exc:
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "code": "MANUAL_SAVE_BUILD_FAILED",
-                "message": "Manual save could not materialize a draft version from the current workspace.",
-                "reason": str(exc),
-            },
-        ) from exc
-
-    await runtime_service.bind_session_to_revision_without_sync(
-        app_id=app.id,
-        user_id=actor.id,
-        revision=result.revision,
-    )
-    await db.commit()
-    await db.refresh(result.revision)
-    return _revision_to_response(result.revision)
 
 
 @router.post("/{app_id}/versions/{version_id}/restore", response_model=PublishedAppRevisionResponse)

@@ -186,8 +186,8 @@ function renderApprovalBlock(
 
 function renderUIBlocksBlock(block: ChatUIBlocksBlock) {
   const bundle =
-    block.ui.bundle && typeof block.ui.bundle === "object"
-      ? (block.ui.bundle as Record<string, unknown>)
+    block.bundle && typeof block.bundle === "object"
+      ? (block.bundle as Record<string, unknown>)
       : null;
   const title = typeof bundle?.title === "string" ? bundle.title : "UI Block";
   const subtitle = typeof bundle?.subtitle === "string" ? bundle.subtitle : "";
@@ -206,7 +206,7 @@ function renderUIBlocksBlock(block: ChatUIBlocksBlock) {
   if (block.status === "error") {
     return (
       <div key={block.id} className="text-sm text-destructive">
-        {block.ui.error || "Failed to render UI block."}
+        {block.error || "Failed to render UI block."}
       </div>
     );
   }
