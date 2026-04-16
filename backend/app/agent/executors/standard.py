@@ -60,6 +60,40 @@ def _policy_snapshot_from_state(state: Dict[str, Any]) -> ResourcePolicySnapshot
     return ResourcePolicySnapshot.from_payload(context.get("resource_policy_snapshot"))
 
 
+def _file_space_prompt_preamble_from_state(state: Dict[str, Any]) -> str:
+    if not isinstance(state, dict):
+        return ""
+    context = state.get("context")
+    if not isinstance(context, dict):
+        nested_state = state.get("state")
+        if isinstance(nested_state, dict):
+            context = nested_state.get("context")
+    if not isinstance(context, dict):
+        return ""
+    grants = context.get("file_spaces")
+    if not isinstance(grants, list) or not grants:
+        return ""
+
+    lines = ["Linked file spaces available for this run:"]
+    if len(grants) == 1 and isinstance(grants[0], dict):
+        grant = grants[0]
+        lines.append(
+            f"- default => {str(grant.get('name') or '').strip() or 'Unnamed'} "
+            f"(id: {str(grant.get('id') or '').strip()}, access: {str(grant.get('access_mode') or '').strip() or 'read'})"
+        )
+        lines.append("For file tools, prefer `space_id: \"default\"` for this linked space.")
+    else:
+        for grant in grants:
+            if not isinstance(grant, dict):
+                continue
+            lines.append(
+                f"- {str(grant.get('name') or '').strip() or 'Unnamed'} "
+                f"(id: {str(grant.get('id') or '').strip()}, access: {str(grant.get('access_mode') or '').strip() or 'read'})"
+            )
+        lines.append("For file tools, use the exact linked file space `id` as `space_id`.")
+    return "\n".join(lines)
+
+
 def _tool_model_name(tool_name: str, suffix: str) -> str:
     return f"{tool_name.title().replace('-', '_').replace(' ', '_')}{suffix}"
 
@@ -1491,6 +1525,9 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
                 instructions = evaluate_template(instructions, state)
             except Exception as e:
                 logger.warning(f"Failed to interpolate instructions: {e}")
+        file_space_preamble = _file_space_prompt_preamble_from_state(state)
+        if file_space_preamble:
+            instructions = f"{instructions.strip()}\n\n{file_space_preamble}".strip()
 
         # Execute
         try:

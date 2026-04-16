@@ -17,7 +17,6 @@ import {
   isDraftSandboxNotRunningError,
 } from "@/features/apps-builder/workspace/draftDevErrors";
 
-const DRAFT_DEV_SYNC_DEBOUNCE_MS = 800;
 const DRAFT_DEV_HEARTBEAT_MS = 30_000;
 const DRAFT_DEV_RECOVERY_ATTEMPTS = 3;
 const DRAFT_DEV_RECOVERY_BACKOFF_MS = 700;
@@ -59,6 +58,7 @@ type UseAppsBuilderSandboxLifecycleResult = {
   hydrateFromBuilderSession: (session?: DraftDevSessionResponse | null) => void;
   ensureDraftDevSession: (options?: EnsureSessionOptions) => Promise<DraftDevSessionResponse | null>;
   retryEnsureDraftDevSession: () => Promise<DraftDevSessionResponse | null>;
+  syncDraftDevSession: (options?: { forceFullSync?: boolean }) => Promise<DraftDevSessionResponse | null>;
 };
 
 function wait(ms: number): Promise<void> {
@@ -549,40 +549,11 @@ export function useAppsBuilderSandboxLifecycle({
     });
   }, [currentRevisionId, ensureDraftDevSession, hasActiveCodingRunLock]);
 
-  useEffect(() => {
-    if (!currentRevisionId) {
-      syncFingerprintRef.current = "";
-      return;
-    }
-    if (hasActiveCodingRunLock) {
-      return;
-    }
-    if (!draftDevSessionId || !isDraftDevServingStatus(draftDevStatus)) {
-      return;
-    }
-
-    const fingerprint = currentSyncFingerprint;
-    if (syncFingerprintRef.current === fingerprint) {
-      return;
-    }
-
-    const timer = window.setTimeout(() => {
-      void syncDraftDevSession(fingerprint).catch(() => {
-        // Errors are handled and materialized in local lifecycle state.
-      });
-    }, DRAFT_DEV_SYNC_DEBOUNCE_MS);
-
-    return () => {
-      window.clearTimeout(timer);
-    };
-  }, [
-    currentRevisionId,
-    currentSyncFingerprint,
-    draftDevSessionId,
-    draftDevStatus,
-    hasActiveCodingRunLock,
-    syncDraftDevSession,
-  ]);
+  const syncDraftDevSessionExplicit = useCallback(
+    async (options?: { forceFullSync?: boolean }) =>
+      syncDraftDevSession(currentSyncFingerprintRef.current, options),
+    [syncDraftDevSession],
+  );
 
   useEffect(() => {
     if (!draftDevSessionId) {
@@ -719,5 +690,6 @@ export function useAppsBuilderSandboxLifecycle({
     hydrateFromBuilderSession,
     ensureDraftDevSession,
     retryEnsureDraftDevSession,
+    syncDraftDevSession: syncDraftDevSessionExplicit,
   };
 }

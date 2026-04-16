@@ -74,9 +74,6 @@ function documentStateReducer(state: DocumentState, action: DocumentAction): Doc
     return state;
   }
   const { transportKey, baseDocumentUrl, previewAuthToken, hasUsableFrame } = action;
-  const nextDocumentUrl = hasUsableFrame
-    ? baseDocumentUrl
-    : appendPreviewRuntimeToken(baseDocumentUrl, previewAuthToken);
   if (!transportKey || !baseDocumentUrl) {
     if (!state.transportKey && !state.documentUrl) {
       return state;
@@ -86,6 +83,9 @@ function documentStateReducer(state: DocumentState, action: DocumentAction): Doc
       documentUrl: null,
     };
   }
+  const nextDocumentUrl = hasUsableFrame
+    ? baseDocumentUrl
+    : appendPreviewRuntimeToken(baseDocumentUrl, previewAuthToken);
   if (state.transportKey !== transportKey) {
     return {
       transportKey,
@@ -196,7 +196,6 @@ export function useBuilderPreviewTransport({
       && lifecyclePhase !== "ensuring"
       && lifecyclePhase !== "recovering"
       && lifecyclePhase !== "syncing"
-      && livePreviewStatus !== "building"
     ) {
       return "ready";
     }

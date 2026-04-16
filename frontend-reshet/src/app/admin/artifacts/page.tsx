@@ -14,6 +14,27 @@ import {
 } from "@/components/admin/artifacts/artifactRoutes"
 import { artifactsService, type Artifact, type ArtifactKind, type ArtifactLanguage } from "@/services/artifacts"
 
+function artifactTransferFilename(displayName: string) {
+  const base = displayName
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+  return `${base || "artifact"}.artifact.json`
+}
+
+function downloadArtifactTransferFile(filename: string, payload: unknown) {
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement("a")
+  link.href = url
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  URL.revokeObjectURL(url)
+}
+
 export default function ArtifactsPage() {
   const { currentTenant } = useTenant()
   const { open: appSidebarOpen, openMobile: appSidebarOpenMobile, isMobile } = useSidebar()
@@ -22,7 +43,7 @@ export default function ArtifactsPage() {
 
   const [loading, setLoading] = useState(true)
   const [publishingId, setPublishingId] = useState<string | null>(null)
-  const [bulkAction, setBulkAction] = useState<"duplicate" | "publish" | "delete" | null>(null)
+  const [bulkAction, setBulkAction] = useState<"duplicate" | "publish" | "delete" | "import" | "export" | null>(null)
   const [artifacts, setArtifacts] = useState<Artifact[]>([])
 
   const legacyMode = searchParams.get("mode")
@@ -164,6 +185,50 @@ export default function ArtifactsPage() {
     }
   }, [currentTenant?.slug, fetchArtifacts])
 
+  const handleDownloadArtifact = useCallback(async (artifact: Artifact) => {
+    try {
+      const transfer = await artifactsService.exportArtifact(artifact.id, currentTenant?.slug)
+      downloadArtifactTransferFile(artifactTransferFilename(artifact.display_name), transfer)
+    } catch (error) {
+      console.error("Failed to export artifact", error)
+      alert(error instanceof Error ? error.message : "Failed to export artifact")
+    }
+  }, [currentTenant?.slug])
+
+  const handleBulkDownload = useCallback(async (selectedArtifacts: Artifact[]) => {
+    if (selectedArtifacts.length === 0) return
+    setBulkAction("export")
+    try {
+      for (const artifact of selectedArtifacts) {
+        const transfer = await artifactsService.exportArtifact(artifact.id, currentTenant?.slug)
+        downloadArtifactTransferFile(artifactTransferFilename(artifact.display_name), transfer)
+      }
+    } catch (error) {
+      console.error("Failed to export selected artifacts", error)
+      alert(error instanceof Error ? error.message : "Failed to export selected artifacts")
+    } finally {
+      setBulkAction(null)
+    }
+  }, [currentTenant?.slug])
+
+  const handleUploadFiles = useCallback(async (files: File[]) => {
+    if (files.length === 0) return
+    setBulkAction("import")
+    try {
+      for (const file of files) {
+        const text = await file.text()
+        const payload = JSON.parse(text)
+        await artifactsService.importArtifact(payload, currentTenant?.slug)
+      }
+      await fetchArtifacts()
+    } catch (error) {
+      console.error("Failed to import artifact files", error)
+      alert(error instanceof Error ? error.message : "Failed to import artifact files")
+    } finally {
+      setBulkAction(null)
+    }
+  }, [currentTenant?.slug, fetchArtifacts])
+
   if (shouldRedirectLegacyRoute) {
     return (
       <div className="flex h-full w-full min-w-0 flex-col overflow-hidden">
@@ -177,6 +242,7 @@ export default function ArtifactsPage() {
           isPublished={false}
           isSaving={false}
           disableSave={false}
+          showDownload={false}
           showPublish={false}
           showVersions={false}
           versionsOpen={false}
@@ -193,6 +259,7 @@ export default function ArtifactsPage() {
           onVersionsOpenChange={() => {}}
           onSelectVersion={() => {}}
           onPublish={() => {}}
+          onDownload={() => {}}
           onRunTest={() => {}}
           onSave={() => {}}
         />
@@ -209,6 +276,9 @@ export default function ArtifactsPage() {
             onBulkDuplicateArtifacts={() => Promise.resolve()}
             onBulkDeleteArtifacts={() => Promise.resolve()}
             onBulkPublishArtifacts={() => Promise.resolve()}
+            onDownloadArtifact={() => Promise.resolve()}
+            onUploadArtifactFiles={() => Promise.resolve()}
+            onBulkDownloadArtifacts={() => Promise.resolve()}
           />
         </div>
       </div>
@@ -227,6 +297,7 @@ export default function ArtifactsPage() {
         isPublished={false}
         isSaving={false}
         disableSave={false}
+        showDownload={false}
         showPublish={false}
         showVersions={false}
         versionsOpen={false}
@@ -245,6 +316,7 @@ export default function ArtifactsPage() {
         onVersionsOpenChange={() => {}}
         onSelectVersion={() => {}}
         onPublish={() => {}}
+        onDownload={() => {}}
         onRunTest={() => {}}
         onSave={() => {}}
       />
@@ -270,6 +342,9 @@ export default function ArtifactsPage() {
           onBulkDuplicateArtifacts={(selectedArtifacts) => handleBulkDuplicate(selectedArtifacts)}
           onBulkDeleteArtifacts={(selectedArtifacts) => handleBulkDelete(selectedArtifacts)}
           onBulkPublishArtifacts={(selectedArtifacts) => handleBulkPublish(selectedArtifacts)}
+          onDownloadArtifact={(artifact) => handleDownloadArtifact(artifact)}
+          onUploadArtifactFiles={(files) => handleUploadFiles(files)}
+          onBulkDownloadArtifacts={(selectedArtifacts) => handleBulkDownload(selectedArtifacts)}
         />
       </div>
     </div>

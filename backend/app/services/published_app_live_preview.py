@@ -5,6 +5,8 @@ import json
 from datetime import datetime, timezone
 from typing import Any, Dict
 
+from app.services.published_app_templates import TemplateRuntimeContext, apply_runtime_bootstrap_overlay
+
 
 LIVE_PREVIEW_MODE = "build_watch_static"
 LIVE_PREVIEW_STATUS_BOOTING = "booting"
@@ -53,6 +55,22 @@ def build_live_preview_workspace_fingerprint(*, entry_file: str, files: Dict[str
     return hashlib.sha256(
         json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
+
+
+def build_live_preview_overlay_workspace_fingerprint(
+    *,
+    entry_file: str,
+    files: Dict[str, str],
+    runtime_context: TemplateRuntimeContext | Dict[str, Any] | None = None,
+) -> str:
+    overlaid_files = apply_runtime_bootstrap_overlay(
+        dict(files or {}),
+        runtime_context=runtime_context,
+    )
+    return build_live_preview_workspace_fingerprint(
+        entry_file=entry_file,
+        files=overlaid_files,
+    )
 
 
 def normalize_live_preview_payload(raw: object) -> dict[str, Any]:

@@ -13,6 +13,9 @@ from app.api.dependencies import ensure_sensitive_action_approved, get_current_p
 from app.api.schemas.artifacts import (
     ArtifactConvertKindRequest,
     ArtifactCreate,
+    ArtifactImportResponse,
+    ArtifactTransferFile,
+    ArtifactTransferPayload,
     ArtifactDependencyAnalysisRequest,
     ArtifactDependencyAnalysisResponse,
     ArtifactPublishResponse,
@@ -339,6 +342,33 @@ def _artifact_revision_to_version_list_item(
     )
 
 
+def _artifact_transfer_payload_from_artifact(artifact: ArtifactModel) -> ArtifactTransferPayload:
+    active_revision = artifact.latest_draft_revision or artifact.latest_published_revision
+    if active_revision is None:
+        raise HTTPException(status_code=409, detail="Artifact is missing a current revision")
+    return ArtifactTransferPayload(
+        display_name=artifact.display_name,
+        description=artifact.description,
+        kind=getattr(artifact.kind, "value", artifact.kind),
+        runtime={
+            "language": str(getattr(active_revision.language, "value", active_revision.language) or "python"),
+            "source_files": list(active_revision.source_files or []),
+            "entry_module_path": active_revision.entry_module_path,
+            "dependencies": list(active_revision.python_dependencies or []),
+            "runtime_target": str(active_revision.runtime_target or "cloudflare_workers"),
+        },
+        capabilities=dict(active_revision.capabilities or {}),
+        config_schema=dict(active_revision.config_schema or {}),
+        agent_contract=dict(active_revision.agent_contract or {}) if active_revision.agent_contract is not None else None,
+        rag_contract=dict(active_revision.rag_contract or {}) if active_revision.rag_contract is not None else None,
+        tool_contract=dict(active_revision.tool_contract or {}) if active_revision.tool_contract is not None else None,
+        published=bool(
+            artifact.status == ArtifactStatus.PUBLISHED
+            and artifact.latest_published_revision_id is not None
+        ),
+    )
+
+
 @router.get("", response_model=dict[str, Any])
 async def list_artifacts(
     tenant_slug: Optional[str] = None,
@@ -373,6 +403,93 @@ async def get_artifact(
     if artifact is None:
         raise HTTPException(status_code=404, detail="Artifact not found")
     return _artifact_to_schema(artifact, include_code=True)
+
+
+@router.get("/{artifact_id}/export", response_model=ArtifactTransferFile)
+async def export_artifact(
+    artifact_id: str,
+    tenant_slug: Optional[str] = None,
+    _: Dict[str, Any] = Depends(require_scopes("artifacts.read")),
+    artifact_ctx=Depends(get_artifact_context),
+):
+    tenant, _user, db = artifact_ctx
+    artifact_uuid = _parse_artifact_uuid(artifact_id)
+    if artifact_uuid is None:
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    artifact = await ArtifactRegistryService(db).get_accessible_artifact(
+        artifact_id=artifact_uuid,
+        tenant_id=tenant.id if tenant is not None else None,
+    )
+    if artifact is None:
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    return ArtifactTransferFile(
+        exported_at=artifact.updated_at,
+        artifact=_artifact_transfer_payload_from_artifact(artifact),
+    )
+
+
+@router.post("/import", response_model=ArtifactImportResponse)
+async def import_artifact(
+    request: ArtifactTransferFile,
+    tenant_slug: Optional[str] = None,
+    principal: Dict[str, Any] = Depends(get_current_principal),
+    _: Dict[str, Any] = Depends(require_scopes("artifacts.write")),
+    artifact_ctx=Depends(get_artifact_context),
+):
+    tenant, user, db = artifact_ctx
+    if tenant is None:
+        raise HTTPException(status_code=400, detail="Tenant context required")
+    registry = ArtifactRegistryService(db)
+    accessible_artifacts = await registry.list_accessible_artifacts(tenant_id=tenant.id)
+    imported_payload = request.artifact
+    display_name = imported_payload.display_name
+    if any(artifact.display_name == display_name for artifact in accessible_artifacts):
+        display_name = _next_duplicate_display_name(
+            imported_payload.display_name,
+            [artifact.display_name for artifact in accessible_artifacts],
+        )
+    created = await ArtifactRevisionService(db).create_artifact(
+        tenant_id=tenant.id,
+        created_by=user.id if user else None,
+        display_name=display_name,
+        description=imported_payload.description,
+        kind=getattr(imported_payload.kind, "value", imported_payload.kind),
+        owner_type=ArtifactOwnerType.TENANT.value,
+        source_files=[_model_dump(item) for item in imported_payload.runtime.source_files],
+        entry_module_path=imported_payload.runtime.entry_module_path,
+        language=getattr(imported_payload.runtime.language, "value", imported_payload.runtime.language),
+        dependencies=list(imported_payload.runtime.dependencies or []),
+        runtime_target=str(imported_payload.runtime.runtime_target or "cloudflare_workers"),
+        capabilities=_model_dump(imported_payload.capabilities),
+        config_schema=dict(imported_payload.config_schema or {}),
+        agent_contract=_model_dump(imported_payload.agent_contract) if imported_payload.agent_contract is not None else None,
+        rag_contract=_model_dump(imported_payload.rag_contract) if imported_payload.rag_contract is not None else None,
+        tool_contract=_model_dump(imported_payload.tool_contract) if imported_payload.tool_contract is not None else None,
+    )
+    try:
+        await ToolBindingService(db).sync_artifact_tool_binding(created)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    await db.commit()
+    imported_artifact = await registry.get_tenant_artifact(artifact_id=created.id, tenant_id=tenant.id)
+    if imported_artifact is None:
+        raise HTTPException(status_code=500, detail="Imported artifact could not be loaded")
+    if imported_payload.published:
+        try:
+            await ArtifactAdminService(db).publish_artifact(
+                ctx=_artifact_control_plane_context(tenant=tenant, user=user, context=principal),
+                artifact_id=created.id,
+            )
+        except ControlPlaneError as exc:
+            raise exc.to_http_exception() from exc
+        await db.commit()
+        imported_artifact = await registry.get_tenant_artifact(artifact_id=created.id, tenant_id=tenant.id)
+        if imported_artifact is None:
+            raise HTTPException(status_code=500, detail="Imported artifact could not be loaded after publish")
+    return ArtifactImportResponse(
+        artifact=_artifact_to_schema(imported_artifact, include_code=True),
+        published=bool(imported_payload.published),
+    )
 
 
 @router.post("/validate-source", response_model=ArtifactSourceValidationResponse)

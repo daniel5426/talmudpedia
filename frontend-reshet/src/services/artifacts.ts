@@ -114,6 +114,31 @@ export interface ArtifactPublishResponse {
   status: "published";
 }
 
+export interface ArtifactTransferPayload {
+  display_name: string;
+  description?: string | null;
+  kind: ArtifactKind;
+  runtime: ArtifactRuntimeConfig;
+  capabilities: ArtifactCapabilityConfig;
+  config_schema: Record<string, unknown>;
+  agent_contract?: AgentArtifactContract | null;
+  rag_contract?: RAGArtifactContract | null;
+  tool_contract?: ToolArtifactContract | null;
+  published: boolean;
+}
+
+export interface ArtifactTransferFile {
+  format: "talmudpedia.artifact";
+  format_version: 1;
+  exported_at: string;
+  artifact: ArtifactTransferPayload;
+}
+
+export interface ArtifactImportResponse {
+  artifact: Artifact;
+  published: boolean;
+}
+
 export interface ArtifactTestRequest {
   artifact_id?: string;
   source_files?: ArtifactSourceFile[];
@@ -471,6 +496,16 @@ export const artifactsService = {
   duplicate: async (id: string, tenantSlug?: string): Promise<Artifact> => {
     const url = tenantSlug ? `/admin/artifacts/${id}/duplicate?tenant_slug=${tenantSlug}` : `/admin/artifacts/${id}/duplicate`;
     return httpClient.post<Artifact>(url, {});
+  },
+
+  exportArtifact: async (id: string, tenantSlug?: string): Promise<ArtifactTransferFile> => {
+    const url = tenantSlug ? `/admin/artifacts/${id}/export?tenant_slug=${tenantSlug}` : `/admin/artifacts/${id}/export`;
+    return httpClient.get<ArtifactTransferFile>(url);
+  },
+
+  importArtifact: async (data: ArtifactTransferFile, tenantSlug?: string): Promise<ArtifactImportResponse> => {
+    const url = tenantSlug ? `/admin/artifacts/import?tenant_slug=${tenantSlug}` : "/admin/artifacts/import";
+    return httpClient.post<ArtifactImportResponse>(url, data);
   },
 
   delete: async (id: string, tenantSlug?: string): Promise<void> => {

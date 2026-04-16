@@ -1,6 +1,6 @@
 # Architecture Tree (Curated)
 
-Last Updated: 2026-04-15
+Last Updated: 2026-04-16
 
 This file is a backend-only architecture map optimized for agent context efficiency.
 
@@ -33,6 +33,7 @@ backend/app/api/routers/agent_graph_mutations.py
 backend/app/api/routers/agent_tool_exports.py
 backend/app/api/routers/resource_policies.py
 backend/app/api/routers/prompts.py
+backend/app/api/routers/files.py
 backend/app/api/routers/rag_graph_mutations.py
 backend/app/api/routers/rag_operator_contracts.py
 backend/app/api/routers/artifacts.py
@@ -128,6 +129,7 @@ backend/app/db/postgres/models/
 backend/app/db/postgres/models/agents.py
 backend/app/db/postgres/models/artifact_runtime.py
 backend/app/db/postgres/models/agent_threads.py
+backend/app/db/postgres/models/files.py
 backend/app/db/postgres/models/mcp.py
 backend/app/db/postgres/models/published_app_analytics.py
 backend/app/db/postgres/models/prompts.py
@@ -157,6 +159,8 @@ backend/app/services/control_plane/agents_admin_service.py
 backend/app/services/control_plane/rag_admin_service.py
 backend/app/services/control_plane/artifact_admin_service.py
 backend/app/services/control_plane/orchestration_admin_service.py
+backend/app/services/file_spaces/
+backend/app/services/file_space_tools.py
 backend/app/services/run_invocation_service.py
 backend/app/services/resource_policy_service.py
 backend/app/services/resource_policy_quota_service.py

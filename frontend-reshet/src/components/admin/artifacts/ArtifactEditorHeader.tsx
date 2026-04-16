@@ -1,6 +1,6 @@
 "use client"
 
-import { Bot, ChevronDown, Clock3, Database, Loader2, PanelLeft, Play, Plus, RefreshCw, Save, Upload, Wrench } from "lucide-react"
+import { Bot, ChevronDown, Clock3, Database, Download, Loader2, PanelLeft, Play, Plus, RefreshCw, Save, Upload, Wrench } from "lucide-react"
 
 import { AdminPageHeader } from "@/components/admin/AdminPageHeader"
 import { ArtifactVersionsDropdown } from "@/components/admin/artifacts/ArtifactVersionsDropdown"
@@ -31,6 +31,7 @@ type ArtifactEditorHeaderProps = {
   isPublished: boolean
   isSaving: boolean
   disableSave: boolean
+  showDownload?: boolean
   showPublish: boolean
   showVersions: boolean
   versionsOpen: boolean
@@ -47,6 +48,7 @@ type ArtifactEditorHeaderProps = {
   onVersionsOpenChange: (open: boolean) => void
   onSelectVersion: (revisionId: string) => void
   onPublish: () => void
+  onDownload: () => void
   onRunTest: () => void
   onSave: () => void
 }
@@ -67,6 +69,7 @@ export function ArtifactEditorHeader({
   isPublished,
   isSaving,
   disableSave,
+  showDownload = false,
   showPublish,
   showVersions,
   versionsOpen,
@@ -83,6 +86,7 @@ export function ArtifactEditorHeader({
   onVersionsOpenChange,
   onSelectVersion,
   onPublish,
+  onDownload,
   onRunTest,
   onSave,
 }: ArtifactEditorHeaderProps) {
@@ -236,6 +240,12 @@ export function ArtifactEditorHeader({
             <Play className="mr-2 h-4 w-4 fill-current" />
             Test
           </Button>
+          {showDownload ? (
+            <Button size="sm" variant="outline" onClick={onDownload} disabled={controlsDisabled}>
+              <Download className="mr-2 h-4 w-4" />
+              Download File
+            </Button>
+          ) : null}
           <Button size="sm" onClick={onSave} disabled={controlsDisabled || isSaving || disableSave}>
             {isSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
             Save

@@ -98,31 +98,33 @@ class PublishedAppDraftRevisionMaterializerService:
         created_by: UUID | None,
         origin_kind: str,
         origin_run_id: UUID | None,
+        restored_from_revision_id: UUID | None = None,
     ) -> MaterializedDraftRevisionResult:
-        existing = await self._find_existing_revision_for_build(
-            app_id=app.id,
-            workspace_build_id=build_result.build.id,
-        )
-        if existing is not None:
-            app.current_draft_revision_id = existing.id
-            await self.runtime_service.bind_live_workspace_snapshot_to_revision(
+        if restored_from_revision_id is None:
+            existing = await self._find_existing_revision_for_build(
                 app_id=app.id,
-                revision_id=existing.id,
+                workspace_build_id=build_result.build.id,
             )
-            self._trace(
-                "materialize.reused_existing_revision",
-                app_id=app.id,
-                revision_id=str(existing.id),
-                source_fingerprint=build_result.source_fingerprint,
-                workspace_revision_token=str(build_result.workspace_revision_token or ""),
-                workspace_build_id=str(build_result.build.id),
-            )
-            return MaterializedDraftRevisionResult(
-                revision=existing,
-                reused=True,
-                source_fingerprint=build_result.source_fingerprint,
-                workspace_revision_token=build_result.workspace_revision_token,
-            )
+            if existing is not None:
+                app.current_draft_revision_id = existing.id
+                await self.runtime_service.bind_live_workspace_snapshot_to_revision(
+                    app_id=app.id,
+                    revision_id=existing.id,
+                )
+                self._trace(
+                    "materialize.reused_existing_revision",
+                    app_id=app.id,
+                    revision_id=str(existing.id),
+                    source_fingerprint=build_result.source_fingerprint,
+                    workspace_revision_token=str(build_result.workspace_revision_token or ""),
+                    workspace_build_id=str(build_result.build.id),
+                )
+                return MaterializedDraftRevisionResult(
+                    revision=existing,
+                    reused=True,
+                    source_fingerprint=build_result.source_fingerprint,
+                    workspace_revision_token=build_result.workspace_revision_token,
+                )
 
         template_runtime_context = TemplateRuntimeContext(
             app_id=str(app.id),
@@ -158,6 +160,7 @@ class PublishedAppDraftRevisionMaterializerService:
             source_revision_id=source_revision_id,
             origin_kind=origin_kind,
             origin_run_id=origin_run_id,
+            restored_from_revision_id=restored_from_revision_id,
             build_status=PublishedAppRevisionBuildStatus.succeeded,
             build_seq=build_seq + 1,
             build_error=None,
@@ -194,6 +197,7 @@ class PublishedAppDraftRevisionMaterializerService:
         created_by: UUID | None,
         origin_kind: str,
         origin_run_id: UUID | None = None,
+        restored_from_revision_id: UUID | None = None,
     ) -> MaterializedDraftRevisionResult:
         self._trace(
             "materialize.begin",
@@ -219,6 +223,7 @@ class PublishedAppDraftRevisionMaterializerService:
                 created_by=created_by,
                 origin_kind=origin_kind,
                 origin_run_id=origin_run_id,
+                restored_from_revision_id=restored_from_revision_id,
             )
         except PublishedAppWorkspaceBuildError as exc:
             self._trace(

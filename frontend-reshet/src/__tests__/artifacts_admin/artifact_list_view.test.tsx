@@ -55,11 +55,18 @@ describe("ArtifactListView", () => {
     render(
       <ArtifactListView
         artifacts={[baseArtifact]}
+        bulkAction={null}
         publishingId={null}
         onEditArtifact={onEditArtifact}
         onDeleteArtifact={jest.fn()}
         onPublishArtifact={jest.fn()}
         onDuplicateArtifact={jest.fn()}
+        onDownloadArtifact={jest.fn()}
+        onUploadArtifactFiles={jest.fn()}
+        onBulkDeleteArtifacts={jest.fn().mockResolvedValue(undefined)}
+        onBulkPublishArtifacts={jest.fn().mockResolvedValue(undefined)}
+        onBulkDuplicateArtifacts={jest.fn().mockResolvedValue(undefined)}
+        onBulkDownloadArtifacts={jest.fn().mockResolvedValue(undefined)}
       />,
     )
 
@@ -74,11 +81,18 @@ describe("ArtifactListView", () => {
     render(
       <ArtifactListView
         artifacts={[baseArtifact]}
+        bulkAction={null}
         publishingId={null}
         onEditArtifact={jest.fn()}
         onDeleteArtifact={onDeleteArtifact}
         onPublishArtifact={onPublishArtifact}
         onDuplicateArtifact={onDuplicateArtifact}
+        onDownloadArtifact={jest.fn()}
+        onUploadArtifactFiles={jest.fn()}
+        onBulkDeleteArtifacts={jest.fn().mockResolvedValue(undefined)}
+        onBulkPublishArtifacts={jest.fn().mockResolvedValue(undefined)}
+        onBulkDuplicateArtifacts={jest.fn().mockResolvedValue(undefined)}
+        onBulkDownloadArtifacts={jest.fn().mockResolvedValue(undefined)}
       />,
     )
 
@@ -89,5 +103,56 @@ describe("ArtifactListView", () => {
     expect(onDuplicateArtifact).toHaveBeenCalledWith(baseArtifact)
     expect(onPublishArtifact).toHaveBeenCalledWith(baseArtifact)
     expect(onDeleteArtifact).toHaveBeenCalledWith(baseArtifact)
+  })
+
+  it("routes download through the dropdown menu handler", () => {
+    const onDownloadArtifact = jest.fn()
+    render(
+      <ArtifactListView
+        artifacts={[baseArtifact]}
+        bulkAction={null}
+        publishingId={null}
+        onEditArtifact={jest.fn()}
+        onDeleteArtifact={jest.fn()}
+        onPublishArtifact={jest.fn()}
+        onDuplicateArtifact={jest.fn()}
+        onDownloadArtifact={onDownloadArtifact}
+        onUploadArtifactFiles={jest.fn()}
+        onBulkDeleteArtifacts={jest.fn().mockResolvedValue(undefined)}
+        onBulkPublishArtifacts={jest.fn().mockResolvedValue(undefined)}
+        onBulkDuplicateArtifacts={jest.fn().mockResolvedValue(undefined)}
+        onBulkDownloadArtifacts={jest.fn().mockResolvedValue(undefined)}
+      />,
+    )
+
+    fireEvent.click(screen.getByText("Download file"))
+    expect(onDownloadArtifact).toHaveBeenCalledWith(baseArtifact)
+  })
+
+  it("passes selected files to the upload handler", () => {
+    const onUploadArtifactFiles = jest.fn()
+    render(
+      <ArtifactListView
+        artifacts={[baseArtifact]}
+        bulkAction={null}
+        publishingId={null}
+        onEditArtifact={jest.fn()}
+        onDeleteArtifact={jest.fn()}
+        onPublishArtifact={jest.fn()}
+        onDuplicateArtifact={jest.fn()}
+        onDownloadArtifact={jest.fn()}
+        onUploadArtifactFiles={onUploadArtifactFiles}
+        onBulkDeleteArtifacts={jest.fn().mockResolvedValue(undefined)}
+        onBulkPublishArtifacts={jest.fn().mockResolvedValue(undefined)}
+        onBulkDuplicateArtifacts={jest.fn().mockResolvedValue(undefined)}
+        onBulkDownloadArtifacts={jest.fn().mockResolvedValue(undefined)}
+      />,
+    )
+
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement
+    const file = new File(['{"format":"talmudpedia.artifact"}'], "artifact.artifact.json", { type: "application/json" })
+    fireEvent.change(input, { target: { files: [file] } })
+
+    expect(onUploadArtifactFiles).toHaveBeenCalledWith([file])
   })
 })

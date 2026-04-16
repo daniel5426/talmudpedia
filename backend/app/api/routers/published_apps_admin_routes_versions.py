@@ -187,10 +187,27 @@ async def create_draft_version(
             },
         )
     current = await _ensure_current_draft_revision(db, app, actor.id)
+    if payload.base_revision_id and str(payload.base_revision_id) != str(current.id):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "REVISION_CONFLICT",
+                "latest_revision_id": str(current.id),
+                "latest_updated_at": current.created_at.isoformat(),
+                "message": "Draft revision is stale",
+            },
+        )
 
-    files = _coerce_files_payload(payload.files if payload.files is not None else dict(current.files or {}))
-    entry_file = _normalize_builder_path(payload.entry_file or current.entry_file)
-    _assert_builder_path_allowed(entry_file, field="entry_file")
+    if payload.files is not None:
+        files = _coerce_files_payload(payload.files)
+        entry_file = _normalize_builder_path(payload.entry_file or current.entry_file)
+        _assert_builder_path_allowed(entry_file, field="entry_file")
+    else:
+        files, entry_file = _apply_patch_operations(
+            dict(current.files or {}),
+            payload.entry_file or current.entry_file,
+            payload.operations,
+        )
     _validate_builder_project_or_raise(files, entry_file)
 
     runtime_service = PublishedAppDraftDevRuntimeService(db)
@@ -212,7 +229,7 @@ async def create_draft_version(
             entry_file=entry_file,
             source_revision_id=current.id,
             created_by=actor.id,
-            origin_kind="manual_edit",
+            origin_kind="manual_save",
         )
     except PublishedAppDraftRevisionMaterializerError as exc:
         raise HTTPException(
@@ -265,39 +282,49 @@ async def restore_version(
                 "reason": str(exc),
             },
         ) from exc
-    restored = await create_app_version(
-        db,
-        app=app,
-        kind=PublishedAppRevisionKind.draft,
-        template_key=target.template_key,
-        entry_file=target.entry_file,
-        files=files,
-        created_by=actor_id,
-        source_revision_id=current.id,
-        origin_kind="restore",
-        restored_from_revision_id=target.id,
-        build_status=PublishedAppRevisionBuildStatus.queued,
-        build_seq=_next_build_seq(current),
-        template_runtime=target.template_runtime or "vite_static",
-    )
-    app.current_draft_revision_id = restored.id
-
+    runtime_service = PublishedAppDraftDevRuntimeService(db)
     if actor_id is not None:
-        runtime_service = PublishedAppDraftDevRuntimeService(db)
         try:
             await runtime_service.sync_session(
                 app=app,
-                revision=restored,
+                revision=current,
                 user_id=actor_id,
-                files=dict(restored.files or {}),
-                entry_file=restored.entry_file,
+                files=files,
+                entry_file=target.entry_file,
             )
         except PublishedAppDraftDevRuntimeDisabled:
             pass
 
+    materializer = PublishedAppDraftRevisionMaterializerService(db)
+    try:
+        result = await materializer.materialize_live_workspace(
+            app=app,
+            entry_file=target.entry_file,
+            source_revision_id=current.id,
+            created_by=actor_id,
+            origin_kind="restore",
+            restored_from_revision_id=target.id,
+        )
+    except PublishedAppDraftRevisionMaterializerError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "RESTORE_BUILD_FAILED",
+                "message": "Selected version could not be restored into a built draft revision.",
+                "reason": str(exc),
+            },
+        ) from exc
+
+    if actor_id is not None:
+        await runtime_service.bind_session_to_revision_without_sync(
+            app_id=app.id,
+            user_id=actor_id,
+            revision=result.revision,
+        )
+
     await db.commit()
-    await db.refresh(restored)
-    return _revision_to_response(restored)
+    await db.refresh(result.revision)
+    return _revision_to_response(result.revision)
 
 
 @router.get("/{app_id}/versions/{version_id}/preview-runtime", response_model=VersionPreviewRuntimeResponse)

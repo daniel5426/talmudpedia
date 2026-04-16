@@ -87,6 +87,8 @@ async def test_runtime_client_delegates_start_session_to_selected_sprite_backend
         app_id="app-1",
         user_id="user-1",
         revision_id="revision-1",
+        app_slug="app-1",
+        agent_id="agent-1",
         entry_file="src/main.tsx",
         files={"src/main.tsx": "export default 1;"},
         idle_timeout_seconds=180,

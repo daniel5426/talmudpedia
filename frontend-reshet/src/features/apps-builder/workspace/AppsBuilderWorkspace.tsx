@@ -124,6 +124,7 @@ type BuilderWorkspaceAction =
   | { type: "update_file"; path: string; content: string }
   | { type: "delete_file"; path: string }
   | { type: "select_file"; path: string | null }
+  | { type: "mark_conflict"; notice: string }
   | { type: "clear_notice" };
 
 const DEFAULT_ENTRY_FILE = "src/main.tsx";
@@ -213,6 +214,12 @@ function builderWorkspaceReducer(state: BuilderWorkspaceState, action: BuilderWo
       return {
         ...state,
         selectedFile: action.path,
+      };
+    case "mark_conflict":
+      return {
+        ...state,
+        conflict: true,
+        notice: action.notice,
       };
     case "clear_notice":
       return {
@@ -331,6 +338,8 @@ function buildDraftDevSyncFingerprint(entry: string, nextFiles: Record<string, s
 }
 
 const POST_RUN_PREVIEW_POLL_WINDOW_MS = 90_000;
+const POST_SAVE_REVISION_POLL_WINDOW_MS = 45_000;
+const POST_SAVE_REVISION_POLL_INTERVAL_MS = 2_000;
 
 function logBuilderWorkspaceDebug(event: string, fields: Record<string, unknown> = {}): void {
   if (typeof console === "undefined" || typeof console.info !== "function") {
@@ -404,6 +413,10 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     until: number;
     baselineBuildId: string | null;
   } | null>(null);
+  const [postSaveRevisionPollState, setPostSaveRevisionPollState] = useState<{
+    until: number;
+    baselineRevisionId: string | null;
+  } | null>(null);
   const saveBlockedByBackendLock = hasActiveCodingRunLock || postRunHydrationPending;
   const [isOpeningApp, setIsOpeningApp] = useState(false);
   const [isExportingArchive, setIsExportingArchive] = useState(false);
@@ -433,6 +446,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     setPreviewRouteInput("/");
     setPreviewReloadToken(0);
     setPostRunHydrationPending(false);
+    setPostSaveRevisionPollState(null);
     dispatchWorkspace({ type: "reset" });
   }, [appId]);
 
@@ -508,6 +522,13 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     const nextFingerprint = buildDraftDevSyncFingerprint(nextEntry, nextFiles);
     const currentFingerprint = buildDraftDevSyncFingerprint(entryFile, files);
     const replacedDirtyLocalState = workspaceState.dirty && nextFingerprint !== currentFingerprint;
+    if (replacedDirtyLocalState) {
+      dispatchWorkspace({
+        type: "mark_conflict",
+        notice: "Live workspace changed while you have unsaved local edits.",
+      });
+      return;
+    }
     dispatchWorkspace({
       type: "hydrate",
       payload: {
@@ -517,8 +538,8 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
         workspaceRevisionToken: session?.workspace_revision_token || session?.live_workspace_snapshot?.revision_token || null,
         workspaceSource: postRunHydrationPending ? "materialized_run" : "live_session",
         preserveSelection: true,
-        notice: replacedDirtyLocalState ? "Workspace refreshed from live sandbox changes." : null,
-        conflict: replacedDirtyLocalState,
+        notice: null,
+        conflict: false,
       },
     });
     lastSavedCodeFingerprintRef.current = nextFingerprint;
@@ -540,6 +561,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     hydrateFromBuilderSession,
     ensureDraftDevSession,
     retryEnsureDraftDevSession,
+    syncDraftDevSession,
   } = useAppsBuilderSandboxLifecycle({
     appId,
     currentRevisionId,
@@ -742,6 +764,28 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
       setError(err instanceof Error ? err.message : "Failed to refresh builder state");
     }
   }, [appId, hydrateFromBuilderSession, hydrateWorkspaceFromRevision]);
+
+  useEffect(() => {
+    if (!postSaveRevisionPollState) {
+      return;
+    }
+    const baselineRevisionId = String(postSaveRevisionPollState.baselineRevisionId || "").trim() || null;
+    const nextRevisionId = String(state?.app.current_draft_revision_id || currentRevisionId || "").trim() || null;
+    if (nextRevisionId && nextRevisionId !== baselineRevisionId) {
+      setPostSaveRevisionPollState(null);
+      return;
+    }
+    if (postSaveRevisionPollState.until <= Date.now()) {
+      setPostSaveRevisionPollState(null);
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      void refreshStateSilently();
+    }, POST_SAVE_REVISION_POLL_INTERVAL_MS);
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [currentRevisionId, postSaveRevisionPollState, refreshStateSilently, state?.app.current_draft_revision_id]);
 
   const {
     versions,
@@ -1126,35 +1170,17 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     setIsSaving(true);
     setError(null);
     try {
-      const revision = await publishedAppsService.createDraftVersion(appId, {
-        base_revision_id: currentRevisionId || undefined,
-        files: filterAppsBuilderFiles(files),
-        entry_file: entryFile,
-      });
-      lastSavedCodeFingerprintRef.current = buildDraftDevSyncFingerprint(entryFile, files);
-      dispatchWorkspace({
-        type: "hydrate",
-        payload: {
-          files,
-          entryFile,
-          revisionId: revision.id,
-          workspaceRevisionToken,
-          workspaceSource: "durable_revision",
-          preserveSelection: true,
-        },
-      });
-      setState((prev) => {
-        if (!prev) return prev;
-        return {
-          ...prev,
-          current_draft_revision: revision,
-          app: {
-            ...prev.app,
-            current_draft_revision_id: revision.id,
-          },
-        };
-      });
       await ensureDraftDevSession();
+      const session = await syncDraftDevSession({ forceFullSync: true });
+      lastSavedCodeFingerprintRef.current = buildDraftDevSyncFingerprint(entryFile, files);
+      if (session) {
+        applyDraftDevSessionToBuilderState(session);
+      }
+      setPostSaveRevisionPollState({
+        until: Date.now() + POST_SAVE_REVISION_POLL_WINDOW_MS,
+        baselineRevisionId: currentRevisionId,
+      });
+      void refreshStateSilently();
     } catch (err: any) {
       const detail = err?.message || "Failed to save draft";
       try {
@@ -1171,7 +1197,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     } finally {
       setIsSaving(false);
     }
-  }, [appId, currentRevisionId, ensureDraftDevSession, entryFile, files, loadState, saveBlockedByBackendLock, workspaceRevisionToken]);
+  }, [applyDraftDevSessionToBuilderState, currentRevisionId, ensureDraftDevSession, entryFile, files, loadState, refreshStateSilently, saveBlockedByBackendLock, syncDraftDevSession]);
 
   const publish = useCallback(async () => {
     if (sandboxActionsBlocked) {

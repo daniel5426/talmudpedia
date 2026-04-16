@@ -5,7 +5,7 @@ import Link from "next/link"
 import { useParams, useRouter } from "next/navigation"
 import {
   Download,
-  File,
+  File as FileIcon,
   FileText,
   Folder,
   FolderPlus,
@@ -19,7 +19,6 @@ import {
 import { AdminPageHeader } from "@/components/admin/AdminPageHeader"
 import { CustomBreadcrumb } from "@/components/ui/custom-breadcrumb"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Textarea } from "@/components/ui/textarea"
@@ -271,7 +270,7 @@ export default function FileSpaceDetailPage() {
             ) : (
               <div className="space-y-1">
                 {entries.map((entry) => {
-                  const Icon = entry.entry_type === "directory" ? Folder : entry.is_text ? FileText : File
+                  const Icon = entry.entry_type === "directory" ? Folder : entry.is_text ? FileText : FileIcon
                   const isSelected = entry.path === selectedPath
                   return (
                     <button

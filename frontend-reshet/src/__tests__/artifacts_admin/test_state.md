@@ -1,4 +1,4 @@
-Last Updated: 2026-03-30
+Last Updated: 2026-04-16
 
 # Test State
 
@@ -30,6 +30,8 @@ Artifact admin editor payload, dependency authoring, and form-state handling.
 - block duplicate declared dependencies in the dependency tab
 - open the artifact editor when the list-row name is clicked
 - route duplicate, publish, and delete through the artifact list actions menu
+- route artifact file download through the artifact list actions menu
+- pass selected artifact transfer files through the upload control
 - generate schema-based default artifact test input payloads
 - validate artifact test input payloads against contract input schema before run
 - reject wrapped legacy tool-contract JSON in the admin editor save path
@@ -71,6 +73,9 @@ Artifact admin editor payload, dependency authoring, and form-state handling.
 - Command: `pnpm --dir frontend-reshet test -- --runInBand src/__tests__/artifacts_admin/artifact_routes.test.ts src/__tests__/admin_url_state/url_query_state.test.ts src/__tests__/resource_policy_sets/resource_policy_sets_page.test.tsx`
 - Date: 2026-03-27 Asia/Hebron
 - Result: Pass (3 suites, 9 tests)
+- Command: `pnpm --dir frontend-reshet test -- --runInBand src/__tests__/artifacts_admin/artifact_list_view.test.tsx`
+- Date: 2026-04-16 Asia/Hebron
+- Result: Pass (1 suite, 4 tests)
 
 ## Known Gaps
 

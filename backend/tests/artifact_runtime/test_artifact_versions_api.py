@@ -218,7 +218,7 @@ async def test_duplicate_artifact_creates_tenant_copy_with_incremented_name(clie
 
         list_response = await client.get(f"/admin/artifacts?tenant_slug={tenant.slug}")
         assert list_response.status_code == 200, list_response.text
-        names = [item["display_name"] for item in list_response.json()]
+        names = [item["display_name"] for item in list_response.json()["items"]]
         assert names.count("Email Validator") == 1
         assert "Email Validator (1)" in names
         assert "Email Validator (2)" in names
@@ -304,6 +304,89 @@ async def test_artifact_versions_list_excludes_detail_only_fields(client, db_ses
         assert "capabilities" not in versions[0]
         assert "tool_contract" not in versions[0]
     finally:
+        app.dependency_overrides.pop(get_current_principal, None)
+
+
+@pytest.mark.asyncio
+async def test_artifact_export_and_import_round_trip_through_transfer_file(client, db_session):
+    tenant, user = await _seed_tenant_context(db_session)
+    app.dependency_overrides[get_current_principal] = _override_principal(tenant.id, user)
+
+    async def fake_ensure_deployment(self, *, revision, namespace, tenant_id=None):
+        return SimpleNamespace(
+            worker_name="prod-worker",
+            deployment_id="dep-1",
+            version_id="ver-1",
+            build_hash=revision.build_hash,
+        )
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(
+        "app.services.artifact_runtime.deployment_service.ArtifactDeploymentService.ensure_deployment",
+        fake_ensure_deployment,
+    )
+
+    try:
+        create_response = await client.post(
+            f"/admin/artifacts?tenant_slug={tenant.slug}",
+            json={
+                "display_name": "Portable Artifact",
+                "description": "moves between environments",
+                "kind": "tool_impl",
+                "runtime": {
+                    "language": "javascript",
+                    "source_files": [{"path": "main.js", "content": "export async function execute(inputs, config, context) { return { ok: inputs.ok ?? true } }\n"}],
+                    "entry_module_path": "main.js",
+                    "dependencies": ["zod@^3.23.8"],
+                    "runtime_target": "cloudflare_workers",
+                },
+                "config_schema": {"type": "object"},
+                "capabilities": {"network_access": False, "allowed_hosts": ["example.com"]},
+                "tool_contract": {
+                    "input_schema": {"type": "object"},
+                    "output_schema": {"type": "object"},
+                    "side_effects": ["http"],
+                    "execution_mode": "interactive",
+                    "tool_ui": {"title": "Portable"},
+                },
+            },
+        )
+        assert create_response.status_code == 200, create_response.text
+        artifact = create_response.json()
+
+        publish_response = await client.post(
+            f"/admin/artifacts/{artifact['id']}/publish?tenant_slug={tenant.slug}",
+            json={},
+        )
+        assert publish_response.status_code == 200, publish_response.text
+
+        export_response = await client.get(
+            f"/admin/artifacts/{artifact['id']}/export?tenant_slug={tenant.slug}",
+        )
+        assert export_response.status_code == 200, export_response.text
+        transfer_file = export_response.json()
+        assert transfer_file["format"] == "talmudpedia.artifact"
+        assert transfer_file["format_version"] == 1
+        assert transfer_file["artifact"]["display_name"] == "Portable Artifact"
+        assert transfer_file["artifact"]["published"] is True
+        assert transfer_file["artifact"]["runtime"]["dependencies"] == ["zod@^3.23.8"]
+        assert transfer_file["artifact"]["runtime"]["source_files"][0]["path"] == "main.js"
+
+        import_response = await client.post(
+            f"/admin/artifacts/import?tenant_slug={tenant.slug}",
+            json=transfer_file,
+        )
+        assert import_response.status_code == 200, import_response.text
+        imported = import_response.json()
+        assert imported["published"] is True
+        assert imported["artifact"]["id"] != artifact["id"]
+        assert imported["artifact"]["display_name"] == "Portable Artifact (1)"
+        assert imported["artifact"]["type"] == "published"
+        assert imported["artifact"]["runtime"]["language"] == "javascript"
+        assert imported["artifact"]["runtime"]["dependencies"] == ["zod@^3.23.8"]
+        assert imported["artifact"]["tool_contract"]["tool_ui"]["title"] == "Portable"
+    finally:
+        monkeypatch.undo()
         app.dependency_overrides.pop(get_current_principal, None)
 
 

@@ -1,7 +1,7 @@
 "use client"
 
-import { useMemo, useState } from "react"
-import { Bot, Copy, Database, Edit, Loader2, MoreHorizontal, Package, PencilLine, Trash2, Upload, Wrench } from "lucide-react"
+import { useMemo, useRef, useState } from "react"
+import { Bot, Copy, Database, Download, Edit, Loader2, MoreHorizontal, Package, PencilLine, Trash2, Upload, Wrench } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -24,14 +24,17 @@ type ArtifactListViewProps = {
   artifacts: Artifact[]
   loading?: boolean
   publishingId: string | null
-  bulkAction: "duplicate" | "publish" | "delete" | null
+  bulkAction: "duplicate" | "publish" | "delete" | "import" | "export" | null
   onEditArtifact: (artifact: Artifact) => void
   onDeleteArtifact: (artifact: Artifact) => void
   onPublishArtifact: (artifact: Artifact) => void
   onDuplicateArtifact: (artifact: Artifact) => void
+  onDownloadArtifact: (artifact: Artifact) => Promise<void> | void
+  onUploadArtifactFiles: (files: File[]) => Promise<void> | void
   onBulkDeleteArtifacts: (artifacts: Artifact[]) => Promise<void>
   onBulkPublishArtifacts: (artifacts: Artifact[]) => Promise<void>
   onBulkDuplicateArtifacts: (artifacts: Artifact[]) => Promise<void>
+  onBulkDownloadArtifacts: (artifacts: Artifact[]) => Promise<void>
 }
 
 function kindIcon(kind: ArtifactKind) {
@@ -62,13 +65,17 @@ export function ArtifactListView({
   onDeleteArtifact,
   onPublishArtifact,
   onDuplicateArtifact,
+  onDownloadArtifact,
+  onUploadArtifactFiles,
   onBulkDeleteArtifacts,
   onBulkPublishArtifacts,
   onBulkDuplicateArtifacts,
+  onBulkDownloadArtifacts,
 }: ArtifactListViewProps) {
   const [searchQuery, setSearchQuery] = useState("")
   const [selectionMode, setSelectionMode] = useState(false)
   const [rawSelectedIds, setRawSelectedIds] = useState<string[]>([])
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
 
   const filteredArtifacts = useMemo(() => {
     const normalizedQuery = searchQuery.trim().toLowerCase()
@@ -137,8 +144,46 @@ export function ArtifactListView({
           wrapperClassName="max-w-md flex-1"
         />
         <div className="flex flex-wrap items-center justify-end gap-2">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="application/json,.json"
+            multiple
+            className="hidden"
+            onChange={(event) => {
+              const files = Array.from(event.target.files || [])
+              if (files.length > 0) {
+                void onUploadArtifactFiles(files)
+              }
+              event.currentTarget.value = ""
+            }}
+          />
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="gap-1.5"
+            disabled={isMutating}
+            onClick={() => fileInputRef.current?.click()}
+          >
+            {bulkAction === "import" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+            Upload Files
+          </Button>
           {selectionMode && selectedVisibleArtifacts.length > 0 ? (
             <>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="gap-1.5"
+                disabled={isMutating}
+                onClick={() => {
+                  void runBulkAction(() => onBulkDownloadArtifacts(selectedVisibleArtifacts))
+                }}
+              >
+                {bulkAction === "export" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+                Download Files ({selectedVisibleArtifacts.length})
+              </Button>
               <Button
                 type="button"
                 variant="outline"
@@ -326,6 +371,10 @@ export function ArtifactListView({
                           <DropdownMenuItem onClick={() => onDuplicateArtifact(artifact)}>
                             <Copy className="mr-2 h-4 w-4" />
                             Duplicate
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => void onDownloadArtifact(artifact)}>
+                            <Download className="mr-2 h-4 w-4" />
+                            Download file
                           </DropdownMenuItem>
                           {artifact.type === "draft" && artifact.owner_type === "tenant" ? (
                             <DropdownMenuItem

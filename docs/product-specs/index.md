@@ -1,6 +1,6 @@
 # Product Specs Index
 
-Last Updated: 2026-03-31
+Last Updated: 2026-04-16
 
 This section is for canonical product behavior and user-facing contracts.
 
@@ -43,3 +43,5 @@ This section is for canonical product behavior and user-facing contracts.
   - Current admin stats endpoint and metrics contract.
 - `model_usage_spec.md`
   - Current persisted model-usage, provenance, and pricing-snapshot contract.
+- `files_domain_spec.md`
+  - Current durable file-space domain for internal workflows and agent runtime access.

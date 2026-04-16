@@ -46,6 +46,8 @@ Last Updated: 2026-04-16
 - Draft-dev heartbeat can reattach a stale detached session row to the existing shared workspace before checking runtime health.
 - Draft-dev incremental sync treats delete operations as idempotent when the target file is already absent in the live sandbox, instead of failing the whole sync on a stale delete.
 - Builder validation now requires a root `index.html`, and incremental sync validates projected patch operations before mutating the live Sprite workspace.
+- Manual editor saves now record the overlaid workspace fingerprint plus a pending materialization request instead of creating a draft version directly on the save API call.
+- Draft-dev heartbeat now materializes a new durable draft revision automatically once the watcher reports a ready build for the saved workspace fingerprint.
 - Coding-agent workspace-write detection ignores read-only `bash` probes like `git status`, while still flagging mutating shell commands and explicit write tools.
 - Live-preview build status normalization preserves the canonical `build_watch_static` contract, richer preview states (`booting`, `building`, `ready`, `failed_keep_last_good`, `failed_no_build`, `recovering`), supervisor health metadata, and stable workspace fingerprinting for build reuse.
 - The generated live-preview watcher now uses persistent Vite/Rollup watch mode instead of polling a revision token and running fresh builds.
@@ -138,6 +140,15 @@ Last Updated: 2026-04-16
 - Command: `cd backend && PYTHONPATH=. python3 -m pytest -q tests/apps_builder_sandbox_runtime/test_live_preview_helpers.py tests/apps_builder_sandbox_runtime/test_runtime_client_and_preview_proxy.py`
 - Date: 2026-04-15 Asia/Hebron
 - Result: PASS (`10 passed, 10 warnings`)
+- Command: `cd backend && PYTHONPATH=. python3 -m pytest -q tests/apps_builder_sandbox_runtime/test_live_preview_helpers.py tests/apps_builder_sandbox_runtime/test_draft_dev_runtime_lifecycle.py -k 'sync_route_ignores_delete_error_when_file_is_already_absent or sync_route_validates_operations_before_mutating_runtime or sync_route_records_saved_workspace_fingerprint_and_pending_materialization or heartbeat_materializes_saved_workspace_when_live_preview_ready'`
+- Date: 2026-04-16 Asia/Hebron
+- Result: PASS (`4 passed, 20 deselected, 4 warnings`)
+- Command: `cd backend && PYTHONPATH=. python3 -m pytest -q tests/apps_builder_sandbox_runtime/test_sprite_backend_config.py tests/apps_builder_sandbox_runtime/test_runtime_client_and_preview_proxy.py`
+- Date: 2026-04-16 Asia/Hebron
+- Result: PASS (`20 passed, 10 warnings`)
+- Command: `cd backend && PYTHONPATH=. python3 -m pytest -q tests/app_versions/test_versions_endpoints.py -k 'versions_list_get_create_restore_and_cross_app_guard'`
+- Date: 2026-04-16 Asia/Hebron
+- Result: FAIL (`POST /admin/apps` returned 403 before the versions assertions ran`)
 - Command: `cd backend && PYTHONPATH=. python3 -m pytest -q tests/apps_builder_sandbox_runtime/test_draft_dev_runtime_lifecycle.py -k 'builder_project_validation_requires_root_index_html or sync_route_validates_operations_before_mutating_runtime'`
 - Date: 2026-04-16 Asia/Hebron
 - Result: PASS

@@ -68,6 +68,27 @@ function createArtifactChatDraftKey(): string {
   return crypto.randomUUID()
 }
 
+function artifactTransferFilename(displayName: string): string {
+  const base = displayName
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+  return `${base || "artifact"}.artifact.json`
+}
+
+function downloadArtifactTransferFile(filename: string, payload: unknown) {
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement("a")
+  link.href = url
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  URL.revokeObjectURL(url)
+}
+
 export function ArtifactEditorScreen({
   mode,
   artifactId,
@@ -415,6 +436,17 @@ export function ArtifactEditorScreen({
     await handlePublishFromEditorIgnoringWarnings()
   }, [formData.language, formData.source_files, handlePublishFromEditorIgnoringWarnings, selectedArtifact])
 
+  const handleDownload = useCallback(async () => {
+    if (!selectedArtifact?.id) return
+    try {
+      const transfer = await artifactsService.exportArtifact(selectedArtifact.id, currentTenant?.slug)
+      downloadArtifactTransferFile(artifactTransferFilename(selectedArtifact.display_name), transfer)
+    } catch (error) {
+      console.error("Failed to export artifact", error)
+      alert(error instanceof Error ? error.message : "Failed to export artifact")
+    }
+  }, [currentTenant?.slug, selectedArtifact])
+
   const handleConvertKind = useCallback(async () => {
     if (!selectedArtifact) return
     if (convertTargetKind === formData.kind) return
@@ -639,6 +671,7 @@ export function ArtifactEditorScreen({
         isPublished={Boolean(mode === "edit" && selectedArtifact?.type === "published" && selectedArtifact.owner_type === "tenant")}
         isSaving={saving}
         disableSave={false}
+        showDownload={Boolean(mode === "edit" && selectedArtifact?.id)}
         showPublish={Boolean(mode === "edit" && selectedArtifact?.type === "draft" && selectedArtifact.owner_type === "tenant")}
         showVersions={Boolean(mode === "edit" && selectedArtifact?.id)}
         versionsOpen={versionsOpen}
@@ -663,6 +696,9 @@ export function ArtifactEditorScreen({
         }}
         onPublish={() => {
           void handlePublishFromEditor()
+        }}
+        onDownload={() => {
+          void handleDownload()
         }}
         onRunTest={() => document.getElementById("artifact-test-panel-execute")?.click()}
         onSave={() => {

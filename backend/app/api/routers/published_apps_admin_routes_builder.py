@@ -25,8 +25,9 @@ from app.services.published_app_agent_integration_contract import (
 from app.services.apps_builder_trace import apps_builder_trace
 from app.services.published_app_draft_dev_runtime import PublishedAppDraftDevRuntimeDisabled, PublishedAppDraftDevRuntimeService
 from app.services.published_app_draft_dev_runtime_client import PublishedAppDraftDevRuntimeClientError
+from app.services.published_app_live_preview import build_live_preview_overlay_workspace_fingerprint
 from app.services.published_app_revision_store import PublishedAppRevisionStore
-from app.services.published_app_templates import build_template_files, get_template, list_templates
+from app.services.published_app_templates import TemplateRuntimeContext, build_template_files, get_template, list_templates
 from app.services.published_app_versioning import create_app_version
 
 from .published_apps_admin_access import (
@@ -238,6 +239,9 @@ async def get_builder_state(
                 try:
                     draft_dev_session = await runtime_service.heartbeat_session(session=draft_dev_session)
                     await db.commit()
+                    await db.refresh(app)
+                    draft = await _get_revision(db, app.current_draft_revision_id)
+                    published = await _get_revision(db, app.current_published_revision_id)
                     apps_builder_trace(
                         "builder.state.draft_dev_refreshed",
                         domain="draft_dev.api",
@@ -448,6 +452,11 @@ async def sync_builder_draft_dev_session(
     session = await _get_draft_dev_session_for_scope(db, app_id=app.id, user_id=actor.id)
     if session is None:
         raise HTTPException(status_code=404, detail="Draft dev session not found")
+    runtime_context = TemplateRuntimeContext(
+        app_id=str(app.id),
+        app_slug=str(app.slug or ""),
+        agent_id=str(app.agent_id or ""),
+    )
 
     if payload.operations:
         sandbox_id = str(session.sandbox_id or "").strip()
@@ -507,13 +516,19 @@ async def sync_builder_draft_dev_session(
                 continue
             revision_token = str(result.get("revision_token") or "").strip() or revision_token
 
+        workspace_fingerprint = build_live_preview_overlay_workspace_fingerprint(
+            entry_file=next_entry_file,
+            files=next_files,
+            runtime_context=runtime_context,
+        )
+
         await runtime_service.record_workspace_live_snapshot(
             app_id=app.id,
             revision_id=session.revision_id or draft.id,
             entry_file=next_entry_file,
             files=next_files,
             revision_token=revision_token,
-            workspace_fingerprint=None,
+            workspace_fingerprint=workspace_fingerprint,
         )
         session = await runtime_service.record_live_workspace_revision_token(
             session=session,
@@ -534,6 +549,41 @@ async def sync_builder_draft_dev_session(
             )
         except PublishedAppDraftDevRuntimeDisabled as exc:
             raise HTTPException(status_code=409, detail=str(exc))
+        backend_metadata = dict(session.backend_metadata or {}) if isinstance(session.backend_metadata, dict) else {}
+        preview_runtime = (
+            dict(backend_metadata.get("preview_runtime") or {})
+            if isinstance(backend_metadata.get("preview_runtime"), dict)
+            else {}
+        )
+        workspace_metadata = (
+            dict(backend_metadata.get("workspace") or {})
+            if isinstance(backend_metadata.get("workspace"), dict)
+            else {}
+        )
+        revision_token = (
+            str(preview_runtime.get("workspace_revision_token") or workspace_metadata.get("revision_token") or "").strip()
+            or None
+        )
+        workspace_fingerprint = build_live_preview_overlay_workspace_fingerprint(
+            entry_file=entry_file,
+            files=files,
+            runtime_context=runtime_context,
+        )
+        await runtime_service.record_workspace_live_snapshot(
+            app_id=app.id,
+            revision_id=session.revision_id or draft.id,
+            entry_file=entry_file,
+            files=files,
+            revision_token=revision_token,
+            workspace_fingerprint=workspace_fingerprint,
+        )
+
+    await runtime_service.record_live_workspace_materialization_request(
+        app_id=app.id,
+        origin_kind="manual_save",
+        source_revision_id=draft.id,
+        created_by=actor.id,
+    )
 
     await db.commit()
     return await _decorate_draft_dev_session_response(

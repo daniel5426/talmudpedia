@@ -311,6 +311,8 @@ async def test_sprite_start_repairs_dependencies_when_preview_readiness_initiall
         app_id="app-1",
         user_id="user-1",
         revision_id="revision-1",
+        app_slug="app-1",
+        agent_id="agent-1",
         entry_file="src/main.tsx",
         files={"src/main.tsx": "console.log(1)"},
         idle_timeout_seconds=180,

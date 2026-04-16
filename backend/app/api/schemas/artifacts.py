@@ -319,6 +319,44 @@ class ArtifactPublishResponse(BaseModel):
     status: Literal["published"] = "published"
 
 
+class ArtifactTransferPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    display_name: str
+    description: Optional[str] = None
+    kind: ArtifactKind
+    runtime: ArtifactRuntimeConfig
+    capabilities: ArtifactCapabilityConfig = Field(default_factory=ArtifactCapabilityConfig)
+    config_schema: Dict[str, Any] = Field(default_factory=dict)
+    agent_contract: Optional[AgentArtifactContract] = None
+    rag_contract: Optional[RAGArtifactContract] = None
+    tool_contract: Optional[ToolArtifactContract] = None
+    published: bool = False
+
+    @model_validator(mode="after")
+    def validate_contracts(self) -> "ArtifactTransferPayload":
+        ArtifactContractEnvelope(
+            kind=self.kind,
+            agent_contract=self.agent_contract,
+            rag_contract=self.rag_contract,
+            tool_contract=self.tool_contract,
+        )
+        return self
+
+
+class ArtifactTransferFile(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    format: Literal["talmudpedia.artifact"] = "talmudpedia.artifact"
+    format_version: Literal[1] = 1
+    exported_at: datetime
+    artifact: ArtifactTransferPayload
+
+
+class ArtifactImportResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    artifact: ArtifactSchema
+    published: bool = False
+
+
 class ArtifactRunStatus(str, Enum):
     QUEUED = "queued"
     RUNNING = "running"

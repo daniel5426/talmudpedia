@@ -1,4 +1,4 @@
-Last Updated: 2026-04-14
+Last Updated: 2026-04-16
 
 # Test State
 
@@ -28,6 +28,8 @@ Artifact runtime revision, deploy, and dispatch-time credential lifecycle.
 - keep artifact version-list responses limited to list-item fields even when revisions carry detail-only metadata
 - fetch one historical artifact revision snapshot through the admin API
 - duplicate an artifact into a new tenant draft with Google Drive-style incremented names
+- export an artifact into a versioned transfer JSON file
+- import a transfer JSON file into a new tenant artifact and preserve published state
 - read and update the persisted artifact working-draft snapshot through the admin API
 - keep saved-artifact working-draft persistence isolated from unrelated `draft_key`-scoped shared drafts
 - link draft-key-scoped artifact coding sessions and shared drafts to the saved artifact during artifact create so artifact history is queryable by `artifact_id`
@@ -143,6 +145,9 @@ Artifact runtime revision, deploy, and dispatch-time credential lifecycle.
 - Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/artifact_runtime/test_artifact_working_draft_api.py backend/tests/artifact_runtime/test_artifact_versions_api.py backend/tests/artifact_runtime/test_revision_service.py backend/tests/artifact_runtime/test_execution_service.py backend/tests/artifact_test_runs/test_artifact_test_run_api.py backend/tests/tool_execution/test_artifact_runtime_tool_execution.py`
 - Date: 2026-04-14 Asia/Hebron
 - Result: Pass (`47 passed, 9 warnings`)
+- Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/artifact_runtime/test_artifact_versions_api.py`
+- Date: 2026-04-16 Asia/Hebron
+- Result: Pass (`5 passed, 10 warnings`)
 
 ## Known Gaps
 

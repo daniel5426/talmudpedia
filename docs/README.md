@@ -66,6 +66,7 @@ Most existing long-form documentation still lives in `backend/documentations/`. 
 - `docs/product-specs/artifacts_domain_spec.md`
 - `docs/product-specs/tools_domain_spec.md`
 - `docs/product-specs/admin_stats_spec.md`
+- `docs/product-specs/files_domain_spec.md`
 - `docs/references/canonical_docs_guide.md`
 - `docs/references/embedded_agent_sdk_standalone_integration_guide.md`
 - `docs/references/legacy_docs_coverage_map.md`

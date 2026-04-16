@@ -263,6 +263,8 @@ async def write_text_entry(
             user_id=_principal_user_id(principal),
         )
         await db.commit()
+        await db.refresh(entry)
+        await db.refresh(revision)
         return {
             "entry": FileSpaceService.serialize_entry(entry),
             "revision": FileSpaceService.serialize_revision(revision),
@@ -292,6 +294,8 @@ async def patch_text_entry(
             user_id=_principal_user_id(principal),
         )
         await db.commit()
+        await db.refresh(entry)
+        await db.refresh(revision)
         return {
             "entry": FileSpaceService.serialize_entry(entry),
             "revision": FileSpaceService.serialize_revision(revision),
@@ -323,6 +327,8 @@ async def upload_entry(
             user_id=_principal_user_id(principal),
         )
         await db.commit()
+        await db.refresh(entry)
+        await db.refresh(revision)
         return {
             "entry": FileSpaceService.serialize_entry(entry),
             "revision": FileSpaceService.serialize_revision(revision),
@@ -373,6 +379,8 @@ async def move_entry(
             user_id=_principal_user_id(principal),
         )
         await db.commit()
+        for entry in entries:
+            await db.refresh(entry)
         return {"items": [FileSpaceService.serialize_entry(entry) for entry in entries]}
     except Exception as exc:
         await db.rollback()
@@ -397,6 +405,8 @@ async def delete_entry(
             user_id=_principal_user_id(principal),
         )
         await db.commit()
+        for entry in entries:
+            await db.refresh(entry)
         return {"items": [FileSpaceService.serialize_entry(entry) for entry in entries]}
     except Exception as exc:
         await db.rollback()
@@ -462,6 +472,7 @@ async def upsert_workflow_link(
             user_id=_principal_user_id(principal),
         )
         await db.commit()
+        await db.refresh(link)
         return FileSpaceService.serialize_link(link)
     except Exception as exc:
         await db.rollback()

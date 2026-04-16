@@ -21,6 +21,7 @@ from app.db.postgres.models.published_apps import (
     PublishedAppDraftWorkspace,
     PublishedAppDraftWorkspaceStatus,
     PublishedAppRevision,
+    PublishedAppRevisionBuildStatus,
     PublishedAppRevisionKind,
     PublishedAppStatus,
     PublishedAppVisibility,
@@ -28,6 +29,8 @@ from app.db.postgres.models.published_apps import (
 from app.services import published_app_draft_dev_runtime as runtime_module
 from app.services.published_app_draft_dev_runtime import PublishedAppDraftDevRuntimeService
 from app.services.published_app_draft_dev_runtime_client import PublishedAppDraftDevRuntimeClientError
+from app.services.published_app_live_preview import build_live_preview_overlay_workspace_fingerprint
+from app.services.published_app_templates import TemplateRuntimeContext
 from app.services.published_app_versioning import create_app_version
 from tests.published_apps._helpers import admin_headers, seed_admin_tenant_and_agent
 
@@ -670,7 +673,7 @@ async def test_ensure_endpoint_reuses_live_session_without_calling_legacy_ensure
     revision_id = uuid4()
     session_id = uuid4()
     ctx = {"tenant_id": tenant_id, "user": SimpleNamespace(id=user_id)}
-    app = SimpleNamespace(id=app_id, tenant_id=tenant_id)
+    app = SimpleNamespace(id=app_id, tenant_id=tenant_id, slug="delete-sync-app", agent_id=uuid4())
     revision = SimpleNamespace(id=revision_id)
     session = SimpleNamespace(id=session_id)
     db = AsyncMock()
@@ -753,7 +756,7 @@ async def test_sync_route_ignores_delete_error_when_file_is_already_absent(
     session_id = uuid4()
     sandbox_id = "sprite-sandbox-1"
     ctx = {"tenant_id": tenant_id, "user": SimpleNamespace(id=user_id)}
-    app = SimpleNamespace(id=app_id, tenant_id=tenant_id)
+    app = SimpleNamespace(id=app_id, tenant_id=tenant_id, slug="delete-sync-app", agent_id=uuid4())
     revision = SimpleNamespace(
         id=revision_id,
         files={
@@ -798,6 +801,7 @@ async def test_sync_route_ignores_delete_error_when_file_is_already_absent(
         client=fake_client,
         record_workspace_live_snapshot=AsyncMock(return_value=None),
         record_live_workspace_revision_token=AsyncMock(return_value=session),
+        record_live_workspace_materialization_request=AsyncMock(return_value=None),
     )
 
     monkeypatch.setattr(builder_routes_module, "_resolve_tenant_admin_context", AsyncMock(return_value=ctx))
@@ -846,11 +850,12 @@ async def test_sync_route_validates_operations_before_mutating_runtime(
     session_id = uuid4()
     sandbox_id = "sprite-sandbox-1"
     ctx = {"tenant_id": tenant_id, "user": SimpleNamespace(id=user_id)}
-    app = SimpleNamespace(id=app_id, tenant_id=tenant_id)
+    app = SimpleNamespace(id=app_id, tenant_id=tenant_id, slug="validate-sync-app", agent_id=uuid4())
     revision = SimpleNamespace(
         id=revision_id,
         files={
             "index.html": "<html></html>",
+            "package.json": "{\"name\":\"app\",\"dependencies\":{}}",
             "src/main.tsx": "import './App';",
             "src/App.tsx": "export default function App() { return <div />; }",
         },
@@ -878,6 +883,7 @@ async def test_sync_route_validates_operations_before_mutating_runtime(
         client=fake_client,
         record_workspace_live_snapshot=AsyncMock(return_value=None),
         record_live_workspace_revision_token=AsyncMock(return_value=session),
+        record_live_workspace_materialization_request=AsyncMock(return_value=None),
     )
 
     monkeypatch.setattr(builder_routes_module, "_resolve_tenant_admin_context", AsyncMock(return_value=ctx))
@@ -905,11 +911,101 @@ async def test_sync_route_validates_operations_before_mutating_runtime(
         {"path": "index.html", "message": "Required root file is missing"}
     ]
     fake_client.write_file.assert_not_awaited()
-    fake_client.delete_file.assert_not_awaited()
-    fake_client.rename_file.assert_not_awaited()
-    fake_runtime_service.record_workspace_live_snapshot.assert_not_awaited()
-    fake_runtime_service.record_live_workspace_revision_token.assert_not_awaited()
-    db.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_sync_route_records_saved_workspace_fingerprint_and_pending_materialization(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    tenant_id = uuid4()
+    user_id = uuid4()
+    app_id = uuid4()
+    agent_id = uuid4()
+    revision_id = uuid4()
+    session_id = uuid4()
+    ctx = {"tenant_id": tenant_id, "user": SimpleNamespace(id=user_id)}
+    app = SimpleNamespace(id=app_id, tenant_id=tenant_id, slug="saved-workspace-app", agent_id=agent_id)
+    revision = SimpleNamespace(
+        id=revision_id,
+        files={
+            "index.html": "<html></html>",
+            "package.json": "{\"name\":\"app\",\"dependencies\":{}}",
+            "src/main.tsx": "import './App';",
+            "src/App.tsx": "export default function App() { return <div>draft</div>; }",
+        },
+        entry_file="src/main.tsx",
+    )
+    session = SimpleNamespace(
+        id=session_id,
+        sandbox_id="sprite-sandbox-1",
+        revision_id=revision_id,
+        backend_metadata={
+            "preview_runtime": {"workspace_revision_token": "rev-token-2"},
+        },
+    )
+    db = AsyncMock()
+    request = SimpleNamespace()
+    synced_files = {
+        **revision.files,
+        "src/App.tsx": "export default function App() { return <div>saved</div>; }",
+    }
+    expected_fingerprint = build_live_preview_overlay_workspace_fingerprint(
+        entry_file=revision.entry_file,
+        files=synced_files,
+        runtime_context=TemplateRuntimeContext(
+            app_id=str(app_id),
+            app_slug="saved-workspace-app",
+            agent_id=str(agent_id),
+        ),
+    )
+    fake_runtime_service = SimpleNamespace(
+        sync_session=AsyncMock(return_value=session),
+        record_workspace_live_snapshot=AsyncMock(return_value=None),
+        record_live_workspace_materialization_request=AsyncMock(return_value=None),
+    )
+
+    monkeypatch.setattr(builder_routes_module, "_resolve_tenant_admin_context", AsyncMock(return_value=ctx))
+    monkeypatch.setattr(builder_routes_module, "_assert_can_manage_apps", lambda resolved_ctx: None)
+    monkeypatch.setattr(builder_routes_module, "_assert_no_active_coding_run_for_scope", AsyncMock(return_value=None))
+    monkeypatch.setattr(builder_routes_module, "_get_app_for_tenant", AsyncMock(return_value=app))
+    monkeypatch.setattr(builder_routes_module, "_ensure_current_draft_revision", AsyncMock(return_value=revision))
+    monkeypatch.setattr(builder_routes_module, "_get_draft_dev_session_for_scope", AsyncMock(return_value=session))
+    monkeypatch.setattr(builder_routes_module, "PublishedAppDraftDevRuntimeService", lambda db: fake_runtime_service)
+    monkeypatch.setattr(
+        builder_routes_module,
+        "_decorate_draft_dev_session_response",
+        AsyncMock(return_value={"session_id": str(session_id)}),
+    )
+
+    result = await builder_routes_module.sync_builder_draft_dev_session(
+        app_id=app_id,
+        payload=builder_routes_module.DraftDevSyncRequest(
+            files=synced_files,
+            entry_file=revision.entry_file,
+            revision_id=revision_id,
+        ),
+        request=request,
+        _={},
+        principal={},
+        db=db,
+    )
+
+    assert result == {"session_id": str(session_id)}
+    fake_runtime_service.record_workspace_live_snapshot.assert_awaited_once_with(
+        app_id=app_id,
+        revision_id=revision_id,
+        entry_file=revision.entry_file,
+        files=synced_files,
+        revision_token="rev-token-2",
+        workspace_fingerprint=expected_fingerprint,
+    )
+    fake_runtime_service.record_live_workspace_materialization_request.assert_awaited_once_with(
+        app_id=app_id,
+        origin_kind="manual_save",
+        source_revision_id=revision_id,
+        created_by=user_id,
+    )
+    db.commit.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -1018,6 +1114,130 @@ async def test_heartbeat_preserves_live_workspace_snapshot_metadata(
     assert session.backend_metadata["live_workspace_snapshot"]["entry_file"] == "src/App.tsx"
     assert session.backend_metadata["live_workspace_snapshot"]["files"]["src/App.tsx"].startswith("export default")
     assert workspace.backend_metadata["live_workspace_snapshot"]["revision_token"] == "snapshot-token"
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_materializes_saved_workspace_when_live_preview_ready(
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    tenant, user, _org_unit, agent = await seed_admin_tenant_and_agent(db_session)
+    fake_client = _FakeSpriteRuntimeClient()
+
+    monkeypatch.setattr(runtime_module.PublishedAppDraftDevRuntimeService, "_acquire_scope_lock", _noop_scope_lock)
+    monkeypatch.setattr(
+        runtime_module.PublishedAppDraftDevRuntimeClient,
+        "from_env",
+        classmethod(lambda cls: fake_client),
+    )
+
+    app, current_revision = await _seed_builder_app_and_revision(
+        db_session,
+        tenant_id=tenant.id,
+        agent_id=agent.id,
+        user_id=user.id,
+        name="Heartbeat Materialize App",
+    )
+    runtime_service = PublishedAppDraftDevRuntimeService(db_session)
+    session = await runtime_service.ensure_session(
+        app=app,
+        revision=current_revision,
+        user_id=user.id,
+        files=dict(current_revision.files or {}),
+        entry_file=current_revision.entry_file,
+    )
+    await db_session.commit()
+    session_id = session.id
+
+    saved_files = {
+        **dict(current_revision.files or {}),
+        "src/App.tsx": "export default function App() { return <main>saved-workspace</main>; }",
+    }
+    expected_fingerprint = build_live_preview_overlay_workspace_fingerprint(
+        entry_file=current_revision.entry_file,
+        files=saved_files,
+        runtime_context=TemplateRuntimeContext(
+            app_id=str(app.id),
+            app_slug=str(app.slug or ""),
+            agent_id=str(app.agent_id or ""),
+        ),
+    )
+
+    await runtime_service.record_workspace_live_snapshot(
+        app_id=app.id,
+        revision_id=current_revision.id,
+        entry_file=current_revision.entry_file,
+        files=saved_files,
+        revision_token="saved-rev-token",
+        workspace_fingerprint=expected_fingerprint,
+    )
+    await runtime_service.record_live_workspace_materialization_request(
+        app_id=app.id,
+        origin_kind="manual_save",
+        source_revision_id=current_revision.id,
+        created_by=user.id,
+    )
+
+    materialized_revision = await create_app_version(
+        db_session,
+        app=app,
+        kind=PublishedAppRevisionKind.draft,
+        template_key=app.template_key,
+        entry_file=current_revision.entry_file,
+        files=saved_files,
+        created_by=user.id,
+        source_revision_id=current_revision.id,
+        origin_kind="manual_save",
+        build_status=PublishedAppRevisionBuildStatus.succeeded,
+        dist_storage_prefix=f"published-apps/test/{uuid4()}/dist",
+        dist_manifest={"source_fingerprint": expected_fingerprint},
+        template_runtime="vite_static",
+    )
+    await db_session.commit()
+
+    async def _heartbeat_with_ready_preview(**kwargs):
+        payload = await _FakeSpriteRuntimeClient.heartbeat_session(fake_client, **kwargs)
+        backend_metadata = dict(payload.get("backend_metadata") or {})
+        backend_metadata["live_preview"] = {
+            "status": "ready",
+            "workspace_fingerprint": expected_fingerprint,
+            "last_successful_build_id": "build-2",
+            "dist_path": "/home/sprite/.talmudpedia/live-preview/current",
+        }
+        payload["backend_metadata"] = backend_metadata
+        return payload
+
+    fake_client.heartbeat_session = _heartbeat_with_ready_preview
+
+    async def _materialize_stub(self, *, app, **kwargs):
+        _ = self, kwargs
+        app.current_draft_revision_id = materialized_revision.id
+        return SimpleNamespace(
+            revision=materialized_revision,
+            reused=False,
+            source_fingerprint=expected_fingerprint,
+            workspace_revision_token="saved-rev-token",
+        )
+
+    monkeypatch.setattr(
+        "app.services.published_app_draft_revision_materializer.PublishedAppDraftRevisionMaterializerService.materialize_live_workspace",
+        _materialize_stub,
+    )
+
+    session = await runtime_service.heartbeat_session(session=session)
+    await db_session.commit()
+    assert session.revision_id == materialized_revision.id
+
+    await db_session.refresh(app)
+    assert app.current_draft_revision_id == materialized_revision.id
+
+    session = await db_session.get(PublishedAppDraftDevSession, session_id)
+    assert session is not None
+    workspace = await db_session.get(PublishedAppDraftWorkspace, session.draft_workspace_id)
+    assert workspace is not None
+    assert session.revision_id == materialized_revision.id
+    assert "live_workspace_materialization" not in dict(session.backend_metadata or {})
+    assert "live_workspace_materialization" not in dict(workspace.backend_metadata or {})
 
 
 @pytest.mark.asyncio

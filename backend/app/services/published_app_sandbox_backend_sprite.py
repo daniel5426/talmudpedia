@@ -21,9 +21,9 @@ from app.services.published_app_live_preview import (
     LIVE_PREVIEW_STATUS_FAILED_NO_BUILD,
     LIVE_PREVIEW_STATUS_READY,
     build_live_preview_context_payload,
+    build_live_preview_overlay_workspace_fingerprint,
     build_live_preview_static_server_script,
     build_live_preview_watch_script,
-    build_live_preview_workspace_fingerprint,
     normalize_live_preview_payload,
 )
 from app.services.published_app_builder_snapshot_filter import (
@@ -35,6 +35,7 @@ from app.services.published_app_sandbox_backend import (
     PublishedAppSandboxBackendError,
 )
 from app.services.published_app_sprite_proxy_tunnel import get_sprite_proxy_tunnel_manager
+from app.services.published_app_templates import TemplateRuntimeContext
 
 
 logger = logging.getLogger(__name__)
@@ -1189,6 +1190,8 @@ print(json.dumps({{
         app_id: str,
         user_id: str,
         revision_id: str,
+        app_slug: str,
+        agent_id: str,
         entry_file: str,
         files: Dict[str, str],
         idle_timeout_seconds: int,
@@ -1198,9 +1201,14 @@ print(json.dumps({{
     ) -> Dict[str, Any]:
         _ = tenant_id, user_id, revision_id, idle_timeout_seconds, draft_dev_token
         sprite_name = self._sprite_name(prefix=self.config.sprite_name_prefix, app_id=app_id)
-        workspace_fingerprint = build_live_preview_workspace_fingerprint(
+        workspace_fingerprint = build_live_preview_overlay_workspace_fingerprint(
             entry_file=entry_file,
             files=files,
+            runtime_context=TemplateRuntimeContext(
+                app_id=str(app_id or ""),
+                app_slug=str(app_slug or ""),
+                agent_id=str(agent_id or ""),
+            ),
         )
         self._trace("sprite.start_session.begin", sprite_name=sprite_name, app_id=app_id, runtime_generation=runtime_generation)
         sprite = await self._ensure_sprite(sprite_name=sprite_name)
@@ -1275,6 +1283,9 @@ print(json.dumps({{
         self,
         *,
         sandbox_id: str,
+        app_id: str,
+        app_slug: str,
+        agent_id: str,
         entry_file: str,
         files: Dict[str, str],
         idle_timeout_seconds: int,
@@ -1284,9 +1295,14 @@ print(json.dumps({{
     ) -> Dict[str, Any]:
         _ = idle_timeout_seconds
         sprite_name = str(sandbox_id or "").strip()
-        workspace_fingerprint = build_live_preview_workspace_fingerprint(
+        workspace_fingerprint = build_live_preview_overlay_workspace_fingerprint(
             entry_file=entry_file,
             files=files,
+            runtime_context=TemplateRuntimeContext(
+                app_id=str(app_id or ""),
+                app_slug=str(app_slug or ""),
+                agent_id=str(agent_id or ""),
+            ),
         )
         self._trace("sprite.sync_session.begin", sprite_name=sprite_name, sandbox_id=sandbox_id)
         sprite = await self._ensure_sprite(sprite_name=sprite_name)

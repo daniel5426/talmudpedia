@@ -71,7 +71,7 @@ class FileSpaceGrant:
         return {
             "id": str(self.id),
             "name": self.name,
-            "access_mode": self.access_mode.value,
+            "access_mode": getattr(self.access_mode, "value", self.access_mode),
         }
 
 
@@ -154,7 +154,7 @@ class FileSpaceService:
         if not normalized:
             normalized = guessed or mimetypes.guess_type(filename or "")[0] or "application/octet-stream"
         is_text = cls._is_text_mime(normalized)
-        if not is_text and payload is not None:
+        if not explicit and not is_text and payload is not None:
             try:
                 payload.decode("utf-8")
                 is_text = True
@@ -713,7 +713,7 @@ class FileSpaceService:
                 FileSpaceGrant(
                     id=space.id,
                     name=space.name,
-                    access_mode=link.access_mode,
+                    access_mode=FileAccessMode(str(getattr(link.access_mode, "value", link.access_mode))),
                 )
             )
         return grants

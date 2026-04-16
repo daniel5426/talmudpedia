@@ -1,6 +1,6 @@
 # Artifacts Domain Spec
 
-Last Updated: 2026-03-25
+Last Updated: 2026-04-16
 
 This document is the canonical product/specification overview for the artifact domain.
 
@@ -69,6 +69,13 @@ Current admin authoring UI also includes:
 - a minimalist version-history dropdown that can load any saved version back into the working draft
 - artifact-page test-run execution against unsaved source trees
 - artifact-page coding chat that edits the live draft snapshot, including unsaved form changes
+
+Current portability behavior also includes:
+- artifact transfer by file export/import so artifacts can move between isolated environments such as local and production
+- each exported artifact is one versioned JSON transfer file
+- bulk transfer is handled as multiple artifact files rather than one environment-coupled account-to-account API flow
+- import creates a new tenant-owned artifact in the target account/environment and auto-suffixes the display name when the target already has the same name
+- import preserves the current artifact snapshot and re-publishes it in the target when the exported artifact was published
 
 ### Direct Coding Chat
 
