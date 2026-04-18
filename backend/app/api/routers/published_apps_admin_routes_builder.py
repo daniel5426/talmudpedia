@@ -477,42 +477,24 @@ async def sync_builder_draft_dev_session(
             next_entry_file,
             payload.operations,
         )
-        for operation in payload.operations:
-            if operation.op == "upsert_file" and operation.path:
-                normalized_path = _normalize_builder_path(operation.path)
-                _assert_builder_path_allowed(normalized_path, field="operations.path")
-                result = await runtime_service.client.write_file(
-                    sandbox_id=sandbox_id,
-                    path=normalized_path,
-                    content=operation.content or "",
-                )
-                next_files[normalized_path] = operation.content or ""
-            elif operation.op == "delete_file" and operation.path:
-                normalized_path = _normalize_builder_path(operation.path)
-                _assert_builder_path_allowed(normalized_path, field="operations.path")
-                result = await _delete_runtime_file_if_present(
-                    runtime_service=runtime_service,
-                    sandbox_id=sandbox_id,
-                    path=normalized_path,
-                    session=session,
-                    app=app,
-                )
-                next_files.pop(normalized_path, None)
-            elif operation.op == "rename_file" and operation.from_path and operation.to_path:
-                from_path = _normalize_builder_path(operation.from_path)
-                to_path = _normalize_builder_path(operation.to_path)
-                _assert_builder_path_allowed(from_path, field="operations.from_path")
-                _assert_builder_path_allowed(to_path, field="operations.to_path")
-                result = await runtime_service.client.rename_file(
-                    sandbox_id=sandbox_id,
-                    from_path=from_path,
-                    to_path=to_path,
-                )
-            elif operation.op == "set_entry_file" and operation.entry_file:
-                continue
-            else:
-                continue
-            revision_token = str(result.get("revision_token") or "").strip() or revision_token
+        workspace_metadata = (
+            dict(existing_metadata.get("workspace") or {})
+            if isinstance(existing_metadata.get("workspace"), dict)
+            else {}
+        )
+        workspace_path = str(workspace_metadata.get("live_workspace_path") or "").strip()
+        if not workspace_path:
+            workspace_path = str(
+                await runtime_service.client.resolve_local_workspace_path(sandbox_id=sandbox_id) or ""
+            ).strip()
+        if not workspace_path:
+            raise HTTPException(status_code=409, detail="Draft dev session workspace path is unavailable")
+        result = await runtime_service.client.sync_workspace_files(
+            sandbox_id=sandbox_id,
+            workspace_path=workspace_path,
+            files=next_files,
+        )
+        revision_token = str(result.get("revision_token") or "").strip() or revision_token
 
         workspace_fingerprint = build_live_preview_overlay_workspace_fingerprint(
             entry_file=next_entry_file,

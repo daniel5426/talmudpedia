@@ -1,9 +1,9 @@
-Last Updated: 2026-04-14
+Last Updated: 2026-04-17
 
 ## Scope
 - OpenCode server client transport compatibility for coding-agent engine runs.
-- Official API mode (`/global/health`, `/global/event`, `/session*`).
-- Legacy API fallback mode (`/health`, `/v1/runs*`).
+- Official API mode only (`/global/health`, `/global/event`, `/session*`).
+- Per-sandbox endpoint discovery for remote OpenCode servers.
 
 ## Test Files
 - `backend/tests/opencode_server_client/test_opencode_server_client.py`
@@ -11,18 +11,24 @@ Last Updated: 2026-04-14
 - `backend/tests/opencode_server_client/test_opencode_server_client_live.py`
 
 ## Key Scenarios Covered
-- Official mode unwraps `{success,data}` and supports `prompt_async` with fallback to `POST /session/{id}/message`.
+- Persistent chat-session OpenCode ownership is supported through explicit `create_session` + `submit_turn` APIs instead of per-prompt session recreation.
+- Official state tracking is keyed by `session_id + turn_ref`, not only `session_id`.
+- Official mode unwraps `{success,data}` and sends normal turns through `POST /session/{id}/message`.
 - Official mode never calls OpenCode MCP registration (`/mcp`) for selected-agent contract access.
 - OpenCode run startup seeds project-local custom tools into workspace `.opencode/tools/*` and seeds run-scoped contract context in `.cache/opencode/selected_agent_contract.json`.
 - Sandbox seeding is cached per sandbox/workspace: unchanged bootstrap files are not rewritten on every run.
 - Volatile contract metadata (`generated_at`) is ignored in context hashing so no-op runs do not rewrite context files.
 - Contract context seeding refreshes only when selected-agent contract content changes.
-- Sandbox-controller mode seeds custom tools via sandbox file APIs before OpenCode start and fails closed on seed-write failures.
+- Sandbox-mode seeds custom tools via sandbox file APIs before OpenCode start and fails closed on seed-write failures.
+- Sandbox-mode creates nested official clients from `ensure_opencode_endpoint(...)` instead of proxying run/session RPCs through the backend.
 - Sprite-backed draft-dev sessions build the inner OpenCode client through a Sprite proxy tunnel to `127.0.0.1:4141` inside the Sprite instead of assuming external `https://<sprite>.sprites.app:4141` reachability.
+- Sprite-backed OpenCode service ensure does not claim a second Sprite `http_port`; `builder-preview` remains the only Sprite HTTP service and OpenCode stays reachable through the proxy tunnel to internal port `4141`.
 - The Sprite proxy tunnel completes the websocket proxy handshake, relays raw bytes, and reuses its local listener for repeated OpenCode requests against the same Sprite/port tuple.
+- Sandbox-mode stream attachment can use an explicit `sandbox_id` even when the current worker did not witness the original `start_run` call and therefore has no in-memory `run_ref -> sandbox_id` mapping.
 - Archived E2B-backed draft-dev sessions still auto-select sandbox-mode OpenCode startup even without a controller URL, so sandbox workspace bootstrap never falls back to host filesystem paths like `/workspace/...`.
 - The inner sandbox OpenCode HTTP client skips host filesystem bootstrap entirely; the outer sandbox layer remains the only bootstrap writer for remote `.talmudpedia/...` workspace state.
 - Host mode fails closed when `workspace_path` is missing/invalid for custom-tool bootstrap.
+- Coding-agent follow-up turns can defer `POST /session/{id}/message` until the official event stream is attached, so reused-session replies cannot finish before `/global/event` subscription starts.
 - Global event stream translation emits incremental `assistant.delta` tokens and tool lifecycle events (`tool.started` / `tool.completed` / `tool.failed`).
 - Incremental tool mapping refreshes `tool.started` when `pending -> running` introduces real tool input (for accurate edit-path UI labels).
 - Incremental tool terminal events (`tool.completed`/`tool.failed`) include both `input` and `output` payloads so frontend path extraction remains stable.
@@ -31,17 +37,46 @@ Last Updated: 2026-04-14
 - Session `idle` no longer force-completes runs by default; streams now continue when assistant text is followed by later tool calls in the same run.
 - Reasoning parts are filtered out from user-visible assistant deltas.
 - Incremental text offset tracking prevents duplicate text when `/global/event` and `/session/{id}/message` overlap.
-- Official global-event streaming can settle to terminal completion without explicit `session.idle` when assistant text is complete and no tools are running.
 - Official global-event streaming now treats `session.status(type=idle)` as canonical completion signal when latest assistant finish is terminal (`finish != tool-calls|unknown`).
 - Idle handling does not prematurely complete mid-run tool continuations (`finish=tool-calls` remains non-terminal).
 - Recoverable tool-step errors in earlier assistant turns no longer force terminal run failure when a later assistant turn succeeds.
-- Snapshot polling fallback remains compatible (empty response recovery, wrapped payloads, missing `parentID`, read-timeout recovery).
+- Persistent-session follow-up turns prefer `POST /session/{id}/message`.
+- Persistent-session follow-up turns also chain `parentID` to the latest assistant message in that session so OpenCode continues the same conversation branch.
+- Persistent-session follow-up turns recover that `parentID` from the live session message list when a fresh client/process has no in-memory parent cache.
+- Follow-up turns fail closed against stale session-history assistants: `session.idle/session.status(idle)` can no longer satisfy a new turn from an older assistant message before the new assistant exists.
+- Newly created sessions are treated as having no parent assistant yet, so the first user turn never probes stale history for a synthetic `parentID`.
 - Session creation includes workspace external-directory permission rules.
 - Missing assistant text still fails closed with deterministic diagnostics.
 - Host/API mode question answers and cancel requests ignore `sandbox_id` hints and stay on direct OpenCode API paths (prevents controller recursion when host mode is forced).
+- Session-chat event streaming maps both OpenCode `permission.*` and `question.*` events onto the shared session chat request contract, and generic request replies route question answers back to `/question/{id}/reply` when needed.
+- Host/API mode abort accepts empty/non-JSON success bodies from OpenCode instead of failing with an invalid-JSON error.
 - Live roundtrip and live full-task edit flows are validated against a real OpenCode daemon.
 
 ## Last Run
+- Command: `cd /Users/danielbenassaya/Code/personal/talmudpedia && backend/.venv-codex-tests/bin/python -m pytest -q backend/tests/apps_builder_sandbox_runtime/test_sprite_backend_config.py backend/tests/opencode_server_client/test_opencode_server_client.py -k 'ensure_opencode_service_reuses_nested_running_service or sprite_build_opencode_client_reuses_cached_service_and_tunnel or sandbox_mode_stream_can_use_explicit_sandbox_id_without_in_memory_mapping'`
+- Date/Time: 2026-04-17 16:09 EEST
+- Result: Pass (3 passed, 52 deselected, 2 warnings)
+- Command: `cd /Users/danielbenassaya/Code/personal/talmudpedia && backend/.venv-codex-tests/bin/python -m pytest -q backend/tests/opencode_server_client/test_opencode_server_client.py -k 'abort_session_accepts_empty_success_body or host_mode_cancel_ignores_sandbox_id_and_uses_api'`
+- Date/Time: 2026-04-17 Asia/Hebron
+- Result: Pass (2 passed, 38 deselected, 2 warnings)
+- Command: `cd /Users/danielbenassaya/Code/personal/talmudpedia && backend/.venv-codex-tests/bin/python -m pytest -q backend/tests/opencode_server_client/test_opencode_server_client.py backend/tests/sandbox_controller/test_opencode_controller_proxy.py backend/tests/coding_agent_api/test_v2_api.py backend/tests/coding_agent_api/test_opencode_apply_patch_recovery.py`
+- Date/Time: 2026-04-16 18:41 Asia/Hebron
+- Result: Pass (63 passed, 8 warnings)
+- Command: `cd /Users/danielbenassaya/Code/personal/talmudpedia && backend/.venv-codex-tests/bin/python -m pytest -q backend/tests/opencode_server_client/test_opencode_server_client.py`
+- Date/Time: 2026-04-16 18:40 Asia/Hebron
+- Result: Pass (39 passed, 2 warnings)
+- Command: `cd /Users/danielbenassaya/Code/personal/talmudpedia && backend/.venv-codex-tests/bin/python -m pytest -q backend/tests/opencode_server_client/test_opencode_server_client.py -k 'stream_session_events_maps_question_events_to_session_chat_contract or reply_request_routes_question_answers_to_question_endpoint or host_mode_answer_question_ignores_sandbox_id_and_uses_api'`
+- Date/Time: 2026-04-19 Asia/Hebron
+- Result: Pass (3 passed, 41 deselected, 2 warnings)
+- Command: `cd /Users/danielbenassaya/Code/personal/talmudpedia && backend/.venv-codex-tests/bin/python -m pytest -q backend/tests/opencode_server_client/test_opencode_server_client.py backend/tests/sandbox_controller/test_opencode_controller_proxy.py backend/tests/coding_agent_api/test_v2_api.py backend/tests/coding_agent_api/test_opencode_apply_patch_recovery.py`
+- Date/Time: 2026-04-16 18:25 EEST
+- Result: Pass (62 passed, 8 warnings)
+- Command: `cd /Users/danielbenassaya/Code/personal/talmudpedia && backend/.venv-codex-tests/bin/python -m pytest -q backend/tests/sandbox_controller/test_draft_dev_runtime_client_stream.py backend/tests/sandbox_controller/test_opencode_controller_proxy.py backend/tests/sandbox_controller/test_dev_shim.py backend/tests/opencode_server_client/test_opencode_server_client.py backend/tests/coding_agent_api/test_v2_api.py backend/tests/coding_agent_api/test_opencode_apply_patch_recovery.py`
+- Date/Time: 2026-04-16 18:25 EEST
+- Result: Pass (71 passed, 8 warnings)
+- Command: `cd /Users/danielbenassaya/Code/personal/talmudpedia && backend/.venv-codex-tests/bin/python -m pytest -q backend/tests/opencode_server_client/test_opencode_server_client.py`
+- Date/Time: 2026-04-16 18:27 Asia/Hebron
+- Result: Pass (36 passed, 2 warnings)
 - Command: `cd backend && set -a && source .env >/dev/null 2>&1 && PYTHONPATH=. pytest -q tests/opencode_server_client/test_opencode_server_client.py -k 'test_build_official_session_permission_rules_includes_workspace_patterns or test_official_mode_seeds_custom_tools_before_start or test_host_mode_can_skip_workspace_bootstrap or test_sprite_inner_opencode_client_skips_host_workspace_bootstrap' tests/opencode_server_client/test_sprite_proxy_tunnel.py`
 - Date/Time: 2026-03-09 01:36 EET
 - Result: Pass (5 passed, 34 deselected, 1 warning)
@@ -57,16 +92,9 @@ Last Updated: 2026-04-14
 - Command: `cd backend && PYTHONPATH=. pytest -q tests/coding_agent_api/test_v2_api.py -k "answer_question_endpoint"`
 - Date/Time: 2026-03-08
 - Result: Pass (1 passed, 6 deselected, 6 warnings)
-
 - Command: `cd backend && PYTHONPATH=. pytest -q tests/opencode_server_client/test_opencode_server_client.py -k "extract_incremental_tool_events_refreshes_started_after_pending_with_real_input or extract_incremental_tool_events_completed_payload_includes_input or official_mode_global_event_stream_emits_tool_events_and_incremental_text"`
 - Date/Time: 2026-02-25
 - Result: Pass (3 passed, 32 deselected, 1 warning)
-- Command: `pytest -q backend/tests/opencode_server_client/test_opencode_server_client.py -k "global_event_stream_keeps_running_after_session_idle_text_before_tool or global_event_stream_settles_without_session_idle or global_event_stream_completes_from_session_status_idle or closed_no_terminal_recovers_via_snapshot_polling or start_run_buffers_assistant_events"`
-- Date/Time: 2026-02-25
-- Result: Pass (5 passed, 28 deselected, 1 warning)
-- Command: `pytest -q backend/tests/opencode_server_client/test_opencode_server_client.py -k "global_event_stream or closed_no_terminal or auto_approves_permission_asked or settles_without_session_idle"`
-- Date/Time: 2026-02-25 21:25 EET
-- Result: Pass (7 passed, 25 deselected, 1 warning)
 - Command: `cd backend && PYTHONPATH=. pytest -q tests/opencode_server_client/test_opencode_server_client.py::test_host_mode_answer_question_ignores_sandbox_id_and_uses_api tests/opencode_server_client/test_opencode_server_client.py::test_host_mode_cancel_ignores_sandbox_id_and_uses_api tests/sandbox_controller/test_dev_shim.py::test_dev_shim_opencode_question_answer tests/coding_agent_api/test_v2_api.py::test_v2_answer_question_endpoint`
 - Date/Time: 2026-02-24
 - Result: Pass (4 passed, 6 warnings)

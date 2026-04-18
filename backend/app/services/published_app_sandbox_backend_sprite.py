@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import json
@@ -14,8 +15,10 @@ from urllib.parse import urlencode
 import httpx
 
 from app.services.apps_builder_trace import apps_builder_trace
+from app.services.opencode_server_launch import build_official_opencode_bootstrap_command
 from app.services.published_app_live_preview import (
     LIVE_PREVIEW_MODE,
+    LIVE_PREVIEW_STATUS_BUILDING,
     LIVE_PREVIEW_STATUS_BOOTING,
     LIVE_PREVIEW_STATUS_FAILED_KEEP_LAST_GOOD,
     LIVE_PREVIEW_STATUS_FAILED_NO_BUILD,
@@ -31,6 +34,7 @@ from app.services.published_app_builder_snapshot_filter import (
     BUILDER_SNAPSHOT_IGNORED_SUFFIXES,
 )
 from app.services.published_app_sandbox_backend import (
+    PublishedAppOpenCodeEndpoint,
     PublishedAppSandboxBackend,
     PublishedAppSandboxBackendError,
 )
@@ -66,6 +70,11 @@ _SNAPSHOT_IGNORE_PREFIXES = (
     "coverage/",
     "dist/",
 )
+_SPRITE_REQUEST_MAX_ATTEMPTS = max(1, int(os.getenv("APPS_SPRITE_REQUEST_MAX_ATTEMPTS", "6")))
+_SPRITE_REQUEST_RETRY_DELAY_SECONDS = max(
+    0.05,
+    float(os.getenv("APPS_SPRITE_REQUEST_RETRY_DELAY_SECONDS", "0.2")),
+)
 
 
 class SpriteSandboxBackend(PublishedAppSandboxBackend):
@@ -98,6 +107,17 @@ class SpriteSandboxBackend(PublishedAppSandboxBackend):
         if json_content:
             headers["Content-Type"] = "application/json"
         return headers
+
+    @staticmethod
+    def _is_retryable_request_error(exc: Exception) -> bool:
+        return isinstance(exc, (httpx.TimeoutException, httpx.NetworkError, httpx.ProtocolError))
+
+    @staticmethod
+    def _request_error_detail(exc: Exception) -> str:
+        raw = str(exc).strip()
+        if raw:
+            return f"{exc.__class__.__name__}({raw})"
+        return repr(exc) or exc.__class__.__name__
 
     @staticmethod
     def _sprite_name(*, prefix: str, app_id: str) -> str:
@@ -180,12 +200,35 @@ class SpriteSandboxBackend(PublishedAppSandboxBackend):
         failure_reason: str | None = None,
     ) -> dict[str, Any]:
         return {
-            "build_watch_status": str((build_watch_service or {}).get("state") or "").strip().lower() or "unknown",
-            "static_server_status": str((static_preview_service or {}).get("state") or "").strip().lower() or "unknown",
+            "build_watch_status": self._service_runtime_status(build_watch_service) or "unknown",
+            "static_server_status": self._service_runtime_status(static_preview_service) or "unknown",
             "checked_at": datetime.now(timezone.utc).isoformat(),
             "restart_reason": str(restart_reason or "").strip() or None,
             "failure_reason": str(failure_reason or "").strip() or None,
         }
+
+    @staticmethod
+    def _service_runtime_status(service: dict[str, Any] | None) -> str:
+        if not isinstance(service, dict):
+            return ""
+        state = service.get("state")
+        if isinstance(state, dict):
+            return str(state.get("status") or "").strip().lower()
+        return str(state or "").strip().lower()
+
+    @staticmethod
+    def _service_runtime_pid(service: dict[str, Any] | None) -> int | None:
+        if not isinstance(service, dict):
+            return None
+        state = service.get("state")
+        if isinstance(state, dict):
+            raw_pid = state.get("pid")
+            try:
+                pid = int(raw_pid)
+            except Exception:
+                return None
+            return pid if pid > 0 else None
+        return None
 
     def _with_live_preview_supervisor(
         self,
@@ -210,6 +253,22 @@ class SpriteSandboxBackend(PublishedAppSandboxBackend):
             return True
         return False
 
+    def _live_preview_requires_rebuild(
+        self,
+        *,
+        revision_token: str | None,
+        live_preview: dict[str, Any] | None,
+    ) -> bool:
+        resolved_revision_token = str(revision_token or "").strip()
+        if not resolved_revision_token or not isinstance(live_preview, dict) or not live_preview:
+            return False
+        payload = normalize_live_preview_payload(live_preview)
+        status = str(payload.get("status") or "").strip().lower()
+        if status in {LIVE_PREVIEW_STATUS_BOOTING, LIVE_PREVIEW_STATUS_BUILDING}:
+            return False
+        last_trigger_revision_token = str(payload.get("debug_last_trigger_revision_token") or "").strip()
+        return bool(last_trigger_revision_token) and last_trigger_revision_token != resolved_revision_token
+
     async def _request(
         self,
         method: str,
@@ -223,21 +282,41 @@ class SpriteSandboxBackend(PublishedAppSandboxBackend):
     ) -> dict[str, Any] | str:
         url = f"{self._api_base()}{path}"
         timeout = httpx.Timeout(timeout_seconds or self.config.request_timeout_seconds)
-        try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                response = await client.request(
-                    method,
-                    url,
-                    params=params,
-                    headers=self._headers(json_content=(content is None)),
-                    json=json_payload,
-                    content=content,
+        response: httpx.Response | None = None
+        last_exc: Exception | None = None
+        for attempt in range(1, _SPRITE_REQUEST_MAX_ATTEMPTS + 1):
+            try:
+                async with httpx.AsyncClient(timeout=timeout) as client:
+                    response = await client.request(
+                        method,
+                        url,
+                        params=params,
+                        headers=self._headers(json_content=(content is None)),
+                        json=json_payload,
+                        content=content,
+                    )
+                break
+            except Exception as exc:
+                last_exc = exc
+                if attempt >= _SPRITE_REQUEST_MAX_ATTEMPTS or not self._is_retryable_request_error(exc):
+                    detail = self._request_error_detail(exc)
+                    raise PublishedAppSandboxBackendError(
+                        f"Sprite request failed for {method.upper()} {path}: {detail}"
+                    ) from exc
+                self._trace(
+                    "sprite.api.request.retry",
+                    method=method.upper(),
+                    path=path,
+                    attempt=attempt,
+                    max_attempts=_SPRITE_REQUEST_MAX_ATTEMPTS,
+                    error_type=exc.__class__.__name__,
                 )
-        except Exception as exc:
-            detail = str(exc).strip() or repr(exc) or exc.__class__.__name__
+                await asyncio.sleep(_SPRITE_REQUEST_RETRY_DELAY_SECONDS * attempt)
+        if response is None:
+            detail = self._request_error_detail(last_exc or RuntimeError("missing Sprite response"))
             raise PublishedAppSandboxBackendError(
                 f"Sprite request failed for {method.upper()} {path}: {detail}"
-            ) from exc
+            )
         if response.status_code >= 400:
             detail = response.text.strip() or response.reason_phrase
             raise PublishedAppSandboxBackendError(
@@ -369,10 +448,24 @@ print(json.dumps({{"status": "ok"}}, sort_keys=True))
         sprite_name: str,
         service_name: str,
         payload: dict[str, Any],
+        force_restart: bool = False,
     ) -> None:
         service = await self._get_service(sprite_name=sprite_name, service_name=service_name)
         expected_http_port = payload.get("http_port")
         if service is None:
+            await self._put_service(sprite_name=sprite_name, service_name=service_name, payload=payload)
+            await self._start_service(sprite_name=sprite_name, service_name=service_name)
+            return
+        if force_restart:
+            pid = self._service_runtime_pid(service)
+            if pid is not None:
+                await self._exec(
+                    sprite_name=sprite_name,
+                    command=["bash", "-lc", f"kill -TERM {pid} >/dev/null 2>&1 || true"],
+                    timeout_seconds=10,
+                    max_output_bytes=512,
+                    allow_nonzero=True,
+                )
             await self._put_service(sprite_name=sprite_name, service_name=service_name, payload=payload)
             await self._start_service(sprite_name=sprite_name, service_name=service_name)
             return
@@ -388,19 +481,27 @@ print(json.dumps({{"status": "ok"}}, sort_keys=True))
             await self._put_service(sprite_name=sprite_name, service_name=service_name, payload=payload)
             await self._start_service(sprite_name=sprite_name, service_name=service_name)
             return
-        if str(service.get("state") or "").strip().lower() != "running":
+        if self._service_runtime_status(service) != "running":
             await self._start_service(sprite_name=sprite_name, service_name=service_name)
 
-    async def _ensure_preview_service(self, *, sprite_name: str) -> None:
+    async def _ensure_preview_service(self, *, sprite_name: str, force_restart: bool = False) -> None:
         await self._install_live_preview_scripts(sprite_name=sprite_name)
         scripts_version = self._live_preview_scripts_version()
+        restart_nonce_prefix = ""
+        if force_restart:
+            restart_nonce = datetime.now(timezone.utc).isoformat()
+            restart_nonce_prefix = (
+                f"export TALMUDPEDIA_LIVE_PREVIEW_RESTART_NONCE={shlex.quote(restart_nonce)} && "
+            )
         build_watch_command = (
             f"export TALMUDPEDIA_LIVE_PREVIEW_SCRIPTS_VERSION={shlex.quote(scripts_version)} && "
+            f"{restart_nonce_prefix}"
             f"cd {shlex.quote(self._live_workspace_path())} && "
             f"node {shlex.quote(self._live_preview_build_watch_script_path())}"
         )
         static_preview_command = (
             f"export TALMUDPEDIA_LIVE_PREVIEW_SCRIPTS_VERSION={shlex.quote(scripts_version)} && "
+            f"{restart_nonce_prefix}"
             f"cd {shlex.quote(self._live_workspace_path())} && "
             f"python3 {shlex.quote(self._live_preview_static_server_script_path())}"
         )
@@ -416,6 +517,7 @@ print(json.dumps({{"status": "ok"}}, sort_keys=True))
             sprite_name=sprite_name,
             service_name=self._build_watch_service_name(),
             payload=self._service_command(build_watch_command),
+            force_restart=force_restart,
         )
         await self._ensure_service_running(
             sprite_name=sprite_name,
@@ -424,6 +526,7 @@ print(json.dumps({{"status": "ok"}}, sort_keys=True))
                 **self._service_command(static_preview_command),
                 "http_port": self._preview_port(),
             },
+            force_restart=force_restart,
         )
         preview_service = await self._get_service(sprite_name=sprite_name, service_name=self._preview_service_name())
         self._trace(
@@ -441,8 +544,7 @@ print(json.dumps({{"status": "ok"}}, sort_keys=True))
         opencode_command = str(
             self.config.sprite_opencode_command
             or f"cd {shlex.quote(live_workspace_path)} && "
-            f"(opencode serve --hostname 0.0.0.0 --port {self._opencode_port()} "
-            f"|| npx -y opencode-ai serve --hostname 0.0.0.0 --port {self._opencode_port()})"
+            f"{build_official_opencode_bootstrap_command(host='0.0.0.0', port=self._opencode_port())}"
         ).strip()
         self._trace(
             "sprite.ensure_services.opencode_plan",
@@ -451,14 +553,10 @@ print(json.dumps({{"status": "ok"}}, sort_keys=True))
             opencode_port=self._opencode_port(),
             opencode_command=opencode_command,
         )
-        await self._put_service(
+        await self._ensure_service_running(
             sprite_name=sprite_name,
             service_name=self._opencode_service_name(),
             payload=self._service_command(opencode_command),
-        )
-        await self._start_service(
-            sprite_name=sprite_name,
-            service_name=self._opencode_service_name(),
         )
 
     async def _wait_for_preview_ready(self, *, sprite_name: str) -> None:
@@ -579,6 +677,21 @@ print(json.dumps({{"status": "ok"}}, sort_keys=True))
             stdin_text=script,
             timeout_seconds=30,
             max_output_bytes=4_000,
+        )
+
+    async def _trigger_live_preview_rebuild(self, *, sprite_name: str) -> None:
+        await self._exec(
+            sprite_name=sprite_name,
+            command=[
+                "bash",
+                "-lc",
+                (
+                    f"touch {shlex.quote(f'{self._live_workspace_path()}/index.html')} "
+                    f"|| touch {shlex.quote(f'{self._live_workspace_path()}/src/main.tsx')}"
+                ),
+            ],
+            timeout_seconds=30,
+            max_output_bytes=2_000,
         )
 
     async def _mirror_workspace(self, *, sprite_name: str, source_workspace_path: str, target_workspace_path: str) -> None:
@@ -1372,6 +1485,12 @@ print(json.dumps({{
         _ = idle_timeout_seconds
         sprite_name = str(sandbox_id or "").strip()
         metadata = await self._heartbeat_metadata(sprite_name=sprite_name)
+        workspace_metadata = (
+            dict(metadata.get("workspace") or {})
+            if isinstance(metadata.get("workspace"), dict)
+            else {}
+        )
+        revision_token = str(workspace_metadata.get("revision_token") or "").strip() or None
         if self._live_preview_needs_service_refresh(live_preview=metadata.get("live_preview")):
             self._trace(
                 "sprite.preview.heartbeat_refresh.begin",
@@ -1380,6 +1499,12 @@ print(json.dumps({{
             )
             await self._ensure_preview_service(sprite_name=sprite_name)
             metadata = await self._heartbeat_metadata(sprite_name=sprite_name)
+            workspace_metadata = (
+                dict(metadata.get("workspace") or {})
+                if isinstance(metadata.get("workspace"), dict)
+                else {}
+            )
+            revision_token = str(workspace_metadata.get("revision_token") or "").strip() or None
             if isinstance(metadata.get("live_preview"), dict):
                 metadata["live_preview"] = self._with_live_preview_supervisor(
                     live_preview=metadata.get("live_preview"),
@@ -1391,6 +1516,38 @@ print(json.dumps({{
             self._trace(
                 "sprite.preview.heartbeat_refresh.done",
                 sprite_name=sprite_name,
+            )
+        if self._live_preview_requires_rebuild(
+            revision_token=revision_token,
+            live_preview=metadata.get("live_preview"),
+        ):
+            self._trace(
+                "sprite.preview.heartbeat_rebuild.begin",
+                sprite_name=sprite_name,
+                revision_token=revision_token,
+                last_trigger_revision_token=str(
+                    (metadata.get("live_preview") or {}).get("debug_last_trigger_revision_token") or ""
+                ).strip()
+                or None,
+            )
+            await self._ensure_preview_service(
+                sprite_name=sprite_name,
+                force_restart=True,
+            )
+            await self._trigger_live_preview_rebuild(sprite_name=sprite_name)
+            metadata = await self._heartbeat_metadata(sprite_name=sprite_name)
+            if isinstance(metadata.get("live_preview"), dict):
+                metadata["live_preview"] = self._with_live_preview_supervisor(
+                    live_preview=metadata.get("live_preview"),
+                    supervisor={
+                        **dict(metadata["live_preview"].get("supervisor") or {}),
+                        "restart_reason": "heartbeat_rebuild",
+                    },
+                )
+            self._trace(
+                "sprite.preview.heartbeat_rebuild.done",
+                sprite_name=sprite_name,
+                revision_token=revision_token,
             )
         try:
             await self._wait_for_preview_ready(sprite_name=sprite_name)
@@ -1904,7 +2061,7 @@ print(json.dumps({{
         workspace_path: str,
         files: Dict[str, str],
     ) -> Dict[str, Any]:
-        revision_token = await self._sync_files_to_workspace(
+        sync_result = await self._sync_files_to_workspace(
             sprite_name=sandbox_id,
             workspace_path=workspace_path,
             files=files,
@@ -1913,7 +2070,10 @@ print(json.dumps({{
             "sandbox_id": sandbox_id,
             "workspace_path": workspace_path,
             "file_count": len(files or {}),
-            "revision_token": revision_token,
+            "revision_token": str(sync_result.get("revision_token") or "").strip() or None,
+            "wrote_count": max(0, int(sync_result.get("wrote_count") or 0)),
+            "skipped_count": max(0, int(sync_result.get("skipped_count") or 0)),
+            "deleted_count": max(0, int(sync_result.get("deleted_count") or 0)),
         }
 
     async def resolve_workspace_path(self, *, sandbox_id: str) -> str | None:
@@ -1927,6 +2087,7 @@ print(json.dumps({{
         if not cache_key:
             raise PublishedAppSandboxBackendError("Sandbox id is required for Sprite OpenCode client.")
         if not force_refresh:
+            await self._ensure_opencode_service(sprite_name=cache_key)
             cached = self._opencode_clients_by_sandbox.get(cache_key)
             if cached is not None:
                 return cached
@@ -1955,60 +2116,53 @@ print(json.dumps({{
         self._opencode_clients_by_sandbox[cache_key] = client
         return client
 
-    async def start_opencode_run(
+    @staticmethod
+    def _is_refreshable_opencode_transport_error(exc: Exception) -> bool:
+        current: BaseException | None = exc
+        while current is not None:
+            if isinstance(current, httpx.HTTPError):
+                return True
+            name = current.__class__.__name__
+            message = str(current or "").strip().lower()
+            if name in {"RemoteProtocolError", "ConnectError", "ReadError", "WriteError", "PoolTimeout"}:
+                return True
+            if "server disconnected without sending a response" in message:
+                return True
+            current = current.__cause__ or current.__context__
+        return False
+
+    async def _retry_opencode_call_after_refresh(
         self,
         *,
         sandbox_id: str,
-        run_id: str,
-        app_id: str,
+        operation: str,
+        exc: Exception,
+    ):
+        if not self._is_refreshable_opencode_transport_error(exc):
+            raise exc
+        self._trace(
+            "sprite.opencode.retrying_after_refresh",
+            sprite_name=sandbox_id,
+            service_name=self._opencode_service_name(),
+            operation=operation,
+            error=str(exc),
+            error_type=exc.__class__.__name__,
+        )
+        return await self._build_opencode_client(sandbox_id=sandbox_id, force_refresh=True)
+
+    async def ensure_opencode_endpoint(
+        self,
+        *,
+        sandbox_id: str,
         workspace_path: str,
-        model_id: str,
-        prompt: str,
-        messages: list[dict[str, str]],
-    ) -> Dict[str, Any]:
+    ) -> PublishedAppOpenCodeEndpoint:
         client = await self._build_opencode_client(sandbox_id=sandbox_id)
-        logger.info(
-            "SPRITE_OPENCODE_START sandbox_id=%s run_id=%s app_id=%s requested_workspace=%s",
-            sandbox_id,
-            run_id,
-            app_id,
-            workspace_path,
+        base_url = str(getattr(getattr(client, "_config", None), "base_url", "") or "").strip()
+        resolved_workspace_path = str(workspace_path or self._live_workspace_path()).strip() or self._live_workspace_path()
+        if not base_url:
+            raise PublishedAppSandboxBackendError("Sprite OpenCode tunnel did not provide a base URL.")
+        return PublishedAppOpenCodeEndpoint(
+            sandbox_id=str(sandbox_id),
+            base_url=base_url,
+            workspace_path=resolved_workspace_path,
         )
-        run_ref = await client.start_run(
-            run_id=run_id,
-            app_id=app_id,
-            sandbox_id=sandbox_id,
-            workspace_path=workspace_path,
-            model_id=model_id,
-            prompt=prompt,
-            messages=messages,
-        )
-        return {"run_ref": run_ref, "sandbox_id": sandbox_id, "status": "started"}
-
-    async def stream_opencode_events(self, *, sandbox_id: str, run_ref: str) -> AsyncGenerator[dict[str, Any], None]:
-        client = await self._build_opencode_client(sandbox_id=sandbox_id)
-        async for item in client.stream_run_events(run_ref=run_ref):
-            if isinstance(item, dict):
-                yield item
-
-    async def cancel_opencode_run(self, *, sandbox_id: str, run_ref: str) -> Dict[str, Any]:
-        client = await self._build_opencode_client(sandbox_id=sandbox_id)
-        cancelled = await client.cancel_run(run_ref=run_ref, sandbox_id=sandbox_id)
-        return {"ok": bool(cancelled), "cancelled": bool(cancelled), "sandbox_id": sandbox_id, "run_ref": run_ref}
-
-    async def answer_opencode_question(
-        self,
-        *,
-        sandbox_id: str,
-        run_ref: str,
-        question_id: str,
-        answers: list[list[str]],
-    ) -> Dict[str, Any]:
-        client = await self._build_opencode_client(sandbox_id=sandbox_id)
-        ok = await client.answer_question(
-            run_ref=run_ref,
-            question_id=question_id,
-            answers=answers,
-            sandbox_id=sandbox_id,
-        )
-        return {"ok": bool(ok), "sandbox_id": sandbox_id, "run_ref": run_ref, "question_id": question_id}

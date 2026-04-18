@@ -325,6 +325,29 @@ class PublishedAppDraftDevRuntimeService:
             return None
         return snapshot
 
+    @staticmethod
+    def _live_workspace_snapshot_differs_from_preview(
+        *,
+        snapshot: dict[str, Any] | None,
+        live_preview: dict[str, Any] | None,
+    ) -> bool:
+        preview_payload = dict(live_preview or {}) if isinstance(live_preview, dict) else {}
+        snapshot_payload = dict(snapshot or {}) if isinstance(snapshot, dict) else {}
+        preview_status = str(preview_payload.get("status") or "").strip().lower()
+        if preview_status != "ready":
+            return False
+        preview_fingerprint = str(preview_payload.get("workspace_fingerprint") or "").strip()
+        preview_revision_token = (
+            str(preview_payload.get("debug_last_trigger_revision_token") or "").strip() or None
+        )
+        snapshot_fingerprint = str(snapshot_payload.get("workspace_fingerprint") or "").strip()
+        snapshot_revision_token = str(snapshot_payload.get("revision_token") or "").strip() or None
+        if preview_fingerprint and preview_fingerprint != snapshot_fingerprint:
+            return True
+        if preview_revision_token and preview_revision_token != snapshot_revision_token:
+            return True
+        return False
+
     async def _restore_live_workspace_snapshot_from_runtime(
         self,
         *,
@@ -340,7 +363,17 @@ class PublishedAppDraftDevRuntimeService:
             metadata=workspace.backend_metadata,
             revision_id=revision.id,
         )
-        if snapshot is not None:
+        live_preview = (
+            dict(workspace.backend_metadata.get("live_preview") or {})
+            if isinstance(workspace.backend_metadata, dict)
+            and isinstance(workspace.backend_metadata.get("live_preview"), dict)
+            else {}
+        )
+        should_refresh_existing_snapshot = self._live_workspace_snapshot_differs_from_preview(
+            snapshot=snapshot,
+            live_preview=live_preview,
+        )
+        if snapshot is not None and not should_refresh_existing_snapshot:
             return
         try:
             payload = await self.client.snapshot_files(sandbox_id=sandbox_id)
@@ -349,20 +382,26 @@ class PublishedAppDraftDevRuntimeService:
             if not files:
                 return
             revision_token = str(payload.get("revision_token") or "").strip() or None
+            workspace_fingerprint = str(live_preview.get("workspace_fingerprint") or "").strip() or None
+            entry_file = str(
+                (snapshot or {}).get("entry_file")
+                or revision.entry_file
+                or "src/main.tsx"
+            ).strip() or "src/main.tsx"
             await self.record_workspace_live_snapshot(
                 app_id=app_id,
                 revision_id=revision.id,
-                entry_file=revision.entry_file,
+                entry_file=entry_file,
                 files=files,
                 revision_token=revision_token,
-                workspace_fingerprint=None,
+                workspace_fingerprint=workspace_fingerprint,
             )
             await self.record_live_workspace_revision_token(
                 session=session,
                 revision_token=revision_token,
             )
             apps_builder_trace(
-                "workspace.snapshot_restored_from_runtime",
+                "workspace.snapshot_refreshed_from_runtime" if should_refresh_existing_snapshot else "workspace.snapshot_restored_from_runtime",
                 domain="draft_dev.runtime",
                 app_id=str(app_id),
                 session_id=str(session.id),
@@ -370,6 +409,8 @@ class PublishedAppDraftDevRuntimeService:
                 sandbox_id=sandbox_id,
                 file_count=len(files),
                 revision_id=str(revision.id),
+                workspace_fingerprint=workspace_fingerprint,
+                revision_token=revision_token,
             )
         except Exception as exc:
             apps_builder_trace(
@@ -1418,8 +1459,6 @@ class PublishedAppDraftDevRuntimeService:
         workspace: PublishedAppDraftWorkspace,
     ) -> PublishedAppDraftDevSession:
         materialization_request = self._get_live_workspace_materialization_request(workspace.backend_metadata)
-        if materialization_request is None:
-            return session
         live_snapshot = (
             dict(workspace.backend_metadata.get("live_workspace_snapshot") or {})
             if isinstance(workspace.backend_metadata, dict)
@@ -1450,7 +1489,7 @@ class PublishedAppDraftDevRuntimeService:
             app=app,
             workspace_fingerprint=workspace_fingerprint,
         ):
-            if app.current_draft_revision_id and session.user_id:
+            if materialization_request is not None and app.current_draft_revision_id and session.user_id:
                 current_revision = await self.db.get(PublishedAppRevision, app.current_draft_revision_id)
                 if current_revision is not None:
                     rebound = await self.bind_session_to_revision_without_sync(
@@ -1460,12 +1499,13 @@ class PublishedAppDraftDevRuntimeService:
                     )
                     if rebound is not None:
                         session = rebound
-            await self.record_live_workspace_materialization_request(
-                app_id=app.id,
-                origin_kind=None,
-                source_revision_id=None,
-                created_by=None,
-            )
+            if materialization_request is not None:
+                await self.record_live_workspace_materialization_request(
+                    app_id=app.id,
+                    origin_kind=None,
+                    source_revision_id=None,
+                    created_by=None,
+                )
             return session
 
         def _parse_uuid(raw: str | None) -> UUID | None:
@@ -1485,11 +1525,32 @@ class PublishedAppDraftDevRuntimeService:
             result = await materializer.materialize_live_workspace(
                 app=app,
                 entry_file=entry_file,
-                source_revision_id=_parse_uuid(materialization_request.get("source_revision_id")),
-                created_by=_parse_uuid(materialization_request.get("created_by")) or session.user_id,
-                origin_kind=materialization_request["origin_kind"],
-                origin_run_id=_parse_uuid(materialization_request.get("origin_run_id")),
-                restored_from_revision_id=_parse_uuid(materialization_request.get("restored_from_revision_id")),
+                source_revision_id=(
+                    _parse_uuid(materialization_request.get("source_revision_id"))
+                    if materialization_request is not None
+                    else app.current_draft_revision_id
+                ),
+                created_by=(
+                    _parse_uuid(materialization_request.get("created_by"))
+                    if materialization_request is not None
+                    else None
+                )
+                or session.user_id,
+                origin_kind=(
+                    materialization_request["origin_kind"]
+                    if materialization_request is not None
+                    else "live_preview"
+                ),
+                origin_run_id=(
+                    _parse_uuid(materialization_request.get("origin_run_id"))
+                    if materialization_request is not None
+                    else None
+                ),
+                restored_from_revision_id=(
+                    _parse_uuid(materialization_request.get("restored_from_revision_id"))
+                    if materialization_request is not None
+                    else None
+                ),
             )
         except Exception as exc:
             apps_builder_trace(

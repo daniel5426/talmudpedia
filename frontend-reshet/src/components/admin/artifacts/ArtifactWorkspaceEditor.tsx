@@ -1,7 +1,7 @@
 "use client"
 
 import type { ChangeEvent } from "react"
-import { useCallback, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { ArtifactCredentialCodeEditor } from "@/components/admin/artifacts/ArtifactCredentialCodeEditor"
 import { ArtifactWorkspaceSidebarHeader } from "@/components/admin/artifacts/ArtifactWorkspaceSidebarHeader"
 import { ArtifactWorkspaceTabs } from "@/components/admin/artifacts/ArtifactWorkspaceTabs"
@@ -27,10 +27,13 @@ import { ArtifactLanguage, ArtifactSourceFile } from "@/services/artifacts"
 import {
   ChevronDown,
   ChevronRight,
+  Copy,
+  Download,
   FileCode2,
   Folder,
   FolderOpen,
   Settings2,
+  Trash2,
   X,
 } from "lucide-react"
 
@@ -56,6 +59,8 @@ interface ArtifactWorkspaceEditorProps {
   configContent?: React.ReactNode
   availableCredentials?: IntegrationCredential[]
 }
+
+const TREE_MENU_DOUBLE_CLICK_MS = 180
 
 /* ------------------------------------------------------------------ */
 /*  Component                                                          */
@@ -137,15 +142,46 @@ export function ArtifactWorkspaceEditor({
   // ---- drag state for file tree ----
   const [draggingNode, setDraggingNode] = useState<string | null>(null)
   const [dropTargetDir, setDropTargetDir] = useState<string | null>(null)
+  const [treeMenu, setTreeMenu] = useState<{
+    path: string
+    kind: "file" | "directory"
+    x: number
+    y: number
+    expanded?: boolean
+  } | null>(null)
   const importInputRef = useRef<HTMLInputElement | null>(null)
+  const treeMenuRef = useRef<HTMLDivElement | null>(null)
+  const lastTreeMenuClickRef = useRef<{ path: string; timestamp: number } | null>(null)
 
   // ---- scroll state for tab transition effect ----
   const [isScrolled, setIsScrolled] = useState(false)
 
-  const activatePath = (path: string) => {
+  useEffect(() => {
+    if (!treeMenu) return
+
+    const handlePointerDown = (event: MouseEvent) => {
+      if (treeMenuRef.current?.contains(event.target as Node)) return
+      setTreeMenu(null)
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setTreeMenu(null)
+      }
+    }
+
+    window.addEventListener("mousedown", handlePointerDown)
+    window.addEventListener("keydown", handleKeyDown)
+    return () => {
+      window.removeEventListener("mousedown", handlePointerDown)
+      window.removeEventListener("keydown", handleKeyDown)
+    }
+  }, [treeMenu])
+
+  const activatePath = useCallback((path: string) => {
     setIsScrolled(false)
     onActiveFileChange(path)
-  }
+  }, [onActiveFileChange, setIsScrolled])
 
   /* ================================================================ */
   /*  Handlers                                                         */
@@ -225,7 +261,7 @@ export function ArtifactWorkspaceEditor({
     }
     if (!isTreeOpen) setIsTreeOpen(true)
     event.target.value = ""
-  }, [activeFilePath, isTreeOpen, loading, onSourceFilesChange, setIsTreeOpen, sourceFiles])
+  }, [activeFilePath, activatePath, isTreeOpen, loading, onSourceFilesChange, setIsTreeOpen, setOpenTabs, sourceFiles])
 
   const handleDeleteFile = (path: string) => {
     if (loading) return
@@ -421,6 +457,66 @@ export function ArtifactWorkspaceEditor({
     setDropTargetDir(null)
   }
 
+  const handleCopyPath = async (path: string) => {
+    try {
+      await navigator.clipboard?.writeText(path)
+    } catch (error) {
+      console.error(error)
+    }
+    setTreeMenu(null)
+  }
+
+  const handleDownloadFile = (path: string) => {
+    const file = sourceFiles.find((entry) => entry.path === path)
+    if (!file) {
+      setTreeMenu(null)
+      return
+    }
+
+    const fileName = path.split("/").pop() || "artifact-file"
+    const blob = new Blob([file.content], { type: "text/plain;charset=utf-8" })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement("a")
+    link.href = url
+    link.download = fileName
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    URL.revokeObjectURL(url)
+    setTreeMenu(null)
+  }
+
+  const openTreeMenu = (
+    event: React.MouseEvent<HTMLElement>,
+    node: TreeNode,
+    options?: { expanded?: boolean }
+  ) => {
+    event.preventDefault()
+    event.stopPropagation()
+    setTreeMenu({
+      path: node.path,
+      kind: node.kind,
+      x: event.clientX,
+      y: event.clientY,
+      expanded: options?.expanded,
+    })
+  }
+
+  const maybeOpenTreeMenuFromClick = (
+    event: React.MouseEvent<HTMLElement>,
+    node: TreeNode,
+    options?: { expanded?: boolean }
+  ) => {
+    const now = event.timeStamp
+    const lastClick = lastTreeMenuClickRef.current
+    if (lastClick && lastClick.path === node.path && now - lastClick.timestamp <= TREE_MENU_DOUBLE_CLICK_MS) {
+      lastTreeMenuClickRef.current = null
+      openTreeMenu(event, node, options)
+      return
+    }
+    lastTreeMenuClickRef.current = { path: node.path, timestamp: now }
+  }
+
   /* ================================================================ */
   /*  Tree rendering                                                   */
   /* ================================================================ */
@@ -445,6 +541,8 @@ export function ArtifactWorkspaceEditor({
             )}
             style={{ paddingLeft: `${8 + depth * 16}px` }}
             onClick={() => toggleDir(node.path)}
+            onContextMenu={(event) => openTreeMenu(event, node, { expanded: isExpanded })}
+            onClickCapture={(event) => maybeOpenTreeMenuFromClick(event, node, { expanded: isExpanded })}
           >
             <span className="flex h-4 w-4 shrink-0 items-center justify-center">
               {isExpanded ? (
@@ -499,6 +597,8 @@ export function ArtifactWorkspaceEditor({
               prev.includes(node.path) ? prev : [...prev, node.path]
             )
           }}
+          onContextMenu={(event) => openTreeMenu(event, node)}
+          onClickCapture={(event) => maybeOpenTreeMenuFromClick(event, node)}
         >
           <FileCode2 className="h-[14px] w-[14px] shrink-0 text-[#519aba]" />
           <span className="truncate pl-0.5">{node.name}</span>
@@ -689,6 +789,79 @@ export function ArtifactWorkspaceEditor({
           )}
         </div>
       </div>
+
+      {treeMenu ? (
+        <div
+          ref={treeMenuRef}
+          className="fixed z-50 min-w-52 overflow-hidden rounded-xl border border-border/60 bg-background/96 p-1.5 shadow-[0_14px_40px_rgba(15,23,42,0.14)] backdrop-blur-sm"
+          style={{
+            left: `${treeMenu.x}px`,
+            top: `${treeMenu.y}px`,
+          }}
+        >
+          <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground">
+            {treeMenu.path}
+          </div>
+          <button
+            type="button"
+            className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm text-foreground hover:bg-accent"
+            onClick={() => {
+              if (treeMenu.kind === "file") {
+                activatePath(treeMenu.path)
+                setOpenTabs((prev) => (prev.includes(treeMenu.path) ? prev : [...prev, treeMenu.path]))
+              } else {
+                toggleDir(treeMenu.path)
+              }
+              setTreeMenu(null)
+            }}
+          >
+            {treeMenu.kind === "file" ? (
+              <FileCode2 className="h-4 w-4 text-muted-foreground" />
+            ) : (
+              <FolderOpen className="h-4 w-4 text-muted-foreground" />
+            )}
+            <span>{treeMenu.kind === "file" ? "Open file" : treeMenu.expanded ? "Collapse folder" : "Expand folder"}</span>
+          </button>
+          {treeMenu.kind === "file" ? (
+            <button
+              type="button"
+              className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm text-foreground hover:bg-accent"
+              onClick={() => handleDownloadFile(treeMenu.path)}
+            >
+              <Download className="h-4 w-4 text-muted-foreground" />
+              <span>Download file</span>
+            </button>
+          ) : null}
+          <button
+            type="button"
+            className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm text-foreground hover:bg-accent"
+            onClick={() => void handleCopyPath(treeMenu.path)}
+          >
+            <Copy className="h-4 w-4 text-muted-foreground" />
+            <span>Copy path</span>
+          </button>
+          <button
+            type="button"
+            className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm text-destructive hover:bg-destructive/10"
+            onClick={() => {
+              if (treeMenu.kind === "file") {
+                handleDeleteFile(treeMenu.path)
+              } else {
+                const prefix = `${treeMenu.path}/`
+                const nextFiles = sourceFiles.filter((file) => file.path !== treeMenu.path && !file.path.startsWith(prefix))
+                onSourceFilesChange(nextFiles)
+                if (activeFilePath === treeMenu.path || activeFilePath.startsWith(prefix)) {
+                  activatePath(nextFiles[0]?.path ?? ARTIFACT_CONFIG_FILE_PATH)
+                }
+              }
+              setTreeMenu(null)
+            }}
+          >
+            <Trash2 className="h-4 w-4" />
+            <span>Delete</span>
+          </button>
+        </div>
+      ) : null}
     </div>
   )
 }

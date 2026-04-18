@@ -99,7 +99,12 @@ async def list_file_spaces(
 ):
     tenant_id, project_id = _required_context(principal)
     spaces = await FileSpaceService(db).list_spaces(tenant_id=tenant_id, project_id=project_id)
-    return {"items": [FileSpaceService.serialize_space(space, view="full") for space in spaces]}
+    return {
+        "items": [
+            FileSpaceService.serialize_space(space, view="full", file_count=file_count, total_bytes=total_bytes)
+            for space, file_count, total_bytes in spaces
+        ]
+    }
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)

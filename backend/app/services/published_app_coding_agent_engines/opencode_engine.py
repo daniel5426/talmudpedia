@@ -5,10 +5,12 @@ import logging
 import os
 import time
 from typing import Any, AsyncGenerator
+from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.postgres.models.agents import AgentRun, RunStatus
+from app.db.postgres.models.published_apps import PublishedAppCodingChatSession
 from app.services.published_app_coding_pipeline_trace import pipeline_trace
 from app.services.opencode_server_client import OpenCodeServerClient
 
@@ -48,6 +50,74 @@ class OpenCodePublishedAppCodingAgentEngine:
         self._db = db
         self._client = client
 
+    @staticmethod
+    def _recovery_messages(context: dict[str, Any]) -> list[dict[str, str]]:
+        raw = context.get("opencode_recovery_messages")
+        if not isinstance(raw, list):
+            return []
+        return [item for item in raw if isinstance(item, dict)]
+
+    @staticmethod
+    def _chat_session_uuid(context: dict[str, Any]) -> UUID | None:
+        raw = str(context.get("chat_session_id") or "").strip()
+        if not raw:
+            return None
+        try:
+            return UUID(raw)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _is_invalid_session_error(exc: Exception) -> bool:
+        message = str(exc or "").strip().lower()
+        return any(
+            token in message
+            for token in (
+                "session not found",
+                "invalid session",
+                "unknown session",
+                "missing session",
+                "session does not exist",
+            )
+        )
+
+    async def _recreate_persistent_session(
+        self,
+        *,
+        run: AgentRun,
+        app_id: str,
+        context: dict[str, Any],
+        sandbox_id: str,
+        workspace_path: str,
+        model_id: str,
+    ) -> str:
+        session_id = await self._client.create_session(
+            run_id=str(run.id),
+            app_id=app_id,
+            sandbox_id=sandbox_id,
+            workspace_path=workspace_path,
+            model_id=model_id,
+            selected_agent_contract=(
+                dict(context.get("selected_agent_contract"))
+                if isinstance(context.get("selected_agent_contract"), dict)
+                else None
+            ),
+        )
+        chat_session_id = self._chat_session_uuid(context)
+        if chat_session_id is not None:
+            chat_session = await self._db.get(PublishedAppCodingChatSession, chat_session_id)
+            if chat_session is not None:
+                chat_session.opencode_session_id = session_id
+                chat_session.opencode_sandbox_id = sandbox_id or None
+                chat_session.opencode_workspace_path = workspace_path or None
+                chat_session.opencode_session_opened_at = datetime.now(timezone.utc)
+                chat_session.opencode_session_closed_at = None
+        context["opencode_session_id"] = session_id
+        context["opencode_sandbox_id"] = sandbox_id or None
+        context["opencode_workspace_path"] = workspace_path or None
+        await self._db.commit()
+        return session_id
+
     async def stream(self, ctx: EngineRunContext) -> AsyncGenerator[EngineStreamEvent, None]:
         run = ctx.run
         trace_base = {
@@ -63,16 +133,10 @@ class OpenCodePublishedAppCodingAgentEngine:
         context = dict(raw_context) if isinstance(raw_context, dict) else {}
         input_params["context"] = context
         run.input_params = input_params
-        messages = input_params.get("messages") if isinstance(input_params.get("messages"), list) else []
         prompt = str(input_params.get("input") or "").strip()
-        prompt_history_budget_chars = int(os.getenv("APPS_CODING_AGENT_OPENCODE_PROMPT_HISTORY_BUDGET_CHARS", "14000"))
-        effective_prompt = build_opencode_effective_prompt(
-            current_user_prompt=prompt,
-            messages=[item for item in messages if isinstance(item, dict)],
-            max_chars=prompt_history_budget_chars,
-        )
         resolved_model_id = str(context.get("resolved_model_id") or "").strip()
         opencode_model_id = str(context.get("opencode_model_id") or "").strip()
+        opencode_session_id = str(context.get("opencode_session_id") or "").strip()
         workspace_path = str(
             context.get("opencode_workspace_path")
             or context.get("preview_workspace_live_path")
@@ -88,45 +152,112 @@ class OpenCodePublishedAppCodingAgentEngine:
             or ""
         ).strip()
         workspace_root = os.path.realpath(os.path.abspath(workspace_path)) if workspace_path else ""
+        recovery_messages = self._recovery_messages(context)
+        if recovery_messages:
+            prompt_history_budget_chars = int(
+                os.getenv("APPS_CODING_AGENT_OPENCODE_PROMPT_HISTORY_BUDGET_CHARS", "14000")
+            )
+            recovery_messages = [
+                {
+                    "role": str(item.get("role") or "").strip(),
+                    "content": str(item.get("content") or "").strip(),
+                }
+                for item in recovery_messages
+                if isinstance(item, dict) and str(item.get("content") or "").strip()
+            ]
+            effective_prompt = build_opencode_effective_prompt(
+                current_user_prompt=prompt,
+                messages=recovery_messages,
+                max_chars=prompt_history_budget_chars,
+            )
+        else:
+            effective_prompt = prompt
 
         if not run.engine_run_ref:
-            opencode_start_started_at = time.monotonic()
+            opencode_submit_started_at = time.monotonic()
             trace_engine(
-                "engine.stream.start_requested",
+                "engine.stream.turn_submit_requested",
+                session_id=opencode_session_id or None,
                 sandbox_id=sandbox_id or None,
                 workspace_path=workspace_path,
                 model_id=opencode_model_id or resolved_model_id,
             )
-            run.engine_run_ref = await self._client.start_run(
-                run_id=str(run.id),
-                app_id=str(ctx.app.id),
-                sandbox_id=sandbox_id,
-                workspace_path=workspace_path,
-                model_id=opencode_model_id or resolved_model_id,
-                prompt=effective_prompt,
-                messages=[item for item in messages if isinstance(item, dict)],
-                selected_agent_contract=(
-                    dict(context.get("selected_agent_contract"))
-                    if isinstance(context.get("selected_agent_contract"), dict)
-                    else None
-                ),
-            )
-            opencode_start_ms = max(0, int((time.monotonic() - opencode_start_started_at) * 1000))
+            if not opencode_session_id:
+                opencode_session_id = await self._recreate_persistent_session(
+                    run=run,
+                    app_id=str(ctx.app.id),
+                    context=context,
+                    sandbox_id=sandbox_id,
+                    workspace_path=workspace_path,
+                    model_id=opencode_model_id or resolved_model_id,
+                )
+            try:
+                run.engine_run_ref = await self._client.submit_turn(
+                    session_id=opencode_session_id,
+                    run_id=str(run.id),
+                    app_id=str(ctx.app.id),
+                    sandbox_id=sandbox_id,
+                    workspace_path=workspace_path,
+                    model_id=opencode_model_id or resolved_model_id,
+                    prompt=effective_prompt,
+                    recovery_messages=recovery_messages if recovery_messages else None,
+                    selected_agent_contract=(
+                        dict(context.get("selected_agent_contract"))
+                        if isinstance(context.get("selected_agent_contract"), dict)
+                        else None
+                    ),
+                    defer_until_stream=True,
+                )
+            except Exception as exc:
+                if not self._is_invalid_session_error(exc):
+                    raise
+                trace_engine(
+                    "engine.stream.session_recreate_after_submit_error",
+                    session_id=opencode_session_id or None,
+                    error=str(exc),
+                    error_type=exc.__class__.__name__,
+                )
+                opencode_session_id = await self._recreate_persistent_session(
+                    run=run,
+                    app_id=str(ctx.app.id),
+                    context=context,
+                    sandbox_id=sandbox_id,
+                    workspace_path=workspace_path,
+                    model_id=opencode_model_id or resolved_model_id,
+                )
+                run.engine_run_ref = await self._client.submit_turn(
+                    session_id=opencode_session_id,
+                    run_id=str(run.id),
+                    app_id=str(ctx.app.id),
+                    sandbox_id=sandbox_id,
+                    workspace_path=workspace_path,
+                    model_id=opencode_model_id or resolved_model_id,
+                    prompt=effective_prompt,
+                    recovery_messages=recovery_messages if recovery_messages else None,
+                    selected_agent_contract=(
+                        dict(context.get("selected_agent_contract"))
+                        if isinstance(context.get("selected_agent_contract"), dict)
+                        else None
+                    ),
+                    defer_until_stream=True,
+                )
+            opencode_turn_submit_ms = max(0, int((time.monotonic() - opencode_submit_started_at) * 1000))
             timings = context.get("timing_metrics_ms")
             if not isinstance(timings, dict):
                 timings = {}
                 context["timing_metrics_ms"] = timings
-            timings["opencode_start"] = opencode_start_ms
+            timings["opencode_turn_submit"] = opencode_turn_submit_ms
             logger.info(
-                "CODING_AGENT_TIMING run_id=%s app_id=%s phase=opencode_start duration_ms=%s",
+                "CODING_AGENT_TIMING run_id=%s app_id=%s phase=opencode_turn_submit duration_ms=%s",
                 run.id,
                 ctx.app.id,
-                opencode_start_ms,
+                opencode_turn_submit_ms,
             )
             trace_engine(
-                "engine.stream.start_confirmed",
+                "engine.stream.turn_submit_confirmed",
+                session_id=opencode_session_id or None,
                 engine_run_ref=str(run.engine_run_ref or ""),
-                opencode_start_ms=opencode_start_ms,
+                opencode_turn_submit_ms=opencode_turn_submit_ms,
             )
 
         run.status = RunStatus.running
@@ -152,7 +283,64 @@ class OpenCodePublishedAppCodingAgentEngine:
         if tool_event_mode not in {"raw", "normalized"}:
             tool_event_mode = "raw"
 
-        async for raw in self._client.stream_run_events(run_ref=str(run.engine_run_ref)):
+        emitted_raw_events = False
+
+        async def _raw_event_stream():
+            nonlocal emitted_raw_events, opencode_session_id
+            try:
+                async for item in self._client.stream_turn_events(
+                    session_id=opencode_session_id,
+                    turn_ref=str(run.engine_run_ref),
+                    sandbox_id=sandbox_id or None,
+                    workspace_path=workspace_path,
+                ):
+                    emitted_raw_events = True
+                    yield item
+            except Exception as exc:
+                if emitted_raw_events or not self._is_invalid_session_error(exc):
+                    raise
+                trace_engine(
+                    "engine.stream.session_recreate_after_stream_error",
+                    session_id=opencode_session_id or None,
+                    turn_ref=str(run.engine_run_ref or "") or None,
+                    error=str(exc),
+                    error_type=exc.__class__.__name__,
+                )
+                recreated_session_id = await self._recreate_persistent_session(
+                    run=run,
+                    app_id=str(ctx.app.id),
+                    context=context,
+                    sandbox_id=sandbox_id,
+                    workspace_path=workspace_path,
+                    model_id=opencode_model_id or resolved_model_id,
+                )
+                opencode_session_id = recreated_session_id
+                context["opencode_recovery_messages"] = recovery_messages
+                run.engine_run_ref = await self._client.submit_turn(
+                    session_id=recreated_session_id,
+                    run_id=str(run.id),
+                    app_id=str(ctx.app.id),
+                    sandbox_id=sandbox_id,
+                    workspace_path=workspace_path,
+                    model_id=opencode_model_id or resolved_model_id,
+                    prompt=effective_prompt,
+                    recovery_messages=recovery_messages if recovery_messages else None,
+                    selected_agent_contract=(
+                        dict(context.get("selected_agent_contract"))
+                        if isinstance(context.get("selected_agent_contract"), dict)
+                        else None
+                    ),
+                    defer_until_stream=True,
+                )
+                async for item in self._client.stream_turn_events(
+                    session_id=recreated_session_id,
+                    turn_ref=str(run.engine_run_ref),
+                    sandbox_id=sandbox_id or None,
+                    workspace_path=workspace_path,
+                ):
+                    yield item
+
+        async for raw in _raw_event_stream():
             mapped = self._translate_event(raw, tool_event_mode=tool_event_mode)
             if mapped is None:
                 continue
@@ -209,9 +397,11 @@ class OpenCodePublishedAppCodingAgentEngine:
                 )
                 try:
                     if run.engine_run_ref:
-                        await self._client.cancel_run(
-                            run_ref=str(run.engine_run_ref),
+                        await self._client.cancel_turn(
+                            session_id=opencode_session_id,
+                            turn_ref=str(run.engine_run_ref),
                             sandbox_id=sandbox_id or None,
+                            workspace_path=workspace_path,
                         )
                 except Exception:
                     pass
@@ -327,11 +517,19 @@ class OpenCodePublishedAppCodingAgentEngine:
         input_params = dict(run.input_params) if isinstance(run.input_params, dict) else {}
         raw_context = input_params.get("context")
         context = dict(raw_context) if isinstance(raw_context, dict) else {}
+        session_id = str(context.get("opencode_session_id") or "").strip() or None
         sandbox_id = str(context.get("opencode_sandbox_id") or context.get("preview_sandbox_id") or "").strip() or None
+        if not session_id:
+            return EngineCancelResult(
+                confirmed=False,
+                diagnostics=[{"code": "OPENCODE_CANCEL_UNCONFIRMED", "message": "Missing OpenCode session id"}],
+            )
         try:
-            confirmed = await self._client.cancel_run(
-                run_ref=str(run.engine_run_ref),
+            confirmed = await self._client.cancel_turn(
+                session_id=session_id,
+                turn_ref=str(run.engine_run_ref),
                 sandbox_id=sandbox_id,
+                workspace_path=str(context.get("opencode_workspace_path") or context.get("preview_workspace_live_path") or "") or None,
             )
         except Exception as exc:
             pipeline_trace(
@@ -383,12 +581,17 @@ class OpenCodePublishedAppCodingAgentEngine:
         input_params = dict(run.input_params) if isinstance(run.input_params, dict) else {}
         raw_context = input_params.get("context")
         context = dict(raw_context) if isinstance(raw_context, dict) else {}
+        session_id = str(context.get("opencode_session_id") or "").strip()
+        if not session_id:
+            raise RuntimeError("Missing OpenCode session id for question response")
         sandbox_id = str(context.get("opencode_sandbox_id") or context.get("preview_sandbox_id") or "").strip() or None
         await self._client.answer_question(
-            run_ref=str(run.engine_run_ref),
+            session_id=session_id,
+            turn_ref=str(run.engine_run_ref),
             question_id=str(question_id or "").strip(),
             answers=answers,
             sandbox_id=sandbox_id,
+            workspace_path=str(context.get("opencode_workspace_path") or context.get("preview_workspace_live_path") or "") or None,
         )
         pipeline_trace(
             "engine.answer_question.sent",

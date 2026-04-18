@@ -1,4 +1,4 @@
-import type { CodingAgentStreamEvent, RevisionConflictResponse } from "@/services";
+import type { CodingAgentSessionEvent, RevisionConflictResponse } from "@/services";
 
 export type CodingAgentModelUnavailableDetail = {
   code: "CODING_AGENT_MODEL_UNAVAILABLE";
@@ -11,15 +11,6 @@ export type CodingAgentEngineUnavailableDetail = {
   field: "engine";
   message: string;
 };
-
-export type CodingAgentRunActiveDetail = {
-  code: "CODING_AGENT_RUN_ACTIVE";
-  message: string;
-  active_run_id: string;
-  chat_session_id?: string;
-};
-
-export type TerminalRunStatus = "completed" | "failed" | "cancelled" | "paused";
 
 export type CodingAgentQuestionOption = {
   label: string;
@@ -40,14 +31,7 @@ export type CodingAgentPendingQuestion = {
   toolMessageId?: string;
 };
 
-export const TERMINAL_RUN_EVENTS = new Set<string>([
-  "run.completed",
-  "run.failed",
-  "run.cancelled",
-  "run.paused",
-]);
-
-export const parseSse = (raw: string): CodingAgentStreamEvent | null => {
+export const parseSse = (raw: string): CodingAgentSessionEvent | null => {
   const dataLines = raw
     .split("\n")
     .map((line) => line.trim())
@@ -56,7 +40,7 @@ export const parseSse = (raw: string): CodingAgentStreamEvent | null => {
   const payload = dataLines.map((line) => line.slice(5).trimStart()).join("\n");
   if (!payload || payload === "[DONE]") return null;
   try {
-    return JSON.parse(payload) as CodingAgentStreamEvent;
+    return JSON.parse(payload) as CodingAgentSessionEvent;
   } catch {
     return null;
   }
@@ -106,16 +90,13 @@ export const parseModelUnavailableDetail = (detail: unknown): CodingAgentModelUn
     return null;
   }
   const candidate = parsed as Partial<CodingAgentModelUnavailableDetail>;
-  if (candidate.code !== "CODING_AGENT_MODEL_UNAVAILABLE") {
-    return null;
-  }
-  if (candidate.field !== "model_id") {
+  if (candidate.code !== "CODING_AGENT_MODEL_UNAVAILABLE" || candidate.field !== "model_id") {
     return null;
   }
   return {
     code: "CODING_AGENT_MODEL_UNAVAILABLE",
     field: "model_id",
-    message: String(candidate.message || "Selected model is unavailable. Pick another model and retry."),
+    message: String(candidate.message || "Selected model is unavailable."),
   };
 };
 
@@ -145,49 +126,6 @@ export const parseEngineUnavailableDetail = (detail: unknown): CodingAgentEngine
     field: "engine",
     message: String(candidate.message || "Selected engine is unavailable for this runtime."),
   };
-};
-
-export const parseRunActiveDetail = (detail: unknown): CodingAgentRunActiveDetail | null => {
-  let parsed: unknown = detail;
-  if (typeof parsed === "string") {
-    const text = parsed.trim();
-    if (!text) return null;
-    try {
-      parsed = JSON.parse(text);
-    } catch {
-      return null;
-    }
-  }
-  if (!parsed || typeof parsed !== "object") {
-    return null;
-  }
-  const candidate = parsed as Partial<CodingAgentRunActiveDetail>;
-  if (candidate.code !== "CODING_AGENT_RUN_ACTIVE") {
-    return null;
-  }
-  const runId = String(candidate.active_run_id || "").trim();
-  if (!runId) {
-    return null;
-  }
-  return {
-    code: "CODING_AGENT_RUN_ACTIVE",
-    message: String(candidate.message || "A coding-agent run is already active for this preview session."),
-    active_run_id: runId,
-    chat_session_id: candidate.chat_session_id ? String(candidate.chat_session_id) : undefined,
-  };
-};
-
-export const parseTerminalRunStatus = (status: unknown): TerminalRunStatus | null => {
-  const normalized = String(status || "").trim().toLowerCase();
-  if (
-    normalized !== "completed" &&
-    normalized !== "failed" &&
-    normalized !== "cancelled" &&
-    normalized !== "paused"
-  ) {
-    return null;
-  }
-  return normalized;
 };
 
 export const parsePendingQuestionPayload = (payload: unknown): CodingAgentPendingQuestion | null => {

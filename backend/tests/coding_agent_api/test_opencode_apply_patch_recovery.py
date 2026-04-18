@@ -15,8 +15,9 @@ def _opencode_run() -> AgentRun:
             "input": "update app",
             "messages": [{"role": "user", "content": "update app"}],
             "context": {
+                "opencode_session_id": "sess-apply-fail",
+                "opencode_workspace_path": "/workspace/apply-fail",
                 "preview_sandbox_id": "sandbox-apply-fail",
-                "preview_workspace_stage_path": "/workspace/apply-fail",
                 "resolved_model_id": "openai/gpt-5",
             },
         },
@@ -29,11 +30,13 @@ async def test_opencode_engine_accepts_apply_patch_completion_without_applied_fi
     app = SimpleNamespace(id=uuid4())
 
     class _FakeOpenCodeClient:
-        async def start_run(self, *, run_id, app_id, sandbox_id, workspace_path, model_id, prompt, messages, selected_agent_contract=None):
+        async def submit_turn(self, *, session_id, run_id, app_id, sandbox_id, workspace_path, model_id, prompt, recovery_messages=None, selected_agent_contract=None, defer_until_stream=False):
             return "run-ref-apply-fail"
 
-        async def stream_run_events(self, *, run_ref):
-            assert run_ref == "run-ref-apply-fail"
+        async def stream_turn_events(self, *, session_id, turn_ref, sandbox_id=None, workspace_path=None):
+            assert session_id == "sess-apply-fail"
+            assert turn_ref == "run-ref-apply-fail"
+            assert workspace_path == "/workspace/apply-fail"
             yield {
                 "event": "tool.failed",
                 "payload": {
@@ -65,11 +68,13 @@ async def test_opencode_engine_allows_non_patch_edit_recovery_after_apply_patch_
     app = SimpleNamespace(id=uuid4())
 
     class _FakeOpenCodeClient:
-        async def start_run(self, *, run_id, app_id, sandbox_id, workspace_path, model_id, prompt, messages, selected_agent_contract=None):
+        async def submit_turn(self, *, session_id, run_id, app_id, sandbox_id, workspace_path, model_id, prompt, recovery_messages=None, selected_agent_contract=None, defer_until_stream=False):
             return "run-ref-edit-recover"
 
-        async def stream_run_events(self, *, run_ref):
-            assert run_ref == "run-ref-edit-recover"
+        async def stream_turn_events(self, *, session_id, turn_ref, sandbox_id=None, workspace_path=None):
+            assert session_id == "sess-apply-fail"
+            assert turn_ref == "run-ref-edit-recover"
+            assert workspace_path == "/workspace/apply-fail"
             yield {
                 "event": "tool.failed",
                 "payload": {
@@ -102,11 +107,13 @@ async def test_opencode_engine_can_disable_unrecovered_apply_patch_fail_closed(d
     app = SimpleNamespace(id=uuid4())
 
     class _FakeOpenCodeClient:
-        async def start_run(self, *, run_id, app_id, sandbox_id, workspace_path, model_id, prompt, messages, selected_agent_contract=None):
+        async def submit_turn(self, *, session_id, run_id, app_id, sandbox_id, workspace_path, model_id, prompt, recovery_messages=None, selected_agent_contract=None, defer_until_stream=False):
             return "run-ref-disabled-strict"
 
-        async def stream_run_events(self, *, run_ref):
-            assert run_ref == "run-ref-disabled-strict"
+        async def stream_turn_events(self, *, session_id, turn_ref, sandbox_id=None, workspace_path=None):
+            assert session_id == "sess-apply-fail"
+            assert turn_ref == "run-ref-disabled-strict"
+            assert workspace_path == "/workspace/apply-fail"
             yield {
                 "event": "tool.failed",
                 "payload": {
@@ -130,11 +137,13 @@ async def test_opencode_engine_stops_consuming_stream_after_terminal_event(db_se
     app = SimpleNamespace(id=uuid4())
 
     class _FakeOpenCodeClient:
-        async def start_run(self, *, run_id, app_id, sandbox_id, workspace_path, model_id, prompt, messages, selected_agent_contract=None):
+        async def submit_turn(self, *, session_id, run_id, app_id, sandbox_id, workspace_path, model_id, prompt, recovery_messages=None, selected_agent_contract=None, defer_until_stream=False):
             return "run-ref-terminal-stop"
 
-        async def stream_run_events(self, *, run_ref):
-            assert run_ref == "run-ref-terminal-stop"
+        async def stream_turn_events(self, *, session_id, turn_ref, sandbox_id=None, workspace_path=None):
+            assert session_id == "sess-apply-fail"
+            assert turn_ref == "run-ref-terminal-stop"
+            assert workspace_path == "/workspace/apply-fail"
             yield {"event": "run.completed", "payload": {"status": "completed"}}
             raise AssertionError("OpenCode stream was consumed after terminal event")
 
@@ -151,11 +160,13 @@ async def test_opencode_engine_defaults_to_raw_tool_completed_event_when_output_
     app = SimpleNamespace(id=uuid4())
 
     class _FakeOpenCodeClient:
-        async def start_run(self, *, run_id, app_id, sandbox_id, workspace_path, model_id, prompt, messages, selected_agent_contract=None):
+        async def submit_turn(self, *, session_id, run_id, app_id, sandbox_id, workspace_path, model_id, prompt, recovery_messages=None, selected_agent_contract=None, defer_until_stream=False):
             return "run-ref-raw-tool-event"
 
-        async def stream_run_events(self, *, run_ref):
-            assert run_ref == "run-ref-raw-tool-event"
+        async def stream_turn_events(self, *, session_id, turn_ref, sandbox_id=None, workspace_path=None):
+            assert session_id == "sess-apply-fail"
+            assert turn_ref == "run-ref-raw-tool-event"
+            assert workspace_path == "/workspace/apply-fail"
             yield {
                 "event": "tool.completed",
                 "payload": {
@@ -180,11 +191,13 @@ async def test_opencode_engine_can_enable_normalized_tool_failed_mapping(db_sess
     app = SimpleNamespace(id=uuid4())
 
     class _FakeOpenCodeClient:
-        async def start_run(self, *, run_id, app_id, sandbox_id, workspace_path, model_id, prompt, messages, selected_agent_contract=None):
+        async def submit_turn(self, *, session_id, run_id, app_id, sandbox_id, workspace_path, model_id, prompt, recovery_messages=None, selected_agent_contract=None, defer_until_stream=False):
             return "run-ref-normalized-tool-event"
 
-        async def stream_run_events(self, *, run_ref):
-            assert run_ref == "run-ref-normalized-tool-event"
+        async def stream_turn_events(self, *, session_id, turn_ref, sandbox_id=None, workspace_path=None):
+            assert session_id == "sess-apply-fail"
+            assert turn_ref == "run-ref-normalized-tool-event"
+            assert workspace_path == "/workspace/apply-fail"
             yield {
                 "event": "tool.completed",
                 "payload": {

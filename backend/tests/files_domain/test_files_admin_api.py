@@ -142,11 +142,20 @@ async def test_file_space_entry_crud_and_revisions(client, db_session):
         assert move_response.status_code == 200
         assert any(item["path"] == "normalized/report.md" for item in move_response.json()["items"])
 
+        move_directory_response = await client.post(
+            f"/admin/files/{space_id}/entries/move",
+            json={"from_path": "raw/listings", "to_path": "normalized/listings"},
+        )
+        assert move_directory_response.status_code == 200
+        moved_paths = {item["path"] for item in move_directory_response.json()["items"]}
+        assert "normalized/listings" in moved_paths
+        assert "normalized/listings/photo.bin" in moved_paths
+
         tree_response = await client.get(f"/admin/files/{space_id}/tree")
         assert tree_response.status_code == 200
         paths = {item["path"] for item in tree_response.json()["items"]}
         assert "normalized/report.md" in paths
-        assert "raw/listings/photo.bin" in paths
+        assert "normalized/listings/photo.bin" in paths
 
         delete_response = await client.post(
             f"/admin/files/{space_id}/entries/delete",

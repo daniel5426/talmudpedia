@@ -5,7 +5,10 @@ from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
 from app.services.published_app_sandbox_backend_sprite import SpriteSandboxBackend
-from app.services.published_app_sandbox_backend import PublishedAppSandboxBackendError
+from app.services.published_app_sandbox_backend import (
+    PublishedAppOpenCodeEndpoint,
+    PublishedAppSandboxBackendError,
+)
 from app.services.published_app_sandbox_backend_factory import (
     build_published_app_sandbox_backend,
     load_published_app_sandbox_backend_config,
@@ -475,57 +478,16 @@ class PublishedAppDraftDevRuntimeClient:
         except PublishedAppSandboxBackendError as exc:
             raise PublishedAppDraftDevRuntimeClientError(str(exc)) from exc
 
-    async def start_opencode_run(
+    async def ensure_opencode_endpoint(
         self,
         *,
         sandbox_id: str,
-        run_id: str,
-        app_id: str,
         workspace_path: str,
-        model_id: str,
-        prompt: str,
-        messages: list[dict[str, str]],
-    ) -> Dict[str, Any]:
+    ) -> PublishedAppOpenCodeEndpoint:
         try:
-            return await self._backend.start_opencode_run(
+            return await self._backend.ensure_opencode_endpoint(
                 sandbox_id=sandbox_id,
-                run_id=run_id,
-                app_id=app_id,
                 workspace_path=workspace_path,
-                model_id=model_id,
-                prompt=prompt,
-                messages=messages,
-            )
-        except PublishedAppSandboxBackendError as exc:
-            raise PublishedAppDraftDevRuntimeClientError(str(exc)) from exc
-
-    async def stream_opencode_events(self, *, sandbox_id: str, run_ref: str):
-        try:
-            async for item in self._backend.stream_opencode_events(sandbox_id=sandbox_id, run_ref=run_ref):
-                yield item
-        except PublishedAppSandboxBackendError as exc:
-            raise PublishedAppDraftDevRuntimeClientError(str(exc)) from exc
-
-    async def cancel_opencode_run(self, *, sandbox_id: str, run_ref: str) -> Dict[str, Any]:
-        try:
-            return await self._backend.cancel_opencode_run(sandbox_id=sandbox_id, run_ref=run_ref)
-        except PublishedAppSandboxBackendError as exc:
-            raise PublishedAppDraftDevRuntimeClientError(str(exc)) from exc
-
-    async def answer_opencode_question(
-        self,
-        *,
-        sandbox_id: str,
-        run_ref: str,
-        question_id: str,
-        answers: list[list[str]],
-    ) -> Dict[str, Any]:
-        try:
-            return await self._backend.answer_opencode_question(
-                sandbox_id=sandbox_id,
-                run_ref=run_ref,
-                question_id=question_id,
-                answers=answers,
             )
         except PublishedAppSandboxBackendError as exc:
             raise PublishedAppDraftDevRuntimeClientError(str(exc)) from exc

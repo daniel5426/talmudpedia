@@ -219,7 +219,7 @@ export function useAppsBuilderVersions({
       const startedAt = Date.now();
       while (status === "queued" || status === "running") {
         if (Date.now() - startedAt > PUBLISH_POLL_TIMEOUT_MS) {
-          throw new Error("Publish timed out while waiting for build completion");
+          throw new Error("Publish timed out while waiting for completion");
         }
         await wait(PUBLISH_POLL_INTERVAL_MS);
         const current = await publishedAppsService.getPublishJobStatus(appId, job.job_id);
@@ -256,8 +256,7 @@ export function useAppsBuilderVersions({
         throw new Error("Publish ended in an unexpected state");
       }
 
-      await onRefreshState();
-      await refreshVersions();
+      await Promise.all([onRefreshState(), refreshVersions()]);
     } catch (err) {
       setPublishStatus("failed");
       let message = err instanceof Error ? err.message : "Failed to publish selected version";

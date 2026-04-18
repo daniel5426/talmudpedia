@@ -76,6 +76,9 @@ export type SessionContainer = {
   cancelInFlightRunIdRef: { current: string | null };
   isQueueDrainActiveRef: { current: boolean };
   promptSubmissionInFlightRef: { current: boolean };
+  streamConnectedRef: { current: boolean };
+  streamReadyPromiseRef: { current: Promise<void> | null };
+  resolveStreamReadyRef: { current: (() => void) | null };
 };
 
 export function createSessionContainer(key: string): SessionContainer {
@@ -108,6 +111,9 @@ export function createSessionContainer(key: string): SessionContainer {
     cancelInFlightRunIdRef: { current: null },
     isQueueDrainActiveRef: { current: false },
     promptSubmissionInFlightRef: { current: false },
+    streamConnectedRef: { current: false },
+    streamReadyPromiseRef: { current: null },
+    resolveStreamReadyRef: { current: null },
   };
 }
 

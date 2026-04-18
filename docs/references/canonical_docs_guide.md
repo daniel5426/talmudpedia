@@ -1,6 +1,6 @@
 # Canonical Docs Guide
 
-Last Updated: 2026-04-14
+Last Updated: 2026-04-19
 
 This guide lists the current canonical documentation entry points after the first documentation-system refactor.
 
@@ -88,6 +88,8 @@ This guide lists the current canonical documentation entry points after the firs
   - Canonical Railway deployment runbook for the core platform and its first production service split.
 - `docs/references/deployment_spec.md`
   - Canonical current-state hosting and deployment spec for the actual live Railway environment, including deployment drift and unresolved gaps.
+- `docs/references/railway_staging_first_release_workflow.md`
+  - Canonical staging-first Railway release workflow for the repo-backed core platform services.
 
 ## Focused Current Detail Docs Still Under `backend/documentations/`
 

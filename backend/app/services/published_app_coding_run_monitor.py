@@ -1251,16 +1251,7 @@ class PublishedAppCodingRunMonitor:
                             if refreshed_status_after_eof in _TERMINAL_RUN_STATUSES:
                                 await _emit_terminal_from_status(status=refreshed_status_after_eof)
                                 break
-                            if force_terminal_on_stream_end_without_terminal:
-                                break
-                            cls._trace(
-                                "monitor.stream_reopen_after_nonterminal_eof",
-                                run_id=str(run_id),
-                                app_id=str(app_id),
-                            )
-                            run_event_stream = runtime.stream_run_events(app=app, run=run)
-                            run_event_iterator = run_event_stream.__aiter__()
-                            continue
+                            break
                         finally:
                             pending_next = None
 

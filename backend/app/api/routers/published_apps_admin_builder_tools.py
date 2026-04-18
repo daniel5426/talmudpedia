@@ -381,24 +381,23 @@ async def _apply_patch_operations_to_sandbox(
     sandbox_id: str,
     operations: List[BuilderPatchOp],
 ) -> None:
-    for op in operations:
-        if op.op == "upsert_file" and op.path:
-            await runtime_service.client.write_file(
-                sandbox_id=sandbox_id,
-                path=op.path,
-                content=op.content or "",
-            )
-        elif op.op == "delete_file" and op.path:
-            await runtime_service.client.delete_file(
-                sandbox_id=sandbox_id,
-                path=op.path,
-            )
-        elif op.op == "rename_file" and op.from_path and op.to_path:
-            await runtime_service.client.rename_file(
-                sandbox_id=sandbox_id,
-                from_path=op.from_path,
-                to_path=op.to_path,
-            )
+    current_files = await _snapshot_files_from_sandbox(
+        runtime_service,
+        sandbox_id=sandbox_id,
+    )
+    next_files, _ = _apply_patch_operations(
+        current_files,
+        "src/main.tsx",
+        operations,
+    )
+    workspace_path = await runtime_service.client.resolve_local_workspace_path(sandbox_id=sandbox_id)
+    if not workspace_path:
+        raise RuntimeError("Sandbox workspace path is unavailable")
+    await runtime_service.client.sync_workspace_files(
+        sandbox_id=sandbox_id,
+        workspace_path=workspace_path,
+        files=next_files,
+    )
 
 
 async def _snapshot_files_from_sandbox(

@@ -10,6 +10,7 @@ type ArtifactWorkspaceTabsProps = {
   activeFilePath: string
   sourceFiles: ArtifactSourceFile[]
   openTabs: string[]
+  unsavedPaths?: string[]
   entryModulePath?: string
   loading?: boolean
   draggingTab: string | null
@@ -36,6 +37,7 @@ export function ArtifactWorkspaceTabs({
   activeFilePath,
   sourceFiles,
   openTabs,
+  unsavedPaths = [],
   entryModulePath,
   loading = false,
   draggingTab,
@@ -51,6 +53,7 @@ export function ArtifactWorkspaceTabs({
 }: ArtifactWorkspaceTabsProps) {
   const sourcePaths = sourceFiles.map((file) => file.path)
   const sourcePathSet = new Set(sourcePaths)
+  const unsavedPathSet = new Set(unsavedPaths)
   const keptTabs = openTabs.filter((path) => path === ARTIFACT_CONFIG_FILE_PATH || sourcePathSet.has(path))
   const visibleTabs =
     (activeFilePath === ARTIFACT_CONFIG_FILE_PATH || sourcePathSet.has(activeFilePath)) && !keptTabs.includes(activeFilePath)
@@ -125,6 +128,7 @@ export function ArtifactWorkspaceTabs({
           const isEntry = file.path === entryModulePath
           const isDragging = draggingTab === file.path
           const isDropTarget = tabDropIndex === index
+          const isUnsaved = unsavedPathSet.has(file.path)
 
           return (
             <div
@@ -158,6 +162,13 @@ export function ArtifactWorkspaceTabs({
             >
               <FileCode2 className="h-3.5 w-3.5 shrink-0 text-[#519aba]" />
               <span className="truncate">{file.path.split("/").pop()}</span>
+              {isUnsaved ? (
+                <span
+                  aria-label="Unsaved changes"
+                  className="h-2 w-2 shrink-0 rounded-full bg-primary"
+                  title="Unsaved changes"
+                />
+              ) : null}
               {isEntry && <span className={cn("text-[9px] font-medium uppercase tracking-[0.08em]", palette.accent)}>M</span>}
               {!isEntry && (
                 <button

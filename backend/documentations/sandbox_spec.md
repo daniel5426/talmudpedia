@@ -1,4 +1,4 @@
-Last Updated: 2026-03-10
+Last Updated: 2026-04-17
 
 # Sandbox Spec
 
@@ -119,10 +119,7 @@ It includes:
 - command/process operations
   - `run_command`
 - OpenCode operations
-  - `start_opencode_run`
-  - `stream_opencode_events`
-  - `cancel_opencode_run`
-  - `answer_opencode_question`
+  - `ensure_opencode_endpoint`
 
 This interface was intentionally designed to be broad enough for artifact runtime adoption later, not only app-builder draft-dev.
 
@@ -276,7 +273,7 @@ Current transport shape:
 Reason for this design:
 - direct `https://<sprite>.sprites.app:4141` access is not a reliable production transport for a private service port
 - the Sprite proxy/control surface is the provider-native way to reach private ports from the backend
-- keeping OpenCode behind a standard localhost HTTP client preserves the existing event and run APIs without another provider-specific protocol layer inside the coding-agent runtime
+- keeping OpenCode behind a standard localhost HTTP client preserves the official OpenCode session/message/event APIs without another provider-specific protocol layer inside the coding-agent runtime
 
 ### Environment Configuration
 

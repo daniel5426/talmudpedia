@@ -81,6 +81,32 @@ class PublishedAppDraftRevisionMaterializerService:
         origin_run_id: UUID | None,
         restored_from_revision_id: UUID | None = None,
     ) -> MaterializedDraftRevisionResult:
+        current_revision_id = getattr(app, "current_draft_revision_id", None)
+        if current_revision_id is not None:
+            current_revision = await self.db.get(PublishedAppRevision, current_revision_id)
+            if (
+                current_revision is not None
+                and current_revision.kind == PublishedAppRevisionKind.draft
+                and current_revision.build_status == PublishedAppRevisionBuildStatus.succeeded
+                and current_revision.workspace_build_id == build_result.build.id
+            ):
+                await self.runtime_service.bind_live_workspace_snapshot_to_revision(
+                    app_id=app.id,
+                    revision_id=current_revision.id,
+                )
+                self._trace(
+                    "materialize.revision_create.reused_current",
+                    app_id=app.id,
+                    revision_id=str(current_revision.id),
+                    workspace_build_id=str(build_result.build.id),
+                )
+                return MaterializedDraftRevisionResult(
+                    revision=current_revision,
+                    reused=True,
+                    source_fingerprint=build_result.source_fingerprint,
+                    workspace_revision_token=build_result.workspace_revision_token,
+                )
+
         template_runtime_context = TemplateRuntimeContext(
             app_id=str(app.id),
             app_slug=str(app.slug or ""),

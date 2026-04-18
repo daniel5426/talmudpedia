@@ -1,6 +1,6 @@
 # Apps Builder Current
 
-Last Updated: 2026-04-16
+Last Updated: 2026-04-18
 
 This document is the canonical current-state overview for the Apps Builder system.
 
@@ -18,9 +18,9 @@ Apps Builder covers draft editing, preview runtime, coding-agent execution, revi
 - Coding-agent runs execute against the canonical shared workspace watched by the persistent preview build pipeline.
 - Live manual code edits are applied incrementally into the shared draft-dev workspace instead of full-workspace resyncs on every debounce.
 - Manual code edits save only through `PATCH /builder/draft-dev/session/sync`; the removed `/versions/draft` route now returns `410`.
-- Manual save creates a pending live-workspace materialization request and then materializes a new durable draft revision only from watcher-ready output.
+- Preview-ready live workspace output is now the canonical version trigger: when the shared workspace diverges from the current draft revision and the watcher reports `ready`, heartbeat refreshes the live snapshot and materializes the next durable draft revision from that watcher-ready state.
 - Published runtime remains static artifact delivery.
-- Completed write-producing coding-agent runs reconcile the live workspace, wait for matching watcher-ready output, and materialize a new durable draft revision from that watcher output only.
+- Completed write-producing coding-agent turns update the shared live workspace, and draft-dev heartbeat reconciles the live sandbox snapshot plus materializes the next durable draft revision from watcher-ready output only.
 - Coding-agent bootstrap now prefers reusing an existing healthy live workspace/session as-is instead of re-ensuring the workspace against `current_draft_revision_id` on every run.
 - Coding-run finalization now uses a row-claimed two-phase flow instead of session-level advisory locks, so duplicate terminal-finalizer entry points can safely converge on one durable revision result.
 - Workspace builds are cached per app/workspace fingerprint and reused across retries or repeated version creation for unchanged source state.
@@ -86,6 +86,8 @@ Apps Builder covers draft editing, preview runtime, coding-agent execution, revi
 - Draft preview session responses now expose `workspace_revision_token` instead of preview-build ids/sequences.
 - Draft preview session responses keep `live_preview`, `live_workspace_snapshot`, and `workspace_revision_token` as separate contracts; revision-token changes are no longer preview rebuild triggers.
 - Coding-agent APIs live under `/admin/apps/{app_id}/coding-agent/v2/*`.
+- The coding-agent chat contract is session-native: builder chat uses `/chat-sessions/*`, one product chat session maps to one OpenCode session, and live updates flow through one session SSE stream.
+- The open builder chat session now treats live SSE as the source of truth for in-flight conversation state; history endpoints are used for initial load/reopen and older-history pagination instead of rewriting the visible active timeline after each idle.
 - Version preview inspection lives at `GET /admin/apps/{app_id}/versions/{version_id}/preview-runtime`.
 - Version publish lives at `POST /admin/apps/{app_id}/versions/{version_id}/publish` and requires existing durable dist.
 - Publish job status lives at `GET /admin/apps/{app_id}/publish/jobs/{job_id}`.

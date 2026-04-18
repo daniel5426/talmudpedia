@@ -629,151 +629,11 @@ def _ensure_local_draft_dev_runtime_if_needed() -> None:
 
 
 def _ensure_local_opencode_if_needed() -> None:
-    """
-    Ensure local OpenCode server is available for coding-agent engine selection.
-
-    This auto-bootstraps only in local infra bootstrap mode and can be disabled with:
-    - APPS_CODING_AGENT_OPENCODE_AUTO_BOOTSTRAP=0
-    """
-    global _LOCAL_OPENCODE_STARTED_BY_APP, _LOCAL_OPENCODE_PROCESS
-
-    sandbox_required = _is_truthy(os.getenv("APPS_CODING_AGENT_SANDBOX_REQUIRED", "0"))
-    shim_enabled = _is_truthy(os.getenv("APPS_SANDBOX_CONTROLLER_DEV_SHIM_ENABLED", "0"))
-    if sandbox_required and not shim_enabled:
-        return
-
-    if not _is_truthy(os.getenv("APPS_CODING_AGENT_OPENCODE_AUTO_BOOTSTRAP", "0")):
-        return
-
-    enabled_raw = os.getenv("APPS_CODING_AGENT_OPENCODE_ENABLED")
-    if enabled_raw is None:
-        os.environ["APPS_CODING_AGENT_OPENCODE_ENABLED"] = "1"
-    elif not _is_truthy(enabled_raw):
-        return
-
-    base_url = (os.getenv("APPS_CODING_AGENT_OPENCODE_BASE_URL") or "").strip()
-    host = (os.getenv("APPS_CODING_AGENT_OPENCODE_HOST") or "127.0.0.1").strip()
-    port = int((os.getenv("APPS_CODING_AGENT_OPENCODE_PORT") or "8788").strip())
-    startup_timeout_seconds = float((os.getenv("APPS_CODING_AGENT_OPENCODE_STARTUP_TIMEOUT_SECONDS") or "20").strip())
-
-    if not base_url:
-        base_url = f"http://{host}:{port}"
-        os.environ["APPS_CODING_AGENT_OPENCODE_BASE_URL"] = base_url
-
-    parsed = _parse_endpoint_host_port(base_url)
-    if not parsed:
-        logger.warning("OpenCode base URL is invalid: %s", base_url)
-        return
-    target_host, target_port = parsed
-
-    if _is_port_open(target_host, target_port):
-        existing_pid = _find_listening_pid_on_port(target_port)
-        stale_reason = ""
-        if (
-            existing_pid
-            and _is_truthy(os.getenv("APPS_CODING_AGENT_OPENCODE_REPLACE_MISCONFIGURED_PROCESS", "1"))
-            and (
-                _opencode_process_has_inline_google_credentials(existing_pid)
-                or _opencode_process_has_stale_managed_google_credentials_file(existing_pid)
-            )
-        ):
-            if _opencode_process_has_inline_google_credentials(existing_pid):
-                stale_reason = "inline GOOGLE_APPLICATION_CREDENTIALS JSON"
-            else:
-                stale_reason = "stale managed GOOGLE_APPLICATION_CREDENTIALS file"
-            logger.warning(
-                "Detected running OpenCode process (pid=%s) with %s. Restarting process with healthy credentials.",
-                existing_pid,
-                stale_reason,
-            )
-            if not _terminate_process(existing_pid):
-                logger.warning("Failed to terminate misconfigured OpenCode process pid=%s", existing_pid)
-                return
-            _wait_for_port_closed(target_host, target_port, timeout_seconds=8.0)
-        else:
-            logger.info("OpenCode server is already reachable at %s:%s", target_host, target_port)
-            return
-
-    command_templates: list[str] = []
-    explicit_template = (os.getenv("APPS_CODING_AGENT_OPENCODE_SERVER_COMMAND") or "").strip()
-    if explicit_template:
-        command_templates.append(explicit_template)
-    else:
-        command_templates.extend(
-            [
-                "opencode serve --hostname {host} --port {port}",
-                "npx -y opencode-ai serve --hostname {host} --port {port}",
-            ]
-        )
-
-    command: list[str] | None = None
-    for template in command_templates:
-        try:
-            candidate = shlex.split(template.format(host=target_host, port=target_port))
-        except Exception as exc:
-            logger.warning("Invalid OpenCode server command template `%s`: %s", template, exc)
-            continue
-        if not candidate:
-            continue
-        if shutil.which(candidate[0]) is None:
-            continue
-        command = candidate
-        break
-
-    if not command:
-        logger.warning(
-            "OpenCode auto-start command is unavailable. Install `opencode` or ensure `npx` is available, "
-            "or set APPS_CODING_AGENT_OPENCODE_SERVER_COMMAND."
-        )
-        return
-
-    opencode_log_path = Path(os.getenv("APPS_CODING_AGENT_OPENCODE_LOG_PATH", "/tmp/talmudpedia-opencode.log"))
-    opencode_env = _prepare_opencode_process_env()
-    with opencode_log_path.open("ab") as log_file:
-        _LOCAL_OPENCODE_PROCESS = subprocess.Popen(
-            command,
-            env=opencode_env,
-            stdout=log_file,
-            stderr=subprocess.STDOUT,
-            start_new_session=True,
-        )
-
-    if _wait_for_port(target_host, target_port, timeout_seconds=startup_timeout_seconds):
-        _LOCAL_OPENCODE_STARTED_BY_APP = True
-        logger.info("Started local OpenCode server on %s:%s", target_host, target_port)
-    else:
-        logger.warning(
-            "OpenCode server did not become ready on %s:%s. See %s for logs.",
-            target_host,
-            target_port,
-            opencode_log_path,
-        )
+    return
 
 
 def _stop_local_opencode_if_needed() -> None:
-    global _LOCAL_OPENCODE_STARTED_BY_APP, _LOCAL_OPENCODE_PROCESS, _LOCAL_OPENCODE_GCP_CREDS_FILE
-    if not _LOCAL_OPENCODE_STARTED_BY_APP:
-        return
-    process = _LOCAL_OPENCODE_PROCESS
-    if process is None or process.poll() is not None:
-        _LOCAL_OPENCODE_STARTED_BY_APP = False
-        _LOCAL_OPENCODE_PROCESS = None
-        return
-    process.terminate()
-    try:
-        process.wait(timeout=8)
-        logger.info("Stopped local OpenCode server")
-    except Exception:
-        process.kill()
-        logger.warning("Force-killed local OpenCode server process")
-    _LOCAL_OPENCODE_STARTED_BY_APP = False
-    _LOCAL_OPENCODE_PROCESS = None
-    if _LOCAL_OPENCODE_GCP_CREDS_FILE and _LOCAL_OPENCODE_GCP_CREDS_FILE.exists():
-        try:
-            _LOCAL_OPENCODE_GCP_CREDS_FILE.unlink()
-        except Exception:
-            pass
-    _LOCAL_OPENCODE_GCP_CREDS_FILE = None
+    return
 
 
 def _prepare_opencode_process_env() -> dict[str, str]:
@@ -1028,20 +888,33 @@ cors_origins = [
     'https://reshet-self.vercel.app'
 ]
 
+
+def _append_cors_origin_variants(origins: list[str], raw_origin: str) -> None:
+    origin = (raw_origin or "").strip().rstrip("/")
+    if not origin:
+        return
+
+    candidates = [origin]
+    parsed = urlparse(origin)
+    host = (parsed.hostname or "").strip().lower()
+    if parsed.scheme in {"http", "https"} and host and host.count(".") == 1 and not host.startswith("www."):
+        candidates.append(f"{parsed.scheme}://www.{host}")
+
+    for candidate in candidates:
+        if candidate and candidate not in origins:
+            origins.append(candidate)
+
 for env_key in ("CORS_ORIGINS", "PLATFORM_BASE_URL", "API_BASE_URL"):
     env_value = os.getenv(env_key, "").strip()
     if not env_value:
         continue
     for raw_origin in env_value.split(","):
-        origin = raw_origin.strip().rstrip("/")
-        if origin and origin not in cors_origins:
-            cors_origins.append(origin)
+        _append_cors_origin_variants(cors_origins, raw_origin)
 
 railway_frontend_host = os.getenv("RAILWAY_SERVICE_FRONTEND_URL", "").strip()
 if railway_frontend_host:
     railway_frontend_origin = f"https://{railway_frontend_host.removeprefix('https://').rstrip('/')}"
-    if railway_frontend_origin not in cors_origins:
-        cors_origins.append(railway_frontend_origin)
+    _append_cors_origin_variants(cors_origins, railway_frontend_origin)
 
 # If credentials are true, Starlette prohibits ["*"] origins.
 # We handle this by ensuring specific origins are used if credentials are required.

@@ -4,9 +4,11 @@ import subprocess
 from types import SimpleNamespace
 from pathlib import Path
 
+import httpx
 import pytest
 
 from app.services import published_app_sandbox_backend_sprite as backend_module
+from app.services.opencode_server_launch import build_official_opencode_bootstrap_command
 from app.services.published_app_sandbox_backend_factory import (
     build_published_app_sandbox_backend,
     load_published_app_sandbox_backend_config,
@@ -96,6 +98,51 @@ def test_sprite_dependency_install_command_prefers_pnpm_lock_over_package_lock_a
 
 
 @pytest.mark.asyncio
+async def test_sprite_request_retries_transient_transport_failures(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("APPS_SPRITE_API_TOKEN", "sprite-token")
+    monkeypatch.setattr(backend_module, "_SPRITE_REQUEST_RETRY_DELAY_SECONDS", 0.0)
+    monkeypatch.setattr(backend_module, "_SPRITE_REQUEST_MAX_ATTEMPTS", 3)
+
+    backend = build_published_app_sandbox_backend(load_published_app_sandbox_backend_config())
+    assert isinstance(backend, SpriteSandboxBackend)
+
+    calls = {"count": 0}
+
+    class _FakeResponse:
+        status_code = 200
+        text = '{"ok": true}'
+        reason_phrase = "OK"
+
+        @staticmethod
+        def json():
+            return {"ok": True}
+
+    class _FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            _ = args, kwargs
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def request(self, *args, **kwargs):
+            _ = args, kwargs
+            calls["count"] += 1
+            if calls["count"] < 3:
+                raise httpx.ConnectTimeout("timed out")
+            return _FakeResponse()
+
+    monkeypatch.setattr(backend_module.httpx, "AsyncClient", _FakeAsyncClient)
+
+    payload = await backend._request("GET", "/v1/sprites/test-sprite")  # noqa: SLF001
+
+    assert payload == {"ok": True}
+    assert calls["count"] == 3
+
+
+@pytest.mark.asyncio
 async def test_sprite_heartbeat_waits_for_preview_without_restarting_services(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("APPS_SPRITE_API_TOKEN", "sprite-token")
     backend = build_published_app_sandbox_backend(load_published_app_sandbox_backend_config())
@@ -144,6 +191,63 @@ async def test_sprite_heartbeat_waits_for_preview_without_restarting_services(mo
     assert result["status"] == "serving"
     assert waited["called"] is True
     assert result["backend_metadata"]["preview"]["upstream_base_url"] == "https://fresh-sprite-host.example"
+
+
+@pytest.mark.asyncio
+async def test_sprite_heartbeat_does_not_refresh_when_nested_service_states_are_running(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("APPS_SPRITE_API_TOKEN", "sprite-token")
+    backend = build_published_app_sandbox_backend(load_published_app_sandbox_backend_config())
+    assert isinstance(backend, SpriteSandboxBackend)
+
+    waited = {"count": 0}
+
+    async def _fake_get_sprite(*, sprite_name: str):
+        assert sprite_name == "sprite-app-1"
+        return {"url": "https://fresh-sprite-host.example"}
+
+    async def _fake_get_service(*, sprite_name: str, service_name: str):
+        assert sprite_name == "sprite-app-1"
+        return {
+            "http_port": 8080 if service_name == backend._preview_service_name() else None,
+            "state": {
+                "name": service_name,
+                "status": "running",
+            },
+        }
+
+    async def _fake_read_live_preview_status(*, sprite_name: str):
+        assert sprite_name == "sprite-app-1"
+        return {
+            "status": "booting",
+            "supervisor": {},
+        }
+
+    async def _fake_wait_for_preview_ready(*, sprite_name: str) -> None:
+        assert sprite_name == "sprite-app-1"
+        waited["count"] += 1
+
+    async def _fake_read_revision_token(**kwargs) -> str:
+        _ = kwargs
+        return "revision-token-1"
+
+    async def _fail_ensure_services(*, sprite_name: str) -> None:
+        raise AssertionError(f"heartbeat should not restart services for {sprite_name}")
+
+    monkeypatch.setattr(backend, "_get_sprite", _fake_get_sprite)
+    monkeypatch.setattr(backend, "_get_service", _fake_get_service)
+    monkeypatch.setattr(backend, "_read_live_preview_status", _fake_read_live_preview_status)
+    monkeypatch.setattr(backend, "_wait_for_preview_ready", _fake_wait_for_preview_ready)
+    monkeypatch.setattr(backend, "_read_revision_token", _fake_read_revision_token)
+    monkeypatch.setattr(backend, "_ensure_preview_service", _fail_ensure_services)
+
+    result = await backend.heartbeat_session(sandbox_id="sprite-app-1", idle_timeout_seconds=180)
+
+    assert result["status"] == "serving"
+    assert waited["count"] == 1
+    assert result["backend_metadata"]["live_preview"]["supervisor"]["build_watch_status"] == "running"
+    assert result["backend_metadata"]["live_preview"]["supervisor"]["static_server_status"] == "running"
 
 
 @pytest.mark.asyncio
@@ -217,6 +321,155 @@ async def test_sprite_heartbeat_refreshes_preview_services_when_preview_services
     assert waited["count"] == 1
     assert result["backend_metadata"]["live_preview"]["supervisor"]["build_watch_status"] == "running"
     assert result["backend_metadata"]["live_preview"]["supervisor"]["restart_reason"] == "heartbeat_refresh"
+
+
+@pytest.mark.asyncio
+async def test_sprite_heartbeat_rebuilds_when_preview_revision_lags_workspace(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("APPS_SPRITE_API_TOKEN", "sprite-token")
+    backend = build_published_app_sandbox_backend(load_published_app_sandbox_backend_config())
+    assert isinstance(backend, SpriteSandboxBackend)
+
+    ensure_calls: list[bool] = []
+    trigger_calls = {"count": 0}
+    waited = {"count": 0}
+    metadata_calls = {"count": 0}
+    first_metadata = {
+        "workspace": {
+            "revision_token": "rev-new",
+        },
+        "preview": {
+            "upstream_base_url": "https://fresh-sprite-host.example",
+        },
+        "live_preview": {
+            "status": "failed_keep_last_good",
+            "current_build_id": "build-2",
+            "last_successful_build_id": "build-1",
+            "debug_last_trigger_revision_token": "rev-old",
+            "supervisor": {
+                "build_watch_status": "running",
+                "static_server_status": "running",
+            },
+        },
+    }
+    rebuilt_metadata = {
+        "workspace": {
+            "revision_token": "rev-new",
+        },
+        "preview": {
+            "upstream_base_url": "https://fresh-sprite-host.example",
+        },
+        "live_preview": {
+            "status": "ready",
+            "current_build_id": "build-3",
+            "last_successful_build_id": "build-3",
+            "debug_last_trigger_revision_token": "rev-new",
+            "supervisor": {
+                "build_watch_status": "running",
+                "static_server_status": "running",
+            },
+        },
+    }
+
+    async def _fake_heartbeat_metadata(*, sprite_name: str):
+        assert sprite_name == "sprite-app-1"
+        metadata_calls["count"] += 1
+        return first_metadata if metadata_calls["count"] == 1 else rebuilt_metadata
+
+    async def _fake_ensure_preview_service(*, sprite_name: str, force_restart: bool = False) -> None:
+        assert sprite_name == "sprite-app-1"
+        ensure_calls.append(force_restart)
+
+    async def _fake_wait_for_preview_ready(*, sprite_name: str) -> None:
+        assert sprite_name == "sprite-app-1"
+        waited["count"] += 1
+
+    async def _fake_trigger_live_preview_rebuild(*, sprite_name: str) -> None:
+        assert sprite_name == "sprite-app-1"
+        trigger_calls["count"] += 1
+
+    monkeypatch.setattr(backend, "_heartbeat_metadata", _fake_heartbeat_metadata)
+    monkeypatch.setattr(backend, "_ensure_preview_service", _fake_ensure_preview_service)
+    monkeypatch.setattr(backend, "_trigger_live_preview_rebuild", _fake_trigger_live_preview_rebuild)
+    monkeypatch.setattr(backend, "_wait_for_preview_ready", _fake_wait_for_preview_ready)
+
+    result = await backend.heartbeat_session(sandbox_id="sprite-app-1", idle_timeout_seconds=180)
+
+    assert result["status"] == "serving"
+    assert ensure_calls == [True]
+    assert trigger_calls["count"] == 1
+    assert waited["count"] == 1
+    assert result["backend_metadata"]["live_preview"]["supervisor"]["restart_reason"] == "heartbeat_rebuild"
+
+
+@pytest.mark.asyncio
+async def test_sprite_ensure_opencode_service_reuses_nested_running_service(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("APPS_SPRITE_API_TOKEN", "sprite-token")
+    backend = build_published_app_sandbox_backend(load_published_app_sandbox_backend_config())
+    assert isinstance(backend, SpriteSandboxBackend)
+
+    put_calls = {"count": 0}
+    start_calls = {"count": 0}
+
+    opencode_payload = {
+        **backend._service_command(
+            f"cd {backend._live_workspace_path()} && "
+            f"{build_official_opencode_bootstrap_command(host='0.0.0.0', port=backend._opencode_port())}"
+        ),
+        "state": {"status": "running"},
+    }
+
+    async def _fake_get_service(*, sprite_name: str, service_name: str):
+        assert sprite_name == "sprite-app-1"
+        assert service_name == backend._opencode_service_name()
+        return dict(opencode_payload)
+
+    async def _fake_put_service(**kwargs) -> None:
+        _ = kwargs
+        put_calls["count"] += 1
+
+    async def _fake_start_service(**kwargs) -> None:
+        _ = kwargs
+        start_calls["count"] += 1
+
+    monkeypatch.setattr(backend, "_get_service", _fake_get_service)
+    monkeypatch.setattr(backend, "_put_service", _fake_put_service)
+    monkeypatch.setattr(backend, "_start_service", _fake_start_service)
+
+    await backend._ensure_opencode_service(sprite_name="sprite-app-1")
+
+    assert put_calls["count"] == 0
+    assert start_calls["count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_sprite_ensure_opencode_endpoint_rechecks_service_before_returning_cached_client(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("APPS_SPRITE_API_TOKEN", "sprite-token")
+    backend = build_published_app_sandbox_backend(load_published_app_sandbox_backend_config())
+    assert isinstance(backend, SpriteSandboxBackend)
+
+    ensure_calls = {"count": 0}
+    backend._opencode_clients_by_sandbox["sprite-app-1"] = SimpleNamespace(
+        _config=SimpleNamespace(base_url="https://tunnel.example")
+    )
+
+    async def _fake_ensure_opencode_service(*, sprite_name: str) -> None:
+        assert sprite_name == "sprite-app-1"
+        ensure_calls["count"] += 1
+
+    monkeypatch.setattr(backend, "_ensure_opencode_service", _fake_ensure_opencode_service)
+
+    endpoint = await backend.ensure_opencode_endpoint(
+        sandbox_id="sprite-app-1",
+        workspace_path="/custom/workspace",
+    )
+
+    assert ensure_calls["count"] == 1
+    assert endpoint.base_url == "https://tunnel.example"
+    assert endpoint.workspace_path == "/custom/workspace"
 
 
 @pytest.mark.asyncio

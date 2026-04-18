@@ -9,7 +9,7 @@ from pathlib import PurePosixPath
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.postgres.models.agents import Agent
@@ -135,6 +135,13 @@ class FileSpaceService:
         return parents
 
     @staticmethod
+    def _parent_directory(path: str) -> str | None:
+        parent = PurePosixPath(path).parent.as_posix()
+        if parent in {"", "."}:
+            return None
+        return parent
+
+    @staticmethod
     def _is_text_mime(mime_type: str) -> bool:
         normalized = str(mime_type or "").strip().lower()
         return normalized.startswith("text/") or normalized in {
@@ -174,18 +181,31 @@ class FileSpaceService:
             raise FileSpaceNotFoundError("project not found")
         return project
 
-    async def list_spaces(self, *, tenant_id: UUID, project_id: UUID) -> list[FileSpace]:
+    async def list_spaces(self, *, tenant_id: UUID, project_id: UUID) -> list[tuple[FileSpace, int, int]]:
         await self._require_project(tenant_id=tenant_id, project_id=project_id)
         result = await self.db.execute(
-            select(FileSpace)
+            select(
+                FileSpace,
+                func.count(FileSpaceEntry.id).label("file_count"),
+                func.coalesce(func.sum(FileSpaceEntry.byte_size), 0).label("total_bytes"),
+            )
+            .outerjoin(
+                FileSpaceEntry,
+                and_(
+                    FileSpaceEntry.space_id == FileSpace.id,
+                    FileSpaceEntry.deleted_at.is_(None),
+                    FileSpaceEntry.entry_type == FileEntryType.file,
+                ),
+            )
             .where(
                 FileSpace.tenant_id == tenant_id,
                 FileSpace.project_id == project_id,
                 FileSpace.status != FileSpaceStatus.archived,
             )
+            .group_by(FileSpace.id)
             .order_by(FileSpace.updated_at.desc(), FileSpace.created_at.desc())
         )
-        return list(result.scalars().all())
+        return [(space, int(file_count or 0), int(total_bytes or 0)) for space, file_count, total_bytes in result.all()]
 
     async def create_space(
         self,
@@ -542,10 +562,14 @@ class FileSpaceService:
         entry = await self._get_entry(space_id=space.id, path=source)
         if entry is None:
             raise FileSpaceNotFoundError("source entry not found")
-        if entry.entry_type == FileEntryType.file:
-            await self._ensure_directory_chain(space=space, path=target, user_id=user_id)
-        else:
-            await self._ensure_directory_chain(space=space, path=f"{target}/placeholder", user_id=user_id)
+        if source == target:
+            return [entry]
+        if entry.entry_type == FileEntryType.directory and target.startswith(f"{source}/"):
+            raise FileSpaceValidationError("directory cannot be moved into itself")
+
+        target_parent = self._parent_directory(target)
+        if target_parent:
+            await self._ensure_directory_chain(space=space, path=f"{target_parent}/placeholder", user_id=user_id)
 
         source_children = await self._get_directory_children(space_id=space.id, path=source)
         if entry.entry_type == FileEntryType.file:
@@ -719,13 +743,21 @@ class FileSpaceService:
         return grants
 
     @staticmethod
-    def serialize_space(space: FileSpace, *, view: str = "full") -> dict[str, Any]:
+    def serialize_space(
+        space: FileSpace,
+        *,
+        view: str = "full",
+        file_count: int | None = None,
+        total_bytes: int | None = None,
+    ) -> dict[str, Any]:
         payload = {
             "id": str(space.id),
             "tenant_id": str(space.tenant_id),
             "project_id": str(space.project_id),
             "name": space.name,
             "status": getattr(space.status, "value", space.status),
+            "file_count": int(file_count) if file_count is not None else None,
+            "total_bytes": int(total_bytes) if total_bytes is not None else None,
             "created_at": space.created_at.isoformat() if space.created_at else None,
             "updated_at": space.updated_at.isoformat() if space.updated_at else None,
         }

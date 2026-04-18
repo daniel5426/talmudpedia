@@ -354,7 +354,7 @@ class ArtifactTransferFile(BaseModel):
 class ArtifactImportResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
     artifact: ArtifactSchema
-    published: bool = False
+    source_published: bool = False
 
 
 class ArtifactRunStatus(str, Enum):

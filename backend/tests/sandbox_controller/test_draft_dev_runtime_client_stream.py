@@ -25,89 +25,7 @@ def _client() -> PublishedAppDraftDevRuntimeClient:
 
 
 @pytest.mark.asyncio
-async def test_stream_opencode_events_uses_no_read_timeout_by_default(monkeypatch: pytest.MonkeyPatch):
-    captured: dict[str, object] = {}
-
-    class _FakeResponse:
-        status_code = 200
-        reason_phrase = "OK"
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
-
-        async def aread(self) -> bytes:
-            return b""
-
-        async def aiter_lines(self):
-            yield f"data: {json.dumps({'event': 'run.completed', 'payload': {'status': 'completed'}})}"
-
-    class _FakeClient:
-        def __init__(self, *args, **kwargs):
-            captured["timeout"] = kwargs.get("timeout")
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
-
-        def stream(self, method, url, headers=None, params=None):
-            captured["method"] = method
-            captured["url"] = url
-            captured["params"] = params
-            return _FakeResponse()
-
-    monkeypatch.setattr(httpx, "AsyncClient", _FakeClient)
-    monkeypatch.delenv("APPS_DRAFT_DEV_CONTROLLER_STREAM_READ_TIMEOUT_SECONDS", raising=False)
-
-    client = _client()
-    events = [item async for item in client.stream_opencode_events(sandbox_id="sandbox-1", run_ref="run-ref-1")]
-    assert events and events[0]["event"] == "run.completed"
-
-    timeout = captured.get("timeout")
-    assert isinstance(timeout, httpx.Timeout)
-    assert timeout.read is None
-
-
-@pytest.mark.asyncio
-async def test_stream_opencode_events_reports_exception_class_when_message_empty(monkeypatch: pytest.MonkeyPatch):
-    class _SilentStreamError(Exception):
-        def __str__(self) -> str:
-            return ""
-
-    class _FakeResponse:
-        async def __aenter__(self):
-            raise _SilentStreamError()
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
-
-    class _FakeClient:
-        def __init__(self, *args, **kwargs):
-            pass
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
-
-        def stream(self, method, url, headers=None, params=None):
-            return _FakeResponse()
-
-    monkeypatch.setattr(httpx, "AsyncClient", _FakeClient)
-
-    client = _client()
-    with pytest.raises(PublishedAppDraftDevRuntimeClientError) as exc_info:
-        _ = [item async for item in client.stream_opencode_events(sandbox_id="sandbox-1", run_ref="run-ref-1")]
-    assert "SilentStreamError" in str(exc_info.value)
-
-
-@pytest.mark.asyncio
-async def test_start_opencode_run_uses_dedicated_start_timeout(monkeypatch: pytest.MonkeyPatch):
+async def test_ensure_opencode_endpoint_uses_dedicated_start_timeout(monkeypatch: pytest.MonkeyPatch):
     captured: dict[str, object] = {}
 
     class _FakeResponse:
@@ -116,7 +34,12 @@ async def test_start_opencode_run_uses_dedicated_start_timeout(monkeypatch: pyte
         text = ""
 
         def json(self):
-            return {"run_ref": "run-ref-1"}
+            return {
+                "sandbox_id": "sandbox-1",
+                "base_url": "http://127.0.0.1:4141",
+                "workspace_path": "/workspace",
+                "extra_headers": {"x-test": "1"},
+            }
 
     class _FakeClient:
         def __init__(self, *args, **kwargs):
@@ -137,23 +60,20 @@ async def test_start_opencode_run_uses_dedicated_start_timeout(monkeypatch: pyte
     monkeypatch.setenv("APPS_DRAFT_DEV_CONTROLLER_OPENCODE_START_TIMEOUT_SECONDS", "42")
 
     client = _client()
-    result = await client.start_opencode_run(
+    result = await client.ensure_opencode_endpoint(
         sandbox_id="sandbox-1",
-        run_id="run-1",
-        app_id="app-1",
         workspace_path="/workspace",
-        model_id="openai/gpt-5",
-        prompt="hello",
-        messages=[{"role": "user", "content": "hello"}],
     )
-    assert result["run_ref"] == "run-ref-1"
+    assert result.base_url == "http://127.0.0.1:4141"
+    assert result.workspace_path == "/workspace"
+    assert result.extra_headers == {"x-test": "1"}
     timeout = captured.get("timeout")
     assert isinstance(timeout, httpx.Timeout)
     assert timeout.read == 42
 
 
 @pytest.mark.asyncio
-async def test_start_opencode_run_reports_exception_class_when_message_empty(monkeypatch: pytest.MonkeyPatch):
+async def test_ensure_opencode_endpoint_reports_exception_class_when_message_empty(monkeypatch: pytest.MonkeyPatch):
     class _SilentStartError(Exception):
         def __str__(self) -> str:
             return ""
@@ -175,60 +95,11 @@ async def test_start_opencode_run_reports_exception_class_when_message_empty(mon
 
     client = _client()
     with pytest.raises(PublishedAppDraftDevRuntimeClientError) as exc_info:
-        await client.start_opencode_run(
+        await client.ensure_opencode_endpoint(
             sandbox_id="sandbox-1",
-            run_id="run-1",
-            app_id="app-1",
             workspace_path="/workspace",
-            model_id="openai/gpt-5",
-            prompt="hello",
-            messages=[{"role": "user", "content": "hello"}],
         )
     assert "SilentStartError" in str(exc_info.value)
-
-
-@pytest.mark.asyncio
-async def test_answer_opencode_question_uses_dedicated_timeout(monkeypatch: pytest.MonkeyPatch):
-    captured: dict[str, object] = {}
-
-    class _FakeResponse:
-        status_code = 200
-        reason_phrase = "OK"
-        text = ""
-
-        def json(self):
-            return {"ok": True}
-
-    class _FakeClient:
-        def __init__(self, *args, **kwargs):
-            captured["timeout"] = kwargs.get("timeout")
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
-
-        async def request(self, method, url, headers=None, json=None):
-            captured["method"] = method
-            captured["url"] = url
-            captured["json"] = json
-            return _FakeResponse()
-
-    monkeypatch.setattr(httpx, "AsyncClient", _FakeClient)
-    monkeypatch.setenv("APPS_DRAFT_DEV_CONTROLLER_OPENCODE_QUESTION_TIMEOUT_SECONDS", "55")
-
-    client = _client()
-    result = await client.answer_opencode_question(
-        sandbox_id="sandbox-1",
-        run_ref="run-ref-1",
-        question_id="question-1",
-        answers=[["A"]],
-    )
-    assert result == {"ok": True}
-    timeout = captured.get("timeout")
-    assert isinstance(timeout, httpx.Timeout)
-    assert timeout.read == 55
 
 
 @pytest.mark.asyncio
@@ -265,10 +136,13 @@ async def test_start_session_uses_dedicated_start_timeout(monkeypatch: pytest.Mo
     client = _client()
     result = await client.start_session(
         session_id="session-1",
+        runtime_generation=1,
         tenant_id="tenant-1",
         app_id="app-1",
         user_id="user-1",
         revision_id="revision-1",
+        app_slug="app-1",
+        agent_id="agent-1",
         entry_file="src/main.tsx",
         files={"src/main.tsx": "export default 1;"},
         idle_timeout_seconds=180,
@@ -315,6 +189,9 @@ async def test_sync_session_uses_dedicated_sync_timeout(monkeypatch: pytest.Monk
     client = _client()
     result = await client.sync_session(
         sandbox_id="sandbox-1",
+        app_id="app-1",
+        app_slug="app-1",
+        agent_id="agent-1",
         entry_file="src/main.tsx",
         files={"src/main.tsx": "export default 1;"},
         idle_timeout_seconds=180,

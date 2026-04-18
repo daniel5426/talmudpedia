@@ -69,6 +69,7 @@ import { sortTemplates } from "@/features/apps-builder/templates";
 import { PreviewCanvas } from "@/features/apps-builder/preview/PreviewCanvas";
 import { buildBuilderPreviewLoadingState } from "@/features/apps-builder/preview/previewLoadingState";
 import {
+  appendPreviewRuntimeToken,
   buildBuilderPreviewDocumentUrl,
   logBuilderPreviewDebug,
 } from "@/features/apps-builder/preview/previewTransport";
@@ -852,18 +853,19 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     if (!inspectedPreviewUrl) {
       return null;
     }
+    const basePreviewUrl = appendPreviewRuntimeToken(inspectedPreviewUrl, inspectedRuntimeToken);
     if (previewReloadToken <= 0) {
-      return inspectedPreviewUrl;
+      return basePreviewUrl;
     }
     try {
-      const parsed = new URL(inspectedPreviewUrl);
+      const parsed = new URL(basePreviewUrl);
       parsed.searchParams.set("__reload", String(previewReloadToken));
       return parsed.toString();
     } catch {
-      const separator = inspectedPreviewUrl.includes("?") ? "&" : "?";
-      return `${inspectedPreviewUrl}${separator}__reload=${previewReloadToken}`;
+      const separator = basePreviewUrl.includes("?") ? "&" : "?";
+      return `${basePreviewUrl}${separator}__reload=${previewReloadToken}`;
     }
-  }, [inspectedPreviewUrl, previewReloadToken]);
+  }, [inspectedPreviewUrl, inspectedRuntimeToken, previewReloadToken]);
   const inspectedPreviewTransportStatus = useMemo(() => {
     if (inspectedPreviewNotice) {
       return "failed" as const;

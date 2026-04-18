@@ -8,6 +8,7 @@ from app.services.published_app_draft_dev_local_runtime import (
     get_local_draft_dev_runtime_manager,
 )
 from app.services.published_app_sandbox_backend import (
+    PublishedAppOpenCodeEndpoint,
     PublishedAppSandboxBackend,
     PublishedAppSandboxBackendError,
 )
@@ -332,42 +333,13 @@ class LocalSandboxBackend(PublishedAppSandboxBackend):
     async def resolve_workspace_path(self, *, sandbox_id: str) -> str | None:
         return await self._manager().resolve_project_dir(sandbox_id=sandbox_id)
 
-    async def start_opencode_run(
+    async def ensure_opencode_endpoint(
         self,
         *,
         sandbox_id: str,
-        run_id: str,
-        app_id: str,
         workspace_path: str,
-        model_id: str,
-        prompt: str,
-        messages: list[dict[str, str]],
-    ) -> Dict[str, Any]:
+    ) -> PublishedAppOpenCodeEndpoint:
+        _ = sandbox_id, workspace_path
         raise PublishedAppSandboxBackendError(
-            "OpenCode sandbox run requires a remote sandbox backend."
-        )
-
-    async def stream_opencode_events(self, *, sandbox_id: str, run_ref: str):
-        _ = sandbox_id, run_ref
-        raise PublishedAppSandboxBackendError(
-            "OpenCode sandbox stream requires a remote sandbox backend."
-        )
-
-    async def cancel_opencode_run(self, *, sandbox_id: str, run_ref: str) -> Dict[str, Any]:
-        _ = sandbox_id, run_ref
-        raise PublishedAppSandboxBackendError(
-            "OpenCode sandbox cancellation requires a remote sandbox backend."
-        )
-
-    async def answer_opencode_question(
-        self,
-        *,
-        sandbox_id: str,
-        run_ref: str,
-        question_id: str,
-        answers: list[list[str]],
-    ) -> Dict[str, Any]:
-        _ = sandbox_id, run_ref, question_id, answers
-        raise PublishedAppSandboxBackendError(
-            "OpenCode sandbox question response requires a remote sandbox backend."
+            "OpenCode endpoint discovery requires the sandbox controller route or a remote sandbox backend."
         )

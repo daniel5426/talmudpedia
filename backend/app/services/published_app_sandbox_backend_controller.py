@@ -1,6 +1,4 @@
 from __future__ import annotations
-
-import json
 import os
 from typing import Any, Dict
 from urllib.parse import urlparse
@@ -8,6 +6,7 @@ from urllib.parse import urlparse
 import httpx
 
 from app.services.published_app_sandbox_backend import (
+    PublishedAppOpenCodeEndpoint,
     PublishedAppSandboxBackend,
     PublishedAppSandboxBackendError,
 )
@@ -99,6 +98,8 @@ class ControllerSandboxBackend(PublishedAppSandboxBackend):
         app_id: str,
         user_id: str,
         revision_id: str,
+        app_slug: str,
+        agent_id: str,
         entry_file: str,
         files: Dict[str, str],
         idle_timeout_seconds: int,
@@ -149,6 +150,9 @@ class ControllerSandboxBackend(PublishedAppSandboxBackend):
         self,
         *,
         sandbox_id: str,
+        app_id: str,
+        app_slug: str,
+        agent_id: str,
         entry_file: str,
         files: Dict[str, str],
         idle_timeout_seconds: int,
@@ -382,98 +386,31 @@ class ControllerSandboxBackend(PublishedAppSandboxBackend):
         _ = sandbox_id
         return None
 
-    async def start_opencode_run(
+    async def ensure_opencode_endpoint(
         self,
         *,
         sandbox_id: str,
-        run_id: str,
-        app_id: str,
         workspace_path: str,
-        model_id: str,
-        prompt: str,
-        messages: list[dict[str, str]],
-    ) -> Dict[str, Any]:
+    ) -> PublishedAppOpenCodeEndpoint:
         start_timeout_raw = (os.getenv("APPS_DRAFT_DEV_CONTROLLER_OPENCODE_START_TIMEOUT_SECONDS") or "").strip()
         start_timeout_seconds = float(start_timeout_raw) if start_timeout_raw else max(float(self.config.request_timeout_seconds), 30.0)
-        return await self._request(
+        payload = await self._request(
             "POST",
-            f"/sessions/{sandbox_id}/opencode/start",
+            f"/sessions/{sandbox_id}/opencode/endpoint",
             json_payload={
-                "run_id": run_id,
-                "app_id": app_id,
                 "workspace_path": workspace_path,
-                "model_id": model_id,
-                "prompt": prompt,
-                "messages": messages,
             },
             timeout_seconds=start_timeout_seconds,
         )
-
-    async def stream_opencode_events(self, *, sandbox_id: str, run_ref: str):
-        if not self.config.controller_url:
-            raise PublishedAppSandboxBackendError("Sandbox controller URL is not configured")
-        url = f"{self.config.controller_url.rstrip('/')}/sessions/{sandbox_id}/opencode/events"
-        stream_read_timeout_raw = (os.getenv("APPS_DRAFT_DEV_CONTROLLER_STREAM_READ_TIMEOUT_SECONDS") or "").strip()
-        stream_read_timeout_seconds = float(stream_read_timeout_raw) if stream_read_timeout_raw else None
-        timeout = httpx.Timeout(
-            connect=max(1.0, float(self.config.request_timeout_seconds)),
-            write=max(1.0, float(self.config.request_timeout_seconds)),
-            pool=max(1.0, float(self.config.request_timeout_seconds)),
-            read=stream_read_timeout_seconds,
-        )
-        try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                async with client.stream("GET", url, headers=self._headers(), params={"run_ref": run_ref}) as response:
-                    if response.status_code >= 400:
-                        body = (await response.aread()).decode("utf-8", errors="replace").strip()
-                        raise PublishedAppSandboxBackendError(
-                            f"Sandbox controller stream request failed ({response.status_code}): "
-                            f"{body or response.reason_phrase}"
-                        )
-                    async for line in response.aiter_lines():
-                        raw = (line or "").strip()
-                        if not raw or raw.startswith(":"):
-                            continue
-                        if raw.startswith("data:"):
-                            raw = raw[5:].strip()
-                        if not raw or raw == "[DONE]":
-                            continue
-                        try:
-                            parsed = json.loads(raw)
-                        except Exception as exc:
-                            raise PublishedAppSandboxBackendError(
-                                f"Sandbox controller event stream returned invalid JSON: {raw}"
-                            ) from exc
-                        if isinstance(parsed, dict):
-                            yield parsed
-        except PublishedAppSandboxBackendError:
-            raise
-        except Exception as exc:
-            detail = str(exc).strip() or exc.__class__.__name__
-            raise PublishedAppSandboxBackendError(
-                f"Sandbox controller stream request failed: {detail}"
-            ) from exc
-
-    async def cancel_opencode_run(self, *, sandbox_id: str, run_ref: str) -> Dict[str, Any]:
-        return await self._request(
-            "POST",
-            f"/sessions/{sandbox_id}/opencode/cancel",
-            json_payload={"run_ref": run_ref},
-        )
-
-    async def answer_opencode_question(
-        self,
-        *,
-        sandbox_id: str,
-        run_ref: str,
-        question_id: str,
-        answers: list[list[str]],
-    ) -> Dict[str, Any]:
-        question_timeout_raw = (os.getenv("APPS_DRAFT_DEV_CONTROLLER_OPENCODE_QUESTION_TIMEOUT_SECONDS") or "").strip()
-        question_timeout_seconds = float(question_timeout_raw) if question_timeout_raw else max(float(self.config.request_timeout_seconds), 45.0)
-        return await self._request(
-            "POST",
-            f"/sessions/{sandbox_id}/opencode/question-answer",
-            json_payload={"run_ref": run_ref, "question_id": question_id, "answers": answers},
-            timeout_seconds=question_timeout_seconds,
+        base_url = str(payload.get("base_url") or "").strip()
+        resolved_workspace_path = str(payload.get("workspace_path") or workspace_path or "").strip()
+        if not base_url:
+            raise PublishedAppSandboxBackendError("Sandbox controller returned invalid OpenCode endpoint payload.")
+        extra_headers = payload.get("extra_headers")
+        return PublishedAppOpenCodeEndpoint(
+            sandbox_id=str(payload.get("sandbox_id") or sandbox_id),
+            base_url=base_url,
+            workspace_path=resolved_workspace_path,
+            api_key=str(payload.get("api_key") or "").strip() or None,
+            extra_headers=extra_headers if isinstance(extra_headers, dict) else None,
         )

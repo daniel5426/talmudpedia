@@ -53,6 +53,42 @@ def test_build_official_session_permission_rules_includes_workspace_patterns():
     assert "/tmp/workspace-a/*" in patterns
 
 
+def test_extract_session_id_from_global_event_properties_recurses_nested_payloads():
+    properties = {
+        "message": {
+            "info": {
+                "sessionID": "ses_nested_session_1",
+            }
+        }
+    }
+
+    assert (
+        OpenCodeServerClient._extract_session_id_from_global_event_properties(properties)
+        == "ses_nested_session_1"
+    )
+
+
+def test_merge_official_extra_headers_adds_encoded_directory_header():
+    headers = OpenCodeServerClient._merge_official_extra_headers(
+        {"X-Test": "1"},
+        workspace_path="/home/sprite/app",
+    )
+
+    assert headers == {
+        "X-Test": "1",
+        "x-opencode-directory": "%2Fhome%2Fsprite%2Fapp",
+    }
+
+
+def test_normalize_message_and_part_ids_use_official_prefixes():
+    message_id = OpenCodeServerClient.normalize_message_id("msg-custom")
+    parts = OpenCodeServerClient.normalize_request_parts([{"type": "text", "text": "hello"}])
+
+    assert message_id.startswith("msg_")
+    assert len(message_id) > len("msg_")
+    assert parts[0]["id"].startswith("prt_")
+
+
 @pytest.mark.asyncio
 async def test_official_mode_seeds_custom_tools_before_start(monkeypatch: pytest.MonkeyPatch, tmp_path):
     monkeypatch.setenv("APPS_CODING_AGENT_OPENCODE_SEED_BOOTSTRAP_ON_RUN_START", "1")
@@ -63,8 +99,6 @@ async def test_official_mode_seeds_custom_tools_before_start(monkeypatch: pytest
             return httpx.Response(200, json={"success": True, "data": {"ok": True}})
         if request.url.path == "/session":
             return httpx.Response(200, json={"success": True, "data": {"id": "sess-seed"}})
-        if request.url.path == "/session/sess-seed/prompt_async":
-            return httpx.Response(404, json={"error": "unsupported"})
         if request.url.path == "/session/sess-seed/message":
             payload = json.loads(request.content.decode("utf-8"))
             text = str((payload.get("parts") or [{}])[0].get("text") or "")
@@ -386,7 +420,7 @@ async def test_sprite_build_opencode_client_reuses_cached_service_and_tunnel(mon
 
     assert first is second
     assert third is not first
-    assert ensure_service_calls == ["sprite-app-1", "sprite-app-1"]
+    assert ensure_service_calls == ["sprite-app-1", "sprite-app-1", "sprite-app-1", "sprite-app-1"]
     assert tunnel_calls == ["sprite-app-1", "sprite-app-1"]
 
 
@@ -397,21 +431,40 @@ async def test_sandbox_mode_seeds_custom_tools_before_start(monkeypatch: pytest.
 
         def __init__(self) -> None:
             self.writes: list[tuple[str, str]] = []
-            self.start_calls = 0
 
         async def write_file(self, *, sandbox_id: str, path: str, content: str):
             self.writes.append((path, content))
             return {"sandbox_id": sandbox_id, "path": path, "status": "written"}
 
-        async def start_opencode_run(self, **kwargs):
+    class NestedSandboxClientStub:
+        def __init__(self) -> None:
+            self.start_calls = 0
+
+        async def create_session(self, **kwargs):
+            return "sandbox-session-1"
+
+        async def submit_turn(self, **kwargs):
             self.start_calls += 1
-            return {"run_ref": "sandbox-run-1"}
+            return "sandbox-run-1"
+
+    nested = NestedSandboxClientStub()
 
     monkeypatch.setenv("APPS_CODING_AGENT_OPENCODE_USE_SANDBOX_CONTROLLER", "1")
     monkeypatch.setenv("APPS_CODING_AGENT_OPENCODE_SEED_BOOTSTRAP_ON_RUN_START", "1")
     stub = SandboxClientStub()
     client = _client(sandbox_controller_mode_override=True)
     client._sandbox_runtime_client = stub
+    monkeypatch.setattr(
+        client,
+        "_get_sandbox_official_client",
+        lambda **kwargs: pytest.fail("_get_sandbox_official_client must be async"),
+    )
+
+    async def _fake_get_sandbox_official_client(*, sandbox_id: str, workspace_path: str):
+        _ = sandbox_id
+        return nested, workspace_path
+
+    monkeypatch.setattr(client, "_get_sandbox_official_client", _fake_get_sandbox_official_client)
 
     run_ref = await client.start_run(
         run_id="run-sandbox-seed",
@@ -424,7 +477,7 @@ async def test_sandbox_mode_seeds_custom_tools_before_start(monkeypatch: pytest.
         selected_agent_contract={"agent": {"id": "agent-1"}},
     )
     assert run_ref == "sandbox-run-1"
-    assert stub.start_calls == 1
+    assert nested.start_calls == 1
     seeded_paths = {path for path, _ in stub.writes}
     assert ".opencode/package.json" in seeded_paths
     assert ".opencode/tools/read_agent_context.ts" in seeded_paths
@@ -441,7 +494,7 @@ async def test_sandbox_mode_seeds_custom_tools_before_start(monkeypatch: pytest.
         selected_agent_contract={"agent": {"id": "agent-1"}},
     )
     assert second_run_ref == "sandbox-run-1"
-    assert stub.start_calls == 2
+    assert nested.start_calls == 2
     assert len(stub.writes) == len(seeded_paths)
 
 
@@ -453,15 +506,23 @@ async def test_e2b_backend_auto_selects_sandbox_mode_without_controller_url(monk
 
         def __init__(self) -> None:
             self.writes: list[tuple[str, str]] = []
-            self.start_calls = 0
 
         async def write_file(self, *, sandbox_id: str, path: str, content: str):
             self.writes.append((path, content))
             return {"sandbox_id": sandbox_id, "path": path, "status": "written"}
 
-        async def start_opencode_run(self, **kwargs):
+    class NestedSandboxClientStub:
+        def __init__(self) -> None:
+            self.start_calls = 0
+
+        async def create_session(self, **kwargs):
+            return "sandbox-session-e2b"
+
+        async def submit_turn(self, **kwargs):
             self.start_calls += 1
-            return {"run_ref": "sandbox-run-e2b"}
+            return "sandbox-run-e2b"
+
+    nested = NestedSandboxClientStub()
 
     monkeypatch.delenv("APPS_CODING_AGENT_OPENCODE_USE_SANDBOX_CONTROLLER", raising=False)
     monkeypatch.delenv("APPS_SANDBOX_CONTROLLER_URL", raising=False)
@@ -469,6 +530,12 @@ async def test_e2b_backend_auto_selects_sandbox_mode_without_controller_url(monk
     stub = SandboxClientStub()
     client = _client(sandbox_controller_mode_override=None)
     client._sandbox_runtime_client = stub
+
+    async def _fake_get_sandbox_official_client(*, sandbox_id: str, workspace_path: str):
+        _ = sandbox_id
+        return nested, workspace_path
+
+    monkeypatch.setattr(client, "_get_sandbox_official_client", _fake_get_sandbox_official_client)
 
     run_ref = await client.start_run(
         run_id="run-e2b-auto",
@@ -482,7 +549,7 @@ async def test_e2b_backend_auto_selects_sandbox_mode_without_controller_url(monk
     )
 
     assert run_ref == "sandbox-run-e2b"
-    assert stub.start_calls == 1
+    assert nested.start_calls == 1
     seeded_paths = {path for path, _ in stub.writes}
     assert ".opencode/package.json" in seeded_paths
     assert OPENCODE_BOOTSTRAP_CONTEXT_PATH in seeded_paths
@@ -500,14 +567,25 @@ async def test_sandbox_mode_refreshes_context_when_contract_changes(monkeypatch:
             self.writes.append((path, content))
             return {"sandbox_id": sandbox_id, "path": path, "status": "written"}
 
-        async def start_opencode_run(self, **kwargs):
-            return {"run_ref": "sandbox-run-1"}
+    class NestedSandboxClientStub:
+        async def create_session(self, **kwargs):
+            return "sandbox-session-1"
+
+        async def submit_turn(self, **kwargs):
+            return "sandbox-run-1"
 
     monkeypatch.setenv("APPS_CODING_AGENT_OPENCODE_USE_SANDBOX_CONTROLLER", "1")
     monkeypatch.setenv("APPS_CODING_AGENT_OPENCODE_SEED_BOOTSTRAP_ON_RUN_START", "1")
     stub = SandboxClientStub()
     client = _client(sandbox_controller_mode_override=True)
     client._sandbox_runtime_client = stub
+    nested = NestedSandboxClientStub()
+
+    async def _fake_get_sandbox_official_client(*, sandbox_id: str, workspace_path: str):
+        _ = sandbox_id
+        return nested, workspace_path
+
+    monkeypatch.setattr(client, "_get_sandbox_official_client", _fake_get_sandbox_official_client)
 
     await client.start_run(
         run_id="run-contract-1",
@@ -546,13 +624,24 @@ async def test_sandbox_mode_ignores_generated_at_for_context_hash(monkeypatch: p
             self.writes.append((path, content))
             return {"sandbox_id": sandbox_id, "path": path, "status": "written"}
 
-        async def start_opencode_run(self, **kwargs):
-            return {"run_ref": "sandbox-run-1"}
+    class NestedSandboxClientStub:
+        async def create_session(self, **kwargs):
+            return "sandbox-session-1"
+
+        async def submit_turn(self, **kwargs):
+            return "sandbox-run-1"
 
     monkeypatch.setenv("APPS_CODING_AGENT_OPENCODE_USE_SANDBOX_CONTROLLER", "1")
     stub = SandboxClientStub()
     client = _client(sandbox_controller_mode_override=True)
     client._sandbox_runtime_client = stub
+    nested = NestedSandboxClientStub()
+
+    async def _fake_get_sandbox_official_client(*, sandbox_id: str, workspace_path: str):
+        _ = sandbox_id
+        return nested, workspace_path
+
+    monkeypatch.setattr(client, "_get_sandbox_official_client", _fake_get_sandbox_official_client)
 
     await client.start_run(
         run_id="run-generated-at-1",
@@ -588,12 +677,23 @@ async def test_sandbox_mode_fails_closed_when_seed_write_fails(monkeypatch: pyte
         async def write_file(self, *, sandbox_id: str, path: str, content: str):
             raise PublishedAppDraftDevRuntimeClientError("write failed")
 
-        async def start_opencode_run(self, **kwargs):
-            raise AssertionError("start_opencode_run should not be called when seeding fails")
+    class NestedSandboxClientStub:
+        async def create_session(self, **kwargs):
+            return "sandbox-session-fail"
+
+        async def submit_turn(self, **kwargs):
+            raise AssertionError("submit_turn should not be called when seeding fails")
 
     monkeypatch.setenv("APPS_CODING_AGENT_OPENCODE_USE_SANDBOX_CONTROLLER", "1")
     client = _client(sandbox_controller_mode_override=True)
     client._sandbox_runtime_client = FailingSandboxClientStub()
+    nested = NestedSandboxClientStub()
+
+    async def _fake_get_sandbox_official_client(*, sandbox_id: str, workspace_path: str):
+        _ = sandbox_id
+        return nested, workspace_path
+
+    monkeypatch.setattr(client, "_get_sandbox_official_client", _fake_get_sandbox_official_client)
 
     with pytest.raises(OpenCodeServerClientError) as exc:
         await client.start_run(
@@ -764,8 +864,8 @@ async def test_official_mode_global_event_stream_emits_tool_events_and_increment
             return httpx.Response(200, json={"success": True, "data": {"ok": True}})
         if request.url.path == "/session":
             return httpx.Response(200, json={"success": True, "data": {"id": session_id}})
-        if request.url.path == f"/session/{session_id}/prompt_async":
-            return httpx.Response(204, text="")
+        if request.url.path == f"/session/{session_id}/message" and request.method == "POST":
+            return httpx.Response(200, content=b"")
         if request.url.path == "/global/event":
             return httpx.Response(200, text=sse_text, headers={"content-type": "text/event-stream"})
         if request.url.path == f"/session/{session_id}/message" and request.method == "GET":
@@ -922,8 +1022,8 @@ async def test_official_mode_global_event_stream_skips_reasoning_deltas(monkeypa
             return httpx.Response(200, json={"success": True, "data": {"ok": True}})
         if request.url.path == "/session":
             return httpx.Response(200, json={"success": True, "data": {"id": session_id}})
-        if request.url.path == f"/session/{session_id}/prompt_async":
-            return httpx.Response(204, text="")
+        if request.url.path == f"/session/{session_id}/message" and request.method == "POST":
+            return httpx.Response(200, content=b"")
         if request.url.path == "/global/event":
             return httpx.Response(200, text=sse_text, headers={"content-type": "text/event-stream"})
         if request.url.path == f"/session/{session_id}/message" and request.method == "GET":
@@ -1006,8 +1106,8 @@ async def test_official_mode_global_event_stream_emits_deltas_from_message_updat
             return httpx.Response(200, json={"success": True, "data": {"ok": True}})
         if request.url.path == "/session":
             return httpx.Response(200, json={"success": True, "data": {"id": session_id}})
-        if request.url.path == f"/session/{session_id}/prompt_async":
-            return httpx.Response(204, text="")
+        if request.url.path == f"/session/{session_id}/message" and request.method == "POST":
+            return httpx.Response(200, content=b"")
         if request.url.path == "/global/event":
             return httpx.Response(200, text=sse_text, headers={"content-type": "text/event-stream"})
         if request.url.path == f"/session/{session_id}/message" and request.method == "GET":
@@ -1113,8 +1213,8 @@ async def test_official_mode_global_event_stream_keeps_running_after_session_idl
             return httpx.Response(200, json={"success": True, "data": {"ok": True}})
         if request.url.path == "/session":
             return httpx.Response(200, json={"success": True, "data": {"id": session_id}})
-        if request.url.path == f"/session/{session_id}/prompt_async":
-            return httpx.Response(204, text="")
+        if request.url.path == f"/session/{session_id}/message" and request.method == "POST":
+            return httpx.Response(200, content=b"")
         if request.url.path == "/global/event":
             return httpx.Response(200, text=sse_text, headers={"content-type": "text/event-stream"})
         if request.url.path == f"/session/{session_id}/message" and request.method == "GET":
@@ -1158,99 +1258,6 @@ async def test_official_mode_global_event_stream_keeps_running_after_session_idl
 
 
 @pytest.mark.asyncio
-async def test_official_mode_global_event_stream_settles_without_session_idle(monkeypatch: pytest.MonkeyPatch):
-    session_id = "sess-global-settle"
-    assistant_message_id = "msg-assistant-settle"
-    user_message_id = "msg-user-settle"
-    text_part_id = "part-text-settle"
-
-    global_events = [
-        ("message.updated", {"info": {"id": user_message_id, "sessionID": session_id, "role": "user"}}),
-        (
-            "message.updated",
-            {"info": {"id": assistant_message_id, "sessionID": session_id, "role": "assistant", "parentID": user_message_id}},
-        ),
-        (
-            "message.part.updated",
-            {
-                "part": {
-                    "id": text_part_id,
-                    "sessionID": session_id,
-                    "messageID": assistant_message_id,
-                    "type": "text",
-                    "text": "Done",
-                }
-            },
-        ),
-        (
-            "message.part.delta",
-            {
-                "sessionID": session_id,
-                "messageID": assistant_message_id,
-                "partID": text_part_id,
-                "field": "text",
-                "delta": "!",
-            },
-        ),
-    ]
-    sse_text = "".join([f"data: {_sse_payload(event_type, properties)}\n\n" for event_type, properties in global_events])
-
-    ticks = {"value": 0.0}
-
-    def _fake_monotonic() -> float:
-        ticks["value"] += 0.3
-        return ticks["value"]
-
-    monkeypatch.setattr("app.services.opencode_server_client.time.monotonic", _fake_monotonic)
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/global/health":
-            return httpx.Response(200, json={"success": True, "data": {"ok": True}})
-        if request.url.path == "/session":
-            return httpx.Response(200, json={"success": True, "data": {"id": session_id}})
-        if request.url.path == f"/session/{session_id}/prompt_async":
-            return httpx.Response(204, text="")
-        if request.url.path == "/global/event":
-            return httpx.Response(200, text=sse_text, headers={"content-type": "text/event-stream"})
-        if request.url.path == "/question":
-            return httpx.Response(200, json=[])
-        if request.url.path == f"/session/{session_id}/message" and request.method == "GET":
-            return httpx.Response(
-                200,
-                json=[
-                    {
-                        "info": {
-                            "id": assistant_message_id,
-                            "sessionID": session_id,
-                            "role": "assistant",
-                            "parentID": user_message_id,
-                            "finish": "stop",
-                            "time": {"created": 1, "completed": 2},
-                        },
-                        "parts": [{"id": text_part_id, "type": "text", "text": "Done!"}],
-                    }
-                ],
-            )
-        raise AssertionError(f"Unexpected request path: {request.url.path} ({request.method})")
-
-    _patch_async_client(monkeypatch, handler)
-    client = _client()
-
-    run_ref = await client.start_run(
-        run_id="run-global-settle",
-        app_id="app-1",
-        sandbox_id="sandbox-1",
-        workspace_path="/tmp/sandbox-1",
-        model_id="",
-        prompt="Reply with done",
-        messages=[{"role": "user", "content": "Reply with done"}],
-    )
-    events = [item async for item in client.stream_run_events(run_ref=run_ref)]
-    assistant_text = "".join(str(item.get("payload", {}).get("content") or "") for item in events if item.get("event") == "assistant.delta")
-    assert assistant_text.startswith("Done")
-    assert events[-1].get("event") == "run.completed"
-
-
 @pytest.mark.asyncio
 async def test_official_mode_global_event_stream_completes_from_session_status_idle(monkeypatch: pytest.MonkeyPatch):
     session_id = "sess-global-status-idle"
@@ -1281,8 +1288,8 @@ async def test_official_mode_global_event_stream_completes_from_session_status_i
             return httpx.Response(200, json={"success": True, "data": {"ok": True}})
         if request.url.path == "/session":
             return httpx.Response(200, json={"success": True, "data": {"id": session_id}})
-        if request.url.path == f"/session/{session_id}/prompt_async":
-            return httpx.Response(204, text="")
+        if request.url.path == f"/session/{session_id}/message" and request.method == "POST":
+            return httpx.Response(200, content=b"")
         if request.url.path == "/global/event":
             return httpx.Response(200, text=sse_text, headers={"content-type": "text/event-stream"})
         if request.url.path == f"/session/{session_id}/message" and request.method == "GET":
@@ -1388,31 +1395,6 @@ async def test_official_mode_unwraps_success_false_error_payload(monkeypatch: py
 
 
 @pytest.mark.asyncio
-async def test_legacy_mode_fallback_when_official_health_unavailable(monkeypatch: pytest.MonkeyPatch):
-    def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/global/health":
-            return httpx.Response(404, text="not found")
-        if request.url.path == "/health":
-            return httpx.Response(200, text="ok")
-        if request.url.path == "/v1/runs":
-            return httpx.Response(200, json={"run_ref": "legacy-run-1"})
-        raise AssertionError(f"Unexpected request path: {request.url.path}")
-
-    _patch_async_client(monkeypatch, handler)
-    client = _client()
-
-    run_ref = await client.start_run(
-        run_id="run-legacy",
-        app_id="app-1",
-        sandbox_id="sandbox-1",
-        workspace_path="/tmp/sandbox-1",
-        model_id="",
-        prompt="Fix the TS issue",
-        messages=[{"role": "user", "content": "Fix the TS issue"}],
-    )
-    assert run_ref == "legacy-run-1"
-
-
 @pytest.mark.asyncio
 async def test_official_mode_missing_text_emits_failed_buffer_event(monkeypatch: pytest.MonkeyPatch):
     def handler(request: httpx.Request) -> httpx.Response:
@@ -1597,146 +1579,6 @@ async def test_official_mode_preflight_invalid_model_raises_clear_error(monkeypa
 
 
 @pytest.mark.asyncio
-async def test_official_mode_empty_message_response_polls_session_messages(monkeypatch: pytest.MonkeyPatch):
-    state: dict[str, str | int] = {"message_id": "", "poll_count": 0}
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/global/health":
-            return httpx.Response(200, json={"success": True, "data": {"ok": True}})
-        if request.url.path == "/session":
-            return httpx.Response(200, json={"success": True, "data": {"id": "sess-poll"}})
-        if request.url.path == "/session/sess-poll/init":
-            return httpx.Response(200, json={"ok": True})
-        if request.url.path == "/session/sess-poll/message" and request.method == "POST":
-            payload = json.loads(request.content.decode("utf-8"))
-            state["message_id"] = str(payload.get("messageID") or "")
-            return httpx.Response(200, content=b"")
-        if request.url.path == "/session/sess-poll/message" and request.method == "GET":
-            state["poll_count"] = int(state["poll_count"]) + 1
-            if int(state["poll_count"]) < 2:
-                return httpx.Response(
-                    200,
-                    json=[
-                        {
-                            "info": {"role": "user", "id": state["message_id"]},
-                            "parts": [{"type": "text", "text": "request"}],
-                        }
-                    ],
-                )
-            return httpx.Response(
-                200,
-                json=[
-                    {
-                        "info": {"role": "assistant", "parentID": state["message_id"], "id": "assistant-1"},
-                        "parts": [{"type": "text", "text": "Polled OK"}],
-                    }
-                ],
-            )
-        raise AssertionError(f"Unexpected request path: {request.url.path} ({request.method})")
-
-    _patch_async_client(monkeypatch, handler)
-    client = _client()
-
-    run_ref = await client.start_run(
-        run_id="run-poll",
-        app_id="app-1",
-        sandbox_id="sandbox-1",
-        workspace_path="/tmp/sandbox-1",
-        model_id="openai/gpt-5",
-        prompt="Reply with OK",
-        messages=[{"role": "user", "content": "Reply with OK"}],
-    )
-    events = [item async for item in client.stream_run_events(run_ref=run_ref)]
-    assert any(item.get("event") == "assistant.delta" and "Polled OK" in str(item.get("payload", {}).get("content")) for item in events)
-
-
-@pytest.mark.asyncio
-async def test_official_mode_empty_message_response_polls_wrapped_messages_payload(monkeypatch: pytest.MonkeyPatch):
-    state: dict[str, str] = {"message_id": ""}
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/global/health":
-            return httpx.Response(200, json={"success": True, "data": {"ok": True}})
-        if request.url.path == "/session":
-            return httpx.Response(200, json={"success": True, "data": {"id": "sess-wrapped-poll"}})
-        if request.url.path == "/session/sess-wrapped-poll/message" and request.method == "POST":
-            payload = json.loads(request.content.decode("utf-8"))
-            state["message_id"] = str(payload.get("messageID") or "")
-            return httpx.Response(200, content=b"")
-        if request.url.path == "/session/sess-wrapped-poll/message" and request.method == "GET":
-            return httpx.Response(
-                200,
-                json={
-                    "messages": [
-                        {
-                            "info": {"role": "assistant", "parentID": state["message_id"], "id": "assistant-wrapped"},
-                            "parts": [{"type": "text", "text": "Wrapped payload OK"}],
-                        }
-                    ]
-                },
-            )
-        raise AssertionError(f"Unexpected request path: {request.url.path} ({request.method})")
-
-    _patch_async_client(monkeypatch, handler)
-    client = _client()
-
-    run_ref = await client.start_run(
-        run_id="run-wrapped-poll",
-        app_id="app-1",
-        sandbox_id="sandbox-1",
-        workspace_path="/tmp/sandbox-1",
-        model_id="",
-        prompt="Reply with OK",
-        messages=[{"role": "user", "content": "Reply with OK"}],
-    )
-    events = [item async for item in client.stream_run_events(run_ref=run_ref)]
-    assert any(
-        item.get("event") == "assistant.delta" and "Wrapped payload OK" in str(item.get("payload", {}).get("content"))
-        for item in events
-    )
-
-
-@pytest.mark.asyncio
-async def test_official_mode_poll_accepts_assistant_message_without_parent_id(monkeypatch: pytest.MonkeyPatch):
-    def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/global/health":
-            return httpx.Response(200, json={"success": True, "data": {"ok": True}})
-        if request.url.path == "/session":
-            return httpx.Response(200, json={"success": True, "data": {"id": "sess-no-parent"}})
-        if request.url.path == "/session/sess-no-parent/message" and request.method == "POST":
-            return httpx.Response(200, content=b"")
-        if request.url.path == "/session/sess-no-parent/message" and request.method == "GET":
-            return httpx.Response(
-                200,
-                json=[
-                    {
-                        "info": {"role": "assistant", "id": "assistant-no-parent"},
-                        "parts": [{"type": "text", "text": "No parent id but valid assistant response"}],
-                    }
-                ],
-            )
-        raise AssertionError(f"Unexpected request path: {request.url.path} ({request.method})")
-
-    _patch_async_client(monkeypatch, handler)
-    client = _client()
-
-    run_ref = await client.start_run(
-        run_id="run-no-parent",
-        app_id="app-1",
-        sandbox_id="sandbox-1",
-        workspace_path="/tmp/sandbox-1",
-        model_id="",
-        prompt="Reply with OK",
-        messages=[{"role": "user", "content": "Reply with OK"}],
-    )
-    events = [item async for item in client.stream_run_events(run_ref=run_ref)]
-    assert any(
-        item.get("event") == "assistant.delta"
-        and "No parent id but valid assistant response" in str(item.get("payload", {}).get("content"))
-        for item in events
-    )
-
-
 @pytest.mark.asyncio
 async def test_request_error_without_message_includes_exception_class(monkeypatch: pytest.MonkeyPatch):
     class _Boom(RuntimeError):
@@ -1766,50 +1608,6 @@ async def test_request_error_without_message_includes_exception_class(monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_official_mode_post_message_read_timeout_falls_back_to_polling(monkeypatch: pytest.MonkeyPatch):
-    state: dict[str, str] = {"message_id": ""}
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/global/health":
-            return httpx.Response(200, json={"success": True, "data": {"ok": True}})
-        if request.url.path == "/session":
-            return httpx.Response(200, json={"success": True, "data": {"id": "sess-timeout"}})
-        if request.url.path == "/session/sess-timeout/message" and request.method == "POST":
-            payload = json.loads(request.content.decode("utf-8"))
-            state["message_id"] = str(payload.get("messageID") or "")
-            raise httpx.ReadTimeout("timed out")
-        if request.url.path == "/session/sess-timeout/message" and request.method == "GET":
-            return httpx.Response(
-                200,
-                json=[
-                    {
-                        "info": {"role": "assistant", "parentID": state["message_id"], "id": "assistant-timeout"},
-                        "parts": [{"type": "text", "text": "Recovered after timeout"}],
-                    }
-                ],
-            )
-        raise AssertionError(f"Unexpected request path: {request.url.path} ({request.method})")
-
-    _patch_async_client(monkeypatch, handler)
-    client = _client()
-
-    run_ref = await client.start_run(
-        run_id="run-timeout",
-        app_id="app-1",
-        sandbox_id="sandbox-1",
-        workspace_path="/tmp/sandbox-1",
-        model_id="",
-        prompt="Reply with OK",
-        messages=[{"role": "user", "content": "Reply with OK"}],
-    )
-    events = [item async for item in client.stream_run_events(run_ref=run_ref)]
-    assert any(
-        item.get("event") == "assistant.delta" and "Recovered after timeout" in str(item.get("payload", {}).get("content"))
-        for item in events
-    )
-
-
-@pytest.mark.asyncio
 async def test_official_mode_prefers_assistant_candidate_with_text(monkeypatch: pytest.MonkeyPatch):
     state: dict[str, str] = {"message_id": ""}
 
@@ -1822,6 +1620,9 @@ async def test_official_mode_prefers_assistant_candidate_with_text(monkeypatch: 
             payload = json.loads(request.content.decode("utf-8"))
             state["message_id"] = str(payload.get("messageID") or "")
             return httpx.Response(200, content=b"")
+        if request.url.path == "/global/event":
+            sse_text = f"data: {_sse_payload('session.idle', {'sessionID': 'sess-candidates'})}\n\n"
+            return httpx.Response(200, text=sse_text, headers={"content-type": "text/event-stream"})
         if request.url.path == "/session/sess-candidates/message" and request.method == "GET":
             return httpx.Response(
                 200,
@@ -1858,132 +1659,461 @@ async def test_official_mode_prefers_assistant_candidate_with_text(monkeypatch: 
 
 
 @pytest.mark.asyncio
-async def test_official_mode_closed_no_terminal_recovers_via_snapshot_polling(monkeypatch: pytest.MonkeyPatch):
-    session_id = "sess-no-terminal"
-    global_events = [
-        ("message.updated", {"info": {"id": "msg-user", "sessionID": session_id, "role": "user"}}),
-    ]
-    sse_text = "".join([f"data: {_sse_payload(event_type, properties)}\n\n" for event_type, properties in global_events])
+async def test_official_mode_persistent_session_followup_turn_uses_message_append_path(monkeypatch: pytest.MonkeyPatch):
+    session_id = "sess-persistent-followup"
+    assistant_messages: list[dict[str, object]] = []
+    latest_assistant_id = ""
+
+    def _assistant(parent_id: str, text: str, order: int) -> dict[str, object]:
+        return {
+            "info": {
+                "id": f"assistant-{order}",
+                "sessionID": session_id,
+                "role": "assistant",
+                "parentID": parent_id,
+                "time": {"created": order, "completed": order},
+            },
+            "parts": [{"type": "text", "text": text}],
+        }
 
     def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal assistant_messages, latest_assistant_id
         if request.url.path == "/global/health":
             return httpx.Response(200, json={"success": True, "data": {"ok": True}})
         if request.url.path == "/session":
             return httpx.Response(200, json={"success": True, "data": {"id": session_id}})
-        if request.url.path == f"/session/{session_id}/prompt_async":
-            return httpx.Response(204, text="")
         if request.url.path == "/global/event":
-            return httpx.Response(200, text=sse_text, headers={"content-type": "text/event-stream"})
-        if request.url.path == "/question":
-            return httpx.Response(200, json=[])
-        if request.url.path == f"/session/{session_id}/message" and request.method == "GET":
-            return httpx.Response(
-                200,
-                json=[
-                    {
-                        "info": {"id": "msg-assistant", "sessionID": session_id, "role": "assistant"},
-                        "parts": [{"id": "part-text", "type": "text", "text": "Recovered after reconnect."}],
-                    }
-                ],
+            sse_text = "".join(
+                [
+                    f"data: {_sse_payload('session.idle', {'sessionID': session_id})}\n\n",
+                    f"data: {_sse_payload('run.completed', {'sessionID': session_id})}\n\n",
+                ]
             )
+            return httpx.Response(200, text=sse_text, headers={"content-type": "text/event-stream"})
+        if request.url.path == f"/session/{session_id}/message" and request.method == "POST":
+            payload = json.loads(request.content.decode("utf-8"))
+            message_id = str(payload.get("messageID") or "").strip()
+            prompt_text = str((payload.get("parts") or [{}])[0].get("text") or "")
+            assert "parentID" not in payload
+            reply_text = (
+                "Your first message was hi."
+                if "what was my first message?" in prompt_text.lower()
+                else "First reply"
+            )
+            order = len(assistant_messages) + 1
+            assistant_messages.append(_assistant(message_id, reply_text, order))
+            latest_assistant_id = f"assistant-{order}"
+            return httpx.Response(200, content=b"")
+        if request.url.path == f"/session/{session_id}/message" and request.method == "GET":
+            return httpx.Response(200, json=assistant_messages)
         raise AssertionError(f"Unexpected request path: {request.url.path} ({request.method})")
 
     _patch_async_client(monkeypatch, handler)
-    monkeypatch.setenv("APPS_CODING_AGENT_OPENCODE_OFFICIAL_POLL_INTERVAL_SECONDS", "0.1")
-    monkeypatch.setenv("APPS_CODING_AGENT_OPENCODE_OFFICIAL_STREAM_SETTLE_SECONDS", "0.2")
     client = _client()
 
-    run_ref = await client.start_run(
-        run_id="run-no-terminal",
+    created_session_id = await client.create_session(
+        run_id="run-persistent-1",
         app_id="app-1",
         sandbox_id="sandbox-1",
         workspace_path="/tmp/sandbox-1",
         model_id="",
-        prompt="Recover gracefully",
-        messages=[{"role": "user", "content": "Recover gracefully"}],
     )
-    events = [item async for item in client.stream_run_events(run_ref=run_ref)]
-    assert any(
-        item.get("event") == "assistant.delta"
-        and "Recovered after reconnect." in str(item.get("payload", {}).get("content") or "")
-        for item in events
+    assert created_session_id == session_id
+
+    first_turn_ref = await client.submit_turn(
+        session_id=session_id,
+        run_id="run-persistent-1",
+        app_id="app-1",
+        sandbox_id="sandbox-1",
+        workspace_path="/tmp/sandbox-1",
+        model_id="",
+        prompt="hi",
     )
-    assert events[-1].get("event") == "run.completed"
-    assert not any(item.get("event") == "run.failed" for item in events)
+    first_events = [
+        item
+        async for item in client.stream_turn_events(session_id=session_id, turn_ref=first_turn_ref)
+    ]
+    first_text = "".join(
+        str(item.get("payload", {}).get("content") or "")
+        for item in first_events
+        if item.get("event") == "assistant.delta"
+    )
+    assert "First reply" in first_text
+
+    second_turn_ref = await client.submit_turn(
+        session_id=session_id,
+        run_id="run-persistent-2",
+        app_id="app-1",
+        sandbox_id="sandbox-1",
+        workspace_path="/tmp/sandbox-1",
+        model_id="",
+        prompt="what was my first message?",
+    )
+    second_events = [
+        item
+        async for item in client.stream_turn_events(session_id=session_id, turn_ref=second_turn_ref)
+    ]
+    second_text = "".join(
+        str(item.get("payload", {}).get("content") or "")
+        for item in second_events
+        if item.get("event") == "assistant.delta"
+    )
+    assert "Your first message was hi." in second_text
 
 
 @pytest.mark.asyncio
-async def test_official_mode_global_event_stream_falls_back_quickly_when_only_heartbeats_arrive(
+async def test_official_mode_followup_turn_does_not_complete_from_stale_idle_history(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    session_id = "sess-heartbeats-only"
-    monotonic_values = iter([0.0, 0.0, 0.2, 0.9, 1.8, 2.7, 3.6, 4.5, 5.4])
-
-    def fake_monotonic() -> float:
-        try:
-            return next(monotonic_values)
-        except StopIteration:
-            return 6.0
-
-    sse_text = "".join(
-        [
-            'data: {"payload":{"type":"server.connected","properties":{}}}\n\n',
-            'data: {"payload":{"type":"server.heartbeat","properties":{}}}\n\n',
-            'data: {"payload":{"type":"server.heartbeat","properties":{}}}\n\n',
-        ]
-    )
+    session_id = "sess-followup-stale-idle"
+    first_assistant_id = "assistant-1"
+    second_assistant_id = "assistant-2"
+    post_count = 0
+    stream_count = 0
+    second_turn_get_count = 0
 
     def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal post_count, stream_count, second_turn_get_count
         if request.url.path == "/global/health":
             return httpx.Response(200, json={"success": True, "data": {"ok": True}})
         if request.url.path == "/session":
             return httpx.Response(200, json={"success": True, "data": {"id": session_id}})
-        if request.url.path == f"/session/{session_id}/prompt_async":
-            return httpx.Response(204, text="")
+        if request.url.path == f"/session/{session_id}/message" and request.method == "POST":
+            payload = json.loads(request.content.decode("utf-8"))
+            post_count += 1
+            assert "parentID" not in payload
+            return httpx.Response(200, content=b"")
         if request.url.path == "/global/event":
+            stream_count += 1
+            if stream_count == 1:
+                sse_text = "".join(
+                    [
+                        f"data: {_sse_payload('session.idle', {'sessionID': session_id})}\n\n",
+                        f"data: {_sse_payload('run.completed', {'sessionID': session_id})}\n\n",
+                    ]
+                )
+                return httpx.Response(200, text=sse_text, headers={"content-type": "text/event-stream"})
+            sse_text = "".join(
+                [
+                    f"data: {_sse_payload('session.status', {'sessionID': session_id, 'status': {'type': 'idle'}})}\n\n",
+                    "data: "
+                    + _sse_payload(
+                        "message.updated",
+                        {
+                            "info": {
+                                "id": second_assistant_id,
+                                "sessionID": session_id,
+                                "role": "assistant",
+                            },
+                            "parts": [{"type": "text", "text": "Your first message was hi."}],
+                        },
+                    )
+                    + "\n\n",
+                    f"data: {_sse_payload('run.completed', {'sessionID': session_id})}\n\n",
+                ]
+            )
             return httpx.Response(200, text=sse_text, headers={"content-type": "text/event-stream"})
-        if request.url.path == "/question":
-            return httpx.Response(200, json=[])
         if request.url.path == f"/session/{session_id}/message" and request.method == "GET":
+            if post_count == 1:
+                return httpx.Response(
+                    200,
+                    json=[
+                        {
+                            "info": {
+                                "id": first_assistant_id,
+                                "sessionID": session_id,
+                                "role": "assistant",
+                            },
+                            "parts": [{"type": "text", "text": "Hi! How can I help you today?"}],
+                        }
+                    ],
+                )
+            second_turn_get_count += 1
+            if second_turn_get_count == 1:
+                return httpx.Response(
+                    200,
+                    json=[
+                        {
+                            "info": {
+                                "id": first_assistant_id,
+                                "sessionID": session_id,
+                                "role": "assistant",
+                            },
+                            "parts": [{"type": "text", "text": "Hi! How can I help you today?"}],
+                        }
+                    ],
+                )
             return httpx.Response(
                 200,
                 json=[
                     {
                         "info": {
-                            "id": "msg-assistant",
+                            "id": first_assistant_id,
                             "sessionID": session_id,
                             "role": "assistant",
-                            "time": {"created": 1, "completed": 2},
                         },
-                        "parts": [{"id": "part-text", "type": "text", "text": "Recovered after missed live events."}],
-                    }
+                        "parts": [{"type": "text", "text": "Hi! How can I help you today?"}],
+                    },
+                    {
+                        "info": {
+                            "id": second_assistant_id,
+                            "sessionID": session_id,
+                            "role": "assistant",
+                        },
+                        "parts": [{"type": "text", "text": "Your first message was hi."}],
+                    },
                 ],
             )
         raise AssertionError(f"Unexpected request path: {request.url.path} ({request.method})")
 
     _patch_async_client(monkeypatch, handler)
-    monkeypatch.setenv("APPS_CODING_AGENT_OPENCODE_OFFICIAL_GLOBAL_NO_MATCH_GRACE_SECONDS", "1")
-    monkeypatch.setenv("APPS_CODING_AGENT_OPENCODE_OFFICIAL_POLL_INTERVAL_SECONDS", "0.1")
-    monkeypatch.setenv("APPS_CODING_AGENT_OPENCODE_OFFICIAL_STREAM_SETTLE_SECONDS", "0.2")
-    monkeypatch.setattr("app.services.opencode_server_client.time.monotonic", fake_monotonic)
     client = _client()
 
-    run_ref = await client.start_run(
-        run_id="run-heartbeats-only",
+    created_session_id = await client.create_session(
+        run_id="run-followup-stale-1",
         app_id="app-1",
         sandbox_id="sandbox-1",
         workspace_path="/tmp/sandbox-1",
         model_id="",
-        prompt="Reply",
-        messages=[{"role": "user", "content": "Reply"}],
     )
-    events = [item async for item in client.stream_run_events(run_ref=run_ref)]
-    assert any(
-        item.get("event") == "assistant.delta"
-        and "Recovered after missed live events." in str(item.get("payload", {}).get("content") or "")
-        for item in events
+    assert created_session_id == session_id
+
+    first_turn_ref = await client.submit_turn(
+        session_id=session_id,
+        run_id="run-followup-stale-1",
+        app_id="app-1",
+        sandbox_id="sandbox-1",
+        workspace_path="/tmp/sandbox-1",
+        model_id="",
+        prompt="hi",
     )
-    assert events[-1].get("event") == "run.completed"
+    first_events = [
+        item
+        async for item in client.stream_turn_events(session_id=session_id, turn_ref=first_turn_ref)
+    ]
+    first_text = "".join(
+        str(item.get("payload", {}).get("content") or "")
+        for item in first_events
+        if item.get("event") == "assistant.delta"
+    )
+    assert "Hi! How can I help you today?" in first_text
+
+    second_turn_ref = await client.submit_turn(
+        session_id=session_id,
+        run_id="run-followup-stale-2",
+        app_id="app-1",
+        sandbox_id="sandbox-1",
+        workspace_path="/tmp/sandbox-1",
+        model_id="",
+        prompt="what is my first message",
+        defer_until_stream=True,
+    )
+    second_events = [
+        item
+        async for item in client.stream_turn_events(session_id=session_id, turn_ref=second_turn_ref)
+    ]
+    second_text = "".join(
+        str(item.get("payload", {}).get("content") or "")
+        for item in second_events
+        if item.get("event") == "assistant.delta"
+    )
+    assert second_text == "Your first message was hi."
+    assert any(item.get("event") == "run.completed" for item in second_events)
+
+
+@pytest.mark.asyncio
+async def test_official_mode_persistent_session_followup_turn_recovers_parent_from_session_messages(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    session_id = "sess-persistent-parent-recovery"
+    assistant_messages: list[dict[str, object]] = []
+    latest_assistant_id = ""
+
+    def _assistant(parent_id: str, text: str, order: int) -> dict[str, object]:
+        return {
+            "info": {
+                "id": f"assistant-{order}",
+                "sessionID": session_id,
+                "role": "assistant",
+                "parentID": parent_id,
+                "time": {"created": order, "completed": order},
+            },
+            "parts": [{"type": "text", "text": text}],
+        }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal assistant_messages, latest_assistant_id
+        if request.url.path == "/global/health":
+            return httpx.Response(200, json={"success": True, "data": {"ok": True}})
+        if request.url.path == "/session":
+            return httpx.Response(200, json={"success": True, "data": {"id": session_id}})
+        if request.url.path == "/global/event":
+            sse_text = "".join(
+                [
+                    f"data: {_sse_payload('session.idle', {'sessionID': session_id})}\n\n",
+                    f"data: {_sse_payload('run.completed', {'sessionID': session_id})}\n\n",
+                ]
+            )
+            return httpx.Response(200, text=sse_text, headers={"content-type": "text/event-stream"})
+        if request.url.path == f"/session/{session_id}/message" and request.method == "POST":
+            payload = json.loads(request.content.decode("utf-8"))
+            message_id = str(payload.get("messageID") or "").strip()
+            prompt_text = str((payload.get("parts") or [{}])[0].get("text") or "")
+            assert "parentID" not in payload
+            if "what was my first message?" in prompt_text.lower():
+                reply_text = "Your first message was hi."
+            else:
+                reply_text = "First reply"
+            order = len(assistant_messages) + 1
+            assistant_messages.append(_assistant(message_id, reply_text, order))
+            latest_assistant_id = f"assistant-{order}"
+            return httpx.Response(200, content=b"")
+        if request.url.path == f"/session/{session_id}/message" and request.method == "GET":
+            return httpx.Response(200, json=assistant_messages)
+        raise AssertionError(f"Unexpected request path: {request.url.path} ({request.method})")
+
+    _patch_async_client(monkeypatch, handler)
+
+    first_client = _client()
+    created_session_id = await first_client.create_session(
+        run_id="run-parent-recovery-1",
+        app_id="app-1",
+        sandbox_id="sandbox-1",
+        workspace_path="/tmp/sandbox-1",
+        model_id="",
+    )
+    assert created_session_id == session_id
+
+    first_turn_ref = await first_client.submit_turn(
+        session_id=session_id,
+        run_id="run-parent-recovery-1",
+        app_id="app-1",
+        sandbox_id="sandbox-1",
+        workspace_path="/tmp/sandbox-1",
+        model_id="",
+        prompt="hi",
+    )
+    _ = [
+        item
+        async for item in first_client.stream_turn_events(session_id=session_id, turn_ref=first_turn_ref)
+    ]
+
+    second_client = _client()
+    second_turn_ref = await second_client.submit_turn(
+        session_id=session_id,
+        run_id="run-parent-recovery-2",
+        app_id="app-1",
+        sandbox_id="sandbox-1",
+        workspace_path="/tmp/sandbox-1",
+        model_id="",
+        prompt="what was my first message?",
+    )
+    second_events = [
+        item
+        async for item in second_client.stream_turn_events(session_id=session_id, turn_ref=second_turn_ref)
+    ]
+    second_text = "".join(
+        str(item.get("payload", {}).get("content") or "")
+        for item in second_events
+        if item.get("event") == "assistant.delta"
+    )
+    assert "Your first message was hi." in second_text
+
+
+@pytest.mark.asyncio
+async def test_official_mode_deferred_turn_attaches_global_stream_before_posting_followup(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    session_id = "sess-deferred-followup"
+    latest_assistant_id = ""
+    stream_count = 0
+    post_seen_stream_counts: list[int] = []
+    second_post_parent_id = ""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal latest_assistant_id, stream_count, second_post_parent_id
+        if request.url.path == "/global/health":
+            return httpx.Response(200, json={"success": True, "data": {"ok": True}})
+        if request.url.path == "/session":
+            return httpx.Response(200, json={"success": True, "data": {"id": session_id}})
+        if request.url.path == "/global/event":
+            stream_count += 1
+            live_assistant_id = f"assistant-live-{stream_count}"
+            latest_assistant_id = live_assistant_id
+            sse_text = "".join(
+                [
+                    "data: "
+                    + _sse_payload(
+                        "message.updated",
+                        {
+                            "info": {
+                                "id": live_assistant_id,
+                                "sessionID": session_id,
+                                "role": "assistant",
+                                "time": {"created": stream_count, "completed": stream_count},
+                            },
+                            "parts": [{"type": "text", "text": "Live reply"}],
+                        },
+                    )
+                    + "\n\n",
+                    f"data: {_sse_payload('run.completed', {'sessionID': session_id})}\n\n",
+                ]
+            )
+            return httpx.Response(200, text=sse_text, headers={"content-type": "text/event-stream"})
+        if request.url.path == f"/session/{session_id}/message" and request.method == "POST":
+            post_seen_stream_counts.append(stream_count)
+            payload = json.loads(request.content.decode("utf-8"))
+            if len(post_seen_stream_counts) > 1:
+                second_post_parent_id = str(payload.get("parentID") or "").strip()
+            assert "parentID" not in payload
+            return httpx.Response(200, content=b"")
+        raise AssertionError(f"Unexpected request path: {request.url.path} ({request.method})")
+
+    _patch_async_client(monkeypatch, handler)
+    client = _client()
+
+    created_session_id = await client.create_session(
+        run_id="run-deferred-1",
+        app_id="app-1",
+        sandbox_id="sandbox-1",
+        workspace_path="/tmp/sandbox-1",
+        model_id="",
+    )
+    assert created_session_id == session_id
+
+    first_turn_ref = await client.submit_turn(
+        session_id=session_id,
+        run_id="run-deferred-1",
+        app_id="app-1",
+        sandbox_id="sandbox-1",
+        workspace_path="/tmp/sandbox-1",
+        model_id="",
+        prompt="hi",
+        defer_until_stream=True,
+    )
+    first_events = [
+        item
+        async for item in client.stream_turn_events(session_id=session_id, turn_ref=first_turn_ref)
+    ]
+    assert any(item.get("event") == "run.completed" for item in first_events)
+
+    second_turn_ref = await client.submit_turn(
+        session_id=session_id,
+        run_id="run-deferred-2",
+        app_id="app-1",
+        sandbox_id="sandbox-1",
+        workspace_path="/tmp/sandbox-1",
+        model_id="",
+        prompt="what was my first message?",
+        defer_until_stream=True,
+    )
+    second_events = [
+        item
+        async for item in client.stream_turn_events(session_id=session_id, turn_ref=second_turn_ref)
+    ]
+    assert any(item.get("event") == "run.completed" for item in second_events)
+    assert post_seen_stream_counts == [1, 2]
+    assert second_post_parent_id == ""
 
 
 @pytest.mark.asyncio
@@ -2012,8 +2142,8 @@ async def test_official_mode_auto_approves_permission_asked_in_stage_workspace(m
             return httpx.Response(200, json={"success": True, "data": {"ok": True}})
         if request.url.path == "/session":
             return httpx.Response(200, json={"success": True, "data": {"id": session_id}})
-        if request.url.path == f"/session/{session_id}/prompt_async":
-            return httpx.Response(204, text="")
+        if request.url.path == f"/session/{session_id}/message" and request.method == "POST":
+            return httpx.Response(200, content=b"")
         if request.url.path == "/global/event":
             return httpx.Response(200, text=sse_text, headers={"content-type": "text/event-stream"})
         if request.url.path == f"/session/{session_id}/permissions/{permission_request_id}" and request.method == "POST":
@@ -2059,9 +2189,6 @@ async def test_host_mode_answer_question_ignores_sandbox_id_and_uses_api(monkeyp
     class _SandboxClientStub:
         is_remote_enabled = True
 
-        async def answer_opencode_question(self, **kwargs):
-            raise AssertionError("sandbox controller path should not be used when host mode is forced")
-
     async def fake_request(method: str, path: str, **kwargs):
         calls.append((method, path))
         if path == "/question/question-1/reply":
@@ -2085,14 +2212,144 @@ async def test_host_mode_answer_question_ignores_sandbox_id_and_uses_api(monkeyp
 
 
 @pytest.mark.asyncio
+async def test_stream_session_events_maps_question_events_to_session_chat_contract(monkeypatch: pytest.MonkeyPatch):
+    session_id = "sess-question-1"
+    sse_text = "".join(
+        [
+            f"data: {_sse_payload('question.asked', {'sessionID': session_id, 'id': 'question-1', 'questions': [{'header': 'Need input', 'question': 'Pick one', 'options': [{'label': 'A'}]}]})}\n\n",
+            f"data: {_sse_payload('question.replied', {'sessionID': session_id, 'id': 'question-1', 'answers': [['A']]})}\n\n",
+        ]
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/global/event":
+            return httpx.Response(200, text=sse_text, headers={"content-type": "text/event-stream"})
+        raise AssertionError(f"Unexpected request path: {request.url.path}")
+
+    _patch_async_client(monkeypatch, handler)
+    client = _client()
+    client._api_mode = "official"
+
+    stream = client.stream_session_events(session_id=session_id)
+    events = [await anext(stream), await anext(stream)]
+    await stream.aclose()
+
+    assert events == [
+        {
+            "event": "permission.updated",
+            "session_id": session_id,
+                "payload": {
+                    "request_id": "question-1",
+                    "questions": [{
+                        "header": "Need input",
+                        "question": "Pick one",
+                        "multiple": False,
+                        "options": [{"label": "A", "description": ""}],
+                    }],
+                    "request_kind": "question",
+                },
+            },
+        {
+            "event": "permission.replied",
+            "session_id": session_id,
+            "payload": {
+                "request_id": "question-1",
+                "request_kind": None,
+                "answers": [["A"]],
+            },
+        },
+    ]
+
+
+@pytest.mark.asyncio
+async def test_reply_request_routes_question_answers_to_question_endpoint(monkeypatch: pytest.MonkeyPatch):
+    calls: list[tuple[str, str]] = []
+
+    async def fake_request(method: str, path: str, **kwargs):
+        calls.append((method, path))
+        if path == "/question/question-1/reply":
+            return {}
+        raise AssertionError(f"Unexpected request path: {path}")
+
+    client = _client(sandbox_controller_mode_override=False)
+    client._api_mode = "official"
+    client._request = fake_request  # type: ignore[method-assign]
+    client._remember_request_kind(session_id="sess-1", request_id="question-1", kind="question")
+
+    ok = await client.reply_request(
+        session_id="sess-1",
+        request_id="question-1",
+        answers=[["A"]],
+    )
+
+    assert ok is True
+    assert calls == [("POST", "/question/question-1/reply")]
+
+
+@pytest.mark.asyncio
+async def test_reply_request_infers_question_endpoint_from_official_question_id(monkeypatch: pytest.MonkeyPatch):
+    calls: list[tuple[str, str]] = []
+
+    async def fake_request(method: str, path: str, **kwargs):
+        calls.append((method, path))
+        if path == "/question/que_da2862c7e001Z3dPoANSu9N2U1/reply":
+            return {}
+        raise AssertionError(f"Unexpected request path: {path}")
+
+    client = _client(sandbox_controller_mode_override=False)
+    client._api_mode = "official"
+    client._request = fake_request  # type: ignore[method-assign]
+
+    ok = await client.reply_request(
+        session_id="sess-1",
+        request_id="que_da2862c7e001Z3dPoANSu9N2U1",
+        answers=[["A"]],
+    )
+
+    assert ok is True
+    assert calls == [("POST", "/question/que_da2862c7e001Z3dPoANSu9N2U1/reply")]
+
+
+@pytest.mark.asyncio
+async def test_sandbox_mode_stream_can_use_explicit_sandbox_id_without_in_memory_mapping():
+    class _NestedSandboxClientStub:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, str]] = []
+
+        async def stream_turn_events(self, *, session_id: str, turn_ref: str):
+            self.calls.append((session_id, turn_ref))
+            yield {"event": "assistant.delta", "payload": {"content": "hello"}}
+            yield {"event": "run.completed", "payload": {"status": "completed"}}
+
+    client = _client(sandbox_controller_mode_override=True)
+    stub = _NestedSandboxClientStub()
+
+    async def _fake_get_sandbox_official_client(*, sandbox_id: str, workspace_path: str):
+        _ = sandbox_id, workspace_path
+        return stub, workspace_path
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(client, "_get_sandbox_official_client", _fake_get_sandbox_official_client)
+
+    events = [
+        item
+        async for item in client.stream_run_events(
+            run_ref="sandbox-run-ref-1",
+            sandbox_id="sandbox-1",
+        )
+    ]
+
+    monkeypatch.undo()
+    assert stub.calls == [("sandbox-run-ref-1", "sandbox-run-ref-1")]
+    assert [item.get("event") for item in events] == ["assistant.delta", "run.completed"]
+
+
+@pytest.mark.asyncio
 async def test_host_mode_cancel_ignores_sandbox_id_and_uses_api(monkeypatch: pytest.MonkeyPatch):
     calls: list[tuple[str, str]] = []
 
     class _SandboxClientStub:
         is_remote_enabled = True
-
-        async def cancel_opencode_run(self, **kwargs):
-            raise AssertionError("sandbox controller path should not be used when host mode is forced")
 
     async def fake_request(method: str, path: str, **kwargs):
         calls.append((method, path))
@@ -2112,3 +2369,23 @@ async def test_host_mode_cancel_ignores_sandbox_id_and_uses_api(monkeypatch: pyt
 
     assert ok is True
     assert calls == [("POST", "/session/run-1/abort")]
+
+
+@pytest.mark.asyncio
+async def test_abort_session_accepts_empty_success_body():
+    calls: list[tuple[str, str, bool]] = []
+
+    async def fake_request(method: str, path: str, **kwargs):
+        calls.append((method, path, bool(kwargs.get("expect_json", True))))
+        if path == "/session/sess-1/abort":
+            return None
+        raise AssertionError(f"Unexpected request path: {path}")
+
+    client = _client(sandbox_controller_mode_override=False)
+    client._api_mode = "official"
+    client._request = fake_request  # type: ignore[method-assign]
+
+    ok = await client.abort_session(session_id="sess-1")
+
+    assert ok is True
+    assert calls == [("POST", "/session/sess-1/abort", False)]

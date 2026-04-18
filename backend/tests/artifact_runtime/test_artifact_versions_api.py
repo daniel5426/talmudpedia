@@ -378,10 +378,10 @@ async def test_artifact_export_and_import_round_trip_through_transfer_file(clien
         )
         assert import_response.status_code == 200, import_response.text
         imported = import_response.json()
-        assert imported["published"] is True
+        assert imported["source_published"] is True
         assert imported["artifact"]["id"] != artifact["id"]
         assert imported["artifact"]["display_name"] == "Portable Artifact (1)"
-        assert imported["artifact"]["type"] == "published"
+        assert imported["artifact"]["type"] == "draft"
         assert imported["artifact"]["runtime"]["language"] == "javascript"
         assert imported["artifact"]["runtime"]["dependencies"] == ["zod@^3.23.8"]
         assert imported["artifact"]["tool_contract"]["tool_ui"]["title"] == "Portable"

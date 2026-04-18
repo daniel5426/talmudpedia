@@ -23,6 +23,7 @@ from app.services.opencode_server_client import (
     OpenCodeServerClientConfig,
     OpenCodeServerClientError,
 )
+from app.services.opencode_server_launch import build_official_opencode_bootstrap_command
 from app.services.published_app_draft_dev_local_runtime import (
     LocalDraftDevRuntimeError,
     get_local_draft_dev_runtime_manager,
@@ -150,23 +151,8 @@ class RunCommandRequest(BaseModel):
     workspace_path: str | None = None
 
 
-class OpenCodeStartRequest(BaseModel):
-    run_id: str
-    app_id: str
+class OpenCodeEndpointRequest(BaseModel):
     workspace_path: str = "/workspace"
-    model_id: str
-    prompt: str
-    messages: list[dict[str, str]] = Field(default_factory=list)
-
-
-class OpenCodeCancelRequest(BaseModel):
-    run_ref: str
-
-
-class OpenCodeQuestionAnswerRequest(BaseModel):
-    run_ref: str
-    question_id: str
-    answers: list[list[str]] = Field(default_factory=list)
 
 
 class StagePrepareRequest(BaseModel):
@@ -246,10 +232,13 @@ def _resolve_opencode_server_command(host: str, port: int) -> list[str] | None:
     explicit = (os.getenv("APPS_SANDBOX_CONTROLLER_DEV_SHIM_OPENCODE_SERVER_COMMAND") or "").strip()
     if not explicit:
         explicit = (os.getenv("APPS_CODING_AGENT_OPENCODE_SERVER_COMMAND") or "").strip()
-    templates = [explicit] if explicit else [
-        "opencode serve --hostname {host} --port {port}",
-        "npx -y opencode-ai serve --hostname {host} --port {port}",
-    ]
+    if not explicit:
+        return [
+            "bash",
+            "-lc",
+            build_official_opencode_bootstrap_command(host=host, port=port),
+        ]
+    templates = [explicit]
     for template in templates:
         if not template:
             continue
@@ -472,42 +461,6 @@ async def _get_per_sandbox_opencode_client(*, sandbox_id: str, workspace_path: s
     return _build_opencode_client_for_base_url(base_url)
 
 
-@dataclass
-class _OpenCodeRunState:
-    sandbox_id: str
-    run_ref: str
-    host_run_ref: str
-    host_client: OpenCodeServerClient
-    queue: asyncio.Queue[dict[str, Any] | None]
-    task: asyncio.Task[None]
-    created_at: datetime
-
-
-class _OpenCodeRunStore:
-    def __init__(self) -> None:
-        self._lock = asyncio.Lock()
-        self._runs: dict[str, _OpenCodeRunState] = {}
-
-    async def put(self, state: _OpenCodeRunState) -> None:
-        async with self._lock:
-            self._runs[state.run_ref] = state
-
-    async def get(self, run_ref: str) -> _OpenCodeRunState | None:
-        async with self._lock:
-            return self._runs.get(str(run_ref))
-
-    async def pop(self, run_ref: str) -> _OpenCodeRunState | None:
-        async with self._lock:
-            return self._runs.pop(str(run_ref), None)
-
-
-_opencode_store = _OpenCodeRunStore()
-
-
-def _sse(payload: dict[str, Any]) -> str:
-    return f"data: {json.dumps(payload, default=str)}\n\n"
-
-
 def _resolve_requested_workspace_path(
     *,
     project_workspace_resolved: str,
@@ -539,29 +492,6 @@ def _resolve_requested_workspace_path(
         status_code=400,
         detail="Requested workspace path is invalid or outside sandbox project scope",
     )
-
-
-async def _pump_opencode_events(state: _OpenCodeRunState) -> None:
-    try:
-        async for event in state.host_client.stream_run_events(run_ref=state.host_run_ref):
-            if isinstance(event, dict):
-                await state.queue.put(event)
-                event_name = str(event.get("event") or event.get("type") or "").strip().lower()
-                if event_name in {"run.completed", "run.failed", "run.cancelled", "run.paused"}:
-                    break
-    except Exception as exc:
-        await state.queue.put(
-            {
-                "event": "run.failed",
-                "payload": {
-                    "status": "failed",
-                    "message": str(exc),
-                },
-                "diagnostics": [{"message": str(exc)}],
-            }
-        )
-    finally:
-        await state.queue.put(None)
 
 
 def _translate_runtime_error(exc: Exception) -> HTTPException:
@@ -853,8 +783,8 @@ async def sync_workspace_files(sandbox_id: str, payload: WorkspaceSyncRequest) -
         raise _translate_runtime_error(exc) from exc
 
 
-@router.post("/sessions/{sandbox_id}/opencode/start")
-async def opencode_start(sandbox_id: str, payload: OpenCodeStartRequest) -> dict[str, Any]:
+@router.post("/sessions/{sandbox_id}/opencode/endpoint")
+async def opencode_endpoint(sandbox_id: str, payload: OpenCodeEndpointRequest) -> dict[str, Any]:
     manager = get_local_draft_dev_runtime_manager()
     workspace_path = await manager.resolve_project_dir(sandbox_id=sandbox_id)
     project_workspace = str(workspace_path or "").strip()
@@ -875,101 +805,18 @@ async def opencode_start(sandbox_id: str, payload: OpenCodeStartRequest) -> dict
         else:
             host_client = _build_host_opencode_client()
         await host_client.ensure_healthy(force=True)
-        host_run_ref = await host_client.start_run(
-            run_id=payload.run_id,
-            app_id=payload.app_id,
-            sandbox_id=sandbox_id,
-            workspace_path=effective_workspace,
-            model_id=payload.model_id,
-            prompt=payload.prompt,
-            messages=payload.messages,
-        )
     except Exception as exc:
         raise _translate_runtime_error(exc) from exc
 
-    queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
-    run_state = _OpenCodeRunState(
-        sandbox_id=sandbox_id,
-        run_ref=host_run_ref,
-        host_run_ref=host_run_ref,
-        host_client=host_client,
-        queue=queue,
-        task=asyncio.create_task(asyncio.sleep(0.0)),
-        created_at=datetime.now(timezone.utc),
-    )
-    run_state.task = asyncio.create_task(_pump_opencode_events(run_state))
-    await _opencode_store.put(run_state)
-    return {"run_ref": host_run_ref, "sandbox_id": sandbox_id, "status": "started"}
-
-
-@router.get("/sessions/{sandbox_id}/opencode/events")
-async def opencode_events(
-    sandbox_id: str,
-    run_ref: str = Query(..., min_length=1),
-) -> StreamingResponse:
-    state = await _opencode_store.get(run_ref)
-    if state is None or str(state.sandbox_id) != str(sandbox_id):
-        raise HTTPException(status_code=404, detail="OpenCode run stream not found.")
-
-    async def event_generator():
-        yield ": " + (" " * 2048) + "\n\n"
-        while True:
-            item = await state.queue.get()
-            if item is None:
-                break
-            yield _sse(item)
-            await asyncio.sleep(0)
-        await _opencode_store.pop(run_ref)
-
-    return StreamingResponse(
-        event_generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )
-
-
-@router.post("/sessions/{sandbox_id}/opencode/cancel")
-async def opencode_cancel(sandbox_id: str, payload: OpenCodeCancelRequest) -> dict[str, Any]:
-    state = await _opencode_store.get(payload.run_ref)
-    if state is None or str(state.sandbox_id) != str(sandbox_id):
-        return {"cancelled": False, "reason": "run not found"}
-    try:
-        cancelled = await state.host_client.cancel_run(
-            run_ref=state.host_run_ref,
-            sandbox_id=str(sandbox_id),
-        )
-        if cancelled:
-            if state.task and not state.task.done():
-                state.task.cancel()
-            await state.queue.put(
-                {
-                    "event": "run.cancelled",
-                    "payload": {"status": "cancelled"},
-                    "diagnostics": [{"message": "run cancelled"}],
-                }
-            )
-            await state.queue.put(None)
-        return {"cancelled": bool(cancelled)}
-    except Exception as exc:
-        raise _translate_runtime_error(exc) from exc
-
-
-@router.post("/sessions/{sandbox_id}/opencode/question-answer")
-async def opencode_question_answer(sandbox_id: str, payload: OpenCodeQuestionAnswerRequest) -> dict[str, Any]:
-    state = await _opencode_store.get(payload.run_ref)
-    if state is None or str(state.sandbox_id) != str(sandbox_id):
-        return {"ok": False, "reason": "run not found"}
-    try:
-        ok = await state.host_client.answer_question(
-            run_ref=state.host_run_ref,
-            question_id=str(payload.question_id or "").strip(),
-            answers=payload.answers,
-            sandbox_id=str(sandbox_id),
-        )
-        return {"ok": bool(ok)}
-    except Exception as exc:
-        raise _translate_runtime_error(exc) from exc
+    base_url = str(getattr(getattr(host_client, "_config", None), "base_url", "") or "").strip()
+    if not base_url:
+        raise HTTPException(status_code=500, detail="OpenCode endpoint did not provide a base URL.")
+    extra_headers = getattr(getattr(host_client, "_config", None), "extra_headers", None)
+    return {
+        "sandbox_id": sandbox_id,
+        "base_url": base_url,
+        "workspace_path": effective_workspace,
+        "api_key": str(getattr(getattr(host_client, "_config", None), "api_key", "") or "").strip() or None,
+        "extra_headers": extra_headers if isinstance(extra_headers, dict) else None,
+        "status": "ready",
+    }

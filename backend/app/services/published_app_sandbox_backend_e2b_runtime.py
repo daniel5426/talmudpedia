@@ -5,7 +5,11 @@ import logging
 import os
 from typing import Any, Dict
 
-from app.services.published_app_sandbox_backend import PublishedAppSandboxBackendError
+from app.services.opencode_server_launch import build_official_opencode_bootstrap_command
+from app.services.published_app_sandbox_backend import (
+    PublishedAppOpenCodeEndpoint,
+    PublishedAppSandboxBackendError,
+)
 
 try:
     from e2b import AsyncSandbox
@@ -219,14 +223,9 @@ class E2BSandboxRuntimeMixin:
         explicit = (os.getenv("APPS_SANDBOX_CONTROLLER_DEV_SHIM_OPENCODE_SERVER_COMMAND") or "").strip()
         if not explicit:
             explicit = (os.getenv("APPS_CODING_AGENT_OPENCODE_SERVER_COMMAND") or "").strip()
-        fallback_command = (
-            "if command -v opencode >/dev/null 2>&1; then "
-            "opencode serve --hostname {host} --port {port}; "
-            "elif command -v npx >/dev/null 2>&1; then "
-            "npx -y opencode-ai serve --hostname {host} --port {port}; "
-            "else "
-            "echo 'OpenCode executable is unavailable in sandbox' >&2; exit 1; "
-            "fi"
+        fallback_command = build_official_opencode_bootstrap_command(
+            host="{host}",
+            port=self.config.e2b_opencode_port,
         )
         template = explicit or fallback_command
         command = template.format(host="0.0.0.0", port=self.config.e2b_opencode_port)
@@ -250,70 +249,25 @@ class E2BSandboxRuntimeMixin:
                 ) from exc
             raise
 
-    async def start_opencode_run(
+    async def ensure_opencode_endpoint(
         self,
         *,
         sandbox_id: str,
-        run_id: str,
-        app_id: str,
         workspace_path: str,
-        model_id: str,
-        prompt: str,
-        messages: list[dict[str, str]],
-    ) -> Dict[str, Any]:
+    ) -> PublishedAppOpenCodeEndpoint:
         sandbox = await self._connect_sandbox(sandbox_id=sandbox_id)
         resolved_workspace = await self._resolve_workspace_path(sandbox, workspace_path)
-        logger.info(
-            "E2B_OPENCODE_START sandbox_id=%s run_id=%s app_id=%s requested_workspace=%s resolved_workspace=%s",
-            sandbox_id,
-            run_id,
-            app_id,
-            workspace_path,
-            resolved_workspace,
-        )
         client = await self._ensure_opencode_server(
             sandbox,
             sandbox_id=sandbox_id,
             workspace_path=resolved_workspace,
         )
-        run_ref = await client.start_run(
-            run_id=run_id,
-            app_id=app_id,
-            sandbox_id=sandbox_id,
+        base_url = str(getattr(getattr(client, "_config", None), "base_url", "") or "").strip()
+        if not base_url:
+            raise PublishedAppSandboxBackendError("E2B OpenCode endpoint is missing a base URL.")
+        return PublishedAppOpenCodeEndpoint(
+            sandbox_id=str(sandbox_id),
+            base_url=base_url,
             workspace_path=resolved_workspace,
-            model_id=model_id,
-            prompt=prompt,
-            messages=messages,
+            extra_headers=self._opencode_headers(sandbox) or None,
         )
-        return {"run_ref": run_ref, "sandbox_id": sandbox_id, "status": "started"}
-
-    async def stream_opencode_events(self, *, sandbox_id: str, run_ref: str):
-        sandbox = await self._connect_sandbox(sandbox_id=sandbox_id)
-        client = self._build_opencode_client(sandbox)
-        async for event in client.stream_run_events(run_ref=run_ref):
-            if isinstance(event, dict):
-                yield event
-
-    async def cancel_opencode_run(self, *, sandbox_id: str, run_ref: str) -> Dict[str, Any]:
-        sandbox = await self._connect_sandbox(sandbox_id=sandbox_id)
-        client = self._build_opencode_client(sandbox)
-        cancelled = await client.cancel_run(run_ref=run_ref, sandbox_id=None)
-        return {"cancelled": bool(cancelled)}
-
-    async def answer_opencode_question(
-        self,
-        *,
-        sandbox_id: str,
-        run_ref: str,
-        question_id: str,
-        answers: list[list[str]],
-    ) -> Dict[str, Any]:
-        sandbox = await self._connect_sandbox(sandbox_id=sandbox_id)
-        client = self._build_opencode_client(sandbox)
-        ok = await client.answer_question(
-            run_ref=run_ref,
-            question_id=question_id,
-            answers=answers,
-            sandbox_id=None,
-        )
-        return {"ok": bool(ok)}

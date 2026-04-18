@@ -29,7 +29,7 @@ Artifact runtime revision, deploy, and dispatch-time credential lifecycle.
 - fetch one historical artifact revision snapshot through the admin API
 - duplicate an artifact into a new tenant draft with Google Drive-style incremented names
 - export an artifact into a versioned transfer JSON file
-- import a transfer JSON file into a new tenant artifact and preserve published state
+- import a transfer JSON file into a new tenant artifact as a portable draft while retaining whether the source file came from a published artifact
 - read and update the persisted artifact working-draft snapshot through the admin API
 - keep saved-artifact working-draft persistence isolated from unrelated `draft_key`-scoped shared drafts
 - link draft-key-scoped artifact coding sessions and shared drafts to the saved artifact during artifact create so artifact history is queryable by `artifact_id`

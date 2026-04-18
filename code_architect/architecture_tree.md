@@ -1,6 +1,6 @@
 # Architecture Tree (Curated)
 
-Last Updated: 2026-04-16
+Last Updated: 2026-04-17
 
 This file is a backend-only architecture map optimized for agent context efficiency.
 
@@ -246,6 +246,7 @@ backend/app/services/published_app_sandbox_backend_factory.py
 backend/app/services/published_app_sandbox_backend_local.py
 backend/app/services/published_app_sandbox_backend_controller.py
 backend/app/services/published_app_sandbox_backend_sprite.py
+backend/app/services/opencode_server_launch.py
 backend/app/services/published_app_sprite_proxy_tunnel.py
 backend/app/services/published_app_sandbox_backend_e2b_workspace.py
 
@@ -262,6 +263,7 @@ backend/app/services/published_app_workspace_build_service.py
 backend/app/services/published_app_draft_revision_materializer.py
 backend/app/services/published_app_draft_dev_patching.py
 backend/app/services/published_app_coding_chat_history_service.py
+backend/app/services/published_app_coding_chat_session_service.py
 backend/app/services/published_app_coding_agent_tools.py
 backend/app/services/published_app_agent_integration_contract.py
 backend/app/services/published_app_coding_agent_profile.py

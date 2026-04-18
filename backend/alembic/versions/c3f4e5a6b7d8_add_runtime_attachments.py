@@ -1,7 +1,7 @@
 """add runtime attachments
 
 Revision ID: c3f4e5a6b7d8
-Revises: 0a1b2c3d4e5f, 11e6a7c4b9d2, a1b9d7c5e3f0, aa19c4e7d2b1
+Revises: 0a1b2c3d4e5f, 11e6a7c4b9d2, a1b9d7c5e3f0
 Create Date: 2026-03-19 16:15:00.000000
 """
 
@@ -12,9 +12,9 @@ from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision = "c3f4e5a6b7d8"
-down_revision = ("0a1b2c3d4e5f", "11e6a7c4b9d2", "a1b9d7c5e3f0", "aa19c4e7d2b1")
+down_revision = ("0a1b2c3d4e5f", "11e6a7c4b9d2", "a1b9d7c5e3f0")
 branch_labels = None
-depends_on = ("1f2e3d4c5b6a",)
+depends_on = ("1f2e3d4c5b6a", "aa19c4e7d2b1")
 
 
 agentthreadsurface = postgresql.ENUM(

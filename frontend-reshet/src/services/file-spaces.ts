@@ -1,4 +1,4 @@
-import { httpClient } from "./http"
+import { HttpRequestError, httpClient } from "./http"
 
 export type FileAccessMode = "read" | "read_write"
 export type FileEntryType = "file" | "directory"
@@ -10,6 +10,8 @@ export interface FileSpace {
   name: string
   description: string | null
   status: "active" | "archived"
+  file_count?: number | null
+  total_bytes?: number | null
   created_at: string | null
   updated_at: string | null
 }
@@ -140,6 +142,31 @@ class FileSpacesService {
   buildDownloadUrl(spaceId: string, path: string): string {
     const baseUrl = httpClient.baseUrl || ""
     return `${baseUrl}${this.basePath}/${spaceId}/entries/download?path=${encodeURIComponent(path)}`
+  }
+
+  async fetchBlob(spaceId: string, path: string, options?: { signal?: AbortSignal }): Promise<Blob> {
+    const response = await httpClient.requestRaw(
+      `${this.basePath}/${spaceId}/entries/download?path=${encodeURIComponent(path)}`,
+      { method: "GET", signal: options?.signal },
+    )
+
+    if (!response.ok) {
+      let detail: unknown = null
+      try {
+        const payload = await response.json()
+        detail = payload?.detail ?? payload
+      } catch {
+        detail = { message: response.statusText || "Request failed" }
+      }
+
+      throw new HttpRequestError(
+        typeof detail === "string" ? detail : response.statusText || "Request failed",
+        response.status,
+        detail,
+      )
+    }
+
+    return response.blob()
   }
 
   async listLinks(spaceId: string): Promise<{ items: AgentFileSpaceLink[] }> {

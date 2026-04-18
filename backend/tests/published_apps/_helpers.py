@@ -1,9 +1,11 @@
 from datetime import datetime, timezone
 from uuid import uuid4
 
+import jwt
+
 from app.agent.execution.trace_recorder import ExecutionTraceRecorder
 from app.agent.execution.service import AgentExecutorService
-from app.core.security import create_access_token, get_password_hash
+from app.core.security import ALGORITHM, SECRET_KEY, create_access_token, get_password_hash
 from app.db.postgres.models.agents import Agent, AgentRun, AgentStatus, RunStatus
 from app.db.postgres.models.identity import (
     MembershipStatus,
@@ -64,12 +66,18 @@ async def seed_admin_tenant_and_agent(db_session):
 
 
 def admin_headers(user_id: str, tenant_id: str, org_unit_id: str) -> dict[str, str]:
-    token = create_access_token(
-        subject=user_id,
-        tenant_id=tenant_id,
-        org_unit_id=org_unit_id,
-        org_role="owner",
+    payload = jwt.decode(
+        create_access_token(
+            subject=user_id,
+            tenant_id=tenant_id,
+            org_unit_id=org_unit_id,
+            org_role="owner",
+        ),
+        SECRET_KEY,
+        algorithms=[ALGORITHM],
     )
+    payload["scope"] = ["*"]
+    token = jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
     return {"Authorization": f"Bearer {token}", "X-Tenant-ID": tenant_id}
 
 

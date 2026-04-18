@@ -1,4 +1,4 @@
-Last Updated: 2026-03-09
+Last Updated: 2026-04-17
 
 # Apps Builder Sprite Hard Cut Status
 
@@ -33,9 +33,9 @@ Validated in code and tests:
 - Sprite backend config coverage
 - Sprite proxy tunnel coverage for OpenCode transport handshake and byte relay
 - live Sprite smoke coverage for create, preview, second-editor attach, detach/reattach, provider delete recovery, and app delete cleanup
+- live coding-agent e2e coverage for submit -> stream -> preview update -> draft revision materialization on the Sprite-backed shared workspace
 
 ## Remaining Follow-ups
 
 - add live websocket/HMR coverage through the backend preview proxy
-- add live OpenCode run coverage on the Sprite-backed shared workspace
 - decide whether artifact runtime remains on E2B or receives a separate Sprite-native design

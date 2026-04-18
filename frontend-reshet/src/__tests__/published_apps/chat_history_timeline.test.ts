@@ -1,7 +1,7 @@
 import { buildTimelineFromChatHistory } from "@/features/apps-builder/workspace/chat/useAppsBuilderChat.history";
 
 describe("buildTimelineFromChatHistory", () => {
-  it("injects persisted tool events before assistant message for the same run", () => {
+  it("injects tool parts before the assistant message", () => {
     const detail = {
       session: {
         id: "chat-1",
@@ -13,45 +13,33 @@ describe("buildTimelineFromChatHistory", () => {
       messages: [
         {
           id: "m1",
-          run_id: "run-1",
           role: "user" as const,
           content: "Please update the main file",
+          parts: [{ id: "m1-p1", type: "text", text: "Please update the main file" }],
           created_at: "2026-02-25T10:00:00Z",
         },
         {
           id: "m2",
-          run_id: "run-1",
           role: "assistant" as const,
           content: "Updated.",
+          parts: [
+            {
+              id: "tool-1",
+              type: "tool",
+              tool: "write_file",
+              call_id: "call-1",
+              state: {
+                status: "completed",
+                input: { path: "src/main.tsx" },
+                output: { path: "src/main.tsx" },
+              },
+            },
+            { id: "m2-p2", type: "text", text: "Updated." },
+          ],
           created_at: "2026-02-25T10:00:02Z",
         },
       ],
-      run_events: [
-        {
-          run_id: "run-1",
-          event: "tool.started" as const,
-          stage: "tool",
-          payload: {
-            tool: "write_file",
-            span_id: "call-1",
-            input: { path: "src/main.tsx" },
-          },
-          diagnostics: [],
-          ts: "2026-02-25T10:00:01Z",
-        },
-        {
-          run_id: "run-1",
-          event: "tool.completed" as const,
-          stage: "tool",
-          payload: {
-            tool: "write_file",
-            span_id: "call-1",
-            output: { path: "src/main.tsx" },
-          },
-          diagnostics: [],
-          ts: "2026-02-25T10:00:01Z",
-        },
-      ],
+      paging: { has_more: false, next_before_message_id: null },
     };
 
     const timeline = buildTimelineFromChatHistory(detail);
@@ -61,98 +49,7 @@ describe("buildTimelineFromChatHistory", () => {
     expect(timeline[1].toolName).toBe("write_file");
     expect(timeline[1].toolPath).toBe("src/main.tsx");
     expect(timeline[2].description).toBe("Updated.");
-  });
-
-  it("settles historical tools when events are missing span_id", () => {
-    const detail = {
-      session: {
-        id: "chat-1",
-        title: "History",
-        created_at: "2026-02-25T10:00:00Z",
-        updated_at: "2026-02-25T10:00:00Z",
-        last_message_at: "2026-02-25T10:00:00Z",
-      },
-      messages: [
-        {
-          id: "m1",
-          run_id: "run-1",
-          role: "assistant" as const,
-          content: "Done.",
-          created_at: "2026-02-25T10:00:02Z",
-        },
-      ],
-      run_events: [
-        {
-          run_id: "run-1",
-          event: "tool.started" as const,
-          stage: "tool",
-          payload: { tool: "read_file", input: { path: "src/a.ts" } },
-          diagnostics: [],
-          ts: "2026-02-25T10:00:01Z",
-        },
-        {
-          run_id: "run-1",
-          event: "tool.completed" as const,
-          stage: "tool",
-          payload: { tool: "read_file", output: { path: "src/a.ts" } },
-          diagnostics: [],
-          ts: "2026-02-25T10:00:01Z",
-        },
-      ],
-    };
-
-    const timeline = buildTimelineFromChatHistory(detail);
-    const toolRows = timeline.filter((item) => item.kind === "tool");
-
-    expect(toolRows).toHaveLength(1);
-    expect(toolRows[0].toolStatus).toBe("completed");
-    expect(toolRows[0].tone).toBe("success");
-  });
-
-  it("keeps multiple terminal tool events when span_id is missing", () => {
-    const detail = {
-      session: {
-        id: "chat-1",
-        title: "History",
-        created_at: "2026-02-25T10:00:00Z",
-        updated_at: "2026-02-25T10:00:00Z",
-        last_message_at: "2026-02-25T10:00:00Z",
-      },
-      messages: [
-        {
-          id: "m1",
-          run_id: "run-1",
-          role: "assistant" as const,
-          content: "Done.",
-          created_at: "2026-02-25T10:00:02Z",
-        },
-      ],
-      run_events: [
-        {
-          run_id: "run-1",
-          event: "tool.completed" as const,
-          stage: "tool",
-          payload: { tool: "glob", output: { path: "index.html" } },
-          diagnostics: [],
-          ts: "2026-02-25T10:00:01Z",
-        },
-        {
-          run_id: "run-1",
-          event: "tool.completed" as const,
-          stage: "tool",
-          payload: { tool: "glob", output: { path: "src/main.tsx" } },
-          diagnostics: [],
-          ts: "2026-02-25T10:00:02Z",
-        },
-      ],
-    };
-
-    const timeline = buildTimelineFromChatHistory(detail);
-    const toolRows = timeline.filter((item) => item.kind === "tool");
-
-    expect(toolRows).toHaveLength(2);
-    expect(toolRows[0].toolStatus).toBe("completed");
-    expect(toolRows[1].toolStatus).toBe("completed");
+    expect(timeline[2].assistantStreamId).toBe("m2");
   });
 
   it("does not treat command output banners as tool file paths in history", () => {
@@ -167,26 +64,25 @@ describe("buildTimelineFromChatHistory", () => {
       messages: [
         {
           id: "m1",
-          run_id: "run-1",
           role: "assistant" as const,
           content: "Done.",
+          parts: [
+            {
+              id: "tool-1",
+              type: "tool",
+              tool: "command",
+              call_id: "call-1",
+              state: {
+                status: "completed",
+                output: "talmudpedia-published-app-template@0.0.1",
+              },
+            },
+            { id: "m1-p2", type: "text", text: "Done." },
+          ],
           created_at: "2026-02-25T10:00:02Z",
         },
       ],
-      run_events: [
-        {
-          run_id: "run-1",
-          event: "tool.completed" as const,
-          stage: "tool",
-          payload: {
-            tool: "command",
-            span_id: "call-1",
-            output: "talmudpedia-published-app-template@0.0.1",
-          },
-          diagnostics: [],
-          ts: "2026-02-25T10:00:01Z",
-        },
-      ],
+      paging: { has_more: false, next_before_message_id: null },
     };
 
     const timeline = buildTimelineFromChatHistory(detail);
@@ -209,38 +105,26 @@ describe("buildTimelineFromChatHistory", () => {
       messages: [
         {
           id: "m1",
-          run_id: "run-1",
           role: "assistant" as const,
           content: "Done.",
+          parts: [
+            {
+              id: "tool-1",
+              type: "tool",
+              tool: "bash",
+              call_id: "call-1",
+              state: {
+                status: "completed",
+                input: { description: "Run TypeScript type checking", command: "npm run typecheck" },
+                output: "ok",
+              },
+            },
+            { id: "m1-p2", type: "text", text: "Done." },
+          ],
           created_at: "2026-02-25T10:00:02Z",
         },
       ],
-      run_events: [
-        {
-          run_id: "run-1",
-          event: "tool.started" as const,
-          stage: "tool",
-          payload: {
-            tool: "bash",
-            span_id: "call-1",
-            input: { description: "Run TypeScript type checking", command: "npm run typecheck" },
-          },
-          diagnostics: [],
-          ts: "2026-02-25T10:00:01Z",
-        },
-        {
-          run_id: "run-1",
-          event: "tool.completed" as const,
-          stage: "tool",
-          payload: {
-            tool: "bash",
-            span_id: "call-1",
-            output: "talmudpedia-published-app-template@0.0.1",
-          },
-          diagnostics: [],
-          ts: "2026-02-25T10:00:02Z",
-        },
-      ],
+      paging: { has_more: false, next_before_message_id: null },
     };
 
     const timeline = buildTimelineFromChatHistory(detail);

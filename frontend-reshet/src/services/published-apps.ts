@@ -1,6 +1,59 @@
 import { httpClient } from "./http";
 import type { ContextWindow } from "./context-window";
 
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "0.0.0.0"]);
+
+export function resolveDirectBackendStreamBaseUrl(
+  streamBase: string | null | undefined,
+  backendBase: string | null | undefined,
+  currentHostname?: string | null,
+): string {
+  const rawStreamBase = String(streamBase || "").trim();
+  const rawBackendBase = String(backendBase || "").trim();
+  const fallbackBase = /^https?:\/\//i.test(rawStreamBase)
+    ? rawStreamBase
+    : /^https?:\/\//i.test(rawBackendBase)
+      ? rawBackendBase
+      : "http://127.0.0.1:8026";
+
+  if (typeof window === "undefined") {
+    const normalizedHostname = String(currentHostname || "").trim().toLowerCase();
+    if (!normalizedHostname) {
+      return fallbackBase;
+    }
+    try {
+      const resolved = new URL(fallbackBase);
+      const targetHostname = String(resolved.hostname || "").trim().toLowerCase();
+      if (
+        LOOPBACK_HOSTS.has(normalizedHostname)
+        && LOOPBACK_HOSTS.has(targetHostname)
+        && normalizedHostname !== targetHostname
+      ) {
+        resolved.hostname = normalizedHostname;
+      }
+      return resolved.toString();
+    } catch {
+      return fallbackBase;
+    }
+  }
+  try {
+    const resolved = new URL(fallbackBase);
+    const pageHostname = String(currentHostname || window.location.hostname || "").trim().toLowerCase();
+    const targetHostname = String(resolved.hostname || "").trim().toLowerCase();
+    if (
+      pageHostname
+      && LOOPBACK_HOSTS.has(pageHostname)
+      && LOOPBACK_HOSTS.has(targetHostname)
+      && pageHostname !== targetHostname
+    ) {
+      resolved.hostname = pageHostname;
+    }
+    return resolved.toString();
+  } catch {
+    return fallbackBase;
+  }
+}
+
 export type PublishedAppStatus = "draft" | "published" | "paused" | "archived";
 export type PublishedAppVisibility = "public" | "private";
 export type PublishedAppAuthProvider = "password" | "google";
@@ -320,47 +373,6 @@ export interface PublishedAppExportOptions {
 export type CodingAgentDiagnostics = Array<{ message?: string; [key: string]: unknown }>;
 export type CodingAgentExecutionEngine = "opencode";
 
-export interface CodingAgentStreamEvent {
-  event: string;
-  run_id: string;
-  app_id: string;
-  seq: number;
-  ts: string;
-  stage: string;
-  payload?: Record<string, unknown>;
-  diagnostics?: CodingAgentDiagnostics;
-}
-
-export interface CodingAgentRun {
-  run_id: string;
-  status: string;
-  execution_engine: CodingAgentExecutionEngine;
-  chat_session_id?: string | null;
-  surface?: string | null;
-  published_app_id?: string | null;
-  base_revision_id?: string | null;
-  result_revision_id?: string | null;
-  requested_model_id?: string | null;
-  resolved_model_id?: string | null;
-  error?: string | null;
-  created_at: string;
-  started_at?: string | null;
-  completed_at?: string | null;
-  sandbox_id?: string | null;
-  sandbox_status?: string | null;
-  sandbox_started_at?: string | null;
-  context_window?: ContextWindow | null;
-  run_usage?: {
-    source?: string | null;
-    input_tokens?: number | null;
-    output_tokens?: number | null;
-    total_tokens?: number | null;
-    cached_input_tokens?: number | null;
-    cached_output_tokens?: number | null;
-    reasoning_tokens?: number | null;
-  } | null;
-}
-
 export interface CodingAgentChatSession {
   id: string;
   title: string;
@@ -369,28 +381,49 @@ export interface CodingAgentChatSession {
   last_message_at: string;
 }
 
+export interface CodingAgentChatMessagePart {
+  id: string;
+  message_id?: string | null;
+  type: string;
+  text?: string | null;
+  tool?: string | null;
+  call_id?: string | null;
+  state?: {
+    status?: string | null;
+    title?: string | null;
+    input?: Record<string, unknown> | null;
+    output?: unknown;
+    error?: string | null;
+    metadata?: Record<string, unknown> | null;
+  } | null;
+}
+
 export interface CodingAgentChatMessage {
   id: string;
-  run_id: string;
   role: "user" | "assistant";
   content: string;
+  parts: CodingAgentChatMessagePart[];
   created_at: string;
 }
 
-export interface CodingAgentRunEvent {
-  run_id: string;
-  event: "tool.started" | "tool.completed" | "tool.failed";
-  stage: string;
-  payload: Record<string, unknown>;
-  diagnostics: Array<Record<string, unknown>>;
-  ts?: string | null;
+export interface CodingAgentSessionEvent {
+  event:
+    | "session.connected"
+    | "session.status"
+    | "session.idle"
+    | "session.error"
+    | "message.updated"
+    | "message.part.updated"
+    | "message.part.removed"
+    | "permission.updated"
+    | "permission.replied";
+  session_id: string;
+  payload?: Record<string, unknown>;
 }
 
 export interface CodingAgentChatSessionDetail {
   session: CodingAgentChatSession;
   messages: CodingAgentChatMessage[];
-  run_events?: CodingAgentRunEvent[];
-  context_window?: ContextWindow | null;
   paging: {
     has_more: boolean;
     next_before_message_id?: string | null;
@@ -404,51 +437,17 @@ export interface AppVersionListItem extends PublishedAppRevision {
   run_prompt_preview?: string | null;
 }
 
-export interface CodingAgentActiveRunState {
-  run_id: string;
-  status: string;
-  context_window?: ContextWindow | null;
-  run_usage?: {
-    source?: string | null;
-    input_tokens?: number | null;
-    output_tokens?: number | null;
-    total_tokens?: number | null;
-    cached_input_tokens?: number | null;
-    cached_output_tokens?: number | null;
-    reasoning_tokens?: number | null;
-  } | null;
+export interface CodingAgentCreateChatSessionRequest {
+  title?: string | null;
 }
 
-export interface CodingAgentPromptQueueItem {
-  id: string;
+export interface CodingAgentMessageSubmissionResponse {
+  submission_status: "accepted";
   chat_session_id: string;
-  position: number;
-  status: string;
-  input: string;
-  client_message_id?: string | null;
-  created_at: string;
-  started_at?: string | null;
-  finished_at?: string | null;
-  error?: string | null;
+  message: CodingAgentChatMessage;
 }
-
-export interface CodingAgentPromptSubmissionStartedResponse {
-  submission_status: "started";
-  run: CodingAgentRun;
-}
-
-export interface CodingAgentPromptSubmissionQueuedResponse {
-  submission_status: "queued";
-  active_run_id: string;
-  queue_item: CodingAgentPromptQueueItem;
-}
-
-export type CodingAgentPromptSubmissionResponse =
-  | CodingAgentPromptSubmissionStartedResponse
-  | CodingAgentPromptSubmissionQueuedResponse;
 
 export interface CodingAgentAnswerQuestionRequest {
-  question_id: string;
   answers: string[][];
 }
 
@@ -713,16 +712,11 @@ export const publishedAppsService = {
     };
   },
 
-  async submitCodingAgentPrompt(
+  async createCodingAgentChatSession(
     appId: string,
-    payload: {
-      input: string;
-      model_id?: string | null;
-      chat_session_id?: string;
-      client_message_id?: string;
-    },
-  ): Promise<CodingAgentPromptSubmissionResponse> {
-    return httpClient.post<CodingAgentPromptSubmissionResponse>(`/admin/apps/${appId}/coding-agent/v2/prompts`, payload);
+    payload: CodingAgentCreateChatSessionRequest = {},
+  ): Promise<CodingAgentChatSession> {
+    return httpClient.post<CodingAgentChatSession>(`/admin/apps/${appId}/coding-agent/v2/chat-sessions`, payload);
   },
 
   async listCodingAgentChatSessions(appId: string, limit = 25): Promise<CodingAgentChatSession[]> {
@@ -747,24 +741,35 @@ export const publishedAppsService = {
     );
   },
 
-  async streamCodingAgentRun(
+  async submitCodingAgentMessage(
     appId: string,
-    runId: string,
+    sessionId: string,
+    payload: {
+      message_id?: string;
+      parts: Array<Record<string, unknown>>;
+      model_id?: string | null;
+    },
+  ): Promise<CodingAgentMessageSubmissionResponse> {
+    return httpClient.post<CodingAgentMessageSubmissionResponse>(
+      `/admin/apps/${appId}/coding-agent/v2/chat-sessions/${sessionId}/messages`,
+      payload,
+    );
+  },
+
+  async streamCodingAgentChatSession(
+    appId: string,
+    sessionId: string,
   ): Promise<Response> {
     // Bypass Next.js rewrite proxy for SSE because it can buffer chunked responses.
-    const streamBase = String(process.env.NEXT_PUBLIC_BACKEND_STREAM_URL || "").trim();
-    const backendBase = String(process.env.NEXT_PUBLIC_BACKEND_URL || "").trim();
-    const directBackendUrl = /^https?:\/\//i.test(streamBase)
-      ? streamBase
-      : /^https?:\/\//i.test(backendBase)
-        ? backendBase
-        : "http://127.0.0.1:8026";
+    const directBackendUrl = resolveDirectBackendStreamBaseUrl(
+      process.env.NEXT_PUBLIC_BACKEND_STREAM_URL,
+      process.env.NEXT_PUBLIC_BACKEND_URL,
+    );
     const headers: Record<string, string> = {
       Accept: "text/event-stream",
-      "Cache-Control": "no-cache",
     };
     const url = new URL(
-      `/admin/apps/${encodeURIComponent(appId)}/coding-agent/v2/runs/${encodeURIComponent(runId)}/stream`,
+      `/admin/apps/${encodeURIComponent(appId)}/coding-agent/v2/chat-sessions/${encodeURIComponent(sessionId)}/events`,
       directBackendUrl,
     );
     return fetch(url.toString(), {
@@ -774,68 +779,22 @@ export const publishedAppsService = {
     });
   },
 
-  async getCodingAgentRun(appId: string, runId: string): Promise<CodingAgentRun> {
-    return httpClient.get<CodingAgentRun>(`/admin/apps/${appId}/coding-agent/v2/runs/${runId}`);
+  async abortCodingAgentChatSession(appId: string, sessionId: string): Promise<{ ok: boolean }> {
+    return httpClient.post<{ ok: boolean }>(
+      `/admin/apps/${appId}/coding-agent/v2/chat-sessions/${sessionId}/abort`,
+      {},
+    );
   },
 
-  async cancelCodingAgentRun(appId: string, runId: string): Promise<CodingAgentRun> {
-    return httpClient.post<CodingAgentRun>(`/admin/apps/${appId}/coding-agent/v2/runs/${runId}/cancel`, {});
-  },
-
-  async answerCodingAgentRunQuestion(
+  async answerCodingAgentPermission(
     appId: string,
-    runId: string,
+    sessionId: string,
+    permissionId: string,
     payload: CodingAgentAnswerQuestionRequest,
-  ): Promise<CodingAgentRun> {
-    return httpClient.post<CodingAgentRun>(
-      `/admin/apps/${appId}/coding-agent/v2/runs/${runId}/answer-question`,
+  ): Promise<{ ok: boolean }> {
+    return httpClient.post<{ ok: boolean }>(
+      `/admin/apps/${appId}/coding-agent/v2/chat-sessions/${sessionId}/permissions/${permissionId}`,
       payload,
-    );
-  },
-
-  async getCodingAgentChatSessionActiveRun(appId: string, sessionId: string): Promise<CodingAgentActiveRunState> {
-    return httpClient.get<CodingAgentActiveRunState>(
-      `/admin/apps/${appId}/coding-agent/v2/chat-sessions/${sessionId}/active-run`,
-    );
-  },
-
-  async findCodingAgentChatSessionActiveRun(
-    appId: string,
-    sessionId: string,
-  ): Promise<CodingAgentActiveRunState | null> {
-    const response = await httpClient.requestRaw(
-      `/admin/apps/${appId}/coding-agent/v2/chat-sessions/${sessionId}/active-run`,
-      { method: "GET" },
-    );
-    if (response.status === 404) {
-      return null;
-    }
-    if (!response.ok) {
-      let message = "Request failed";
-      try {
-        const data = await response.json();
-        message = data?.detail || data?.message || message;
-      } catch {
-        message = response.statusText || message;
-      }
-      throw new Error(typeof message === "string" ? message : JSON.stringify(message));
-    }
-    return response.json() as Promise<CodingAgentActiveRunState>;
-  },
-
-  async listCodingAgentChatSessionQueue(appId: string, sessionId: string): Promise<CodingAgentPromptQueueItem[]> {
-    return httpClient.get<CodingAgentPromptQueueItem[]>(
-      `/admin/apps/${appId}/coding-agent/v2/chat-sessions/${sessionId}/queue`,
-    );
-  },
-
-  async deleteCodingAgentChatSessionQueueItem(
-    appId: string,
-    sessionId: string,
-    queueItemId: string,
-  ): Promise<{ status: string; id: string }> {
-    return httpClient.delete<{ status: string; id: string }>(
-      `/admin/apps/${appId}/coding-agent/v2/chat-sessions/${sessionId}/queue/${queueItemId}`,
     );
   },
 

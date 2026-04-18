@@ -27,6 +27,8 @@ describe("files page", () => {
           name: "Research Workspace",
           description: "City crawl outputs",
           status: "active",
+          file_count: 12,
+          total_bytes: 15360,
           created_at: "2026-04-16T00:00:00Z",
           updated_at: "2026-04-16T00:00:00Z",
         },
@@ -43,5 +45,7 @@ describe("files page", () => {
       expect(screen.getByText("Research Workspace")).toBeInTheDocument()
     })
     expect(screen.getByText("City crawl outputs")).toBeInTheDocument()
+    expect(screen.getByText("12 files")).toBeInTheDocument()
+    expect(screen.getByText("15 KB")).toBeInTheDocument()
   })
 })

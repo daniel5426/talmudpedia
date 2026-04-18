@@ -37,7 +37,9 @@ class PublishedAppCodingChatHistoryService:
         session_id: UUID,
     ) -> PublishedAppCodingChatSession | None:
         result = await self.db.execute(
-            select(PublishedAppCodingChatSession).where(
+            select(PublishedAppCodingChatSession)
+            .execution_options(populate_existing=True)
+            .where(
                 and_(
                     PublishedAppCodingChatSession.id == session_id,
                     PublishedAppCodingChatSession.published_app_id == app_id,
@@ -69,6 +71,24 @@ class PublishedAppCodingChatHistoryService:
             published_app_id=app_id,
             user_id=user_id,
             title=self._session_title_from_prompt(user_prompt),
+            last_message_at=datetime.now(timezone.utc),
+        )
+        self.db.add(session)
+        await self.db.commit()
+        await self.db.refresh(session)
+        return session
+
+    async def create_session(
+        self,
+        *,
+        app_id: UUID,
+        user_id: UUID,
+        title: str | None = None,
+    ) -> PublishedAppCodingChatSession:
+        session = PublishedAppCodingChatSession(
+            published_app_id=app_id,
+            user_id=user_id,
+            title=self._session_title_from_prompt(str(title or "").strip()),
             last_message_at=datetime.now(timezone.utc),
         )
         self.db.add(session)
@@ -277,6 +297,22 @@ class PublishedAppCodingChatHistoryService:
             "updated_at": session.updated_at,
             "last_message_at": session.last_message_at,
         }
+
+    async def touch_session(
+        self,
+        *,
+        session_id: UUID,
+        at: datetime | None = None,
+    ) -> None:
+        await self.db.execute(
+            update(PublishedAppCodingChatSession)
+            .where(PublishedAppCodingChatSession.id == session_id)
+            .values(
+                last_message_at=at or func.now(),
+                updated_at=func.now(),
+            )
+        )
+        await self.db.commit()
 
     @staticmethod
     def serialize_message(message: PublishedAppCodingChatMessage) -> dict[str, Any]:

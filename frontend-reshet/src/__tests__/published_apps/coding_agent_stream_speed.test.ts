@@ -1,11 +1,11 @@
-import { consumeRunStream } from "@/features/apps-builder/workspace/chat/useAppsBuilderChat.stream";
+import { consumeSessionStream } from "@/features/apps-builder/workspace/chat/useAppsBuilderChat.stream";
 import { publishedAppsService } from "@/services";
 import { ReadableStream } from "stream/web";
 import { TextDecoder, TextEncoder } from "util";
 
 jest.mock("@/services", () => ({
   publishedAppsService: {
-    streamCodingAgentRun: jest.fn(),
+    streamCodingAgentChatSession: jest.fn(),
   },
 }));
 
@@ -13,47 +13,33 @@ function buildSseFrame(payload: Record<string, unknown>): string {
   return `data: ${JSON.stringify(payload)}\n\n`;
 }
 
-describe("coding agent stream rendering speed", () => {
+describe("coding agent session stream rendering", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     (global as { TextDecoder?: typeof TextDecoder }).TextDecoder = TextDecoder;
   });
 
-  it("renders assistant delta chunks without frontend coalescing", async () => {
-
+  it("renders assistant delta chunks without coalescing away updates", async () => {
     const sse = [
+      buildSseFrame({ event: "session.connected", session_id: "session-1", payload: {} }),
       buildSseFrame({
-        event: "run.accepted",
-        run_id: "run-1",
-        app_id: "app-1",
-        seq: 1,
-        ts: "2026-02-23T10:00:00Z",
-        stage: "run",
-        payload: { status: "queued" },
-        diagnostics: [],
+        event: "message.updated",
+        session_id: "session-1",
+        payload: { info: { id: "assistant-1", role: "assistant" } },
       }),
-      ...["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"].map((chunk, index) =>
-        buildSseFrame({
-          event: "assistant.delta",
-          run_id: "run-1",
-          app_id: "app-1",
-          seq: index + 2,
-          ts: "2026-02-23T10:00:00Z",
-          stage: "assistant",
-          payload: { content: chunk },
-          diagnostics: [],
-        }),
-      ),
-      buildSseFrame({
-        event: "run.completed",
-        run_id: "run-1",
-        app_id: "app-1",
-        seq: 12,
-        ts: "2026-02-23T10:00:01Z",
-        stage: "run",
-        payload: { status: "completed" },
-        diagnostics: [],
-      }),
+      ...["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"].map((chunk) => buildSseFrame({
+        event: "message.part.updated",
+        session_id: "session-1",
+        payload: {
+          delta: chunk,
+          part: {
+            id: `part-${chunk}`,
+            messageID: "assistant-1",
+            type: "text",
+          },
+        },
+      })),
+      buildSseFrame({ event: "session.idle", session_id: "session-1", payload: {} }),
     ].join("");
 
     const body = new ReadableStream<Uint8Array>({
@@ -66,83 +52,62 @@ describe("coding agent stream rendering speed", () => {
       ok: true,
       status: 200,
       body,
+      headers: new Headers({ "content-type": "text/event-stream" }),
       json: async () => ({}),
     } as unknown as Response;
-    (publishedAppsService.streamCodingAgentRun as jest.Mock).mockResolvedValue(response);
+    (publishedAppsService.streamCodingAgentChatSession as jest.Mock).mockResolvedValue(response);
 
-    const upsertAssistantTimeline = jest.fn();
+    const onUpsertAssistant = jest.fn();
     const onError = jest.fn();
 
-    await consumeRunStream({
+    const attachmentIdRef = { current: 1 };
+    const intentionalAbortRef = { current: false };
+    await consumeSessionStream({
       appId: "app-1",
-      runId: "run-1",
-      activeTab: "config",
-      activeChatSessionIdRef: { current: "session-1" },
-      setIsSending: jest.fn(),
-      setIsStopping: jest.fn(),
-      setActiveThinkingSummary: jest.fn(),
-      isSendingRef: { current: false },
-      pendingCancelRef: { current: false },
-      intentionalAbortRef: { current: false },
-      activeRunIdRef: { current: null },
-      lastKnownRunIdRef: { current: null },
+      sessionId: "session-1",
+      streamAttachmentId: 1,
+      getCurrentStreamAttachmentId: () => attachmentIdRef.current,
       abortReaderRef: { current: null },
+      intentionalAbortRef,
       isMountedRef: { current: true },
-      seenRunEventKeysRef: { current: new Set<string>() },
       onError,
-      onSetCurrentRevisionId: jest.fn(),
-      pushTimeline: jest.fn(),
-      upsertAssistantTimeline,
-      upsertToolTimeline: jest.fn(),
-      finalizeRunningTools: jest.fn(),
-      attachCheckpointToLastUser: jest.fn(),
-      refreshStateSilently: jest.fn(async () => undefined),
-      ensureDraftDevSession: jest.fn(async () => undefined),
-      loadChatSessions: jest.fn(async () => []),
-      requestCancelForRun: jest.fn(async () => undefined),
-      onQuestionAsked: jest.fn(),
-      onQuestionResolved: jest.fn(),
+      onSetSending: jest.fn(),
+      onSetStopping: jest.fn(),
+      onSetThinkingSummary: jest.fn(),
+      onUpsertAssistant,
+      onUpsertTool: jest.fn(),
+      onFinalizeRunningTools: jest.fn(),
+      onPermissionUpdated: jest.fn(),
+      onPermissionResolved: jest.fn(),
+      onSessionIdle: async () => {
+        attachmentIdRef.current = 2;
+        intentionalAbortRef.current = true;
+      },
     });
 
     const nonEmptyErrors = onError.mock.calls
       .map((call) => call[0])
       .filter((value) => typeof value === "string" && value.trim().length > 0);
     expect(nonEmptyErrors).toHaveLength(0);
-    expect(upsertAssistantTimeline).toHaveBeenCalled();
-    expect(upsertAssistantTimeline.mock.calls.length).toBeGreaterThanOrEqual(10);
-    const latestText = String(upsertAssistantTimeline.mock.calls.at(-1)?.[1] || "");
-    expect(latestText).toBe("ABCDEFGHIJ");
+    expect(onUpsertAssistant.mock.calls.length).toBeGreaterThanOrEqual(10);
+    expect(String(onUpsertAssistant.mock.calls.at(-1)?.[1] || "")).toBe("J");
   });
 
-  it("surfaces question tool events to the question UI callbacks", async () => {
+  it("surfaces permission events to the question callbacks", async () => {
     const sse = [
       buildSseFrame({
-        event: "run.accepted",
-        run_id: "run-2",
-        app_id: "app-1",
-        seq: 1,
-        ts: "2026-02-24T10:00:00Z",
-        stage: "run",
-        payload: { status: "queued" },
-        diagnostics: [],
-      }),
-      buildSseFrame({
-        event: "tool.question",
-        run_id: "run-2",
-        app_id: "app-1",
-        seq: 2,
-        ts: "2026-02-24T10:00:01Z",
-        stage: "tool",
+        event: "permission.updated",
+        session_id: "session-1",
         payload: {
-          request_id: "q-1",
+          request_id: "perm-1",
           questions: [
             {
-              header: "Implementation choice",
-              question: "Which approach should I use?",
+              header: "Permission",
+              question: "Allow command?",
               multiple: false,
               options: [
-                { label: "A", description: "Use option A" },
-                { label: "B", description: "Use option B" },
+                { label: "Allow", description: "Allow once" },
+                { label: "Deny", description: "Reject" },
               ],
             },
           ],
@@ -151,31 +116,13 @@ describe("coding agent stream rendering speed", () => {
             message_id: "message-1",
           },
         },
-        diagnostics: [],
       }),
       buildSseFrame({
-        event: "tool.question.answered",
-        run_id: "run-2",
-        app_id: "app-1",
-        seq: 3,
-        ts: "2026-02-24T10:00:02Z",
-        stage: "tool",
-        payload: {
-          request_id: "q-1",
-          answers: [["A"]],
-        },
-        diagnostics: [],
+        event: "permission.replied",
+        session_id: "session-1",
+        payload: { request_id: "perm-1", answers: [["Allow"]] },
       }),
-      buildSseFrame({
-        event: "run.completed",
-        run_id: "run-2",
-        app_id: "app-1",
-        seq: 4,
-        ts: "2026-02-24T10:00:03Z",
-        stage: "run",
-        payload: { status: "completed" },
-        diagnostics: [],
-      }),
+      buildSseFrame({ event: "session.idle", session_id: "session-1", payload: {} }),
     ].join("");
 
     const body = new ReadableStream<Uint8Array>({
@@ -188,61 +135,193 @@ describe("coding agent stream rendering speed", () => {
       ok: true,
       status: 200,
       body,
+      headers: new Headers({ "content-type": "text/event-stream" }),
       json: async () => ({}),
     } as unknown as Response;
-    (publishedAppsService.streamCodingAgentRun as jest.Mock).mockResolvedValue(response);
+    (publishedAppsService.streamCodingAgentChatSession as jest.Mock).mockResolvedValue(response);
 
-    const onQuestionAsked = jest.fn();
-    const onQuestionResolved = jest.fn();
+    const onPermissionUpdated = jest.fn();
+    const onPermissionResolved = jest.fn();
+    const attachmentIdRef = { current: 1 };
+    const intentionalAbortRef = { current: false };
 
-    await consumeRunStream({
+    await consumeSessionStream({
       appId: "app-1",
-      runId: "run-2",
-      activeTab: "config",
-      activeChatSessionIdRef: { current: "session-1" },
-      setIsSending: jest.fn(),
-      setIsStopping: jest.fn(),
-      setActiveThinkingSummary: jest.fn(),
-      isSendingRef: { current: false },
-      pendingCancelRef: { current: false },
-      intentionalAbortRef: { current: false },
-      activeRunIdRef: { current: null },
-      lastKnownRunIdRef: { current: null },
+      sessionId: "session-1",
+      streamAttachmentId: 1,
+      getCurrentStreamAttachmentId: () => attachmentIdRef.current,
       abortReaderRef: { current: null },
+      intentionalAbortRef,
       isMountedRef: { current: true },
-      seenRunEventKeysRef: { current: new Set<string>() },
       onError: jest.fn(),
-      onSetCurrentRevisionId: jest.fn(),
-      pushTimeline: jest.fn(),
-      upsertAssistantTimeline: jest.fn(),
-      upsertToolTimeline: jest.fn(),
-      finalizeRunningTools: jest.fn(),
-      attachCheckpointToLastUser: jest.fn(),
-      refreshStateSilently: jest.fn(async () => undefined),
-      ensureDraftDevSession: jest.fn(async () => undefined),
-      loadChatSessions: jest.fn(async () => []),
-      requestCancelForRun: jest.fn(async () => undefined),
-      onQuestionAsked,
-      onQuestionResolved,
+      onSetSending: jest.fn(),
+      onSetStopping: jest.fn(),
+      onSetThinkingSummary: jest.fn(),
+      onUpsertAssistant: jest.fn(),
+      onUpsertTool: jest.fn(),
+      onFinalizeRunningTools: jest.fn(),
+      onPermissionUpdated,
+      onPermissionResolved,
+      onSessionIdle: async () => {
+        attachmentIdRef.current = 2;
+        intentionalAbortRef.current = true;
+      },
     });
 
-    expect(onQuestionAsked).toHaveBeenCalledTimes(1);
-    expect(onQuestionAsked).toHaveBeenCalledWith({
-      requestId: "q-1",
+    expect(onPermissionUpdated).toHaveBeenCalledWith({
+      requestId: "perm-1",
       questions: [
         {
-          header: "Implementation choice",
-          question: "Which approach should I use?",
+          header: "Permission",
+          question: "Allow command?",
           multiple: false,
           options: [
-            { label: "A", description: "Use option A" },
-            { label: "B", description: "Use option B" },
+            { label: "Allow", description: "Allow once" },
+            { label: "Deny", description: "Reject" },
           ],
         },
       ],
       toolCallId: "call-1",
       toolMessageId: "message-1",
     });
-    expect(onQuestionResolved).toHaveBeenCalledWith("q-1");
+    expect(onPermissionResolved).toHaveBeenCalledWith("perm-1");
+  });
+
+  it("ignores user text part updates while still rendering assistant text", async () => {
+    const sse = [
+      buildSseFrame({ event: "session.connected", session_id: "session-1", payload: {} }),
+      buildSseFrame({
+        event: "message.updated",
+        session_id: "session-1",
+        payload: { info: { id: "user-1", role: "user" } },
+      }),
+      buildSseFrame({
+        event: "message.part.updated",
+        session_id: "session-1",
+        payload: {
+          part: {
+            id: "user-part-1",
+            messageID: "user-1",
+            type: "text",
+            text: "how are you",
+          },
+        },
+      }),
+      buildSseFrame({
+        event: "message.updated",
+        session_id: "session-1",
+        payload: { info: { id: "assistant-1", role: "assistant" } },
+      }),
+      buildSseFrame({
+        event: "message.part.updated",
+        session_id: "session-1",
+        payload: {
+          part: {
+            id: "assistant-part-1",
+            messageID: "assistant-1",
+            type: "text",
+            text: "I am well.",
+          },
+        },
+      }),
+      buildSseFrame({ event: "session.idle", session_id: "session-1", payload: {} }),
+    ].join("");
+
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(sse));
+        controller.close();
+      },
+    });
+    const response = {
+      ok: true,
+      status: 200,
+      body,
+      headers: new Headers({ "content-type": "text/event-stream" }),
+      json: async () => ({}),
+    } as unknown as Response;
+    (publishedAppsService.streamCodingAgentChatSession as jest.Mock).mockResolvedValue(response);
+
+    const onUpsertAssistant = jest.fn();
+    const attachmentIdRef = { current: 1 };
+    const intentionalAbortRef = { current: false };
+
+    await consumeSessionStream({
+      appId: "app-1",
+      sessionId: "session-1",
+      streamAttachmentId: 1,
+      getCurrentStreamAttachmentId: () => attachmentIdRef.current,
+      abortReaderRef: { current: null },
+      intentionalAbortRef,
+      isMountedRef: { current: true },
+      onError: jest.fn(),
+      onSetSending: jest.fn(),
+      onSetStopping: jest.fn(),
+      onSetThinkingSummary: jest.fn(),
+      onUpsertAssistant,
+      onUpsertTool: jest.fn(),
+      onFinalizeRunningTools: jest.fn(),
+      onPermissionUpdated: jest.fn(),
+      onPermissionResolved: jest.fn(),
+      onSessionIdle: async () => {
+        attachmentIdRef.current = 2;
+        intentionalAbortRef.current = true;
+      },
+    });
+
+    expect(onUpsertAssistant).toHaveBeenCalledTimes(1);
+    expect(onUpsertAssistant).toHaveBeenCalledWith("assistant-1", "I am well.");
+    expect(onUpsertAssistant).not.toHaveBeenCalledWith("user-1", "how are you");
+  });
+
+  it("fails fast when the stream endpoint returns non-SSE content", async () => {
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("<html>login</html>"));
+        controller.close();
+      },
+    });
+    const response = {
+      ok: true,
+      status: 200,
+      body,
+      headers: new Headers({ "content-type": "text/html; charset=utf-8" }),
+      json: async () => ({}),
+    } as unknown as Response;
+    (publishedAppsService.streamCodingAgentChatSession as jest.Mock).mockResolvedValue(response);
+
+    const onError = jest.fn(() => {
+      attachmentIdRef.current = 2;
+      intentionalAbortRef.current = true;
+    });
+    const attachmentIdRef = { current: 1 };
+    const intentionalAbortRef = { current: false };
+
+    await consumeSessionStream({
+      appId: "app-1",
+      sessionId: "session-1",
+      streamAttachmentId: 1,
+      getCurrentStreamAttachmentId: () => attachmentIdRef.current,
+      abortReaderRef: { current: null },
+      intentionalAbortRef,
+      isMountedRef: { current: true },
+      onError,
+      onSetSending: jest.fn(),
+      onSetStopping: jest.fn(),
+      onSetThinkingSummary: jest.fn(),
+      onUpsertAssistant: jest.fn(),
+      onUpsertTool: jest.fn(),
+      onFinalizeRunningTools: jest.fn(),
+      onPermissionUpdated: jest.fn(),
+      onPermissionResolved: jest.fn(),
+      onSessionIdle: async () => {
+        attachmentIdRef.current = 2;
+        intentionalAbortRef.current = true;
+      },
+    });
+
+    expect(onError).toHaveBeenCalledWith(
+      expect.stringContaining("non-SSE content"),
+    );
   });
 });

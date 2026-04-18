@@ -14,6 +14,38 @@ class CloudflareArtifactRuntimeError(RuntimeError):
 
 
 class CloudflareArtifactClient:
+    def _preferred_runtime_bin_dirs(self) -> list[str]:
+        candidates: list[str] = []
+        explicit = str(os.getenv("ARTIFACT_RUNTIME_NODE_BIN") or "").strip()
+        if explicit:
+            candidates.append(explicit)
+
+        home = Path.home()
+        nvm_versions_dir = home / ".nvm" / "versions" / "node"
+        if nvm_versions_dir.exists():
+            version_dirs = sorted(
+                (path for path in nvm_versions_dir.iterdir() if path.is_dir()),
+                reverse=True,
+            )
+            for version_dir in version_dirs:
+                bin_dir = version_dir / "bin"
+                if (bin_dir / "node").exists():
+                    candidates.append(str(bin_dir))
+
+        candidates.extend([
+            "/opt/homebrew/bin",
+            "/opt/homebrew/sbin",
+        ])
+
+        unique: list[str] = []
+        seen: set[str] = set()
+        for candidate in candidates:
+            if not candidate or candidate in seen or not Path(candidate).exists():
+                continue
+            seen.add(candidate)
+            unique.append(candidate)
+        return unique
+
     async def deploy_worker(
         self,
         *,
@@ -178,6 +210,9 @@ class CloudflareArtifactClient:
         error_prefix: str,
     ) -> str:
         env = dict(os.environ)
+        runtime_bin_dirs = self._preferred_runtime_bin_dirs()
+        if runtime_bin_dirs:
+            env["PATH"] = os.pathsep.join([*runtime_bin_dirs, env.get("PATH", "")])
         process = await asyncio.create_subprocess_exec(
             *command,
             cwd=str(project_dir),

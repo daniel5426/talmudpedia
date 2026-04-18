@@ -136,7 +136,7 @@ export interface ArtifactTransferFile {
 
 export interface ArtifactImportResponse {
   artifact: Artifact;
-  published: boolean;
+  source_published: boolean;
 }
 
 export interface ArtifactTestRequest {

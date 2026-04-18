@@ -255,6 +255,19 @@ class AgentExecutorService:
         return RequestedModelTarget(logical_model_id=logical_model_id, ref=model_ref)
 
     @staticmethod
+    def _should_skip_model_registry_resolution(
+        runtime_context: dict[str, Any],
+        *,
+        run: AgentRun | None = None,
+    ) -> bool:
+        execution_engine = str(
+            runtime_context.get("execution_engine")
+            or getattr(run, "execution_engine", None)
+            or ""
+        ).strip().lower()
+        return execution_engine == "opencode"
+
+    @staticmethod
     def _merge_quota_caps(*caps: Any) -> int | None:
         parsed_caps: list[int] = []
         for cap in caps:
@@ -395,6 +408,8 @@ class AgentExecutorService:
         agent: Agent,
         runtime_context: dict[str, Any],
     ) -> ResolvedModelBindingReceipt | None:
+        if self._should_skip_model_registry_resolution(runtime_context, run=run):
+            return None
         raw_requested_model_id = (
             runtime_context.get("requested_model_id")
             or (str(run.requested_model_id) if run.requested_model_id else None)
@@ -1023,7 +1038,7 @@ class AgentExecutorService:
             context_payload["quota_max_output_tokens"] = int(quota_metadata["max_output_cap"])
         context_payload["execution_mode"] = mode.value
         pre_run_receipt: ResolvedModelBindingReceipt | None = None
-        if requested_model_ref:
+        if requested_model_ref and not self._should_skip_model_registry_resolution(context_payload):
             try:
                 pre_run_receipt = await ModelResolver(self.db, agent.tenant_id).resolve_receipt(
                     requested_model_ref,

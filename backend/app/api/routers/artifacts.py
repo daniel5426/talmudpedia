@@ -432,7 +432,6 @@ async def export_artifact(
 async def import_artifact(
     request: ArtifactTransferFile,
     tenant_slug: Optional[str] = None,
-    principal: Dict[str, Any] = Depends(get_current_principal),
     _: Dict[str, Any] = Depends(require_scopes("artifacts.write")),
     artifact_ctx=Depends(get_artifact_context),
 ):
@@ -474,21 +473,9 @@ async def import_artifact(
     imported_artifact = await registry.get_tenant_artifact(artifact_id=created.id, tenant_id=tenant.id)
     if imported_artifact is None:
         raise HTTPException(status_code=500, detail="Imported artifact could not be loaded")
-    if imported_payload.published:
-        try:
-            await ArtifactAdminService(db).publish_artifact(
-                ctx=_artifact_control_plane_context(tenant=tenant, user=user, context=principal),
-                artifact_id=created.id,
-            )
-        except ControlPlaneError as exc:
-            raise exc.to_http_exception() from exc
-        await db.commit()
-        imported_artifact = await registry.get_tenant_artifact(artifact_id=created.id, tenant_id=tenant.id)
-        if imported_artifact is None:
-            raise HTTPException(status_code=500, detail="Imported artifact could not be loaded after publish")
     return ArtifactImportResponse(
         artifact=_artifact_to_schema(imported_artifact, include_code=True),
-        published=bool(imported_payload.published),
+        source_published=bool(imported_payload.published),
     )
 
 

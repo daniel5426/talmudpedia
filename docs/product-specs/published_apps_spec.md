@@ -1,6 +1,6 @@
 # Published Apps Spec
 
-Last Updated: 2026-04-16
+Last Updated: 2026-04-18
 
 This document is the canonical product/specification overview for published apps.
 
@@ -61,6 +61,12 @@ The current backend exposes these main published-app surfaces:
 - external runtime/auth/history endpoints under `/public/external/apps`
 - hosted runtime/internal auth surface in `published_apps_host_runtime`
 - builder preview proxy/runtime flows for draft development and preview assets
+
+Builder-specific current admin/runtime behavior also includes:
+- coding-agent v2 builder chat under `/admin/apps/{app_id}/coding-agent/v2/chat-sessions/*`
+- one builder coding chat session mapped 1:1 to one OpenCode session
+- live builder coding updates delivered through a session-scoped SSE stream rather than a per-run stream contract
+- for the active builder chat tab, live SSE owns the visible in-flight conversation state; history endpoints are used for reopen/history pagination rather than post-turn timeline replacement
 
 Notable current public/runtime routes include:
 - `/public/apps/{app_slug}/config`

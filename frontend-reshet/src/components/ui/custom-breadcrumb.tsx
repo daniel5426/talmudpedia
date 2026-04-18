@@ -25,6 +25,11 @@ interface CustomBreadcrumbProps {
 }
 
 export function CustomBreadcrumb({ items }: CustomBreadcrumbProps) {
+  const renderStatusDot = (statusDot?: BreadcrumbItemProps["statusDot"]) => {
+    if (statusDot !== "primary") return null
+    return <span aria-label="Unsaved changes" className="h-2 w-2 rounded-full bg-primary" title="Unsaved changes" />
+  }
+
   return (
     <Breadcrumb className="max-w-full min-w-0">
       <BreadcrumbList className="max-w-full min-w-0 flex-nowrap">
@@ -36,7 +41,7 @@ export function CustomBreadcrumb({ items }: CustomBreadcrumbProps) {
                   <span className="block max-w-[12rem] truncate sm:max-w-[18rem] md:max-w-[24rem]" title={item.label}>
                     {item.label}
                   </span>
-                  {item.statusDot === "primary" ? <span className="h-2 w-2 rounded-full bg-primary" /> : null}
+                  {renderStatusDot(item.statusDot)}
                 </BreadcrumbPage>
               ) : (
                 <BreadcrumbLink asChild>
@@ -44,7 +49,7 @@ export function CustomBreadcrumb({ items }: CustomBreadcrumbProps) {
                     <span className="block max-w-[12rem] truncate sm:max-w-[18rem] md:max-w-[24rem]" title={item.label}>
                       {item.label}
                     </span>
-                    {item.statusDot === "primary" ? <span className="h-2 w-2 rounded-full bg-primary" /> : null}
+                    {renderStatusDot(item.statusDot)}
                   </Link>
                 </BreadcrumbLink>
               )}

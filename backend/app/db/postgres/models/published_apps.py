@@ -378,6 +378,11 @@ class PublishedAppCodingChatSession(Base):
         index=True,
     )
     title = Column(String(255), nullable=False, default="New Chat")
+    opencode_session_id = Column(String(255), nullable=True, index=True)
+    opencode_sandbox_id = Column(String(255), nullable=True)
+    opencode_workspace_path = Column(Text, nullable=True)
+    opencode_session_opened_at = Column(DateTime(timezone=True), nullable=True)
+    opencode_session_closed_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
     last_message_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)

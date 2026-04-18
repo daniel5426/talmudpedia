@@ -75,7 +75,7 @@ Current portability behavior also includes:
 - each exported artifact is one versioned JSON transfer file
 - bulk transfer is handled as multiple artifact files rather than one environment-coupled account-to-account API flow
 - import creates a new tenant-owned artifact in the target account/environment and auto-suffixes the display name when the target already has the same name
-- import preserves the current artifact snapshot and re-publishes it in the target when the exported artifact was published
+- import preserves the current artifact snapshot and records whether the source artifact was published, but imports it as a draft so transfer does not depend on deployment/runtime availability in the target environment
 
 ### Direct Coding Chat
 

@@ -49,6 +49,15 @@ class PublishedAppSandboxBackendConfig:
     sprite_network_policy: Optional[str]
 
 
+@dataclass(frozen=True)
+class PublishedAppOpenCodeEndpoint:
+    sandbox_id: str
+    base_url: str
+    workspace_path: str
+    api_key: Optional[str] = None
+    extra_headers: Dict[str, str] | None = None
+
+
 class PublishedAppSandboxBackend(ABC):
     backend_name = "unknown"
     is_remote = False
@@ -234,36 +243,12 @@ class PublishedAppSandboxBackend(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def start_opencode_run(
+    async def ensure_opencode_endpoint(
         self,
         *,
         sandbox_id: str,
-        run_id: str,
-        app_id: str,
         workspace_path: str,
-        model_id: str,
-        prompt: str,
-        messages: list[dict[str, str]],
-    ) -> Dict[str, Any]:
-        raise NotImplementedError
-
-    @abstractmethod
-    async def stream_opencode_events(self, *, sandbox_id: str, run_ref: str):
-        raise NotImplementedError
-
-    @abstractmethod
-    async def cancel_opencode_run(self, *, sandbox_id: str, run_ref: str) -> Dict[str, Any]:
-        raise NotImplementedError
-
-    @abstractmethod
-    async def answer_opencode_question(
-        self,
-        *,
-        sandbox_id: str,
-        run_ref: str,
-        question_id: str,
-        answers: list[list[str]],
-    ) -> Dict[str, Any]:
+    ) -> PublishedAppOpenCodeEndpoint:
         raise NotImplementedError
 
     async def reconcile_session_scope(

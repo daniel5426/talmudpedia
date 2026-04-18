@@ -14,6 +14,7 @@ Artifact admin editor payload, dependency authoring, and form-state handling.
 - `artifact_list_view.test.tsx`
 - `artifact_test_panel.test.tsx`
 - `artifact_test_input.test.ts`
+- `artifact_workspace_editor.test.tsx`
 
 ## Key Scenarios Covered
 
@@ -40,6 +41,9 @@ Artifact admin editor payload, dependency authoring, and form-state handling.
 - treat semantically equivalent JSON/dependency formatting as clean after save so the unsaved indicator clears
 - round-trip copied artifact configuration payloads across artifact editors of the same kind/language
 - reject copied configuration payloads when the kind or entry module path does not match the current artifact
+- open the artifact file-tree action menu on double click
+- download a single source file from the artifact file-tree action menu
+- keep the artifact file-tree action menu closed on single click
 
 ## Last Run
 
@@ -76,6 +80,12 @@ Artifact admin editor payload, dependency authoring, and form-state handling.
 - Command: `pnpm --dir frontend-reshet test -- --runInBand src/__tests__/artifacts_admin/artifact_list_view.test.tsx`
 - Date: 2026-04-16 Asia/Hebron
 - Result: Pass (1 suite, 4 tests)
+- Command: `pnpm --dir frontend-reshet test -- --runInBand src/__tests__/artifacts_admin/artifact_workspace_editor.test.tsx`
+- Date: 2026-04-16 20:58:33 EEST
+- Result: Pass (1 suite, 2 tests)
+- Command: `pnpm --dir frontend-reshet test -- --runInBand src/__tests__/files_domain/file_space_workspace_editor.test.tsx src/__tests__/artifacts_admin/artifact_workspace_editor.test.tsx`
+- Date: 2026-04-17 15:20:33 EEST
+- Result: Pass (2 suites, 6 tests)
 
 ## Known Gaps
 
@@ -84,3 +94,4 @@ Artifact admin editor payload, dependency authoring, and form-state handling.
 - no browser-level coverage yet for the full config tab switch flow
 - no browser-level coverage with the real Monaco editor; the artifact test panel regression uses a focused editor mock
 - no browser-level coverage yet for the config-tab clipboard shortcuts
+- no browser-level coverage yet for the artifact tree action menu

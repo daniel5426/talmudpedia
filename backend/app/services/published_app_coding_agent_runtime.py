@@ -19,6 +19,7 @@ from app.agent.execution.types import ExecutionMode
 from app.db.postgres.models.agents import Agent, AgentRun, RunStatus
 from app.db.postgres.models.published_apps import (
     PublishedApp,
+    PublishedAppCodingChatSession,
     PublishedAppDraftDevSessionStatus,
     PublishedAppRevision,
     PublishedAppRevisionBuildStatus,
@@ -345,6 +346,57 @@ class PublishedAppCodingAgentRuntimeService(
         _ = run
         return self._opencode_engine
 
+    @staticmethod
+    def _normalize_recovery_messages(
+        messages: list[dict[str, str]] | None,
+        *,
+        user_prompt: str,
+    ) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+        normalized: list[dict[str, str]] = []
+        for message in messages or []:
+            if not isinstance(message, dict):
+                continue
+            role = str(message.get("role") or "").strip().lower()
+            content = str(message.get("content") or "").strip()
+            if role not in {"user", "assistant", "system"} or not content:
+                continue
+            normalized.append({"role": role, "content": content})
+        if not normalized:
+            normalized = [{"role": "user", "content": user_prompt}]
+        elif normalized[-1]["role"] != "user" or normalized[-1]["content"] != user_prompt:
+            normalized.append({"role": "user", "content": user_prompt})
+
+        message_budget_chars = int(os.getenv("APPS_CODING_AGENT_MESSAGE_BUDGET_CHARS", "28000"))
+        normalized = PublishedAppCodingAgentRuntimeService._compact_messages_for_budget(normalized, message_budget_chars)
+        minimal = [{"role": "user", "content": user_prompt}]
+        return normalized, minimal
+
+    async def _load_chat_session(
+        self,
+        *,
+        chat_session_id: UUID | None,
+    ) -> PublishedAppCodingChatSession | None:
+        if chat_session_id is None:
+            return None
+        session = await self.db.get(PublishedAppCodingChatSession, chat_session_id)
+        return session
+
+    @staticmethod
+    def _session_matches_runtime(
+        session: PublishedAppCodingChatSession,
+        *,
+        sandbox_id: str,
+        workspace_path: str,
+    ) -> bool:
+        session_id = str(session.opencode_session_id or "").strip()
+        if not session_id:
+            return False
+        if str(session.opencode_sandbox_id or "").strip() != str(sandbox_id or "").strip():
+            return False
+        if str(session.opencode_workspace_path or "").strip() != str(workspace_path or "").strip():
+            return False
+        return True
+
     async def create_run(
         self,
         *,
@@ -382,6 +434,7 @@ class PublishedAppCodingAgentRuntimeService(
             )
         create_run_phase_metrics["create_run_opencode_health"] = 0
         create_run_phase_metrics["create_run_opencode_model_resolve"] = 0
+        create_run_phase_metrics["create_run_opencode_session_create"] = 0
         if normalized_engine == CODING_AGENT_ENGINE_OPENCODE:
             probe_started_at = time.monotonic()
             try:
@@ -412,23 +465,10 @@ class PublishedAppCodingAgentRuntimeService(
         create_run_phase_metrics["create_run_profile_cache_hit"] = 1 if profile_cache_hit else 0
 
         normalize_messages_started_at = time.monotonic()
-        normalized_messages: list[dict[str, str]] = []
-        for message in messages or []:
-            if not isinstance(message, dict):
-                continue
-            role = str(message.get("role") or "").strip().lower()
-            content = str(message.get("content") or "").strip()
-            if role not in {"user", "assistant", "system"}:
-                continue
-            if not content:
-                continue
-            normalized_messages.append({"role": role, "content": content})
-        if not normalized_messages:
-            normalized_messages = [{"role": "user", "content": user_prompt}]
-        elif normalized_messages[-1]["role"] != "user" or normalized_messages[-1]["content"] != user_prompt:
-            normalized_messages.append({"role": "user", "content": user_prompt})
-        message_budget_chars = int(os.getenv("APPS_CODING_AGENT_MESSAGE_BUDGET_CHARS", "28000"))
-        normalized_messages = self._compact_messages_for_budget(normalized_messages, message_budget_chars)
+        recovery_messages, run_messages = self._normalize_recovery_messages(
+            messages,
+            user_prompt=user_prompt,
+        )
         _record_create_run_phase_metric("create_run_message_prepare", normalize_messages_started_at)
 
         include_agent_contract = str(
@@ -453,11 +493,11 @@ class PublishedAppCodingAgentRuntimeService(
                 os.getenv("APPS_CODING_AGENT_INCLUDE_CONTRACT_PROMPT_SNAPSHOT", "0") or "0"
             ).strip().lower() in {"1", "true", "yes", "on"}
             if include_contract_snapshot:
-                normalized_messages.insert(0, {"role": "system", "content": contract_message})
+                recovery_messages.insert(0, {"role": "system", "content": contract_message})
 
         input_params = {
             "input": user_prompt,
-            "messages": normalized_messages,
+            "messages": run_messages,
             "context": {
                 "surface": CODING_AGENT_SURFACE,
                 "app_id": str(app.id),
@@ -546,6 +586,88 @@ class PublishedAppCodingAgentRuntimeService(
 
         context = self._run_context(run)
         context.update({key: value for key, value in sandbox_context.items() if key != "stage_prepare_ms"})
+        workspace_path = str(
+            context.get("opencode_workspace_path")
+            or context.get("preview_workspace_live_path")
+            or ""
+        ).strip()
+        sandbox_id = str(
+            context.get("opencode_sandbox_id")
+            or context.get("preview_sandbox_id")
+            or ""
+        ).strip()
+        chat_session = await self._load_chat_session(chat_session_id=chat_session_id)
+        opencode_session_create_started_at = time.monotonic()
+        if chat_session is not None and normalized_engine == CODING_AGENT_ENGINE_OPENCODE:
+            existing_session_id = str(chat_session.opencode_session_id or "").strip()
+            if self._session_matches_runtime(chat_session, sandbox_id=sandbox_id, workspace_path=workspace_path):
+                context["opencode_session_id"] = existing_session_id
+                context["opencode_sandbox_id"] = sandbox_id or None
+                context["opencode_workspace_path"] = workspace_path or None
+                context["opencode_recovery_messages"] = []
+                self._trace(
+                    "opencode.session.reused",
+                    app_id=str(app.id),
+                    run_id=str(run.id),
+                    chat_session_id=str(chat_session.id),
+                    session_id=existing_session_id,
+                    sandbox_id=sandbox_id or None,
+                    workspace_path=workspace_path or None,
+                )
+            else:
+                if existing_session_id:
+                    self._trace(
+                        "opencode.session.invalidated",
+                        app_id=str(app.id),
+                        run_id=str(run.id),
+                        chat_session_id=str(chat_session.id),
+                        session_id=existing_session_id,
+                        persisted_sandbox_id=str(chat_session.opencode_sandbox_id or "") or None,
+                        current_sandbox_id=sandbox_id or None,
+                        persisted_workspace_path=str(chat_session.opencode_workspace_path or "") or None,
+                        current_workspace_path=workspace_path or None,
+                    )
+                created_session_id = await self._opencode_client.create_session(
+                    run_id=str(run.id),
+                    app_id=str(app.id),
+                    sandbox_id=sandbox_id,
+                    workspace_path=workspace_path,
+                    model_id=resolved_model_id,
+                    selected_agent_contract=selected_agent_contract,
+                )
+                chat_session.opencode_session_id = created_session_id
+                chat_session.opencode_sandbox_id = sandbox_id or None
+                chat_session.opencode_workspace_path = workspace_path or None
+                chat_session.opencode_session_opened_at = datetime.now(timezone.utc)
+                chat_session.opencode_session_closed_at = None
+                context["opencode_session_id"] = created_session_id
+                context["opencode_sandbox_id"] = sandbox_id or None
+                context["opencode_workspace_path"] = workspace_path or None
+                context["opencode_recovery_messages"] = recovery_messages if existing_session_id else []
+                self._trace(
+                    "opencode.session.create.confirmed",
+                    app_id=str(app.id),
+                    run_id=str(run.id),
+                    chat_session_id=str(chat_session.id),
+                    session_id=created_session_id,
+                    sandbox_id=sandbox_id or None,
+                    workspace_path=workspace_path or None,
+                    recovered=bool(existing_session_id),
+                )
+                create_run_phase_metrics["create_run_opencode_session_create"] = max(
+                    0,
+                    int((time.monotonic() - opencode_session_create_started_at) * 1000),
+                )
+                self._set_timing_metric_value(
+                    run,
+                    metric="create_run_opencode_session_create",
+                    value=create_run_phase_metrics["create_run_opencode_session_create"],
+                )
+                self._set_timing_metric_value(
+                    run,
+                    metric="opencode_session_create_ms",
+                    value=create_run_phase_metrics["create_run_opencode_session_create"],
+                )
         resolve_preview_ms = self._record_timing_metric(
             run,
             phase="resolve_preview_session",

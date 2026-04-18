@@ -1,4 +1,4 @@
-Last Updated: 2026-04-16
+Last Updated: 2026-04-18
 
 # Apps Builder Sandbox Runtime Tests
 
@@ -33,22 +33,28 @@ Last Updated: 2026-04-16
 - The preview proxy also refreshes stale preview metadata on upstream remote-protocol disconnects before failing the iframe request.
 - The preview proxy rewrites asset requests against the Sprite upstream path instead of the backend API route path.
 - Sprite heartbeat waits for preview readiness without restarting the services on every reopen.
+- Sprite heartbeat treats nested Sprite service state payloads with `status: running` as healthy and avoids false preview restarts.
 - Sprite heartbeat returns refreshed backend preview metadata, and the draft-dev runtime persists that refreshed metadata on session heartbeat.
+- Sprite heartbeat now also detects when preview is behind the current live workspace revision token and forces a watched-file rebuild trigger so stale failed watcher state can recover.
 - Sprite heartbeat preserves `live_workspace_snapshot` metadata that was recorded after coding-run reconciliation, instead of wiping it on the next refresh.
 - Sprite heartbeat can repopulate a missing `live_workspace_snapshot` from the live workspace when an older session has already lost that metadata.
 - Restored live workspace snapshots use the same builder file policy as save/materialization paths, so invalid files like no-extension roots never enter builder state.
 - Stage-to-live promotion now mirrors files into the existing live workspace instead of deleting the live root and restarting preview services.
 - Sprite workspace snapshots filter generated/high-noise paths before serializing payloads back to the backend.
+- Sprite OpenCode service ensure now reuses an already-running Sprite service when the provider returns nested service-state objects.
+- Sprite OpenCode service ensure no longer declares Sprite `http_port`, because `builder-preview` is the sole Sprite HTTP service and OpenCode is reached through the proxy tunnel to internal port `4141`.
+- Sprite OpenCode endpoint discovery re-runs service ensure before returning a cached tunnel client, so long-lived sandboxes still pick up command rotations.
 - Sprite live sync preserves `node_modules/` across no-op file syncs, and start/sync can force a dependency repair plus Vite cache rebuild when preview readiness fails.
 - Shared app-level draft workspaces are reused across multiple editors on the same app.
 - Coding-run bootstrap can reuse a healthy live workspace even when the saved draft revision has advanced, instead of forcing a revision-driven resync.
 - The public draft-dev `ensure` route reuses an already-serving live workspace via `ensure_active_session(..., prefer_live_workspace=True)` instead of falling back to the legacy full-sync path.
 - Draft-dev runtime failures now keep the editor session attached to the shared workspace instead of returning a detached zombie session with `draft_workspace_id = null`.
 - Draft-dev heartbeat can reattach a stale detached session row to the existing shared workspace before checking runtime health.
-- Draft-dev incremental sync treats delete operations as idempotent when the target file is already absent in the live sandbox, instead of failing the whole sync on a stale delete.
 - Builder validation now requires a root `index.html`, and incremental sync validates projected patch operations before mutating the live Sprite workspace.
-- Manual editor saves now record the overlaid workspace fingerprint plus a pending materialization request instead of creating a draft version directly on the save API call.
-- Draft-dev heartbeat now materializes a new durable draft revision automatically once the watcher reports a ready build for the saved workspace fingerprint.
+- Builder `operations` sync now projects the full next workspace and applies it through one `sync_workspace_files()` call, so the watcher never sees a half-written multi-file edit batch.
+- Manual editor sync can still record a pending materialization request, but preview-ready live workspace divergence is now the canonical durable-version trigger.
+- Draft-dev heartbeat now refreshes stale live sandbox snapshots when preview revision-token or workspace-fingerprint metadata moves ahead of the stored snapshot.
+- Draft-dev heartbeat now materializes a new durable draft revision automatically once the watcher reports a ready build for the current live workspace fingerprint, even without an explicit manual-save request.
 - Coding-agent workspace-write detection ignores read-only `bash` probes like `git status`, while still flagging mutating shell commands and explicit write tools.
 - Live-preview build status normalization preserves the canonical `build_watch_static` contract, richer preview states (`booting`, `building`, `ready`, `failed_keep_last_good`, `failed_no_build`, `recovering`), supervisor health metadata, and stable workspace fingerprinting for build reuse.
 - Durable workspace builds can now reuse the watcher dist when the watcher fingerprint is stale but its last-trigger revision token matches the current live workspace revision token.
@@ -59,9 +65,11 @@ Last Updated: 2026-04-16
 - Dormant workspace sweep destroys the shared Sprite only after all sessions detach and retention elapses.
 - App delete destroys the shared Sprite and removes workspace metadata.
 - Sprite backend env validation requires a Sprite token and hard-rejects archived E2B backend selection.
+- Sprite API requests now retry transient transport failures with a higher default retry budget before failing draft-dev bootstrap, so intermittent provider TLS/connect stalls do not abort app/session creation on the first attempt.
 - Sprite dependency install strategy prefers pnpm/yarn lockfiles over a stray `package-lock.json`, and live builder installs allow pnpm lock drift instead of failing with `ERR_PNPM_OUTDATED_LOCKFILE`.
 - The live Sprite smoke covers create -> ensure -> preview HTML -> proxied Vite asset -> second editor attach -> direct filesystem write/read -> detach/reattach -> provider-side Sprite delete -> recovery ensure -> preview recovery -> app delete -> provider cleanup.
 - The live coding-run e2e covers create -> ensure draft-dev preview -> submit a real coding-agent prompt -> stream the live run -> poll preview/version/run state every second -> send recurring draft-dev heartbeats during long waits -> verify preview source updates without publish -> verify a new draft revision/version is created automatically from watcher-ready output -> verify the built preview asset becomes reachable.
+- Draft revision materialization reuses the current draft revision when the watcher/build fingerprint is unchanged, so a fresh app no longer creates a duplicate `live_preview` version from the same ready build as `app_init`.
 
 ## Last run command + date/time + result
 - Command: `cd backend && PYTHONPATH=. pytest -x -q tests/apps_builder_sandbox_runtime/test_draft_dev_runtime_lifecycle.py`
@@ -178,6 +186,33 @@ Last Updated: 2026-04-16
 - Command: `cd backend && PYTHONPATH=. python3 -m pytest -q tests/apps_builder_sandbox_runtime/test_draft_dev_runtime_lifecycle.py`
 - Date: 2026-04-16 Asia/Hebron
 - Result: FAIL (`18 failed, 9 passed, 6 warnings`) during app creation with `403` responses in the current local worktree.
+- Command: `cd /Users/danielbenassaya/Code/personal/talmudpedia && backend/.venv-codex-tests/bin/python -m pytest -q backend/tests/apps_builder_sandbox_runtime/test_sprite_backend_config.py`
+- Date: 2026-04-16 18:25 EEST
+- Result: PASS (`14 passed, 2 warnings`)
+- Command: `cd /Users/danielbenassaya/Code/personal/talmudpedia && backend/.venv-codex-tests/bin/python -m pytest -q backend/tests/apps_builder_sandbox_runtime/test_sprite_backend_config.py`
+- Date: 2026-04-16 22:15 Asia/Hebron
+- Result: PASS (`15 passed, 2 warnings`)
+- Command: `cd /Users/danielbenassaya/Code/personal/talmudpedia && backend/.venv-codex-tests/bin/python -m pytest -q backend/tests/apps_builder_sandbox_runtime/test_sprite_backend_config.py`
+- Date: 2026-04-17 15:58 EEST
+- Result: PASS (`16 passed, 2 warnings`)
+- Command: `cd /Users/danielbenassaya/Code/personal/talmudpedia && backend/.venv-codex-tests/bin/python -m pytest -q backend/tests/apps_builder_sandbox_runtime/test_draft_dev_runtime_lifecycle.py -k 'heartbeat_materializes_saved_workspace_when_live_preview_ready or heartbeat_materializes_live_preview_without_explicit_request or heartbeat_restores_missing_live_workspace_snapshot_from_runtime or heartbeat_refreshes_stale_live_workspace_snapshot_when_preview_differs'`
+- Date: 2026-04-18 Asia/Hebron
+- Result: PASS (`4 passed, 18 deselected, 4 warnings`)
+- Command: `cd /Users/danielbenassaya/Code/personal/talmudpedia && backend/.venv-codex-tests/bin/python -m pytest -q backend/tests/apps_builder_sandbox_runtime/test_draft_dev_runtime_lifecycle.py -k 'materializer_reuses_current_revision_when_workspace_build_is_unchanged or heartbeat_materializes_live_preview_without_explicit_request'`
+- Date: 2026-04-19 Asia/Hebron
+- Result: PASS (`2 passed, 21 deselected, 4 warnings`)
+- Command: `cd /Users/danielbenassaya/Code/personal/talmudpedia && backend/.venv-codex-tests/bin/python -m pytest -q backend/tests/apps_builder_sandbox_runtime/test_draft_dev_runtime_lifecycle.py backend/tests/apps_builder_sandbox_runtime/test_sprite_backend_config.py -k 'sync_route_batches_operations_into_single_workspace_sync or sync_route_validates_operations_before_mutating_runtime or sprite_heartbeat_rebuilds_when_preview_revision_lags_workspace or sprite_heartbeat_refreshes_preview_services_when_preview_services_are_not_running or sprite_heartbeat_does_not_refresh_when_nested_service_states_are_running'`
+- Date: 2026-04-18 Asia/Hebron
+- Result: PASS (`5 passed, 34 deselected, 4 warnings`)
+- Command: `cd /Users/danielbenassaya/Code/personal/talmudpedia/backend && PYTHONPATH=. APPS_SPRITE_REQUEST_MAX_ATTEMPTS=6 APPS_SPRITE_REQUEST_RETRY_DELAY_SECONDS=0.2 .venv-codex-tests/bin/python - <<'PY' ... SpriteSandboxBackend._request('/v1/sprites/nonexistent-codex-probe') ... PY`
+- Date: 2026-04-17 16:00 EEST
+- Result: PASS (`6/6 requests reached Sprite and returned 404; no hard transport failures, but some calls required retries and took 4.5s-10.3s`)
+- Command: `cd /Users/danielbenassaya/Code/personal/talmudpedia && backend/.venv-codex-tests/bin/python -m pytest -q backend/tests/apps_builder_sandbox_runtime/test_sprite_backend_config.py backend/tests/opencode_server_client/test_opencode_server_client.py -k 'ensure_opencode_service_reuses_nested_running_service or sprite_build_opencode_client_reuses_cached_service_and_tunnel or sandbox_mode_stream_can_use_explicit_sandbox_id_without_in_memory_mapping'`
+- Date: 2026-04-17 16:09 EEST
+- Result: PASS (`3 passed, 52 deselected, 2 warnings`)
+- Command: `cd backend && PYTHONPATH=. python3 -m pytest -q tests/apps_builder_sandbox_runtime/test_sprite_backend_config.py tests/opencode_server_client/test_opencode_server_client.py -k 'heartbeat_waits_for_preview_without_restarting_services or heartbeat_does_not_refresh_when_nested_service_states_are_running or heartbeat_refreshes_preview_services_when_preview_services_are_not_running or ensure_opencode_service_reuses_nested_running_service or sprite_build_opencode_client_reuses_cached_service_and_tunnel or sprite_start_opencode_run_retries_after_refreshable_disconnect or sandbox_mode_stream_can_use_explicit_sandbox_id_without_in_memory_mapping'`
+- Date: 2026-04-16 Asia/Hebron
+- Result: FAIL in the current shell before test collection (`python3` lacks `pytest`, and the local interpreter also lacks backend deps like `fastapi`)
 
 ## Known gaps or follow-ups
 - Run the live coding-run e2e regularly in an environment with Sprite + OpenCode credentials so timing regressions are caught before manual QA.

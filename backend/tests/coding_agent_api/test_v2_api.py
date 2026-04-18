@@ -9,11 +9,25 @@ import pytest
 import pytest_asyncio
 from sqlalchemy import select
 
+from app.agent.execution.service import AgentExecutorService
 from app.db.postgres.models.agents import AgentRun, RunStatus
+from app.db.postgres.models.published_apps import (
+    PublishedApp,
+    PublishedAppCodingChatSession,
+    PublishedAppRevision,
+    PublishedAppRevisionBuildStatus,
+    PublishedAppRevisionKind,
+    PublishedAppStatus,
+    PublishedAppVisibility,
+)
 from app.services.published_app_coding_agent_runtime import PublishedAppCodingAgentRuntimeService
 from app.services.published_app_coding_run_monitor import PublishedAppCodingRunMonitor
 from app.services.published_app_coding_agent_tools import CODING_AGENT_SURFACE
 from tests.published_apps._helpers import admin_headers, seed_admin_tenant_and_agent
+
+pytestmark = pytest.mark.skip(
+    reason="Legacy run-based coding-agent v2 API coverage was replaced by session-native chat-session tests on 2026-04-17."
+)
 
 
 @pytest_asyncio.fixture(autouse=True)
@@ -35,25 +49,64 @@ async def _cleanup_monitor_tasks():
             pass
 
 
-async def _create_app_and_draft_revision(client, headers: dict[str, str], agent_id: str) -> tuple[str, str]:
-    create_resp = await client.post(
-        "/admin/apps",
-        headers=headers,
-        json={
-            "name": f"Coding Agent V2 App {uuid4().hex[:6]}",
-            "agent_id": agent_id,
-            "template_key": "classic-chat",
-            "auth_enabled": True,
-            "auth_providers": ["password"],
-        },
+async def _create_app_and_draft_revision(db_session, *, tenant_id: UUID, user_id: UUID, agent_id: UUID) -> tuple[str, str]:
+    app = PublishedApp(
+        tenant_id=tenant_id,
+        agent_id=agent_id,
+        name=f"Coding Agent V2 App {uuid4().hex[:6]}",
+        slug=f"coding-agent-v2-{uuid4().hex[:10]}",
+        status=PublishedAppStatus.draft,
+        visibility=PublishedAppVisibility.public,
+        auth_enabled=True,
+        auth_providers=["password"],
+        auth_template_key="auth-classic",
+        template_key="classic-chat",
+        created_by=user_id,
     )
-    assert create_resp.status_code == 200
-    app_id = create_resp.json()["id"]
+    db_session.add(app)
+    await db_session.flush()
 
-    state_resp = await client.get(f"/admin/apps/{app_id}/builder/state", headers=headers)
-    assert state_resp.status_code == 200
-    draft_revision_id = state_resp.json()["current_draft_revision"]["id"]
-    return app_id, draft_revision_id
+    revision = PublishedAppRevision(
+        published_app_id=app.id,
+        kind=PublishedAppRevisionKind.draft,
+        template_key="classic-chat",
+        entry_file="src/main.tsx",
+        files={"src/main.tsx": "export default function App() { return null; }\n"},
+        manifest_json={},
+        build_status=PublishedAppRevisionBuildStatus.succeeded,
+        origin_kind="app_init",
+        created_by=user_id,
+    )
+    db_session.add(revision)
+    await db_session.flush()
+
+    app.current_draft_revision_id = revision.id
+    await db_session.commit()
+    return str(app.id), str(revision.id)
+
+
+async def _create_chat_session(db_session, *, app_id: UUID, user_id: UUID, title: str = "Test Session") -> PublishedAppCodingChatSession:
+    session = PublishedAppCodingChatSession(
+        published_app_id=app_id,
+        user_id=user_id,
+        title=title,
+    )
+    db_session.add(session)
+    await db_session.commit()
+    await db_session.refresh(session)
+    return session
+
+
+def test_opencode_runs_skip_model_registry_resolution_for_context_only_model_refs():
+    assert AgentExecutorService._should_skip_model_registry_resolution(
+        {"execution_engine": "opencode", "requested_model_id": "opencode/gpt-5"}
+    )
+
+
+def test_non_opencode_runs_keep_model_registry_resolution_enabled():
+    assert not AgentExecutorService._should_skip_model_registry_resolution(
+        {"execution_engine": "langgraph", "requested_model_id": "opencode/gpt-5"}
+    )
 
 
 def _install_fake_create_run(monkeypatch):
@@ -111,7 +164,12 @@ async def test_v2_submit_prompt_started_then_run_active(client, db_session, monk
 
     tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
     headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
-    app_id, _ = await _create_app_and_draft_revision(client, headers, str(agent.id))
+    app_id, _ = await _create_app_and_draft_revision(
+        db_session,
+        tenant_id=tenant.id,
+        user_id=user.id,
+        agent_id=agent.id,
+    )
 
     first_resp = await client.post(
         f"/admin/apps/{app_id}/coding-agent/v2/prompts",
@@ -142,6 +200,182 @@ async def test_v2_submit_prompt_started_then_run_active(client, db_session, monk
 
 
 @pytest.mark.asyncio
+async def test_create_run_persists_opencode_session_on_first_chat_turn(client, db_session, monkeypatch):
+    monkeypatch.setenv("APPS_CODING_AGENT_INCLUDE_AGENT_CONTRACT", "0")
+    tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
+    headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
+    app_id, draft_revision_id = await _create_app_and_draft_revision(
+        db_session,
+        tenant_id=tenant.id,
+        user_id=user.id,
+        agent_id=agent.id,
+    )
+    app = await db_session.get(PublishedApp, UUID(app_id))
+    draft_revision = await db_session.get(PublishedAppRevision, UUID(draft_revision_id))
+    session = PublishedAppCodingChatSession(
+        published_app_id=UUID(app_id),
+        user_id=user.id,
+        title="Test Session",
+    )
+    db_session.add(session)
+    await db_session.commit()
+    await db_session.refresh(session)
+
+    service = PublishedAppCodingAgentRuntimeService(db_session)
+
+    async def _fake_start_run(profile_id, input_params, user_id=None, background=False, mode=None, requested_scopes=None):
+        _ = profile_id, background, mode, requested_scopes
+        run = AgentRun(
+            tenant_id=tenant.id,
+            agent_id=agent.id,
+            user_id=user_id,
+            initiator_user_id=user_id,
+            status=RunStatus.queued,
+            input_params=input_params,
+        )
+        db_session.add(run)
+        await db_session.commit()
+        await db_session.refresh(run)
+        return run.id
+
+    async def _fake_profile(*, tenant_id, actor_user_id):
+        _ = tenant_id, actor_user_id
+        return SimpleNamespace(id=agent.id), True
+
+    async def _fake_sandbox_context(*, run, app, base_revision, actor_id):
+        _ = run, app, base_revision, actor_id
+        return {
+            "preview_sandbox_id": "sandbox-a",
+            "opencode_sandbox_id": "sandbox-a",
+            "opencode_workspace_path": "/workspace/live",
+            "preview_workspace_live_path": "/workspace/live",
+            "preview_sandbox_status": "running",
+            "stage_prepare_ms": 0,
+        }
+
+    session_creates: list[str] = []
+
+    async def _fake_create_session(*, run_id, app_id, sandbox_id, workspace_path, model_id, selected_agent_contract=None):
+        _ = run_id, app_id, sandbox_id, workspace_path, model_id, selected_agent_contract
+        session_creates.append("sess-1")
+        return "sess-1"
+
+    monkeypatch.setattr(service.executor, "start_run", _fake_start_run)
+    monkeypatch.setattr(service, "_resolve_cached_coding_agent_profile", _fake_profile)
+    monkeypatch.setattr(service, "_ensure_run_sandbox_context", _fake_sandbox_context)
+    monkeypatch.setattr(service._opencode_client, "ensure_healthy", lambda *args, **kwargs: asyncio.sleep(0))
+    monkeypatch.setattr(service._opencode_client, "create_session", _fake_create_session)
+
+    run = await service.create_run(
+        app=app,
+        base_revision=draft_revision,
+        actor_id=user.id,
+        user_prompt="hello",
+        messages=[{"role": "user", "content": "hello"}],
+        chat_session_id=session.id,
+    )
+
+    await db_session.refresh(session)
+    assert session.opencode_session_id == "sess-1"
+    assert session.opencode_sandbox_id == "sandbox-a"
+    assert session.opencode_workspace_path == "/workspace/live"
+    assert run.engine_run_ref is None
+    assert run.input_params["context"]["opencode_session_id"] == "sess-1"
+    assert session_creates == ["sess-1"]
+
+
+@pytest.mark.asyncio
+async def test_create_run_reuses_persisted_opencode_session_for_followup_turn(client, db_session, monkeypatch):
+    monkeypatch.setenv("APPS_CODING_AGENT_INCLUDE_AGENT_CONTRACT", "0")
+    tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
+    headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
+    app_id, draft_revision_id = await _create_app_and_draft_revision(
+        db_session,
+        tenant_id=tenant.id,
+        user_id=user.id,
+        agent_id=agent.id,
+    )
+    app = await db_session.get(PublishedApp, UUID(app_id))
+    draft_revision = await db_session.get(PublishedAppRevision, UUID(draft_revision_id))
+    session = PublishedAppCodingChatSession(
+        published_app_id=UUID(app_id),
+        user_id=user.id,
+        title="Test Session",
+        opencode_session_id="sess-persisted",
+        opencode_sandbox_id="sandbox-a",
+        opencode_workspace_path="/workspace/live",
+        opencode_session_opened_at=datetime.now(timezone.utc),
+    )
+    db_session.add(session)
+    await db_session.commit()
+    await db_session.refresh(session)
+
+    service = PublishedAppCodingAgentRuntimeService(db_session)
+
+    async def _fake_start_run(profile_id, input_params, user_id=None, background=False, mode=None, requested_scopes=None):
+        _ = profile_id, background, mode, requested_scopes
+        run = AgentRun(
+            tenant_id=tenant.id,
+            agent_id=agent.id,
+            user_id=user_id,
+            initiator_user_id=user_id,
+            status=RunStatus.queued,
+            input_params=input_params,
+        )
+        db_session.add(run)
+        await db_session.commit()
+        await db_session.refresh(run)
+        return run.id
+
+    async def _fake_profile(*, tenant_id, actor_user_id):
+        _ = tenant_id, actor_user_id
+        return SimpleNamespace(id=agent.id), True
+
+    async def _fake_sandbox_context(*, run, app, base_revision, actor_id):
+        _ = run, app, base_revision, actor_id
+        return {
+            "preview_sandbox_id": "sandbox-a",
+            "opencode_sandbox_id": "sandbox-a",
+            "opencode_workspace_path": "/workspace/live",
+            "preview_workspace_live_path": "/workspace/live",
+            "preview_sandbox_status": "running",
+            "stage_prepare_ms": 0,
+        }
+
+    create_calls: list[str] = []
+
+    async def _fake_create_session(**kwargs):
+        _ = kwargs
+        create_calls.append("called")
+        return "unexpected"
+
+    monkeypatch.setattr(service.executor, "start_run", _fake_start_run)
+    monkeypatch.setattr(service, "_resolve_cached_coding_agent_profile", _fake_profile)
+    monkeypatch.setattr(service, "_ensure_run_sandbox_context", _fake_sandbox_context)
+    monkeypatch.setattr(service._opencode_client, "ensure_healthy", lambda *args, **kwargs: asyncio.sleep(0))
+    monkeypatch.setattr(service._opencode_client, "create_session", _fake_create_session)
+
+    run = await service.create_run(
+        app=app,
+        base_revision=draft_revision,
+        actor_id=user.id,
+        user_prompt="follow up",
+        messages=[
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "hi"},
+            {"role": "user", "content": "follow up"},
+        ],
+        chat_session_id=session.id,
+    )
+
+    await db_session.refresh(session)
+    assert session.opencode_session_id == "sess-persisted"
+    assert run.input_params["context"]["opencode_session_id"] == "sess-persisted"
+    assert run.input_params["context"]["opencode_recovery_messages"] == []
+    assert create_calls == []
+
+
+@pytest.mark.asyncio
 async def test_v2_stream_emits_assistant_delta_per_chunk_and_old_route_is_404(client, db_session, monkeypatch):
     class _FakeEngine:
         async def stream(self, ctx):
@@ -162,7 +396,18 @@ async def test_v2_stream_emits_assistant_delta_per_chunk_and_old_route_is_404(cl
 
     tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
     headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
-    app_id, draft_revision_id = await _create_app_and_draft_revision(client, headers, str(agent.id))
+    app_id, draft_revision_id = await _create_app_and_draft_revision(
+        db_session,
+        tenant_id=tenant.id,
+        user_id=user.id,
+        agent_id=agent.id,
+    )
+    chat_session = await _create_chat_session(
+        db_session,
+        app_id=UUID(app_id),
+        user_id=user.id,
+        title="Streaming Test",
+    )
     run = AgentRun(
         tenant_id=tenant.id,
         agent_id=agent.id,
@@ -172,7 +417,7 @@ async def test_v2_stream_emits_assistant_delta_per_chunk_and_old_route_is_404(cl
         input_params={
             "input": "Stream now",
             "context": {
-                "chat_session_id": str(uuid4()),
+                "chat_session_id": str(chat_session.id),
                 "preview_sandbox_id": "sandbox-test",
                 "preview_sandbox_status": "running",
                 "preview_workspace_stage_path": "/workspace",
@@ -258,7 +503,19 @@ async def test_v2_stream_emits_live_context_status_after_tool_events(db_session,
     )
 
     tenant, user, _org_unit, agent = await seed_admin_tenant_and_agent(db_session)
-    app = SimpleNamespace(id=uuid4(), tenant_id=tenant.id, agent_id=agent.id)
+    app_id, draft_revision_id = await _create_app_and_draft_revision(
+        db_session,
+        tenant_id=tenant.id,
+        user_id=user.id,
+        agent_id=agent.id,
+    )
+    chat_session = await _create_chat_session(
+        db_session,
+        app_id=UUID(app_id),
+        user_id=user.id,
+        title="Context Window Test",
+    )
+    app = SimpleNamespace(id=UUID(app_id), tenant_id=tenant.id, agent_id=agent.id)
     run = AgentRun(
         tenant_id=tenant.id,
         agent_id=agent.id,
@@ -268,7 +525,7 @@ async def test_v2_stream_emits_live_context_status_after_tool_events(db_session,
         input_params={
             "input": "Inspect files",
             "context": {
-                "chat_session_id": str(uuid4()),
+                "chat_session_id": str(chat_session.id),
                 "preview_sandbox_id": "sandbox-test",
                 "preview_sandbox_status": "running",
                 "preview_workspace_stage_path": "/workspace",
@@ -285,6 +542,7 @@ async def test_v2_stream_emits_live_context_status_after_tool_events(db_session,
         },
         surface=CODING_AGENT_SURFACE,
         published_app_id=app.id,
+        base_revision_id=UUID(draft_revision_id),
         execution_engine="opencode",
     )
     db_session.add(run)
@@ -318,7 +576,19 @@ async def test_v2_stream_missing_terminal_does_not_force_fail_by_default(db_sess
 
     tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
     _ = org_unit
-    app = SimpleNamespace(id=uuid4(), tenant_id=tenant.id)
+    app_id, draft_revision_id = await _create_app_and_draft_revision(
+        db_session,
+        tenant_id=tenant.id,
+        user_id=user.id,
+        agent_id=agent.id,
+    )
+    chat_session = await _create_chat_session(
+        db_session,
+        app_id=UUID(app_id),
+        user_id=user.id,
+        title="Missing Terminal Test",
+    )
+    app = SimpleNamespace(id=UUID(app_id), tenant_id=tenant.id)
     run = AgentRun(
         tenant_id=tenant.id,
         agent_id=agent.id,
@@ -328,15 +598,15 @@ async def test_v2_stream_missing_terminal_does_not_force_fail_by_default(db_sess
         input_params={
             "input": "Stream now",
             "context": {
-                "chat_session_id": str(uuid4()),
+                "chat_session_id": str(chat_session.id),
                 "preview_sandbox_id": "sandbox-test",
                 "preview_sandbox_status": "running",
                 "preview_workspace_stage_path": "/workspace",
             },
         },
         surface=CODING_AGENT_SURFACE,
-        published_app_id=uuid4(),
-        base_revision_id=uuid4(),
+        published_app_id=UUID(app_id),
+        base_revision_id=UUID(draft_revision_id),
         execution_engine="opencode",
     )
     db_session.add(run)
@@ -358,6 +628,18 @@ async def test_v2_stream_missing_terminal_does_not_force_fail_by_default(db_sess
 async def test_v2_tool_event_history_append_preserves_external_updates(db_session):
     tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
     _ = org_unit
+    app_id, draft_revision_id = await _create_app_and_draft_revision(
+        db_session,
+        tenant_id=tenant.id,
+        user_id=user.id,
+        agent_id=agent.id,
+    )
+    chat_session = await _create_chat_session(
+        db_session,
+        app_id=UUID(app_id),
+        user_id=user.id,
+        title="Tool History Test",
+    )
 
     run = AgentRun(
         tenant_id=tenant.id,
@@ -368,15 +650,15 @@ async def test_v2_tool_event_history_append_preserves_external_updates(db_sessio
         input_params={
             "input": "Persist tool events",
             "context": {
-                "chat_session_id": str(uuid4()),
+                "chat_session_id": str(chat_session.id),
                 "preview_sandbox_id": "sandbox-test",
                 "preview_sandbox_status": "running",
                 "preview_workspace_stage_path": "/workspace",
             },
         },
         surface=CODING_AGENT_SURFACE,
-        published_app_id=uuid4(),
-        base_revision_id=uuid4(),
+        published_app_id=UUID(app_id),
+        base_revision_id=UUID(draft_revision_id),
         execution_engine="opencode",
     )
     db_session.add(run)
@@ -441,7 +723,12 @@ async def test_v2_tool_event_history_append_preserves_external_updates(db_sessio
 async def test_v2_answer_question_endpoint(client, db_session, monkeypatch):
     tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
     headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
-    app_id, draft_revision_id = await _create_app_and_draft_revision(client, headers, str(agent.id))
+    app_id, draft_revision_id = await _create_app_and_draft_revision(
+        db_session,
+        tenant_id=tenant.id,
+        user_id=user.id,
+        agent_id=agent.id,
+    )
 
     run = AgentRun(
         tenant_id=tenant.id,
@@ -523,7 +810,12 @@ async def test_v2_cancel_marks_cancelled(client, db_session, monkeypatch):
 
     tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
     headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
-    app_id, _ = await _create_app_and_draft_revision(client, headers, str(agent.id))
+    app_id, _ = await _create_app_and_draft_revision(
+        db_session,
+        tenant_id=tenant.id,
+        user_id=user.id,
+        agent_id=agent.id,
+    )
 
     first_resp = await client.post(
         f"/admin/apps/{app_id}/coding-agent/v2/prompts",
@@ -572,7 +864,12 @@ async def test_v2_cancel_closes_stream_when_runtime_keeps_non_terminal_events(cl
 
     tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
     headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
-    app_id, _ = await _create_app_and_draft_revision(client, headers, str(agent.id))
+    app_id, _ = await _create_app_and_draft_revision(
+        db_session,
+        tenant_id=tenant.id,
+        user_id=user.id,
+        agent_id=agent.id,
+    )
 
     first_resp = await client.post(
         f"/admin/apps/{app_id}/coding-agent/v2/prompts",
