@@ -27,6 +27,7 @@ Repo-backed core services covered by this workflow:
 - `frontend`
 - `backend-worker`
 - `docs-site`
+- `crawl4ai`
 
 Non-repo-managed data services stay outside this workflow:
 
@@ -75,6 +76,7 @@ The script:
   - `frontend`
   - `backend-worker`
   - `docs-site`
+  - `crawl4ai`
 
 Exceptional bypass:
 
@@ -104,7 +106,3 @@ scripts/railway_promote_staging_commit.sh <commit-sha>
 - staging is allowed to break; production is not
 - production promotion must use a tested commit SHA, not an untracked local upload
 - if a service is not repo-backed in Railway, it is outside this workflow until it is normalized into it
-
-## Current Known Constraint
-
-`crawl4ai-runtime` is still being normalized separately. The staging-first commit-promotion workflow above is currently defined for the core repo-backed platform services listed in this doc.

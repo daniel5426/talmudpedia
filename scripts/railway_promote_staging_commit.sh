@@ -11,6 +11,7 @@ Promotes the same tested commit from staging to production for:
   - frontend
   - backend-worker
   - docs-site
+  - crawl4ai
 EOF
 }
 
@@ -94,7 +95,7 @@ snapshot="$(
       --data @-
 )"
 
-services=(backend frontend backend-worker docs-site)
+services=(backend frontend backend-worker docs-site crawl4ai)
 staging_env_id="$(jq -r '.data.project.environments.edges[] | select(.node.name=="staging") | .node.id' <<<"$snapshot")"
 prod_env_id="$(jq -r '.data.project.environments.edges[] | select(.node.name=="production") | .node.id' <<<"$snapshot")"
 
