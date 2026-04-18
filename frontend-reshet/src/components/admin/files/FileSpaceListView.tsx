@@ -26,6 +26,7 @@ type FileSpaceListViewProps = {
   loading?: boolean
   bulkAction: "delete" | null
   onDeleteSpace: (space: FileSpace) => void
+  onBulkDeleteSpaces?: (spaces: FileSpace[]) => void | Promise<void>
 }
 
 const dateFormatter = new Intl.DateTimeFormat(undefined, {
