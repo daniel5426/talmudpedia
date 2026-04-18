@@ -6,7 +6,7 @@ export XDG_CACHE_HOME="/tmp/crawl4ai-cache"
 export XDG_CONFIG_HOME="/tmp/crawl4ai-config"
 export XDG_DATA_HOME="/tmp/crawl4ai-data"
 export CRAWL4AI_DB_PATH="$XDG_DATA_HOME/crawl4ai.db"
-export PLAYWRIGHT_BROWSERS_PATH="/ms-playwright"
+export PLAYWRIGHT_BROWSERS_PATH="/root/.cache/ms-playwright"
 export GUNICORN_CMD_ARGS="${GUNICORN_CMD_ARGS:-} --worker-tmp-dir /tmp"
 
 mkdir -p "$HOME" "$XDG_CACHE_HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME"

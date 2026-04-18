@@ -8,10 +8,12 @@ ENV HOME=/tmp/crawl4ai-home \
     XDG_CONFIG_HOME=/tmp/crawl4ai-config \
     XDG_DATA_HOME=/tmp/crawl4ai-data \
     CRAWL4AI_DB_PATH=/tmp/crawl4ai-data/crawl4ai.db \
-    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+    PLAYWRIGHT_BROWSERS_PATH=/root/.cache/ms-playwright
 
 RUN mkdir -p "$HOME" "$XDG_CACHE_HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" \
-    && chmod -R 777 "$HOME" "$XDG_CACHE_HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME"
+    && chmod -R 777 "$HOME" "$XDG_CACHE_HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" \
+    && chmod 755 /root /root/.cache \
+    && chmod -R a+rX /root/.cache/ms-playwright
 
 COPY start.sh /start.sh
 RUN chmod +x /start.sh
