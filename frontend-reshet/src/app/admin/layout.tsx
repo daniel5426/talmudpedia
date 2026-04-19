@@ -14,7 +14,6 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const hydrated = useAuthStore((state) => state.hydrated)
   const sessionChecked = useAuthStore((state) => state.sessionChecked)
   const onboardingRequired = useAuthStore((state) => state.onboardingRequired)
-  const effectiveScopes = useAuthStore((state) => state.effectiveScopes)
   const router = useRouter()
   const pathname = usePathname()
   const [isAuthorized, setIsAuthorized] = useState(false)
@@ -34,19 +33,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       return
     }
 
-    const hasAccess =
-      effectiveScopes.length > 0 ||
-      user.role === "admin" ||
-      user.role === "system_admin" ||
-      user.role === "system"
-
-    if (!hasAccess) {
-      router.replace("/")
-      return
-    }
-
     setIsAuthorized(true)
-  }, [effectiveScopes.length, hydrated, onboardingRequired, pathname, router, sessionChecked, user])
+  }, [hydrated, onboardingRequired, pathname, router, sessionChecked, user])
 
   if (!isAuthorized) {
     return null

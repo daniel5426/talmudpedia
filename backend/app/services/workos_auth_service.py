@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 from datetime import datetime, timezone
 import hashlib
@@ -93,6 +94,9 @@ def _iter_collection(value: Any) -> list[Any]:
 
 
 class WorkOSAuthService:
+    _refresh_flights: dict[str, asyncio.Future[Any]] = {}
+    _refresh_flights_guard: asyncio.Lock | None = None
+
     def __init__(self, db: AsyncSession):
         self.db = db
         self.client = _workos_client()
@@ -142,6 +146,61 @@ class WorkOSAuthService:
                 handle.write(json.dumps(payload, ensure_ascii=True, default=str) + "\n")
         except Exception:
             logger.exception("Failed to write WorkOS auth debug log")
+
+    @classmethod
+    def _get_refresh_flights_guard(cls) -> asyncio.Lock:
+        if cls._refresh_flights_guard is None:
+            cls._refresh_flights_guard = asyncio.Lock()
+        return cls._refresh_flights_guard
+
+    async def _get_or_create_refresh_flight(self, key: str) -> tuple[asyncio.Future[Any], bool]:
+        guard = self._get_refresh_flights_guard()
+        async with guard:
+            future = self._refresh_flights.get(key)
+            if future is None:
+                future = asyncio.get_running_loop().create_future()
+                self._refresh_flights[key] = future
+                return future, True
+            return future, False
+
+    async def _finish_refresh_flight(self, key: str, future: asyncio.Future[Any]) -> None:
+        guard = self._get_refresh_flights_guard()
+        async with guard:
+            current = self._refresh_flights.get(key)
+            if current is future:
+                self._refresh_flights.pop(key, None)
+
+    async def _refresh_session_helper(self, helper: Any) -> Any:
+        return await asyncio.to_thread(helper.refresh)
+
+    async def _refresh_with_single_flight(self, *, request: Request, helper: Any) -> Any:
+        cookie_value = str(request.cookies.get(WORKOS_SESSION_COOKIE_NAME) or "").strip()
+        refresh_key = self._fingerprint_secret(cookie_value) or "missing"
+        future, is_leader = await self._get_or_create_refresh_flight(refresh_key)
+        if is_leader:
+            self._auth_debug_log(
+                "authenticate_request.refresh_single_flight_leader",
+                request=request,
+                fields={"refresh_cookie_fp": refresh_key},
+            )
+            try:
+                refreshed = await self._refresh_session_helper(helper)
+                if not future.done():
+                    future.set_result(refreshed)
+                return refreshed
+            except Exception as exc:
+                if not future.done():
+                    future.set_exception(exc)
+                raise
+            finally:
+                await self._finish_refresh_flight(refresh_key, future)
+
+        self._auth_debug_log(
+            "authenticate_request.refresh_single_flight_wait",
+            request=request,
+            fields={"refresh_cookie_fp": refresh_key},
+        )
+        return await future
 
     @staticmethod
     def is_enabled() -> bool:
@@ -316,7 +375,7 @@ class WorkOSAuthService:
             if reason == "no_session_cookie_provided":
                 return None
 
-            refreshed = helper.refresh()
+            refreshed = await self._refresh_with_single_flight(request=request, helper=helper)
             refresh_authenticated = bool(_workos_attr(refreshed, "authenticated"))
             refresh_reason = _workos_attr(refreshed, "reason")
             self._auth_debug_log(

@@ -40,6 +40,8 @@ import {
   SettingsRole,
   SettingsRoleAssignment,
 } from "@/services"
+import { MemberRoleAssignmentsDialog } from "@/app/admin/settings/components/MemberRoleAssignmentsDialog"
+import { RolePermissionDialog } from "@/app/admin/settings/components/RolePermissionDialog"
 
 function ErrorBanner({ message }: { message: string | null }) {
   if (!message) return null
@@ -67,7 +69,7 @@ export function PeoplePermissionsSection() {
   const [inviteOpen, setInviteOpen] = useState(false)
   const [groupOpen, setGroupOpen] = useState(false)
   const [roleOpen, setRoleOpen] = useState(false)
-  const [assignmentOpen, setAssignmentOpen] = useState(false)
+  const [memberRoleOpen, setMemberRoleOpen] = useState(false)
 
   // Invite form
   const [inviteEmail, setInviteEmail] = useState("")
@@ -79,12 +81,13 @@ export function PeoplePermissionsSection() {
   const [groupSaving, setGroupSaving] = useState(false)
 
   // Role form
-  const [roleForm, setRoleForm] = useState({ id: "", name: "", description: "", permissions: "" })
+  const [roleForm, setRoleForm] = useState({ id: "", name: "", description: "", permissions: [] as string[] })
   const [roleSaving, setRoleSaving] = useState(false)
 
-  // Assignment form
-  const [assignmentForm, setAssignmentForm] = useState({ user_id: "", role_id: "", scope_type: "organization", scope_id: "" })
-  const [assignmentSaving, setAssignmentSaving] = useState(false)
+  // Member role assignment
+  const [memberRoleTarget, setMemberRoleTarget] = useState<SettingsMember | null>(null)
+  const [memberRoleIds, setMemberRoleIds] = useState<string[]>([])
+  const [memberRoleSaving, setMemberRoleSaving] = useState(false)
 
   const load = async () => {
     setLoading(true)
@@ -116,12 +119,6 @@ export function PeoplePermissionsSection() {
   }, [])
 
   const rootGroupId = useMemo(() => groups.find((group) => group.parent_id === null)?.id || "", [groups])
-
-  useEffect(() => {
-    if (!assignmentForm.scope_id && assignmentForm.scope_type === "organization" && rootGroupId) {
-      setAssignmentForm((current) => ({ ...current, scope_id: rootGroupId }))
-    }
-  }, [assignmentForm.scope_id, assignmentForm.scope_type, rootGroupId])
 
   // ── Filtered data ──
   const filteredMembers = useMemo(() => {
@@ -189,7 +186,6 @@ export function PeoplePermissionsSection() {
       name: roleForm.name.trim(),
       description: roleForm.description.trim() || null,
       permissions: roleForm.permissions
-        .split(",")
         .map((value) => value.trim())
         .filter(Boolean),
     }
@@ -202,7 +198,7 @@ export function PeoplePermissionsSection() {
       } else {
         await settingsPeoplePermissionsService.createRole(payload)
       }
-      setRoleForm({ id: "", name: "", description: "", permissions: "" })
+      setRoleForm({ id: "", name: "", description: "", permissions: [] })
       setRoleOpen(false)
       await load()
     } catch (error) {
@@ -212,29 +208,44 @@ export function PeoplePermissionsSection() {
     }
   }
 
-  const createAssignment = async () => {
-    if (!assignmentForm.user_id || !assignmentForm.role_id) return
-    const scopeId =
-      assignmentForm.scope_type === "organization"
-        ? members[0]?.org_unit_id || ""
-        : assignmentForm.scope_id
+  const saveMemberRoles = async () => {
+    if (!memberRoleTarget) return
+    const scopeId = rootGroupId || memberRoleTarget.org_unit_id
     if (!scopeId) return
-    setAssignmentSaving(true)
+    const currentAssignments = assignments.filter(
+      (assignment) => assignment.user_id === memberRoleTarget.user_id && assignment.scope_type === "organization"
+    )
+    const currentRoleIds = new Set(currentAssignments.map((assignment) => assignment.role_id))
+    const nextRoleIds = new Set(memberRoleIds)
+    const assignmentIdsToDelete = currentAssignments
+      .filter((assignment) => !nextRoleIds.has(assignment.role_id))
+      .map((assignment) => assignment.id)
+    const roleIdsToCreate = memberRoleIds.filter((roleId) => !currentRoleIds.has(roleId))
+
+    setMemberRoleSaving(true)
     setError(null)
     try {
-      await settingsPeoplePermissionsService.createRoleAssignment({
-        user_id: assignmentForm.user_id,
-        role_id: assignmentForm.role_id,
-        scope_type: assignmentForm.scope_type,
-        scope_id: scopeId,
-      })
-      setAssignmentForm({ user_id: "", role_id: "", scope_type: "organization", scope_id: "" })
-      setAssignmentOpen(false)
+      await Promise.all([
+        ...roleIdsToCreate.map((roleId) =>
+          settingsPeoplePermissionsService.createRoleAssignment({
+            user_id: memberRoleTarget.user_id,
+            role_id: roleId,
+            scope_type: "organization",
+            scope_id: scopeId,
+          })
+        ),
+        ...assignmentIdsToDelete.map((assignmentId) =>
+          settingsPeoplePermissionsService.deleteRoleAssignment(assignmentId)
+        ),
+      ])
+      setMemberRoleTarget(null)
+      setMemberRoleIds([])
+      setMemberRoleOpen(false)
       await load()
     } catch (error) {
-      setError(formatHttpErrorMessage(error, "Failed to assign role."))
+      setError(formatHttpErrorMessage(error, "Failed to update member roles."))
     } finally {
-      setAssignmentSaving(false)
+      setMemberRoleSaving(false)
     }
   }
 
@@ -259,15 +270,17 @@ export function PeoplePermissionsSection() {
         )
       case "roles":
         return (
-          <div className="flex items-center gap-2 shrink-0">
-            <Button size="sm" className="h-8 text-xs" onClick={() => { setRoleForm({ id: "", name: "", description: "", permissions: "" }); setRoleOpen(true) }}>
-              <Plus className="h-3.5 w-3.5 mr-1.5" />
-              New Role
-            </Button>
-            <Button variant="outline" size="sm" className="h-8 text-xs" onClick={() => setAssignmentOpen(true)}>
-              Assign Role
-            </Button>
-          </div>
+          <Button
+            size="sm"
+            className="h-8 text-xs"
+            onClick={() => {
+              setRoleForm({ id: "", name: "", description: "", permissions: [] })
+              setRoleOpen(true)
+            }}
+          >
+            <Plus className="h-3.5 w-3.5 mr-1.5" />
+            New Role
+          </Button>
         )
       default:
         return null
@@ -342,15 +355,44 @@ export function PeoplePermissionsSection() {
                         <span className="text-muted-foreground/30">·</span>
                         <span className="text-xs text-muted-foreground/40">{member.org_unit_name}</span>
                       </div>
+                      {assignments.some((assignment) => assignment.user_id === member.user_id && assignment.scope_type === "organization") ? (
+                        <div className="mt-1 flex flex-wrap gap-1">
+                          {assignments
+                            .filter((assignment) => assignment.user_id === member.user_id && assignment.scope_type === "organization")
+                            .map((assignment) => (
+                              <Badge key={assignment.id} variant="secondary" className="h-5 px-1.5 text-[10px]">
+                                {assignment.role_name}
+                              </Badge>
+                            ))}
+                        </div>
+                      ) : null}
                     </div>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="text-destructive h-7 text-xs shrink-0"
-                      onClick={() => void settingsPeoplePermissionsService.removeMember(member.membership_id).then(load)}
-                    >
-                      Remove
-                    </Button>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 text-xs"
+                        onClick={() => {
+                          setMemberRoleTarget(member)
+                          setMemberRoleIds(
+                            assignments
+                              .filter((assignment) => assignment.user_id === member.user_id && assignment.scope_type === "organization")
+                              .map((assignment) => assignment.role_id)
+                          )
+                          setMemberRoleOpen(true)
+                        }}
+                      >
+                        Edit Roles
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-destructive h-7 text-xs"
+                        onClick={() => void settingsPeoplePermissionsService.removeMember(member.membership_id).then(load)}
+                      >
+                        Remove
+                      </Button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -473,7 +515,7 @@ export function PeoplePermissionsSection() {
                             id: role.id,
                             name: role.name,
                             description: role.description || "",
-                            permissions: role.permissions.join(", "),
+                            permissions: role.permissions,
                           })
                           setRoleOpen(true)
                         }}
@@ -614,105 +656,32 @@ export function PeoplePermissionsSection() {
       </Dialog>
 
       {/* ── Role Modal ── */}
-      <Dialog open={roleOpen} onOpenChange={(open) => { setRoleOpen(open); if (!open) setRoleForm({ id: "", name: "", description: "", permissions: "" }) }}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle className="text-base">{roleForm.id ? "Edit Role" : "New Role"}</DialogTitle>
-            <DialogDescription className="text-xs">
-              {roleForm.id ? "Update the role details." : "Define a new custom role with permissions."}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 pt-2">
-            <div className="space-y-1.5">
-              <Label className="text-xs">Name</Label>
-              <Input value={roleForm.name} onChange={(e) => setRoleForm((c) => ({ ...c, name: e.target.value }))} placeholder="Role name" className="h-9" />
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs">Description</Label>
-              <Input value={roleForm.description} onChange={(e) => setRoleForm((c) => ({ ...c, description: e.target.value }))} placeholder="Optional description" className="h-9" />
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs">Permissions</Label>
-              <Input value={roleForm.permissions} onChange={(e) => setRoleForm((c) => ({ ...c, permissions: e.target.value }))} placeholder="scope.one, scope.two" className="h-9 font-mono text-xs" />
-              <p className="text-[11px] text-muted-foreground/50">Comma-separated permission scopes</p>
-            </div>
-            <div className="flex justify-end gap-2 pt-2">
-              <Button variant="outline" size="sm" onClick={() => setRoleOpen(false)}>Cancel</Button>
-              <Button size="sm" onClick={saveRole} disabled={roleSaving || !roleForm.name.trim()}>
-                {roleSaving && <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />}
-                {roleForm.id ? "Save Role" : "Create Role"}
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <RolePermissionDialog
+        open={roleOpen}
+        form={roleForm}
+        saving={roleSaving}
+        assignmentCount={roleForm.id ? assignments.filter((assignment) => assignment.role_id === roleForm.id).length : 0}
+        onFormChange={setRoleForm}
+        onOpenChange={setRoleOpen}
+        onSave={saveRole}
+      />
 
-      {/* ── Assignment Modal ── */}
-      <Dialog open={assignmentOpen} onOpenChange={(open) => { setAssignmentOpen(open); if (!open) setAssignmentForm({ user_id: "", role_id: "", scope_type: "organization", scope_id: "" }) }}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle className="text-base">Assign Role</DialogTitle>
-            <DialogDescription className="text-xs">Grant a role to a member at organization or project scope.</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 pt-2">
-            <div className="space-y-1.5">
-              <Label className="text-xs">Member</Label>
-              <Select value={assignmentForm.user_id || "__none__"} onValueChange={(value) => setAssignmentForm((c) => ({ ...c, user_id: value === "__none__" ? "" : value }))}>
-                <SelectTrigger className="h-9"><SelectValue placeholder="Select member" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__none__">Select member</SelectItem>
-                  {members.map((member) => (
-                    <SelectItem key={member.user_id} value={member.user_id}>{member.full_name || member.email}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs">Role</Label>
-              <Select value={assignmentForm.role_id || "__none__"} onValueChange={(value) => setAssignmentForm((c) => ({ ...c, role_id: value === "__none__" ? "" : value }))}>
-                <SelectTrigger className="h-9"><SelectValue placeholder="Select role" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__none__">Select role</SelectItem>
-                  {roles.map((role) => (
-                    <SelectItem key={role.id} value={role.id}>{role.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs">Scope</Label>
-              <Select value={assignmentForm.scope_type} onValueChange={(value) => setAssignmentForm((c) => ({ ...c, scope_type: value, scope_id: value === "organization" ? rootGroupId : "" }))}>
-                <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="organization">Organization</SelectItem>
-                  <SelectItem value="project">Project</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            {assignmentForm.scope_type === "project" && (
-              <div className="space-y-1.5">
-                <Label className="text-xs">Project</Label>
-                <Select value={assignmentForm.scope_id || "__none__"} onValueChange={(value) => setAssignmentForm((c) => ({ ...c, scope_id: value === "__none__" ? "" : value }))}>
-                  <SelectTrigger className="h-9"><SelectValue placeholder="Select project" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__none__">Select project</SelectItem>
-                    {projects.map((project) => (
-                      <SelectItem key={project.id} value={project.id}>{project.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
-            <div className="flex justify-end gap-2 pt-2">
-              <Button variant="outline" size="sm" onClick={() => setAssignmentOpen(false)}>Cancel</Button>
-              <Button size="sm" onClick={createAssignment} disabled={assignmentSaving || !assignmentForm.user_id || !assignmentForm.role_id}>
-                {assignmentSaving && <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />}
-                Assign
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <MemberRoleAssignmentsDialog
+        open={memberRoleOpen}
+        member={memberRoleTarget}
+        roles={roles}
+        selectedRoleIds={memberRoleIds}
+        saving={memberRoleSaving}
+        onSelectedRoleIdsChange={setMemberRoleIds}
+        onOpenChange={(open) => {
+          setMemberRoleOpen(open)
+          if (!open) {
+            setMemberRoleTarget(null)
+            setMemberRoleIds([])
+          }
+        }}
+        onSave={saveMemberRoles}
+      />
     </div>
   )
 }
