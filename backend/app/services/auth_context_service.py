@@ -16,7 +16,10 @@ async def list_user_organizations(*, db: AsyncSession, user_id: UUID) -> list[Te
     result = await db.execute(
         select(Tenant)
         .join(OrgMembership, OrgMembership.tenant_id == Tenant.id)
-        .where(OrgMembership.user_id == user_id)
+        .where(
+            OrgMembership.user_id == user_id,
+            Tenant.workos_organization_id.is_not(None),
+        )
         .order_by(Tenant.created_at.asc())
     )
     organizations: list[Tenant] = []
