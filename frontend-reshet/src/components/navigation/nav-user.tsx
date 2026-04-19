@@ -60,11 +60,11 @@ export function NavUser({
   const handleLogout = async () => {
     try {
       const result = await authService.logout()
-      clearAuthSession()
       if (result.logout_url) {
         window.location.assign(result.logout_url)
         return
       }
+      clearAuthSession()
     } catch (error) {
       console.error("Failed to close browser session cleanly", error)
       clearAuthSession()
