@@ -139,3 +139,4 @@ from .mcp import (
     McpSyncStatus,
     McpUserAccountConnection,
 )
+from .workos_events import WorkOSWebhookEvent

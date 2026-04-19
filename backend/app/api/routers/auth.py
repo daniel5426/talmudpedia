@@ -1,24 +1,22 @@
 from __future__ import annotations
 
 import logging
-import os
 import re
-import time
-from typing import Any, Dict, Optional
+from typing import Optional
+from urllib.parse import urlencode, urlparse, urlunparse
 from uuid import UUID
 
 import jwt
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from google.auth.transport import requests as google_requests
-from google.oauth2 import id_token
 from pydantic import BaseModel, EmailStr
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.security import ALGORITHM, SECRET_KEY, create_access_token, get_password_hash, verify_password
-from app.db.postgres.models.identity import OrgMembership, OrgInvite, Tenant, User
-from app.db.postgres.models.workspace import BrowserSession, Project
+from app.core.security import ALGORITHM, SECRET_KEY, create_access_token, verify_password
+from app.db.postgres.models.identity import OrgMembership, Tenant, User
+from app.db.postgres.models.workspace import Project
 from app.db.postgres.session import get_db
 from app.services.auth_context_service import (
     list_organization_projects,
@@ -28,23 +26,12 @@ from app.services.auth_context_service import (
     serialize_project_summary,
     serialize_user_summary,
 )
-from app.services.browser_session_service import (
-    SESSION_COOKIE_NAME,
-    SESSION_TTL_DAYS,
-    BrowserSessionService,
-)
-from app.services.organization_bootstrap_service import OrganizationBootstrapService
+from app.services.workos_auth_service import LocalSessionBundle, WorkOSAuthError, WorkOSAuthService
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
-AUTH_SESSION_SLOW_LOG_THRESHOLD_MS = int(
-    (os.getenv("AUTH_SESSION_SLOW_LOG_THRESHOLD_MS") or "500").strip() or "500"
-)
-AUTH_SESSION_LOG_ALL = str(os.getenv("AUTH_SESSION_LOG_ALL") or "").strip().lower() in {"1", "true", "yes", "on"}
-
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login", auto_error=False)
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/token", auto_error=False)
 
 
 class SessionUserResponse(BaseModel):
@@ -73,71 +60,28 @@ class ProjectSummaryResponse(BaseModel):
 
 
 class SessionResponse(BaseModel):
+    authenticated: bool = True
+    onboarding_required: bool = False
     user: SessionUserResponse
-    active_organization: OrganizationSummaryResponse
-    active_project: ProjectSummaryResponse
+    active_organization: OrganizationSummaryResponse | None = None
+    active_project: ProjectSummaryResponse | None = None
     organizations: list[OrganizationSummaryResponse]
     projects: list[ProjectSummaryResponse]
     effective_scopes: list[str]
 
 
-class SignupRequest(BaseModel):
-    email: EmailStr
-    password: str
-    full_name: str | None = None
-
-
-class GoogleToken(BaseModel):
-    credential: str
-
-
 class SwitchOrganizationRequest(BaseModel):
     organization_slug: str
+    return_to: str | None = None
 
 
 class SwitchProjectRequest(BaseModel):
     project_slug: str
 
 
-class _SessionBundle(BaseModel):
-    user: SessionUserResponse
-    active_organization: OrganizationSummaryResponse
-    active_project: ProjectSummaryResponse
-    organizations: list[OrganizationSummaryResponse]
-    projects: list[ProjectSummaryResponse]
-    effective_scopes: list[str]
-
-
-_user_cache: Dict[str, Any] = {}
-CACHE_TTL = 300
-
-
-def _slugify(value: str, *, fallback: str) -> str:
-    cleaned = re.sub(r"[^a-z0-9]+", "-", str(value or "").strip().lower()).strip("-")
-    return cleaned[:48] or fallback
-
-
-def _set_session_cookie(*, response: Response, request: Request, token: str) -> None:
-    max_age_seconds = SESSION_TTL_DAYS * 24 * 60 * 60
-    response.set_cookie(
-        key=SESSION_COOKIE_NAME,
-        value=token,
-        httponly=True,
-        secure=request.url.scheme == "https",
-        samesite="lax",
-        path="/",
-        max_age=max_age_seconds,
-        expires=max_age_seconds,
-    )
-
-
-def _clear_session_cookie(*, response: Response, request: Request) -> None:
-    response.delete_cookie(
-        key=SESSION_COOKIE_NAME,
-        path="/",
-        secure=request.url.scheme == "https",
-        samesite="lax",
-    )
+class OnboardingOrganizationRequest(BaseModel):
+    name: str
+    return_to: str | None = None
 
 
 async def _resolve_user_from_access_token(token: str, db: AsyncSession) -> User:
@@ -148,49 +92,101 @@ async def _resolve_user_from_access_token(token: str, db: AsyncSession) -> User:
     )
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        user_id_str: str = payload.get("sub")
-        if user_id_str is None:
-            raise credentials_exception
-
-        now = time.time()
-        if user_id_str in _user_cache:
-            cached_user, expires_at = _user_cache[user_id_str]
-            if now < expires_at:
-                return cached_user
-            del _user_cache[user_id_str]
-
-        try:
-            user_id = UUID(user_id_str)
-        except ValueError as exc:
-            raise credentials_exception from exc
-    except jwt.PyJWTError as exc:
+        user_id = UUID(str(payload.get("sub")))
+    except Exception as exc:
         raise credentials_exception from exc
 
-    result = await db.execute(select(User).where(User.id == user_id))
-    user = result.scalar_one_or_none()
+    user = await db.get(User, user_id)
     if user is None:
         raise credentials_exception
-    db.expunge(user)
-    _user_cache[user_id_str] = (user, time.time() + CACHE_TTL)
     return user
+
+
+def _slugify_organization_name(value: str) -> str:
+    cleaned = re.sub(r"[^a-z0-9]+", "-", str(value or "").strip().lower()).strip("-")
+    return cleaned[:48] or "organization"
+
+
+def _build_frontend_onboarding_url(return_to: str, request: Request) -> str:
+    if return_to.startswith("http://") or return_to.startswith("https://"):
+        parsed = urlparse(return_to)
+        query = urlencode({"return_to": return_to})
+        return urlunparse((parsed.scheme, parsed.netloc, "/auth/onboarding", "", query, ""))
+    query = urlencode({"return_to": return_to})
+    return f"{str(request.base_url).rstrip('/')}/auth/onboarding?{query}"
+
+
+async def _load_workos_auth(
+    *,
+    request: Request,
+    response: Response,
+    db: AsyncSession,
+) -> tuple[WorkOSAuthService, object, User]:
+    service = WorkOSAuthService(db)
+    auth_response = await service.authenticate_request(request, response)
+    if auth_response is None:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    user = await service.sync_local_user(auth_response)
+    return service, auth_response, user
+
+
+async def _load_workos_session_bundle(
+    *,
+    request: Request,
+    response: Response,
+    db: AsyncSession,
+) -> LocalSessionBundle:
+    service, auth_response, _ = await _load_workos_auth(request=request, response=response, db=db)
+    if not service.current_organization_id(auth_response):
+        raise HTTPException(status_code=409, detail="Organization onboarding is required")
+    bundle = await service.ensure_local_bundle(auth_response=auth_response, request=request)
+    service.set_project_cookie(response=response, request=request, project_id=bundle.project.id)
+    return bundle
+
+
+async def _serialize_session_response(
+    *,
+    db: AsyncSession,
+    user: User,
+    organization: Tenant | None,
+    project: Project | None,
+    effective_scopes: list[str],
+    authenticated: bool = True,
+    onboarding_required: bool = False,
+) -> SessionResponse:
+    organizations = await list_user_organizations(db=db, user_id=user.id)
+    projects = await list_organization_projects(db=db, organization_id=organization.id) if organization is not None else []
+    return SessionResponse(
+        authenticated=authenticated,
+        onboarding_required=onboarding_required,
+        user=SessionUserResponse.model_validate(serialize_user_summary(user)),
+        active_organization=(
+            OrganizationSummaryResponse.model_validate(serialize_organization_summary(organization))
+            if organization is not None
+            else None
+        ),
+        active_project=(
+            ProjectSummaryResponse.model_validate(serialize_project_summary(project))
+            if project is not None
+            else None
+        ),
+        organizations=[OrganizationSummaryResponse.model_validate(serialize_organization_summary(item)) for item in organizations],
+        projects=[ProjectSummaryResponse.model_validate(serialize_project_summary(item)) for item in projects],
+        effective_scopes=effective_scopes,
+    )
 
 
 async def get_current_user(
     request: Request,
+    response: Response,
     token: Optional[str] = Depends(oauth2_scheme),
     db: AsyncSession = Depends(get_db),
 ) -> User:
     if token:
         return await _resolve_user_from_access_token(token, db)
-
-    cookie_token = str(request.cookies.get(SESSION_COOKIE_NAME) or "").strip()
-    if cookie_token:
-        session = await BrowserSessionService(db).resolve_session(cookie_token)
-        if session is not None:
-            user = await db.get(User, session.user_id)
-            if user is not None:
-                return user
-
+    if WorkOSAuthService.is_enabled():
+        _, _, user = await _load_workos_auth(request=request, response=response, db=db)
+        return user
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Authentication required",
@@ -198,367 +194,308 @@ async def get_current_user(
     )
 
 
-async def _load_browser_session_bundle(request: Request, db: AsyncSession) -> tuple[BrowserSession, _SessionBundle]:
-    started_at = time.perf_counter()
-    timings_ms: dict[str, int] = {}
-
-    def record_timing(step: str, step_started_at: float) -> None:
-        timings_ms[step] = int((time.perf_counter() - step_started_at) * 1000)
-
-    raw_token = str(request.cookies.get(SESSION_COOKIE_NAME) or "").strip()
-    if not raw_token:
-        raise HTTPException(status_code=401, detail="No active browser session")
-
-    session: BrowserSession | None = None
-    user: User | None = None
-    organization: Tenant | None = None
-    project: Project | None = None
-    try:
-        step_started_at = time.perf_counter()
-        session = await BrowserSessionService(db).resolve_session(raw_token)
-        record_timing("resolve_session", step_started_at)
-        if session is None:
-            raise HTTPException(status_code=401, detail="Browser session expired")
-
-        step_started_at = time.perf_counter()
-        user = await db.get(User, session.user_id)
-        record_timing("load_user", step_started_at)
-
-        step_started_at = time.perf_counter()
-        organization = await db.get(Tenant, session.organization_id)
-        record_timing("load_organization", step_started_at)
-
-        step_started_at = time.perf_counter()
-        project = await db.get(Project, session.project_id)
-        record_timing("load_project", step_started_at)
-        if user is None or organization is None or project is None:
-            raise HTTPException(status_code=401, detail="Browser session is invalid")
-
-        step_started_at = time.perf_counter()
-        organizations = await list_user_organizations(db=db, user_id=user.id)
-        record_timing("list_user_organizations", step_started_at)
-
-        step_started_at = time.perf_counter()
-        projects = await list_organization_projects(db=db, organization_id=organization.id)
-        record_timing("list_organization_projects", step_started_at)
-
-        step_started_at = time.perf_counter()
-        effective_scopes = await resolve_effective_scopes(
-            db=db,
-            user=user,
-            organization_id=organization.id,
-            project_id=project.id,
-        )
-        record_timing("resolve_effective_scopes", step_started_at)
-
-        bundle = _SessionBundle(
-            user=SessionUserResponse.model_validate(serialize_user_summary(user)),
-            active_organization=OrganizationSummaryResponse.model_validate(serialize_organization_summary(organization)),
-            active_project=ProjectSummaryResponse.model_validate(serialize_project_summary(project)),
-            organizations=[OrganizationSummaryResponse.model_validate(serialize_organization_summary(item)) for item in organizations],
-            projects=[ProjectSummaryResponse.model_validate(serialize_project_summary(item)) for item in projects],
-            effective_scopes=effective_scopes,
-        )
-        total_ms = int((time.perf_counter() - started_at) * 1000)
-        if AUTH_SESSION_LOG_ALL or total_ms >= AUTH_SESSION_SLOW_LOG_THRESHOLD_MS:
-            logger.warning(
-                "auth.session_bundle.complete total_ms=%s timings_ms=%s user_id=%s organization_id=%s project_id=%s path=%s",
-                total_ms,
-                timings_ms,
-                str(user.id) if user is not None else None,
-                str(organization.id) if organization is not None else None,
-                str(project.id) if project is not None else None,
-                request.url.path,
-            )
-        return session, bundle
-    except Exception:
-        total_ms = int((time.perf_counter() - started_at) * 1000)
-        logger.warning(
-            "auth.session_bundle.failed total_ms=%s timings_ms=%s session_id=%s user_id=%s organization_id=%s project_id=%s path=%s",
-            total_ms,
-            timings_ms,
-            str(session.id) if session is not None else None,
-            str(user.id) if user is not None else None,
-            str(organization.id) if organization is not None else None,
-            str(project.id) if project is not None else None,
-            request.url.path,
-            exc_info=True,
-        )
-        raise
+@router.get("/login")
+@router.post("/login")
+async def login(request: Request, db: AsyncSession = Depends(get_db)):
+    service = WorkOSAuthService(db)
+    if not service.is_enabled():
+        raise HTTPException(status_code=503, detail="WorkOS auth is not configured")
+    url = service.build_authorization_url(
+        request,
+        screen_hint="sign-in",
+        return_to=request.query_params.get("return_to"),
+    )
+    return RedirectResponse(url=url, status_code=status.HTTP_302_FOUND)
 
 
-async def _create_browser_session_response(
-    *,
+@router.get("/signup")
+@router.post("/signup")
+async def signup(request: Request, db: AsyncSession = Depends(get_db)):
+    service = WorkOSAuthService(db)
+    if not service.is_enabled():
+        raise HTTPException(status_code=503, detail="WorkOS auth is not configured")
+    url = service.build_authorization_url(
+        request,
+        screen_hint="sign-up",
+        return_to=request.query_params.get("return_to"),
+    )
+    return RedirectResponse(url=url, status_code=status.HTTP_302_FOUND)
+
+
+@router.get("/register")
+@router.post("/register")
+async def register(request: Request, db: AsyncSession = Depends(get_db)):
+    service = WorkOSAuthService(db)
+    if not service.is_enabled():
+        raise HTTPException(status_code=503, detail="WorkOS auth is not configured")
+    url = service.build_authorization_url(
+        request,
+        screen_hint="sign-up",
+        return_to=request.query_params.get("return_to"),
+    )
+    return RedirectResponse(url=url, status_code=status.HTTP_302_FOUND)
+
+
+@router.get("/callback")
+async def auth_callback(
     request: Request,
     response: Response,
-    db: AsyncSession,
-    user: User,
-    organization: Tenant,
-    project: Project,
-) -> SessionResponse:
-    _session, raw_token = await BrowserSessionService(db).create_session(
-        user=user,
-        organization=organization,
-        project=project,
+    code: str | None = None,
+    state: str | None = None,
+    error: str | None = None,
+    error_description: str | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    service = WorkOSAuthService(db)
+    if error:
+        raise HTTPException(status_code=400, detail=error_description or error)
+    if not code:
+        raise HTTPException(status_code=400, detail="Missing authorization code")
+
+    decoded_state = service.decode_state(state)
+    auth_response = await service.authenticate_with_code(
+        request,
+        code=code,
+        invitation_token=decoded_state.get("invitation_token"),
     )
-    _set_session_cookie(response=response, request=request, token=raw_token)
-    organizations = await list_user_organizations(db=db, user_id=user.id)
-    projects = await list_organization_projects(db=db, organization_id=organization.id)
+    await service.sync_local_user(auth_response)
+
+    redirect_to = str(decoded_state.get("return_to") or "/admin/agents/playground")
+    if service.current_organization_id(auth_response):
+        await service.sync_current_organization(auth_response=auth_response)
+        bundle = await service.ensure_local_bundle(auth_response=auth_response, request=request)
+        redirect_response = RedirectResponse(url=redirect_to, status_code=status.HTTP_302_FOUND)
+        service.set_project_cookie(response=redirect_response, request=request, project_id=bundle.project.id)
+    else:
+        redirect_response = RedirectResponse(
+            url=_build_frontend_onboarding_url(redirect_to, request),
+            status_code=status.HTTP_302_FOUND,
+        )
+
+    sealed_session = (
+        auth_response.get("sealed_session")
+        if isinstance(auth_response, dict)
+        else getattr(auth_response, "sealed_session", None) or getattr(auth_response, "sealedSession", None)
+    )
+    if sealed_session:
+        service.set_session_cookie(response=redirect_response, request=request, sealed_session=str(sealed_session))
+    return redirect_response
+
+
+@router.get("/session", response_model=SessionResponse)
+async def get_session(
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+):
+    service, auth_response, user = await _load_workos_auth(request=request, response=response, db=db)
+    if not service.current_organization_id(auth_response):
+        return await _serialize_session_response(
+            db=db,
+            user=user,
+            organization=None,
+            project=None,
+            effective_scopes=[],
+            authenticated=True,
+            onboarding_required=True,
+        )
+
+    bundle = await service.ensure_local_bundle(auth_response=auth_response, request=request)
+    service.set_project_cookie(response=response, request=request, project_id=bundle.project.id)
     effective_scopes = await resolve_effective_scopes(
         db=db,
-        user=user,
-        organization_id=organization.id,
-        project_id=project.id,
+        user=bundle.user,
+        organization_id=bundle.organization.id,
+        project_id=bundle.project.id,
+        organization_permissions=bundle.permissions,
     )
-    await db.commit()
-    return SessionResponse(
-        user=SessionUserResponse.model_validate(serialize_user_summary(user)),
-        active_organization=OrganizationSummaryResponse.model_validate(serialize_organization_summary(organization)),
-        active_project=ProjectSummaryResponse.model_validate(serialize_project_summary(project)),
-        organizations=[OrganizationSummaryResponse.model_validate(serialize_organization_summary(item)) for item in organizations],
-        projects=[ProjectSummaryResponse.model_validate(serialize_project_summary(item)) for item in projects],
+    return await _serialize_session_response(
+        db=db,
+        user=bundle.user,
+        organization=bundle.organization,
+        project=bundle.project,
+        effective_scopes=effective_scopes,
+        authenticated=True,
+        onboarding_required=False,
+    )
+
+
+@router.post("/onboarding/organization", response_model=SessionResponse)
+async def create_onboarding_organization(
+    payload: OnboardingOrganizationRequest,
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+):
+    service, auth_response, user = await _load_workos_auth(request=request, response=response, db=db)
+    if service.current_organization_id(auth_response):
+        bundle = await service.ensure_local_bundle(auth_response=auth_response, request=request)
+        effective_scopes = await resolve_effective_scopes(
+            db=db,
+            user=bundle.user,
+            organization_id=bundle.organization.id,
+            project_id=bundle.project.id,
+            organization_permissions=bundle.permissions,
+        )
+        return await _serialize_session_response(
+            db=db,
+            user=bundle.user,
+            organization=bundle.organization,
+            project=bundle.project,
+            effective_scopes=effective_scopes,
+        )
+
+    name = str(payload.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Organization name is required")
+    slug = _slugify_organization_name(name)
+    existing = (await db.execute(select(Tenant).where(Tenant.slug == slug))).scalar_one_or_none()
+    if existing is not None:
+        raise HTTPException(status_code=400, detail="Organization slug already exists")
+
+    bundle = await service.create_organization_for_user(
+        local_user=user,
+        name=name,
+        slug=slug,
+        request=request,
+        response=response,
+        return_to=payload.return_to,
+    )
+    if isinstance(bundle, dict):
+        return JSONResponse(bundle)
+    effective_scopes = await resolve_effective_scopes(
+        db=db,
+        user=bundle.user,
+        organization_id=bundle.organization.id,
+        project_id=bundle.project.id,
+        organization_permissions=bundle.permissions,
+    )
+    return await _serialize_session_response(
+        db=db,
+        user=bundle.user,
+        organization=bundle.organization,
+        project=bundle.project,
         effective_scopes=effective_scopes,
     )
 
 
-@router.post("/signup", response_model=SessionResponse, status_code=status.HTTP_201_CREATED)
-async def signup(
-    payload: SignupRequest,
-    request: Request,
-    response: Response,
-    db: AsyncSession = Depends(get_db),
-):
-    existing_user = (await db.execute(select(User).where(User.email == payload.email))).scalar_one_or_none()
-    if existing_user is not None:
-        raise HTTPException(status_code=400, detail="User with this email already exists")
-
-    user = User(
-        email=payload.email,
-        hashed_password=get_password_hash(payload.password),
-        full_name=payload.full_name,
-        role="user",
-        avatar=f"https://api.dicebear.com/7.x/initials/svg?seed={payload.full_name or payload.email}",
-    )
-    db.add(user)
-    await db.flush()
-
-    owner_label = payload.full_name or payload.email.split("@", 1)[0]
-    organization_slug = _slugify(owner_label, fallback=f"org-{str(user.id)[:8]}")
-    organization, project = await OrganizationBootstrapService(db).create_organization_with_default_project(
-        owner=user,
-        name=f"{owner_label}'s Organization",
-        slug=organization_slug,
-    )
-    return await _create_browser_session_response(
-        request=request,
-        response=response,
-        db=db,
-        user=user,
-        organization=organization,
-        project=project,
-    )
-
-
-@router.post("/register", response_model=SessionResponse, status_code=status.HTTP_201_CREATED)
-async def register_alias(
-    payload: SignupRequest,
-    request: Request,
-    response: Response,
-    db: AsyncSession = Depends(get_db),
-):
-    return await signup(payload=payload, request=request, response=response, db=db)
-
-
-@router.post("/login", response_model=SessionResponse)
-async def login(
-    request: Request,
-    response: Response,
-    form_data: OAuth2PasswordRequestForm = Depends(),
-    db: AsyncSession = Depends(get_db),
-):
-    user = (await db.execute(select(User).where(User.email == form_data.username))).scalar_one_or_none()
-    if user is None or not user.hashed_password or not verify_password(form_data.password, user.hashed_password):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect email or password",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    organizations = await list_user_organizations(db=db, user_id=user.id)
-    if not organizations:
-        raise HTTPException(status_code=403, detail="User does not belong to any organization")
-    organization = organizations[0]
-    projects = await list_organization_projects(db=db, organization_id=organization.id)
-    if not projects:
-        raise HTTPException(status_code=403, detail="Organization has no active project")
-    project = projects[0]
-    return await _create_browser_session_response(
-        request=request,
-        response=response,
-        db=db,
-        user=user,
-        organization=organization,
-        project=project,
-    )
-
-
-@router.post("/google", response_model=SessionResponse)
-async def google_auth(
-    payload: GoogleToken,
-    request: Request,
-    response: Response,
-    db: AsyncSession = Depends(get_db),
-):
-    try:
-        info = id_token.verify_oauth2_token(
-            payload.credential,
-            google_requests.Request(),
-            GOOGLE_CLIENT_ID,
-        )
-        if info["iss"] not in ["accounts.google.com", "https://accounts.google.com"]:
-            raise ValueError("Wrong issuer")
-    except Exception as exc:  # pragma: no cover - external verifier
-        raise HTTPException(status_code=401, detail=f"Invalid Google token: {exc}") from exc
-
-    email = info["email"]
-    google_id = info["sub"]
-    full_name = info.get("name")
-    avatar = info.get("picture")
-
-    user = (
-        await db.execute(select(User).where((User.google_id == google_id) | (User.email == email)))
-    ).scalar_one_or_none()
-
-    if user is None:
-        user = User(
-            email=email,
-            google_id=google_id,
-            full_name=full_name,
-            role="user",
-            avatar=avatar or f"https://api.dicebear.com/7.x/initials/svg?seed={full_name or email}",
-        )
-        db.add(user)
-        await db.flush()
-        owner_label = full_name or email.split("@", 1)[0]
-        organization, project = await OrganizationBootstrapService(db).create_organization_with_default_project(
-            owner=user,
-            name=f"{owner_label}'s Organization",
-            slug=_slugify(owner_label, fallback=f"org-{str(user.id)[:8]}"),
-        )
-        return await _create_browser_session_response(
-            request=request,
-            response=response,
-            db=db,
-            user=user,
-            organization=organization,
-            project=project,
-        )
-
-    if not user.google_id:
-        user.google_id = google_id
-        await db.flush()
-
-    organizations = await list_user_organizations(db=db, user_id=user.id)
-    if not organizations:
-        raise HTTPException(status_code=403, detail="User does not belong to any organization")
-    organization = organizations[0]
-    projects = await list_organization_projects(db=db, organization_id=organization.id)
-    if not projects:
-        raise HTTPException(status_code=403, detail="Organization has no active project")
-    project = projects[0]
-    return await _create_browser_session_response(
-        request=request,
-        response=response,
-        db=db,
-        user=user,
-        organization=organization,
-        project=project,
-    )
-
-
-@router.get("/session", response_model=SessionResponse)
-async def get_current_session(
-    request: Request,
-    db: AsyncSession = Depends(get_db),
-):
-    route_started_at = time.perf_counter()
-    logger.warning(
-        "auth.session.route.enter path=%s has_cookie=%s",
-        request.url.path,
-        bool(str(request.cookies.get(SESSION_COOKIE_NAME) or "").strip()),
-    )
-    _session, bundle = await _load_browser_session_bundle(request, db)
-    await db.commit()
-    total_ms = int((time.perf_counter() - route_started_at) * 1000)
-    if AUTH_SESSION_LOG_ALL or total_ms >= AUTH_SESSION_SLOW_LOG_THRESHOLD_MS:
-        logger.warning("auth.session.route.complete total_ms=%s path=%s", total_ms, request.url.path)
-    return SessionResponse.model_validate(bundle.model_dump())
-
-
-@router.get("/me", response_model=SessionUserResponse)
-async def read_current_user(
+@router.get("/me")
+async def get_me(
     current_user: User = Depends(get_current_user),
 ):
-    return SessionUserResponse.model_validate(serialize_user_summary(current_user))
+    return serialize_user_summary(current_user)
 
 
 @router.post("/logout")
-async def logout(
+async def logout(request: Request, response: Response, db: AsyncSession = Depends(get_db)):
+    service = WorkOSAuthService(db)
+    logout_url = None
+    result = JSONResponse({"status": "logged_out", "logout_url": None})
+    if service.is_enabled():
+        logout_url = service.get_logout_url(request)
+        result = JSONResponse({"status": "logged_out", "logout_url": logout_url})
+        service.clear_session_cookie(response=result, request=request)
+        service.clear_project_cookie(response=result, request=request)
+    return result
+
+
+@router.post("/context/organization")
+async def switch_active_organization(
+    payload: SwitchOrganizationRequest,
     request: Request,
     response: Response,
     db: AsyncSession = Depends(get_db),
 ):
-    raw_token = str(request.cookies.get(SESSION_COOKIE_NAME) or "").strip()
-    if raw_token:
-        await BrowserSessionService(db).revoke_session(raw_token)
-        await db.commit()
-    _clear_session_cookie(response=response, request=request)
-    return {"status": "logged_out"}
+    service, auth_response, user = await _load_workos_auth(request=request, response=response, db=db)
 
-
-@router.post("/context/organization", response_model=SessionResponse)
-async def switch_active_organization(
-    payload: SwitchOrganizationRequest,
-    request: Request,
-    db: AsyncSession = Depends(get_db),
-):
-    session, _bundle = await _load_browser_session_bundle(request, db)
-    organizations = await list_user_organizations(db=db, user_id=session.user_id)
-    organization = next((item for item in organizations if item.slug == payload.organization_slug), None)
+    organization = (
+        await db.execute(
+            select(Tenant)
+            .join(OrgMembership, OrgMembership.tenant_id == Tenant.id)
+            .where(
+                Tenant.slug == payload.organization_slug,
+                OrgMembership.user_id == user.id,
+            )
+            .limit(1)
+        )
+    ).scalar_one_or_none()
     if organization is None:
         raise HTTPException(status_code=404, detail="Organization not found")
-    await BrowserSessionService(db).switch_organization(session=session, organization_id=organization.id)
-    await db.commit()
-    _session, bundle = await _load_browser_session_bundle(request, db)
-    return SessionResponse.model_validate(bundle.model_dump())
+    if not organization.workos_organization_id:
+        raise HTTPException(status_code=400, detail="Organization is not linked to WorkOS")
+
+    refreshed = await service.switch_organization(
+        request,
+        response,
+        organization.workos_organization_id,
+        return_to=payload.return_to or str(request.headers.get("referer") or "").strip() or request.query_params.get("return_to"),
+    )
+    if isinstance(refreshed, dict):
+        return JSONResponse(refreshed)
+
+    await service.sync_current_organization(auth_response=refreshed, actor_user_id=user.id)
+    bundle = await service.ensure_local_bundle(auth_response=refreshed, request=request, actor_user_id=user.id)
+    service.set_project_cookie(response=response, request=request, project_id=bundle.project.id)
+    effective_scopes = await resolve_effective_scopes(
+        db=db,
+        user=bundle.user,
+        organization_id=bundle.organization.id,
+        project_id=bundle.project.id,
+        organization_permissions=bundle.permissions,
+    )
+    return await _serialize_session_response(
+        db=db,
+        user=bundle.user,
+        organization=bundle.organization,
+        project=bundle.project,
+        effective_scopes=effective_scopes,
+    )
 
 
 @router.post("/context/project", response_model=SessionResponse)
 async def switch_active_project(
     payload: SwitchProjectRequest,
     request: Request,
+    response: Response,
     db: AsyncSession = Depends(get_db),
 ):
-    session, _bundle = await _load_browser_session_bundle(request, db)
-    projects = await list_organization_projects(db=db, organization_id=session.organization_id)
-    project = next((item for item in projects if item.slug == payload.project_slug), None)
+    bundle = await _load_workos_session_bundle(
+        request=request,
+        response=response,
+        db=db,
+    )
+    project = (
+        await db.execute(
+            select(Project).where(
+                Project.organization_id == bundle.organization.id,
+                Project.slug == payload.project_slug,
+            )
+        )
+    ).scalar_one_or_none()
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
-    await BrowserSessionService(db).switch_project(session=session, project_id=project.id)
-    await db.commit()
-    _session, bundle = await _load_browser_session_bundle(request, db)
-    return SessionResponse.model_validate(bundle.model_dump())
+
+    WorkOSAuthService(db).set_project_cookie(response=response, request=request, project_id=project.id)
+    effective_scopes = await resolve_effective_scopes(
+        db=db,
+        user=bundle.user,
+        organization_id=bundle.organization.id,
+        project_id=project.id,
+        organization_permissions=bundle.permissions,
+    )
+    return await _serialize_session_response(
+        db=db,
+        user=bundle.user,
+        organization=bundle.organization,
+        project=project,
+        effective_scopes=effective_scopes,
+    )
 
 
 @router.post("/token")
-async def create_programmatic_user_token(
-    current_user: User = Depends(get_current_user),
+async def login_for_access_token(
+    form_data: OAuth2PasswordRequestForm = Depends(),
     db: AsyncSession = Depends(get_db),
 ):
-    organizations = await list_user_organizations(db=db, user_id=current_user.id)
-    organization = organizations[0] if organizations else None
-    access_token = create_access_token(
-        subject=str(current_user.id),
-        tenant_id=str(organization.id) if organization else None,
-    )
-    return {"access_token": access_token, "token_type": "bearer"}
+    del form_data, db
+    raise HTTPException(status_code=status.HTTP_410_GONE, detail="Local password token login has been removed")

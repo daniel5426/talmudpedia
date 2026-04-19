@@ -1,6 +1,6 @@
 # Auth Current State
 
-Last Updated: 2026-04-14
+Last Updated: 2026-04-19
 
 This document is the canonical current-state auth and authorization overview.
 
@@ -19,26 +19,26 @@ The delegated workload-auth system has been removed.
 
 ## Browser Control-Plane Auth
 
-Browser auth now uses secure HTTP-only cookie sessions.
+Browser auth now uses WorkOS AuthKit with a sealed WorkOS session cookie plus a local project-context cookie.
 
 The active browser session carries:
 
-- authenticated user identity
-- active organization
-- active project
+- authenticated user identity from WorkOS
+- active organization from WorkOS
+- active project from Talmudpedia
 
 Browser control-plane requests are expected to resolve auth and active context from the server session, not from:
 
 - local-storage bearer tokens
-- token-embedded tenant claims as the browser source of truth
-- first-membership inference after a session is established
+- Google ID tokens posted directly to the platform
+- local password auth as the browser source of truth
 
 Current browser auth endpoints:
 
-- `POST /auth/signup`
-- `POST /auth/register`
-- `POST /auth/login`
-- `POST /auth/google`
+- `GET|POST /auth/login`
+- `GET|POST /auth/signup`
+- `GET|POST /auth/register`
+- `GET /auth/callback`
 - `GET /auth/session`
 - `POST /auth/logout`
 - `POST /auth/context/organization`
@@ -46,8 +46,9 @@ Current browser auth endpoints:
 
 ## Current Authorization Model
 
-- RBAC scopes remain the control-plane authorization model.
-- scopes are split across organization scope and project scope
+- WorkOS session permissions are the source for organization-level permissions when present.
+- Local RBAC remains active for project-scoped permissions.
+- Local organization-scoped RBAC remains fallback only while WorkOS role parity is being completed.
 - resource policy sets remain the runtime-facing access and quota layer
 - `platform-architect` is the only special internal case and uses architect modes:
   - `read_only`
@@ -66,25 +67,25 @@ Current browser auth endpoints:
 
 The browser and programmatic auth paths are intentionally separate.
 
-- browser control-plane access should use the session cookie model
-- non-browser flows may still use bearer-style auth where explicitly implemented
+- browser control-plane access uses the WorkOS session cookie model
+- `POST /auth/token` remains temporary compatibility for explicit bearer flows
 - machine/runtime credentials should be scoped to the owning resource model rather than treated as browser login tokens
 
-## Current Known Cleanup Boundary
+## Current Bridge Boundary
 
-Some backend and API naming still uses `tenant` at the implementation level even though the intended browser/control-plane model is organization + project.
-
-That remaining terminology is cleanup debt, not the target product model.
+- Published-app auth still uses the app-local auth/session bridge.
+- Control-plane auth no longer shares the browser-session implementation with published apps.
 
 ## Canonical Implementation References
 
 - `backend/app/api/routers/auth.py`
 - `backend/app/api/dependencies.py`
-- `backend/app/core/scope_registry.py`
-- `backend/app/services/browser_session_service.py`
+- `backend/app/services/workos_auth_service.py`
 - `backend/app/services/auth_context_service.py`
 - `backend/app/services/organization_bootstrap_service.py`
 - `backend/app/api/routers/organizations.py`
+- `backend/app/api/routers/workos_webhooks.py`
+- `backend/app/core/scope_registry.py`
 - `backend/app/api/routers/resource_policies.py`
 - `backend/app/services/resource_policy_service.py`
 - `backend/app/services/resource_policy_quota_service.py`

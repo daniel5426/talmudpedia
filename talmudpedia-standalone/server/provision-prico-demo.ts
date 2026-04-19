@@ -43,13 +43,6 @@ const env = {
     `http://127.0.0.1:${Number(process.env.PORT || 3001)}/api/prico-tools`,
   modelId: String(process.env.PRICO_AGENT_MODEL_ID || "").trim(),
   adminToken: String(process.env.TALMUDPEDIA_ADMIN_BEARER_TOKEN || "").trim(),
-  adminEmail: String(process.env.TALMUDPEDIA_ADMIN_EMAIL || "").trim(),
-  adminPassword: String(process.env.TALMUDPEDIA_ADMIN_PASSWORD || "").trim(),
-};
-
-type TokenResponse = {
-  access_token: string;
-  token_type: string;
 };
 
 let resolvedAdminTokenPromise: Promise<string> | null = null;
@@ -63,36 +56,9 @@ async function resolveAdminToken(): Promise<string> {
     if (env.adminToken) {
       return env.adminToken;
     }
-
-    if (!env.adminEmail || !env.adminPassword) {
-      throw new Error(
-        "Missing admin auth. Set TALMUDPEDIA_ADMIN_BEARER_TOKEN or TALMUDPEDIA_ADMIN_EMAIL plus TALMUDPEDIA_ADMIN_PASSWORD.",
-      );
-    }
-
-    const body = new URLSearchParams();
-    body.set("username", env.adminEmail);
-    body.set("password", env.adminPassword);
-
-    const response = await fetch(`${env.baseUrl}/auth/login`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
-      body,
-    });
-
-    if (!response.ok) {
-      const text = await response.text();
-      throw new Error(`POST /auth/login failed: ${response.status} ${text}`);
-    }
-
-    const payload = (await response.json()) as TokenResponse;
-    const token = String(payload.access_token || "").trim();
-    if (!token) {
-      throw new Error("POST /auth/login succeeded but no access_token was returned.");
-    }
-    return token;
+    throw new Error(
+      "Missing admin auth. Set TALMUDPEDIA_ADMIN_BEARER_TOKEN to a valid machine credential before provisioning.",
+    );
   })();
 
   return await resolvedAdminTokenPromise;

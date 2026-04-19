@@ -1,6 +1,6 @@
 # Talmudpedia Standalone
 
-Last Updated: 2026-03-29
+Last Updated: 2026-04-19
 
 Standalone Vite app with Vercel-compatible serverless BFF routes for embedding a published Talmudpedia agent through the public server-only `@agents24/embed-sdk` npm package.
 
@@ -27,9 +27,7 @@ Copy `.env.example` to `.env` and set:
 - `TALMUDPEDIA_BASE_URL`
 - `TALMUDPEDIA_EMBED_API_KEY`
 - `TALMUDPEDIA_AGENT_ID`
-- `TALMUDPEDIA_ADMIN_BEARER_TOKEN` for provisioning, or:
-- `TALMUDPEDIA_ADMIN_EMAIL`
-- `TALMUDPEDIA_ADMIN_PASSWORD`
+- `TALMUDPEDIA_ADMIN_BEARER_TOKEN` for provisioning
 - `TALMUDPEDIA_TENANT_ID` for provisioning
 - `SESSION_COOKIE_SECRET`
 - optional `PRICO_TOOL_BASE_URL`
@@ -69,7 +67,7 @@ To create the five local HTTP tools and the published PRICO demo agent in the pl
 pnpm provision:prico-demo
 ```
 
-The provisioner uses `TALMUDPEDIA_ADMIN_BEARER_TOKEN` when present. If it is unset, it automatically logs in through `/auth/login` using `TALMUDPEDIA_ADMIN_EMAIL` and `TALMUDPEDIA_ADMIN_PASSWORD`.
+The provisioner requires `TALMUDPEDIA_ADMIN_BEARER_TOKEN`. Use a machine credential rather than a browser login flow.
 
 The script prints the created agent id. Set `TALMUDPEDIA_AGENT_ID` in `.env` to that value before running the standalone app.
 

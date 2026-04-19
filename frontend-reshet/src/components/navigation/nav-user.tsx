@@ -59,13 +59,17 @@ export function NavUser({
 
   const handleLogout = async () => {
     try {
-      await authService.logout()
+      const result = await authService.logout()
+      clearAuthSession()
+      if (result.logout_url) {
+        window.location.assign(result.logout_url)
+        return
+      }
     } catch (error) {
       console.error("Failed to close browser session cleanly", error)
-    } finally {
       clearAuthSession()
-      router.push("/auth/login")
     }
+    router.push("/auth/login")
   }
 
   return (
@@ -76,7 +80,7 @@ export function NavUser({
             <SidebarMenuButton
               dir={direction}
               size="lg"
-              className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground cursor-pointer"
+              className="cursor-pointer data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
             >
               <Avatar className="h-8 w-8 rounded-lg">
                 <AvatarImage src={user.avatar} alt={user.name} />

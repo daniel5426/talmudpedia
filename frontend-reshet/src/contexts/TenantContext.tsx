@@ -133,10 +133,14 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
       return
     }
     void authService
-      .switchOrganization(tenant.slug)
-      .then((session) => {
+      .switchOrganization(tenant.slug, window.location.href)
+      .then((result) => {
+        if ("redirect_url" in result) {
+          window.location.assign(result.redirect_url)
+          return
+        }
         setCurrentOrgUnit(null)
-        applyAuthSession(session)
+        applyAuthSession(result)
       })
       .catch((error) => {
         console.error("Failed to switch organization", error)

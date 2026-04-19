@@ -45,6 +45,7 @@ class Tenant(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name = Column(String, nullable=False)
     slug = Column(String, unique=True, nullable=False, index=True)
+    workos_organization_id = Column(String, unique=True, nullable=True, index=True)
     status = Column(SQLEnum(TenantStatus), default=TenantStatus.active, nullable=False)
     settings = Column(JSONB, default={}, nullable=False)
     
@@ -63,6 +64,7 @@ class User(Base):
     email = Column(String, unique=True, nullable=False, index=True)
     hashed_password = Column(String, nullable=True)
     google_id = Column(String, unique=True, nullable=True, index=True)
+    workos_user_id = Column(String, unique=True, nullable=True, index=True)
     full_name = Column(String, nullable=True)
     avatar = Column(String, nullable=True)
     role = Column(String, default="user", nullable=False) # Keeping as string to match Pydantic, or could upgrade to Enum
@@ -103,6 +105,7 @@ class OrgMembership(Base):
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     org_unit_id = Column(UUID(as_uuid=True), ForeignKey("org_units.id"), nullable=False)
+    workos_membership_id = Column(String, unique=True, nullable=True, index=True)
     
     role = Column(SQLEnum(OrgRole), default=OrgRole.member, nullable=False)
     status = Column(SQLEnum(MembershipStatus), default=MembershipStatus.active, nullable=False)

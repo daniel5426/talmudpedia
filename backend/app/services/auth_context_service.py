@@ -49,9 +49,12 @@ async def resolve_effective_scopes(
     user: User,
     organization_id: UUID,
     project_id: UUID | None,
+    organization_permissions: list[str] | None = None,
 ) -> list[str]:
     if is_platform_admin_role(getattr(user, "role", None)):
         return ["*"]
+
+    resolved_scopes = {str(scope) for scope in (organization_permissions or []) if str(scope).strip()}
 
     assignments = (
         await db.execute(
@@ -66,18 +69,19 @@ async def resolve_effective_scopes(
 
     allowed_role_ids: set[UUID] = set()
     for assignment in assignments:
-        if assignment.scope_type == "organization" and assignment.scope_id == organization_id:
+        if not resolved_scopes and assignment.scope_type == "organization" and assignment.scope_id == organization_id:
             allowed_role_ids.add(assignment.role_id)
         if project_id is not None and assignment.scope_type == "project" and assignment.scope_id == project_id:
             allowed_role_ids.add(assignment.role_id)
 
     if not allowed_role_ids:
-        return []
+        return sorted(resolved_scopes)
 
     perms = (
         await db.execute(select(RolePermission).where(RolePermission.role_id.in_(list(allowed_role_ids))))
     ).scalars().all()
-    return sorted({str(perm.scope_key) for perm in perms if getattr(perm, "scope_key", None)})
+    resolved_scopes.update({str(perm.scope_key) for perm in perms if getattr(perm, "scope_key", None)})
+    return sorted(resolved_scopes)
 
 
 def serialize_user_summary(user: User) -> dict[str, Any]:

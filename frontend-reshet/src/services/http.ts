@@ -83,6 +83,27 @@ class HttpClient {
     return normalized.includes("PUBLISH_ACTIVE_SESSION_LOCKED");
   }
 
+  private shouldSuppressHttpErrorLogging(
+    error: unknown,
+    options: {
+      url: string;
+      clearSessionOn401: boolean;
+    },
+  ): boolean {
+    const { url, clearSessionOn401 } = options;
+    if (this.shouldSuppressErrorLogging(error instanceof Error ? error.message : error)) {
+      return true;
+    }
+    if (
+      error instanceof HttpRequestError &&
+      error.status === 401 &&
+      (clearSessionOn401 || url.endsWith("/auth/session"))
+    ) {
+      return true;
+    }
+    return false;
+  }
+
   buildHeaders(headers?: HeadersInit, body?: BodyInit | null): HeadersInit {
     const nextHeaders: Record<string, string> = {};
 
@@ -172,8 +193,7 @@ class HttpClient {
           timeoutMs ?? 0,
         );
       }
-      const errorMessage = error instanceof Error ? error.message : String(error || "");
-      if (!this.shouldSuppressErrorLogging(errorMessage)) {
+      if (!this.shouldSuppressHttpErrorLogging(error, { url, clearSessionOn401: Boolean(clearSessionOn401) })) {
         console.error(`[HttpClient] Request failed for ${url}:`, error);
       }
       throw error;

@@ -5,7 +5,6 @@ import { ThemeProvider } from "@/components/theme-provider";
 import { PaletteInitializer } from "@/components/palette-initializer";
 import { PaletteScript } from "@/components/palette-script";
 import { DirectionProvider } from "@/components/direction-provider";
-import { GoogleOAuthProvider } from "@react-oauth/google";
 import { TenantProvider } from "@/contexts/TenantContext";
 import { AuthRefresher } from "@/components/auth-refresher";
 
@@ -54,14 +53,12 @@ export default function RootLayout({
           disableTransitionOnChange
         >
           <PaletteInitializer />
-          <GoogleOAuthProvider clientId={process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID || ""}>
-            <DirectionProvider>
-              <TenantProvider>
-                <AuthRefresher />
-                {children}
-              </TenantProvider>
-            </DirectionProvider>
-          </GoogleOAuthProvider>
+          <DirectionProvider>
+            <TenantProvider>
+              <AuthRefresher />
+              {children}
+            </TenantProvider>
+          </DirectionProvider>
         </ThemeProvider>
       </body>
     </html>

@@ -3,6 +3,8 @@ import type { AuthSessionResponse } from "@/services/types";
 
 export function applyAuthSession(session: AuthSessionResponse): void {
   useAuthStore.getState().setSession({
+    authenticated: session.authenticated,
+    onboardingRequired: session.onboarding_required,
     user: session.user,
     activeOrganization: session.active_organization,
     activeProject: session.active_project,

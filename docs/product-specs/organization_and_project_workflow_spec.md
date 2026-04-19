@@ -1,6 +1,6 @@
 # Organization And Project Workflow Spec
 
-Last Updated: 2026-04-14
+Last Updated: 2026-04-19
 
 This document is the canonical product/specification reference for the browser sign-in flow, active organization/project context, and the organization/project admin workflow.
 
@@ -30,13 +30,13 @@ Projects are the primary runtime and day-to-day product boundary for:
 
 ## Browser Auth Model
 
-Browser auth uses secure HTTP-only cookie sessions.
+Browser auth uses WorkOS AuthKit plus secure HTTP-only cookies.
 
-The browser session carries:
+The browser auth context carries:
 
-- authenticated user id
-- active organization id
-- active project id
+- authenticated user identity from WorkOS
+- active organization identity from WorkOS
+- active project id from a local project cookie
 
 The browser control plane must resolve identity and active context from the server session, not from:
 
@@ -47,48 +47,52 @@ The browser control plane must resolve identity and active context from the serv
 
 Programmatic auth remains separate:
 
-- browser flows use session cookies
+- browser flows use the WorkOS sealed session cookie plus the local project cookie
 - API/service flows may use bearer tokens or project-scoped machine credentials where explicitly designed
 
 ## Default Signup Workflow
 
 The canonical signup flow is:
 
-1. user creates an account
-2. system creates a new organization for that user
-3. system creates a default project inside that organization
-4. system assigns the user as organization owner
-5. system assigns the user as project owner for the default project
-6. system materializes default organization/project system profiles
-7. browser session is created with active organization and active project
+1. user starts the hosted sign-up flow
+2. WorkOS authenticates the user and redirects back to the callback
+3. backend maps the WorkOS user into a local user
+4. if no organization exists yet, system creates a new organization for that user
+5. system creates a default project inside that organization
+6. system assigns the user as organization owner and default-project owner locally
+7. backend stores the WorkOS sealed session cookie and local project cookie
 8. user lands inside the default project
 
 Current implemented endpoints:
 
-- `POST /auth/signup`
-- `POST /auth/register`
-- `POST /auth/google`
+- `GET|POST /auth/signup`
+- `GET|POST /auth/register`
+- `GET /auth/callback`
 
 ## Sign-In Workflow
 
 The canonical sign-in flow is:
 
-1. user authenticates
-2. backend resolves organizations for the user
-3. backend resolves projects for the selected organization
-4. backend creates a browser session with active organization and active project
-5. frontend hydrates the auth/session store from `GET /auth/session`
+1. user starts from the platform sign-in or sign-up page
+2. backend redirects the browser into hosted WorkOS AuthKit
+3. WorkOS redirects back to `GET /auth/callback`
+4. backend stores a sealed WorkOS session cookie and resolves the active organization
+5. backend resolves the active local project for that organization and stores the local project cookie
+6. frontend hydrates the auth/session store from `GET /auth/session`
 
 Current implemented endpoints:
 
-- `POST /auth/login`
+- `GET|POST /auth/login`
+- `GET|POST /auth/signup`
+- `GET /auth/callback`
 - `GET /auth/session`
 - `POST /auth/logout`
 
 Current implementation detail:
 
-- login currently selects the first available organization and first available project when creating a fresh browser session
-- once the session exists, later control-plane requests should use the session active context rather than re-deriving it from memberships
+- WorkOS is the source of truth for browser user identity and active organization
+- the active project remains local and is resolved after the WorkOS session is established
+- once the session exists, later control-plane requests should use the active WorkOS org context plus the local project cookie rather than re-deriving both from memberships
 
 ## Active Context Workflow
 
@@ -116,10 +120,10 @@ Canonical invite behavior:
 1. organization admin creates an invite for an email address
 2. invite may include initial project assignments
 3. invite token is time-bound
-4. accepting the invite creates an account if needed
+4. accepting the invite requires an authenticated WorkOS user for the invited email
 5. accepted user is attached to the organization
 6. accepted user receives the requested project access
-7. browser session is created with active organization and active project
+7. the active local project cookie is updated for the accepted organization
 
 Current implemented organization APIs:
 

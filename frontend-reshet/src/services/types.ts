@@ -122,13 +122,27 @@ export interface ProjectSummary {
 }
 
 export interface AuthSessionResponse {
+  authenticated: boolean;
+  onboarding_required: boolean;
   user: User;
-  active_organization: OrganizationSummary;
-  active_project: ProjectSummary;
+  active_organization: OrganizationSummary | null;
+  active_project: ProjectSummary | null;
   organizations: OrganizationSummary[];
   projects: ProjectSummary[];
   effective_scopes: string[];
 }
+
+export interface OrganizationSwitchRedirectResponse {
+  redirect_url: string;
+}
+
+export type OrganizationSwitchResponse =
+  | AuthSessionResponse
+  | OrganizationSwitchRedirectResponse;
+
+export type OnboardingOrganizationResponse =
+  | AuthSessionResponse
+  | OrganizationSwitchRedirectResponse;
 
 export interface AdminStats {
   total_users: number;

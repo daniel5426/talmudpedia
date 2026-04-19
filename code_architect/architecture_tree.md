@@ -1,6 +1,6 @@
 # Architecture Tree (Curated)
 
-Last Updated: 2026-04-17
+Last Updated: 2026-04-19
 
 This file is a backend-only architecture map optimized for agent context efficiency.
 
@@ -18,6 +18,7 @@ backend/app/
 
 backend/app/api/
 backend/app/api/dependencies.py
+backend/app/api/routers/workos_webhooks.py
 backend/app/api/routers/
 backend/app/api/routers/sandbox_controller_dev_shim.py
 backend/app/api/routers/published_apps_builder_preview_proxy.py
@@ -136,6 +137,7 @@ backend/app/db/postgres/models/prompts.py
 backend/app/db/postgres/models/runtime_attachments.py
 backend/app/db/postgres/models/resource_policies.py
 backend/app/db/postgres/models/usage_quota.py
+backend/app/db/postgres/models/workos_events.py
 backend/app/db/postgres/seeds/
 
 backend/app/services/
@@ -237,6 +239,7 @@ backend/app/services/tool_binding_service.py
 backend/app/services/apps_builder_trace.py
 backend/app/services/published_app_builder_snapshot_filter.py
 backend/app/services/published_app_auth_service.py
+backend/app/services/workos_auth_service.py
 backend/app/services/published_app_auth_shell_renderer.py
 backend/app/workers/
 backend/app/services/published_app_host_runtime_support.py

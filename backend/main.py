@@ -941,7 +941,7 @@ app.add_middleware(PublishedAppsCORSMiddleware)
 # Registered after CORS so it runs first for app-host requests.
 app.add_middleware(PublishedAppsHostRuntimeMiddleware)
 
-from app.api.routers import auth, general, search, stt, texts, library, admin, tts, rag_admin
+from app.api.routers import auth, general, search, stt, texts, library, admin, tts, rag_admin, workos_webhooks
 from app.api.routers.agents import router as agents_router
 from app.api.routers import agent_run_logs as agent_run_logs_router
 from app.api.routers import agent_graph_mutations as agent_graph_mutations_router
@@ -975,6 +975,7 @@ from app.api.routers import sandbox_controller_dev_shim as sandbox_controller_de
 from app.api.routers import files as files_router
 from app.api.routers import organizations as organizations_router
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
+app.include_router(workos_webhooks.router)
 app.include_router(agents_router)
 app.include_router(agent_tool_exports_router.router)
 app.include_router(agent_run_logs_router.router)

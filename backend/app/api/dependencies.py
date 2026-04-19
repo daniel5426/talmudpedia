@@ -1,74 +1,79 @@
+from __future__ import annotations
+
 from datetime import datetime, timezone
-from typing import Dict, Any, Optional, Callable
-from fastapi import Depends, HTTPException, Header, Request, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from pydantic import BaseModel
-from .routers.auth import get_current_user
-from app.db.postgres.models.identity import Tenant, User, OrgUnit
-from app.services.tenant_api_key_service import TenantAPIKeyAuthError, TenantAPIKeyService
+from typing import Any, Callable, Dict, Optional
+from uuid import UUID
+
+import jwt
+from fastapi import Depends, Header, HTTPException, Request, Response, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from pydantic import BaseModel, ConfigDict
+from sqlalchemy import and_, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.api.routers.auth import get_current_user
+from app.core.scope_registry import is_platform_admin_role
+from app.core.security import (
+    ALGORITHM,
+    SECRET_KEY,
+    decode_published_app_preview_token,
+    decode_published_app_session_token,
+)
+from app.db.postgres.models.identity import OrgUnit, Tenant, User
 from app.db.postgres.models.published_apps import (
     PublishedApp,
     PublishedAppAccount,
     PublishedAppAccountStatus,
     PublishedAppSession,
 )
-from app.db.postgres.session import get_db
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import and_, select
-from uuid import UUID
-import jwt
-from app.core.security import SECRET_KEY, ALGORITHM
-from app.core.scope_registry import is_platform_admin_role
-from app.core.security import decode_published_app_preview_token, decode_published_app_session_token
 from app.db.postgres.models.workspace import Project
+from app.db.postgres.session import get_db
 from app.services.auth_context_service import list_organization_projects, resolve_effective_scopes
-from app.services.browser_session_service import SESSION_COOKIE_NAME, BrowserSessionService
+from app.services.tenant_api_key_service import TenantAPIKeyAuthError, TenantAPIKeyService
+from app.services.workos_auth_service import WorkOSAuthService
+
 
 class AuthContext(BaseModel):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
     user: User
     tenant: Tenant
     org_unit: Optional[OrgUnit] = None
     project: Optional[Project] = None
 
-    class Config:
-        arbitrary_types_allowed = True
-
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
+
 async def get_tenant_context(
     request: Request,
+    response: Response,
     db: AsyncSession = Depends(get_db),
     x_tenant_id: Optional[str] = Header(None, alias="X-Tenant-ID"),
 ) -> Dict[str, Any]:
-    """
-    Dependency to get the current tenant context.
-    Matches the placeholder logic but uses Postgres effectively.
-    """
     tenant_uuid: UUID | None = None
+    project_uuid: UUID | None = None
+
     if x_tenant_id:
         try:
             tenant_uuid = UUID(x_tenant_id)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail="Invalid X-Tenant-ID header") from exc
-    else:
-        cookie_token = str(request.cookies.get(SESSION_COOKIE_NAME) or "").strip()
-        if cookie_token:
-            session = await BrowserSessionService(db).resolve_session(cookie_token)
-            if session is not None:
-                tenant_uuid = session.organization_id
+    elif WorkOSAuthService.is_enabled():
+        service = WorkOSAuthService(db)
+        auth_response = await service.authenticate_request(request, response)
+        if auth_response is not None and service.current_organization_id(auth_response):
+            bundle = await service.ensure_local_bundle(auth_response=auth_response, request=request)
+            tenant_uuid = bundle.organization.id
+            project_uuid = bundle.project.id
+
     if tenant_uuid is None:
         raise HTTPException(status_code=400, detail="Active organization context is required")
-    project_uuid: UUID | None = None
-    cookie_token = str(request.cookies.get(SESSION_COOKIE_NAME) or "").strip()
-    if cookie_token:
-        session = await BrowserSessionService(db).resolve_session(cookie_token)
-        if session is not None:
-            project_uuid = session.project_id
-    result = await db.execute(select(Tenant).where(Tenant.id == tenant_uuid))
-    tenant = result.scalar_one_or_none()
-    if not tenant:
+
+    tenant = await db.get(Tenant, tenant_uuid)
+    if tenant is None:
         raise HTTPException(status_code=404, detail="Organization not found")
+
     return {
         "tenant_id": str(tenant.id),
         "organization_id": str(tenant.id),
@@ -77,28 +82,28 @@ async def get_tenant_context(
         "project_id": str(project_uuid) if project_uuid else None,
     }
 
+
 async def get_auth_context(
     request: Request,
+    response: Response,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> AuthContext:
-    """
-    Unified dependency for full auth context including tenant and org unit.
-    """
-    cookie_token = str(request.cookies.get(SESSION_COOKIE_NAME) or "").strip()
-    if cookie_token:
-        session = await BrowserSessionService(db).resolve_session(cookie_token)
-        if session is not None:
-            tenant = await db.get(Tenant, session.organization_id)
-            project = await db.get(Project, session.project_id)
-            if tenant is not None:
-                return AuthContext(user=user, tenant=tenant, org_unit=None, project=project)
+    if WorkOSAuthService.is_enabled():
+        service = WorkOSAuthService(db)
+        auth_response = await service.authenticate_request(request, response)
+        if auth_response is not None and service.current_organization_id(auth_response):
+            bundle = await service.ensure_local_bundle(auth_response=auth_response, request=request)
+            if bundle.user.id == user.id:
+                return AuthContext(user=user, tenant=bundle.organization, org_unit=None, project=bundle.project)
+
     if _is_platform_admin(user):
         tenant = (await db.execute(select(Tenant).limit(1))).scalar_one_or_none()
         if tenant is None:
             raise HTTPException(status_code=500, detail="No organization configured")
         projects = await list_organization_projects(db=db, organization_id=tenant.id)
         return AuthContext(user=user, tenant=tenant, org_unit=None, project=projects[0] if projects else None)
+
     raise HTTPException(status_code=403, detail="No active organization session")
 
 
@@ -108,70 +113,63 @@ def _is_platform_admin(user: User) -> bool:
 
 async def get_current_principal(
     request: Request,
+    response: Response,
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
     db: AsyncSession = Depends(get_db),
 ) -> Dict[str, Any]:
-    """
-    Unified principal resolver for migrated secure endpoints.
-    Supports authenticated user principals.
-    """
-    try:
-        raw_cookie = str(request.cookies.get(SESSION_COOKIE_NAME) or "").strip()
-        if raw_cookie:
-            session = await BrowserSessionService(db).resolve_session(raw_cookie)
-            if session is not None:
-                user = await db.get(User, session.user_id)
-                organization = await db.get(Tenant, session.organization_id)
-                project = await db.get(Project, session.project_id)
-                if user is not None and organization is not None and project is not None:
-                    scopes = await resolve_effective_scopes(
-                        db=db,
-                        user=user,
-                        organization_id=organization.id,
-                        project_id=project.id,
-                    )
-                    return {
-                        "type": "user",
-                        "auth_mode": "browser_session",
-                        "user": user,
-                        "user_id": str(user.id),
-                        "tenant_id": str(organization.id),
-                        "organization_id": str(organization.id),
-                        "organization_slug": organization.slug,
-                        "project_id": str(project.id),
-                        "project_slug": project.slug,
-                        "scopes": sorted(scopes),
-                        "auth_token": raw_cookie,
-                    }
+    if credentials is None and WorkOSAuthService.is_enabled():
+        try:
+            service = WorkOSAuthService(db)
+            auth_response = await service.authenticate_request(request, response)
+            if auth_response is not None and service.current_organization_id(auth_response):
+                bundle = await service.ensure_local_bundle(auth_response=auth_response, request=request)
+                scopes = await resolve_effective_scopes(
+                    db=db,
+                    user=bundle.user,
+                    organization_id=bundle.organization.id,
+                    project_id=bundle.project.id,
+                    organization_permissions=bundle.permissions,
+                )
+                return {
+                    "type": "user",
+                    "auth_mode": "workos_session",
+                    "user": bundle.user,
+                    "user_id": str(bundle.user.id),
+                    "tenant_id": str(bundle.organization.id),
+                    "organization_id": str(bundle.organization.id),
+                    "organization_slug": bundle.organization.slug,
+                    "project_id": str(bundle.project.id),
+                    "project_slug": bundle.project.slug,
+                    "scopes": sorted(scopes),
+                    "auth_token": request.cookies.get("wos_session"),
+                }
+        except HTTPException:
+            pass
+        except Exception:
+            pass
 
-        token = credentials.credentials if credentials is not None and credentials.credentials else None
-        if token is None:
-            raise HTTPException(status_code=401, detail="Could not validate principal token")
+    token = credentials.credentials if credentials is not None and credentials.credentials else None
+    if token is None:
+        raise HTTPException(status_code=401, detail="Could not validate principal token")
 
-        user = await get_current_user(request=request, token=token, db=db)
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        tenant_id = payload.get("tenant_id")
-        if not tenant_id:
-            raise HTTPException(status_code=403, detail="Organization context required")
-        project_id = payload.get("project_id")
-        scopes = set(str(s) for s in (payload.get("scope") or []) if str(s).strip())
-        return {
-            "type": "user",
-            "auth_mode": "bearer_token",
-            "user": user,
-            "user_id": str(user.id),
-            "tenant_id": str(tenant_id),
-            "organization_id": str(tenant_id),
-            "project_id": str(project_id) if project_id else None,
-            "scopes": sorted(scopes),
-            "auth_token": token,
-        }
-    except HTTPException:
-        pass
-    except Exception:
-        pass
-
-    raise HTTPException(status_code=401, detail="Could not validate principal token")
+    user = await get_current_user(request=request, response=response, token=token, db=db)
+    payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+    tenant_id = payload.get("tenant_id")
+    if not tenant_id:
+        raise HTTPException(status_code=403, detail="Organization context required")
+    project_id = payload.get("project_id")
+    scopes = set(str(s) for s in (payload.get("scope") or []) if str(s).strip())
+    return {
+        "type": "user",
+        "auth_mode": "bearer_token",
+        "user": user,
+        "user_id": str(user.id),
+        "tenant_id": str(tenant_id),
+        "organization_id": str(tenant_id),
+        "project_id": str(project_id) if project_id else None,
+        "scopes": sorted(scopes),
+        "auth_token": token,
+    }
 
 
 async def get_current_tenant_api_key_principal(
@@ -230,6 +228,7 @@ def require_tenant_api_key_scopes(*required_scopes: str) -> Callable[[Dict[str, 
         return principal
 
     return _dep
+
 
 async def ensure_sensitive_action_approved(
     *,

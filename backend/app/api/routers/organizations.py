@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import secrets
-from datetime import datetime, timedelta, timezone
 from typing import Optional
 from uuid import UUID
 
@@ -12,8 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_current_principal, require_scopes
 from app.api.routers.auth import get_current_user
-from app.core.security import get_password_hash
-from app.db.postgres.models.identity import OrgInvite, OrgMembership, OrgRole, Tenant, User
+from app.db.postgres.models.identity import OrgMembership, OrgRole, Tenant, User
 from app.db.postgres.models.workspace import Project, ProjectStatus
 from app.db.postgres.session import get_db
 from app.services.auth_context_service import (
@@ -23,8 +20,8 @@ from app.services.auth_context_service import (
     serialize_project_summary,
     serialize_user_summary,
 )
-from app.services.browser_session_service import BrowserSessionService, SESSION_COOKIE_NAME
 from app.services.organization_bootstrap_service import OrganizationBootstrapService
+from app.services.workos_auth_service import WorkOSAuthService
 
 router = APIRouter(prefix="/api/organizations", tags=["organizations"])
 
@@ -57,10 +54,9 @@ class CreateInviteRequest(BaseModel):
     project_ids: list[str] = []
 
 
-class AcceptInviteRequest(BaseModel):
-    token: str
-    password: Optional[str] = None
-    full_name: Optional[str] = None
+class WorkOSAdminPortalLinkRequest(BaseModel):
+    intent: str = "sso"
+    return_url: Optional[str] = None
 
 
 def _require_org_scope(principal: dict, *scopes: str) -> None:
@@ -92,21 +88,29 @@ async def list_organizations(
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_organization(
     payload: CreateOrganizationRequest,
+    request: Request,
+    response: Response,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     existing = (await db.execute(select(Tenant).where(Tenant.slug == payload.slug))).scalar_one_or_none()
     if existing is not None:
         raise HTTPException(status_code=400, detail="Organization slug already exists")
-    organization, project = await OrganizationBootstrapService(db).create_organization_with_default_project(
-        owner=current_user,
+    if not current_user.workos_user_id:
+        raise HTTPException(status_code=400, detail="Current user is not linked to WorkOS")
+    bundle = await WorkOSAuthService(db).create_organization_for_user(
+        local_user=current_user,
         name=payload.name,
         slug=payload.slug,
+        request=request,
+        response=response,
     )
+    if isinstance(bundle, dict):
+        return bundle
     await db.commit()
     return {
-        "organization": serialize_organization_summary(organization),
-        "default_project": serialize_project_summary(project),
+        "organization": serialize_organization_summary(bundle.organization),
+        "default_project": serialize_project_summary(bundle.project),
     }
 
 
@@ -250,17 +254,20 @@ async def list_invites(
 ):
     _require_org_scope(principal, "organization_invites.read")
     organization = await _get_org_or_404(db, organization_slug)
-    invites = (
-        await db.execute(select(OrgInvite).where(OrgInvite.tenant_id == organization.id).order_by(OrgInvite.created_at.desc()))
-    ).scalars().all()
+    if not organization.workos_organization_id:
+        raise HTTPException(status_code=400, detail="Organization is not linked to WorkOS")
+    service = WorkOSAuthService(db)
+    invites = service.client.user_management.list_invitations(
+        organization_id=organization.workos_organization_id,
+    )
     return [
         {
-            "id": str(invite.id),
-            "email": invite.email,
-            "project_ids": [str(item) for item in list(invite.project_ids or [])],
-            "accepted_at": invite.accepted_at,
-            "created_at": invite.created_at,
-            "expires_at": invite.expires_at,
+            "id": str(getattr(invite, "id", "")),
+            "email": getattr(invite, "email", None),
+            "project_ids": [],
+            "accepted_at": getattr(invite, "accepted_at", None) or getattr(invite, "acceptedAt", None),
+            "created_at": getattr(invite, "created_at", None) or getattr(invite, "createdAt", None),
+            "expires_at": getattr(invite, "expires_at", None) or getattr(invite, "expiresAt", None),
         }
         for invite in invites
     ]
@@ -275,114 +282,56 @@ async def create_invite(
 ):
     _require_org_scope(principal, "organization_invites.write")
     organization = await _get_org_or_404(db, organization_slug)
-    invite = OrgInvite(
-        email=payload.email,
-        tenant_id=organization.id,
-        role=OrgRole.member,
-        project_ids=[str(item) for item in payload.project_ids],
-        token=secrets.token_urlsafe(32),
-        expires_at=datetime.now(timezone.utc) + timedelta(days=7),
-        created_by=UUID(str(principal["user_id"])),
+    if not organization.workos_organization_id:
+        raise HTTPException(status_code=400, detail="Organization is not linked to WorkOS")
+    service = WorkOSAuthService(db)
+    current_user = await db.get(User, UUID(str(principal["user_id"])))
+    invite = service.client.user_management.send_invitation(
+        email=str(payload.email),
+        organization_id=organization.workos_organization_id,
+        inviter_user_id=current_user.workos_user_id if current_user and current_user.workos_user_id else None,
     )
-    db.add(invite)
-    await db.commit()
     return {
-        "id": str(invite.id),
-        "token": invite.token,
-        "email": invite.email,
-        "project_ids": invite.project_ids,
-        "expires_at": invite.expires_at,
+        "id": str(getattr(invite, "id", "")),
+        "token": getattr(invite, "token", None),
+        "email": getattr(invite, "email", None),
+        "project_ids": [],
+        "expires_at": getattr(invite, "expires_at", None) or getattr(invite, "expiresAt", None),
     }
 
 
 @router.delete("/{organization_slug}/invites/{invite_id}")
 async def revoke_invite(
     organization_slug: str,
-    invite_id: UUID,
+    invite_id: str,
     principal: dict = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ):
     _require_org_scope(principal, "organization_invites.delete")
     organization = await _get_org_or_404(db, organization_slug)
-    invite = (
-        await db.execute(
-            select(OrgInvite).where(and_(OrgInvite.id == invite_id, OrgInvite.tenant_id == organization.id))
-        )
-    ).scalar_one_or_none()
-    if invite is None:
-        raise HTTPException(status_code=404, detail="Invite not found")
-    await db.delete(invite)
-    await db.commit()
+    if not organization.workos_organization_id:
+        raise HTTPException(status_code=400, detail="Organization is not linked to WorkOS")
+    WorkOSAuthService(db).client.user_management.revoke_invitation(invite_id)
     return {"status": "deleted"}
 
 
-@router.post("/invites/accept")
-async def accept_invite(
-    payload: AcceptInviteRequest,
-    request: Request,
-    response: Response,
+@router.post("/{organization_slug}/workos/admin-portal-link")
+async def create_workos_admin_portal_link(
+    organization_slug: str,
+    payload: WorkOSAdminPortalLinkRequest,
+    principal: dict = Depends(require_scopes("organizations.write")),
     db: AsyncSession = Depends(get_db),
 ):
-    invite = (
-        await db.execute(select(OrgInvite).where(OrgInvite.token == payload.token).limit(1))
-    ).scalar_one_or_none()
-    if invite is None:
-        raise HTTPException(status_code=404, detail="Invite not found")
-    expiry = invite.expires_at
-    if expiry.tzinfo is None:
-        expiry = expiry.replace(tzinfo=timezone.utc)
-    if expiry <= datetime.now(timezone.utc):
-        raise HTTPException(status_code=400, detail="Invite has expired")
-
-    existing_user = (await db.execute(select(User).where(User.email == invite.email))).scalar_one_or_none()
-    current_user: User | None = None
-    try:
-        current_user = await get_current_user(request=request, token=None, db=db)
-    except HTTPException:
-        current_user = None
-
-    if current_user is not None and current_user.email != invite.email:
-        raise HTTPException(status_code=403, detail="Invite email does not match the current account")
-
-    user = current_user or existing_user
-    if user is None:
-        if not payload.password:
-            raise HTTPException(status_code=400, detail="Password is required to create a new account from invite")
-        user = User(
-            email=invite.email,
-            hashed_password=get_password_hash(payload.password),
-            full_name=payload.full_name,
-            role="user",
-            avatar=f"https://api.dicebear.com/7.x/initials/svg?seed={payload.full_name or invite.email}",
-        )
-        db.add(user)
-        await db.flush()
-
-    organization, assigned_project = await OrganizationBootstrapService(db).accept_invite(invite=invite, user=user)
-    session_project = assigned_project
-    if session_project is None:
-        projects = await list_organization_projects(db=db, organization_id=organization.id)
-        session_project = projects[0] if projects else None
-    if session_project is None:
-        raise HTTPException(status_code=400, detail="Organization has no active project")
-
-    browser_session, raw_token = await BrowserSessionService(db).create_session(
-        user=user,
-        organization=organization,
-        project=session_project,
+    del principal
+    organization = await _get_org_or_404(db, organization_slug)
+    if not organization.workos_organization_id:
+        raise HTTPException(status_code=400, detail="Organization is not linked to WorkOS")
+    service = WorkOSAuthService(db)
+    if not service.is_enabled():
+        raise HTTPException(status_code=503, detail="WorkOS auth is not configured")
+    link = service.client.portal.generate_link(
+        organization=organization.workos_organization_id,
+        intent=payload.intent,
+        return_url=payload.return_url,
     )
-    del browser_session
-    response.set_cookie(
-        key=SESSION_COOKIE_NAME,
-        value=raw_token,
-        httponly=True,
-        secure=request.url.scheme == "https",
-        samesite="lax",
-        path="/",
-    )
-    await db.commit()
-    return {
-        "organization": serialize_organization_summary(organization),
-        "project": serialize_project_summary(session_project),
-        "user": serialize_user_summary(user),
-    }
+    return {"link": getattr(link, "link", None) or link["link"]}

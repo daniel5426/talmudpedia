@@ -12,6 +12,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const user = useAuthStore((state) => state.user)
   const hydrated = useAuthStore((state) => state.hydrated)
   const sessionChecked = useAuthStore((state) => state.sessionChecked)
+  const onboardingRequired = useAuthStore((state) => state.onboardingRequired)
   const effectiveScopes = useAuthStore((state) => state.effectiveScopes)
   const router = useRouter()
   const pathname = usePathname()
@@ -23,7 +24,12 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     }
 
     if (!user) {
-      router.replace("/auth/login")
+      router.replace(`/auth/login?return_to=${encodeURIComponent(pathname || "/admin/dashboard")}`)
+      return
+    }
+
+    if (onboardingRequired) {
+      router.replace(`/auth/onboarding?return_to=${encodeURIComponent(pathname || "/admin/dashboard")}`)
       return
     }
 
@@ -39,7 +45,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     }
 
     setIsAuthorized(true)
-  }, [effectiveScopes.length, hydrated, router, sessionChecked, user])
+  }, [effectiveScopes.length, hydrated, onboardingRequired, pathname, router, sessionChecked, user])
 
   if (!isAuthorized) {
     return null
