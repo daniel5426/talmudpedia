@@ -489,11 +489,12 @@ async def get_me(
 @router.post("/logout")
 async def logout(request: Request, response: Response, db: AsyncSession = Depends(get_db)):
     service = WorkOSAuthService(db)
+    frontend_home = _normalize_frontend_return_to("/", request, fallback="/")
     logout_url = None
-    result = JSONResponse({"status": "logged_out", "logout_url": None})
+    result = JSONResponse({"status": "logged_out", "logout_url": frontend_home})
     if service.is_enabled():
-        logout_url = service.get_logout_url(request)
-        result = JSONResponse({"status": "logged_out", "logout_url": logout_url})
+        logout_url = service.get_logout_url(request, return_to=frontend_home)
+        result = JSONResponse({"status": "logged_out", "logout_url": logout_url or frontend_home})
         service.clear_session_cookie(response=result, request=request)
         service.clear_project_cookie(response=result, request=request)
     return result

@@ -69,7 +69,7 @@ export function NavUser({
       console.error("Failed to close browser session cleanly", error)
       clearAuthSession()
     }
-    window.location.assign(authService.getLoginUrl("/"))
+    window.location.assign("/")
   }
 
   return (
