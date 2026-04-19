@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 
-const AUTH_NAV_BASE_URL = "/api/py";
+const AUTH_NAV_BASE_URL = String(process.env.NEXT_PUBLIC_BACKEND_URL || "http://127.0.0.1:8026").trim().replace(/\/$/, "");
 
 function buildReturnTo(target?: string) {
   const fallback = "/admin/agents/playground";

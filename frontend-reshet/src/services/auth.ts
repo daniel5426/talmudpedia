@@ -7,7 +7,7 @@ import type {
 } from "./types";
 
 const AUTH_SESSION_TIMEOUT_MS = 8000;
-const AUTH_NAV_BASE_URL = "/api/py";
+const AUTH_NAV_BASE_URL = String(process.env.NEXT_PUBLIC_BACKEND_URL || "").trim().replace(/\/$/, "");
 const AUTH_REQUEST_INIT = { cache: "no-store" as const };
 
 class AuthService {
@@ -20,12 +20,27 @@ class AuthService {
     return target.startsWith("/") ? target : `/${target}`;
   }
 
+  private getAuthNavBaseUrl(): string {
+    if (AUTH_NAV_BASE_URL) {
+      return AUTH_NAV_BASE_URL;
+    }
+
+    if (typeof window !== "undefined") {
+      const { protocol, hostname } = window.location;
+      if (hostname === "localhost" || hostname === "127.0.0.1") {
+        return `${protocol}//${hostname}:8026`;
+      }
+    }
+
+    return "";
+  }
+
   getLoginUrl(returnTo = "/admin/agents/playground"): string {
-    return `${AUTH_NAV_BASE_URL}/auth/login?return_to=${encodeURIComponent(this.buildReturnTo(returnTo))}`;
+    return `${this.getAuthNavBaseUrl()}/auth/login?return_to=${encodeURIComponent(this.buildReturnTo(returnTo))}`;
   }
 
   getSignupUrl(returnTo = "/admin/agents/playground"): string {
-    return `${AUTH_NAV_BASE_URL}/auth/signup?return_to=${encodeURIComponent(this.buildReturnTo(returnTo))}`;
+    return `${this.getAuthNavBaseUrl()}/auth/signup?return_to=${encodeURIComponent(this.buildReturnTo(returnTo))}`;
   }
 
   async getCurrentSession(): Promise<AuthSessionResponse> {
