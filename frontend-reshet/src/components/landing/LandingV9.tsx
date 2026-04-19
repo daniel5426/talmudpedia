@@ -7,6 +7,7 @@ import { AnimatePresence, motion, useMotionTemplate, useMotionValueEvent, useRed
 import { type Repulsor } from "./v9/ParticleField";
 import { DOMAIN_SCREENSHOTS, PLATFORM_DOMAINS, PLATFORM_DOMAIN_SCROLL_MODEL, getPlatformDomainsSceneHeight } from "./v9/platformDomains";
 import { LandingFooter } from "@/components/marketing/landing-footer";
+import { authService } from "@/services";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useHeaderStore } from "@/lib/store/useHeaderStore";
 
@@ -80,6 +81,7 @@ function DomainTextContent({
 }
 
 export function LandingV9() {
+  const signupUrl = authService.getSignupUrl("/admin/agents/playground");
   const [hasMounted, setHasMounted] = useState(false);
   const [viewportWidth, setViewportWidth] = useState(1440);
   const [vhInstance, setVhInstance] = useState(800);
@@ -730,9 +732,9 @@ export function LandingV9() {
               <h2 className="text-[20px] md:text-2xl font-medium tracking-tight text-white mb-5">
                 Ready to deploy?
               </h2>
-              <Link href="/auth/signup" className="px-8 py-3.5 bg-white text-black text-[15px] font-semibold rounded-full hover:bg-gray-100 transition-colors shadow-lg hover:shadow-xl hover:-translate-y-1 transform duration-300">
+              <a href={signupUrl} className="px-8 py-3.5 bg-white text-black text-[15px] font-semibold rounded-full hover:bg-gray-100 transition-colors shadow-lg hover:shadow-xl hover:-translate-y-1 transform duration-300">
                 Build your first agent
-              </Link>
+              </a>
             </div>
           </div>
         </section>

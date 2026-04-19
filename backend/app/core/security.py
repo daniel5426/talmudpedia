@@ -6,7 +6,14 @@ import uuid
 from pwdlib import PasswordHash
 from pwdlib.hashers.argon2 import Argon2Hasher
 
-SECRET_KEY = os.getenv("SECRET_KEY", "YOUR_SECRET_KEY_HERE_CHANGE_IN_PRODUCTION")
+_INVALID_SECRET_KEYS = {
+    "",
+    "YOUR_SECRET_KEY_HERE_CHANGE_IN_PRODUCTION",
+    "replace-with-long-random-secret",
+}
+SECRET_KEY = os.getenv("SECRET_KEY", "").strip()
+if SECRET_KEY in _INVALID_SECRET_KEYS:
+    raise RuntimeError("SECRET_KEY must be set to a non-default value before starting the backend")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 90 # 90 days (approx 3 months)
 PUBLISHED_APP_ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("PUBLISHED_APP_ACCESS_TOKEN_EXPIRE_MINUTES", str(60 * 24 * 7)))

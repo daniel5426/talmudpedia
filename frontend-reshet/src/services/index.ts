@@ -54,6 +54,26 @@ export type {
   TenantAPIKeyCreateResponse,
   TenantAPIKeyRevokeResponse,
 } from "./tenant-api-keys";
+export { settingsProfileService } from "./settings-profile";
+export type { SettingsProfile } from "./settings-profile";
+export { settingsOrgService } from "./settings-org";
+export type { SettingsOrganization } from "./settings-org";
+export { settingsPeoplePermissionsService } from "./settings-people-permissions";
+export type {
+  SettingsMember,
+  SettingsInvitation,
+  SettingsGroup,
+  SettingsRole,
+  SettingsRoleAssignment,
+} from "./settings-people-permissions";
+export { settingsProjectsService } from "./settings-projects";
+export type { SettingsProject } from "./settings-projects";
+export { settingsApiKeysService } from "./settings-api-keys";
+export type { SettingsApiKey, SettingsApiKeyCreateResponse } from "./settings-api-keys";
+export { settingsLimitsService } from "./settings-limits";
+export type { SettingsLimit } from "./settings-limits";
+export { settingsAuditService } from "./settings-audit";
+export type { SettingsAuditLog, SettingsAuditLogDetail, SettingsAuditFilters } from "./settings-audit";
 // Agent & Resource Services
 export { agentService } from "./agent";
 export { modelsService } from "./models";

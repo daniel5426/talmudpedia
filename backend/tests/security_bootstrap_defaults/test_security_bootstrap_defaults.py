@@ -1,3 +1,7 @@
+import os
+from pathlib import Path
+import subprocess
+import sys
 from uuid import uuid4
 
 import pytest
@@ -7,6 +11,9 @@ from app.core.security import get_password_hash
 from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Tenant, User
 from app.db.postgres.models.rbac import Role, RoleAssignment
 from app.services.security_bootstrap_service import SecurityBootstrapService
+
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 @pytest.mark.asyncio
@@ -50,8 +57,8 @@ async def test_bootstrap_seeds_default_roles_and_owner_assignment_idempotently(d
     await db_session.commit()
 
     roles = (await db_session.execute(select(Role).where(Role.tenant_id == tenant.id))).scalars().all()
-    role_names = sorted(role.name for role in roles)
-    assert role_names == ["admin", "member", "owner"]
+    role_names = {role.name for role in roles}
+    assert {"organization_admin", "organization_member", "organization_owner"}.issubset(role_names)
     assert all(role.is_system for role in roles)
 
     assignments = (
@@ -59,9 +66,45 @@ async def test_bootstrap_seeds_default_roles_and_owner_assignment_idempotently(d
             select(RoleAssignment).where(
                 RoleAssignment.tenant_id == tenant.id,
                 RoleAssignment.user_id == user.id,
-                RoleAssignment.scope_type == "tenant",
             )
         )
     ).scalars().all()
-    owner_assignments = [item for item in assignments if item.role_id in {role.id for role in roles if role.name == "owner"}]
+    owner_assignments = [
+        item for item in assignments if item.role_id in {role.id for role in roles if role.name == "organization_owner"}
+    ]
     assert len(owner_assignments) == 1
+
+
+@pytest.mark.parametrize(
+    ("secret_key", "should_fail"),
+    [
+        (None, True),
+        ("YOUR_SECRET_KEY_HERE_CHANGE_IN_PRODUCTION", True),
+        ("replace-with-long-random-secret", True),
+        ("explicit-test-secret", False),
+    ],
+)
+def test_security_module_requires_non_default_secret_key(secret_key, should_fail):
+    env = os.environ.copy()
+    if secret_key is None:
+        env.pop("SECRET_KEY", None)
+    else:
+        env["SECRET_KEY"] = secret_key
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; sys.path.insert(0, 'backend'); import app.core.security",
+        ],
+        cwd=str(REPO_ROOT),
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    if should_fail:
+        assert result.returncode != 0
+        assert "SECRET_KEY must be set to a non-default value" in (result.stderr or result.stdout)
+    else:
+        assert result.returncode == 0, result.stderr or result.stdout

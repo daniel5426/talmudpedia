@@ -230,6 +230,38 @@ def require_tenant_api_key_scopes(*required_scopes: str) -> Callable[[Dict[str, 
     return _dep
 
 
+def ensure_published_app_principal_access(
+    principal: Optional[Dict[str, Any]],
+    *,
+    app_id: UUID | str,
+    required_scopes: tuple[str, ...] = (),
+    require_authenticated: bool = True,
+) -> Optional[Dict[str, Any]]:
+    if principal is None:
+        if require_authenticated:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Authentication required",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        return None
+
+    if principal.get("type") != "published_app_user":
+        raise HTTPException(status_code=403, detail="Published app principal required")
+
+    if str(principal.get("app_id")) != str(app_id):
+        raise HTTPException(status_code=403, detail="Token does not belong to this app")
+
+    if required_scopes:
+        scopes = {str(scope).strip() for scope in (principal.get("scopes") or []) if str(scope).strip()}
+        if "*" not in scopes:
+            missing = [scope for scope in required_scopes if scope not in scopes]
+            if missing:
+                raise HTTPException(status_code=403, detail=f"Missing required scopes: {', '.join(missing)}")
+
+    return principal
+
+
 async def ensure_sensitive_action_approved(
     *,
     principal: Dict[str, Any],

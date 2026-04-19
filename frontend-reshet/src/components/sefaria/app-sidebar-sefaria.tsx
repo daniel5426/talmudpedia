@@ -23,7 +23,7 @@ import {
 } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
 import { useLayoutStore } from "@/lib/store/useLayoutStore";
-import { chatService, Chat } from "@/services";
+import { authService, chatService, Chat } from "@/services";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -246,7 +246,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
 
   const handleNewChat = React.useCallback(() => {
     if (!user) {
-      router.push("/auth/login");
+      window.location.assign(authService.getLoginUrl("/chat"));
       return;
     }
     if (pathname !== '/chat') {
@@ -430,7 +430,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
           <SidebarMenu dir={direction}>
             <SidebarMenuItem>
               <SidebarMenuButton dir={direction} asChild size="lg" className={`${isRTL ? "rtl" : "ltr"}`}>
-                <a href="/auth/login" dir={direction} className={`${isRTL ? "rtl" : "ltr"}`}>
+                <a href={authService.getLoginUrl("/admin/dashboard")} dir={direction} className={`${isRTL ? "rtl" : "ltr"}`}>
                   <div dir={direction} className={`grid flex-1  text-sm leading-tight ${isRTL ? "text-right" : "text-left"}`}>
                     <span className="truncate font-semibold" >התחברות</span>
                     <span className="truncate text-xs">התחבר לחשבון שלך</span>

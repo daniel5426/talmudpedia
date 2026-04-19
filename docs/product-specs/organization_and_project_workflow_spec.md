@@ -167,14 +167,29 @@ Role strings alone should not be treated as the long-term frontend authorization
 
 The intended browser control-plane grouping is:
 
-- Organization
-- Projects
-- Members & Invites
-- Security & Roles
-- Organization Settings
-- Project Settings
+- `Settings` as the single governance entry point
+- `Resource Policies` as a separate advanced surface
 
-`/admin/settings` should remain a focused settings hub, not a catch-all replacement for organization and security administration.
+The settings surface is organized as:
+
+- `Organization`
+- `Profile`
+- `People & Permissions`
+- `Projects`
+- `API Keys`
+- `Limits`
+- `Audit Logs`
+- `Integrations`
+- `MCP Servers`
+
+Within `People & Permissions`, the internal grouping is:
+
+- `Members`
+- `Invitations`
+- `Groups`
+- `Roles`
+
+Old standalone organization, security, and audit pages are no longer the intended frontend information architecture.
 
 ## Default System Profiles
 

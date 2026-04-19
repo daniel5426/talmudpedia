@@ -7,6 +7,7 @@ import { ChevronDown } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { PLATFORM_DOMAINS } from "@/components/landing/v9/platformDomains";
+import { authService } from "@/services";
 
 import { usePathname, useRouter } from "next/navigation";
 
@@ -38,6 +39,8 @@ export function LandingHeader({ scrolled: propsScrolled, onSelectDomain }: Landi
 
   // Use the prop if we're on home and it's defined, otherwise use internal scroll state
   const scrolled = (isHome && propsScrolled !== undefined) ? propsScrolled : internalScrolled;
+  const loginUrl = authService.getLoginUrl("/admin/dashboard");
+  const signupUrl = authService.getSignupUrl("/admin/agents/playground");
 
   const handleSelectDomain = (index: number) => {
     if (onSelectDomain) {
@@ -147,18 +150,18 @@ export function LandingHeader({ scrolled: propsScrolled, onSelectDomain }: Landi
         <div className="flex-1" />
 
         <div className="hidden items-center gap-3 md:flex">
-          <Link
-            href="/auth/login"
+          <a
+            href={loginUrl}
             className="px-3 py-1.5 text-[13px] font-medium text-[#4b5563] transition-colors hover:text-black"
           >
             Log in
-          </Link>
-          <Link
-            href="/auth/signup"
+          </a>
+          <a
+            href={signupUrl}
             className="rounded-full bg-black px-4 py-2 text-[13px] font-medium text-white transition-colors hover:bg-gray-900"
           >
             Start building
-          </Link>
+          </a>
         </div>
       </div>
     </nav>

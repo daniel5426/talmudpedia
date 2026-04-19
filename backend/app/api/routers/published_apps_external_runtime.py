@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import (
+    ensure_published_app_principal_access,
     get_current_published_app_principal,
     get_optional_published_app_principal,
 )
@@ -63,12 +64,19 @@ def _build_external_runtime_bootstrap(*, request: Request, app: Any, revision: A
     )
 
 
-def _assert_principal_matches_app(app: Any, principal: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-    if principal is None:
-        return None
-    if str(principal.get("app_id")) != str(app.id):
-        raise HTTPException(status_code=403, detail="Token does not belong to this app")
-    return principal
+def _published_app_principal(
+    app: Any,
+    principal: Optional[Dict[str, Any]],
+    *,
+    required_scopes: tuple[str, ...] = (),
+    require_authenticated: bool = False,
+) -> Optional[Dict[str, Any]]:
+    return ensure_published_app_principal_access(
+        principal,
+        app_id=str(app.id),
+        required_scopes=required_scopes,
+        require_authenticated=require_authenticated,
+    )
 
 
 @router.get("/{app_slug}/runtime/bootstrap", response_model=RuntimeBootstrapResponse)
@@ -79,7 +87,7 @@ async def get_external_runtime_bootstrap(
     principal: Optional[Dict[str, Any]] = Depends(get_optional_published_app_principal),
 ):
     app = await _assert_published(db, app_slug)
-    matched_principal = _assert_principal_matches_app(app, principal)
+    matched_principal = _published_app_principal(app, principal, require_authenticated=False)
     revision = await _get_published_ui_revision(db, app)
     response = JSONResponse(_build_external_runtime_bootstrap(request=request, app=app, revision=revision).model_dump())
     await PublishedAppAnalyticsService(db).record_bootstrap(
@@ -164,7 +172,7 @@ async def external_auth_me(
     principal: Dict[str, Any] = Depends(get_current_published_app_principal),
 ):
     app = await _assert_published(db, app_slug)
-    _assert_principal_matches_app(app, principal)
+    _published_app_principal(app, principal, required_scopes=("public.auth",), require_authenticated=True)
     return _user_payload(principal["user"])
 
 
@@ -175,7 +183,7 @@ async def external_auth_logout(
     principal: Dict[str, Any] = Depends(get_current_published_app_principal),
 ):
     app = await _assert_published(db, app_slug)
-    _assert_principal_matches_app(app, principal)
+    _published_app_principal(app, principal, required_scopes=("public.auth",), require_authenticated=True)
     service = PublishedAppAuthService(db)
     await service.revoke_session(
         session_id=UUID(principal["session_id"]),
@@ -193,7 +201,12 @@ async def external_chat_stream(
     principal: Optional[Dict[str, Any]] = Depends(get_optional_published_app_principal),
 ):
     app = await _assert_published(db, app_slug)
-    matched_principal = _assert_principal_matches_app(app, principal)
+    matched_principal = _published_app_principal(
+        app,
+        principal,
+        required_scopes=("public.chat",) if app.auth_enabled else (),
+        require_authenticated=False,
+    )
     return await _stream_chat_for_app(
         app=app,
         payload=payload,
@@ -215,7 +228,12 @@ async def external_upload_attachments(
     principal: Optional[Dict[str, Any]] = Depends(get_optional_published_app_principal),
 ):
     app = await _assert_published(db, app_slug)
-    matched_principal = _assert_principal_matches_app(app, principal)
+    matched_principal = _published_app_principal(
+        app,
+        principal,
+        required_scopes=("public.chat",) if app.auth_enabled else (),
+        require_authenticated=False,
+    )
     if app.auth_enabled and matched_principal is None:
         raise HTTPException(status_code=401, detail="Authentication required")
     owner = RuntimeAttachmentOwner(
@@ -237,7 +255,7 @@ async def external_list_threads(
     principal: Dict[str, Any] = Depends(get_current_published_app_principal),
 ):
     app = await _assert_published(db, app_slug)
-    _assert_principal_matches_app(app, principal)
+    _published_app_principal(app, principal, required_scopes=("public.chats.read",), require_authenticated=True)
     service = ThreadService(db)
     threads, total = await service.list_threads(
         tenant_id=app.tenant_id,
@@ -268,7 +286,7 @@ async def external_get_thread(
     principal: Dict[str, Any] = Depends(get_current_published_app_principal),
 ):
     app = await _assert_published(db, app_slug)
-    _assert_principal_matches_app(app, principal)
+    _published_app_principal(app, principal, required_scopes=("public.chats.read",), require_authenticated=True)
     service = ThreadService(db)
     repaired = await service.repair_thread_turn_indices(thread_id=thread_id)
     if repaired:

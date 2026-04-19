@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import secrets
 from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
@@ -25,6 +26,7 @@ from app.api.routers.published_apps_public import (
     _is_enabled,
     _stream_chat_for_app,
 )
+from app.api.dependencies import ensure_published_app_principal_access
 from app.db.postgres.models.agent_threads import AgentThreadSurface
 from app.core.security import decode_published_app_session_token
 from app.db.postgres.engine import sessionmaker
@@ -38,7 +40,11 @@ from app.db.postgres.models.published_apps import (
     PublishedAppVisibility,
 )
 from app.db.postgres.session import get_db
-from app.services.published_app_auth_service import PublishedAppAuthError, PublishedAppAuthService
+from app.services.published_app_auth_service import (
+    PublishedAppAuthError,
+    PublishedAppAuthRateLimitError,
+    PublishedAppAuthService,
+)
 from app.services.published_app_analytics_service import PublishedAppAnalyticsService
 from app.db.postgres.models.published_app_analytics import PublishedAppAnalyticsSurface
 from app.services.published_app_host_runtime_support import (
@@ -66,6 +72,10 @@ router = APIRouter(tags=["published-apps-host-runtime"])
 
 INTERNAL_PREFIX = "/_talmudpedia"
 SESSION_COOKIE_NAME = os.getenv("PUBLISHED_APP_SESSION_COOKIE_NAME", "published_app_session").strip() or "published_app_session"
+GOOGLE_OAUTH_STATE_COOKIE_NAME = (
+    os.getenv("PUBLISHED_APP_GOOGLE_OAUTH_STATE_COOKIE_NAME", "published_app_google_oauth_state").strip()
+    or "published_app_google_oauth_state"
+)
 
 
 def _is_app_host_request(request: Request) -> bool:
@@ -96,6 +106,27 @@ def _set_session_cookie(*, response: Response, request: Request, token: str) -> 
 def _clear_session_cookie(*, response: Response, request: Request) -> None:
     response.delete_cookie(
         key=SESSION_COOKIE_NAME,
+        path="/",
+        secure=request.url.scheme == "https",
+        samesite="lax",
+    )
+
+
+def _set_google_oauth_state_cookie(*, response: Response, request: Request, nonce: str, cookie_name: str) -> None:
+    response.set_cookie(
+        key=cookie_name,
+        value=nonce,
+        httponly=True,
+        secure=request.url.scheme == "https",
+        samesite="lax",
+        path="/",
+        max_age=600,
+    )
+
+
+def _clear_google_oauth_state_cookie(*, response: Response, request: Request, cookie_name: str) -> None:
+    response.delete_cookie(
+        key=cookie_name,
         path="/",
         secure=request.url.scheme == "https",
         samesite="lax",
@@ -332,7 +363,7 @@ async def _serve_published_asset_response(
     response = Response(
         content=payload,
         media_type=content_type,
-        headers={"Cache-Control": "public, max-age=60"},
+        headers={"Cache-Control": "private, max-age=60" if app.auth_enabled else "public, max-age=60"},
     )
     if stale_cookie:
         _clear_session_cookie(response=response, request=request)
@@ -381,6 +412,21 @@ async def _host_auth_context(
     app = await _resolve_host_app_or_404(db, request)
     principal, stale_cookie = await _resolve_optional_principal_from_cookie(db=db, request=request, expected_app=app)
     return app, principal, stale_cookie
+
+
+def _host_runtime_principal(
+    app: PublishedApp,
+    principal: Optional[dict[str, Any]],
+    *,
+    required_scopes: tuple[str, ...] = (),
+    require_authenticated: bool = True,
+) -> Optional[dict[str, Any]]:
+    return ensure_published_app_principal_access(
+        principal,
+        app_id=str(app.id),
+        required_scopes=required_scopes,
+        require_authenticated=require_authenticated,
+    )
 
 
 @router.get(f"{INTERNAL_PREFIX}/auth/state")
@@ -451,7 +497,10 @@ async def host_login(
             app=app,
             email=payload.email.lower(),
             password=payload.password,
+            client_ip=request.client.host if request.client else None,
         )
+    except PublishedAppAuthRateLimitError as exc:
+        raise HTTPException(status_code=429, detail=str(exc))
     except PublishedAppAuthError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     response = JSONResponse({"status": "ok", "user": _user_payload(result.account)})
@@ -486,6 +535,7 @@ async def host_logout(
     app = await _resolve_host_app_or_404(db, request)
     principal, stale_cookie = await _resolve_optional_principal_from_cookie(db=db, request=request, expected_app=app)
     if principal is not None:
+        _host_runtime_principal(app, principal, required_scopes=("public.auth",), require_authenticated=True)
         service = PublishedAppAuthService(db)
         await service.revoke_session(
             session_id=UUID(principal["session_id"]),
@@ -525,13 +575,22 @@ async def host_google_start(
 
     normalized_return = _normalize_return_to_for_host(str(request.base_url), return_to) or "/"
     target_abs = f"{_request_origin_from_base_url(str(request.base_url))}{normalized_return}"
+    oauth_state_nonce = secrets.token_urlsafe(32)
     auth_url = auth_service.build_google_auth_url(
         client_id=client_id,
         redirect_uri=redirect_uri,
         app_slug=app.slug,
         return_to=target_abs,
+        nonce=oauth_state_nonce,
     )
-    return RedirectResponse(url=auth_url, status_code=302)
+    response = RedirectResponse(url=auth_url, status_code=302)
+    _set_google_oauth_state_cookie(
+        response=response,
+        request=request,
+        nonce=oauth_state_nonce,
+        cookie_name=GOOGLE_OAUTH_STATE_COOKIE_NAME,
+    )
+    return response
 
 
 @router.get(f"{INTERNAL_PREFIX}/auth/google/callback")
@@ -554,8 +613,9 @@ async def host_google_callback(
     if not client_id or not client_secret or not redirect_uri:
         raise HTTPException(status_code=400, detail="Google OAuth credentials are incomplete")
 
+    oauth_state_nonce = (request.cookies.get(GOOGLE_OAUTH_STATE_COOKIE_NAME) or "").strip()
     try:
-        state_payload = auth_service.parse_google_state(state)
+        state_payload = auth_service.parse_google_state(state, expected_nonce=oauth_state_nonce)
         if state_payload.get("app_slug") != app.slug:
             raise PublishedAppAuthError("OAuth state app slug mismatch")
         token_response = auth_service.exchange_google_code(
@@ -582,11 +642,22 @@ async def host_google_callback(
             metadata={"google_sub": str(profile.get("sub"))},
         )
     except PublishedAppAuthError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        response = JSONResponse(status_code=400, content={"detail": str(exc)})
+        _clear_google_oauth_state_cookie(
+            response=response,
+            request=request,
+            cookie_name=GOOGLE_OAUTH_STATE_COOKIE_NAME,
+        )
+        return response
 
     return_to = _normalize_return_to_for_host(str(request.base_url), state_payload.get("return_to"))  # type: ignore[name-defined]
     redirect = RedirectResponse(url=return_to or "/", status_code=302)
     _set_session_cookie(response=redirect, request=request, token=result.token)
+    _clear_google_oauth_state_cookie(
+        response=redirect,
+        request=request,
+        cookie_name=GOOGLE_OAUTH_STATE_COOKIE_NAME,
+    )
     return redirect
 
 
@@ -635,6 +706,13 @@ async def host_chat_stream(
         raise HTTPException(status_code=404, detail="Published apps are disabled")
     app = await _resolve_host_app_or_404(db, request)
     principal, stale_cookie = await _resolve_optional_principal_from_cookie(db=db, request=request, expected_app=app)
+    if principal is not None:
+        principal = _host_runtime_principal(
+            app,
+            principal,
+            required_scopes=("public.chat",),
+            require_authenticated=True,
+        )
     if app.auth_enabled and principal is None:
         response = JSONResponse(status_code=401, content={"detail": "Authentication required"})
         if stale_cookie:
@@ -665,6 +743,13 @@ async def host_upload_attachments(
         raise HTTPException(status_code=404, detail="Published apps are disabled")
     app = await _resolve_host_app_or_404(db, request)
     principal, stale_cookie = await _resolve_optional_principal_from_cookie(db=db, request=request, expected_app=app)
+    if principal is not None:
+        principal = _host_runtime_principal(
+            app,
+            principal,
+            required_scopes=("public.chat",),
+            require_authenticated=True,
+        )
     if app.auth_enabled and principal is None:
         response = JSONResponse(status_code=401, content={"detail": "Authentication required"})
         if stale_cookie:
@@ -699,6 +784,7 @@ async def host_list_threads(
         if stale_cookie:
             _clear_session_cookie(response=response, request=request)
         return response
+    principal = _host_runtime_principal(app, principal, required_scopes=("public.chats.read",), require_authenticated=True)
 
     service = ThreadService(db)
     threads, total = await service.list_threads(
@@ -739,6 +825,7 @@ async def host_get_thread(
         if stale_cookie:
             _clear_session_cookie(response=response, request=request)
         return response
+    principal = _host_runtime_principal(app, principal, required_scopes=("public.chats.read",), require_authenticated=True)
 
     service = ThreadService(db)
     repaired = await service.repair_thread_turn_indices(thread_id=thread_id)

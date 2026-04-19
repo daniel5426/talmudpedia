@@ -3,12 +3,16 @@
 import Link from "next/link";
 
 import { PLATFORM_DOMAINS } from "@/components/landing/v9/platformDomains";
+import { authService } from "@/services";
 
 type LandingFooterProps = {
   onSelectDomain: (index: number) => void;
 };
 
 export function LandingFooter({ onSelectDomain }: LandingFooterProps) {
+  const signupUrl = authService.getSignupUrl("/admin/agents/playground");
+  const loginUrl = authService.getLoginUrl("/admin/dashboard");
+
   return (
     <div className="max-w-[1100px] mx-auto mb-24 -mt-20 relative">
       <div className="grid gap-10 md:grid-cols-4">
@@ -37,14 +41,14 @@ export function LandingFooter({ onSelectDomain }: LandingFooterProps) {
           </p>
           <ul className="mt-4 space-y-2.5">
             <li>
-              <Link href="/auth/signup" className="text-sm text-gray-400 transition-colors hover:text-white">
+              <a href={signupUrl} className="text-sm text-gray-400 transition-colors hover:text-white">
                 Request access
-              </Link>
+              </a>
             </li>
             <li>
-              <Link href="/auth/login" className="text-sm text-gray-400 transition-colors hover:text-white">
+              <a href={loginUrl} className="text-sm text-gray-400 transition-colors hover:text-white">
                 Operator login
-              </Link>
+              </a>
             </li>
             <li>
               <Link href="/contact" className="text-sm text-gray-400 transition-colors hover:text-white">

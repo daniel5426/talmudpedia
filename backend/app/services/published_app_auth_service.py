@@ -1,8 +1,6 @@
-import base64
-import json
-import secrets
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+import os
 from typing import Any, Optional
 from urllib.parse import urlencode
 from uuid import UUID, uuid4
@@ -14,7 +12,7 @@ from google.oauth2 import id_token
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.security import create_published_app_session_token, get_password_hash, verify_password
+from app.core.security import ALGORITHM, SECRET_KEY, create_published_app_session_token, get_password_hash, verify_password
 from app.db.postgres.models.identity import User
 from app.db.postgres.models.published_apps import (
     PublishedApp,
@@ -30,9 +28,19 @@ SESSION_TTL_DAYS = 7
 GOOGLE_OAUTH_SCOPES = "openid email profile"
 GOOGLE_OAUTH_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_OAUTH_TOKEN_URL = "https://oauth2.googleapis.com/token"
+GOOGLE_OAUTH_STATE_TOKEN_USE = "published_app_google_oauth_state"
+GOOGLE_OAUTH_STATE_EXPIRE_MINUTES = int(os.getenv("PUBLISHED_APP_GOOGLE_OAUTH_STATE_EXPIRE_MINUTES", "10"))
+PASSWORD_LOGIN_MAX_FAILURES = int(os.getenv("PUBLISHED_APP_PASSWORD_LOGIN_MAX_FAILURES", "5"))
+PASSWORD_LOGIN_FAILURE_WINDOW_MINUTES = int(os.getenv("PUBLISHED_APP_PASSWORD_LOGIN_FAILURE_WINDOW_MINUTES", "15"))
+PASSWORD_LOGIN_LOCKOUT_MINUTES = int(os.getenv("PUBLISHED_APP_PASSWORD_LOGIN_LOCKOUT_MINUTES", "15"))
+_PASSWORD_LOGIN_THROTTLES: dict[str, dict[str, Any]] = {}
 
 
 class PublishedAppAuthError(Exception):
+    pass
+
+
+class PublishedAppAuthRateLimitError(PublishedAppAuthError):
     pass
 
 
@@ -46,6 +54,59 @@ class AuthResult:
 class PublishedAppAuthService:
     def __init__(self, db: AsyncSession):
         self.db = db
+
+    @staticmethod
+    def _password_login_throttle_key(*, app: PublishedApp, email: str, client_ip: Optional[str]) -> str:
+        normalized_email = email.strip().lower()
+        normalized_ip = str(client_ip or "").strip() or "unknown"
+        return f"{app.id}:{normalized_email}:{normalized_ip}"
+
+    @staticmethod
+    def _prune_password_login_throttle(*, key: str, now: datetime) -> dict[str, Any] | None:
+        state = _PASSWORD_LOGIN_THROTTLES.get(key)
+        if state is None:
+            return None
+        locked_until = state.get("locked_until")
+        window_started_at = state.get("window_started_at")
+        if isinstance(locked_until, datetime) and locked_until <= now:
+            _PASSWORD_LOGIN_THROTTLES.pop(key, None)
+            return None
+        if isinstance(window_started_at, datetime) and window_started_at + timedelta(minutes=PASSWORD_LOGIN_FAILURE_WINDOW_MINUTES) <= now:
+            _PASSWORD_LOGIN_THROTTLES.pop(key, None)
+            return None
+        return state
+
+    def _assert_password_login_allowed(self, *, app: PublishedApp, email: str, client_ip: Optional[str]) -> None:
+        key = self._password_login_throttle_key(app=app, email=email, client_ip=client_ip)
+        now = datetime.now(timezone.utc)
+        state = self._prune_password_login_throttle(key=key, now=now)
+        if state is None:
+            return
+        locked_until = state.get("locked_until")
+        if isinstance(locked_until, datetime) and locked_until > now:
+            raise PublishedAppAuthRateLimitError("Too many failed login attempts. Try again later.")
+
+    def _record_password_login_failure(self, *, app: PublishedApp, email: str, client_ip: Optional[str]) -> None:
+        key = self._password_login_throttle_key(app=app, email=email, client_ip=client_ip)
+        now = datetime.now(timezone.utc)
+        state = self._prune_password_login_throttle(key=key, now=now)
+        if state is None:
+            _PASSWORD_LOGIN_THROTTLES[key] = {
+                "window_started_at": now,
+                "failures": 1,
+                "locked_until": None,
+            }
+            return
+
+        failures = int(state.get("failures") or 0) + 1
+        state["failures"] = failures
+        if failures >= PASSWORD_LOGIN_MAX_FAILURES:
+            state["locked_until"] = now + timedelta(minutes=PASSWORD_LOGIN_LOCKOUT_MINUTES)
+            raise PublishedAppAuthRateLimitError("Too many failed login attempts. Try again later.")
+
+    def _clear_password_login_failure_state(self, *, app: PublishedApp, email: str, client_ip: Optional[str]) -> None:
+        key = self._password_login_throttle_key(app=app, email=email, client_ip=client_ip)
+        _PASSWORD_LOGIN_THROTTLES.pop(key, None)
 
     async def get_google_credential(self, tenant_id: UUID) -> Optional[IntegrationCredential]:
         result = await self.db.execute(
@@ -202,7 +263,7 @@ class PublishedAppAuthService:
             app_account_id=str(account.id),
             session_id=str(session.id),
             provider=provider,
-            scopes=["public.chat", "public.chats.read"],
+            scopes=["public.auth", "public.chat", "public.chats.read"],
             expires_delta=timedelta(days=SESSION_TTL_DAYS),
         )
         await self.db.commit()
@@ -382,12 +443,22 @@ class PublishedAppAuthService:
         )
         return await self.issue_auth_result(app=app, account=account, provider="password")
 
-    async def login_with_password(self, app: PublishedApp, email: str, password: str) -> AuthResult:
+    async def login_with_password(
+        self,
+        app: PublishedApp,
+        email: str,
+        password: str,
+        client_ip: Optional[str] = None,
+    ) -> AuthResult:
+        normalized_email = email.strip().lower()
+        self._assert_password_login_allowed(app=app, email=normalized_email, client_ip=client_ip)
         account = await self._get_account_by_email(app_id=app.id, email=email)
         if account is None or not account.hashed_password or not verify_password(password, account.hashed_password):
+            self._record_password_login_failure(app=app, email=normalized_email, client_ip=client_ip)
             raise PublishedAppAuthError("Invalid email or password")
         if account.status == PublishedAppAccountStatus.blocked:
             raise PublishedAppAuthError("User is blocked for this app")
+        self._clear_password_login_failure_state(app=app, email=normalized_email, client_ip=client_ip)
         return await self.issue_auth_result(app=app, account=account, provider="password")
 
     async def get_or_create_google_account(
@@ -454,13 +525,24 @@ class PublishedAppAuthService:
         await self.db.flush()
         return account
 
-    def build_google_auth_url(self, *, client_id: str, redirect_uri: str, app_slug: str, return_to: str) -> str:
+    def build_google_auth_url(
+        self,
+        *,
+        client_id: str,
+        redirect_uri: str,
+        app_slug: str,
+        return_to: str,
+        nonce: str,
+    ) -> str:
         state_payload = {
             "app_slug": app_slug,
             "return_to": return_to,
-            "nonce": secrets.token_urlsafe(16),
+            "nonce": nonce,
+            "token_use": GOOGLE_OAUTH_STATE_TOKEN_USE,
+            "exp": datetime.now(timezone.utc) + timedelta(minutes=GOOGLE_OAUTH_STATE_EXPIRE_MINUTES),
+            "jti": str(uuid4()),
         }
-        state = base64.urlsafe_b64encode(json.dumps(state_payload).encode("utf-8")).decode("utf-8")
+        state = jwt.encode(state_payload, SECRET_KEY, algorithm=ALGORITHM)
         query = urlencode(
             {
                 "client_id": client_id,
@@ -474,14 +556,19 @@ class PublishedAppAuthService:
         )
         return f"{GOOGLE_OAUTH_AUTH_URL}?{query}"
 
-    def parse_google_state(self, encoded_state: str) -> dict[str, str]:
+    def parse_google_state(self, encoded_state: str, *, expected_nonce: str) -> dict[str, str]:
         try:
-            raw = base64.urlsafe_b64decode(encoded_state.encode("utf-8")).decode("utf-8")
-            payload = json.loads(raw)
+            payload = jwt.decode(encoded_state, SECRET_KEY, algorithms=[ALGORITHM])
             if not isinstance(payload, dict):
                 raise ValueError("State payload must be an object")
+            if payload.get("token_use") != GOOGLE_OAUTH_STATE_TOKEN_USE:
+                raise ValueError("State token_use is invalid")
             if not payload.get("app_slug") or not payload.get("return_to"):
                 raise ValueError("State payload is missing required fields")
+            if not expected_nonce:
+                raise ValueError("State cookie is missing")
+            if payload.get("nonce") != expected_nonce:
+                raise ValueError("State nonce mismatch")
             return payload
         except Exception as exc:
             raise PublishedAppAuthError(f"Invalid OAuth state: {exc}") from exc

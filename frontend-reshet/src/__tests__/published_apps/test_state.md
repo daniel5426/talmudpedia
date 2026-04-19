@@ -1,6 +1,6 @@
 # Published Apps Frontend Tests
 
-Last Updated: 2026-04-18
+Last Updated: 2026-04-19
 
 ## Scope
 Frontend coverage for published-apps admin and public runtime surfaces outside the new versions module.
@@ -15,6 +15,7 @@ Frontend coverage for published-apps admin and public runtime surfaces outside t
 - `frontend-reshet/src/__tests__/published_apps/chat_model_path_parsing.test.ts`
 - `frontend-reshet/src/__tests__/published_apps/coding_agent_stream_speed.test.ts`
 - `frontend-reshet/src/__tests__/published_apps/coding_agent_stream_url.test.ts`
+- `frontend-reshet/src/__tests__/published_apps/published_runtime_service.test.ts`
 - `frontend-reshet/src/__tests__/published_apps/preview_canvas_auth_channel.test.tsx`
 
 ## Key Scenarios Covered
@@ -31,6 +32,7 @@ Frontend coverage for published-apps admin and public runtime surfaces outside t
 - Coding-agent stream consumer rejects non-`text/event-stream` responses instead of silently retrying forever on HTML/auth/error bodies.
 - Chat history timeline rebuilds tool rows from official message parts instead of legacy run events.
 - Preview auth token channel updates and iframe src stability across token refreshes.
+- Public runtime service omits ambient browser cookies and disables caching for auth and bearer-stream fetches.
 - Preview keeps the iframe mounted during same-session transient pending/recovering states instead of immediately blanking it.
 - Preview stages same-session route changes behind the current iframe and swaps only after the new document loads.
 - Preview cold-boot loading now renders explicit staged progress instead of a generic blank spinner.
@@ -40,6 +42,9 @@ Frontend coverage for published-apps admin and public runtime surfaces outside t
 - Command: `cd /Users/danielbenassaya/Code/personal/talmudpedia && pnpm --dir frontend-reshet test -- --runInBand src/__tests__/published_apps/chat_history_timeline.test.ts src/__tests__/published_apps/coding_agent_stream_speed.test.ts src/__tests__/published_apps/coding_agent_stream_url.test.ts src/__tests__/published_apps/chat_session_hydration.test.ts`
 - Date: 2026-04-18 21:52 EEST
 - Result: PASS (`4 suites, 11 tests`)
+- Command: `cd /Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet && pnpm test -- --runInBand src/__tests__/auth_session_bootstrap/auth_service.test.ts src/__tests__/auth_session_bootstrap/auth_refresher.test.tsx src/__tests__/published_apps/published_runtime_service.test.ts`
+- Date: 2026-04-19 Asia/Hebron
+- Result: PASS (`3 suites, 5 tests`)
 - Command: `cd /Users/danielbenassaya/Code/personal/talmudpedia && pnpm --dir frontend-reshet test -- --runInBand src/__tests__/published_apps/coding_agent_stream_speed.test.ts src/__tests__/published_apps/coding_agent_stream_url.test.ts`
 - Date: 2026-04-18 21:52 EEST
 - Result: PASS (`2 suites, 6 tests`)

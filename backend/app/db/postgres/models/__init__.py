@@ -39,6 +39,8 @@ from .files import (
     FileAccessMode,
 )
 from .security import (
+    ProjectAPIKey,
+    ProjectAPIKeyStatus,
     TenantAPIKey,
     TenantAPIKeyStatus,
 )

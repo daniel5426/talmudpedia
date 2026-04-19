@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 
 from app.api.routers import published_apps_builder_preview_proxy as preview_proxy_router
 from app.services import published_app_draft_dev_runtime_client as runtime_client_module
+from app.services.published_app_auth_service import PublishedAppAuthRateLimitError
 from app.services.published_app_draft_dev_runtime_client import (
     PublishedAppDraftDevRuntimeClient,
     PublishedAppDraftDevRuntimeClientConfig,
@@ -16,6 +18,7 @@ def _fake_preview_app_and_revision():
     return (
         SimpleNamespace(
             id="app-1",
+            tenant_id="tenant-1",
             slug="sefaria",
             name="Sefaria",
             description=None,
@@ -501,3 +504,98 @@ async def test_builder_preview_target_falls_back_to_sprite_session_identity_when
     assert target["upstream_base_url"] == "http://127.0.0.1:49000"
     assert target["resolver_kind"] == "sprite_tunnel_fallback"
     assert target["provider"] == "sprite"
+
+
+@pytest.mark.asyncio
+async def test_builder_preview_login_maps_password_throttle_to_429(monkeypatch: pytest.MonkeyPatch, client):
+    async def _fake_load_preview_request_context(**kwargs):
+        _ = kwargs
+        session = _fake_session()
+        app, revision = _fake_preview_app_and_revision()
+        return session, app, revision, None, None
+
+    async def _fake_login_with_password(self, *, app, email, password, client_ip=None):
+        _ = self, app, email, password, client_ip
+        raise PublishedAppAuthRateLimitError("Too many failed login attempts. Try again later.")
+
+    monkeypatch.setattr(preview_proxy_router, "_load_preview_request_context", _fake_load_preview_request_context)
+    monkeypatch.setattr(
+        "app.services.published_app_auth_service.PublishedAppAuthService.login_with_password",
+        _fake_login_with_password,
+    )
+
+    response = await client.post(
+        "/public/apps-builder/draft-dev/sessions/session-1/preview/_talmudpedia/auth/login",
+        json={"email": "preview@example.com", "password": "wrong-password"},
+    )
+
+    assert response.status_code == 429
+    assert response.json()["detail"] == "Too many failed login attempts. Try again later."
+
+
+@pytest.mark.asyncio
+async def test_builder_preview_google_start_sets_csrf_state_cookie(monkeypatch: pytest.MonkeyPatch, client):
+    async def _fake_load_preview_request_context(**kwargs):
+        _ = kwargs
+        session = _fake_session()
+        app, revision = _fake_preview_app_and_revision()
+        app.auth_providers = ["google"]
+        return session, app, revision, None, None
+
+    async def _fake_get_google_credential(self, tenant_id):
+        _ = self, tenant_id
+        return SimpleNamespace(credentials={"client_id": "google-client", "redirect_uri": "https://accounts.example/callback"})
+
+    monkeypatch.setattr(preview_proxy_router, "_load_preview_request_context", _fake_load_preview_request_context)
+    monkeypatch.setattr("app.services.published_app_auth_service.PublishedAppAuthService.get_google_credential", _fake_get_google_credential)
+
+    response = await client.get(
+        "/public/apps-builder/draft-dev/sessions/session-1/preview/_talmudpedia/auth/google/start?return_to=/done",
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 302
+    assert "published_app_google_oauth_state_preview=" in response.headers.get("set-cookie", "")
+    state = parse_qs(urlparse(response.headers["location"]).query)["state"][0]
+    assert state
+
+
+@pytest.mark.asyncio
+async def test_builder_preview_google_callback_rejects_missing_csrf_state_cookie(
+    monkeypatch: pytest.MonkeyPatch,
+    client,
+):
+    async def _fake_load_preview_request_context(**kwargs):
+        _ = kwargs
+        session = _fake_session()
+        app, revision = _fake_preview_app_and_revision()
+        app.auth_providers = ["google"]
+        return session, app, revision, None, None
+
+    async def _fake_get_google_credential(self, tenant_id):
+        _ = self, tenant_id
+        return SimpleNamespace(
+            credentials={
+                "client_id": "google-client",
+                "client_secret": "google-secret",
+                "redirect_uri": "https://accounts.example/callback",
+            }
+        )
+
+    monkeypatch.setattr(preview_proxy_router, "_load_preview_request_context", _fake_load_preview_request_context)
+    monkeypatch.setattr("app.services.published_app_auth_service.PublishedAppAuthService.get_google_credential", _fake_get_google_credential)
+
+    start_response = await client.get(
+        "/public/apps-builder/draft-dev/sessions/session-1/preview/_talmudpedia/auth/google/start?return_to=/done",
+        follow_redirects=False,
+    )
+    state = parse_qs(urlparse(start_response.headers["location"]).query)["state"][0]
+    client.cookies.clear()
+
+    response = await client.get(
+        f"/public/apps-builder/draft-dev/sessions/session-1/preview/_talmudpedia/auth/google/callback?code=fake-code&state={state}",
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 400
+    assert "Invalid OAuth state" in response.json()["detail"]

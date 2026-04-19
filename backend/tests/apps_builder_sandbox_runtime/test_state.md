@@ -24,6 +24,8 @@ Last Updated: 2026-04-18
 - The preview proxy strips `runtime_token` from upstream requests, forwards provider-neutral auth headers, and sets the preview auth cookie on successful bootstrap.
 - The preview proxy prefers the preview auth cookie over a stale `runtime_token` query param, so old iframe URLs cannot override the current session scope after bootstrap.
 - The preview proxy falls back to the query `runtime_token` when the preview cookie belongs to a different app, so stale cross-app cookies cannot block a fresh session bootstrap.
+- The builder preview password-login route maps throttled login attempts to HTTP `429`.
+- The builder preview Google OAuth start route sets a CSRF state cookie, and callback rejects missing state cookies.
 - The preview proxy now behaves as a static builder-preview proxy: it injects runtime context plus the session-scoped route bridge into HTML, and passes built assets through without Vite/HMR rewrites.
 - The preview proxy exposes `/_talmudpedia/status` as a direct backend status contract backed by draft-dev heartbeat metadata instead of proxying preview status through the static server.
 - The preview proxy exposes the canonical builder preview base path to the runtime SDK and no longer depends on query-plumbed runtime bootstrap URLs for steady-state builder preview.
@@ -72,6 +74,9 @@ Last Updated: 2026-04-18
 - Draft revision materialization reuses the current draft revision when the watcher/build fingerprint is unchanged, so a fresh app no longer creates a duplicate `live_preview` version from the same ready build as `app_init`.
 
 ## Last run command + date/time + result
+- Command: `SECRET_KEY=explicit-test-secret-0123456789abcdef TEST_USE_REAL_DB=0 /Users/danielbenassaya/Code/personal/talmudpedia/backend/.venv-codex-tests/bin/python -m pytest -q backend/tests/apps_builder_sandbox_runtime/test_runtime_client_and_preview_proxy.py`
+- Date: 2026-04-19 Asia/Hebron
+- Result: PASS (`12 passed`, `9 warnings`)
 - Command: `cd backend && PYTHONPATH=. pytest -x -q tests/apps_builder_sandbox_runtime/test_draft_dev_runtime_lifecycle.py`
 - Date: 2026-03-15
 - Result: PASS (6 passed, 6 warnings)

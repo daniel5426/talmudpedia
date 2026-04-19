@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import re
+import secrets
 import time
 from typing import Any
 from urllib.parse import urlencode, urlparse, urlunparse
@@ -25,7 +26,11 @@ from app.db.postgres.models.agent_threads import AgentThreadSurface
 from app.db.postgres.models.published_apps import PublishedApp, PublishedAppDraftDevSession, PublishedAppRevision
 from app.db.postgres.session import get_db
 from app.services.apps_builder_trace import apps_builder_trace
-from app.services.published_app_auth_service import PublishedAppAuthError, PublishedAppAuthService
+from app.services.published_app_auth_service import (
+    PublishedAppAuthError,
+    PublishedAppAuthRateLimitError,
+    PublishedAppAuthService,
+)
 from app.services.published_app_draft_dev_runtime import PublishedAppDraftDevRuntimeService
 from app.services.published_app_draft_dev_runtime_client import PublishedAppDraftDevRuntimeClient
 from app.services.published_app_sandbox_backend_factory import load_published_app_sandbox_backend_config
@@ -34,13 +39,16 @@ from app.services.runtime_attachment_service import RuntimeAttachmentOwner
 from app.services.thread_service import ThreadService
 
 from .published_apps_host_runtime import (
+    GOOGLE_OAUTH_STATE_COOKIE_NAME,
     INTERNAL_PREFIX,
     _clear_session_cookie,
+    _clear_google_oauth_state_cookie,
     _normalize_return_to_for_host,
     _request_origin_from_base_url,
     _resolve_optional_principal_from_cookie,
     _serialize_thread_detail,
     _serialize_thread_summary,
+    _set_google_oauth_state_cookie,
     _set_session_cookie,
     _user_payload,
 )
@@ -1262,7 +1270,10 @@ async def builder_preview_login(
             app=app,
             email=payload.email.lower(),
             password=payload.password,
+            client_ip=request.client.host if request.client else None,
         )
+    except PublishedAppAuthRateLimitError as exc:
+        raise HTTPException(status_code=429, detail=str(exc))
     except PublishedAppAuthError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     response = JSONResponse({"status": "ok", "user": _user_payload(result.account)})
@@ -1336,13 +1347,23 @@ async def builder_preview_google_start(
         raise HTTPException(status_code=400, detail="Google OAuth credentials are incomplete")
     normalized_return = _normalize_return_to_for_host(str(request.base_url), return_to) or "/"
     target_abs = f"{_request_origin_from_base_url(str(request.base_url))}{normalized_return}"
+    cookie_name = f"{GOOGLE_OAUTH_STATE_COOKIE_NAME}_preview"
+    oauth_state_nonce = secrets.token_urlsafe(32)
     auth_url = auth_service.build_google_auth_url(
         client_id=client_id,
         redirect_uri=redirect_uri,
         app_slug=app.slug,
         return_to=target_abs,
+        nonce=oauth_state_nonce,
     )
-    return RedirectResponse(url=auth_url, status_code=302)
+    response = RedirectResponse(url=auth_url, status_code=302)
+    _set_google_oauth_state_cookie(
+        response=response,
+        request=request,
+        nonce=oauth_state_nonce,
+        cookie_name=cookie_name,
+    )
+    return response
 
 
 @router.get("/public/apps-builder/draft-dev/sessions/{session_id}/preview/_talmudpedia/auth/google/callback")
@@ -1364,8 +1385,10 @@ async def builder_preview_google_callback(
     redirect_uri = creds.get("redirect_uri")
     if not client_id or not client_secret or not redirect_uri:
         raise HTTPException(status_code=400, detail="Google OAuth credentials are incomplete")
+    cookie_name = f"{GOOGLE_OAUTH_STATE_COOKIE_NAME}_preview"
+    oauth_state_nonce = (request.cookies.get(cookie_name) or "").strip()
     try:
-        state_payload = auth_service.parse_google_state(state)
+        state_payload = auth_service.parse_google_state(state, expected_nonce=oauth_state_nonce)
         if state_payload.get("app_slug") != app.slug:
             raise PublishedAppAuthError("OAuth state app slug mismatch")
         token_response = auth_service.exchange_google_code(
@@ -1392,10 +1415,21 @@ async def builder_preview_google_callback(
             metadata={"google_sub": str(profile.get("sub"))},
         )
     except PublishedAppAuthError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        response = JSONResponse(status_code=400, content={"detail": str(exc)})
+        _clear_google_oauth_state_cookie(
+            response=response,
+            request=request,
+            cookie_name=cookie_name,
+        )
+        return response
     return_to = _normalize_return_to_for_host(str(request.base_url), state_payload.get("return_to"))  # type: ignore[name-defined]
     redirect = RedirectResponse(url=return_to or "/", status_code=302)
     _set_session_cookie(response=redirect, request=request, token=result.token)
+    _clear_google_oauth_state_cookie(
+        response=redirect,
+        request=request,
+        cookie_name=cookie_name,
+    )
     return redirect
 
 

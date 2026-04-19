@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Image from "next/image";
-import { Settings2, Bot, Library, Trash2, ChevronRightIcon, MoreHorizontal, Share2, FileText, LayoutDashboard, Users, MessageSquare, LogIn, Database, ShieldCheck, History, Landmark, Workflow, Settings, Play, Code2, BarChart3, Globe, ScrollText } from "lucide-react";
+import { Settings2, Bot, Library, Trash2, ChevronRightIcon, MoreHorizontal, Share2, FileText, LayoutDashboard, Users, MessageSquare, LogIn, Database, Workflow, Settings, Play, Code2, BarChart3, Globe, ScrollText } from "lucide-react";
 
 import { NavMain } from "./nav-main";
 import { NavUser } from "./nav-user";
@@ -23,7 +23,7 @@ import {
 } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
 import { useLayoutStore } from "@/lib/store/useLayoutStore";
-import { chatService, Chat } from "@/services";
+import { authService, chatService, Chat } from "@/services";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -83,31 +83,10 @@ const data = {
       items: [],
     },
     {
-      title: "Security & Org",
-      url: "/admin/organization",
-      icon: ShieldCheck,
-      items: [
-        {
-          title: "Organization",
-          url: "/admin/organization",
-          icon: Landmark,
-        },
-        {
-          title: "Security & Roles",
-          url: "/admin/security",
-          icon: ShieldCheck,
-        },
-        {
-          title: "Audit Logs",
-          url: "/admin/audit",
-          icon: History,
-        },
-        {
-          title: "Resource Policies",
-          url: "/admin/resource-policies",
-          icon: ScrollText,
-        },
-      ],
+      title: "Resource Policies",
+      url: "/admin/resource-policies",
+      icon: ScrollText,
+      items: [],
     },
     {
       title: "RAG Management",
@@ -209,7 +188,9 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
         ? false
         : item.url === "/admin/apps"
           ? pathname?.startsWith("/admin/apps")
-          : pathname === item.url,
+          : item.url === "/admin/settings"
+            ? pathname?.startsWith("/admin/settings")
+            : pathname === item.url,
       items: item.items?.map(sub => {
         const isPlayground = sub.title === "Playground";
         const isApps = sub.url === "/admin/apps";
@@ -290,7 +271,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
 
   const handleNewChat = React.useCallback(() => {
     if (!user) {
-      router.push("/auth/login");
+      window.location.assign(authService.getLoginUrl("/chat"));
       return;
     }
     if (pathname !== '/chat') {
@@ -449,7 +430,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
           <SidebarMenu dir={direction}>
             <SidebarMenuItem>
               <SidebarMenuButton dir={direction} asChild size="lg" className={`${isRTL ? "rtl" : "ltr"}`}>
-                <a href="/auth/login" dir={direction} className={`${isRTL ? "rtl" : "ltr"}`}>
+                <a href={authService.getLoginUrl("/admin/dashboard")} dir={direction} className={`${isRTL ? "rtl" : "ltr"}`}>
                   <div dir={direction} className={`grid flex-1  text-sm leading-tight ${isRTL ? "text-right" : "text-left"}`}>
                     <span className="truncate font-semibold" >Login</span>
                     <span className="truncate text-xs">Login to your account</span>

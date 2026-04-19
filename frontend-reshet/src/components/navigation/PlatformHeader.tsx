@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useAuthStore } from "@/lib/store/useAuthStore";
 import { useState } from "react";
+import { authService } from "@/services";
 
 export function PlatformHeader() {
   const [isOpen, setIsOpen] = useState(false);
@@ -28,6 +29,7 @@ export function PlatformHeader() {
   const user = useAuthStore((state) => state.user);
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated());
   const router = useRouter();
+  const loginUrl = authService.getLoginUrl("/admin/dashboard");
 
   React.useEffect(() => {
     setMounted(true);
@@ -97,9 +99,9 @@ export function PlatformHeader() {
                 </DropdownMenuContent>
               </DropdownMenu>
             ) : (
-              <Link href="/auth/login">
+              <a href={loginUrl}>
                 <InteractiveHoverButton>Sign in</InteractiveHoverButton>
-              </Link>
+              </a>
             )}
           </div>
         </NavBody>
@@ -145,9 +147,9 @@ export function PlatformHeader() {
                   </DropdownMenuContent>
                 </DropdownMenu>
               ) : (
-                <Link href="/auth/login">
+                <a href={loginUrl}>
                   <InteractiveHoverButton>Sign in</InteractiveHoverButton>
-                </Link>
+                </a>
               )}
 
               <MobileNavToggle

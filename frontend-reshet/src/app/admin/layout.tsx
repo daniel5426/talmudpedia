@@ -3,6 +3,7 @@
 import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar"
 import { AppSidebar } from "@/components/navigation/app-sidebar"
 import { useDirection } from "@/components/direction-provider"
+import { authService } from "@/services"
 import { useAuthStore } from "@/lib/store/useAuthStore"
 import { usePathname, useRouter } from "next/navigation"
 import { useEffect, useState } from "react"
@@ -24,7 +25,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     }
 
     if (!user) {
-      router.replace(`/auth/login?return_to=${encodeURIComponent(pathname || "/admin/dashboard")}`)
+      window.location.replace(authService.getLoginUrl(pathname || "/admin/dashboard"))
       return
     }
 

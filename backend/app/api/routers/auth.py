@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 from typing import Optional
 from urllib.parse import urlencode, urlparse, urlunparse
@@ -107,13 +108,81 @@ def _slugify_organization_name(value: str) -> str:
     return cleaned[:48] or "organization"
 
 
+def _frontend_request_origin(request: Request) -> str:
+    explicit = str(os.getenv("NEXT_PUBLIC_APP_URL") or "").strip()
+    if explicit:
+        return explicit.rstrip("/")
+
+    referer = str(request.headers.get("referer") or "").strip()
+    if referer.startswith("http://") or referer.startswith("https://"):
+        parsed = urlparse(referer)
+        if parsed.scheme and parsed.netloc:
+            return f"{parsed.scheme}://{parsed.netloc}"
+
+    origin = str(request.headers.get("origin") or "").strip()
+    if origin.startswith("http://") or origin.startswith("https://"):
+        parsed = urlparse(origin)
+        if parsed.scheme and parsed.netloc:
+            return f"{parsed.scheme}://{parsed.netloc}"
+
+    return str(request.base_url).rstrip("/")
+
+
+def _normalize_frontend_return_to(return_to: str | None, request: Request, *, fallback: str) -> str:
+    resolved = str(return_to or "").strip() or fallback
+    if resolved.startswith("http://") or resolved.startswith("https://"):
+        return resolved
+    return f"{_frontend_request_origin(request)}{resolved if resolved.startswith('/') else f'/{resolved}'}"
+
+
 def _build_frontend_onboarding_url(return_to: str, request: Request) -> str:
     if return_to.startswith("http://") or return_to.startswith("https://"):
         parsed = urlparse(return_to)
         query = urlencode({"return_to": return_to})
         return urlunparse((parsed.scheme, parsed.netloc, "/auth/onboarding", "", query, ""))
     query = urlencode({"return_to": return_to})
-    return f"{str(request.base_url).rstrip('/')}/auth/onboarding?{query}"
+    return f"{_frontend_request_origin(request)}/auth/onboarding?{query}"
+
+
+def _fingerprint_secret(value: str | None) -> str | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    import hashlib
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+
+
+def _append_workos_callback_log(
+    event: str,
+    *,
+    request: Request,
+    fields: dict[str, object] | None = None,
+) -> None:
+    payload: dict[str, object] = {
+        "ts": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(),
+        "event": event,
+        "pid": os.getpid(),
+        "path": request.url.path,
+        "query": request.url.query,
+        "host": str(request.headers.get("host") or "").strip(),
+        "origin": str(request.headers.get("origin") or "").strip(),
+        "referer": str(request.headers.get("referer") or "").strip(),
+        "cookie_present": bool(str(request.cookies.get("wos_session") or "").strip()),
+        "cookie_fp": _fingerprint_secret(str(request.cookies.get("wos_session") or "").strip()),
+        "workos_client_id_fp": _fingerprint_secret(os.getenv("WORKOS_CLIENT_ID")),
+        "workos_cookie_password_fp": _fingerprint_secret(os.getenv("WORKOS_COOKIE_PASSWORD")),
+    }
+    if fields:
+        payload.update(fields)
+    try:
+        from pathlib import Path
+        path = Path(os.getenv("WORKOS_AUTH_DEBUG_LOG_PATH", "/tmp/talmudpedia-workos-auth.jsonl").strip() or "/tmp/talmudpedia-workos-auth.jsonl")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as handle:
+            import json
+            handle.write(json.dumps(payload, ensure_ascii=True, default=str) + "\n")
+    except Exception:
+        logger.exception("Failed to append WorkOS callback debug log")
 
 
 async def _load_workos_auth(
@@ -203,7 +272,11 @@ async def login(request: Request, db: AsyncSession = Depends(get_db)):
     url = service.build_authorization_url(
         request,
         screen_hint="sign-in",
-        return_to=request.query_params.get("return_to"),
+        return_to=_normalize_frontend_return_to(
+            request.query_params.get("return_to"),
+            request,
+            fallback="/admin/agents/playground",
+        ),
     )
     return RedirectResponse(url=url, status_code=status.HTTP_302_FOUND)
 
@@ -217,7 +290,11 @@ async def signup(request: Request, db: AsyncSession = Depends(get_db)):
     url = service.build_authorization_url(
         request,
         screen_hint="sign-up",
-        return_to=request.query_params.get("return_to"),
+        return_to=_normalize_frontend_return_to(
+            request.query_params.get("return_to"),
+            request,
+            fallback="/admin/agents/playground",
+        ),
     )
     return RedirectResponse(url=url, status_code=status.HTTP_302_FOUND)
 
@@ -231,7 +308,11 @@ async def register(request: Request, db: AsyncSession = Depends(get_db)):
     url = service.build_authorization_url(
         request,
         screen_hint="sign-up",
-        return_to=request.query_params.get("return_to"),
+        return_to=_normalize_frontend_return_to(
+            request.query_params.get("return_to"),
+            request,
+            fallback="/admin/agents/playground",
+        ),
     )
     return RedirectResponse(url=url, status_code=status.HTTP_302_FOUND)
 
@@ -247,6 +328,7 @@ async def auth_callback(
     db: AsyncSession = Depends(get_db),
 ):
     service = WorkOSAuthService(db)
+    _append_workos_callback_log("auth_callback.start", request=request)
     if error:
         raise HTTPException(status_code=400, detail=error_description or error)
     if not code:
@@ -260,7 +342,11 @@ async def auth_callback(
     )
     await service.sync_local_user(auth_response)
 
-    redirect_to = str(decoded_state.get("return_to") or "/admin/agents/playground")
+    redirect_to = _normalize_frontend_return_to(
+        decoded_state.get("return_to"),
+        request,
+        fallback="/admin/agents/playground",
+    )
     if service.current_organization_id(auth_response):
         await service.sync_current_organization(auth_response=auth_response)
         bundle = await service.ensure_local_bundle(auth_response=auth_response, request=request)
@@ -279,6 +365,20 @@ async def auth_callback(
     )
     if sealed_session:
         service.set_session_cookie(response=redirect_response, request=request, sealed_session=str(sealed_session))
+        _append_workos_callback_log(
+            "auth_callback.session_cookie_set",
+            request=request,
+            fields={
+                "redirect_to": redirect_to,
+                "new_cookie_fp": _fingerprint_secret(str(sealed_session)),
+            },
+        )
+    else:
+        _append_workos_callback_log(
+            "auth_callback.session_cookie_missing",
+            request=request,
+            fields={"redirect_to": redirect_to},
+        )
     return redirect_response
 
 

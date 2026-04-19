@@ -37,7 +37,7 @@ function AuthOnboardingContent() {
       return
     }
     if (!user) {
-      router.replace(`/auth/login?return_to=${encodeURIComponent(returnTo)}`)
+      window.location.replace(authService.getLoginUrl(returnTo))
       return
     }
     if (!onboardingRequired) {

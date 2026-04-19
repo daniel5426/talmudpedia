@@ -1,6 +1,6 @@
 # Test State: Published Apps External Runtime
 
-Last Updated: 2026-04-09
+Last Updated: 2026-04-19
 
 ## Scope
 - Host-anywhere published-app runtime surface under `/public/external/apps/*`.
@@ -14,6 +14,8 @@ Last Updated: 2026-04-09
 ## Key Scenarios Covered
 - External bootstrap returns the new runtime surface and CORS headers.
 - External password auth returns bearer tokens and supports `me` and `logout`.
+- External bearer tokens cannot be replayed across published apps.
+- External runtime routes reject bearer tokens that are missing required published-app scopes.
 - External OIDC exchange returns a bearer session token.
 - External authenticated stream persists threads and exposes list/detail history APIs.
 - External authenticated stream replays persisted worker-owned run events instead of executing in the request path.
@@ -23,6 +25,9 @@ Last Updated: 2026-04-09
 - Disallowed origins are rejected on the external runtime surface.
 
 ## Last Run Command + Date/Time + Result
+- Command: `TEST_USE_REAL_DB=0 /Users/danielbenassaya/Code/personal/talmudpedia/backend/.venv-codex-tests/bin/python -m pytest -q backend/tests/published_apps_external_runtime/test_external_runtime_api.py backend/tests/published_apps_host_runtime/test_host_runtime_same_url_auth.py`
+- Date/Time: 2026-04-19 Asia/Hebron
+- Result: PASS (`22 passed`)
 - Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/published_apps_external_runtime/test_external_runtime_api.py backend/tests/published_apps_host_runtime/test_host_runtime_same_url_auth.py`
 - Date/Time: 2026-04-05 Asia/Hebron
 - Result: PASS (`17 passed`)
@@ -32,4 +37,3 @@ Last Updated: 2026-04-09
 
 ## Known Gaps or Follow-ups
 - Add explicit preflight `OPTIONS` coverage for allowed and blocked origins.
-- Add negative tests for cross-app bearer token replay on bootstrap/history routes.

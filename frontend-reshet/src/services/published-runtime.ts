@@ -92,6 +92,8 @@ async function runtimeRequest<T>(path: string, options: RuntimeRequestOptions = 
     method: options.method || "GET",
     headers,
     body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
+    credentials: "omit",
+    cache: "no-store",
   });
 
   if (!response.ok) {
@@ -185,6 +187,8 @@ export const publishedRuntimeService = {
       method: "POST",
       headers,
       body: JSON.stringify(payload),
+      credentials: "omit",
+      cache: "no-store",
     });
     if (!response.ok) {
       let message = "Failed to stream chat";

@@ -1,46 +1,77 @@
 "use client"
 
-import Link from "next/link"
+import { useEffect, useMemo, useState } from "react"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { CustomBreadcrumb } from "@/components/ui/custom-breadcrumb"
+import {
+  KeyRound,
+  LayoutList,
+  PlugZap,
+  ShieldCheck,
+  User,
+  Wallet,
+} from "lucide-react"
+
 import { AdminPageHeader } from "@/components/admin/AdminPageHeader"
+import { useDirection } from "@/components/direction-provider"
+import { CustomBreadcrumb } from "@/components/ui/custom-breadcrumb"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Skeleton } from "@/components/ui/skeleton"
-import { useDirection } from "@/components/direction-provider"
-import { useTenant } from "@/contexts/TenantContext"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import { cn } from "@/lib/utils"
 import { useAuthStore } from "@/lib/store/useAuthStore"
 import {
   credentialsService,
-  orgUnitsService,
-  modelsService,
   IntegrationCredential,
-  IntegrationCredentialCategory,
-  Tenant,
-  TenantSettings,
-  RetrievalPolicy,
   LogicalModel,
+  modelsService,
+  settingsOrgService,
+  settingsProfileService,
+  SettingsOrganization,
+  SettingsProfile,
 } from "@/services"
-import { cn } from "@/lib/utils"
-import {
-  AlertTriangle,
-  Building2,
-  ChevronRight,
-  KeyRound,
-  Loader2,
-  PlugZap,
-  ShieldCheck,
-  Sliders,
-  User,
-} from "lucide-react"
-import { CredentialFormDialog } from "./components/CredentialFormDialog"
+import { formatHttpErrorMessage } from "@/services/http"
 import { CredentialDeleteDialog } from "./components/CredentialDeleteDialog"
-import McpSettingsSection from "./mcp/page"
+import { CredentialFormDialog } from "./components/CredentialFormDialog"
+import {
+  ApiKeysSection,
+  AuditLogsSection,
+  LimitsSection,
+  PeoplePermissionsSection,
+  ProjectsSection,
+} from "./components/GovernanceSections"
+import McpSettingsPage from "./mcp/page"
 
-const CATEGORY_LABELS: Record<IntegrationCredentialCategory, { title: string; description: string }> = {
+type SettingsSection =
+  | "organization"
+  | "profile"
+  | "people_permissions"
+  | "projects"
+  | "api_keys"
+  | "limits"
+  | "audit_logs"
+  | "integrations"
+  | "mcp_servers"
+
+const NAV_ITEMS: Array<{ key: SettingsSection; label: string; icon: any }> = [
+  { key: "organization", label: "Organization", icon: LayoutList },
+  { key: "profile", label: "Profile", icon: User },
+  { key: "people_permissions", label: "People & Permissions", icon: ShieldCheck },
+  { key: "projects", label: "Projects", icon: LayoutList },
+  { key: "api_keys", label: "API Keys", icon: KeyRound },
+  { key: "limits", label: "Limits", icon: Wallet },
+  { key: "audit_logs", label: "Audit Logs", icon: ShieldCheck },
+  { key: "integrations", label: "Integrations", icon: KeyRound },
+  { key: "mcp_servers", label: "MCP Servers", icon: PlugZap },
+]
+
+const CATEGORY_LABELS: Record<string, { title: string; description: string }> = {
   llm_provider: {
     title: "LLM Providers",
     description: "API keys and base URLs for chat, embedding, and reranker models.",
@@ -55,53 +86,39 @@ const CATEGORY_LABELS: Record<IntegrationCredentialCategory, { title: string; de
   },
   custom: {
     title: "Custom Credentials",
-    description: "Tenant-specific credentials for bespoke integrations.",
+    description: "Organization-specific credentials for bespoke integrations.",
   },
 }
 
-const RETRIEVAL_POLICIES: Array<{ value: RetrievalPolicy; label: string }> = [
-  { value: "semantic_only", label: "Semantic Only" },
-  { value: "hybrid", label: "Hybrid" },
-  { value: "keyword_only", label: "Keyword Only" },
-  { value: "recency_boosted", label: "Recency Boosted" },
-]
-type SettingsSection = "profile" | "integrations" | "mcp_servers" | "security"
-
-const NAV_ITEMS: Array<{ key: SettingsSection; label: string; icon: any }> = [
-  { key: "profile", label: "General", icon: User },
-  { key: "integrations", label: "Credentials", icon: KeyRound },
-  { key: "mcp_servers", label: "MCP Servers", icon: PlugZap },
-  { key: "security", label: "Security", icon: ShieldCheck },
-]
-
 function parseSection(value: string | null): SettingsSection {
-  return NAV_ITEMS.some((item) => item.key === value) ? (value as SettingsSection) : "profile"
+  return NAV_ITEMS.some((item) => item.key === value) ? (value as SettingsSection) : "organization"
 }
 
 function SectionHeader({ title, description }: { title: string; description: string }) {
   return (
     <div className="mb-6">
       <h2 className="text-sm font-medium text-foreground">{title}</h2>
-      <p className="text-xs text-muted-foreground/70 mt-0.5">{description}</p>
+      <p className="mt-0.5 text-xs text-muted-foreground/70">{description}</p>
     </div>
   )
 }
 
-
-
-function LoadingSkeleton() {
+function SectionCard({
+  title,
+  description,
+  children,
+}: {
+  title: string
+  description?: string
+  children: React.ReactNode
+}) {
   return (
-    <div className="space-y-6 p-6">
-      <div className="space-y-2">
-        <Skeleton className="h-4 w-32" />
-        <Skeleton className="h-3 w-56" />
+    <div className="rounded-lg border border-border/50 bg-card">
+      <div className="border-b border-border/40 px-4 py-3">
+        <h3 className="text-sm font-medium">{title}</h3>
+        {description ? <p className="mt-0.5 text-xs text-muted-foreground/60">{description}</p> : null}
       </div>
-      {Array.from({ length: 3 }).map((_, i) => (
-        <div key={i} className="flex gap-6 py-4 border-b border-border/40">
-          <Skeleton className="h-4 w-28 shrink-0" />
-          <Skeleton className="h-9 flex-1 max-w-md" />
-        </div>
-      ))}
+      <div className="p-4">{children}</div>
     </div>
   )
 }
@@ -113,501 +130,407 @@ export default function SettingsPage() {
   const pathname = usePathname()
   const searchParams = useSearchParams()
   const hasScope = useAuthStore((state) => state.hasScope)
-  const { currentTenant, setCurrentTenant, refreshTenants } = useTenant()
-
-  const canManageOrganizationSettings = hasScope("organizations.write")
-  const canManageCredentials = hasScope("credentials.write")
-
   const [activeSection, setActiveSection] = useState<SettingsSection>(() => parseSection(searchParams.get("tab")))
-  const [loading, setLoading] = useState(true)
-  const [fetchError, setFetchError] = useState<string | null>(null)
-
-  const [tenant, setTenant] = useState<Tenant | null>(null)
-  const [tenantSettings, setTenantSettings] = useState<TenantSettings>({
-    default_chat_model_id: null,
-    default_embedding_model_id: null,
-    default_retrieval_policy: null,
-  })
+  const [organization, setOrganization] = useState<SettingsOrganization | null>(null)
+  const [organizationForm, setOrganizationForm] = useState<SettingsOrganization | null>(null)
+  const [profile, setProfile] = useState<SettingsProfile | null>(null)
+  const [profileForm, setProfileForm] = useState<SettingsProfile | null>(null)
   const [credentials, setCredentials] = useState<IntegrationCredential[]>([])
   const [chatModels, setChatModels] = useState<LogicalModel[]>([])
   const [embeddingModels, setEmbeddingModels] = useState<LogicalModel[]>([])
-
-  const [profileForm, setProfileForm] = useState({ name: "", slug: "", status: "active" })
-  const [defaultsForm, setDefaultsForm] = useState<TenantSettings>({
-    default_chat_model_id: null,
-    default_embedding_model_id: null,
-    default_retrieval_policy: null,
-  })
-
+  const [loading, setLoading] = useState(true)
+  const [fetchError, setFetchError] = useState<string | null>(null)
+  const [organizationError, setOrganizationError] = useState<string | null>(null)
   const [profileError, setProfileError] = useState<string | null>(null)
-  const [defaultsError, setDefaultsError] = useState<string | null>(null)
   const [integrationsError, setIntegrationsError] = useState<string | null>(null)
+  const [organizationSaving, setOrganizationSaving] = useState(false)
   const [profileSaving, setProfileSaving] = useState(false)
-  const [defaultsSaving, setDefaultsSaving] = useState(false)
+  const [auditResourceId, setAuditResourceId] = useState<string | null>(null)
 
-  const lastTenantSlugRef = useRef<string | null>(null)
-  const dirtyStateRef = useRef(false)
+  const canManageOrganization = hasScope("organizations.write")
+  const canManageCredentials = hasScope("credentials.write")
 
-  const profileDirty =
-    !!tenant &&
-    (profileForm.name !== tenant.name || profileForm.slug !== tenant.slug || profileForm.status !== tenant.status)
-
-  const defaultsDirty =
-    defaultsForm.default_chat_model_id !== tenantSettings.default_chat_model_id ||
-    defaultsForm.default_embedding_model_id !== tenantSettings.default_embedding_model_id ||
-    defaultsForm.default_retrieval_policy !== tenantSettings.default_retrieval_policy
-
-  const hasUnsavedChanges = profileDirty || defaultsDirty
-  dirtyStateRef.current = hasUnsavedChanges
-
-  const fetchData = useCallback(async () => {
-    if (!currentTenant?.slug) return
+  const fetchData = async () => {
     setLoading(true)
     setFetchError(null)
     try {
-      const [tenantData, settingsData, credentialsData, chatModelsData, embeddingModelsData] = await Promise.all([
-        orgUnitsService.getTenant(currentTenant.slug),
-        orgUnitsService.getTenantSettings(currentTenant.slug),
+      const [orgData, profileData, credentialsData, chatData, embeddingData] = await Promise.all([
+        settingsOrgService.getOrganization(),
+        settingsProfileService.getProfile(),
         credentialsService.listCredentials(undefined, { limit: 100, view: "summary" }),
         modelsService.listModels("chat", "active", 0, 100, "full"),
         modelsService.listModels("embedding", "active", 0, 100, "full"),
       ])
-
-      setTenant(tenantData)
-      setTenantSettings(settingsData)
+      setOrganization(orgData)
+      setOrganizationForm(orgData)
+      setProfile(profileData)
+      setProfileForm(profileData)
       setCredentials(credentialsData.items)
-      setChatModels(chatModelsData.items)
-      setEmbeddingModels(embeddingModelsData.items)
-      setProfileForm({
-        name: tenantData.name,
-        slug: tenantData.slug,
-        status: tenantData.status,
-      })
-      setDefaultsForm({
-        default_chat_model_id: settingsData.default_chat_model_id,
-        default_embedding_model_id: settingsData.default_embedding_model_id,
-        default_retrieval_policy: settingsData.default_retrieval_policy,
-      })
+      setChatModels(chatData.items)
+      setEmbeddingModels(embeddingData.items)
+      setOrganizationError(null)
       setProfileError(null)
-      setDefaultsError(null)
       setIntegrationsError(null)
     } catch (error) {
-      console.error("Failed to fetch settings hub data", error)
-      setFetchError("Failed to load settings.")
+      setFetchError(formatHttpErrorMessage(error, "Failed to load settings."))
     } finally {
       setLoading(false)
     }
-  }, [currentTenant?.slug])
+  }
 
   useEffect(() => {
-    if (!currentTenant?.slug) return
-
-    if (lastTenantSlugRef.current && lastTenantSlugRef.current !== currentTenant.slug && dirtyStateRef.current) {
-      window.confirm("Tenant changed. Unsaved changes were discarded.")
-    }
-
-    lastTenantSlugRef.current = currentTenant.slug
-    fetchData()
-  }, [currentTenant?.slug, fetchData])
+    void fetchData()
+  }, [])
 
   useEffect(() => {
     const nextSection = parseSection(searchParams.get("tab"))
     setActiveSection((currentSection) => (currentSection === nextSection ? currentSection : nextSection))
   }, [searchParams])
 
-  const handleSectionChange = useCallback(
-    (section: SettingsSection) => {
-      setActiveSection(section)
-      const params = new URLSearchParams(searchParams.toString())
-      if (section === "profile") {
-        params.delete("tab")
-      } else {
-        params.set("tab", section)
-      }
-      const nextQuery = params.toString()
-      router.replace(nextQuery ? `${pathname}?${nextQuery}` : pathname, { scroll: false })
-    },
-    [pathname, router, searchParams]
-  )
+  const handleSectionChange = (section: SettingsSection) => {
+    setActiveSection(section)
+    const params = new URLSearchParams(searchParams.toString())
+    if (section === "organization") {
+      params.delete("tab")
+    } else {
+      params.set("tab", section)
+    }
+    const nextQuery = params.toString()
+    router.replace(nextQuery ? `${pathname}?${nextQuery}` : pathname, { scroll: false })
+  }
 
-  const grouped = useMemo(() => {
-    return credentials.reduce<Record<IntegrationCredentialCategory, IntegrationCredential[]>>(
-      (acc, cred) => {
-        acc[cred.category] = acc[cred.category] || []
-        acc[cred.category].push(cred)
-        return acc
-      },
-      {
-        llm_provider: [],
-        vector_store: [],
-        tool_provider: [],
-        custom: [],
-      }
-    )
+  const groupedCredentials = useMemo(() => {
+    return credentials.reduce<Record<string, IntegrationCredential[]>>((acc, credential) => {
+      const key = credential.category
+      acc[key] = [...(acc[key] ?? []), credential]
+      return acc
+    }, {})
   }, [credentials])
 
-  const handleSaveProfile = async () => {
-    if (!tenant || !currentTenant?.slug || !profileDirty) return
+  const saveOrganization = async () => {
+    if (!organizationForm) return
+    setOrganizationSaving(true)
+    setOrganizationError(null)
+    try {
+      const updated = await settingsOrgService.updateOrganization({
+        name: organizationForm.name,
+        slug: organizationForm.slug,
+        status: organizationForm.status,
+        default_chat_model_id: organizationForm.default_chat_model_id,
+        default_embedding_model_id: organizationForm.default_embedding_model_id,
+        default_retrieval_policy: organizationForm.default_retrieval_policy,
+      })
+      setOrganization(updated)
+      setOrganizationForm(updated)
+    } catch (error) {
+      setOrganizationError(formatHttpErrorMessage(error, "Failed to update organization settings."))
+    } finally {
+      setOrganizationSaving(false)
+    }
+  }
+
+  const saveProfile = async () => {
+    if (!profileForm) return
     setProfileSaving(true)
     setProfileError(null)
     try {
-      const updated = await orgUnitsService.updateTenant(currentTenant.slug, {
-        name: profileForm.name,
-        slug: profileForm.slug,
-        status: profileForm.status as "active" | "suspended" | "pending",
+      const updated = await settingsProfileService.updateProfile({
+        full_name: profileForm.full_name,
+        avatar: profileForm.avatar,
       })
-      setTenant(updated)
-      setProfileForm({ name: updated.name, slug: updated.slug, status: updated.status })
-
-      if (updated.slug !== currentTenant.slug) {
-        setCurrentTenant(updated)
-        await refreshTenants()
-      }
-    } catch (error: any) {
-      console.error("Failed to update tenant profile", error)
-      const detail = error?.response?.data?.detail
-      setProfileError(typeof detail === "string" ? detail : "Failed to update tenant profile.")
+      setProfile(updated)
+      setProfileForm(updated)
+    } catch (error) {
+      setProfileError(formatHttpErrorMessage(error, "Failed to update profile."))
     } finally {
       setProfileSaving(false)
     }
   }
 
-  const handleSaveDefaults = async () => {
-    if (!currentTenant?.slug || !defaultsDirty) return
-    setDefaultsSaving(true)
-    setDefaultsError(null)
-    try {
-      const payload = {
-        default_chat_model_id: defaultsForm.default_chat_model_id,
-        default_embedding_model_id: defaultsForm.default_embedding_model_id,
-        default_retrieval_policy: defaultsForm.default_retrieval_policy,
-      }
-      const updated = await orgUnitsService.updateTenantSettings(currentTenant.slug, payload)
-      setTenantSettings(updated)
-      setDefaultsForm(updated)
-    } catch (error: any) {
-      console.error("Failed to update tenant defaults", error)
-      const detail = error?.response?.data?.detail
-      setDefaultsError(typeof detail === "string" ? detail : "Failed to update tenant defaults.")
-    } finally {
-      setDefaultsSaving(false)
+  const renderOrganization = () => (
+    <div className="space-y-6">
+      <SectionHeader title="Organization" description="General organization identity and default pointers." />
+
+      <div className="grid grid-cols-1 gap-8 md:grid-cols-2">
+        <div className="space-y-5">
+          <h3 className="border-b border-border/40 pb-2 text-sm font-semibold text-foreground">Identity</h3>
+          <div className="space-y-4">
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium text-muted-foreground">Organization Name</Label>
+              <Input
+                value={organizationForm?.name || ""}
+                onChange={(e) => setOrganizationForm((prev) => prev ? { ...prev, name: e.target.value } : prev)}
+                disabled={!canManageOrganization}
+                className="h-9 w-full"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium text-muted-foreground">Slug</Label>
+              <Input
+                value={organizationForm?.slug || ""}
+                onChange={(e) => setOrganizationForm((prev) => prev ? { ...prev, slug: e.target.value } : prev)}
+                disabled={!canManageOrganization}
+                className="h-9 w-full"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium text-muted-foreground">Status</Label>
+              <Select
+                value={organizationForm?.status || "active"}
+                onValueChange={(value) => setOrganizationForm((prev) => prev ? { ...prev, status: value } : prev)}
+                disabled={!canManageOrganization}
+              >
+                <SelectTrigger className="h-9 w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="active">Active</SelectItem>
+                  <SelectItem value="suspended">Suspended</SelectItem>
+                  <SelectItem value="pending">Pending</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+        </div>
+
+        <div className="space-y-5">
+          <h3 className="border-b border-border/40 pb-2 text-sm font-semibold text-foreground">Defaults</h3>
+          <div className="space-y-4">
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium text-muted-foreground">Default Chat Model</Label>
+              <Select
+                value={organizationForm?.default_chat_model_id || "none"}
+                onValueChange={(value) =>
+                  setOrganizationForm((prev) => prev ? { ...prev, default_chat_model_id: value === "none" ? null : value } : prev)
+                }
+                disabled={!canManageOrganization}
+              >
+                <SelectTrigger className="h-9 w-full"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">None</SelectItem>
+                  {chatModels.map((model) => (
+                    <SelectItem key={model.id} value={model.id}>{model.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium text-muted-foreground">Default Embedding Model</Label>
+              <Select
+                value={organizationForm?.default_embedding_model_id || "none"}
+                onValueChange={(value) =>
+                  setOrganizationForm((prev) => prev ? { ...prev, default_embedding_model_id: value === "none" ? null : value } : prev)
+                }
+                disabled={!canManageOrganization}
+              >
+                <SelectTrigger className="h-9 w-full"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">None</SelectItem>
+                  {embeddingModels.map((model) => (
+                    <SelectItem key={model.id} value={model.id}>{model.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium text-muted-foreground">Retrieval Policy</Label>
+              <Select
+                value={organizationForm?.default_retrieval_policy || "none"}
+                onValueChange={(value) =>
+                  setOrganizationForm((prev) => prev ? { ...prev, default_retrieval_policy: value === "none" ? null : value } : prev)
+                }
+                disabled={!canManageOrganization}
+              >
+                <SelectTrigger className="h-9 w-full"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">None</SelectItem>
+                  <SelectItem value="semantic_only">Semantic Only</SelectItem>
+                  <SelectItem value="hybrid">Hybrid</SelectItem>
+                  <SelectItem value="keyword_only">Keyword Only</SelectItem>
+                  <SelectItem value="recency_boosted">Recency Boosted</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {!canManageOrganization && (
+        <p className="mt-2 text-xs text-muted-foreground/60">Read-only access. Contact an admin to make changes.</p>
+      )}
+
+      {organizationError && <p className="text-sm text-destructive">{organizationError}</p>}
+
+      <div className={cn("mt-6 flex gap-2 border-t border-border/40 pt-6", isRTL ? "justify-start" : "justify-end")}>
+        <Button variant="outline" size="sm" onClick={fetchData} disabled={organizationSaving || profileSaving}>
+          Reset
+        </Button>
+        <Button size="sm" onClick={saveOrganization} disabled={!canManageOrganization || organizationSaving}>
+          {organizationSaving ? <span className="mr-2">Saving...</span> : null}
+          Save Changes
+        </Button>
+      </div>
+    </div>
+  )
+
+  const renderProfile = () => (
+    <div className="space-y-6">
+      <SectionHeader title="Profile" description="Personal identity for the signed-in user." />
+
+      <div className="grid grid-cols-1 gap-8 md:grid-cols-2">
+        <div className="space-y-5">
+          <h3 className="border-b border-border/40 pb-2 text-sm font-semibold text-foreground">Identity</h3>
+          <div className="space-y-4">
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium text-muted-foreground">Email</Label>
+              <Input value={profile?.email || ""} readOnly className="h-9 w-full" />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium text-muted-foreground">Full Name</Label>
+              <Input
+                value={profileForm?.full_name || ""}
+                onChange={(e) => setProfileForm((prev) => prev ? { ...prev, full_name: e.target.value } : prev)}
+                className="h-9 w-full"
+              />
+            </div>
+          </div>
+        </div>
+
+        <div className="space-y-5">
+          <h3 className="border-b border-border/40 pb-2 text-sm font-semibold text-foreground">Account</h3>
+          <div className="space-y-4">
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium text-muted-foreground">Avatar URL</Label>
+              <Input
+                value={profileForm?.avatar || ""}
+                onChange={(e) => setProfileForm((prev) => prev ? { ...prev, avatar: e.target.value } : prev)}
+                className="h-9 w-full"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium text-muted-foreground">Role</Label>
+              <Input value={profile?.role || ""} readOnly className="h-9 w-full" />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {profileError && <p className="text-sm text-destructive">{profileError}</p>}
+
+      <div className={cn("mt-6 flex gap-2 border-t border-border/40 pt-6", isRTL ? "justify-start" : "justify-end")}>
+        <Button variant="outline" size="sm" onClick={fetchData} disabled={profileSaving || organizationSaving}>
+          Reset
+        </Button>
+        <Button size="sm" onClick={saveProfile} disabled={profileSaving}>
+          {profileSaving ? <span className="mr-2">Saving...</span> : null}
+          Save Changes
+        </Button>
+      </div>
+    </div>
+  )
+
+  const renderIntegrations = () => (
+    <div>
+      <SectionHeader title="Credentials" description="Manage organization-scoped credentials. Secret values are write-only." />
+
+      {integrationsError && (
+        <div className="mb-4 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+          {integrationsError}
+        </div>
+      )}
+
+      <div className="space-y-6">
+        {Object.entries(CATEGORY_LABELS).map(([category, meta]) => {
+          const items = groupedCredentials[category] || []
+          return (
+            <div key={category} className="rounded-lg border border-border/50 bg-card">
+              <div className="flex items-center justify-between border-b border-border/40 px-4 py-3">
+                <div>
+                  <h3 className="text-sm font-medium">{meta.title}</h3>
+                  <p className="mt-0.5 text-xs text-muted-foreground/60">{meta.description}</p>
+                </div>
+                <CredentialFormDialog mode="create" category={category as any} disabled={!canManageCredentials} onSaved={fetchData} />
+              </div>
+
+              {items.length === 0 ? (
+                <div className="px-4 py-6 text-center">
+                  <p className="text-xs text-muted-foreground/50">No credentials configured.</p>
+                </div>
+              ) : (
+                <div className="divide-y divide-border/30">
+                  {items.map((credential) => (
+                    <div key={credential.id} className="flex items-center gap-3 px-4 py-2.5 hover:bg-muted/20 transition-colors">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="truncate font-mono text-sm font-medium">{credential.provider_key}</span>
+                          <span className="flex shrink-0 items-center gap-1">
+                            <span className={cn("h-1.5 w-1.5 rounded-full", credential.is_enabled ? "bg-emerald-500" : "bg-zinc-400")} />
+                            <span className="text-xs text-muted-foreground/60">{credential.is_enabled ? "Active" : "Disabled"}</span>
+                          </span>
+                        </div>
+                        <div className="mt-0.5 flex items-center gap-2">
+                          <span className="font-mono text-xs text-muted-foreground/50">{credential.display_name}</span>
+                          {credential.credential_keys.length > 0 ? (
+                            <>
+                              <span className="text-muted-foreground/30">·</span>
+                              <span className="text-xs text-muted-foreground/40">
+                                {credential.credential_keys.length} key{credential.credential_keys.length !== 1 ? "s" : ""}
+                              </span>
+                            </>
+                          ) : null}
+                        </div>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-1">
+                        <CredentialFormDialog mode="edit" category={credential.category} credential={credential} disabled={!canManageCredentials} onSaved={fetchData} />
+                        <CredentialDeleteDialog credential={credential} disabled={!canManageCredentials} onDeleted={fetchData} onError={(message) => setIntegrationsError(message || null)} />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+
+  const renderSection = () => {
+    switch (activeSection) {
+      case "organization":
+        return renderOrganization()
+      case "profile":
+        return renderProfile()
+      case "people_permissions":
+        return <PeoplePermissionsSection />
+      case "projects":
+        return <ProjectsSection onOpenAudit={(resourceId) => {
+          setAuditResourceId(resourceId)
+          handleSectionChange("audit_logs")
+        }} />
+      case "api_keys":
+        return <ApiKeysSection />
+      case "limits":
+        return <LimitsSection />
+      case "audit_logs":
+        return <AuditLogsSection initialResourceId={auditResourceId} />
+      case "integrations":
+        return renderIntegrations()
+      case "mcp_servers":
+        return <McpSettingsPage />
+      default:
+        return null
     }
   }
 
-  const chatDefaultMissing =
-    !!defaultsForm.default_chat_model_id && !chatModels.find((m) => m.id === defaultsForm.default_chat_model_id)
-  const embeddingDefaultMissing =
-    !!defaultsForm.default_embedding_model_id &&
-    !embeddingModels.find((m) => m.id === defaultsForm.default_embedding_model_id)
-
-  function renderProfile() {
-    return (
-      <div className="space-y-6">
-        <SectionHeader title="General Settings" description="Core identity and platform defaults." />
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-          {/* Identity Column */}
-          <div className="space-y-5">
-            <h3 className="text-sm font-semibold text-foreground border-b border-border/40 pb-2">Identity</h3>
-            
-            <div className="space-y-4">
-              <div className="space-y-1.5">
-                <Label className="text-xs font-medium text-muted-foreground">Tenant Name</Label>
-                <Input
-                  value={profileForm.name}
-                  onChange={(e) => setProfileForm((prev) => ({ ...prev, name: e.target.value }))}
-                  disabled={!canManageOrganizationSettings}
-                  className="h-9 w-full"
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <Label className="text-xs font-medium text-muted-foreground">Status</Label>
-                <Select
-                  value={profileForm.status}
-                  onValueChange={(value) => setProfileForm((prev) => ({ ...prev, status: value }))}
-                  disabled={!canManageOrganizationSettings}
-                >
-                  <SelectTrigger className="h-9 w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="active">Active</SelectItem>
-                    <SelectItem value="suspended">Suspended</SelectItem>
-                    <SelectItem value="pending">Pending</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-          </div>
-
-          {/* Defaults Column */}
-          <div className="space-y-5">
-            <h3 className="text-sm font-semibold text-foreground border-b border-border/40 pb-2">Defaults</h3>
-            
-            <div className="space-y-4">
-              <div className="space-y-1.5">
-                <Label className="text-xs font-medium text-muted-foreground">Default Chat Model</Label>
-                <Select
-                  value={defaultsForm.default_chat_model_id || "none"}
-                  onValueChange={(value) => setDefaultsForm((prev) => ({ ...prev, default_chat_model_id: value === "none" ? null : value }))}
-                  disabled={!canManageOrganizationSettings}
-                >
-                  <SelectTrigger className="h-9 w-full">
-                    <SelectValue placeholder="Select chat model" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">None</SelectItem>
-                    {chatModels.map((model) => (
-                      <SelectItem key={model.id} value={model.id}>
-                        {model.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="space-y-1.5">
-                <Label className="text-xs font-medium text-muted-foreground">Default Embedding Model</Label>
-                <Select
-                  value={defaultsForm.default_embedding_model_id || "none"}
-                  onValueChange={(value) =>
-                    setDefaultsForm((prev) => ({ ...prev, default_embedding_model_id: value === "none" ? null : value }))
-                  }
-                  disabled={!canManageOrganizationSettings}
-                >
-                  <SelectTrigger className="h-9 w-full">
-                    <SelectValue placeholder="Select embedding model" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">None</SelectItem>
-                    {embeddingModels.map((model) => (
-                      <SelectItem key={model.id} value={model.id}>
-                        {model.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="space-y-1.5">
-                <Label className="text-xs font-medium text-muted-foreground">Retrieval Policy</Label>
-                <Select
-                  value={defaultsForm.default_retrieval_policy || "none"}
-                  onValueChange={(value) =>
-                    setDefaultsForm((prev) => ({
-                      ...prev,
-                      default_retrieval_policy: value === "none" ? null : (value as RetrievalPolicy),
-                    }))
-                  }
-                  disabled={!canManageOrganizationSettings}
-                >
-                  <SelectTrigger className="h-9 w-full">
-                    <SelectValue placeholder="Select policy" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">None</SelectItem>
-                    {RETRIEVAL_POLICIES.map((policy) => (
-                      <SelectItem key={policy.value} value={policy.value}>
-                        {policy.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Warnings & Errors */}
-        {(chatDefaultMissing || embeddingDefaultMissing) && (
-          <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs text-amber-700 mt-2 flex items-start gap-2 max-w-2xl">
-            <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-            <span>One or more defaults point to missing or disabled models.</span>
-          </div>
-        )}
-
-        {!canManageOrganizationSettings && (
-          <p className="text-xs text-muted-foreground/60 mt-2">Read-only access. Contact an admin to make changes.</p>
-        )}
-        
-        {(profileError || defaultsError) && (
-          <div className="space-y-1 mt-2">
-            {profileError && <p className="text-sm text-destructive">{profileError}</p>}
-            {defaultsError && <p className="text-sm text-destructive">{defaultsError}</p>}
-          </div>
-        )}
-
-        <div className={cn("flex gap-2 pt-6 border-t border-border/40 mt-6", isRTL ? "justify-start" : "justify-end")}>
-          <Button variant="outline" size="sm" onClick={fetchData} disabled={profileSaving || defaultsSaving}>
-            Reset
-          </Button>
-          <Button
-            size="sm"
-            onClick={async () => {
-              if (profileDirty) await handleSaveProfile();
-              if (defaultsDirty) await handleSaveDefaults();
-            }}
-            disabled={
-              !canManageOrganizationSettings ||
-              (!profileDirty && !defaultsDirty) ||
-              !profileForm.name.trim() ||
-              profileSaving ||
-              defaultsSaving
-            }
-          >
-            {(profileSaving || defaultsSaving) && <Loader2 className="h-3.5 w-3.5 animate-spin mr-2" />}
-            Save Changes
-          </Button>
-        </div>
-      </div>
-    )
-  }
-
-  function renderIntegrations() {
-    return (
-      <div>
-        <SectionHeader
-          title="Credentials"
-          description="Manage tenant-scoped credentials. Secret values are write-only."
-        />
-
-        {integrationsError && (
-          <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive mb-4">
-            {integrationsError}
-          </div>
-        )}
-
-        <div className="space-y-6">
-          {(Object.keys(CATEGORY_LABELS) as IntegrationCredentialCategory[]).map((category) => {
-            const categoryInfo = CATEGORY_LABELS[category]
-            const items = grouped[category] || []
-            return (
-              <div key={category} className="rounded-lg border border-border/50">
-                <div className="flex items-center justify-between px-4 py-3 border-b border-border/40">
-                  <div>
-                    <h3 className="text-sm font-medium">{categoryInfo.title}</h3>
-                    <p className="text-xs text-muted-foreground/60 mt-0.5">{categoryInfo.description}</p>
-                  </div>
-                  <CredentialFormDialog mode="create" category={category} disabled={!canManageCredentials} onSaved={fetchData} />
-                </div>
-
-                {items.length === 0 ? (
-                  <div className="px-4 py-6 text-center">
-                    <p className="text-xs text-muted-foreground/50">No credentials configured.</p>
-                  </div>
-                ) : (
-                  <div className="divide-y divide-border/30">
-                    {items.map((cred) => (
-                      <div key={cred.id} className="flex items-center gap-3 px-4 py-2.5 hover:bg-muted/20 transition-colors">
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span className="text-sm font-medium truncate font-mono">{cred.provider_key}</span>
-                            {cred.is_default && (
-                              <span className="rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-[10px] text-emerald-700">
-                                Default
-                              </span>
-                            )}
-                            <span className="flex items-center gap-1 shrink-0">
-                              <span className={cn("h-1.5 w-1.5 rounded-full", cred.is_enabled ? "bg-emerald-500" : "bg-zinc-400")} />
-                              <span className="text-xs text-muted-foreground/60">{cred.is_enabled ? "Active" : "Disabled"}</span>
-                            </span>
-                          </div>
-                          <div className="flex items-center gap-2 mt-0.5">
-                            <span className="text-xs text-muted-foreground/50 font-mono">{cred.display_name}</span>
-                            {cred.credential_keys.length > 0 && (
-                              <>
-                                <span className="text-muted-foreground/30">·</span>
-                                <span className="text-xs text-muted-foreground/40">
-                                  {cred.credential_keys.length} key{cred.credential_keys.length !== 1 ? "s" : ""}
-                                </span>
-                              </>
-                            )}
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-1 shrink-0">
-                          <CredentialFormDialog
-                            mode="edit"
-                            category={category}
-                            credential={cred}
-                            disabled={!canManageCredentials}
-                            onSaved={fetchData}
-                          />
-                          <CredentialDeleteDialog
-                            credential={cred}
-                            disabled={!canManageCredentials}
-                            onDeleted={fetchData}
-                            onError={(message) => setIntegrationsError(message || null)}
-                          />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )
-          })}
-        </div>
-      </div>
-    )
-  }
-
-  function renderSecurity() {
-    return (
-      <div>
-        <SectionHeader
-          title="Security & Organization"
-          description="Manage org structure and security policies in their dedicated modules."
-        />
-
-        <div className="space-y-2">
-          <Link
-            href="/admin/organization"
-            className="group flex items-center gap-3 rounded-lg border border-border/50 px-4 py-3.5 hover:bg-muted/30 transition-colors"
-          >
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border/60 bg-muted/30 text-muted-foreground/70 group-hover:border-border group-hover:bg-muted/50 transition-colors">
-              <Building2 className="h-4 w-4" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <span className="text-sm font-medium text-foreground">Organization</span>
-              <p className="text-xs text-muted-foreground/60 mt-0.5">Org unit hierarchy and member assignments.</p>
-            </div>
-            <ChevronRight className="h-4 w-4 text-muted-foreground/40 group-hover:text-muted-foreground transition-colors" />
-          </Link>
-
-          <Link
-            href="/admin/security"
-            className="group flex items-center gap-3 rounded-lg border border-border/50 px-4 py-3.5 hover:bg-muted/30 transition-colors"
-          >
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border/60 bg-muted/30 text-muted-foreground/70 group-hover:border-border group-hover:bg-muted/50 transition-colors">
-              <ShieldCheck className="h-4 w-4" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <span className="text-sm font-medium text-foreground">Security & Roles</span>
-              <p className="text-xs text-muted-foreground/60 mt-0.5">Roles, assignments, API keys, and resource policy governance.</p>
-            </div>
-            <ChevronRight className="h-4 w-4 text-muted-foreground/40 group-hover:text-muted-foreground transition-colors" />
-          </Link>
-        </div>
-      </div>
-    )
-  }
-  const SECTION_RENDERERS: Record<SettingsSection, () => React.ReactNode> = {
-    profile: renderProfile,
-    integrations: renderIntegrations,
-    mcp_servers: () => <McpSettingsSection />,
-    security: renderSecurity,
-  }
-
   return (
-    <div className="flex flex-col h-full w-full" dir={direction}>
+    <div className="flex h-full w-full flex-col" dir={direction}>
       <AdminPageHeader>
         <CustomBreadcrumb items={[{ label: "Settings", href: "/admin/settings", active: true }]} />
-        {hasUnsavedChanges && <span className="text-xs text-amber-600 font-medium">Unsaved changes</span>}
       </AdminPageHeader>
 
-      <div className="flex-1 flex overflow-hidden">
-        <nav className="w-48 shrink-0 p-3 overflow-y-auto hidden sm:block">
+      <div className="flex flex-1 overflow-hidden">
+        <nav className="hidden w-56 shrink-0 overflow-y-auto p-3 sm:block">
           <div className="space-y-0.5">
             {NAV_ITEMS.map((item) => {
               const Icon = item.icon
@@ -617,8 +540,8 @@ export default function SettingsPage() {
                   key={item.key}
                   onClick={() => handleSectionChange(item.key)}
                   className={cn(
-                    "flex items-center gap-2.5 w-full rounded-md px-2.5 py-1.5 text-sm transition-colors text-left",
-                    isActive ? "bg-muted/60 text-foreground font-medium" : "text-muted-foreground hover:text-foreground hover:bg-muted/30"
+                    "flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-sm transition-colors",
+                    isActive ? "bg-muted/60 text-foreground font-medium" : "text-muted-foreground hover:bg-muted/30 hover:text-foreground"
                   )}
                 >
                   <Icon className="h-3.5 w-3.5 shrink-0" />
@@ -629,13 +552,13 @@ export default function SettingsPage() {
           </div>
         </nav>
 
-        <div className="sm:hidden shrink-0 border-b border-border/40 px-4 py-2 flex gap-1 overflow-x-auto">
+        <div className="shrink-0 border-b border-border/40 px-4 py-2 flex gap-1 overflow-x-auto sm:hidden">
           {NAV_ITEMS.map((item) => (
             <button
               key={item.key}
               onClick={() => handleSectionChange(item.key)}
               className={cn(
-                "px-3 py-1.5 rounded-md text-xs whitespace-nowrap transition-colors",
+                "whitespace-nowrap rounded-md px-3 py-1.5 text-xs transition-colors",
                 activeSection === item.key ? "bg-muted/60 text-foreground font-medium" : "text-muted-foreground hover:text-foreground"
               )}
             >
@@ -645,15 +568,26 @@ export default function SettingsPage() {
         </div>
 
         <main className="flex-1 overflow-y-auto" data-admin-page-scroll>
-          <div className="max-w-4xl mx-auto px-4 sm:px-6 py-6">
+          <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6">
             {loading ? (
-              <LoadingSkeleton />
+              <div className="space-y-6 p-6">
+                <div className="space-y-2">
+                  <div className="h-4 w-32 rounded bg-muted" />
+                  <div className="h-3 w-56 rounded bg-muted" />
+                </div>
+                {Array.from({ length: 3 }).map((_, i) => (
+                  <div key={i} className="flex gap-6 border-b border-border/40 py-4">
+                    <div className="h-4 w-28 rounded bg-muted" />
+                    <div className="h-9 max-w-md flex-1 rounded bg-muted" />
+                  </div>
+                ))}
+              </div>
             ) : fetchError ? (
               <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
                 {fetchError}
               </div>
             ) : (
-              SECTION_RENDERERS[activeSection]()
+              renderSection()
             )}
           </div>
         </main>

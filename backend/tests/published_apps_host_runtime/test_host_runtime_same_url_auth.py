@@ -1,6 +1,10 @@
+import jwt
 import pytest
 from sqlalchemy import func, select
+from types import SimpleNamespace
+from urllib.parse import parse_qs, urlparse
 
+from app.core.security import ALGORITHM, SECRET_KEY
 from app.db.postgres.models.agent_threads import AgentThread, AgentThreadSurface, AgentThreadTurnStatus
 from app.db.postgres.models.agents import AgentRun
 from app.db.postgres.models.identity import User
@@ -12,6 +16,18 @@ from tests.published_apps._helpers import install_stub_agent_worker, seed_admin_
 
 def _host_headers(slug: str) -> dict[str, str]:
     return {"Host": f"{slug}.apps.localhost"}
+
+
+def _host_headers_with_cookie(slug: str, token: str) -> dict[str, str]:
+    headers = _host_headers(slug)
+    headers["Cookie"] = f"published_app_session={token}"
+    return headers
+
+
+def _token_with_scopes(token: str, scopes: list[str]) -> str:
+    payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+    payload["scope"] = scopes
+    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
 
 @pytest.mark.asyncio
@@ -247,6 +263,80 @@ async def test_host_thread_detail_is_scoped_to_app_account(client, db_session, m
         headers=_host_headers(app.slug),
     )
     assert thread_resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_host_runtime_rejects_cross_app_cookie_replay(client, db_session):
+    tenant, owner, _, agent = await seed_admin_tenant_and_agent(db_session)
+    app_a = await seed_published_app(
+        db_session,
+        tenant.id,
+        agent.id,
+        owner.id,
+        slug="host-replay-app-a",
+        auth_enabled=True,
+        auth_providers=["password"],
+    )
+    app_b = await seed_published_app(
+        db_session,
+        tenant.id,
+        agent.id,
+        owner.id,
+        slug="host-replay-app-b",
+        auth_enabled=True,
+        auth_providers=["password"],
+    )
+
+    signup_resp = await client.post(
+        "/_talmudpedia/auth/signup",
+        headers=_host_headers(app_a.slug),
+        json={"email": "host-replay@example.com", "password": "secret123"},
+    )
+    token = signup_resp.headers["set-cookie"].split("published_app_session=", 1)[1].split(";", 1)[0]
+
+    replay_resp = await client.post(
+        "/_talmudpedia/chat/stream",
+        headers=_host_headers_with_cookie(app_b.slug, token),
+        json={"input": "hello"},
+    )
+    assert replay_resp.status_code == 401
+    assert replay_resp.json()["detail"] == "Authentication required"
+
+
+@pytest.mark.asyncio
+async def test_host_runtime_enforces_published_app_scopes(client, db_session):
+    tenant, owner, _, agent = await seed_admin_tenant_and_agent(db_session)
+    app = await seed_published_app(
+        db_session,
+        tenant.id,
+        agent.id,
+        owner.id,
+        slug="host-scope-app",
+        auth_enabled=True,
+        auth_providers=["password"],
+    )
+
+    signup_resp = await client.post(
+        "/_talmudpedia/auth/signup",
+        headers=_host_headers(app.slug),
+        json={"email": "host-scoped@example.com", "password": "secret123"},
+    )
+    token = signup_resp.headers["set-cookie"].split("published_app_session=", 1)[1].split(";", 1)[0]
+
+    chat_resp = await client.post(
+        "/_talmudpedia/chat/stream",
+        headers=_host_headers_with_cookie(app.slug, _token_with_scopes(token, ["public.auth", "public.chats.read"])),
+        json={"input": "hello"},
+    )
+    assert chat_resp.status_code == 403
+    assert chat_resp.json()["detail"] == "Missing required scopes: public.chat"
+
+    threads_resp = await client.get(
+        "/_talmudpedia/threads",
+        headers=_host_headers_with_cookie(app.slug, _token_with_scopes(token, ["public.auth", "public.chat"])),
+    )
+    assert threads_resp.status_code == 403
+    assert threads_resp.json()["detail"] == "Missing required scopes: public.chats.read"
 
 
 @pytest.mark.asyncio
@@ -568,3 +658,165 @@ async def test_host_assets_serve_dist_asset_with_assets_prefix(client, db_sessio
     resp = await client.get("/assets/index-abc123.js", headers=_host_headers(app.slug))
     assert resp.status_code == 200
     assert "console.log('ok')" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_host_assets_are_private_cache_when_auth_enabled(client, db_session, monkeypatch):
+    tenant, owner, _, agent = await seed_admin_tenant_and_agent(db_session)
+    app = await seed_published_app(
+        db_session,
+        tenant.id,
+        agent.id,
+        owner.id,
+        slug="host-private-assets-app",
+        auth_enabled=True,
+        auth_providers=["password"],
+    )
+
+    revision = PublishedAppRevision(
+        published_app_id=app.id,
+        kind=PublishedAppRevisionKind.published,
+        template_key="classic-chat",
+        template_runtime="vite_static",
+        files={"src/main.tsx": "export default {};"},
+        dist_storage_prefix="apps/t/a/revisions/host-private-assets/dist",
+        dist_manifest={"entry_html": "index.html"},
+        created_by=owner.id,
+    )
+    db_session.add(revision)
+    await db_session.flush()
+    app.current_published_revision_id = revision.id
+    await db_session.commit()
+
+    class _Storage:
+        def read_asset_bytes(self, *, dist_storage_prefix: str, asset_path: str):
+            assert dist_storage_prefix == "apps/t/a/revisions/host-private-assets/dist"
+            assert asset_path == "assets/index-auth.js"
+            return b"console.log('private')", "application/javascript"
+
+    monkeypatch.setattr(
+        "app.api.routers.published_apps_host_runtime.PublishedAppBundleStorage.from_env",
+        staticmethod(lambda: _Storage()),
+    )
+
+    signup_resp = await client.post(
+        "/_talmudpedia/auth/signup",
+        headers=_host_headers(app.slug),
+        json={"email": "asset-user@example.com", "password": "secret123"},
+    )
+    assert signup_resp.status_code == 200
+
+    resp = await client.get("/assets/index-auth.js", headers=_host_headers(app.slug))
+    assert resp.status_code == 200
+    assert resp.headers["Cache-Control"] == "private, max-age=60"
+
+
+@pytest.mark.asyncio
+async def test_host_login_rate_limits_repeated_failed_password_attempts(client, db_session):
+    tenant, owner, _, agent = await seed_admin_tenant_and_agent(db_session)
+    app = await seed_published_app(
+        db_session,
+        tenant.id,
+        agent.id,
+        owner.id,
+        slug="host-login-throttle-app",
+        auth_enabled=True,
+        auth_providers=["password"],
+    )
+
+    signup_resp = await client.post(
+        "/_talmudpedia/auth/signup",
+        headers=_host_headers(app.slug),
+        json={"email": "throttle-user@example.com", "password": "secret123"},
+    )
+    assert signup_resp.status_code == 200
+
+    for _ in range(4):
+        resp = await client.post(
+            "/_talmudpedia/auth/login",
+            headers=_host_headers(app.slug),
+            json={"email": "throttle-user@example.com", "password": "wrong-password"},
+        )
+        assert resp.status_code == 400
+
+    locked_resp = await client.post(
+        "/_talmudpedia/auth/login",
+        headers=_host_headers(app.slug),
+        json={"email": "throttle-user@example.com", "password": "wrong-password"},
+    )
+    assert locked_resp.status_code == 429
+    assert locked_resp.json()["detail"] == "Too many failed login attempts. Try again later."
+
+
+@pytest.mark.asyncio
+async def test_host_google_start_sets_csrf_state_cookie(client, db_session, monkeypatch):
+    tenant, owner, _, agent = await seed_admin_tenant_and_agent(db_session)
+    app = await seed_published_app(
+        db_session,
+        tenant.id,
+        agent.id,
+        owner.id,
+        slug="host-google-start-app",
+        auth_enabled=True,
+        auth_providers=["google"],
+    )
+
+    async def _fake_get_google_credential(self, tenant_id):
+        assert str(tenant_id) == str(app.tenant_id)
+        return SimpleNamespace(credentials={"client_id": "google-client", "redirect_uri": "https://accounts.example/callback"})
+
+    monkeypatch.setattr("app.services.published_app_auth_service.PublishedAppAuthService.get_google_credential", _fake_get_google_credential)
+
+    response = await client.get(
+        "/_talmudpedia/auth/google/start?return_to=/dashboard",
+        headers=_host_headers(app.slug),
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 302
+    assert "published_app_google_oauth_state=" in response.headers.get("set-cookie", "")
+    state = parse_qs(urlparse(response.headers["location"]).query)["state"][0]
+    assert state
+
+
+@pytest.mark.asyncio
+async def test_host_google_callback_rejects_missing_csrf_state_cookie(client, db_session, monkeypatch):
+    tenant, owner, _, agent = await seed_admin_tenant_and_agent(db_session)
+    app = await seed_published_app(
+        db_session,
+        tenant.id,
+        agent.id,
+        owner.id,
+        slug="host-google-callback-app",
+        auth_enabled=True,
+        auth_providers=["google"],
+    )
+
+    async def _fake_get_google_credential(self, tenant_id):
+        assert str(tenant_id) == str(app.tenant_id)
+        return SimpleNamespace(
+            credentials={
+                "client_id": "google-client",
+                "client_secret": "google-secret",
+                "redirect_uri": "https://accounts.example/callback",
+            }
+        )
+
+    monkeypatch.setattr("app.services.published_app_auth_service.PublishedAppAuthService.get_google_credential", _fake_get_google_credential)
+
+    start_response = await client.get(
+        "/_talmudpedia/auth/google/start?return_to=/dashboard",
+        headers=_host_headers(app.slug),
+        follow_redirects=False,
+    )
+    state = parse_qs(urlparse(start_response.headers["location"]).query)["state"][0]
+    client.cookies.clear()
+
+    callback_resp = await client.get(
+        f"/_talmudpedia/auth/google/callback?code=fake-code&state={state}",
+        headers=_host_headers(app.slug),
+        follow_redirects=False,
+    )
+
+    assert callback_resp.status_code == 400
+    assert "Invalid OAuth state" in callback_resp.json()["detail"]

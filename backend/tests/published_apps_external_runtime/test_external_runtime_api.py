@@ -1,7 +1,9 @@
+import jwt
 import pytest
 from uuid import UUID
 from sqlalchemy import func, select
 
+from app.core.security import ALGORITHM, SECRET_KEY
 from app.db.postgres.models.agent_threads import AgentThread, AgentThreadTurn
 from app.db.postgres.models.agents import AgentRun
 from app.db.postgres.models.identity import User
@@ -40,6 +42,12 @@ def _external_headers(token: str | None = None, *, origin: str = ALLOWED_ORIGIN)
     if token:
         headers["Authorization"] = f"Bearer {token}"
     return headers
+
+
+def _token_with_scopes(token: str, scopes: list[str]) -> str:
+    payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+    payload["scope"] = scopes
+    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
 
 async def _grant_member_role(db_session, *, tenant_id, owner_id, email: str):
@@ -126,6 +134,83 @@ async def test_external_password_auth_flow_uses_bearer_tokens(client, db_session
         headers=_external_headers(token),
     )
     assert me_after_logout.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_external_runtime_rejects_cross_app_bearer_replay(client, db_session):
+    tenant, owner, _, agent = await seed_admin_tenant_and_agent(db_session)
+    app_a = await seed_published_app(
+        db_session,
+        tenant.id,
+        agent.id,
+        owner.id,
+        slug="external-replay-app-a",
+        allowed_origins=[ALLOWED_ORIGIN],
+    )
+    app_b = await seed_published_app(
+        db_session,
+        tenant.id,
+        agent.id,
+        owner.id,
+        slug="external-replay-app-b",
+        allowed_origins=[ALLOWED_ORIGIN],
+    )
+
+    signup_resp = await client.post(
+        f"/public/external/apps/{app_a.slug}/auth/signup",
+        headers=_external_headers(),
+        json={"email": "replay-user@example.com", "password": "secret123"},
+    )
+    token = signup_resp.json()["token"]
+
+    replay_resp = await client.get(
+        f"/public/external/apps/{app_b.slug}/auth/me",
+        headers=_external_headers(token),
+    )
+    assert replay_resp.status_code == 403
+    assert replay_resp.json()["detail"] == "Token does not belong to this app"
+
+
+@pytest.mark.asyncio
+async def test_external_runtime_enforces_published_app_scopes(client, db_session):
+    tenant, owner, _, agent = await seed_admin_tenant_and_agent(db_session)
+    app = await seed_published_app(
+        db_session,
+        tenant.id,
+        agent.id,
+        owner.id,
+        slug="external-scope-app",
+        allowed_origins=[ALLOWED_ORIGIN],
+    )
+
+    signup_resp = await client.post(
+        f"/public/external/apps/{app.slug}/auth/signup",
+        headers=_external_headers(),
+        json={"email": "scoped-user@example.com", "password": "secret123"},
+    )
+    token = signup_resp.json()["token"]
+
+    me_resp = await client.get(
+        f"/public/external/apps/{app.slug}/auth/me",
+        headers=_external_headers(_token_with_scopes(token, ["public.chat", "public.chats.read"])),
+    )
+    assert me_resp.status_code == 403
+    assert me_resp.json()["detail"] == "Missing required scopes: public.auth"
+
+    chat_resp = await client.post(
+        f"/public/external/apps/{app.slug}/chat/stream",
+        headers=_external_headers(_token_with_scopes(token, ["public.auth", "public.chats.read"])),
+        json={"input": "hello"},
+    )
+    assert chat_resp.status_code == 403
+    assert chat_resp.json()["detail"] == "Missing required scopes: public.chat"
+
+    threads_resp = await client.get(
+        f"/public/external/apps/{app.slug}/threads",
+        headers=_external_headers(_token_with_scopes(token, ["public.auth", "public.chat"])),
+    )
+    assert threads_resp.status_code == 403
+    assert threads_resp.json()["detail"] == "Missing required scopes: public.chats.read"
 
 
 @pytest.mark.asyncio

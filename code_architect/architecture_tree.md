@@ -41,6 +41,7 @@ backend/app/api/routers/artifacts.py
 backend/app/api/routers/artifact_runs.py
 backend/app/api/routers/artifact_coding_agent.py
 backend/app/api/routers/mcp.py
+backend/app/api/routers/settings_governance.py
 backend/app/api/schemas/
 backend/app/api/schemas/context_window.py
 backend/app/api/schemas/mcp.py
@@ -131,12 +132,15 @@ backend/app/db/postgres/models/agents.py
 backend/app/db/postgres/models/artifact_runtime.py
 backend/app/db/postgres/models/agent_threads.py
 backend/app/db/postgres/models/files.py
+backend/app/db/postgres/models/identity.py
 backend/app/db/postgres/models/mcp.py
 backend/app/db/postgres/models/published_app_analytics.py
 backend/app/db/postgres/models/prompts.py
 backend/app/db/postgres/models/runtime_attachments.py
+backend/app/db/postgres/models/security.py
 backend/app/db/postgres/models/resource_policies.py
 backend/app/db/postgres/models/usage_quota.py
+backend/app/db/postgres/models/workspace.py
 backend/app/db/postgres/models/workos_events.py
 backend/app/db/postgres/seeds/
 
@@ -225,6 +229,7 @@ backend/app/services/published_app_live_preview.py
 backend/app/services/builtin_tools.py
 backend/app/services/architect_mode_service.py
 backend/app/services/tenant_api_key_service.py
+backend/app/services/project_api_key_service.py
 backend/app/services/embedded_agent_runtime_service.py
 backend/app/services/runtime_attachment_service.py
 backend/app/services/runtime_input_preparation_service.py

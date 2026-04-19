@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+from datetime import datetime, timezone
 import hashlib
 import hmac
 import json
@@ -8,6 +9,7 @@ import os
 import re
 from dataclasses import dataclass
 from functools import lru_cache
+from pathlib import Path
 from typing import Any
 from uuid import UUID
 
@@ -15,7 +17,6 @@ from fastapi import HTTPException, Request, Response, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from workos import WorkOSClient
-from workos.session import seal_session_from_auth_response
 
 from app.db.postgres.models.identity import (
     MembershipStatus,
@@ -32,6 +33,10 @@ from app.services.organization_bootstrap_service import OrganizationBootstrapSer
 
 WORKOS_SESSION_COOKIE_NAME = os.getenv("WORKOS_SESSION_COOKIE_NAME", "wos_session").strip() or "wos_session"
 WORKOS_PROJECT_COOKIE_NAME = os.getenv("WORKOS_PROJECT_COOKIE_NAME", "talmudpedia_active_project").strip() or "talmudpedia_active_project"
+WORKOS_AUTH_DEBUG_LOG_PATH = (
+    os.getenv("WORKOS_AUTH_DEBUG_LOG_PATH", "/tmp/talmudpedia-workos-auth.jsonl").strip()
+    or "/tmp/talmudpedia-workos-auth.jsonl"
+)
 
 
 class WorkOSAuthError(RuntimeError):
@@ -91,6 +96,52 @@ class WorkOSAuthService:
     def __init__(self, db: AsyncSession):
         self.db = db
         self.client = _workos_client()
+
+    @staticmethod
+    def _fingerprint_secret(value: str | None) -> str | None:
+        raw = str(value or "").strip()
+        if not raw:
+            return None
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+
+    def _auth_debug_log(
+        self,
+        event: str,
+        *,
+        request: Request | None = None,
+        fields: dict[str, Any] | None = None,
+    ) -> None:
+        payload: dict[str, Any] = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "event": event,
+            "pid": os.getpid(),
+            "workos_client_id_fp": self._fingerprint_secret(os.getenv("WORKOS_CLIENT_ID")),
+            "workos_cookie_password_fp": self._fingerprint_secret(os.getenv("WORKOS_COOKIE_PASSWORD")),
+        }
+        if request is not None:
+            cookie_value = str(request.cookies.get(WORKOS_SESSION_COOKIE_NAME) or "").strip()
+            payload.update(
+                {
+                    "method": request.method,
+                    "path": request.url.path,
+                    "query": request.url.query,
+                    "host": str(request.headers.get("host") or "").strip(),
+                    "origin": str(request.headers.get("origin") or "").strip(),
+                    "referer": str(request.headers.get("referer") or "").strip(),
+                    "user_agent": str(request.headers.get("user-agent") or "").strip()[:240],
+                    "cookie_present": bool(cookie_value),
+                    "cookie_fp": self._fingerprint_secret(cookie_value),
+                }
+            )
+        if fields:
+            payload.update(fields)
+        try:
+            path = Path(WORKOS_AUTH_DEBUG_LOG_PATH)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(payload, ensure_ascii=True, default=str) + "\n")
+        except Exception:
+            logger.exception("Failed to write WorkOS auth debug log")
 
     @staticmethod
     def is_enabled() -> bool:
@@ -214,53 +265,91 @@ class WorkOSAuthService:
         self._require_enabled()
         sealed_session = str(request.cookies.get(WORKOS_SESSION_COOKIE_NAME) or "").strip()
         if not sealed_session:
+            self._auth_debug_log("load_session_helper.missing_cookie", request=request)
             return None
-        return self.client.user_management.load_sealed_session(
-            session_data=sealed_session,
-            cookie_password=str(os.getenv("WORKOS_COOKIE_PASSWORD") or "").strip(),
-        )
-
-    def _ensure_sealed_session(self, auth_response: Any) -> Any:
-        sealed_session = _workos_attr(auth_response, "sealed_session", "sealedSession")
-        if sealed_session:
-            return auth_response
-        access_token = _workos_attr(auth_response, "access_token", "accessToken")
-        refresh_token = _workos_attr(auth_response, "refresh_token", "refreshToken")
-        user = _workos_attr(auth_response, "user")
-        if not access_token or not refresh_token or not user:
-            return auth_response
-        generated = seal_session_from_auth_response(
-            access_token=str(access_token),
-            refresh_token=str(refresh_token),
-            user=user if isinstance(user, dict) else getattr(user, "__dict__", {}),
-            impersonator=_workos_attr(auth_response, "impersonator"),
-            cookie_password=str(os.getenv("WORKOS_COOKIE_PASSWORD") or "").strip(),
-        )
-        if isinstance(auth_response, dict):
-            auth_response["sealed_session"] = generated
-        else:
-            setattr(auth_response, "sealed_session", generated)
-        return auth_response
+        try:
+            cookie_password = str(os.getenv("WORKOS_COOKIE_PASSWORD") or "").strip()
+            try:
+                helper = self.client.user_management.load_sealed_session(
+                    sealed_session=sealed_session,
+                    cookie_password=cookie_password,
+                )
+            except TypeError:
+                helper = self.client.user_management.load_sealed_session(
+                    session_data=sealed_session,
+                    cookie_password=cookie_password,
+                )
+            self._auth_debug_log("load_session_helper.loaded", request=request)
+            return helper
+        except Exception as exc:
+            self._auth_debug_log(
+                "load_session_helper.failed",
+                request=request,
+                fields={
+                    "error_type": type(exc).__name__,
+                    "error": str(exc),
+                },
+            )
+            raise
 
     async def authenticate_request(self, request: Request, response: Response | None = None) -> Any | None:
-        helper = self._load_session_helper(request)
-        if helper is None:
-            return None
+        try:
+            helper = self._load_session_helper(request)
+            if helper is None:
+                self._auth_debug_log("authenticate_request.no_helper", request=request)
+                return None
 
-        auth_response = helper.authenticate()
-        if _workos_attr(auth_response, "authenticated"):
-            return self._ensure_sealed_session(auth_response)
+            auth_response = helper.authenticate()
+            authenticated = bool(_workos_attr(auth_response, "authenticated"))
+            reason = _workos_attr(auth_response, "reason")
+            self._auth_debug_log(
+                "authenticate_request.authenticate_result",
+                request=request,
+                fields={
+                    "authenticated": authenticated,
+                    "reason": reason,
+                },
+            )
+            if authenticated:
+                return auth_response
 
-        if _workos_attr(auth_response, "reason") == "no_session_cookie_provided":
-            return None
+            if reason == "no_session_cookie_provided":
+                return None
 
-        refreshed = helper.refresh()
-        if not _workos_attr(refreshed, "authenticated"):
-            return None
-        sealed_session = _workos_attr(refreshed, "sealed_session", "sealedSession")
-        if response is not None and sealed_session:
-            self.set_session_cookie(response=response, request=request, sealed_session=str(sealed_session))
-        return self._ensure_sealed_session(refreshed)
+            refreshed = helper.refresh()
+            refresh_authenticated = bool(_workos_attr(refreshed, "authenticated"))
+            refresh_reason = _workos_attr(refreshed, "reason")
+            self._auth_debug_log(
+                "authenticate_request.refresh_result",
+                request=request,
+                fields={
+                    "authenticated": refresh_authenticated,
+                    "reason": refresh_reason,
+                },
+            )
+            if not refresh_authenticated:
+                return None
+            sealed_session = _workos_attr(refreshed, "sealed_session", "sealedSession")
+            if response is not None and sealed_session:
+                self.set_session_cookie(response=response, request=request, sealed_session=str(sealed_session))
+                self._auth_debug_log(
+                    "authenticate_request.session_cookie_refreshed",
+                    request=request,
+                    fields={
+                        "refreshed_cookie_fp": self._fingerprint_secret(str(sealed_session)),
+                    },
+                )
+            return refreshed
+        except Exception as exc:
+            self._auth_debug_log(
+                "authenticate_request.exception",
+                request=request,
+                fields={
+                    "error_type": type(exc).__name__,
+                    "error": str(exc),
+                },
+            )
+            raise
 
     async def authenticate_with_code(
         self,
@@ -270,30 +359,17 @@ class WorkOSAuthService:
         invitation_token: str | None = None,
     ) -> Any:
         self._require_enabled()
-        body: dict[str, Any] = {
-            "grant_type": "authorization_code",
-            "code": code,
-            "client_id": str(os.getenv("WORKOS_CLIENT_ID") or "").strip(),
-            "client_secret": str(os.getenv("WORKOS_API_KEY") or "").strip(),
-            "session": {
+        auth_response = self.client.user_management.authenticate_with_code(
+            code=code,
+            session={
                 "seal_session": True,
                 "cookie_password": str(os.getenv("WORKOS_COOKIE_PASSWORD") or "").strip(),
             },
-        }
-        ip_address = self._request_ip(request)
-        if ip_address:
-            body["ip_address"] = ip_address
-        user_agent = self._user_agent(request)
-        if user_agent:
-            body["user_agent"] = user_agent
-        if invitation_token:
-            body["invitation_token"] = invitation_token
-        auth_response = self.client.request_raw(
-            method="post",
-            path="user_management/authenticate",
-            body=body,
+            ip_address=self._request_ip(request),
+            user_agent=self._user_agent(request),
+            invitation_token=invitation_token,
         )
-        return self._ensure_sealed_session(auth_response)
+        return auth_response
 
     def get_logout_url(self, request: Request, *, return_to: str | None = None) -> str | None:
         helper = self._load_session_helper(request)
