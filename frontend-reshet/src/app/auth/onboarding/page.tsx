@@ -1,5 +1,6 @@
 "use client"
 
+import { Suspense } from "react"
 import { FormEvent, useEffect, useMemo, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 
@@ -15,7 +16,7 @@ function navigateToTarget(router: ReturnType<typeof useRouter>, target: string) 
   router.replace(target)
 }
 
-export default function AuthOnboardingPage() {
+function AuthOnboardingContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const hydrated = useAuthStore((state) => state.hydrated)
@@ -101,5 +102,13 @@ export default function AuthOnboardingPage() {
         </form>
       </div>
     </div>
+  )
+}
+
+export default function AuthOnboardingPage() {
+  return (
+    <Suspense fallback={null}>
+      <AuthOnboardingContent />
+    </Suspense>
   )
 }
