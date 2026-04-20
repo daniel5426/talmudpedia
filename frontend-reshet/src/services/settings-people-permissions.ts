@@ -16,6 +16,8 @@ export interface SettingsInvitation {
   id: string
   email: string | null
   project_ids: string[]
+  organization_role: string
+  project_role: string | null
   accepted_at: string | null
   created_at: string | null
   expires_at: string | null
@@ -33,10 +35,12 @@ export interface SettingsGroup {
 
 export interface SettingsRole {
   id: string
+  family: "organization" | "project"
   name: string
   description: string | null
   permissions: string[]
   is_system: boolean
+  is_preset: boolean
   created_at: string
 }
 
@@ -45,6 +49,7 @@ export interface SettingsRoleAssignment {
   user_id: string
   user_email: string | null
   role_id: string
+  role_family: "organization" | "project"
   role_name: string
   scope_id: string
   scope_type: string
@@ -95,11 +100,24 @@ class SettingsPeoplePermissionsService {
     return httpClient.get("/api/settings/people/roles")
   }
 
-  async createRole(input: { name: string; description?: string | null; permissions: string[] }): Promise<SettingsRole> {
+  async createRole(input: {
+    family: SettingsRole["family"]
+    name: string
+    description?: string | null
+    permissions: string[]
+  }): Promise<SettingsRole> {
     return httpClient.post("/api/settings/people/roles", input)
   }
 
-  async updateRole(roleId: string, input: { name?: string; description?: string | null; permissions?: string[] }): Promise<SettingsRole> {
+  async updateRole(
+    roleId: string,
+    input: {
+      family?: SettingsRole["family"]
+      name?: string
+      description?: string | null
+      permissions?: string[]
+    }
+  ): Promise<SettingsRole> {
     return httpClient.patch(`/api/settings/people/roles/${roleId}`, input)
   }
 

@@ -71,6 +71,7 @@ async def test_settings_people_permissions_members_invites_groups_roles_and_assi
     )
     assert invite_create.status_code == 201
     assert invite_create.json()["id"] == "inv-2"
+    assert invite_create.json()["organization_role"] == "Reader"
 
     invite_delete = await client.delete("/api/settings/people/invitations/inv-1", headers=headers)
     assert invite_delete.status_code == 204
@@ -86,10 +87,48 @@ async def test_settings_people_permissions_members_invites_groups_roles_and_assi
     role_create = await client.post(
         "/api/settings/people/roles",
         headers=headers,
-        json={"name": "Ops Admin", "description": "Ops role", "permissions": ["projects.read"]},
+        json={"family": "organization", "name": "Ops Admin", "description": "Ops role", "permissions": ["projects.read"]},
     )
     assert role_create.status_code == 201
     role_id = role_create.json()["id"]
+
+    project_role_create = await client.post(
+        "/api/settings/people/roles",
+        headers=headers,
+        json={"family": "project", "name": "Ops Admin", "description": "Project ops role", "permissions": ["apps.read", "agents.read"]},
+    )
+    assert project_role_create.status_code == 201
+    project_role_id = project_role_create.json()["id"]
+
+    duplicate_role = await client.post(
+        "/api/settings/people/roles",
+        headers=headers,
+        json={"family": "organization", "name": "Ops Admin", "description": None, "permissions": ["projects.read"]},
+    )
+    assert duplicate_role.status_code == 400
+
+    invalid_role = await client.post(
+        "/api/settings/people/roles",
+        headers=headers,
+        json={"family": "organization", "name": "Broken Org Role", "description": None, "permissions": ["apps.read"]},
+    )
+    assert invalid_role.status_code == 400
+
+    roles_resp = await client.get("/api/settings/people/roles", headers=headers)
+    assert roles_resp.status_code == 200
+    owner_role = next(role for role in roles_resp.json() if role["family"] == "organization" and role["name"] == "Owner")
+
+    preset_update = await client.patch(
+        f"/api/settings/people/roles/{owner_role['id']}",
+        headers=headers,
+        json={"name": "Changed Owner"},
+    )
+    assert preset_update.status_code == 400
+    assert preset_update.json()["detail"] == "Cannot modify system roles"
+
+    preset_delete = await client.delete(f"/api/settings/people/roles/{owner_role['id']}", headers=headers)
+    assert preset_delete.status_code == 400
+    assert preset_delete.json()["detail"] == "Cannot delete system roles"
 
     assignment_create = await client.post(
         "/api/settings/people/role-assignments",
@@ -97,8 +136,50 @@ async def test_settings_people_permissions_members_invites_groups_roles_and_assi
         json={
             "user_id": str(member.id),
             "role_id": role_id,
-            "scope_id": str(root.id),
+            "scope_id": str(tenant.id),
             "scope_type": "organization",
         },
     )
     assert assignment_create.status_code == 201
+
+    invalid_assignment = await client.post(
+        "/api/settings/people/role-assignments",
+        headers=headers,
+        json={
+            "user_id": str(member.id),
+            "role_id": project_role_id,
+            "scope_id": str(tenant.id),
+            "scope_type": "organization",
+        },
+    )
+    assert invalid_assignment.status_code == 400
+    assert invalid_assignment.json()["detail"] == "Role family does not match assignment scope"
+
+    replacement_role = await client.post(
+        "/api/settings/people/roles",
+        headers=headers,
+        json={"family": "organization", "name": "Ops Auditor", "description": "Audit role", "permissions": ["audit.read"]},
+    )
+    assert replacement_role.status_code == 201
+
+    replacement_assignment = await client.post(
+        "/api/settings/people/role-assignments",
+        headers=headers,
+        json={
+            "user_id": str(member.id),
+            "role_id": replacement_role.json()["id"],
+            "scope_id": str(tenant.id),
+            "scope_type": "organization",
+        },
+    )
+    assert replacement_assignment.status_code == 201
+
+    assignments_resp = await client.get("/api/settings/people/role-assignments", headers=headers)
+    assert assignments_resp.status_code == 200
+    member_org_assignments = [
+        item
+        for item in assignments_resp.json()
+        if item["user_id"] == str(member.id) and item["scope_type"] == "organization" and item["role_family"] == "organization"
+    ]
+    assert len(member_org_assignments) == 1
+    assert member_org_assignments[0]["role_name"] == "Ops Auditor"

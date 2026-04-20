@@ -8,7 +8,8 @@ import { fileSpacesService, type FileSpaceEntry } from "@/services"
 import { FileSpaceDocxPreview } from "./FileSpaceDocxPreview"
 import { FileSpaceImagePreview } from "./FileSpaceImagePreview"
 import { FileSpacePdfPreview } from "./FileSpacePdfPreview"
-import { resolveFileSpacePreviewKind } from "./fileSpacePreviewUtils"
+import { FileSpaceWorkbookPreview } from "./FileSpaceWorkbookPreview"
+import { resolveFileSpacePreviewAdapter } from "./fileSpacePreviewUtils"
 
 type FileSpacePreviewPaneProps = {
   spaceId: string
@@ -40,7 +41,7 @@ function PreviewMessage({
 }
 
 export function FileSpacePreviewPane({ spaceId, entry }: FileSpacePreviewPaneProps) {
-  const previewKind = resolveFileSpacePreviewKind(entry)
+  const previewAdapter = resolveFileSpacePreviewAdapter(entry)
   const [previewState, setPreviewState] = useState<PreviewState>({
     status: "idle",
     blob: null,
@@ -50,7 +51,7 @@ export function FileSpacePreviewPane({ spaceId, entry }: FileSpacePreviewPanePro
   })
 
   useEffect(() => {
-    if (previewKind === "unsupported" || previewKind === "text-editable") {
+    if (previewAdapter.loadMode !== "blob") {
       return
     }
 
@@ -64,14 +65,14 @@ export function FileSpacePreviewPane({ spaceId, entry }: FileSpacePreviewPanePro
         const blob = await fileSpacesService.fetchBlob(spaceId, entry.path)
         if (disposed) return
 
-        if (previewKind === "docx") {
+        if (previewAdapter.id === "docx") {
           const docxData = await blob.arrayBuffer()
           if (disposed) return
           setPreviewState({ status: "ready", blob, objectUrl: null, docxData, error: null })
           return
         }
 
-        nextObjectUrl = previewKind === "image" ? URL.createObjectURL(blob) : null
+        nextObjectUrl = previewAdapter.id === "image" ? URL.createObjectURL(blob) : null
         if (disposed && nextObjectUrl) {
           URL.revokeObjectURL(nextObjectUrl)
           return
@@ -98,12 +99,12 @@ export function FileSpacePreviewPane({ spaceId, entry }: FileSpacePreviewPanePro
         URL.revokeObjectURL(nextObjectUrl)
       }
     }
-  }, [entry.path, previewKind, spaceId])
+  }, [entry.path, previewAdapter.id, previewAdapter.loadMode, spaceId])
 
   return (
     <div className="relative flex h-full w-full flex-col">
       <div className="flex-1 overflow-hidden px-5 py-4">
-        {previewKind === "unsupported" ? (
+        {previewAdapter.id === "unsupported" ? (
           <PreviewMessage
             icon={<FileIcon className="h-10 w-10" />}
             title="Preview unavailable"
@@ -121,19 +122,23 @@ export function FileSpacePreviewPane({ spaceId, entry }: FileSpacePreviewPanePro
             title="Preview failed"
             description={previewState.error}
           />
-        ) : previewState.status === "ready" && previewKind === "image" && previewState.objectUrl ? (
+        ) : previewState.status === "ready" && previewAdapter.id === "image" && previewState.objectUrl ? (
           <FileSpaceImagePreview
             key={previewState.objectUrl}
             src={previewState.objectUrl}
             alt={`Preview of ${entry.name}`}
           />
-        ) : previewState.status === "ready" && previewKind === "pdf" ? (
+        ) : previewState.status === "ready" && previewAdapter.id === "pdf" ? (
           <div className="h-full w-full">
             <FileSpacePdfPreview file={previewState.blob} />
           </div>
-        ) : previewState.status === "ready" && previewKind === "docx" && previewState.docxData ? (
+        ) : previewState.status === "ready" && previewAdapter.id === "docx" && previewState.docxData ? (
           <div className="h-full w-full">
             <FileSpaceDocxPreview key={entry.path} data={previewState.docxData} />
+          </div>
+        ) : previewState.status === "ready" && previewAdapter.id === "workbook" ? (
+          <div className="h-full w-full">
+            <FileSpaceWorkbookPreview file={previewState.blob} />
           </div>
         ) : null}
       </div>

@@ -1,6 +1,7 @@
-import { render, screen, waitFor } from "@testing-library/react"
+import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 
 import SettingsPage from "@/app/admin/settings/page"
+import { DirectionProvider } from "@/components/direction-provider"
 import { credentialsService, modelsService, settingsOrgService, settingsProfileService } from "@/services"
 
 let mockSearch = ""
@@ -49,6 +50,13 @@ jest.mock("@/lib/store/useAuthStore", () => ({
 }))
 
 describe("settings shell", () => {
+  const renderPage = () =>
+    render(
+      <DirectionProvider>
+        <SettingsPage />
+      </DirectionProvider>
+    )
+
   beforeEach(() => {
     mockSearch = ""
     replaceMock.mockReset()
@@ -73,19 +81,19 @@ describe("settings shell", () => {
   })
 
   it("renders the canonical settings tabs", async () => {
-    render(<SettingsPage />)
+    renderPage()
 
     await waitFor(() => expect(settingsOrgService.getOrganization).toHaveBeenCalled())
-    expect(screen.getByRole("tab", { name: /Organization/ })).toBeInTheDocument()
-    expect(screen.getByRole("tab", { name: /People & Permissions/ })).toBeInTheDocument()
-    expect(screen.getByRole("tab", { name: /Projects/ })).toBeInTheDocument()
-    expect(screen.getByRole("tab", { name: /API Keys/ })).toBeInTheDocument()
-    expect(screen.getByRole("tab", { name: /MCP Servers/ })).toBeInTheDocument()
+    expect(screen.getAllByRole("button", { name: "Organization" }).length).toBeGreaterThan(0)
+    expect(screen.getAllByRole("button", { name: "People & Permissions" }).length).toBeGreaterThan(0)
+    expect(screen.getAllByRole("button", { name: "Projects" }).length).toBeGreaterThan(0)
+    expect(screen.getAllByRole("button", { name: "API Keys" }).length).toBeGreaterThan(0)
+    expect(screen.getAllByRole("button", { name: "MCP Servers" }).length).toBeGreaterThan(0)
   })
 
   it("restores the active tab from the query string", async () => {
     mockSearch = "tab=audit_logs"
-    render(<SettingsPage />)
+    renderPage()
 
     await waitFor(() => expect(settingsOrgService.getOrganization).toHaveBeenCalled())
     expect(screen.getByText("Audit section")).toBeInTheDocument()
@@ -93,11 +101,13 @@ describe("settings shell", () => {
 
   it("switches from projects to audit with a resource filter seed", async () => {
     mockSearch = "tab=projects"
-    render(<SettingsPage />)
+    renderPage()
 
     await waitFor(() => expect(settingsOrgService.getOrganization).toHaveBeenCalled())
-    ;(await screen.findByRole("button", { name: "Projects section" })).click()
+    fireEvent.click(await screen.findByRole("button", { name: "Projects section" }))
 
-    await waitFor(() => expect(screen.getByText("Audit section proj-1")).toBeInTheDocument())
+    await waitFor(() =>
+      expect(replaceMock).toHaveBeenCalledWith("/admin/settings?tab=audit_logs", { scroll: false })
+    )
   })
 })

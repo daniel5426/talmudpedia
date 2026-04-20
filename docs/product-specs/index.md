@@ -1,6 +1,6 @@
 # Product Specs Index
 
-Last Updated: 2026-04-16
+Last Updated: 2026-04-20
 
 This section is for canonical product behavior and user-facing contracts.
 
@@ -27,6 +27,8 @@ This section is for canonical product behavior and user-facing contracts.
   - Current published-app product behavior and runtime contract.
 - `settings_hub_spec.md`
   - Current tenant settings hub behavior and API surface.
+- `people_permissions_roles_spec.md`
+  - Current canonical role families, defaults, and assignment model for `People & Permissions`.
 - `runtime_sdk_host_anywhere_spec.md`
   - Current runtime SDK contract for hosted and externally hosted published apps.
 - `agent_graph_spec.md`

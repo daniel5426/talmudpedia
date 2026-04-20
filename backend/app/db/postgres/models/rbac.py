@@ -38,6 +38,7 @@ class Role(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True)
+    family = Column(String, nullable=False, index=True)
     name = Column(String, nullable=False)
     description = Column(String, nullable=True)
     is_system = Column(Boolean, default=False, nullable=False)
@@ -51,7 +52,7 @@ class Role(Base):
     assignments = relationship("RoleAssignment", back_populates="role", cascade="all, delete-orphan")
 
     __table_args__ = (
-        UniqueConstraint('tenant_id', 'name', name='uq_role_tenant_name'),
+        UniqueConstraint('tenant_id', 'family', 'name', name='uq_role_tenant_family_name'),
     )
 
 class RolePermission(Base):

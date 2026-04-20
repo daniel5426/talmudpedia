@@ -21,6 +21,7 @@ from workos import WorkOSClient
 
 from app.db.postgres.models.identity import (
     MembershipStatus,
+    OrgInvite,
     OrgMembership,
     OrgRole,
     OrgUnit,
@@ -31,6 +32,7 @@ from app.db.postgres.models.identity import (
 from app.db.postgres.models.workspace import Project
 from app.services.auth_context_service import list_organization_projects
 from app.services.organization_bootstrap_service import OrganizationBootstrapService
+from app.services.security_bootstrap_service import SecurityBootstrapService
 
 WORKOS_SESSION_COOKIE_NAME = os.getenv("WORKOS_SESSION_COOKIE_NAME", "wos_session").strip() or "wos_session"
 WORKOS_PROJECT_COOKIE_NAME = os.getenv("WORKOS_PROJECT_COOKIE_NAME", "talmudpedia_active_project").strip() or "talmudpedia_active_project"
@@ -664,6 +666,40 @@ class WorkOSAuthService:
         membership.workos_membership_id = str(workos_membership_id) if workos_membership_id else membership.workos_membership_id
         membership.status = self._map_membership_status(_workos_attr(workos_membership, "status"))
         membership.role = self._map_membership_role(_workos_attr(workos_membership, "role_slug", "roleSlug", "role"))
+        bootstrap = SecurityBootstrapService(self.db)
+        if membership.role in {OrgRole.owner, OrgRole.admin}:
+            await bootstrap.ensure_organization_owner_assignment(
+                organization_id=local_org.id,
+                user_id=local_user.id,
+                assigned_by=local_user.id,
+            )
+        else:
+            await bootstrap.ensure_organization_reader_assignment(
+                organization_id=local_org.id,
+                user_id=local_user.id,
+                assigned_by=local_user.id,
+            )
+        pending_invites = (
+            await self.db.execute(
+                select(OrgInvite).where(
+                    OrgInvite.tenant_id == local_org.id,
+                    OrgInvite.email == local_user.email,
+                    OrgInvite.accepted_at.is_(None),
+                )
+            )
+        ).scalars().all()
+        for invite in pending_invites:
+            for project_id in invite.project_ids or []:
+                try:
+                    await bootstrap.ensure_project_member_assignment(
+                        organization_id=local_org.id,
+                        project_id=UUID(str(project_id)),
+                        user_id=local_user.id,
+                        assigned_by=local_user.id,
+                    )
+                except Exception:
+                    continue
+            invite.accepted_at = datetime.now(timezone.utc)
         await self.db.flush()
         return membership
 

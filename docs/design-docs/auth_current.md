@@ -46,9 +46,9 @@ Current browser auth endpoints:
 
 ## Current Authorization Model
 
-- WorkOS session permissions are the source for organization-level permissions when present.
-- Local RBAC remains active for project-scoped permissions.
-- Local organization-scoped RBAC remains fallback only while WorkOS role parity is being completed.
+- WorkOS remains the browser identity and session source.
+- Local Talmudpedia roles are the control-plane authorization source of truth.
+- Organization-scoped and project-scoped effective permissions are resolved locally from role assignments.
 - resource policy sets remain the runtime-facing access and quota layer
 - `platform-architect` is the only special internal case and uses architect modes:
   - `read_only`

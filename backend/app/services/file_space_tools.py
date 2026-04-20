@@ -9,7 +9,6 @@ from uuid import UUID
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.postgres import engine as postgres_engine
 from app.db.postgres.models.registry import (
     ToolDefinitionScope,
     ToolImplementationType,
@@ -17,17 +16,19 @@ from app.db.postgres.models.registry import (
     ToolStatus,
     set_tool_management_metadata,
 )
-from app.db.postgres.models.files import FileAccessMode
-from app.services.file_spaces.service import (
-    FileSpaceNotFoundError,
-    FileSpacePermissionError,
-    FileSpaceService,
-    FileSpaceValidationError,
-)
+from app.services.file_reference_access import with_authorized_file_space as _with_service
+from app.services.file_representation_service import inspect_file, read_representation
+from app.services.file_spaces.service import FileSpaceService, FileSpaceValidationError
 from app.services.tool_function_registry import register_tool_function
 
 READ_FILE_DEFAULT_LINE_WINDOW = 200
 READ_FILE_FULL_CONTENT_LINE_THRESHOLD = 300
+FILE_SPACE_TOOLSET_ID = "file_space_memory"
+FILE_SPACE_TOOLSET_NAME = "File Space Memory"
+FILE_SPACE_TOOLSET_DESCRIPTION = (
+    "Persistent workspace access for linked file spaces. "
+    "Select the full toolset to give the agent the complete file-space memory surface."
+)
 
 
 def _tool_schema(
@@ -63,6 +64,21 @@ FILE_SPACE_TOOL_SPECS: list[dict[str, Any]] = [
         ),
     },
     {
+        "slug": "files-inspect",
+        "name": "Files Inspect",
+        "description": "Inspect a linked file and return metadata plus supported deterministic representations.",
+        "function_name": "files_inspect",
+        "timeout_s": 30,
+        "is_pure": True,
+        "schema": _tool_schema(
+            properties={
+                "space_id": {"type": "string"},
+                "path": {"type": "string"},
+            },
+            required=["space_id", "path"],
+        ),
+    },
+    {
         "slug": "files-read",
         "name": "Files Read",
         "description": "Read one text file from a linked file space. Supports bounded line reads and optional numbered output.",
@@ -78,6 +94,23 @@ FILE_SPACE_TOOL_SPECS: list[dict[str, Any]] = [
                 "include_line_numbers": {"type": "boolean"},
             },
             required=["space_id", "path"],
+        ),
+    },
+    {
+        "slug": "files-read-representation",
+        "name": "Files Read Representation",
+        "description": "Read a deterministic structured representation from a linked file.",
+        "function_name": "files_read_representation",
+        "timeout_s": 60,
+        "is_pure": True,
+        "schema": _tool_schema(
+            properties={
+                "space_id": {"type": "string"},
+                "path": {"type": "string"},
+                "representation": {"type": "string"},
+                "options": {"type": "object", "additionalProperties": True},
+            },
+            required=["space_id", "path", "representation"],
         ),
     },
     {
@@ -207,62 +240,14 @@ FILE_SPACE_TOOL_SPECS: list[dict[str, Any]] = [
 ]
 
 
-def _parse_uuid(value: Any, *, field: str) -> UUID:
-    try:
-        return UUID(str(value))
-    except Exception as exc:
-        raise FileSpaceValidationError(f"{field} is required") from exc
-
-
-def _runtime_context(payload: Any) -> dict[str, Any]:
-    return payload.get("__tool_runtime_context__") if isinstance(payload, dict) and isinstance(payload.get("__tool_runtime_context__"), dict) else {}
-
-
-def _file_space_grant(payload: dict[str, Any], *, space_id: UUID) -> dict[str, Any]:
-    runtime_context = _runtime_context(payload)
-    grants = runtime_context.get("file_spaces") if isinstance(runtime_context.get("file_spaces"), list) else []
-    for grant in grants:
-        if not isinstance(grant, dict):
-            continue
-        try:
-            grant_id = UUID(str(grant.get("id")))
-        except Exception:
-            continue
-        if grant_id == space_id:
-            return grant
-    raise FileSpacePermissionError("file space is not linked to this workflow run")
-
-
-def _resolve_space_id(payload: dict[str, Any]) -> UUID:
-    raw_value = payload.get("space_id")
-    runtime_context = _runtime_context(payload)
-    grants = runtime_context.get("file_spaces") if isinstance(runtime_context.get("file_spaces"), list) else []
-
-    normalized = str(raw_value or "").strip()
-    if normalized.lower() == "default":
-        if len(grants) != 1:
-            raise FileSpaceValidationError(
-                "space_id='default' requires exactly one linked file space in the workflow run"
-            )
-        grant = grants[0] if isinstance(grants[0], dict) else None
-        if not isinstance(grant, dict):
-            raise FileSpaceValidationError("default linked file space is invalid")
-        try:
-            return UUID(str(grant.get("id")))
-        except Exception as exc:
-            raise FileSpaceValidationError("default linked file space is invalid") from exc
-
-    try:
-        return UUID(normalized)
-    except Exception as exc:
-        raise FileSpaceValidationError("space_id must be a UUID or 'default'") from exc
-
-
-def _optional_uuid(value: Any) -> UUID | None:
-    try:
-        return UUID(str(value)) if value else None
-    except Exception:
-        return None
+def _file_space_toolset_payload(member_ids: list[str]) -> dict[str, Any]:
+    return {
+        "id": FILE_SPACE_TOOLSET_ID,
+        "name": FILE_SPACE_TOOLSET_NAME,
+        "description": FILE_SPACE_TOOLSET_DESCRIPTION,
+        "selection_mode": "expand_to_members",
+        "member_ids": list(member_ids),
+    }
 
 
 def _normalize_path_prefix(value: Any) -> str | None:
@@ -345,60 +330,6 @@ async def _list_filtered_entries(
     return [entry for entry in entries if entry.path == path_prefix or entry.path.startswith(prefix)]
 
 
-def _require_access(payload: dict[str, Any], *, space_id: UUID, write: bool) -> tuple[UUID, UUID, UUID | None, UUID | None]:
-    runtime_context = _runtime_context(payload)
-    tenant_id = _parse_uuid(runtime_context.get("tenant_id"), field="tenant_id")
-    project_id = _parse_uuid(runtime_context.get("project_id"), field="project_id")
-    raw_run_id = runtime_context.get("run_id")
-    raw_user_id = runtime_context.get("initiator_user_id") or runtime_context.get("user_id")
-    run_id = _optional_uuid(raw_run_id)
-    user_id = _optional_uuid(raw_user_id)
-    grant = _file_space_grant(payload, space_id=space_id)
-    access_mode = str(grant.get("access_mode") or "").strip().lower()
-    if write and access_mode != FileAccessMode.read_write.value:
-        raise FileSpacePermissionError("linked workflow has read-only access to this file space")
-    return tenant_id, project_id, user_id, run_id
-
-
-def _serialize_exception(exc: Exception) -> dict[str, Any]:
-    if isinstance(exc, FileSpacePermissionError):
-        return {"error": str(exc), "code": "FILE_SPACE_FORBIDDEN"}
-    if isinstance(exc, FileSpaceNotFoundError):
-        return {"error": str(exc), "code": "FILE_SPACE_NOT_FOUND"}
-    if isinstance(exc, FileSpaceValidationError):
-        return {"error": str(exc), "code": "FILE_SPACE_VALIDATION_FAILED"}
-    raise exc
-
-
-async def _with_service(
-    payload: Any,
-    *,
-    write: bool,
-    handler,
-) -> dict[str, Any]:
-    tool_payload = payload if isinstance(payload, dict) else {}
-    try:
-        space_id = _resolve_space_id(tool_payload)
-        tenant_id, project_id, user_id, run_id = _require_access(tool_payload, space_id=space_id, write=write)
-        async with postgres_engine.sessionmaker() as db:
-            service = FileSpaceService(db)
-            result = await handler(
-                db=db,
-                service=service,
-                tool_payload=tool_payload,
-                space_id=space_id,
-                tenant_id=tenant_id,
-                project_id=project_id,
-                user_id=user_id,
-                run_id=run_id,
-            )
-            if write:
-                await db.commit()
-            return result
-    except Exception as exc:
-        return _serialize_exception(exc)
-
-
 @register_tool_function("files_list")
 async def files_list(payload: Any) -> dict[str, Any]:
     async def _handler(**kwargs):
@@ -426,28 +357,49 @@ async def files_list(payload: Any) -> dict[str, Any]:
     return await _with_service(payload, write=False, handler=_handler)
 
 
+@register_tool_function("files_inspect")
+async def files_inspect(payload: Any) -> dict[str, Any]:
+    async def _handler(**kwargs):
+        return await inspect_file(
+            kwargs["authorized_context"],
+            path=str(kwargs["tool_payload"].get("path") or ""),
+        )
+
+    return await _with_service(payload, write=False, handler=_handler)
+
+
 @register_tool_function("files_read")
 async def files_read(payload: Any) -> dict[str, Any]:
     async def _handler(**kwargs):
-        entry, revision, content = await kwargs["service"].read_text_file(
-            tenant_id=kwargs["tenant_id"],
-            project_id=kwargs["project_id"],
-            space_id=kwargs["space_id"],
+        payload = await read_representation(
+            kwargs["authorized_context"],
             path=str(kwargs["tool_payload"].get("path") or ""),
+            representation="raw_text",
+            options={
+                "start_line": kwargs["tool_payload"].get("start_line") or kwargs["tool_payload"].get("startLine"),
+                "end_line": kwargs["tool_payload"].get("end_line") or kwargs["tool_payload"].get("endLine"),
+                "include_line_numbers": kwargs["tool_payload"].get("include_line_numbers")
+                or kwargs["tool_payload"].get("includeLineNumbers"),
+            },
         )
         return {
-            **_slice_text_content(
-                path=entry.path,
-                content=content,
-                start_line_raw=kwargs["tool_payload"].get("start_line") or kwargs["tool_payload"].get("startLine"),
-                end_line_raw=kwargs["tool_payload"].get("end_line") or kwargs["tool_payload"].get("endLine"),
-                include_line_numbers=bool(
-                    kwargs["tool_payload"].get("include_line_numbers") or kwargs["tool_payload"].get("includeLineNumbers")
-                ),
-            ),
-            "entry": FileSpaceService.serialize_entry(entry),
-            "revision": FileSpaceService.serialize_revision(revision),
+            key: value
+            for key, value in payload.items()
+            if key != "representation"
         }
+
+    return await _with_service(payload, write=False, handler=_handler)
+
+
+@register_tool_function("files_read_representation")
+async def files_read_representation(payload: Any) -> dict[str, Any]:
+    async def _handler(**kwargs):
+        return await read_representation(
+            kwargs["authorized_context"],
+            path=str(kwargs["tool_payload"].get("path") or ""),
+            representation=str(kwargs["tool_payload"].get("representation") or ""),
+            options=kwargs["tool_payload"].get("options"),
+        )
 
     return await _with_service(payload, write=False, handler=_handler)
 
@@ -705,6 +657,7 @@ async def files_download_meta(payload: Any) -> dict[str, Any]:
 
 async def ensure_file_space_tools(db: AsyncSession) -> list[str]:
     tool_ids: list[str] = []
+    tool_rows: list[ToolRegistry] = []
     for spec in FILE_SPACE_TOOL_SPECS:
         result = await db.execute(
             select(ToolRegistry).where(
@@ -754,6 +707,15 @@ async def ensure_file_space_tools(db: AsyncSession) -> list[str]:
             tool.is_system = True
             tool.published_at = tool.published_at or datetime.now(timezone.utc)
             set_tool_management_metadata(tool, ownership="system")
+        tool_rows.append(tool)
         tool_ids.append(str(tool.id))
+
+    toolset_payload = _file_space_toolset_payload(tool_ids)
+    for tool in tool_rows:
+        config_schema = tool.config_schema if isinstance(tool.config_schema, dict) else {}
+        tool.config_schema = {
+            **config_schema,
+            "toolset": toolset_payload,
+        }
     await db.flush()
     return tool_ids

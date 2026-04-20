@@ -342,6 +342,45 @@ async def validate_pipeline_config_if_needed(
     await validate_pipeline_binding_for_tenant(db, tenant_id=tenant_id, pipeline_id_raw=pipeline_id)
 
 
+def resolve_toolset_payload(tool: ToolRegistry | object) -> dict[str, Any] | None:
+    config_schema = getattr(tool, "config_schema", {}) or {}
+    if not isinstance(config_schema, dict):
+        return None
+
+    raw = config_schema.get("toolset")
+    if not isinstance(raw, dict):
+        return None
+
+    toolset_id = str(raw.get("id") or "").strip()
+    name = str(raw.get("name") or "").strip()
+    selection_mode = str(raw.get("selection_mode") or "expand_to_members").strip() or "expand_to_members"
+    raw_member_ids = raw.get("member_ids")
+    if not toolset_id or not name or not isinstance(raw_member_ids, list):
+        return None
+
+    member_ids: list[str] = []
+    seen: set[str] = set()
+    for value in raw_member_ids:
+        member_id = str(value or "").strip()
+        if not member_id or member_id in seen:
+            continue
+        seen.add(member_id)
+        member_ids.append(member_id)
+
+    current_tool_id = str(getattr(tool, "id", "") or "").strip()
+    if not member_ids or (current_tool_id and current_tool_id not in member_ids):
+        return None
+
+    description = str(raw.get("description") or "").strip() or None
+    return {
+        "id": toolset_id,
+        "name": name,
+        "description": description,
+        "selection_mode": selection_mode,
+        "member_ids": member_ids,
+    }
+
+
 def serialize_tool(tool: ToolRegistry | object, *, view: str = "full") -> dict[str, Any]:
     impl_type = get_tool_impl_type(tool)
     ownership, managed_by, source_object_type, source_object_id = resolve_tool_metadata(tool, impl_type)
@@ -380,6 +419,7 @@ def serialize_tool(tool: ToolRegistry | object, *, view: str = "full") -> dict[s
         "is_builtin_template": is_builtin_template(tool),
         "is_builtin_instance": is_builtin_instance(tool),
         "frontend_requirements": frontend_requirements_for_tool(tool),
+        "toolset": resolve_toolset_payload(tool),
         "is_active": bool(getattr(tool, "is_active", False)),
         "is_system": bool(getattr(tool, "is_system", False)),
         "created_at": getattr(tool, "created_at"),

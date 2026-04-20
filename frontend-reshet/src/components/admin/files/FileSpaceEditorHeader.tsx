@@ -1,6 +1,6 @@
 "use client"
 
-import { Loader2, Plus, RefreshCw, Save } from "lucide-react"
+import { Eye, FileSpreadsheet, FileText, Loader2, Plus, RefreshCw, Save } from "lucide-react"
 
 import { AdminPageHeader } from "@/components/admin/AdminPageHeader"
 import { CustomBreadcrumb, type BreadcrumbItemProps } from "@/components/ui/custom-breadcrumb"
@@ -19,6 +19,12 @@ type FileSpaceEditorHeaderProps = {
   onCreateSpace?: () => void
   onSaveAll?: () => void
   onArchiveSpace?: () => void
+  previewTextToggle?: {
+    visible: boolean
+    rawTextActive: boolean
+    formattedMode: "spreadsheet" | "preview"
+    onToggle: () => void
+  }
 }
 
 export function FileSpaceEditorHeader({
@@ -32,6 +38,7 @@ export function FileSpaceEditorHeader({
   onCreateSpace,
   onSaveAll,
   onArchiveSpace,
+  previewTextToggle,
 }: FileSpaceEditorHeaderProps) {
   const breadcrumbItems: BreadcrumbItemProps[] = [
     { label: "Files", href: "/admin/files", active: viewMode === "list" },
@@ -53,9 +60,16 @@ export function FileSpaceEditorHeader({
       </div>
       {viewMode === "list" ? (
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={onRefresh} disabled={controlsDisabled}>
-            <RefreshCw className="mr-2 h-4 w-4" />
-            Refresh
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 rounded-full text-muted-foreground hover:bg-transparent hover:text-foreground"
+            onClick={onRefresh}
+            disabled={controlsDisabled}
+            aria-label="Refresh file spaces"
+            title="Refresh file spaces"
+          >
+            <RefreshCw className="h-4 w-4" />
           </Button>
           <Button size="sm" onClick={onCreateSpace} disabled={controlsDisabled}>
             <Plus className="mr-2 h-4 w-4" />
@@ -64,10 +78,42 @@ export function FileSpaceEditorHeader({
         </div>
       ) : (
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={onRefresh} disabled={controlsDisabled}>
-            <RefreshCw className="mr-2 h-4 w-4" />
-            Refresh
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 rounded-full text-muted-foreground hover:bg-transparent hover:text-foreground"
+            onClick={onRefresh}
+            disabled={controlsDisabled}
+            aria-label="Refresh file preview"
+            title="Refresh file preview"
+          >
+            <RefreshCw className="h-4 w-4" />
           </Button>
+          {previewTextToggle?.visible ? (
+            <Button
+              variant="ghost"
+              size="icon"
+              className={`h-8 w-8 rounded-full hover:bg-transparent ${
+                previewTextToggle.rawTextActive
+                  ? "text-foreground"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+              onClick={previewTextToggle.onToggle}
+              disabled={controlsDisabled}
+              aria-label={previewTextToggle.rawTextActive ? "Switch to formatted view" : "Switch to raw text view"}
+              title={previewTextToggle.rawTextActive ? "Switch to formatted view" : "Switch to raw text view"}
+            >
+              {previewTextToggle.rawTextActive ? (
+                previewTextToggle.formattedMode === "spreadsheet" ? (
+                  <FileSpreadsheet className="h-4 w-4" />
+                ) : (
+                  <Eye className="h-4 w-4" />
+                )
+              ) : (
+                <FileText className="h-4 w-4" />
+              )}
+            </Button>
+          ) : null}
           <Button
             variant="outline"
             size="sm"

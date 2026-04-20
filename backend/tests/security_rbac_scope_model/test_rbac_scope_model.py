@@ -65,6 +65,7 @@ async def test_role_permission_scope_key_unique_per_role(db_session):
 
     role = Role(
         tenant_id=tenant.id,
+        family="project",
         name=f"custom-{uuid4().hex[:6]}",
         description="custom",
         is_system=False,
@@ -80,7 +81,7 @@ async def test_role_permission_scope_key_unique_per_role(db_session):
             user_id=user.id,
             actor_type=ActorType.USER,
             scope_id=tenant.id,
-            scope_type="tenant",
+            scope_type="project",
             assigned_by=user.id,
         )
     )

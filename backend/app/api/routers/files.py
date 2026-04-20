@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from pathlib import PurePosixPath
 from typing import Any
+from urllib.parse import quote
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
@@ -19,6 +21,18 @@ from app.services.file_spaces.service import (
 
 
 router = APIRouter(prefix="/admin/files", tags=["files"])
+
+
+def _build_download_content_disposition(path: str) -> str:
+    filename = PurePosixPath(str(path or "")).name or "download"
+    ascii_filename = filename.encode("ascii", "ignore").decode("ascii").strip().replace('"', "")
+
+    if not ascii_filename or ascii_filename.startswith("."):
+        suffix = PurePosixPath(filename).suffix
+        ascii_filename = f"download{suffix}" if suffix else "download"
+
+    encoded_filename = quote(filename, safe="")
+    return f'attachment; filename="{ascii_filename}"; filename*=UTF-8\'\'{encoded_filename}'
 
 
 class CreateFileSpaceRequest(BaseModel):
@@ -359,7 +373,7 @@ async def download_entry(
             space_id=space_id,
             path=path,
         )
-        headers = {"Content-Disposition": f'attachment; filename="{entry.path.rsplit("/", 1)[-1]}"'}
+        headers = {"Content-Disposition": _build_download_content_disposition(entry.path)}
         return Response(content=payload, media_type=revision.mime_type, headers=headers)
     except Exception as exc:
         raise _handle_service_error(exc) from exc

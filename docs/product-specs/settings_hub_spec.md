@@ -1,6 +1,6 @@
 # Settings Hub Spec
 
-Last Updated: 2026-04-19
+Last Updated: 2026-04-20
 
 This document is the canonical product/specification overview for the unified settings governance surface.
 
@@ -48,6 +48,10 @@ Old standalone organization, security, and audit pages are removed from the inte
 - `Audit Logs` is organization-scoped with resource/user filtering.
 
 ## People & Permissions
+
+For the canonical role and membership model used by this surface, see:
+
+- `docs/product-specs/people_permissions_roles_spec.md`
 
 `People & Permissions` contains these sub-tabs:
 - `Members`

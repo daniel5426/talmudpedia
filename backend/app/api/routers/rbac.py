@@ -154,6 +154,7 @@ async def create_role(
 
     role = Role(
         tenant_id=tenant.id,
+        family="project",
         name=request.name,
         description=request.description,
         is_system=False,

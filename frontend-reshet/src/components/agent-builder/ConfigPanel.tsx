@@ -30,6 +30,7 @@ import {
     Mic,
     AlertTriangle,
     ChevronDown,
+    ChevronRight,
     ChevronUp,
 } from "lucide-react"
 import { Input } from "@/components/ui/input"
@@ -791,11 +792,134 @@ function ToolListField({
     toolCatalog: ToolDefinition[]
 }) {
     const [open, setOpen] = useState(false)
+    const [expandedToolsets, setExpandedToolsets] = useState<Record<string, boolean>>({})
     const builderUi = useAgentBuilderUi()
-    const selectedTools = toolCatalog.filter((tool) => value.includes(tool.id))
+    const selectedIds = useMemo(() => new Set(value), [value])
+    const toolById = useMemo(() => new Map(toolCatalog.map((tool) => [tool.id, tool])), [toolCatalog])
+    const resolvedToolsets = useMemo(() => {
+        const groups: Array<{
+            id: string
+            name: string
+            description: string | null
+            memberIds: string[]
+            members: ToolDefinition[]
+        }> = []
+        const seen = new Set<string>()
+
+        toolCatalog.forEach((tool) => {
+            const meta = tool.toolset
+            if (!meta || seen.has(meta.id)) return
+            seen.add(meta.id)
+            const members = meta.member_ids
+                .map((memberId) => toolById.get(memberId))
+                .filter((member): member is ToolDefinition => Boolean(member))
+            if (members.length === 0) return
+            groups.push({
+                id: meta.id,
+                name: meta.name,
+                description: meta.description || null,
+                memberIds: members.map((member) => member.id),
+                members,
+            })
+        })
+
+        return groups
+    }, [toolById, toolCatalog])
+    const fullySelectedToolsets = useMemo(() => {
+        return resolvedToolsets.filter((toolset) => toolset.memberIds.every((memberId) => selectedIds.has(memberId)))
+    }, [resolvedToolsets, selectedIds])
+    const fullySelectedToolsetMemberIds = useMemo(() => {
+        const next = new Set<string>()
+        fullySelectedToolsets.forEach((toolset) => {
+            toolset.memberIds.forEach((memberId) => next.add(memberId))
+        })
+        return next
+    }, [fullySelectedToolsets])
+    const selectedTools = toolCatalog.filter((tool) => selectedIds.has(tool.id) && !fullySelectedToolsetMemberIds.has(tool.id))
+
+    const toggleToolsetExpanded = (toolsetId: string) => {
+        setExpandedToolsets((current) => ({
+            ...current,
+            [toolsetId]: !current[toolsetId],
+        }))
+    }
 
     return (
         <div className="space-y-2">
+            {fullySelectedToolsets.length > 0 && (
+                <div className="space-y-1.5">
+                    {fullySelectedToolsets.map((toolset) => {
+                        const isExpanded = Boolean(expandedToolsets[toolset.id])
+                        return (
+                            <div key={toolset.id} className="rounded-md border border-border/60 bg-secondary/40 px-2 py-1.5">
+                                <div className="flex items-center gap-2">
+                                    <button
+                                        type="button"
+                                        className="inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:bg-muted/50 transition-colors"
+                                        onClick={() => toggleToolsetExpanded(toolset.id)}
+                                        aria-label={isExpanded ? `Collapse ${toolset.name}` : `Expand ${toolset.name}`}
+                                    >
+                                        <ChevronRight className={cn("h-3.5 w-3.5 transition-transform", isExpanded && "rotate-90")} />
+                                    </button>
+                                    <div className="min-w-0 flex-1">
+                                        <div className="flex items-center gap-1.5 min-w-0">
+                                            <Wrench className="h-3 w-3 text-muted-foreground shrink-0" />
+                                            <span className="truncate text-xs font-medium">{toolset.name}</span>
+                                            <span className="shrink-0 text-[10px] text-muted-foreground">
+                                                {toolset.memberIds.length} tools
+                                            </span>
+                                        </div>
+                                        {toolset.description && (
+                                            <div className="truncate text-[10px] text-muted-foreground mt-0.5">
+                                                {toolset.description}
+                                            </div>
+                                        )}
+                                    </div>
+                                    <button
+                                        type="button"
+                                        className="rounded-sm p-0.5 text-muted-foreground/70 hover:text-foreground hover:bg-muted transition-colors shrink-0"
+                                        onClick={() => onChange(value.filter((id) => !toolset.memberIds.includes(id)))}
+                                        aria-label={`Remove ${toolset.name}`}
+                                    >
+                                        <X className="h-3 w-3" />
+                                    </button>
+                                </div>
+                                {isExpanded && (
+                                    <div className="mt-2 flex flex-wrap gap-1.5 pl-8">
+                                        {toolset.members.map((tool) => (
+                                            <div
+                                                key={tool.id}
+                                                className={cn(
+                                                    "inline-flex items-center gap-0.5 rounded-md border border-transparent",
+                                                    "bg-secondary text-secondary-foreground text-xs pl-1 pr-0.5 py-0.5"
+                                                )}
+                                            >
+                                                <button
+                                                    type="button"
+                                                    className="inline-flex items-center gap-1 min-w-0 max-w-[220px] rounded px-1 py-0.5 hover:bg-muted/50 transition-colors"
+                                                    onClick={() => builderUi?.openToolDetailFromSettings(tool.id)}
+                                                >
+                                                    <Wrench className="h-3 w-3 text-muted-foreground shrink-0" />
+                                                    <span className="truncate font-medium">{tool.name}</span>
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    className="rounded-sm p-0.5 text-muted-foreground/70 hover:text-foreground hover:bg-muted transition-colors shrink-0"
+                                                    onClick={() => onChange(value.filter((id) => id !== tool.id))}
+                                                    aria-label={`Remove ${tool.name}`}
+                                                >
+                                                    <X className="h-3 w-3" />
+                                                </button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        )
+                    })}
+                </div>
+            )}
+
             {selectedTools.length > 0 && (
                 <div className="flex flex-wrap gap-1.5">
                     {selectedTools.map((tool) => (

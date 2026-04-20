@@ -1,6 +1,6 @@
 # Tools Domain Spec
 
-Last Updated: 2026-04-14
+Last Updated: 2026-04-20
 
 This document is the canonical product/specification overview for the tools domain.
 
@@ -14,6 +14,17 @@ Tools are callable capabilities that agents can execute. The tools domain provid
 
 In the current platform, the canonical runtime-facing tool catalog is the DB-backed `ToolRegistry` domain exposed at `/tools`.
 The small in-process helper in `backend/app/services/tool_function_registry.py` is only a function-dispatch map for `FUNCTION` tools, not the canonical registry for the tools domain.
+
+## Toolsets
+
+Toolsets are catalog/grouping metadata for tool-selection UX. They are not runtime-callable tools and they do not change the agent runtime contract.
+
+Current rules:
+- a toolset is exposed as metadata on member tool rows in `/tools`
+- toolsets are used by selection UIs to present one grouped entry that can expand into member tools
+- selecting a toolset in the builder expands to the member tool ids before save
+- compile/runtime continue to receive only flat tool ids
+- v1 selection mode is `expand_to_members`
 
 Important boundary:
 - `/tools` is the authoring surface for manual tools
@@ -122,6 +133,7 @@ Current invocation rules:
 - `ToolRegistry.schema.input` is the authoritative argument schema for registered tools
 - `execution.validation_mode` is `strict` by default and may be explicitly set to `none`
 - runtime metadata is stripped from model input before validation and passed separately to the backend executor
+- generic tool implementations may consume authorized file references from runtime file-space grants through shared backend access helpers; this is not limited to the `files.*` tool module
 - generic wrapper recovery is removed; wrapped payloads such as `args`, `input`, `parameters`, `payload`, `data`, `arguments`, and `value` are not executor-supported compatibility shapes
 - compile-time failures return a shared `TOOL_ARGUMENT_COMPILE_FAILED` envelope with stable structured issue codes
 
@@ -164,6 +176,8 @@ Current contract boundary:
 Current system-tool note:
 - system tools can also be artifact-backed
 - the architect-visible `platform-rag`, `platform-agents`, `platform-assets`, and `platform-governance` tools are global/system `FUNCTION` tools backed by native backend dispatch, not by the control-plane SDK shim runtime
+- the file-space `files.*` system tools are also grouped into the `file_space_memory` toolset for agent-builder selection UX
+- the file-space surface now includes generic discovery/representation reads so other tools can share the same file-reference contract instead of inventing per-tool file access
 
 ## Artifact Connection
 

@@ -7,21 +7,21 @@ from app.db.postgres.models.registry import ModelRegistry, ModelCapabilityType, 
 
 
 @pytest.mark.asyncio
-async def test_get_tenant_settings_returns_normalized_defaults(client, db_session):
+async def test_get_tenant_settings_returns_normalized_defaults(client, db_session, run_prefix):
     tenant = Tenant(
         name="Tenant Settings",
-        slug="tenant-settings",
+        slug=f"tenant-settings-{run_prefix}",
         settings={
             "default_chat_model_id": "chat-123",
             "default_embedding_model_id": None,
             "default_retrieval_policy": "hybrid",
         },
     )
-    user = User(email="owner@tenant-settings.com", hashed_password="x", role="user")
+    user = User(email=f"owner-{run_prefix}@tenant-settings.com", hashed_password="x", role="user")
     db_session.add_all([tenant, user])
     await db_session.flush()
 
-    root = OrgUnit(tenant_id=tenant.id, parent_id=None, name="Root", slug="root-settings", type=OrgUnitType.org)
+    root = OrgUnit(tenant_id=tenant.id, parent_id=None, name="Root", slug=f"root-settings-{run_prefix}", type=OrgUnitType.org)
     db_session.add(root)
     await db_session.flush()
 
@@ -52,13 +52,13 @@ async def test_get_tenant_settings_returns_normalized_defaults(client, db_sessio
 
 
 @pytest.mark.asyncio
-async def test_patch_tenant_settings_accepts_valid_defaults(client, db_session):
-    tenant = Tenant(name="Tenant Defaults", slug="tenant-defaults")
-    user = User(email="owner@tenant-defaults.com", hashed_password="x", role="user")
+async def test_patch_tenant_settings_accepts_valid_defaults(client, db_session, run_prefix):
+    tenant = Tenant(name="Tenant Defaults", slug=f"tenant-defaults-{run_prefix}")
+    user = User(email=f"owner-{run_prefix}@tenant-defaults.com", hashed_password="x", role="user")
     db_session.add_all([tenant, user])
     await db_session.flush()
 
-    root = OrgUnit(tenant_id=tenant.id, parent_id=None, name="Root", slug="root-defaults", type=OrgUnitType.org)
+    root = OrgUnit(tenant_id=tenant.id, parent_id=None, name="Root", slug=f"root-defaults-{run_prefix}", type=OrgUnitType.org)
     db_session.add(root)
     await db_session.flush()
 
@@ -112,13 +112,13 @@ async def test_patch_tenant_settings_accepts_valid_defaults(client, db_session):
 
 
 @pytest.mark.asyncio
-async def test_patch_tenant_settings_rejects_invalid_capability(client, db_session):
-    tenant = Tenant(name="Tenant Invalid", slug="tenant-invalid-cap")
-    user = User(email="owner@tenant-invalid.com", hashed_password="x", role="user")
+async def test_patch_tenant_settings_rejects_invalid_capability(client, db_session, run_prefix):
+    tenant = Tenant(name="Tenant Invalid", slug=f"tenant-invalid-cap-{run_prefix}")
+    user = User(email=f"owner-{run_prefix}@tenant-invalid.com", hashed_password="x", role="user")
     db_session.add_all([tenant, user])
     await db_session.flush()
 
-    root = OrgUnit(tenant_id=tenant.id, parent_id=None, name="Root", slug="root-invalid", type=OrgUnitType.org)
+    root = OrgUnit(tenant_id=tenant.id, parent_id=None, name="Root", slug=f"root-invalid-{run_prefix}", type=OrgUnitType.org)
     db_session.add(root)
     await db_session.flush()
 
@@ -158,13 +158,13 @@ async def test_patch_tenant_settings_rejects_invalid_capability(client, db_sessi
 
 
 @pytest.mark.asyncio
-async def test_patch_tenant_settings_rejects_unknown_model(client, db_session):
-    tenant = Tenant(name="Tenant Unknown", slug="tenant-unknown-model")
-    user = User(email="owner@tenant-unknown.com", hashed_password="x", role="user")
+async def test_patch_tenant_settings_rejects_unknown_model(client, db_session, run_prefix):
+    tenant = Tenant(name="Tenant Unknown", slug=f"tenant-unknown-model-{run_prefix}")
+    user = User(email=f"owner-{run_prefix}@tenant-unknown.com", hashed_password="x", role="user")
     db_session.add_all([tenant, user])
     await db_session.flush()
 
-    root = OrgUnit(tenant_id=tenant.id, parent_id=None, name="Root", slug="root-unknown", type=OrgUnitType.org)
+    root = OrgUnit(tenant_id=tenant.id, parent_id=None, name="Root", slug=f"root-unknown-{run_prefix}", type=OrgUnitType.org)
     db_session.add(root)
     await db_session.flush()
 

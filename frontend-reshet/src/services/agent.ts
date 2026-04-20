@@ -191,6 +191,15 @@ export type ToolStatus = "draft" | "published" | "deprecated" | "disabled";
 export type ToolTypeBucket = "built_in" | "mcp" | "artifact" | "custom";
 export type ToolOwnership = "manual" | "artifact_bound" | "pipeline_bound" | "agent_bound" | "system";
 export type ToolManager = "tools" | "artifacts" | "pipelines" | "agents" | "system";
+export type ToolsetSelectionMode = "expand_to_members";
+
+export interface ToolsetDefinition {
+  id: string;
+  name: string;
+  description?: string | null;
+  selection_mode: ToolsetSelectionMode;
+  member_ids: string[];
+}
 
 export interface ToolDefinition {
   id: string;
@@ -226,6 +235,7 @@ export interface ToolDefinition {
   builtin_template_id?: string | null;
   is_builtin_template?: boolean;
   is_builtin_instance?: boolean;
+  toolset?: ToolsetDefinition | null;
   frontend_requirements?: {
     required: boolean;
     renderer_kind: string;

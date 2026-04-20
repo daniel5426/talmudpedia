@@ -158,6 +158,7 @@ class ToolResponse(BaseModel):
     is_builtin_template: bool = False
     is_builtin_instance: bool = False
     frontend_requirements: Optional[dict[str, Any]] = None
+    toolset: Optional[dict[str, Any]] = None
     is_active: bool
     is_system: bool
     created_at: datetime
@@ -454,6 +455,7 @@ def _serialize_tool(tool: ToolRegistry | object) -> ToolResponse:
         is_builtin_template=_is_builtin_template(tool),
         is_builtin_instance=_is_builtin_instance(tool),
         frontend_requirements=frontend_requirements_for_tool(tool),
+        toolset=tool_admin.resolve_toolset_payload(tool),
         is_active=bool(getattr(tool, "is_active", False)),
         is_system=bool(getattr(tool, "is_system", False)),
         created_at=getattr(tool, "created_at"),

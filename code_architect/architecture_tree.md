@@ -166,6 +166,8 @@ backend/app/services/control_plane/rag_admin_service.py
 backend/app/services/control_plane/artifact_admin_service.py
 backend/app/services/control_plane/orchestration_admin_service.py
 backend/app/services/file_spaces/
+backend/app/services/file_reference_access.py
+backend/app/services/file_representation_service.py
 backend/app/services/file_space_tools.py
 backend/app/services/run_invocation_service.py
 backend/app/services/resource_policy_service.py

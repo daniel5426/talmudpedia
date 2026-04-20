@@ -6,7 +6,10 @@ import { useParams, useRouter } from "next/navigation"
 
 import { FileSpaceEditorHeader } from "@/components/admin/files/FileSpaceEditorHeader"
 import { FileSpaceConfigPanel } from "@/components/admin/files/FileSpaceConfigPanel"
+import { FileSpaceDelimitedTextEditor } from "@/components/admin/files/FileSpaceDelimitedTextEditor"
+import { FileSpaceMarkdownPreview } from "@/components/admin/files/FileSpaceMarkdownPreview"
 import { FileSpaceWorkspaceEditor } from "@/components/admin/files/FileSpaceWorkspaceEditor"
+import { resolveFileSpacePreviewAdapter } from "@/components/admin/files/fileSpacePreviewUtils"
 import { ARTIFACT_CONFIG_FILE_PATH } from "@/components/admin/artifacts/artifactWorkspaceUtils"
 import { Textarea } from "@/components/ui/textarea"
 import {
@@ -86,6 +89,7 @@ export default function FileSpaceDetailPage() {
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [saving, setSaving] = useState(false)
   const [textDrafts, setTextDrafts] = useState<Record<string, TextDraftState>>({})
+  const [previewTextMode, setPreviewTextMode] = useState<"default" | "raw-text">("default")
 
   const activeFilePathRef = useRef(activeFilePath)
   const entriesRef = useRef(entries)
@@ -111,9 +115,15 @@ export default function FileSpaceDetailPage() {
     () => entries.find((entry) => entry.path === activeFilePath) || null,
     [entries, activeFilePath],
   )
+  const selectedPreviewAdapter = useMemo(
+    () => (selectedEntry ? resolveFileSpacePreviewAdapter(selectedEntry) : null),
+    [selectedEntry],
+  )
 
   const selectedTextDraft =
     selectedEntry?.entry_type === "file" && selectedEntry.is_text ? textDrafts[selectedEntry.path] || null : null
+  const supportsHeaderRawTextToggle =
+    selectedPreviewAdapter?.id === "delimited-text" || selectedPreviewAdapter?.id === "markdown"
 
   const unsavedPaths = useMemo(
     () =>
@@ -422,7 +432,46 @@ export default function FileSpaceDetailPage() {
     return (
       <div className="relative flex h-full w-full flex-col">
         <div className="relative flex-1 min-h-0">
-          {selectedEntry.is_text ? (
+          {selectedPreviewAdapter?.id === "delimited-text" ? (
+            <FileSpaceDelimitedTextEditor
+              path={selectedEntry.path}
+              mimeType={selectedEntry.mime_type}
+              value={selectedTextDraft?.content ?? ""}
+              mode={previewTextMode === "raw-text" ? "raw" : "grid"}
+              onChange={(nextValue) =>
+                setTextDrafts((current) => ({
+                  ...current,
+                  [selectedEntry.path]: {
+                    content: nextValue,
+                    savedContent: current[selectedEntry.path]?.savedContent ?? "",
+                    mimeType: current[selectedEntry.path]?.mimeType ?? selectedEntry.mime_type,
+                    revision: current[selectedEntry.path]?.revision ?? null,
+                  },
+                }))
+              }
+            />
+          ) : selectedPreviewAdapter?.id === "markdown" ? (
+            previewTextMode !== "raw-text" ? (
+              <FileSpaceMarkdownPreview content={selectedTextDraft?.content ?? ""} />
+            ) : (
+              <Textarea
+                value={selectedTextDraft?.content ?? ""}
+                onChange={(event) =>
+                  setTextDrafts((current) => ({
+                    ...current,
+                    [selectedEntry.path]: {
+                      content: event.target.value,
+                      savedContent: current[selectedEntry.path]?.savedContent ?? "",
+                      mimeType: current[selectedEntry.path]?.mimeType ?? selectedEntry.mime_type,
+                      revision: current[selectedEntry.path]?.revision ?? null,
+                    },
+                  }))
+                }
+                className="absolute inset-0 h-full w-full resize-none rounded-none border-0 bg-transparent px-5 py-4 font-mono text-sm leading-relaxed focus-visible:ring-0 focus-visible:ring-offset-0"
+                spellCheck={false}
+              />
+            )
+          ) : selectedPreviewAdapter?.editorMode === "text" ? (
             <Textarea
               value={selectedTextDraft?.content ?? ""}
               onChange={(event) =>
@@ -458,6 +507,12 @@ export default function FileSpaceDetailPage() {
         hasUnsavedChanges={hasUnsavedChanges}
         isSaving={saving}
         onRefresh={() => loadAll(undefined, true)}
+        previewTextToggle={{
+          visible: supportsHeaderRawTextToggle,
+          rawTextActive: previewTextMode === "raw-text",
+          formattedMode: selectedPreviewAdapter?.id === "delimited-text" ? "spreadsheet" : "preview",
+          onToggle: () => setPreviewTextMode((current) => (current === "raw-text" ? "default" : "raw-text")),
+        }}
         onSaveAll={() => {
           void handleSaveAll()
         }}

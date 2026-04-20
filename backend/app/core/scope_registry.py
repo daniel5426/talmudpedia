@@ -144,16 +144,23 @@ PROJECT_SCOPES: set[str] = {
 
 ALL_SCOPES: list[str] = sorted(ORGANIZATION_SCOPES.union(PROJECT_SCOPES))
 
+ROLE_FAMILY_ORGANIZATION = "organization"
+ROLE_FAMILY_PROJECT = "project"
+
+ORGANIZATION_OWNER_ROLE = "Owner"
+ORGANIZATION_READER_ROLE = "Reader"
+PROJECT_OWNER_ROLE = "Owner"
+PROJECT_MEMBER_ROLE = "Member"
+PROJECT_VIEWER_ROLE = "Viewer"
+
 ORGANIZATION_DEFAULT_ROLE_SCOPES: dict[str, list[str]] = {
-    "organization_owner": sorted(set(ORGANIZATION_SCOPES)),
-    "organization_admin": sorted(set(ORGANIZATION_SCOPES) - {"organizations.write"}),
-    "organization_member": sorted({"organizations.read", "projects.read"}),
+    ORGANIZATION_OWNER_ROLE: sorted(set(ORGANIZATION_SCOPES)),
+    ORGANIZATION_READER_ROLE: sorted({"organizations.read", "projects.read"}),
 }
 
 PROJECT_DEFAULT_ROLE_SCOPES: dict[str, list[str]] = {
-    "project_owner": sorted(set(PROJECT_SCOPES)),
-    "project_admin": sorted(set(PROJECT_SCOPES) - {"api_keys.write"}),
-    "project_editor": sorted(
+    PROJECT_OWNER_ROLE: sorted(set(PROJECT_SCOPES).union({"prompts.read", "prompts.write"})),
+    PROJECT_MEMBER_ROLE: sorted(
         {
             "apps.read",
             "apps.write",
@@ -177,11 +184,9 @@ PROJECT_DEFAULT_ROLE_SCOPES: dict[str, list[str]] = {
             "prompts.write",
             "threads.read",
             "threads.write",
-            "apps.read",
-            "apps.write",
         }
     ),
-    "project_viewer": sorted(
+    PROJECT_VIEWER_ROLE: sorted(
         {
             "apps.read",
             "pipelines.catalog.read",
@@ -198,12 +203,17 @@ PROJECT_DEFAULT_ROLE_SCOPES: dict[str, list[str]] = {
     ),
 }
 
+CUSTOM_ROLE_ALLOWED_SCOPES: dict[str, set[str]] = {
+    ROLE_FAMILY_ORGANIZATION: set(ORGANIZATION_SCOPES),
+    ROLE_FAMILY_PROJECT: set(PROJECT_SCOPES).union({"prompts.read", "prompts.write"}),
+}
+
 # Legacy export name kept as the active organization-role seed set for code paths
 # that have not yet been renamed.
 TENANT_DEFAULT_ROLE_SCOPES: dict[str, list[str]] = {
-    "owner": list(ORGANIZATION_DEFAULT_ROLE_SCOPES["organization_owner"]),
-    "admin": list(ORGANIZATION_DEFAULT_ROLE_SCOPES["organization_admin"]),
-    "member": list(ORGANIZATION_DEFAULT_ROLE_SCOPES["organization_member"]),
+    "owner": list(ORGANIZATION_DEFAULT_ROLE_SCOPES[ORGANIZATION_OWNER_ROLE]),
+    "admin": list(ORGANIZATION_DEFAULT_ROLE_SCOPES[ORGANIZATION_OWNER_ROLE]),
+    "member": list(ORGANIZATION_DEFAULT_ROLE_SCOPES[ORGANIZATION_READER_ROLE]),
 }
 
 # Legacy RBAC migration bridge: existing enum permissions -> canonical scope keys.
@@ -262,11 +272,29 @@ def build_scope_catalog() -> dict[str, Any]:
         "groups": {k: sorted(v) for k, v in sorted(grouped.items())},
         "all_scopes": list(ALL_SCOPES),
         "default_roles": {
-            **{k: list(v) for k, v in ORGANIZATION_DEFAULT_ROLE_SCOPES.items()},
-            **{k: list(v) for k, v in PROJECT_DEFAULT_ROLE_SCOPES.items()},
+            "organization": {k: list(v) for k, v in ORGANIZATION_DEFAULT_ROLE_SCOPES.items()},
+            "project": {k: list(v) for k, v in PROJECT_DEFAULT_ROLE_SCOPES.items()},
         },
     }
 
 
 def is_platform_admin_role(role_value: str | None) -> bool:
     return str(role_value or "").strip().lower() in {"admin", "system", "system_admin"}
+
+
+def allowed_scopes_for_role_family(family: str) -> set[str]:
+    return set(CUSTOM_ROLE_ALLOWED_SCOPES.get(str(family or "").strip().lower(), set()))
+
+
+def preset_role_scopes(*, family: str, name: str) -> list[str]:
+    normalized_family = str(family or "").strip().lower()
+    normalized_name = str(name or "").strip()
+    if normalized_family == ROLE_FAMILY_ORGANIZATION:
+        return list(ORGANIZATION_DEFAULT_ROLE_SCOPES.get(normalized_name, []))
+    if normalized_family == ROLE_FAMILY_PROJECT:
+        return list(PROJECT_DEFAULT_ROLE_SCOPES.get(normalized_name, []))
+    return []
+
+
+def is_preset_role(*, family: str, name: str) -> bool:
+    return bool(preset_role_scopes(family=family, name=name))

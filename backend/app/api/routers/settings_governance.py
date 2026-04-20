@@ -14,9 +14,17 @@ from app.api.dependencies import get_current_principal
 from app.api.routers.auth import get_current_user
 from app.api.routers.org_units import _normalize_tenant_settings, _validate_default_model_id
 from app.api.routers.rbac import _role_permissions
-from app.core.scope_registry import normalize_scope_list
+from app.core.scope_registry import (
+    ORGANIZATION_READER_ROLE,
+    PROJECT_MEMBER_ROLE,
+    ROLE_FAMILY_ORGANIZATION,
+    ROLE_FAMILY_PROJECT,
+    allowed_scopes_for_role_family,
+    is_preset_role,
+    normalize_scope_list,
+)
 from app.db.postgres.models.audit import AuditLog, AuditResult
-from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Tenant, TenantStatus, User
+from app.db.postgres.models.identity import MembershipStatus, OrgInvite, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Tenant, TenantStatus, User
 from app.db.postgres.models.registry import ModelCapabilityType
 from app.db.postgres.models.rbac import Action, ActorType, ResourceType, Role, RoleAssignment, RolePermission
 from app.db.postgres.models.security import ProjectAPIKey, ProjectAPIKeyStatus, TenantAPIKey, TenantAPIKeyStatus
@@ -79,6 +87,8 @@ class InviteResponse(BaseModel):
     id: str
     email: str | None = None
     project_ids: list[str] = Field(default_factory=list)
+    organization_role: str = ORGANIZATION_READER_ROLE
+    project_role: str | None = None
     accepted_at: datetime | None = None
     created_at: datetime | None = None
     expires_at: datetime | None = None
@@ -114,10 +124,12 @@ class UpdateGroupRequest(BaseModel):
 
 class RoleResponse(BaseModel):
     id: str
+    family: str
     name: str
     description: str | None = None
     permissions: list[str]
     is_system: bool
+    is_preset: bool
     created_at: datetime
 
 
@@ -126,6 +138,7 @@ class RoleAssignmentResponse(BaseModel):
     user_id: str
     user_email: str | None = None
     role_id: str
+    role_family: str
     role_name: str
     scope_id: str
     scope_type: str
@@ -133,12 +146,14 @@ class RoleAssignmentResponse(BaseModel):
 
 
 class CreateRoleRequest(BaseModel):
+    family: str
     name: str
     description: str | None = None
     permissions: list[str] = Field(default_factory=list)
 
 
 class UpdateRoleRequest(BaseModel):
+    family: str | None = None
     name: str | None = None
     description: str | None = None
     permissions: list[str] | None = None
@@ -231,6 +246,31 @@ def _require_scope(principal: dict[str, Any], *required_scopes: str) -> None:
         if scope in scopes:
             return
     raise HTTPException(status_code=403, detail=f"Missing required scope: {' or '.join(required_scopes)}")
+
+
+def _normalize_role_family(value: str) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized not in {ROLE_FAMILY_ORGANIZATION, ROLE_FAMILY_PROJECT}:
+        raise HTTPException(status_code=400, detail="Role family must be organization or project")
+    return normalized
+
+
+def _normalize_assignment_scope_type(value: str) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized in {"organization", "tenant", "org", "org_unit"}:
+        return ROLE_FAMILY_ORGANIZATION
+    if normalized == "project":
+        return ROLE_FAMILY_PROJECT
+    raise HTTPException(status_code=400, detail="Role assignments must target organization or project scope")
+
+
+def _validate_role_permissions(*, family: str, permissions: list[str]) -> list[str]:
+    normalized = normalize_scope_list(permissions)
+    allowed = allowed_scopes_for_role_family(family)
+    invalid = [scope for scope in normalized if scope not in allowed]
+    if invalid:
+        raise HTTPException(status_code=400, detail=f"Invalid {family} role scopes: {', '.join(invalid)}")
+    return normalized
 
 
 async def _active_organization(db: AsyncSession, principal: dict[str, Any]) -> Tenant:
@@ -482,6 +522,10 @@ async def list_invitations(
     organization = await _active_organization(db, principal)
     if not organization.workos_organization_id:
         return []
+    local_invites = (
+        await db.execute(select(OrgInvite).where(OrgInvite.tenant_id == organization.id, OrgInvite.accepted_at.is_(None)))
+    ).scalars().all()
+    local_by_token = {invite.token: invite for invite in local_invites}
     invites = WorkOSAuthService(db).client.user_management.list_invitations(
         organization_id=organization.workos_organization_id,
     )
@@ -489,7 +533,9 @@ async def list_invitations(
         InviteResponse(
             id=str(getattr(invite, "id", "")),
             email=getattr(invite, "email", None),
-            project_ids=[],
+            project_ids=list(local_by_token.get(str(getattr(invite, "id", "")), None).project_ids if local_by_token.get(str(getattr(invite, "id", "")), None) else []),
+            organization_role=ORGANIZATION_READER_ROLE,
+            project_role=PROJECT_MEMBER_ROLE if local_by_token.get(str(getattr(invite, "id", "")), None) and local_by_token.get(str(getattr(invite, "id", "")), None).project_ids else None,
             accepted_at=getattr(invite, "accepted_at", None) or getattr(invite, "acceptedAt", None),
             created_at=getattr(invite, "created_at", None) or getattr(invite, "createdAt", None),
             expires_at=getattr(invite, "expires_at", None) or getattr(invite, "expiresAt", None),
@@ -526,10 +572,24 @@ async def create_invitation(
         organization_id=organization.workos_organization_id,
         inviter_user_id=current_user.workos_user_id if current_user and current_user.workos_user_id else None,
     )
+    db.add(
+        OrgInvite(
+            email=str(payload.email),
+            tenant_id=organization.id,
+            role=OrgRole.member,
+            project_ids=payload.project_ids,
+            token=str(getattr(invite, "id", "")),
+            expires_at=(getattr(invite, "expires_at", None) or getattr(invite, "expiresAt", None) or datetime.now(timezone.utc)),
+            created_by=UUID(str(principal["user_id"])),
+        )
+    )
+    await db.commit()
     return InviteResponse(
         id=str(getattr(invite, "id", "")),
         email=getattr(invite, "email", None),
         project_ids=payload.project_ids,
+        organization_role=ORGANIZATION_READER_ROLE,
+        project_role=PROJECT_MEMBER_ROLE if payload.project_ids else None,
         accepted_at=getattr(invite, "accepted_at", None) or getattr(invite, "acceptedAt", None),
         created_at=getattr(invite, "created_at", None) or getattr(invite, "createdAt", None),
         expires_at=getattr(invite, "expires_at", None) or getattr(invite, "expiresAt", None),
@@ -547,6 +607,18 @@ async def revoke_invitation(
     if not organization.workos_organization_id:
         raise HTTPException(status_code=400, detail="Organization is not linked to WorkOS")
     WorkOSAuthService(db).client.user_management.revoke_invitation(invite_id)
+    local_invite = (
+        await db.execute(
+            select(OrgInvite).where(
+                OrgInvite.tenant_id == organization.id,
+                OrgInvite.token == invite_id,
+                OrgInvite.accepted_at.is_(None),
+            )
+        )
+    ).scalar_one_or_none()
+    if local_invite is not None:
+        await db.delete(local_invite)
+        await db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -655,10 +727,12 @@ async def list_roles(
     return [
         RoleResponse(
             id=str(role.id),
+            family=role.family,
             name=role.name,
             description=role.description,
             permissions=await _role_permissions(db, role.id),
             is_system=role.is_system,
+            is_preset=is_preset_role(family=role.family, name=role.name),
             created_at=role.created_at,
         )
         for role in roles
@@ -673,29 +747,40 @@ async def create_role(
 ) -> RoleResponse:
     _require_scope(principal, "roles.write")
     organization = await _active_organization(db, principal)
+    family = _normalize_role_family(payload.family)
+    permissions = _validate_role_permissions(family=family, permissions=payload.permissions)
     existing = (
-        await db.execute(select(Role).where(Role.tenant_id == organization.id, Role.name == payload.name))
+        await db.execute(
+            select(Role).where(
+                Role.tenant_id == organization.id,
+                Role.family == family,
+                Role.name == payload.name,
+            )
+        )
     ).scalar_one_or_none()
     if existing is not None:
         raise HTTPException(status_code=400, detail="Role with this name already exists")
     role = Role(
         tenant_id=organization.id,
+        family=family,
         name=payload.name,
         description=payload.description,
         is_system=False,
     )
     db.add(role)
     await db.flush()
-    for scope_key in normalize_scope_list(payload.permissions):
+    for scope_key in permissions:
         db.add(RolePermission(role_id=role.id, scope_key=scope_key))
     await db.commit()
     await db.refresh(role)
     return RoleResponse(
         id=str(role.id),
+        family=role.family,
         name=role.name,
         description=role.description,
         permissions=await _role_permissions(db, role.id),
         is_system=role.is_system,
+        is_preset=False,
         created_at=role.created_at,
     )
 
@@ -716,22 +801,29 @@ async def update_role(
         raise HTTPException(status_code=404, detail="Role not found")
     if role.is_system:
         raise HTTPException(status_code=400, detail="Cannot modify system roles")
+    if "family" in payload.model_fields_set and payload.family is not None:
+        next_family = _normalize_role_family(payload.family)
+        if next_family != role.family:
+            raise HTTPException(status_code=400, detail="Role family cannot be changed")
     if "name" in payload.model_fields_set and payload.name is not None:
         role.name = payload.name
     if "description" in payload.model_fields_set:
         role.description = payload.description
     if payload.permissions is not None:
+        permissions = _validate_role_permissions(family=role.family, permissions=payload.permissions)
         await db.execute(delete(RolePermission).where(RolePermission.role_id == role.id))
-        for scope_key in normalize_scope_list(payload.permissions):
+        for scope_key in permissions:
             db.add(RolePermission(role_id=role.id, scope_key=scope_key))
     await db.commit()
     await db.refresh(role)
     return RoleResponse(
         id=str(role.id),
+        family=role.family,
         name=role.name,
         description=role.description,
         permissions=await _role_permissions(db, role.id),
         is_system=role.is_system,
+        is_preset=False,
         created_at=role.created_at,
     )
 
@@ -791,6 +883,7 @@ async def list_role_assignments(
             user_id=str(user.id),
             user_email=user.email,
             role_id=str(role.id),
+            role_family=role.family,
             role_name=role.name,
             scope_id=str(assignment.scope_id),
             scope_type=assignment.scope_type,
@@ -811,32 +904,50 @@ async def create_role_assignment(
     role_id = UUID(payload.role_id)
     user_id = UUID(payload.user_id)
     scope_id = UUID(payload.scope_id)
+    scope_type = _normalize_assignment_scope_type(payload.scope_type)
     role = (
         await db.execute(select(Role).where(Role.id == role_id, Role.tenant_id == organization.id))
     ).scalar_one_or_none()
     if role is None:
         raise HTTPException(status_code=404, detail="Role not found")
+    if role.family != scope_type:
+        raise HTTPException(status_code=400, detail="Role family does not match assignment scope")
     user = await db.get(User, user_id)
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
-    existing = (
+    replacements = (
         await db.execute(
             select(RoleAssignment).where(
                 RoleAssignment.tenant_id == organization.id,
                 RoleAssignment.user_id == user_id,
-                RoleAssignment.role_id == role_id,
                 RoleAssignment.scope_id == scope_id,
+                RoleAssignment.scope_type == scope_type,
             )
         )
-    ).scalar_one_or_none()
-    if existing is not None:
-        raise HTTPException(status_code=400, detail="Role assignment already exists")
+    ).scalars().all()
+    for existing in replacements:
+        existing_role = await db.get(Role, existing.role_id)
+        if existing_role is None or existing_role.family != role.family:
+            continue
+        if existing.role_id == role_id:
+            return RoleAssignmentResponse(
+                id=str(existing.id),
+                user_id=str(user.id),
+                user_email=user.email,
+                role_id=str(role.id),
+                role_family=role.family,
+                role_name=role.name,
+                scope_id=str(existing.scope_id),
+                scope_type=existing.scope_type,
+                assigned_at=existing.assigned_at,
+            )
+        await db.delete(existing)
     assignment = RoleAssignment(
         tenant_id=organization.id,
         user_id=user_id,
         role_id=role_id,
         scope_id=scope_id,
-        scope_type=payload.scope_type,
+        scope_type=scope_type,
         actor_type=payload.actor_type,
         assigned_by=UUID(str(principal["user_id"])),
     )
@@ -848,6 +959,7 @@ async def create_role_assignment(
         user_id=str(user.id),
         user_email=user.email,
         role_id=str(role.id),
+        role_family=role.family,
         role_name=role.name,
         scope_id=str(assignment.scope_id),
         scope_type=assignment.scope_type,

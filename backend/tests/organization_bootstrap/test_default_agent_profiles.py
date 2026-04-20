@@ -189,7 +189,7 @@ async def test_agents_list_backfill_persists_seeded_profiles_across_requests(db_
         status=None,
         skip=0,
         limit=50,
-        compact=False,
+        view="full",
         context={
             "tenant_id": organization.id,
             "project_id": project.id,
@@ -198,7 +198,7 @@ async def test_agents_list_backfill_persists_seeded_profiles_across_requests(db_
         db=db_session,
     )
 
-    response_slugs = sorted(agent.slug for agent in response.agents)
+    response_slugs = sorted(item["slug"] for item in response["items"])
     assert response_slugs == [
         "artifact-coding-agent",
         "platform-architect",
@@ -249,7 +249,7 @@ async def test_agents_list_skips_backfill_when_default_profiles_already_exist(db
         status=None,
         skip=0,
         limit=50,
-        compact=False,
+        view="full",
         context={
             "tenant_id": organization.id,
             "project_id": project.id,
@@ -258,7 +258,7 @@ async def test_agents_list_skips_backfill_when_default_profiles_already_exist(db
         db=db_session,
     )
 
-    assert sorted(agent.slug for agent in response.agents) == [
+    assert sorted(item["slug"] for item in response["items"]) == [
         "artifact-coding-agent",
         "platform-architect",
         "published-app-coding-agent",

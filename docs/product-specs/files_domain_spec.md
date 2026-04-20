@@ -1,6 +1,6 @@
 # Files Domain Spec
 
-Last Updated: 2026-04-16
+Last Updated: 2026-04-20
 
 ## Summary
 `Files` is the durable workspace domain for internal workflows. A file space is a project-scoped workspace that can hold directories and files, be linked to workflows, and be used during internal agent runs.
@@ -13,6 +13,7 @@ Last Updated: 2026-04-16
 - Access mode per link is only `read` or `read_write`.
 - Internal workflow/runtime surfaces only.
 - Text files support read/write/patch.
+- Deterministic file representations can be read for supported file types.
 - Binary files support upload/download/replace.
 - Revisions are per-file immutable revisions only.
 
@@ -40,10 +41,14 @@ Last Updated: 2026-04-16
   - `context.file_spaces = [{ id, name, access_mode }]`
 - File contents are never preloaded into prompts or run context.
 - Access happens on demand through file tools.
+- Runtime file access authorization is reusable backend infrastructure, not a `files.*`-specific special case.
+- Generic tools may consume authorized file references using canonical `space_id + path`.
 
 ## Tool Surface
 - `files.list`
+- `files.inspect`
 - `files.read`
+- `files.read_representation`
 - `files.write`
 - `files.patch_text`
 - `files.mkdir`
@@ -53,6 +58,18 @@ Last Updated: 2026-04-16
 - `files.download_meta`
 
 Backend enforcement is authoritative for `read` vs `read_write`.
+
+Current deterministic representation examples:
+- `raw_text`
+- `markdown_rendered`
+- `delimited_table`
+- `workbook`
+- `binary_meta`
+
+## Toolset UX
+- linked file-space access is grouped in the tools catalog as the `file_space_memory` toolset
+- the toolset is a builder-selection convenience over the same `files.*` tools
+- selecting the toolset expands to the member tool ids before save; runtime behavior remains the normal flat file-tool surface
 
 ## Control-Plane Surface
 - File-space CRUD/list/detail

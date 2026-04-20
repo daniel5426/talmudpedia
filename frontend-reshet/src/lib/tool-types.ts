@@ -45,6 +45,58 @@ export function getSubtypeLabel(implementationType: ToolImplementationType): str
   return TOOL_SUBTYPES.find((t) => t.id === implementationType)?.label || implementationType
 }
 
+export interface ToolsetGroup {
+  id: string
+  name: string
+  description?: string | null
+  selection_mode: "expand_to_members"
+  member_ids: string[]
+  members: ToolDefinition[]
+  bucket: ToolTypeBucket
+}
+
+export function buildToolsets(tools: ToolDefinition[]): ToolsetGroup[] {
+  const toolById = new Map<string, ToolDefinition>()
+  tools.forEach((tool) => {
+    toolById.set(tool.id, tool)
+  })
+
+  const groups: ToolsetGroup[] = []
+  const seen = new Set<string>()
+
+  tools.forEach((tool) => {
+    const meta = tool.toolset
+    if (!meta || seen.has(meta.id)) return
+    seen.add(meta.id)
+
+    const members = meta.member_ids
+      .map((memberId) => toolById.get(memberId))
+      .filter((member): member is ToolDefinition => Boolean(member))
+
+    if (members.length === 0) return
+
+    groups.push({
+      id: meta.id,
+      name: meta.name,
+      description: meta.description || null,
+      selection_mode: meta.selection_mode,
+      member_ids: members.map((member) => member.id),
+      members,
+      bucket: getToolBucket(members[0]),
+    })
+  })
+
+  return groups
+}
+
+export function getToolsetSelectionState(toolset: ToolsetGroup, selectedToolIds: string[]): "none" | "partial" | "full" {
+  const selected = new Set(selectedToolIds)
+  const selectedCount = toolset.member_ids.filter((memberId) => selected.has(memberId)).length
+  if (selectedCount === 0) return "none"
+  if (selectedCount === toolset.member_ids.length) return "full"
+  return "partial"
+}
+
 export interface ToolFilterState {
   query?: string
   status?: ToolStatus | "all"

@@ -5,12 +5,12 @@ from app.db.postgres.models.identity import OrgMembership, OrgRole, Tenant, User
 
 
 @pytest.mark.asyncio
-async def test_owner_can_patch_tenant_profile(client, db_session):
-    tenant = Tenant(name="Tenant A", slug="tenant-a")
-    owner = User(email="owner@tenant-a.com", hashed_password="x", role="user")
+async def test_owner_can_patch_tenant_profile(client, db_session, run_prefix):
+    tenant = Tenant(name="Tenant A", slug=f"tenant-a-{run_prefix}")
+    owner = User(email=f"owner-{run_prefix}@tenant-a.com", hashed_password="x", role="user")
     db_session.add_all([tenant, owner])
     await db_session.flush()
-    root = OrgUnit(tenant_id=tenant.id, parent_id=None, name="Root", slug="root-tenant-a", type=OrgUnitType.org)
+    root = OrgUnit(tenant_id=tenant.id, parent_id=None, name="Root", slug=f"root-tenant-a-{run_prefix}", type=OrgUnitType.org)
     db_session.add(root)
     await db_session.flush()
 
@@ -43,12 +43,12 @@ async def test_owner_can_patch_tenant_profile(client, db_session):
 
 
 @pytest.mark.asyncio
-async def test_member_cannot_patch_tenant_profile(client, db_session):
-    tenant = Tenant(name="Tenant A", slug="tenant-member")
-    member_user = User(email="member@tenant-a.com", hashed_password="x", role="user")
+async def test_member_cannot_patch_tenant_profile(client, db_session, run_prefix):
+    tenant = Tenant(name="Tenant A", slug=f"tenant-member-{run_prefix}")
+    member_user = User(email=f"member-{run_prefix}@tenant-a.com", hashed_password="x", role="user")
     db_session.add_all([tenant, member_user])
     await db_session.flush()
-    root = OrgUnit(tenant_id=tenant.id, parent_id=None, name="Root", slug="root-tenant-member", type=OrgUnitType.org)
+    root = OrgUnit(tenant_id=tenant.id, parent_id=None, name="Root", slug=f"root-tenant-member-{run_prefix}", type=OrgUnitType.org)
     db_session.add(root)
     await db_session.flush()
 
@@ -78,13 +78,13 @@ async def test_member_cannot_patch_tenant_profile(client, db_session):
 
 
 @pytest.mark.asyncio
-async def test_patch_tenant_slug_conflict_returns_400(client, db_session):
-    tenant_a = Tenant(name="Tenant A", slug="tenant-a-conflict")
-    tenant_b = Tenant(name="Tenant B", slug="tenant-b-conflict")
-    owner = User(email="owner@tenant-conflict.com", hashed_password="x", role="user")
+async def test_patch_tenant_slug_conflict_returns_400(client, db_session, run_prefix):
+    tenant_a = Tenant(name="Tenant A", slug=f"tenant-a-conflict-{run_prefix}")
+    tenant_b = Tenant(name="Tenant B", slug=f"tenant-b-conflict-{run_prefix}")
+    owner = User(email=f"owner-{run_prefix}@tenant-conflict.com", hashed_password="x", role="user")
     db_session.add_all([tenant_a, tenant_b, owner])
     await db_session.flush()
-    root = OrgUnit(tenant_id=tenant_a.id, parent_id=None, name="Root", slug="root-tenant-conflict", type=OrgUnitType.org)
+    root = OrgUnit(tenant_id=tenant_a.id, parent_id=None, name="Root", slug=f"root-tenant-conflict-{run_prefix}", type=OrgUnitType.org)
     db_session.add(root)
     await db_session.flush()
 

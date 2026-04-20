@@ -58,7 +58,7 @@ async def test_bootstrap_seeds_default_roles_and_owner_assignment_idempotently(d
 
     roles = (await db_session.execute(select(Role).where(Role.tenant_id == tenant.id))).scalars().all()
     role_names = {role.name for role in roles}
-    assert {"organization_admin", "organization_member", "organization_owner"}.issubset(role_names)
+    assert {"Owner", "Reader", "Member", "Viewer"}.issubset(role_names)
     assert all(role.is_system for role in roles)
 
     assignments = (
@@ -70,7 +70,7 @@ async def test_bootstrap_seeds_default_roles_and_owner_assignment_idempotently(d
         )
     ).scalars().all()
     owner_assignments = [
-        item for item in assignments if item.role_id in {role.id for role in roles if role.name == "organization_owner"}
+        item for item in assignments if item.role_id in {role.id for role in roles if role.name == "Owner" and role.family == "organization"}
     ]
     assert len(owner_assignments) == 1
 

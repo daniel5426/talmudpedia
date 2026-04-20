@@ -6,9 +6,16 @@ from uuid import UUID
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.scope_registry import is_platform_admin_role
+from app.core.scope_registry import (
+    ORGANIZATION_OWNER_ROLE,
+    PROJECT_DEFAULT_ROLE_SCOPES,
+    PROJECT_OWNER_ROLE,
+    ROLE_FAMILY_ORGANIZATION,
+    ROLE_FAMILY_PROJECT,
+    is_platform_admin_role,
+)
 from app.db.postgres.models.identity import OrgMembership, Tenant, User
-from app.db.postgres.models.rbac import RoleAssignment, RolePermission
+from app.db.postgres.models.rbac import Role, RoleAssignment, RolePermission
 from app.db.postgres.models.workspace import Project, ProjectStatus
 
 
@@ -57,33 +64,39 @@ async def resolve_effective_scopes(
     if is_platform_admin_role(getattr(user, "role", None)):
         return ["*"]
 
-    resolved_scopes = {str(scope) for scope in (organization_permissions or []) if str(scope).strip()}
+    _ = organization_permissions
+    resolved_scopes: set[str] = set()
 
     assignments = (
         await db.execute(
-            select(RoleAssignment).where(
+            select(RoleAssignment, Role)
+            .join(Role, Role.id == RoleAssignment.role_id)
+            .where(
                 and_(
                     RoleAssignment.tenant_id == organization_id,
                     RoleAssignment.user_id == user.id,
                 )
             )
         )
-    ).scalars().all()
+    ).all()
 
     allowed_role_ids: set[UUID] = set()
-    for assignment in assignments:
-        if not resolved_scopes and assignment.scope_type == "organization" and assignment.scope_id == organization_id:
+    has_org_owner = False
+    for assignment, role in assignments:
+        if assignment.scope_type == ROLE_FAMILY_ORGANIZATION and assignment.scope_id == organization_id:
             allowed_role_ids.add(assignment.role_id)
-        if project_id is not None and assignment.scope_type == "project" and assignment.scope_id == project_id:
+            if role.family == ROLE_FAMILY_ORGANIZATION and role.name == ORGANIZATION_OWNER_ROLE:
+                has_org_owner = True
+        if project_id is not None and assignment.scope_type == ROLE_FAMILY_PROJECT and assignment.scope_id == project_id:
             allowed_role_ids.add(assignment.role_id)
 
-    if not allowed_role_ids:
-        return sorted(resolved_scopes)
-
-    perms = (
-        await db.execute(select(RolePermission).where(RolePermission.role_id.in_(list(allowed_role_ids))))
-    ).scalars().all()
-    resolved_scopes.update({str(perm.scope_key) for perm in perms if getattr(perm, "scope_key", None)})
+    if allowed_role_ids:
+        perms = (
+            await db.execute(select(RolePermission).where(RolePermission.role_id.in_(list(allowed_role_ids))))
+        ).scalars().all()
+        resolved_scopes.update({str(perm.scope_key) for perm in perms if getattr(perm, "scope_key", None)})
+    if project_id is not None and has_org_owner:
+        resolved_scopes.update(PROJECT_DEFAULT_ROLE_SCOPES.get(PROJECT_OWNER_ROLE, []))
     return sorted(resolved_scopes)
 
 

@@ -10,6 +10,10 @@ jest.mock("@/components/admin/files/FileSpacePdfPreview", () => ({
   FileSpacePdfPreview: () => <div>PDF Preview</div>,
 }))
 
+jest.mock("@/components/admin/files/FileSpaceWorkbookPreview", () => ({
+  FileSpaceWorkbookPreview: () => <div>Workbook Preview</div>,
+}))
+
 jest.mock("docx-preview", () => ({
   renderAsync: (...args: unknown[]) => renderAsyncMock(...args),
 }))
@@ -141,7 +145,9 @@ describe("file space preview pane", () => {
     })
   })
 
-  it("keeps unsupported files download-only", async () => {
+  it("renders workbook previews in-app", async () => {
+    fetchBlobMock.mockResolvedValue(new Blob(["xlsx-bytes"], { type: "application/vnd.ms-excel" }))
+
     render(
       <FileSpacePreviewPane
         spaceId="space-1"
@@ -154,6 +160,33 @@ describe("file space preview pane", () => {
           entry_type: "file",
           current_revision_id: "rev-4",
           mime_type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          byte_size: 10,
+          sha256: "jkl",
+          is_text: false,
+          deleted_at: null,
+          created_at: null,
+          updated_at: null,
+        }}
+      />,
+    )
+
+    expect(await screen.findByText("Workbook Preview")).toBeInTheDocument()
+    expect(fetchBlobMock).toHaveBeenCalledWith("space-1", "sheet.xlsx")
+  })
+
+  it("keeps unsupported files download-only", async () => {
+    render(
+      <FileSpacePreviewPane
+        spaceId="space-1"
+        entry={{
+          id: "entry-unsupported",
+          space_id: "space-1",
+          path: "archive.zip",
+          name: "archive.zip",
+          parent_path: null,
+          entry_type: "file",
+          current_revision_id: "rev-unsupported",
+          mime_type: "application/zip",
           byte_size: 10,
           sha256: "jkl",
           is_text: false,

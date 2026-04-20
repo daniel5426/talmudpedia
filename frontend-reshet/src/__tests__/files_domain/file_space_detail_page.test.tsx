@@ -177,4 +177,166 @@ describe("file space detail page", () => {
       expect(saveButton).toBeDisabled()
     })
   })
+
+  it("opens csv files in spreadsheet mode and saves edited cells through the text api", async () => {
+    listTreeMock.mockResolvedValue({
+      items: [
+        {
+          id: "file-csv",
+          space_id: "space-1",
+          path: "people.csv",
+          name: "people.csv",
+          parent_path: null,
+          entry_type: "file",
+          current_revision_id: "rev-csv-1",
+          mime_type: "text/csv",
+          byte_size: 21,
+          sha256: "csv",
+          is_text: true,
+          deleted_at: null,
+          created_at: "2026-04-16T00:00:00Z",
+          updated_at: "2026-04-16T00:00:00Z",
+        },
+      ],
+    })
+    readTextMock.mockResolvedValue({
+      entry: {
+        id: "file-csv",
+        space_id: "space-1",
+        path: "people.csv",
+        name: "people.csv",
+        parent_path: null,
+        entry_type: "file",
+        current_revision_id: "rev-csv-1",
+        mime_type: "text/csv",
+        byte_size: 21,
+        sha256: "csv",
+        is_text: true,
+        deleted_at: null,
+        created_at: "2026-04-16T00:00:00Z",
+        updated_at: "2026-04-16T00:00:00Z",
+      },
+      revision: {
+        id: "rev-csv-1",
+        entry_id: "file-csv",
+        storage_key: "key-csv-1",
+        mime_type: "text/csv",
+        byte_size: 21,
+        sha256: "csv",
+        is_text: true,
+        encoding: "utf-8",
+        created_by: null,
+        created_by_run_id: null,
+        created_at: "2026-04-16T00:00:00Z",
+      },
+      content: "name,role\nAda,Editor",
+    })
+    writeTextMock.mockResolvedValue({
+      entry: {
+        id: "file-csv",
+        space_id: "space-1",
+        path: "people.csv",
+        name: "people.csv",
+        parent_path: null,
+        entry_type: "file",
+        current_revision_id: "rev-csv-2",
+        mime_type: "text/csv",
+        byte_size: 21,
+        sha256: "csv-2",
+        is_text: true,
+        deleted_at: null,
+        created_at: "2026-04-16T00:00:00Z",
+        updated_at: "2026-04-16T00:00:00Z",
+      },
+      revision: {
+        id: "rev-csv-2",
+        entry_id: "file-csv",
+        storage_key: "key-csv-2",
+        mime_type: "text/csv",
+        byte_size: 21,
+        sha256: "csv-2",
+        is_text: true,
+        encoding: "utf-8",
+        created_by: null,
+        created_by_run_id: null,
+        created_at: "2026-04-16T00:00:00Z",
+      },
+    })
+
+    render(
+      <DirectionProvider>
+        <FileSpaceDetailPage />
+      </DirectionProvider>,
+    )
+
+    await waitFor(() => {
+      expect(screen.getAllByText("people.csv").length).toBeGreaterThan(0)
+    })
+
+    fireEvent.click(screen.getAllByText("people.csv")[0])
+
+    const cell = await screen.findByLabelText("Cell B2")
+    fireEvent.change(cell, { target: { value: "Author" } })
+
+    fireEvent.keyDown(window, { key: "s", ctrlKey: true })
+
+    await waitFor(() => {
+      expect(writeTextMock).toHaveBeenCalledWith("space-1", {
+        path: "people.csv",
+        content: "name,role\nAda,Author",
+        mime_type: "text/csv",
+      })
+    })
+  })
+
+  it("renders markdown preview and switches to raw text from the header toggle", async () => {
+    readTextMock.mockResolvedValue({
+      entry: {
+        id: "file-1",
+        space_id: "space-1",
+        path: "notes.md",
+        name: "notes.md",
+        parent_path: null,
+        entry_type: "file",
+        current_revision_id: "rev-1",
+        mime_type: "text/markdown",
+        byte_size: 18,
+        sha256: "abc",
+        is_text: true,
+        deleted_at: null,
+        created_at: "2026-04-16T00:00:00Z",
+        updated_at: "2026-04-16T00:00:00Z",
+      },
+      revision: {
+        id: "rev-1",
+        entry_id: "file-1",
+        storage_key: "key-1",
+        mime_type: "text/markdown",
+        byte_size: 18,
+        sha256: "abc",
+        is_text: true,
+        encoding: "utf-8",
+        created_by: null,
+        created_by_run_id: null,
+        created_at: "2026-04-16T00:00:00Z",
+      },
+      content: "# Hello\n\nParagraph",
+    })
+
+    render(
+      <DirectionProvider>
+        <FileSpaceDetailPage />
+      </DirectionProvider>,
+    )
+
+    await waitFor(() => {
+      expect(screen.getAllByText("notes.md").length).toBeGreaterThan(0)
+    })
+
+    fireEvent.click(screen.getAllByText("notes.md")[0])
+
+    expect(await screen.findByRole("heading", { name: "Hello" })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: "Switch to raw text view" }))
+    expect(await screen.findByRole("textbox")).toHaveValue("# Hello\n\nParagraph")
+  })
 })
