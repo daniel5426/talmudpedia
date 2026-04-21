@@ -22,7 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_current_principal, require_scopes
 from app.db.postgres.models.agents import Agent, AgentStatus
-from app.db.postgres.models.identity import OrgMembership, OrgRole, User
+from app.db.postgres.models.identity import OrgMembership, User
 from app.db.postgres.models.published_apps import (
     BuilderCheckpointType,
     BuilderConversationTurnStatus,
@@ -156,6 +156,7 @@ PUBLISH_POLL_MAX_DIAGNOSTICS = 12
 class PublishedAppResponse(BaseModel):
     id: str
     organization_id: str
+    project_id: Optional[str] = None
     agent_id: str
     name: str
     description: Optional[str] = None
@@ -596,6 +597,7 @@ def _app_to_response(app: PublishedApp) -> PublishedAppResponse:
     return PublishedAppResponse(
         id=str(app.id),
         organization_id=str(app.organization_id),
+        project_id=str(app.project_id) if app.project_id else None,
         agent_id=str(app.agent_id),
         name=app.name,
         description=app.description,

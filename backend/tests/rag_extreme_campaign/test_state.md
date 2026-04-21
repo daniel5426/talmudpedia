@@ -38,7 +38,7 @@ Initial live-stack campaign coverage for RAG production-readiness:
 - local pgvector ingestion/storage roundtrips can run without live embedding providers by using direct vectors.
 - `RetrievalService.query_multiple_stores` merge ordering is asserted deterministically.
 - DB-backed admin graph patching persists node config changes and version bumps.
-- DB-backed admin compile/job creation persists `ExecutablePipeline` and `PipelineJob` rows.
+- DB-backed admin compile/job creation persists `ExecutablePipeline` and `PipelineJob` rows inside the active project.
 - deep live embedding/retrieval diagnostics are available as bounded opt-in tests.
 - Pinecone parity smoke is available as an opt-in namespace-isolated test.
 - mixed builtin-plus-artifact RAG pipelines compile with pinned artifact revisions and execute through the artifact runtime.
@@ -129,7 +129,18 @@ Initial live-stack campaign coverage for RAG production-readiness:
 - Command: `SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest backend/tests/rag_extreme_campaign/test_admin_graph_and_jobs_api.py`
 - Date: 2026-04-21 Asia/Hebron
 - Result: Pass (`2 passed`). Admin RAG graph/job routes now use `organization_id` instead of `tenant_slug`.
+- Command: `SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest -q backend/tests/rag_extreme_campaign/test_admin_graph_and_jobs_api.py`
+- Date: 2026-04-21 Asia/Hebron
+- Result: Pass (`2 passed`). Admin graph patch/compile/job routes remain green after binding pipelines, executable rows, jobs, and knowledge-store fixtures to the active project.
+- Command: `SECRET_KEY=explicit-test-secret PYTHONPATH=/Users/danielbenassaya/Code/personal/talmudpedia backend/.venv/bin/python -m pytest -q backend/tests/rag_extreme_campaign`
+- Date: 2026-04-21 Asia/Hebron
+- Result: fail during collection. `test_remaining_gap_reproductions.py` currently imports missing `_pipeline_shell_graph` from `app.services.platform_native_tools`.
+- Command: `SECRET_KEY=explicit-test-secret PYTHONPATH=/Users/danielbenassaya/Code/personal/talmudpedia backend/.venv/bin/python -m pytest -q backend/tests/rag_extreme_campaign/test_admin_graph_and_jobs_api.py backend/tests/rag_extreme_campaign/test_long_ingestion_chains.py backend/tests/rag_extreme_campaign/test_mixed_artifact_pipelines.py backend/tests/rag_extreme_campaign/test_executor_persistence_and_failure_states.py`
+- Date: 2026-04-21 Asia/Hebron
+- Result: partial pass (`5 passed, 2 failed`). The remaining failures are both in `test_mixed_artifact_pipelines.py`, blocked by local artifact writes failing with `invalid input value for enum artifactownertype: "organization"`.
 
 ## Known Gaps / Follow-ups
 
 - Live embedding/provider latency is still not part of the default fast loop.
+- Local collection is currently blocked by a pre-existing missing `_pipeline_shell_graph` import in `test_remaining_gap_reproductions.py`.
+- Local mixed-artifact coverage is currently blocked by `artifactownertype` enum drift in artifact creation.

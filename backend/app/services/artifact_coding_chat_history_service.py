@@ -72,6 +72,7 @@ class ArtifactCodingChatHistoryService:
         return {
             "id": str(session.id),
             "title": session.title,
+            "project_id": str(session.project_id) if session.project_id else None,
             "artifact_id": str(session.artifact_id) if session.artifact_id else None,
             "shared_draft_id": str(session.shared_draft_id),
             "draft_key": session.draft_key,
@@ -98,6 +99,7 @@ class ArtifactCodingChatHistoryService:
         self,
         *,
         organization_id: UUID,
+        project_id: UUID | None,
         user_id: UUID | None,
         session_id: UUID,
     ) -> ArtifactCodingSession | None:
@@ -108,6 +110,7 @@ class ArtifactCodingChatHistoryService:
                 and_(
                     ArtifactCodingSession.id == session_id,
                     ArtifactCodingSession.organization_id == organization_id,
+                    ArtifactCodingSession.project_id == project_id,
                     AgentThread.user_id == user_id,
                 )
             )
@@ -119,6 +122,7 @@ class ArtifactCodingChatHistoryService:
         self,
         *,
         organization_id: UUID,
+        project_id: UUID | None,
         artifact_id: UUID | None,
         shared_draft_id: UUID,
         draft_key: str | None,
@@ -127,6 +131,7 @@ class ArtifactCodingChatHistoryService:
     ) -> ArtifactCodingSession:
         session = ArtifactCodingSession(
             organization_id=organization_id,
+            project_id=project_id,
             artifact_id=artifact_id,
             shared_draft_id=shared_draft_id,
             draft_key=draft_key,
@@ -143,6 +148,7 @@ class ArtifactCodingChatHistoryService:
         self,
         *,
         organization_id: UUID,
+        project_id: UUID | None,
         user_id: UUID | None,
         artifact_id: UUID | None,
         draft_key: str | None,
@@ -151,7 +157,10 @@ class ArtifactCodingChatHistoryService:
         stmt = (
             select(ArtifactCodingSession)
             .join(AgentThread, ArtifactCodingSession.agent_thread_id == AgentThread.id)
-            .where(ArtifactCodingSession.organization_id == organization_id)
+            .where(
+                ArtifactCodingSession.organization_id == organization_id,
+                ArtifactCodingSession.project_id == project_id,
+            )
         )
         if user_id is not None:
             stmt = stmt.where(AgentThread.user_id == user_id)
@@ -175,6 +184,7 @@ class ArtifactCodingChatHistoryService:
         self,
         *,
         organization_id: UUID,
+        project_id: UUID | None,
         draft_key: str,
         artifact_id: UUID,
     ) -> int:
@@ -185,6 +195,7 @@ class ArtifactCodingChatHistoryService:
             .where(
                 and_(
                     ArtifactCodingSession.organization_id == organization_id,
+                    ArtifactCodingSession.project_id == project_id,
                     ArtifactCodingSession.draft_key == draft_key,
                 )
             )

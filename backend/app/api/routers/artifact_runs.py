@@ -6,7 +6,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import require_scopes
+from app.api.dependencies import get_current_principal, require_scopes
 from app.api.schemas.artifacts import ArtifactRunEventSchema, ArtifactRunSchema, ArtifactRuntimeQueueStatusSchema
 from app.db.postgres.models.artifact_runtime import ArtifactRunStatus
 from app.services.artifact_runtime.execution_service import ArtifactExecutionService
@@ -64,15 +64,19 @@ async def get_artifact_runtime_status(
 async def get_artifact_run(
     run_id: UUID,
     organization_id: Optional[str] = None,
+    principal: Dict[str, Any] = Depends(get_current_principal),
     _: Dict[str, Any] = Depends(require_scopes("artifacts.write")),
     artifact_ctx=Depends(get_artifact_context),
 ):
     organization, _user, db = artifact_ctx
+    project_id = principal.get("project_id")
     run = await ArtifactRunService(db).get_run(run_id=run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="Artifact run not found")
     if organization is not None and str(run.organization_id) != str(organization.id):
         raise HTTPException(status_code=403, detail="Organization mismatch")
+    if project_id and str(run.project_id) != str(project_id):
+        raise HTTPException(status_code=404, detail="Artifact run not found")
     return _serialize_run(run)
 
 
@@ -80,16 +84,20 @@ async def get_artifact_run(
 async def get_artifact_run_events(
     run_id: UUID,
     organization_id: Optional[str] = None,
+    principal: Dict[str, Any] = Depends(get_current_principal),
     _: Dict[str, Any] = Depends(require_scopes("artifacts.write")),
     artifact_ctx=Depends(get_artifact_context),
 ):
     organization, _user, db = artifact_ctx
+    project_id = principal.get("project_id")
     run_service = ArtifactRunService(db)
     run = await run_service.get_run(run_id=run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="Artifact run not found")
     if organization is not None and str(run.organization_id) != str(organization.id):
         raise HTTPException(status_code=403, detail="Organization mismatch")
+    if project_id and str(run.project_id) != str(project_id):
+        raise HTTPException(status_code=404, detail="Artifact run not found")
     events = await run_service.list_events(run_id=run_id)
     return {
         "run_id": str(run_id),
@@ -117,15 +125,23 @@ async def get_artifact_run_events(
 async def cancel_artifact_run(
     run_id: UUID,
     organization_id: Optional[str] = None,
+    principal: Dict[str, Any] = Depends(get_current_principal),
     _: Dict[str, Any] = Depends(require_scopes("artifacts.write")),
     artifact_ctx=Depends(get_artifact_context),
 ):
     organization, _user, db = artifact_ctx
     if organization is None:
         raise HTTPException(status_code=400, detail="Organization context required")
+    raw_project_id = principal.get("project_id")
+    if not raw_project_id:
+        raise HTTPException(status_code=422, detail="Active project context is required")
     service = ArtifactExecutionService(db)
     try:
-        run = await service.cancel_run(run_id=run_id, organization_id=organization.id)
+        run = await service.cancel_run(
+            run_id=run_id,
+            organization_id=organization.id,
+            project_id=UUID(str(raw_project_id)),
+        )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     status_value = run.status.value if hasattr(run.status, "value") else str(run.status)

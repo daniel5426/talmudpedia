@@ -1,6 +1,6 @@
 # Platform SDK Tool Tests
 
-Last Updated: 2026-04-14
+Last Updated: 2026-04-22
 
 Scope:
 - Platform SDK contract/parity behavior, explicit-action behavior, and strict canonical input enforcement.
@@ -29,6 +29,7 @@ Key scenarios covered:
 - `rag.create_pipeline_shell` parity now matches the current retrieval shell graph:
   `query_input -> model_embedder -> vector_search -> retrieval_result`
 - Runtime primitive action dispatch routes through canonical orchestration action IDs.
+- Canonical artifact entrypoint calls now prefer top-level `inputs` over legacy wrapped `context.inputs` payloads.
 - Control-plane list parity now uses the shared `skip`/`limit`/`view` request contract and `items`/`total`/`has_more` response envelope.
 - Action-to-SDK parity for `artifacts.create`, `artifacts.update`, `artifacts.convert_kind`, `artifacts.create_test_run`, `artifacts.delete`, `tools.create_or_update`, `tools.publish`, `agents.execute`, `agents.start_run`, `agents.get_run_tree`, `orchestration.spawn_run`, and `catalog.list_capabilities`.
 - Action-to-SDK parity now also covers non-start-set canonical domains:
@@ -84,6 +85,11 @@ Key scenarios covered:
 Last run command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/platform_sdk_tool/test_platform_sdk_sdk_parity_additional_actions.py`
 Last run date/time: 2026-04-14 Asia/Hebron
 Last run result: passed (`67 passed`)
+
+Latest focused validation:
+- Command: `TEST_USE_REAL_DB=0 SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest -q backend/tests/platform_sdk_tool/test_platform_sdk_actions.py`
+- Date/Time: 2026-04-22 Asia/Hebron
+- Result: passed (`12 passed`)
 
 Known gaps / follow-ups:
 - Publish env-gated cross-surface parity runs into CI with controlled credentials to reduce skip-only coverage in default local runs.

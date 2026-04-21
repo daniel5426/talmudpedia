@@ -8,10 +8,11 @@ from sqlalchemy import select
 from app.api.dependencies import get_current_principal
 from app.agent.execution.service import AgentExecutorService
 from app.db.postgres.models.agents import Agent, AgentRun, RunStatus
-from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Organization, User
+from app.db.postgres.models.identity import Organization, User
 from app.db.postgres.models.prompts import PromptLibrary
 from app.db.postgres.models.registry import ToolDefinitionScope, ToolImplementationType, ToolRegistry, ToolStatus
 from app.db.postgres.models.artifact_runtime import Artifact, ArtifactKind, ArtifactOwnerType, ArtifactRevision, ArtifactStatus
+from app.db.postgres.models.workspace import Project
 from app.services.prompt_reference_resolver import PromptReferenceResolver
 from main import app
 
@@ -19,29 +20,21 @@ from main import app
 async def _seed_tenant_context(db_session):
     tenant = Organization(id=uuid.uuid4(), name="Prompt Organization", slug=f"prompt-{uuid.uuid4().hex[:8]}")
     user = User(id=uuid.uuid4(), email=f"prompt-{uuid.uuid4().hex[:6]}@example.com", role="admin")
-    org_unit = OrgUnit(
+    project = Project(
         id=uuid.uuid4(),
         organization_id=tenant.id,
-        name="Prompt Org",
-        slug=f"prompt-org-{uuid.uuid4().hex[:6]}",
-        type=OrgUnitType.org,
+        name="Prompt Project",
+        slug=f"prompt-project-{uuid.uuid4().hex[:8]}",
     )
-    membership = OrgMembership(
-        id=uuid.uuid4(),
-        organization_id=tenant.id,
-        user_id=user.id,
-        org_unit_id=org_unit.id,
-        role=OrgRole.owner,
-        status=MembershipStatus.active,
-    )
-    db_session.add_all([tenant, user, org_unit, membership])
+    db_session.add_all([tenant, user, project])
     await db_session.commit()
-    return tenant, user
+    return tenant, user, project
 
 
-def _override_principal(organization_id, user, scopes: list[str]):
+def _override_principal(organization_id, project_id, user, scopes: list[str]):
     user_id = str(user.id)
     tenant_id_text = str(organization_id)
+    project_id_text = str(project_id)
     role = str(getattr(user, "role", "admin") or "admin")
 
     async def _inner():
@@ -50,6 +43,7 @@ def _override_principal(organization_id, user, scopes: list[str]):
             "user": None,
             "user_id": user_id,
             "organization_id": tenant_id_text,
+            "project_id": project_id_text,
             "scopes": scopes,
             "role": role,
         }
@@ -59,9 +53,10 @@ def _override_principal(organization_id, user, scopes: list[str]):
 
 @pytest.mark.asyncio
 async def test_prompt_library_crud_and_resolve_preview(client, db_session):
-    tenant, user = await _seed_tenant_context(db_session)
+    tenant, user, project = await _seed_tenant_context(db_session)
     app.dependency_overrides[get_current_principal] = _override_principal(
         tenant.id,
+        project.id,
         user,
         ["agents.read", "agents.write"],
     )
@@ -111,9 +106,10 @@ async def test_prompt_library_crud_and_resolve_preview(client, db_session):
 
 @pytest.mark.asyncio
 async def test_prompt_delete_is_blocked_when_agent_references_it(client, db_session):
-    tenant, user = await _seed_tenant_context(db_session)
+    tenant, user, project = await _seed_tenant_context(db_session)
     app.dependency_overrides[get_current_principal] = _override_principal(
         tenant.id,
+        project.id,
         user,
         ["agents.read", "agents.write"],
     )
@@ -125,6 +121,7 @@ async def test_prompt_delete_is_blocked_when_agent_references_it(client, db_sess
         agent = Agent(
             id=uuid.uuid4(),
             organization_id=tenant.id,
+            project_id=project.id,
             name="Prompt Agent",
             slug=f"prompt-agent-{uuid.uuid4().hex[:6]}",
             graph_definition={
@@ -153,10 +150,11 @@ async def test_prompt_delete_is_blocked_when_agent_references_it(client, db_sess
 
 @pytest.mark.asyncio
 async def test_paused_run_status_includes_resolved_interaction_prompt(db_session):
-    tenant, user = await _seed_tenant_context(db_session)
+    tenant, user, project = await _seed_tenant_context(db_session)
     prompt = PromptLibrary(
         id=uuid.uuid4(),
         organization_id=tenant.id,
+        project_id=project.id,
         name="Approval Prompt",
         content="Approve {{ticket}}?",
         scope="tenant",
@@ -170,6 +168,7 @@ async def test_paused_run_status_includes_resolved_interaction_prompt(db_session
     agent = Agent(
         id=uuid.uuid4(),
         organization_id=tenant.id,
+        project_id=project.id,
         name="Paused Agent",
         slug=f"paused-agent-{uuid.uuid4().hex[:6]}",
         graph_definition={
@@ -188,7 +187,7 @@ async def test_paused_run_status_includes_resolved_interaction_prompt(db_session
     db_session.add_all([prompt, agent])
     await db_session.commit()
 
-    resolved_graph = await PromptReferenceResolver(db_session, tenant.id).resolve_graph_definition(agent.graph_definition)
+    resolved_graph = await PromptReferenceResolver(db_session, tenant.id, project.id).resolve_graph_definition(agent.graph_definition)
     paused_node = AgentExecutorService._build_paused_node_payload(
         node=resolved_graph["nodes"][0],
         state={"ticket": "ABC-123"},
@@ -199,10 +198,11 @@ async def test_paused_run_status_includes_resolved_interaction_prompt(db_session
 
 @pytest.mark.asyncio
 async def test_usage_scanner_covers_tools_and_artifacts(db_session):
-    tenant, _user = await _seed_tenant_context(db_session)
+    tenant, _user, project = await _seed_tenant_context(db_session)
     prompt = PromptLibrary(
         id=uuid.uuid4(),
         organization_id=tenant.id,
+        project_id=project.id,
         name="Schema Prompt",
         content="Used in schemas",
         scope="tenant",
@@ -216,6 +216,7 @@ async def test_usage_scanner_covers_tools_and_artifacts(db_session):
     tool = ToolRegistry(
         id=uuid.uuid4(),
         organization_id=tenant.id,
+        project_id=project.id,
         name="Prompt Tool",
         slug=f"prompt-tool-{uuid.uuid4().hex[:6]}",
         description=f"[[prompt:{prompt.id}]]",
@@ -234,6 +235,7 @@ async def test_usage_scanner_covers_tools_and_artifacts(db_session):
     artifact = Artifact(
         id=uuid.uuid4(),
         organization_id=tenant.id,
+        project_id=project.id,
         display_name="Prompt Artifact",
         kind=ArtifactKind.TOOL_IMPL,
         owner_type=ArtifactOwnerType.TENANT,
@@ -272,7 +274,7 @@ async def test_usage_scanner_covers_tools_and_artifacts(db_session):
     db_session.add_all([prompt, tool, artifact, revision])
     await db_session.commit()
 
-    usage = await PromptReferenceResolver(db_session, tenant.id).scan_usage(prompt_id=prompt.id)
+    usage = await PromptReferenceResolver(db_session, tenant.id, project.id).scan_usage(prompt_id=prompt.id)
     surfaces = {(item["resource_type"], item["surface"]) for item in usage}
     assert ("tool", "tool.description") in surfaces
     assert ("tool", "tool.schema.description") in surfaces

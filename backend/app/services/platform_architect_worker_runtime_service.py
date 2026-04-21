@@ -70,6 +70,12 @@ class PlatformArchitectWorkerRuntimeService:
                 raise ValueError(f"Invalid runtime context '{key}'") from exc
 
         organization_id= _required_uuid("organization_id")
+        project_id = None
+        if raw.get("project_id") not in (None, ""):
+            try:
+                project_id = UUID(str(raw.get("project_id")))
+            except Exception as exc:
+                raise ValueError("Invalid runtime context 'project_id'") from exc
         user_id = _required_uuid("user_id")
         caller_run_id = _required_uuid("run_id")
 
@@ -79,6 +85,7 @@ class PlatformArchitectWorkerRuntimeService:
             scope_subset = [str(item) for item in requested_scopes if isinstance(item, str) and item.strip()]
         return {
             "organization_id": organization_id,
+            "project_id": project_id,
             "user_id": user_id,
             "caller_run_id": caller_run_id,
             "requested_scopes": scope_subset,
@@ -293,6 +300,7 @@ class PlatformArchitectWorkerRuntimeService:
         task = input_context.get("architect_worker_task") if isinstance(input_context.get("architect_worker_task"), dict) else None
         prepared = await adapter.build_spawn_payload(
             organization_id=runtime_context["organization_id"],
+            project_id=runtime_context.get("project_id"),
             user_id=runtime_context["user_id"],
             binding_ref=binding_ref,
             prompt=response.strip(),
@@ -323,6 +331,7 @@ class PlatformArchitectWorkerRuntimeService:
             raise RuntimeError("Continued worker run was not created")
         await adapter.register_spawned_run(
             organization_id=runtime_context["organization_id"],
+            project_id=runtime_context.get("project_id"),
             user_id=runtime_context["user_id"],
             binding_ref=binding_ref,
             run_id=continued_run.id,
@@ -375,6 +384,7 @@ class PlatformArchitectWorkerRuntimeService:
         adapter = self.bindings.adapter_for_type(binding_type)
         return await adapter.prepare(
             organization_id=runtime_context["organization_id"],
+            project_id=runtime_context.get("project_id"),
             user_id=runtime_context["user_id"],
             binding_payload=binding_payload,
             replace_snapshot=replace_snapshot,
@@ -388,6 +398,7 @@ class PlatformArchitectWorkerRuntimeService:
         adapter = self.bindings.adapter_for_ref(binding_ref)
         return await adapter.get_state(
             organization_id=runtime_context["organization_id"],
+            project_id=runtime_context.get("project_id"),
             user_id=runtime_context["user_id"],
             binding_ref=binding_ref,
             reconcile_run_id=reconcile_run_id,
@@ -400,6 +411,7 @@ class PlatformArchitectWorkerRuntimeService:
         adapter = self.bindings.adapter_for_ref(binding_ref)
         return await adapter.persist_artifact(
             organization_id=runtime_context["organization_id"],
+            project_id=runtime_context.get("project_id"),
             user_id=runtime_context["user_id"],
             binding_ref=binding_ref,
             mode=mode,
@@ -422,6 +434,7 @@ class PlatformArchitectWorkerRuntimeService:
             adapter = self.bindings.adapter_for_ref(binding_ref)
             binding_context = await adapter.build_spawn_payload(
                 organization_id=runtime_context["organization_id"],
+                project_id=runtime_context.get("project_id"),
                 user_id=runtime_context["user_id"],
                 binding_ref=binding_ref,
                 prompt=prompt,
@@ -462,6 +475,7 @@ class PlatformArchitectWorkerRuntimeService:
             adapter = self.bindings.adapter_for_ref(binding_ref)
             await adapter.register_spawned_run(
                 organization_id=runtime_context["organization_id"],
+                project_id=runtime_context.get("project_id"),
                 user_id=runtime_context["user_id"],
                 binding_ref=binding_ref,
                 run_id=run_id,
@@ -507,6 +521,7 @@ class PlatformArchitectWorkerRuntimeService:
                 adapter = self.bindings.adapter_for_ref(binding_ref)
                 binding_context = await adapter.build_spawn_payload(
                     organization_id=runtime_context["organization_id"],
+                    project_id=runtime_context.get("project_id"),
                     user_id=runtime_context["user_id"],
                     binding_ref=binding_ref,
                     prompt=prompt,
@@ -567,6 +582,7 @@ class PlatformArchitectWorkerRuntimeService:
             adapter = self.bindings.adapter_for_ref(target["binding_ref"])
             await adapter.register_spawned_run(
                 organization_id=runtime_context["organization_id"],
+                project_id=runtime_context.get("project_id"),
                 user_id=runtime_context["user_id"],
                 binding_ref=target["binding_ref"],
                 run_id=UUID(str(run_id_raw)),

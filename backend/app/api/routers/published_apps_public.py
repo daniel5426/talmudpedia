@@ -63,6 +63,7 @@ _PREVIEW_REWRITABLE_TEXT_PREFIXES = ("text/html", "application/javascript", "tex
 class PublicAppConfigResponse(BaseModel):
     id: str
     organization_id: str
+    project_id: Optional[str] = None
     agent_id: str
     name: str
     description: Optional[str] = None
@@ -170,6 +171,7 @@ def _to_public_config(app: PublishedApp) -> PublicAppConfigResponse:
     return PublicAppConfigResponse(
         id=str(app.id),
         organization_id=str(app.organization_id),
+        project_id=str(app.project_id) if app.project_id else None,
         agent_id=str(app.agent_id),
         name=app.name,
         description=app.description,
@@ -467,6 +469,7 @@ async def _stream_chat_for_app(
             agent_id=app.agent_id,
             surface_context=RuntimeSurfaceContext(
                 organization_id=app.organization_id,
+                project_id=app.project_id,
                 surface=(
                     AgentThreadSurface.preview_runtime
                     if bool(request_context.get("published_app_preview"))
@@ -806,6 +809,7 @@ async def upload_preview_attachments(
     )
     owner = RuntimeAttachmentOwner(
         organization_id=app.organization_id,
+        project_id=app.project_id,
         surface=AgentThreadSurface.published_host_runtime,
         user_id=_optional_uuid(principal.get("user_id")),
         published_app_id=app.id,

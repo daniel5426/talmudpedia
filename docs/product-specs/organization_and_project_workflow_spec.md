@@ -1,6 +1,6 @@
 # Organization And Project Workflow Spec
 
-Last Updated: 2026-04-20
+Last Updated: 2026-04-21
 
 This document is the canonical product/specification reference for the browser sign-in flow, active organization/project context, and the organization/project admin workflow.
 
@@ -103,6 +103,18 @@ Canonical behavior:
 - top-level organization switcher changes the active organization in session
 - project switcher changes the active project inside the active organization
 - permissions and visible resources update immediately after the session switch
+- project-work pages must refetch and only show resources from the active project
+- project-work APIs must reject missing project context rather than silently falling back to organization-wide reads
+
+Project switch isolation applies to:
+
+- agents
+- apps
+- tools
+- prompts
+- artifacts
+- knowledge stores and pipelines
+- threads, runs, previews, and other project runtime history
 
 Current implemented endpoints:
 

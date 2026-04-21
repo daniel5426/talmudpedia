@@ -4,13 +4,14 @@ from uuid import UUID, uuid4
 import pytest
 
 from app.db.postgres.models.agents import AgentRun, RunStatus
-from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, User
+from app.db.postgres.models.identity import MembershipStatus, OrgMembership, User
 from app.db.postgres.models.published_apps import (
     PublishedAppCodingChatMessage,
     PublishedAppCodingChatMessageRole,
     PublishedAppCodingChatSession,
 )
 from app.services.published_app_coding_agent_tools import CODING_AGENT_SURFACE
+from app.services.security_bootstrap_service import SecurityBootstrapService
 from tests.published_apps._helpers import admin_headers, seed_admin_tenant_and_agent
 
 
@@ -78,9 +79,15 @@ async def test_chat_history_list_scopes_to_current_user(client, db_session):
             organization_id=tenant.id,
             user_id=other_user.id,
             org_unit_id=org_unit.id,
-            role=OrgRole.owner,
             status=MembershipStatus.active,
         )
+    )
+    bootstrap = SecurityBootstrapService(db_session)
+    await bootstrap.ensure_default_roles(tenant.id)
+    await bootstrap.ensure_organization_owner_assignment(
+        organization_id=tenant.id,
+        user_id=other_user.id,
+        assigned_by=owner.id,
     )
     await db_session.commit()
 
@@ -251,9 +258,15 @@ async def test_chat_history_detail_blocks_cross_user_session_access(client, db_s
             organization_id=tenant.id,
             user_id=other_user.id,
             org_unit_id=org_unit.id,
-            role=OrgRole.owner,
             status=MembershipStatus.active,
         )
+    )
+    bootstrap = SecurityBootstrapService(db_session)
+    await bootstrap.ensure_default_roles(tenant.id)
+    await bootstrap.ensure_organization_owner_assignment(
+        organization_id=tenant.id,
+        user_id=other_user.id,
+        assigned_by=owner.id,
     )
     await db_session.commit()
 

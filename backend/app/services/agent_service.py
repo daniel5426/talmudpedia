@@ -100,9 +100,15 @@ class AgentService:
     All business logic lives here, keeping routers as thin dispatch layers.
     """
     
-    def __init__(self, db: AsyncSession, organization_id: UUID):
+    def __init__(self, db: AsyncSession, organization_id: UUID, project_id: UUID | None = None):
         self.db = db
         self.organization_id = organization_id
+        self.project_id = project_id
+
+    def _require_project_id(self) -> UUID:
+        if self.project_id is None:
+            raise AgentInputValidationError("Active project context is required")
+        return self.project_id
 
     @staticmethod
     def _internal_row_key(prefix: str = "agent") -> str:
@@ -218,7 +224,13 @@ class AgentService:
             select(ToolRegistry.id).where(
                 ToolRegistry.id == tool_uuid,
                 ToolRegistry.is_active.is_(True),
-                or_(ToolRegistry.organization_id == self.organization_id, ToolRegistry.organization_id.is_(None)),
+                or_(
+                    ToolRegistry.organization_id.is_(None),
+                    and_(
+                        ToolRegistry.organization_id == self.organization_id,
+                        ToolRegistry.project_id == self._require_project_id(),
+                    ),
+                ),
             ).limit(1)
         )
         return res.scalar_one_or_none() is not None
@@ -436,7 +448,7 @@ class AgentService:
         compact: bool = False,
     ) -> Tuple[List[Agent], int]:
         """List agents for the organization with pagination and optional status filter."""
-        filters = [Agent.organization_id == self.organization_id]
+        filters = [Agent.organization_id == self.organization_id, Agent.project_id == self._require_project_id()]
         
         if status:
             filters.append(Agent.status == status)
@@ -459,6 +471,7 @@ class AgentService:
                 load_only(
                     Agent.id,
                     Agent.organization_id,
+                    Agent.project_id,
                     Agent.name,
                     Agent.description,
                     Agent.version,
@@ -480,7 +493,7 @@ class AgentService:
     async def get_agent(self, agent_id: UUID) -> Agent:
         """Fetch a specific agent by ID."""
         query = select(Agent).where(
-            and_(Agent.id == agent_id, Agent.organization_id == self.organization_id)
+            and_(Agent.id == agent_id, Agent.organization_id == self.organization_id, Agent.project_id == self._require_project_id())
         )
         result = await self.db.execute(query)
         agent = result.scalar_one_or_none()
@@ -518,6 +531,7 @@ class AgentService:
 
         agent = Agent(
             organization_id=self.organization_id,
+            project_id=self._require_project_id(),
             name=data.name,
             slug=slug,
             description=data.description,
@@ -588,13 +602,22 @@ class AgentService:
             and_(
                 AgentRun.agent_id == agent_id,
                 AgentRun.organization_id == self.organization_id,
+                AgentRun.project_id == self._require_project_id(),
             )
         )
 
         await self.db.execute(delete(AgentVersion).where(AgentVersion.agent_id == agent_id))
         await self.db.execute(delete(AgentTrace).where(AgentTrace.run_id.in_(run_ids_subquery)))
         await self.db.execute(delete(AgentRun).where(AgentRun.id.in_(run_ids_subquery)))
-        await self.db.execute(delete(Agent).where(and_(Agent.id == agent_id, Agent.organization_id == self.organization_id)))
+        await self.db.execute(
+            delete(Agent).where(
+                and_(
+                    Agent.id == agent_id,
+                    Agent.organization_id == self.organization_id,
+                    Agent.project_id == self._require_project_id(),
+                )
+            )
+        )
         await self.db.commit()
         return True
 

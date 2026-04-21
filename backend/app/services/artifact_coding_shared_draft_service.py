@@ -23,9 +23,13 @@ class ArtifactCodingSharedDraftService:
         self,
         *,
         organization_id: UUID,
+        project_id: UUID | None,
         artifact_id: UUID,
     ) -> ArtifactCodingSharedDraft | None:
-        stmt = select(ArtifactCodingSharedDraft).where(ArtifactCodingSharedDraft.organization_id == organization_id)
+        stmt = select(ArtifactCodingSharedDraft).where(
+            ArtifactCodingSharedDraft.organization_id == organization_id,
+            ArtifactCodingSharedDraft.project_id == project_id,
+        )
         stmt = stmt.where(
             or_(
                 ArtifactCodingSharedDraft.artifact_id == artifact_id,
@@ -39,12 +43,14 @@ class ArtifactCodingSharedDraftService:
         self,
         *,
         organization_id: UUID,
+        project_id: UUID | None,
         draft_key: str,
     ) -> ArtifactCodingSharedDraft | None:
         result = await self.db.execute(
             select(ArtifactCodingSharedDraft)
             .where(
                 ArtifactCodingSharedDraft.organization_id == organization_id,
+                ArtifactCodingSharedDraft.project_id == project_id,
                 ArtifactCodingSharedDraft.draft_key == draft_key,
             )
             .order_by(desc(ArtifactCodingSharedDraft.updated_at))
@@ -56,29 +62,48 @@ class ArtifactCodingSharedDraftService:
         self,
         *,
         organization_id: UUID,
+        project_id: UUID | None,
         artifact_id: UUID | None,
         draft_key: str | None,
     ) -> ArtifactCodingSharedDraft | None:
         if artifact_id is not None and draft_key:
-            artifact_shared = await self._get_for_artifact(organization_id=organization_id, artifact_id=artifact_id)
-            draft_shared = await self._get_for_draft_key(organization_id=organization_id, draft_key=draft_key)
+            artifact_shared = await self._get_for_artifact(
+                organization_id=organization_id,
+                project_id=project_id,
+                artifact_id=artifact_id,
+            )
+            draft_shared = await self._get_for_draft_key(
+                organization_id=organization_id,
+                project_id=project_id,
+                draft_key=draft_key,
+            )
             return draft_shared or artifact_shared
         if artifact_id is not None:
-            return await self._get_for_artifact(organization_id=organization_id, artifact_id=artifact_id)
+            return await self._get_for_artifact(
+                organization_id=organization_id,
+                project_id=project_id,
+                artifact_id=artifact_id,
+            )
         if draft_key:
-            return await self._get_for_draft_key(organization_id=organization_id, draft_key=draft_key)
+            return await self._get_for_draft_key(
+                organization_id=organization_id,
+                project_id=project_id,
+                draft_key=draft_key,
+            )
         return None
 
     async def get_or_create_for_scope(
         self,
         *,
         organization_id: UUID,
+        project_id: UUID | None,
         artifact_id: UUID | None,
         draft_key: str | None,
         initial_snapshot: dict[str, Any] | None = None,
     ) -> ArtifactCodingSharedDraft:
         shared = await self.get_for_scope(
             organization_id=organization_id,
+            project_id=project_id,
             artifact_id=artifact_id,
             draft_key=draft_key,
         )
@@ -87,6 +112,7 @@ class ArtifactCodingSharedDraftService:
 
         shared = ArtifactCodingSharedDraft(
             organization_id=organization_id,
+            project_id=project_id,
             artifact_id=artifact_id,
             draft_key=draft_key,
             linked_artifact_id=artifact_id,
@@ -110,6 +136,7 @@ class ArtifactCodingSharedDraftService:
 
         return await self.get_or_create_for_scope(
             organization_id=session.organization_id,
+            project_id=session.project_id,
             artifact_id=session.artifact_id or session.linked_artifact_id,
             draft_key=session.draft_key,
             initial_snapshot=None,
@@ -138,12 +165,18 @@ class ArtifactCodingSharedDraftService:
         self,
         *,
         organization_id: UUID,
+        project_id: UUID | None,
         draft_key: str,
         artifact_id: UUID,
     ) -> None:
         if not draft_key:
             return
-        shared = await self.get_for_scope(organization_id=organization_id, artifact_id=artifact_id, draft_key=draft_key)
+        shared = await self.get_for_scope(
+            organization_id=organization_id,
+            project_id=project_id,
+            artifact_id=artifact_id,
+            draft_key=draft_key,
+        )
         if shared is None:
             return
         shared.artifact_id = artifact_id
@@ -182,6 +215,7 @@ class ArtifactCodingSharedDraftService:
     ) -> ArtifactCodingRunSnapshot:
         snapshot = ArtifactCodingRunSnapshot(
             organization_id=shared_draft.organization_id,
+            project_id=shared_draft.project_id,
             shared_draft_id=shared_draft.id,
             run_id=run_id,
             session_id=session_id,
@@ -198,12 +232,14 @@ class ArtifactCodingSharedDraftService:
         self,
         *,
         organization_id: UUID,
+        project_id: UUID | None,
         run_id: UUID,
         snapshot_kind: str = "pre_run",
     ) -> ArtifactCodingRunSnapshot | None:
         result = await self.db.execute(
             select(ArtifactCodingRunSnapshot).where(
                 ArtifactCodingRunSnapshot.organization_id == organization_id,
+                ArtifactCodingRunSnapshot.project_id == project_id,
                 ArtifactCodingRunSnapshot.run_id == run_id,
                 ArtifactCodingRunSnapshot.snapshot_kind == snapshot_kind,
             )
@@ -214,11 +250,13 @@ class ArtifactCodingSharedDraftService:
         self,
         *,
         organization_id: UUID,
+        project_id: UUID | None,
         run_id: UUID,
         snapshot_kind: str = "pre_run",
     ) -> ArtifactCodingSharedDraft:
         snapshot = await self.get_run_snapshot(
             organization_id=organization_id,
+            project_id=project_id,
             run_id=run_id,
             snapshot_kind=snapshot_kind,
         )

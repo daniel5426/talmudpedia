@@ -60,7 +60,13 @@ async def get_tools_context(
         organization = result.scalar_one_or_none()
         if not organization:
             raise HTTPException(status_code=404, detail="Organization not found")
-        return {"organization_id": str(organization.id), "organization": organization, "user": None, "is_service": True}
+        return {
+            "organization_id": str(organization.id),
+            "project_id": str(context.get("project_id")) if context.get("project_id") else None,
+            "organization": organization,
+            "user": None,
+            "is_service": True,
+        }
 
     organization_id= context.get("organization_id")
     if not organization_id:
@@ -75,6 +81,7 @@ async def get_tools_context(
         raise HTTPException(status_code=404, detail="Organization not found")
     return {
         "organization_id": str(organization.id),
+        "project_id": str(context.get("project_id")) if context.get("project_id") else None,
         "organization": organization,
         "user": context.get("user"),
         "is_service": False,
@@ -809,7 +816,7 @@ async def update_tool(
 async def publish_tool(
     tool_id: uuid.UUID,
     principal: dict = Depends(get_current_principal),
-    _: dict = Depends(require_scopes("tools.write")),
+    _: dict = Depends(require_scopes("tools.publish")),
     db: AsyncSession = Depends(get_db),
     organization_ctx=Depends(get_tools_context),
 ):
@@ -851,9 +858,19 @@ async def delete_tool(
     organization_ctx=Depends(get_tools_context),
 ):
     tid = uuid.UUID(str(organization_ctx["organization_id"]))
+    raw_project_id = organization_ctx.get("project_id")
+    if not raw_project_id:
+        raise HTTPException(status_code=422, detail="Active project context is required")
+    project_id = uuid.UUID(str(raw_project_id))
 
     tool = (
-        await db.execute(select(ToolRegistry).where(ToolRegistry.id == tool_id, ToolRegistry.organization_id == tid))
+        await db.execute(
+            select(ToolRegistry).where(
+                ToolRegistry.id == tool_id,
+                ToolRegistry.organization_id == tid,
+                ToolRegistry.project_id == project_id,
+            )
+        )
     ).scalar_one_or_none()
     if not tool:
         raise HTTPException(status_code=404, detail="Tool not found")

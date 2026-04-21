@@ -855,6 +855,12 @@ class AgentExecutorService:
             parsed_thread_id = UUID(str(raw_thread_id)) if raw_thread_id else None
         except Exception:
             raise ValueError("Invalid thread_id")
+        raw_project_id = runtime_context.get("project_id") or input_params.get("project_id")
+        parsed_project_id: Optional[UUID] = None
+        try:
+            parsed_project_id = UUID(str(raw_project_id)) if raw_project_id else None
+        except Exception:
+            parsed_project_id = None
 
         surface = AgentThreadSurface.internal
         runtime_surface = str(runtime_context.get("surface") or "").strip().lower()
@@ -895,6 +901,7 @@ class AgentExecutorService:
         try:
             thread_result = await thread_service.resolve_or_create_thread(
                 organization_id=agent.organization_id,
+                project_id=parsed_project_id,
                 user_id=effective_initiator_id,
                 app_account_id=published_app_account_id,
                 organization_api_key_id=organization_api_key_id,
@@ -913,6 +920,7 @@ class AgentExecutorService:
         attachment_service = RuntimeAttachmentService(self.db)
         attachment_owner = RuntimeAttachmentOwner(
             organization_id=agent.organization_id,
+            project_id=parsed_project_id,
             surface=surface,
             user_id=effective_initiator_id,
             app_account_id=published_app_account_id,
@@ -1073,6 +1081,7 @@ class AgentExecutorService:
             id=run_id,
             agent_id=agent_id,
             organization_id=agent.organization_id,
+            project_id=parsed_project_id,
             user_id=effective_initiator_id,
             thread_id=thread_result.thread.id,
             initiator_user_id=effective_initiator_id,

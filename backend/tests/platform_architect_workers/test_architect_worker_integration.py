@@ -18,6 +18,7 @@ from app.db.postgres.models.agents import Agent, AgentRun, RunStatus
 from app.db.postgres.models.artifact_runtime import Artifact, ArtifactCodingSession, ArtifactCodingSharedDraft, ArtifactRun
 from app.db.postgres.models.identity import Organization, User
 from app.db.postgres.models.registry import ModelCapabilityType, ModelRegistry, ModelStatus
+from app.db.postgres.models.workspace import Project
 from app.services import registry_seeding
 from app.services.architect_mode_service import ArchitectMode
 from app.services.artifact_coding_runtime_service import ArtifactCodingRuntimeService
@@ -63,6 +64,15 @@ async def _seed_tenant_user_and_model(db_session):
     user = User(email=f"architect-worker-e2e-{suffix}@example.com", role="admin")
     db_session.add_all([tenant, user])
     await db_session.flush()
+    project = Project(
+        organization_id=tenant.id,
+        name="Architect Worker Project",
+        slug=f"architect-worker-project-{suffix}",
+        is_default=True,
+        created_by=user.id,
+    )
+    db_session.add(project)
+    await db_session.flush()
     model = ModelRegistry(
         organization_id=None,
         name="Unit Chat Model",
@@ -75,12 +85,14 @@ async def _seed_tenant_user_and_model(db_session):
     await db_session.commit()
     await db_session.refresh(tenant)
     await db_session.refresh(user)
-    return tenant, user, model
+    await db_session.refresh(project)
+    return tenant, project, user, model
 
 
-async def _seed_worker_agent(db_session, *, organization_id):
+async def _seed_worker_agent(db_session, *, organization_id, project_id):
     agent = Agent(
         organization_id=organization_id,
+        project_id=project_id,
         name="Artifact Worker",
         slug=f"artifact-worker-{uuid4().hex[:8]}",
         status=AgentStatus.published,
@@ -93,11 +105,16 @@ async def _seed_worker_agent(db_session, *, organization_id):
 
 @pytest.mark.asyncio
 async def test_seeded_architect_run_spawns_artifact_worker_and_persists_artifact(db_session, monkeypatch):
-    tenant, user, _model = await _seed_tenant_user_and_model(db_session)
-    architect = await registry_seeding.seed_platform_architect_agent(db_session)
+    tenant, project, user, _model = await _seed_tenant_user_and_model(db_session)
+    architect = await registry_seeding.ensure_platform_architect_agent(
+        db_session,
+        tenant.id,
+        project_id=project.id,
+    )
     assert architect is not None
     organization_id = architect.organization_id
-    worker_agent = await _seed_worker_agent(db_session, organization_id=organization_id)
+    assert architect.project_id == project.id
+    worker_agent = await _seed_worker_agent(db_session, organization_id=organization_id, project_id=project.id)
 
     shared: dict[str, object] = {}
     draft_key = f"architect-worker-{uuid4().hex[:8]}"
@@ -312,10 +329,19 @@ async def test_seeded_architect_run_spawns_artifact_worker_and_persists_artifact
 
 @pytest.mark.asyncio
 async def test_seeded_architect_run_rejects_second_mutating_spawn_for_active_binding(db_session, monkeypatch):
-    tenant, user, _model = await _seed_tenant_user_and_model(db_session)
-    architect = await registry_seeding.seed_platform_architect_agent(db_session)
+    tenant, project, user, _model = await _seed_tenant_user_and_model(db_session)
+    architect = await registry_seeding.ensure_platform_architect_agent(
+        db_session,
+        tenant.id,
+        project_id=project.id,
+    )
     assert architect is not None
-    worker_agent = await _seed_worker_agent(db_session, organization_id=architect.organization_id)
+    assert architect.project_id == project.id
+    worker_agent = await _seed_worker_agent(
+        db_session,
+        organization_id=architect.organization_id,
+        project_id=project.id,
+    )
 
     shared: dict[str, object] = {}
     draft_key = f"architect-worker-blocked-{uuid4().hex[:8]}"

@@ -6,13 +6,14 @@ import pytest
 from sqlalchemy import func, select
 
 from app.db.postgres.models.artifact_runtime import ArtifactRevision, ArtifactStatus
-from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Organization, User
+from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgUnit, OrgUnitType, Organization, User
 from app.db.postgres.models.registry import IntegrationCredential, IntegrationCredentialCategory
 from app.services.artifact_runtime.bundle_builder import ArtifactBundleBuilder
 from app.services.artifact_runtime.cloudflare_package_builder import CloudflareArtifactPackageBuilder
 from app.services.artifact_runtime.registry_service import ArtifactRegistryService
 from app.services.artifact_runtime.revision_service import ArtifactRevisionService
 from app.services.artifact_runtime.workers_validation import ArtifactWorkersCompatibilityError
+from app.services.security_bootstrap_service import SecurityBootstrapService
 
 
 async def _seed_tenant_context(db_session):
@@ -30,10 +31,16 @@ async def _seed_tenant_context(db_session):
         organization_id=tenant.id,
         user_id=user.id,
         org_unit_id=org_unit.id,
-        role=OrgRole.owner,
         status=MembershipStatus.active,
     )
     db_session.add_all([tenant, user, org_unit, membership])
+    bootstrap = SecurityBootstrapService(db_session)
+    await bootstrap.ensure_default_roles(tenant.id)
+    await bootstrap.ensure_organization_owner_assignment(
+        organization_id=tenant.id,
+        user_id=user.id,
+        assigned_by=user.id,
+    )
     await db_session.commit()
     return tenant, user
 
@@ -68,7 +75,7 @@ async def test_revision_service_creates_updates_and_publishes_multifile_revision
         },
     )
     await db_session.commit()
-    artifact = await ArtifactRegistryService(db_session).get_tenant_artifact(artifact_id=artifact.id, organization_id=tenant.id)
+    artifact = await ArtifactRegistryService(db_session).get_organization_artifact(artifact_id=artifact.id, organization_id=tenant.id)
 
     assert artifact.latest_draft_revision_id is not None
     assert artifact.status == ArtifactStatus.DRAFT
@@ -101,7 +108,7 @@ async def test_revision_service_creates_updates_and_publishes_multifile_revision
         },
     )
     await db_session.commit()
-    artifact = await ArtifactRegistryService(db_session).get_tenant_artifact(artifact_id=artifact.id, organization_id=tenant.id)
+    artifact = await ArtifactRegistryService(db_session).get_organization_artifact(artifact_id=artifact.id, organization_id=tenant.id)
 
     assert artifact.latest_draft_revision.revision_number == 2
     assert artifact.latest_draft_revision.build_hash != first_hash
@@ -111,7 +118,7 @@ async def test_revision_service_creates_updates_and_publishes_multifile_revision
 
     published_revision = await service.publish_latest_draft(artifact)
     await db_session.commit()
-    artifact = await ArtifactRegistryService(db_session).get_tenant_artifact(artifact_id=artifact.id, organization_id=tenant.id)
+    artifact = await ArtifactRegistryService(db_session).get_organization_artifact(artifact_id=artifact.id, organization_id=tenant.id)
 
     assert published_revision.is_published is True
     assert published_revision.version_label == "v2"
@@ -148,7 +155,7 @@ async def test_revision_service_does_not_create_new_revision_for_noop_update(db_
         },
     )
     await db_session.commit()
-    artifact = await ArtifactRegistryService(db_session).get_tenant_artifact(artifact_id=artifact.id, organization_id=tenant.id)
+    artifact = await ArtifactRegistryService(db_session).get_organization_artifact(artifact_id=artifact.id, organization_id=tenant.id)
     assert artifact.latest_draft_revision is not None
     original_revision_id = artifact.latest_draft_revision.id
     original_revision_number = artifact.latest_draft_revision.revision_number
@@ -174,7 +181,7 @@ async def test_revision_service_does_not_create_new_revision_for_noop_update(db_
         },
     )
     await db_session.commit()
-    artifact = await ArtifactRegistryService(db_session).get_tenant_artifact(artifact_id=artifact.id, organization_id=tenant.id)
+    artifact = await ArtifactRegistryService(db_session).get_organization_artifact(artifact_id=artifact.id, organization_id=tenant.id)
     revision_count = await db_session.scalar(
         select(func.count()).select_from(ArtifactRevision).where(ArtifactRevision.artifact_id == artifact.id)
     )
@@ -212,7 +219,7 @@ async def test_revision_service_rejects_language_mutation_for_persisted_artifact
         },
     )
     await db_session.commit()
-    artifact = await ArtifactRegistryService(db_session).get_tenant_artifact(artifact_id=artifact.id, organization_id=tenant.id)
+    artifact = await ArtifactRegistryService(db_session).get_organization_artifact(artifact_id=artifact.id, organization_id=tenant.id)
 
     with pytest.raises(ValueError, match="Artifact language is immutable"):
         await service.update_artifact(

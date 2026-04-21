@@ -3,7 +3,7 @@ from uuid import uuid4
 
 from app.api.dependencies import get_current_principal
 from app.api.routers.auth import get_current_user
-from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Organization, User
+from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgUnit, OrgUnitType, Organization, User
 from app.db.postgres.models.registry import ModelCapabilityType, ModelRegistry, ModelStatus
 
 
@@ -42,7 +42,6 @@ async def test_get_tenant_settings_returns_normalized_defaults(client, db_sessio
         organization_id=tenant.id,
         user_id=user.id,
         org_unit_id=root.id,
-        role=OrgRole.owner,
         status=MembershipStatus.active,
     )
     db_session.add(membership)
@@ -80,7 +79,6 @@ async def test_patch_tenant_settings_accepts_valid_defaults(client, db_session, 
         organization_id=tenant.id,
         user_id=user.id,
         org_unit_id=root.id,
-        role=OrgRole.owner,
         status=MembershipStatus.active,
     )
     db_session.add(membership)
@@ -141,7 +139,6 @@ async def test_patch_tenant_settings_rejects_invalid_capability(client, db_sessi
         organization_id=tenant.id,
         user_id=user.id,
         org_unit_id=root.id,
-        role=OrgRole.owner,
         status=MembershipStatus.active,
     )
     db_session.add(membership)
@@ -188,7 +185,6 @@ async def test_patch_tenant_settings_rejects_unknown_model(client, db_session, r
         organization_id=tenant.id,
         user_id=user.id,
         org_unit_id=root.id,
-        role=OrgRole.owner,
         status=MembershipStatus.active,
     )
     db_session.add(membership)

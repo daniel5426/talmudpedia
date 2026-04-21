@@ -4,8 +4,9 @@ import pytest
 import jwt
 from sqlalchemy import select
 
+from app.core.scope_registry import ORGANIZATION_DEFAULT_ROLE_SCOPES, ORGANIZATION_OWNER_ROLE
 from app.core.security import ALGORITHM, SECRET_KEY, create_access_token, get_password_hash
-from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Organization, User
+from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgUnit, OrgUnitType, Organization, User
 from app.services.security_bootstrap_service import SecurityBootstrapService
 
 
@@ -13,20 +14,18 @@ def _auth_headers(
     user_id: str,
     organization_id: str,
     org_unit_id: str,
-    org_role: str = "owner",
     scopes: list[str] | None = None,
 ) -> dict[str, str]:
     payload = jwt.decode(
         create_access_token(
-        subject=user_id,
-        organization_id=organization_id,
-        org_unit_id=org_unit_id,
-        org_role=org_role,
+            subject=user_id,
+            organization_id=organization_id,
+            org_unit_id=org_unit_id,
         ),
         SECRET_KEY,
         algorithms=[ALGORITHM],
     )
-    payload["scope"] = scopes if scopes is not None else (["*"] if org_role == "owner" else [])
+    payload["scope"] = scopes if scopes is not None else list(ORGANIZATION_DEFAULT_ROLE_SCOPES[ORGANIZATION_OWNER_ROLE])
     token = jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
     return {
         "Authorization": f"Bearer {token}",
@@ -63,13 +62,12 @@ async def _seed_admin_user_setup(db_session):
     db_session.add(org_unit)
     await db_session.flush()
 
-    for user, role in ((owner, OrgRole.owner), (target_user, OrgRole.member), (unscoped_user, OrgRole.member)):
+    for user in (owner, target_user, unscoped_user):
         db_session.add(
             OrgMembership(
                 organization_id=tenant.id,
                 user_id=user.id,
                 org_unit_id=org_unit.id,
-                role=role,
                 status=MembershipStatus.active,
             )
         )
@@ -121,7 +119,7 @@ async def test_admin_update_user_ignores_role_payload(client, db_session):
 @pytest.mark.asyncio
 async def test_admin_users_requires_users_read_scope(client, db_session):
     tenant, _owner, _target_user, unscoped_user, org_unit = await _seed_admin_user_setup(db_session)
-    headers = _auth_headers(str(unscoped_user.id), str(tenant.id), str(org_unit.id), org_role="member")
+    headers = _auth_headers(str(unscoped_user.id), str(tenant.id), str(org_unit.id), scopes=[])
 
     response = await client.get("/admin/users", headers=headers)
     assert response.status_code == 403

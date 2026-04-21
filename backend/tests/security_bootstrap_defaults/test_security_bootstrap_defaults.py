@@ -8,7 +8,7 @@ import pytest
 from sqlalchemy import select
 
 from app.core.security import get_password_hash
-from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Organization, User
+from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgUnit, OrgUnitType, Organization, User
 from app.db.postgres.models.rbac import Role, RoleAssignment
 from app.services.security_bootstrap_service import SecurityBootstrapService
 
@@ -41,7 +41,6 @@ async def test_bootstrap_seeds_default_roles_and_owner_assignment_idempotently(d
             organization_id=tenant.id,
             user_id=user.id,
             org_unit_id=org_unit.id,
-            role=OrgRole.owner,
             status=MembershipStatus.active,
         )
     )

@@ -2,7 +2,7 @@ import pytest
 
 from app.api.dependencies import get_current_principal
 from app.api.routers.auth import get_current_user
-from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Organization, User
+from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgUnit, OrgUnitType, Organization, User
 
 
 def _override_principal(tenant: Organization, user: User, scopes: list[str]):
@@ -31,7 +31,6 @@ async def test_owner_can_patch_tenant_profile(client, db_session, run_prefix):
         organization_id=tenant.id,
         user_id=owner.id,
         org_unit_id=root.id,
-        role=OrgRole.owner,
         status=MembershipStatus.active,
     )
     db_session.add(membership)
@@ -70,7 +69,6 @@ async def test_member_cannot_patch_tenant_profile(client, db_session, run_prefix
         organization_id=tenant.id,
         user_id=member_user.id,
         org_unit_id=root.id,
-        role=OrgRole.member,
         status=MembershipStatus.active,
     )
     db_session.add(membership)

@@ -16,18 +16,21 @@ from app.services.platform_architect_live_harness import (
     write_run_bundle,
     write_run_bundle_summary,
 )
+from tests.platform_architect_e2e.test_architect_e2e_live import _resolve_architect_agent_id
 
 
 def test_live_harness_config_reads_new_env_names(monkeypatch):
     monkeypatch.setenv("PLATFORM_ARCHITECT_BASE_URL", "http://localhost:9999")
     monkeypatch.setenv("PLATFORM_ARCHITECT_API_KEY", "token-123")
-    monkeypatch.setenv("PLATFORM_ARCHITECT_TENANT_ID", "tenant-123")
+    monkeypatch.setenv("PLATFORM_ARCHITECT_ORGANIZATION_ID", "org-123")
+    monkeypatch.setenv("PLATFORM_ARCHITECT_PROJECT_ID", "project-123")
     monkeypatch.setenv("PLATFORM_ARCHITECT_AGENT_ID", "agent-123")
     monkeypatch.setenv("PLATFORM_ARCHITECT_TIMEOUT_SECONDS", "123")
     config = ArchitectLiveHarnessConfig.from_env()
     assert config.base_url == "http://localhost:9999"
     assert config.api_key == "token-123"
-    assert config.organization_id == "tenant-123"
+    assert config.organization_id == "org-123"
+    assert config.project_id == "project-123"
     assert config.architect_agent_id == "agent-123"
     assert config.timeout_s == 123
 
@@ -37,7 +40,8 @@ def test_live_harness_config_uses_port_for_default_base_url(monkeypatch):
     monkeypatch.delenv("TEST_BASE_URL", raising=False)
     monkeypatch.setenv("PORT", "8026")
     monkeypatch.setenv("PLATFORM_ARCHITECT_API_KEY", "token-123")
-    monkeypatch.setenv("PLATFORM_ARCHITECT_TENANT_ID", "tenant-123")
+    monkeypatch.setenv("PLATFORM_ARCHITECT_ORGANIZATION_ID", "org-123")
+    monkeypatch.setenv("PLATFORM_ARCHITECT_PROJECT_ID", "project-123")
     config = ArchitectLiveHarnessConfig.from_env()
     assert config.base_url == "http://localhost:8026"
 
@@ -116,18 +120,21 @@ def test_write_run_bundle_and_processed_state(tmp_path: Path):
 def test_seed_local_dev_auth_defaults_mints_token(monkeypatch):
     monkeypatch.delenv("PLATFORM_ARCHITECT_API_KEY", raising=False)
     monkeypatch.delenv("TEST_API_KEY", raising=False)
-    monkeypatch.delenv("PLATFORM_ARCHITECT_TENANT_ID", raising=False)
-    monkeypatch.delenv("TEST_TENANT_ID", raising=False)
+    monkeypatch.delenv("PLATFORM_ARCHITECT_ORGANIZATION_ID", raising=False)
+    monkeypatch.delenv("TEST_ORGANIZATION_ID", raising=False)
+    monkeypatch.delenv("PLATFORM_ARCHITECT_PROJECT_ID", raising=False)
+    monkeypatch.delenv("TEST_PROJECT_ID", raising=False)
 
     monkeypatch.setattr(
         "scripts.platform_architect_live_harness._mint_local_dev_jwt",
-        lambda: ("jwt-123", "tenant-123"),
+        lambda: ("jwt-123", "org-123", "project-123"),
     )
 
     _seed_local_dev_auth_defaults()
 
     assert os.getenv("TEST_API_KEY") == "jwt-123"
-    assert os.getenv("TEST_TENANT_ID") == "tenant-123"
+    assert os.getenv("TEST_ORGANIZATION_ID") == "org-123"
+    assert os.getenv("TEST_PROJECT_ID") == "project-123"
 
 
 def test_start_run_defaults_architect_mode_and_execution_mode():
@@ -146,7 +153,28 @@ def test_start_run_defaults_architect_mode_and_execution_mode():
         ArchitectLiveHarnessConfig(
             base_url="http://localhost:8026",
             api_key="token-123",
-            organization_id="tenant-123",
+            organization_id="org-123",
+            project_id="project-123",
         )
     )
     assert harness.start_run(prompt="hello") == "run-123"
+
+
+def test_resolve_architect_agent_id_prefers_system_key():
+    class _FakeAgents:
+        @staticmethod
+        def list(limit=200):
+            assert limit == 200
+            return {
+                "data": {
+                    "agents": [
+                        {"id": "agent-other", "slug": "platform-architect", "system_key": "other_agent"},
+                        {"id": "agent-architect", "slug": "sys-agent-platform-architect", "system_key": "platform_architect"},
+                    ]
+                }
+            }
+
+    class _FakeClient:
+        agents = _FakeAgents()
+
+    assert _resolve_architect_agent_id(_FakeClient()) == "agent-architect"

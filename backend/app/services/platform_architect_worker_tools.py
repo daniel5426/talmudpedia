@@ -19,7 +19,7 @@ from app.db.postgres.models.registry import (
     ToolStatus,
     set_tool_management_metadata,
 )
-from app.services.artifact_coding_agent_profile import ensure_artifact_coding_agent_profile
+from app.services.artifact_coding_agent_tools import ensure_artifact_coding_tools
 from app.db.postgres.models.artifact_runtime import ArtifactKind
 from app.services.platform_architect_worker_runtime_service import PlatformArchitectWorkerRuntimeService
 from app.services.tool_function_registry import register_tool_function
@@ -525,7 +525,7 @@ async def ensure_platform_architect_worker_tools(
     organization_id: UUID,
     actor_user_id: UUID | None = None,
 ) -> list[str]:
-    await ensure_artifact_coding_agent_profile(db, organization_id, actor_user_id=actor_user_id)
+    await ensure_artifact_coding_tools(db)
 
     try:
         result = await db.execute(
@@ -606,9 +606,9 @@ async def ensure_platform_architect_worker_orchestration_policy(
     db: AsyncSession,
     *,
     organization_id: UUID,
+    project_id: UUID,
     orchestrator_agent_id: UUID,
 ) -> None:
-    artifact_agent = await ensure_artifact_coding_agent_profile(db, organization_id, actor_user_id=None)
     result = await db.execute(
         select(OrchestratorPolicy).where(
             and_(
@@ -630,25 +630,33 @@ async def ensure_platform_architect_worker_orchestration_policy(
         policy.is_active = True
         policy.allowed_scope_subset = ["agents.execute"]
 
-    target_agent_id = artifact_agent.id
-    allow_result = await db.execute(
-        select(OrchestratorTargetAllowlist).where(
-            and_(
-                OrchestratorTargetAllowlist.organization_id == organization_id,
-                OrchestratorTargetAllowlist.orchestrator_agent_id == orchestrator_agent_id,
-                OrchestratorTargetAllowlist.target_agent_id == target_agent_id,
-            )
+    artifact_agents_result = await db.execute(
+        select(Agent).where(
+            Agent.organization_id == organization_id,
+            Agent.project_id == project_id,
+            Agent.system_key == "artifact_coding_agent",
         )
     )
-    allow = allow_result.scalar_one_or_none()
-    if allow is None:
-        allow = OrchestratorTargetAllowlist(
-            organization_id=organization_id,
-            orchestrator_agent_id=orchestrator_agent_id,
-            target_agent_id=target_agent_id,
-            is_active=True,
+    artifact_agents = list(artifact_agents_result.scalars().all())
+    for artifact_agent in artifact_agents:
+        allow_result = await db.execute(
+            select(OrchestratorTargetAllowlist).where(
+                and_(
+                    OrchestratorTargetAllowlist.organization_id == organization_id,
+                    OrchestratorTargetAllowlist.orchestrator_agent_id == orchestrator_agent_id,
+                    OrchestratorTargetAllowlist.target_agent_id == artifact_agent.id,
+                )
+            )
         )
-        db.add(allow)
-    else:
-        allow.is_active = True
+        allow = allow_result.scalar_one_or_none()
+        if allow is None:
+            allow = OrchestratorTargetAllowlist(
+                organization_id=organization_id,
+                orchestrator_agent_id=orchestrator_agent_id,
+                target_agent_id=artifact_agent.id,
+                is_active=True,
+            )
+            db.add(allow)
+        else:
+            allow.is_active = True
     await db.flush()

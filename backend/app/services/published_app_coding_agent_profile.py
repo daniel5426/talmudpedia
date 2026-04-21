@@ -107,13 +107,14 @@ async def resolve_coding_agent_chat_model_id(db: AsyncSession, organization_id) 
     return resolve_coding_agent_profile_model_id()
 
 
-async def ensure_coding_agent_profile(db: AsyncSession, organization_id, *, actor_user_id=None) -> Agent:
+async def ensure_coding_agent_profile(db: AsyncSession, organization_id, project_id=None, *, actor_user_id=None) -> Agent:
     tool_ids = await ensure_coding_agent_tools(db)
 
     result = await db.execute(
         select(Agent).where(
             Agent.system_key == CODING_AGENT_PROFILE_SYSTEM_KEY,
             Agent.organization_id == organization_id,
+            Agent.project_id == project_id,
         )
     )
     agent = result.scalar_one_or_none()
@@ -123,6 +124,7 @@ async def ensure_coding_agent_profile(db: AsyncSession, organization_id, *, acto
         graph_definition = _build_coding_agent_graph(model_id, tool_ids)
         agent = Agent(
             organization_id=organization_id,
+            project_id=project_id,
             name=CODING_AGENT_PROFILE_NAME,
             system_key=CODING_AGENT_PROFILE_SYSTEM_KEY,
             slug=_system_agent_row_key(CODING_AGENT_PROFILE_SYSTEM_KEY),
@@ -143,6 +145,7 @@ async def ensure_coding_agent_profile(db: AsyncSession, organization_id, *, acto
     agent.name = CODING_AGENT_PROFILE_NAME
     agent.system_key = CODING_AGENT_PROFILE_SYSTEM_KEY
     agent.slug = _system_agent_row_key(CODING_AGENT_PROFILE_SYSTEM_KEY)
+    agent.project_id = project_id
     agent.description = "System coding-agent profile for published app runtime editing."
     agent.graph_definition = graph_definition
     agent.tools = tool_ids

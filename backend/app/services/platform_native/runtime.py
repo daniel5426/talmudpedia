@@ -85,6 +85,7 @@ class NativePlatformToolRuntime:
         self._principal = {
             "type": "user",
             "organization_id": str(organization_id) if organization_id is not None else None,
+            "project_id": str(self.runtime_context.get("project_id")) if self.runtime_context.get("project_id") else None,
             "user_id": str(user_id) if user_id is not None else None,
             "user": None,
             "scopes": scopes,
@@ -100,6 +101,7 @@ class NativePlatformToolRuntime:
             raise validation("Organization context required", field="organization_id")
         return ControlPlaneContext(
             organization_id=UUID(str(organization_id)),
+            project_id=parse_uuid(principal.get("project_id")),
             user=principal.get("user"),
             user_id=parse_uuid(principal.get("user_id") or getattr(principal.get("user"), "id", None)),
             auth_token=principal.get("auth_token"),
@@ -112,6 +114,7 @@ class NativePlatformToolRuntime:
         return {
             "user": principal.get("user"),
             "organization_id": principal.get("organization_id"),
+            "project_id": principal.get("project_id"),
             "auth_token": principal.get("auth_token"),
             "initiator_user_id": principal.get("initiator_user_id"),
             "scopes": principal.get("scopes", []),
@@ -123,6 +126,7 @@ class NativePlatformToolRuntime:
         organization_id= principal.get("organization_id")
         return {
             "organization_id": str(organization_id) if organization_id else None,
+            "project_id": str(principal.get("project_id")) if principal.get("project_id") else None,
             "organization": SimpleNamespace(id=UUID(str(organization_id))) if organization_id else None,
             "user": principal.get("user"),
             "is_service": bool(principal.get("type") == "workload"),

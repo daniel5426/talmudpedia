@@ -26,6 +26,7 @@ class ArtifactRunService:
         self,
         *,
         organization_id: UUID,
+        project_id: UUID | None,
         artifact: Artifact | None,
         revision: ArtifactRevision,
         domain: ArtifactRunDomain | str,
@@ -37,6 +38,7 @@ class ArtifactRunService:
         normalized_domain = self._normalize_domain(domain)
         run = ArtifactRun(
             organization_id=organization_id,
+            project_id=project_id,
             artifact_id=artifact.id if artifact else revision.artifact_id,
             revision_id=revision.id,
             domain=normalized_domain,
@@ -73,6 +75,7 @@ class ArtifactRunService:
         self,
         *,
         organization_id: UUID,
+        project_id: UUID | None,
         artifact: Artifact | None,
         revision: ArtifactRevision,
         input_payload: Any,
@@ -82,6 +85,7 @@ class ArtifactRunService:
     ) -> ArtifactRun:
         return await self.create_run(
             organization_id=organization_id,
+            project_id=project_id,
             artifact=artifact,
             revision=revision,
             domain=ArtifactRunDomain.TEST,

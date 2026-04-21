@@ -1,6 +1,6 @@
 # Design Docs Index
 
-Last Updated: 2026-04-13
+Last Updated: 2026-04-22
 
 This section is for architecture and design documents that explain system shape, constraints, and tradeoffs.
 
@@ -58,3 +58,5 @@ This section is for architecture and design documents that explain system shape,
   - Shared-resource design for a platform-wide prompt library and cross-surface prompt references.
 - `rag_agent_node_architecture_decision.md`
   - Decision record for keeping Agent and RAG node registries/contracts separate and avoiding premature shared-node abstraction.
+- `platform_architect_graph_authoring_direction.md`
+  - Agreed direction for moving the architect toward node/operator discovery plus canonical graph authoring with backend defaults and strict validation.

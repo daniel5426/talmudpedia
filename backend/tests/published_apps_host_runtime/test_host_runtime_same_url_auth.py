@@ -407,6 +407,7 @@ async def test_host_thread_detail_includes_public_run_events(client, db_session,
     thread_service = ThreadService(db_session)
     resolved = await thread_service.resolve_or_create_thread(
         organization_id=tenant.id,
+        project_id=app.project_id,
         user_id=None,
         app_account_id=app_account.id,
         agent_id=agent.id,
@@ -417,6 +418,7 @@ async def test_host_thread_detail_includes_public_run_events(client, db_session,
     )
     run = AgentRun(
         organization_id=tenant.id,
+        project_id=app.project_id,
         agent_id=agent.id,
         initiator_user_id=owner.id,
         thread_id=resolved.thread.id,
@@ -516,6 +518,7 @@ async def test_host_thread_detail_returns_subthread_tree_when_requested(client, 
     thread_service = ThreadService(db_session)
     resolved = await thread_service.resolve_or_create_thread(
         organization_id=tenant.id,
+        project_id=app.project_id,
         user_id=None,
         app_account_id=app_account.id,
         agent_id=agent.id,
@@ -526,6 +529,7 @@ async def test_host_thread_detail_returns_subthread_tree_when_requested(client, 
     )
     run = AgentRun(
         organization_id=tenant.id,
+        project_id=app.project_id,
         agent_id=agent.id,
         initiator_user_id=owner.id,
         published_app_id=app.id,
@@ -543,6 +547,7 @@ async def test_host_thread_detail_returns_subthread_tree_when_requested(client, 
 
     child_thread = AgentThread(
         organization_id=tenant.id,
+        project_id=app.project_id,
         app_account_id=app_account.id,
         agent_id=agent.id,
         published_app_id=app.id,
@@ -558,6 +563,7 @@ async def test_host_thread_detail_returns_subthread_tree_when_requested(client, 
     await db_session.flush()
     child_run = AgentRun(
         organization_id=tenant.id,
+        project_id=app.project_id,
         agent_id=agent.id,
         initiator_user_id=owner.id,
         published_app_id=app.id,

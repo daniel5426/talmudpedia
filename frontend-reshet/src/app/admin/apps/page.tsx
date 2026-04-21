@@ -44,6 +44,7 @@ import { SearchInput } from "@/components/ui/search-input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { agentService, publishedAppsService } from "@/services";
+import { useAuthStore } from "@/lib/store/useAuthStore";
 import type {
   Agent,
   PublishedApp,
@@ -98,6 +99,7 @@ function AppRowSkeleton() {
 
 export default function AppsPage() {
   const router = useRouter();
+  const currentProjectId = useAuthStore((state) => state.activeProject?.id ?? null);
   const [apps, setApps] = useState<PublishedApp[]>([]);
   const [templates, setTemplates] = useState<PublishedAppTemplate[]>([]);
   const [authTemplates, setAuthTemplates] = useState<PublishedAppAuthTemplate[]>([]);
@@ -140,7 +142,7 @@ export default function AppsPage() {
     return map;
   }, [publishedAgents]);
 
-  async function loadApps() {
+  const loadApps = useCallback(async () => {
     setIsAppsLoading(true);
     setAppsError(null);
     try {
@@ -151,9 +153,9 @@ export default function AppsPage() {
     } finally {
       setIsAppsLoading(false);
     }
-  }
+  }, []);
 
-  async function loadCreateResources() {
+  const loadCreateResources = useCallback(async () => {
     setIsCreateResourcesLoading(true);
     setCreateError(null);
     try {
@@ -177,7 +179,7 @@ export default function AppsPage() {
     } finally {
       setIsCreateResourcesLoading(false);
     }
-  }
+  }, []);
 
   const loadStats = useCallback(async (days: number) => {
     const fetchId = ++statsFetchRef.current;
@@ -202,14 +204,29 @@ export default function AppsPage() {
   }, []);
 
   useEffect(() => {
+    setApps([]);
+    setTemplates([]);
+    setAuthTemplates([]);
+    setPublishedAgents([]);
+    setStatsMap(new Map());
+    setStatsApproximate(false);
+    setAppsError(null);
+    setCreateError(null);
+    setCreateDialogOpen(false);
+    setName("");
+    setAgentId("");
+    setTemplateKey("");
+    setAuthTemplateKey("");
+    setAuthEnabled(true);
+    setProviderPassword(true);
+    setProviderGoogle(false);
     void loadApps();
     void loadCreateResources();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [currentProjectId, loadApps, loadCreateResources]);
 
   useEffect(() => {
     void loadStats(statsDays);
-  }, [statsDays, loadStats]);
+  }, [currentProjectId, statsDays, loadStats]);
 
   function resetCreateForm() {
     setName("");

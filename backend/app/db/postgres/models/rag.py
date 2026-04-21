@@ -75,6 +75,7 @@ class KnowledgeStore(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=True, index=True)
     
     # Identity
     name = Column(String, nullable=False)
@@ -102,6 +103,7 @@ class KnowledgeStore(Base):
 
     # Relationships
     organization = relationship("Organization")
+    project = relationship("Project")
     creator = relationship("User")
 
 
@@ -141,6 +143,7 @@ class VisualPipeline(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=True, index=True)
     org_unit_id = Column(UUID(as_uuid=True), ForeignKey("org_units.id", ondelete="SET NULL"), nullable=True, index=True)
     
     name = Column(String, nullable=False)
@@ -161,6 +164,7 @@ class VisualPipeline(Base):
 
     # Relationships
     organization = relationship("Organization")
+    project = relationship("Project")
     org_unit = relationship("OrgUnit")
     creator = relationship("User")
     executable_pipelines = relationship("ExecutablePipeline", back_populates="visual_pipeline", cascade="all, delete-orphan")
@@ -173,6 +177,7 @@ class ExecutablePipeline(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     visual_pipeline_id = Column(UUID(as_uuid=True), ForeignKey("visual_pipelines.id", ondelete="CASCADE"), nullable=False, index=True)
     organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=True, index=True)
     
     version = Column(Integer, nullable=False)
     
@@ -188,6 +193,7 @@ class ExecutablePipeline(Base):
     # Relationships
     visual_pipeline = relationship("VisualPipeline", back_populates="executable_pipelines")
     organization = relationship("Organization")
+    project = relationship("Project")
     compiler = relationship("User")
     jobs = relationship("PipelineJob", back_populates="executable_pipeline", cascade="all, delete-orphan")
 
@@ -198,6 +204,7 @@ class PipelineJob(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=True, index=True)
     executable_pipeline_id = Column(UUID(as_uuid=True), ForeignKey("executable_pipelines.id", ondelete="CASCADE"), nullable=False, index=True)
     
     status = Column(pg_enum(PipelineJobStatus), default=PipelineJobStatus.QUEUED, nullable=False)
@@ -214,6 +221,7 @@ class PipelineJob(Base):
 
     # Relationships
     organization = relationship("Organization")
+    project = relationship("Project")
     executable_pipeline = relationship("ExecutablePipeline", back_populates="jobs")
     trigger_user = relationship("User")
 
@@ -247,4 +255,3 @@ class PipelineStepExecution(Base):
     # Relationships
     job = relationship("PipelineJob", backref="steps")
     organization = relationship("Organization")
-

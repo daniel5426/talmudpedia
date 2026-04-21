@@ -1,5 +1,6 @@
 import os
 import uuid
+from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 from uuid import UUID
@@ -22,6 +23,14 @@ from app.db.postgres.models.published_apps import (
 from .published_apps_admin_shared import _slugify
 
 CODING_AGENT_SURFACE = "published_app_coding_agent"
+_ACTIVE_PROJECT_ID: ContextVar[UUID | None] = ContextVar("published_apps_active_project_id", default=None)
+
+
+def _active_project_id() -> UUID:
+    project_id = _ACTIVE_PROJECT_ID.get()
+    if project_id is None:
+        raise HTTPException(status_code=403, detail="Project context required")
+    return project_id
 
 
 def _publish_job_stale_timeout_seconds() -> int:
@@ -90,12 +99,22 @@ async def _resolve_organization_admin_context(
     principal: Dict[str, Any],
     db: AsyncSession,
 ) -> Dict[str, Any]:
+    project_raw = principal.get("project_id")
+    if not project_raw:
+        raise HTTPException(status_code=403, detail="Project context required")
+    try:
+        active_project_id = UUID(str(project_raw))
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Invalid project context") from exc
+
     if principal.get("type") == "workload":
-        organization_id= principal.get("organization_id")
+        organization_id = principal.get("organization_id")
         if not organization_id:
             raise HTTPException(status_code=403, detail="Organization context required")
+        _ACTIVE_PROJECT_ID.set(active_project_id)
         return {
             "organization_id": UUID(str(organization_id)),
+            "project_id": active_project_id,
             "user": None,
             "is_system_admin": False,
         }
@@ -110,6 +129,9 @@ async def _resolve_organization_admin_context(
             organization_uuid = UUID(str(header_tenant))
         except Exception:
             raise HTTPException(status_code=400, detail="Invalid X-Organization-ID header")
+        principal_organization_id = principal.get("organization_id")
+        if principal_organization_id and str(principal_organization_id) != str(organization_uuid):
+            raise HTTPException(status_code=403, detail="Requested organization does not match active project context")
         membership_result = await db.execute(
             select(OrgMembership).where(
                 OrgMembership.user_id == user.id,
@@ -119,8 +141,10 @@ async def _resolve_organization_admin_context(
         membership = membership_result.scalar_one_or_none()
         if membership is None and user.role != "admin":
             raise HTTPException(status_code=403, detail="Not a member of the requested organization")
+        _ACTIVE_PROJECT_ID.set(active_project_id)
         return {
             "organization_id": organization_uuid,
+            "project_id": active_project_id,
             "user": user,
             "is_system_admin": user.role == "admin",
         }
@@ -130,16 +154,20 @@ async def _resolve_organization_admin_context(
     )
     membership = membership_result.scalar_one_or_none()
     if membership is not None:
+        _ACTIVE_PROJECT_ID.set(active_project_id)
         return {
             "organization_id": membership.organization_id,
+            "project_id": active_project_id,
             "user": user,
             "is_system_admin": user.role == "admin",
         }
 
-    organization_id= principal.get("organization_id")
+    organization_id = principal.get("organization_id")
     if user.role == "admin" and organization_id:
+        _ACTIVE_PROJECT_ID.set(active_project_id)
         return {
             "organization_id": UUID(str(organization_id)),
+            "project_id": active_project_id,
             "user": user,
             "is_system_admin": True,
         }
@@ -153,7 +181,13 @@ def _assert_can_manage_apps(ctx: Dict[str, Any]) -> None:
 
 async def _validate_agent(db: AsyncSession, organization_id: UUID, agent_id: UUID) -> Agent:
     result = await db.execute(
-        select(Agent).where(and_(Agent.id == agent_id, Agent.organization_id == organization_id)).limit(1)
+        select(Agent).where(
+            and_(
+                Agent.id == agent_id,
+                Agent.organization_id == organization_id,
+                Agent.project_id == _active_project_id(),
+            )
+        ).limit(1)
     )
     agent = result.scalar_one_or_none()
     if agent is None:
@@ -173,7 +207,11 @@ async def _generate_public_id(db: AsyncSession) -> str:
 async def _get_app_for_tenant(db: AsyncSession, organization_id: UUID, app_id: UUID) -> PublishedApp:
     result = await db.execute(
         select(PublishedApp).where(
-            and_(PublishedApp.id == app_id, PublishedApp.organization_id == organization_id)
+            and_(
+                PublishedApp.id == app_id,
+                PublishedApp.organization_id == organization_id,
+                PublishedApp.project_id == _active_project_id(),
+            )
         ).limit(1)
     )
     app = result.scalar_one_or_none()

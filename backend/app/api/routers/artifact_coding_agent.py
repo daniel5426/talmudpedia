@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import require_scopes
+from app.api.dependencies import get_current_principal, require_scopes
 from app.api.schemas.context_window import ContextWindowResponse
 from app.api.schemas.run_usage import RunUsageResponse
 from app.api.routers.artifacts import get_artifact_context
@@ -179,6 +179,14 @@ def _run_response_from_snapshot(
     )
 
 
+def _project_id_from_principal(principal: Dict[str, Any] | None) -> UUID | None:
+    raw = (principal or {}).get("project_id")
+    try:
+        return UUID(str(raw)) if raw else None
+    except Exception:
+        return None
+
+
 async def _require_user_context(artifact_ctx) -> tuple[Organization, Any, AsyncSession]:
     organization, user, db = artifact_ctx
     if organization is None:
@@ -192,12 +200,14 @@ async def _get_session_for_user_or_404(
     *,
     db: AsyncSession,
     organization_id: UUID,
+    project_id: UUID | None,
     user_id: UUID,
     session_id: UUID,
 ) -> ArtifactCodingSession:
     history = ArtifactCodingChatHistoryService(db)
     session = await history.get_session_for_user(
         organization_id=organization_id,
+        project_id=project_id,
         user_id=user_id,
         session_id=session_id,
     )
@@ -210,11 +220,17 @@ async def _require_run_owner(
     *,
     db: AsyncSession,
     organization_id: UUID,
+    project_id: UUID | None,
     user_id: UUID,
     run_id: UUID,
 ) -> tuple[AgentRun, ArtifactCodingSession]:
     run = await db.get(AgentRun, run_id)
-    if run is None or run.organization_id != organization_id or str(run.surface or "") != ARTIFACT_CODING_AGENT_SURFACE:
+    if (
+        run is None
+        or run.organization_id != organization_id
+        or run.project_id != project_id
+        or str(run.surface or "") != ARTIFACT_CODING_AGENT_SURFACE
+    ):
         raise HTTPException(status_code=404, detail="Artifact coding run not found")
     session_id = _session_id_for_run(run)
     if session_id is None:
@@ -222,6 +238,7 @@ async def _require_run_owner(
     session = await _get_session_for_user_or_404(
         db=db,
         organization_id=organization_id,
+        project_id=project_id,
         user_id=user_id,
         session_id=session_id,
     )
@@ -321,6 +338,7 @@ async def list_artifact_coding_sessions(
     draft_key: Optional[str] = None,
     limit: int = Query(default=25, ge=1, le=100),
     _: Dict[str, Any] = Depends(require_scopes("artifacts.read")),
+    principal: Dict[str, Any] = Depends(get_current_principal),
     artifact_ctx=Depends(get_artifact_context),
 ):
     organization, user, db = await _require_user_context(artifact_ctx)
@@ -328,6 +346,7 @@ async def list_artifact_coding_sessions(
         raise HTTPException(status_code=400, detail="artifact_id or draft_key is required")
     sessions = await ArtifactCodingChatHistoryService(db).list_sessions(
         organization_id=organization.id,
+        project_id=_project_id_from_principal(principal),
         user_id=user.id,
         artifact_id=artifact_id,
         draft_key=str(draft_key or "").strip() or None,
@@ -342,6 +361,7 @@ async def get_artifact_coding_session(
     before_message_id: Optional[UUID] = None,
     limit: int = Query(default=10, ge=1, le=100),
     _: Dict[str, Any] = Depends(require_scopes("artifacts.read")),
+    principal: Dict[str, Any] = Depends(get_current_principal),
     artifact_ctx=Depends(get_artifact_context),
 ):
     organization, user, db = await _require_user_context(artifact_ctx)
@@ -350,6 +370,7 @@ async def get_artifact_coding_session(
     session = await _get_session_for_user_or_404(
         db=db,
         organization_id=organization.id,
+        project_id=_project_id_from_principal(principal),
         user_id=user.id,
         session_id=session_id,
     )
@@ -371,12 +392,14 @@ async def get_artifact_coding_session(
 async def get_artifact_coding_session_draft_snapshot(
     session_id: UUID,
     _: Dict[str, Any] = Depends(require_scopes("artifacts.read")),
+    principal: Dict[str, Any] = Depends(get_current_principal),
     artifact_ctx=Depends(get_artifact_context),
 ):
     organization, user, db = await _require_user_context(artifact_ctx)
     session = await _get_session_for_user_or_404(
         db=db,
         organization_id=organization.id,
+        project_id=_project_id_from_principal(principal),
         user_id=user.id,
         session_id=session_id,
     )
@@ -392,12 +415,14 @@ async def get_artifact_coding_session_draft_snapshot(
 async def get_artifact_coding_session_active_run(
     session_id: UUID,
     _: Dict[str, Any] = Depends(require_scopes("artifacts.read")),
+    principal: Dict[str, Any] = Depends(get_current_principal),
     artifact_ctx=Depends(get_artifact_context),
 ):
     organization, user, db = await _require_user_context(artifact_ctx)
     session = await _get_session_for_user_or_404(
         db=db,
         organization_id=organization.id,
+        project_id=_project_id_from_principal(principal),
         user_id=user.id,
         session_id=session_id,
     )
@@ -424,6 +449,7 @@ async def get_artifact_coding_session_active_run(
 async def submit_artifact_coding_prompt(
     payload: ArtifactCodingPromptRequest,
     _: Dict[str, Any] = Depends(require_scopes("artifacts.write")),
+    principal: Dict[str, Any] = Depends(get_current_principal),
     artifact_ctx=Depends(get_artifact_context),
 ):
     organization, user, db = await _require_user_context(artifact_ctx)
@@ -435,6 +461,7 @@ async def submit_artifact_coding_prompt(
     try:
         session, _shared_draft, run = await runtime.start_prompt_run(
             organization_id=organization.id,
+            project_id=_project_id_from_principal(principal),
             user_id=user.id,
             user_prompt=user_prompt,
             artifact_id=payload.artifact_id,
@@ -448,6 +475,7 @@ async def submit_artifact_coding_prompt(
             session = await _get_session_for_user_or_404(
                 db=db,
                 organization_id=organization.id,
+                project_id=_project_id_from_principal(principal),
                 user_id=user.id,
                 session_id=payload.chat_session_id,
             )
@@ -473,12 +501,14 @@ async def submit_artifact_coding_prompt(
 async def get_artifact_coding_run(
     run_id: UUID,
     _: Dict[str, Any] = Depends(require_scopes("artifacts.read")),
+    principal: Dict[str, Any] = Depends(get_current_principal),
     artifact_ctx=Depends(get_artifact_context),
 ):
     organization, user, db = await _require_user_context(artifact_ctx)
     run, session = await _require_run_owner(
         db=db,
         organization_id=organization.id,
+        project_id=_project_id_from_principal(principal),
         user_id=user.id,
         run_id=run_id,
     )
@@ -492,12 +522,14 @@ async def get_artifact_coding_run(
 async def stream_artifact_coding_run(
     run_id: UUID,
     _: Dict[str, Any] = Depends(require_scopes("artifacts.write")),
+    principal: Dict[str, Any] = Depends(get_current_principal),
     artifact_ctx=Depends(get_artifact_context),
 ):
     organization, user, db = await _require_user_context(artifact_ctx)
     run, session = await _require_run_owner(
         db=db,
         organization_id=organization.id,
+        project_id=_project_id_from_principal(principal),
         user_id=user.id,
         run_id=run_id,
     )
@@ -626,12 +658,14 @@ async def cancel_artifact_coding_run(
     run_id: UUID,
     payload: ArtifactCodingCancelRunRequest,
     _: Dict[str, Any] = Depends(require_scopes("artifacts.write")),
+    principal: Dict[str, Any] = Depends(get_current_principal),
     artifact_ctx=Depends(get_artifact_context),
 ):
     organization, user, db = await _require_user_context(artifact_ctx)
     run, _session = await _require_run_owner(
         db=db,
         organization_id=organization.id,
+        project_id=_project_id_from_principal(principal),
         user_id=user.id,
         run_id=run_id,
     )
@@ -648,12 +682,14 @@ async def answer_artifact_coding_run_question(
     run_id: UUID,
     payload: ArtifactCodingAnswerQuestionRequest,
     _: Dict[str, Any] = Depends(require_scopes("artifacts.write")),
+    principal: Dict[str, Any] = Depends(get_current_principal),
     artifact_ctx=Depends(get_artifact_context),
 ):
     organization, user, db = await _require_user_context(artifact_ctx)
     run, session = await _require_run_owner(
         db=db,
         organization_id=organization.id,
+        project_id=_project_id_from_principal(principal),
         user_id=user.id,
         run_id=run_id,
     )
@@ -674,14 +710,17 @@ async def revert_artifact_coding_session_to_run(
     session_id: UUID,
     payload: ArtifactCodingRevertRequest,
     _: Dict[str, Any] = Depends(require_scopes("artifacts.write")),
+    principal: Dict[str, Any] = Depends(get_current_principal),
     artifact_ctx=Depends(get_artifact_context),
 ):
     organization, user, db = await _require_user_context(artifact_ctx)
     history = ArtifactCodingChatHistoryService(db)
     shared_drafts = ArtifactCodingSharedDraftService(db)
+    project_id = _project_id_from_principal(principal)
     session = await _get_session_for_user_or_404(
         db=db,
         organization_id=organization.id,
+        project_id=project_id,
         user_id=user.id,
         session_id=session_id,
     )
@@ -695,6 +734,7 @@ async def revert_artifact_coding_session_to_run(
             raise HTTPException(status_code=409, detail="Cannot revert while this chat has an active run")
     snapshot = await shared_drafts.get_run_snapshot(
         organization_id=organization.id,
+        project_id=project_id,
         run_id=payload.run_id,
         snapshot_kind="pre_run",
     )
@@ -702,6 +742,7 @@ async def revert_artifact_coding_session_to_run(
         raise HTTPException(status_code=404, detail="Artifact coding snapshot not found for this chat message")
     await shared_drafts.restore_run_snapshot(
         organization_id=organization.id,
+        project_id=project_id,
         run_id=payload.run_id,
         snapshot_kind="pre_run",
     )

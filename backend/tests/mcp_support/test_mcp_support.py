@@ -11,7 +11,7 @@ from app.db.postgres.base import Base
 from app.api.dependencies import get_current_principal
 from app.core.runtime_urls import resolve_local_backend_origin
 from app.db.postgres.models.agents import Agent
-from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Organization, User
+from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgUnit, OrgUnitType, Organization, User
 from app.db.postgres.models.mcp import (
     McpAgentMount,
     McpApprovalPolicy,
@@ -64,7 +64,6 @@ async def mcp_fixture(db_session):
             organization_id=tenant.id,
             user_id=user.id,
             org_unit_id=org.id,
-            role=OrgRole.owner,
             status=MembershipStatus.active,
         )
     )

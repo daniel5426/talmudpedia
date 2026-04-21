@@ -56,6 +56,7 @@ class ArtifactExecutionService:
         self,
         *,
         organization_id: UUID,
+        project_id: UUID | None = None,
         created_by: UUID | None,
         artifact_id: UUID | None,
         source_files: list[dict[str, Any]] | None = None,
@@ -76,7 +77,11 @@ class ArtifactExecutionService:
         artifact: Artifact | None = None
         revision = None
         if artifact_id is not None:
-            artifact = await self._registry.get_organization_artifact(artifact_id=artifact_id, organization_id=organization_id)
+            artifact = await self._registry.get_organization_artifact(
+                artifact_id=artifact_id,
+                organization_id=organization_id,
+                project_id=project_id,
+            )
             if artifact is None:
                 raise ValueError("Artifact not found")
             revision = artifact.latest_draft_revision or artifact.latest_published_revision
@@ -128,6 +133,7 @@ class ArtifactExecutionService:
 
         run = await self._runs.create_test_run(
             organization_id=organization_id,
+            project_id=artifact.project_id if artifact is not None else project_id,
             artifact=artifact,
             revision=revision,
             input_payload=input_data,
@@ -200,6 +206,7 @@ class ArtifactExecutionService:
         self,
         *,
         organization_id: UUID,
+        project_id: UUID | None = None,
         created_by: UUID | None,
         revision_id: UUID,
         domain: ArtifactRunDomain | str,
@@ -214,14 +221,20 @@ class ArtifactExecutionService:
         revision = await self._resolve_revision_for_execution(
             revision_id=revision_id,
             organization_id=organization_id,
+            project_id=project_id,
             require_published=require_published and normalized_domain != ArtifactRunDomain.TEST,
         )
         artifact = None
         if revision.artifact_id is not None:
-            artifact = await self._registry.get_accessible_artifact(artifact_id=revision.artifact_id, organization_id=organization_id)
+            artifact = await self._registry.get_accessible_artifact(
+                artifact_id=revision.artifact_id,
+                organization_id=organization_id,
+                project_id=project_id,
+            )
 
         run = await self._runs.create_run(
             organization_id=organization_id,
+            project_id=artifact.project_id if artifact is not None else project_id,
             artifact=artifact,
             revision=revision,
             domain=normalized_domain,
@@ -499,9 +512,9 @@ class ArtifactExecutionService:
                 return run
             await asyncio.sleep(0.2)
 
-    async def cancel_run(self, *, run_id: UUID, organization_id: UUID):
+    async def cancel_run(self, *, run_id: UUID, organization_id: UUID, project_id: UUID | None = None):
         run = await self._runs.get_run(run_id=run_id)
-        if run is None or str(run.organization_id) != str(organization_id):
+        if run is None or str(run.organization_id) != str(organization_id) or (project_id is not None and run.project_id != project_id):
             raise ValueError("Artifact run not found")
         await self._runs.mark_cancel_requested(run)
         if run.sandbox_session_id and run.status == ArtifactRunStatus.CANCEL_REQUESTED:
@@ -531,9 +544,14 @@ class ArtifactExecutionService:
         *,
         revision_id: UUID,
         organization_id: UUID,
+        project_id: UUID | None,
         require_published: bool,
     ):
-        revision = await self._registry.get_revision(revision_id=revision_id, organization_id=organization_id)
+        revision = await self._registry.get_revision(
+            revision_id=revision_id,
+            organization_id=organization_id,
+            project_id=project_id,
+        )
         if revision is None:
             raise ValueError("Artifact revision not found")
         if require_published and (not revision.is_published or revision.is_ephemeral):

@@ -1,4 +1,4 @@
-Last Updated: 2026-03-31
+Last Updated: 2026-04-21
 
 # Tool Bindings Test State
 
@@ -29,6 +29,7 @@ Domain-owned tool bindings for `tool_impl` artifacts, visual pipelines, and expo
 - updating a published pipeline demotes the bound tool back to draft and clears the executable pin
 - compiling an ingestion pipeline can also publish a `rag_pipeline` tool
 - exporting an agent now creates an owner-managed `agent_call` tool row exposed through `/tools` as `agent_bound`
+- exported agent tools now inherit the source agent `project_id`, and export routes resolve the source agent inside the active project
 - exported agent-tool input schemas are now generated from built-in workflow modalities plus declared state vars instead of an export-time custom schema
 - publishing an exported agent syncs the bound tool to `PUBLISHED` and snapshots a tool version
 - deleting an agent removes the exported bound tool row
@@ -47,7 +48,17 @@ Domain-owned tool bindings for `tool_impl` artifacts, visual pipelines, and expo
 - Command: `PYTHONPATH=/Users/danielbenassaya/Code/personal/talmudpedia python3 -m pytest -q backend/tests/tool_bindings/test_agent_tool_bindings.py`
 - Date: 2026-03-31 Asia/Hebron
 - Result: pass (`3 passed`)
+- Command: `SECRET_KEY=explicit-test-secret PYTHONPATH=/Users/danielbenassaya/Code/personal/talmudpedia backend/.venv/bin/python -m pytest -q backend/tests/tool_bindings/test_agent_tool_bindings.py`
+- Date: 2026-04-21 Asia/Hebron
+- Result: pass (`3 passed`). Agent-export lookup now follows source-object metadata instead of the old derived slug convention.
+- Command: `SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest -q backend/tests/tool_bindings/test_agent_tool_bindings.py`
+- Date: 2026-04-21 Asia/Hebron
+- Result: pass (`3 passed`). Agent export/publish/delete flows remain green after project-scoping the source agent lookup and bound-tool rows.
+- Command: `SECRET_KEY=explicit-test-secret PYTHONPATH=/Users/danielbenassaya/Code/personal/talmudpedia backend/.venv/bin/python -m pytest -q backend/tests/tool_bindings/test_domain_owned_tool_bindings.py -x`
+- Date: 2026-04-21 Asia/Hebron
+- Result: fail on first test. Local artifact creation currently errors with `invalid input value for enum artifactownertype: "organization"` before the tool-binding assertions run.
 
 ## Known Gaps / Follow-ups
 
 - No dedicated migration-level assertions yet for legacy `rag_retrieval` rows upgrading to `rag_pipeline`.
+- Local DB enum drift currently blocks `test_domain_owned_tool_bindings.py` artifact-route coverage (`artifactownertype` rejects `"organization"`).

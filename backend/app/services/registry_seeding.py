@@ -21,6 +21,7 @@ from app.db.postgres.models.registry import (
 from app.db.postgres.models.artifact_runtime import ArtifactKind, ArtifactOwnerType
 from app.db.postgres.models.identity import Organization
 from app.db.postgres.models.agents import Agent, AgentStatus
+from app.db.postgres.models.workspace import Project
 from app.services.builtin_tools import BUILTIN_TEMPLATE_SPECS, is_builtin_tools_v1_enabled
 from app.services.artifact_runtime.registry_service import ArtifactRegistryService
 from app.services.artifact_runtime.revision_service import ArtifactRevisionService
@@ -613,6 +614,7 @@ async def ensure_platform_architect_agent(
     db,
     organization_id,
     *,
+    project_id,
     actor_user_id=None,
 ):
     """
@@ -691,6 +693,7 @@ async def ensure_platform_architect_agent(
                 select(Agent).where(
                     Agent.system_key == PLATFORM_ARCHITECT_AGENT_SYSTEM_KEY,
                     Agent.organization_id == organization.id,
+                    Agent.project_id == project_id,
                 )
             )
             agent = agent_result.scalar_one_or_none()
@@ -702,6 +705,7 @@ async def ensure_platform_architect_agent(
         if agent is None:
             agent = Agent(
                 organization_id=organization.id,
+                project_id=project_id,
                 name="Platform Architect",
                 system_key=PLATFORM_ARCHITECT_AGENT_SYSTEM_KEY,
                 slug=_system_row_key("sys-agent", PLATFORM_ARCHITECT_AGENT_SYSTEM_KEY),
@@ -716,6 +720,7 @@ async def ensure_platform_architect_agent(
             )
             db.add(agent)
         else:
+            agent.project_id = project_id
             agent.name = "Platform Architect"
             agent.description = "Dynamic single-agent platform architect runtime using Control Plane SDK domain tools."
             agent.graph_definition = graph_definition
@@ -731,6 +736,7 @@ async def ensure_platform_architect_agent(
         await ensure_platform_architect_worker_orchestration_policy(
             db,
             organization_id=organization.id,
+            project_id=project_id,
             orchestrator_agent_id=agent.id,
         )
         await db.commit()
@@ -740,6 +746,7 @@ async def ensure_platform_architect_agent(
     agent = await _seed_platform_architect_agent_legacy(
         db,
         organization.id,
+        project_id,
         graph_definition,
         architect_tool_ids,
         agent_columns,
@@ -748,6 +755,7 @@ async def ensure_platform_architect_agent(
         await ensure_platform_architect_worker_orchestration_policy(
             db,
             organization_id=organization.id,
+            project_id=project_id,
             orchestrator_agent_id=agent.id,
         )
         await db.commit()
@@ -758,21 +766,25 @@ async def seed_platform_architect_agent(db):
     """
     Backward-compatible explicit seeding helper for tests/internal callers.
     """
-    organization_result = await db.execute(select(Organization).order_by(Organization.created_at.asc()).limit(1))
-    organization = organization_result.scalar_one_or_none()
-    if organization is None:
-        print("No organization found; skipping Platform Architect agent seed.")
+    project_result = await db.execute(
+        select(Project).order_by(Project.created_at.asc(), Project.id.asc()).limit(1)
+    )
+    project = project_result.scalar_one_or_none()
+    if project is None:
+        print("No project found; skipping Platform Architect agent seed.")
         return None
-    return await ensure_platform_architect_agent(db, organization.id)
+    return await ensure_platform_architect_agent(db, project.organization_id, project_id=project.id)
 
 
 async def seed_artifact_coding_agent(db):
-    organization_result = await db.execute(select(Organization).order_by(Organization.created_at.asc()).limit(1))
-    organization = organization_result.scalar_one_or_none()
-    if not organization:
-        print("No organization found; skipping Artifact Coding agent seed.")
+    project_result = await db.execute(
+        select(Project).order_by(Project.created_at.asc(), Project.id.asc()).limit(1)
+    )
+    project = project_result.scalar_one_or_none()
+    if not project:
+        print("No project found; skipping Artifact Coding agent seed.")
         return None
-    agent = await ensure_artifact_coding_agent_profile(db, organization.id)
+    agent = await ensure_artifact_coding_agent_profile(db, project.organization_id, project_id=project.id)
     await db.commit()
     return agent
 
@@ -861,6 +873,7 @@ async def _get_table_columns(db, table_name: str) -> set:
 async def _seed_platform_architect_agent_legacy(
     db,
     organization_id,
+    project_id,
     graph_definition: dict,
     tool_ids: list[str],
     columns: set,
@@ -873,17 +886,22 @@ async def _seed_platform_architect_agent_legacy(
     where_clause = "system_key = :system_key"
     if "organization_id" in columns:
         where_clause += " AND organization_id= :organization_id"
+    if "project_id" in columns:
+        where_clause += " AND project_id = :project_id"
 
     select_sql = f"SELECT id FROM agents WHERE {where_clause} LIMIT 1"
     params = {"system_key": system_key}
     if "organization_id" in columns:
         params["organization_id"] = organization_id
+    if "project_id" in columns:
+        params["project_id"] = project_id
     result = await db.execute(text(select_sql), params)
     row = result.first()
 
     values = {
         "id": uuid.uuid4(),
         "organization_id": organization_id,
+        "project_id": project_id,
         "name": name,
         "system_key": system_key,
         "slug": _system_row_key("sys-agent", system_key),

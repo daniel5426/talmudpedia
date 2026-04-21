@@ -1,6 +1,6 @@
 # Resource Policy Sets Test State
 
-Last Updated: 2026-03-30
+Last Updated: 2026-04-21
 
 ## Scope
 Validate the resource policy set domain across service resolution, admin API, runtime enforcement, quota accounting, and real-DB migration coverage.
@@ -20,8 +20,12 @@ Validate the resource policy set domain across service resolution, admin API, ru
 - Runtime quota enforcement now resolves graph-defined model IDs before reservation, so monthly model quotas apply even when the request omits `context.requested_model_id`
 - Model quota reservation and settlement follow canonical persisted accounting semantics and explicit monthly counter behavior
 - Real Postgres migration coverage locks schema objects, indexes, enum lifecycle, downgrade cleanup, and rerun safety
+- Shared tenant fixtures no longer depend on the removed legacy org-membership role enum
 
 ## Last Run
+- Command: `SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest -q backend/tests/resource_policy_sets`
+- Date/Time: 2026-04-21 21:13 EEST
+- Result: FAIL during collection. `backend/tests/resource_policy_sets/test_policy_set_runtime_enforcement.py` still references removed enum member `ResourcePolicyPrincipalType.TENANT_USER`.
 - Command: `pytest backend/tests/resource_policy_sets -q -k 'not real_db'`
 - Date/Time: 2026-03-26 23:01:01 EET
 - Result: pass

@@ -8,7 +8,7 @@ from sqlalchemy import select
 from app.core.security import ALGORITHM, SECRET_KEY, create_access_token, get_password_hash
 from app.db.postgres.models.agent_threads import AgentThread, AgentThreadSurface, AgentThreadStatus, AgentThreadTurn
 from app.db.postgres.models.agents import Agent, AgentRun, AgentStatus, RunStatus
-from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Organization, User
+from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgUnit, OrgUnitType, Organization, User
 from app.db.postgres.models.registry import ModelCapabilityType, ModelRegistry, ModelStatus
 from app.db.postgres.models.published_apps import PublishedApp, PublishedAppAccount
 from app.services.security_bootstrap_service import SecurityBootstrapService
@@ -20,7 +20,6 @@ def _auth_headers(user_id: str, organization_id: str, org_unit_id: str) -> dict[
             subject=user_id,
             organization_id=organization_id,
             org_unit_id=org_unit_id,
-            org_role="owner",
         ),
         SECRET_KEY,
         algorithms=[ALGORITHM],
@@ -56,13 +55,12 @@ async def _seed_monitoring_fixture(db_session):
     db_session.add(org_unit)
     await db_session.flush()
 
-    for user, role in ((owner, OrgRole.owner), (platform_user, OrgRole.member)):
+    for user in (owner, platform_user):
         db_session.add(
             OrgMembership(
                 organization_id=tenant.id,
                 user_id=user.id,
                 org_unit_id=org_unit.id,
-                role=role,
                 status=MembershipStatus.active,
             )
         )

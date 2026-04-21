@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useState, useCallback } from "react"
+import { useAuthStore } from "@/lib/store/useAuthStore"
 import { promptsService } from "@/services/prompts"
 import type { PromptRecord } from "@/services/prompts"
 import { CustomBreadcrumb } from "@/components/ui/custom-breadcrumb"
@@ -53,6 +54,7 @@ const STATUS_CONFIG: Record<string, { color: string; label: string }> = {
 /* ───────────────────────────── Page ───────────────────────────── */
 
 export default function PromptLibraryPage() {
+  const currentProjectId = useAuthStore((state) => state.activeProject?.id ?? null)
   const [prompts, setPrompts] = useState<PromptRecord[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -89,7 +91,16 @@ export default function PromptLibraryPage() {
 
   useEffect(() => {
     fetchPrompts()
-  }, [fetchPrompts])
+  }, [currentProjectId, fetchPrompts])
+
+  useEffect(() => {
+    setPrompts([])
+    setTotal(0)
+    setDeleteTarget(null)
+    setDeleteError(null)
+    setSelectedPromptId(null)
+    setModalOpen(false)
+  }, [currentProjectId])
 
   /* ── Open detail modal ── */
   const openDetail = useCallback((prompt: PromptRecord) => {

@@ -158,6 +158,7 @@ def _build_artifact_coding_graph(model_id: str, tool_ids: list[str]) -> dict:
 async def ensure_artifact_coding_agent_profile(
     db: AsyncSession,
     organization_id,
+    project_id=None,
     *,
     actor_user_id=None,
 ) -> Agent:
@@ -168,6 +169,7 @@ async def ensure_artifact_coding_agent_profile(
         select(Agent).where(
             Agent.system_key == ARTIFACT_CODING_AGENT_PROFILE_SYSTEM_KEY,
             Agent.organization_id == organization_id,
+            Agent.project_id == project_id,
         )
     )
     agent = result.scalar_one_or_none()
@@ -179,6 +181,7 @@ async def ensure_artifact_coding_agent_profile(
     if agent is None:
         agent = Agent(
             organization_id=organization_id,
+            project_id=project_id,
             name=ARTIFACT_CODING_AGENT_PROFILE_NAME,
             system_key=ARTIFACT_CODING_AGENT_PROFILE_SYSTEM_KEY,
             slug=_system_agent_row_key(ARTIFACT_CODING_AGENT_PROFILE_SYSTEM_KEY),
@@ -197,6 +200,7 @@ async def ensure_artifact_coding_agent_profile(
         agent.name = ARTIFACT_CODING_AGENT_PROFILE_NAME
         agent.system_key = ARTIFACT_CODING_AGENT_PROFILE_SYSTEM_KEY
         agent.slug = _system_agent_row_key(ARTIFACT_CODING_AGENT_PROFILE_SYSTEM_KEY)
+        agent.project_id = project_id
         agent.description = description
         agent.graph_definition = graph_definition
         agent.tools = tool_ids
@@ -206,5 +210,23 @@ async def ensure_artifact_coding_agent_profile(
         agent.is_public = True
         agent.show_in_playground = False
         await db.flush()
+
+    from app.services.platform_architect_worker_tools import ensure_platform_architect_worker_orchestration_policy
+
+    platform_architect_result = await db.execute(
+        select(Agent.id).where(
+            Agent.organization_id == organization_id,
+            Agent.project_id == project_id,
+            Agent.system_key == "platform_architect",
+        )
+    )
+    platform_architect_id = platform_architect_result.scalar_one_or_none()
+    if platform_architect_id is not None:
+        await ensure_platform_architect_worker_orchestration_policy(
+            db,
+            organization_id=organization_id,
+            project_id=project_id,
+            orchestrator_agent_id=platform_architect_id,
+        )
 
     return agent

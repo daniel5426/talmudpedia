@@ -312,12 +312,14 @@ async def get_knowledge_store_stats(
     principal: Dict[str, Any] = Depends(get_current_principal),
 ):
     """Get detailed statistics for a knowledge store."""
-    del principal
+    project_id = _service_context(organization_ctx=organization_ctx, principal=principal, organization_id=organization_id).project_id
+    if project_id is None:
+        raise HTTPException(status_code=422, detail="Active project context is required")
     organization = await resolve_request_tenant(db=db, organization_ctx=organization_ctx, organization_id=organization_id)
     store = await db.get(KnowledgeStore, store_id)
     if not store:
         raise HTTPException(status_code=404, detail="Knowledge store not found")
-    if store.organization_id != organization.id:
+    if store.organization_id != organization.id or store.project_id != project_id:
         raise HTTPException(status_code=404, detail="Knowledge store not found")
     
     return {

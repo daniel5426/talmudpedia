@@ -4,19 +4,22 @@ import json
 from uuid import UUID, uuid4
 
 import pytest
+import jwt
 from langchain_core.messages import AIMessageChunk
 
-from app.core.security import create_access_token
+from app.core.security import ALGORITHM, SECRET_KEY, create_access_token
 from app.db.postgres.models.identity import (
     MembershipStatus,
     OrgMembership,
-    OrgRole,
     OrgUnit,
     OrgUnitType,
     Organization,
     User,
 )
 from app.db.postgres.models.registry import (
+    ModelCapabilityType,
+    ModelRegistry,
+    ModelStatus,
     ToolDefinitionScope,
     ToolImplementationType,
     ToolRegistry,
@@ -24,6 +27,7 @@ from app.db.postgres.models.registry import (
 )
 from app.services.agent_service import AgentService, CreateAgentData
 from app.services.model_resolver import ModelResolver
+from app.services.security_bootstrap_service import SecurityBootstrapService
 
 
 class _FakeProvider:
@@ -145,7 +149,7 @@ def _parse_sse_events(payload: str) -> list[dict]:
 async def _seed_execution_panel_user(db_session):
     suffix = uuid4().hex[:8]
     tenant = Organization(name=f"Panel Organization {suffix}", slug=f"panel-tenant-{suffix}")
-    user = User(email=f"panel-user-{suffix}@example.com", hashed_password="x", role="admin")
+    user = User(email=f"panel-user-{suffix}@example.com", hashed_password="x", role="user")
     db_session.add_all([tenant, user])
     await db_session.flush()
 
@@ -163,20 +167,33 @@ async def _seed_execution_panel_user(db_session):
         organization_id=tenant.id,
         user_id=user.id,
         org_unit_id=root.id,
-        role=OrgRole.owner,
         status=MembershipStatus.active,
     )
     db_session.add(membership)
+
+    bootstrap = SecurityBootstrapService(db_session)
+    await bootstrap.ensure_default_roles(tenant.id)
+    await bootstrap.ensure_organization_owner_assignment(
+        organization_id=tenant.id,
+        user_id=user.id,
+        assigned_by=user.id,
+    )
+
     await db_session.commit()
     await db_session.refresh(tenant)
     await db_session.refresh(user)
 
-    token = create_access_token(
-        subject=str(user.id),
-        organization_id=str(tenant.id),
-        org_unit_id=str(root.id),
-        org_role="owner",
+    payload = jwt.decode(
+        create_access_token(
+            subject=str(user.id),
+            organization_id=str(tenant.id),
+            org_unit_id=str(root.id),
+        ),
+        SECRET_KEY,
+        algorithms=[ALGORITHM],
     )
+    payload["scope"] = ["agents.execute"]
+    token = jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
     headers = {
         "Authorization": f"Bearer {token}",
         "X-Organization-ID": str(tenant.id),
@@ -219,12 +236,28 @@ async def _create_web_search_tool(db_session, *, organization_id: UUID, suffix: 
     return tool
 
 
+async def _create_chat_model(db_session, organization_id: UUID, suffix: str) -> str:
+    model = ModelRegistry(
+        organization_id=organization_id,
+        name=f"Panel Chat Model {suffix}",
+        capability_type=ModelCapabilityType.CHAT,
+        status=ModelStatus.ACTIVE,
+        is_active=True,
+        metadata_={},
+    )
+    db_session.add(model)
+    await db_session.commit()
+    await db_session.refresh(model)
+    return str(model.id)
+
+
 async def _create_panel_agent(
     db_session,
     *,
     organization_id: UUID,
     user_id: UUID,
     tool_id: UUID,
+    model_id: str,
     suffix: str,
 ):
     graph = {
@@ -237,7 +270,9 @@ async def _create_panel_agent(
                 "position": {"x": 180, "y": 0},
                 "config": {
                     "name": "Simple Agent",
-                    "model_id": "gpt-5.2",
+                    "model_id": model_id,
+                    "instructions": "Be helpful.",
+                    "include_chat_history": True,
                     "tools": [str(tool_id)],
                     "max_tool_iterations": 2,
                     "tool_execution_mode": "sequential",
@@ -255,7 +290,6 @@ async def _create_panel_agent(
     return await service.create_agent(
         CreateAgentData(
             name=f"panel-agent-{suffix}",
-            slug=f"panel-agent-{suffix}",
             description="execution panel parity test agent",
             graph_definition=graph,
         ),
@@ -267,12 +301,14 @@ async def _create_panel_agent(
 async def test_execution_panel_stream_user_path_web_search_success(client, db_session, monkeypatch):
     suffix = uuid4().hex[:8]
     tenant, user, headers = await _seed_execution_panel_user(db_session)
+    model_id = await _create_chat_model(db_session, tenant.id, suffix)
     tool = await _create_web_search_tool(db_session, organization_id=tenant.id, suffix=suffix)
     agent = await _create_panel_agent(
         db_session,
         organization_id=tenant.id,
         user_id=user.id,
         tool_id=tool.id,
+        model_id=model_id,
         suffix=suffix,
     )
 
@@ -325,12 +361,14 @@ async def test_execution_panel_stream_user_path_web_search_success(client, db_se
 async def test_execution_panel_stream_user_path_web_search_can_fail_when_model_omits_query(client, db_session, monkeypatch):
     suffix = uuid4().hex[:8]
     tenant, user, headers = await _seed_execution_panel_user(db_session)
+    model_id = await _create_chat_model(db_session, tenant.id, suffix)
     tool = await _create_web_search_tool(db_session, organization_id=tenant.id, suffix=suffix)
     agent = await _create_panel_agent(
         db_session,
         organization_id=tenant.id,
         user_id=user.id,
         tool_id=tool.id,
+        model_id=model_id,
         suffix=suffix,
     )
 

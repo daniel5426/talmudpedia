@@ -1,6 +1,6 @@
 # Organization Bootstrap Tests
 
-Last Updated: 2026-04-21
+Last Updated: 2026-04-22
 
 ## Scope
 
@@ -12,17 +12,20 @@ Validates organization/project bootstrap materialization of default agent profil
 
 ## Key Scenarios Covered
 
-- organization creation creates the canonical platform architect profile
-- default project bootstrap creates coding-agent profiles
+- default project bootstrap creates the canonical platform architect and coding-agent profiles
 - seeded default agent profiles validate against the current model registry
 - platform architect defaults to `architect_mode=default` when none is provided
-- additional project creation does not duplicate default profiles
+- additional project creation materializes a fresh per-project platform architect without cross-project duplication bugs
 - existing organizations can be backfilled through explicit ensure helpers without startup seeding
-- `/agents` lazy backfill persists seeded profiles across requests instead of returning transient IDs
+- `/agents` lazy backfill persists seeded per-project profiles across requests instead of returning transient IDs
 - `/agents` skips bootstrap writes once the canonical default profiles already exist for the tenant
+- Membership fixtures no longer depend on the removed legacy org-membership role enum
 
 ## Last Run
 
+- Command: `SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest -q backend/tests/organization_bootstrap/test_default_agent_profiles.py`
+- Date: 2026-04-21 Asia/Hebron
+- Result: PASS (`6 passed`)
 - Command: `python3 -m pytest backend/tests/organization_bootstrap/test_default_agent_profiles.py -q`
 - Date: 2026-04-14
 - Result: Not run yet after latest change
@@ -45,7 +48,7 @@ Validates organization/project bootstrap materialization of default agent profil
 
 ## 2026-04-21 validation
 - Command: `SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest backend/tests/organization_bootstrap/test_default_agent_profiles.py`
-- Result: `5 passed`
+- Result: `6 passed`
 
 ## 2026-04-21 tenant-to-organization validation
 - Command: `cd backend && SECRET_KEY=explicit-test-secret .venv/bin/python -m pytest tests/organization_bootstrap/test_default_agent_profiles.py tests/platform_architect_runtime/test_native_platform_assets_actions.py tests/platform_architect_runtime/test_native_platform_tools.py tests/platform_native_adapter/test_platform_native_adapter.py`
@@ -57,3 +60,11 @@ Validates organization/project bootstrap materialization of default agent profil
 - Command: `cd backend && SECRET_KEY=explicit-test-secret .venv/bin/python -m pytest tests/organization_bootstrap/test_default_agent_profiles.py -q`
 - Date: 2026-04-21 17:37 EEST
 - Result: PASS (`6 passed, 6 warnings`)
+
+## 2026-04-21 org-role hard-cut validation
+- Command: `SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest -q backend/tests/security_bootstrap_defaults backend/tests/security_admin_user_management backend/tests/organization_bootstrap backend/tests/admin_stats_accounting backend/tests/role_assignments_model`
+- Date/Time: 2026-04-21 21:13 EEST
+- Result: PASS (`18 passed`)
+- Command: `SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest -q backend/tests/organization_bootstrap/test_default_agent_profiles.py backend/tests/agent_api_context/test_agent_context_tenant_resolution.py backend/tests/platform_architect_workers/test_architect_worker_integration.py backend/tests/platform_architect_runtime/test_architect_seeding.py backend/tests/platform_architect_runtime/test_native_platform_tools.py`
+- Date: 2026-04-22 Asia/Hebron
+- Result: PASS (`18 passed`). `platform_architect` is now seeded and listed per project, and native platform runtime / worker bindings preserve project context.

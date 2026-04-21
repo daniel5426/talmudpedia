@@ -37,8 +37,9 @@ async def export_agent_tool(
     db: AsyncSession = Depends(get_db),
 ):
     organization_id= UUID(str(agent_ctx["organization_id"]))
+    project_id = UUID(str(agent_ctx["project_id"])) if agent_ctx.get("project_id") else None
     actor = agent_ctx.get("user")
-    agent = await AgentService(db=db, organization_id=organization_id).get_agent(agent_id)
+    agent = await AgentService(db=db, organization_id=organization_id, project_id=project_id).get_agent(agent_id)
     tool = await ToolBindingService(db).export_agent_tool_binding(
         agent=agent,
         name=request.name,

@@ -101,7 +101,6 @@ def _headers(user: User, tenant: Organization) -> dict[str, str]:
     base_token = create_access_token(
         subject=str(user.id),
         organization_id=str(tenant.id),
-        org_role="owner",
     )
     payload = jwt.decode(base_token, SECRET_KEY, algorithms=[ALGORITHM])
     payload["scope"] = ["agents.read", "agents.write"]

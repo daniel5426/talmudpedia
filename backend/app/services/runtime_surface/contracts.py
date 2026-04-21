@@ -17,6 +17,7 @@ class RuntimeEventView(str, Enum):
 @dataclass(frozen=True)
 class RuntimeThreadScope:
     organization_id: UUID | None
+    project_id: UUID | None = None
     user_id: UUID | None = None
     app_account_id: UUID | None = None
     published_app_id: UUID | None = None
@@ -28,6 +29,7 @@ class RuntimeThreadScope:
 @dataclass(frozen=True)
 class RuntimeSurfaceContext:
     organization_id: UUID
+    project_id: UUID | None
     surface: AgentThreadSurface
     event_view: RuntimeEventView
     user_id: UUID | None = None
@@ -42,6 +44,7 @@ class RuntimeSurfaceContext:
     def thread_scope(self, *, agent_id: UUID | None = None) -> RuntimeThreadScope:
         return RuntimeThreadScope(
             organization_id=self.organization_id,
+            project_id=self.project_id,
             user_id=self.user_id,
             app_account_id=self.app_account_id,
             published_app_id=self.published_app_id,
@@ -95,6 +98,7 @@ class RuntimeThreadOptions:
 @dataclass(frozen=True)
 class RuntimeRunControlContext:
     organization_id: UUID
+    project_id: UUID | None = None
     user_id: UUID | None = None
     is_service: bool = False
     is_platform_admin: bool = False

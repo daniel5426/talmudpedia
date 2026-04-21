@@ -5,10 +5,11 @@ from sqlalchemy import select
 
 from app.api.dependencies import get_current_principal
 from app.db.postgres.models.artifact_runtime import ArtifactCodingSession, ArtifactCodingSharedDraft
-from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Organization, User
+from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgUnit, OrgUnitType, Organization, User
 from app.services.artifact_coding_agent_profile import ensure_artifact_coding_agent_profile
 from app.services.artifact_coding_runtime_service import ArtifactCodingRuntimeService
 from app.services.artifact_coding_shared_draft_service import ArtifactCodingSharedDraftService
+from app.services.security_bootstrap_service import SecurityBootstrapService
 from main import app
 
 
@@ -27,10 +28,16 @@ async def _seed_tenant_context(db_session):
         organization_id=tenant.id,
         user_id=user.id,
         org_unit_id=org_unit.id,
-        role=OrgRole.owner,
         status=MembershipStatus.active,
     )
     db_session.add_all([tenant, user, org_unit, membership])
+    bootstrap = SecurityBootstrapService(db_session)
+    await bootstrap.ensure_default_roles(tenant.id)
+    await bootstrap.ensure_organization_owner_assignment(
+        organization_id=tenant.id,
+        user_id=user.id,
+        assigned_by=user.id,
+    )
     await db_session.commit()
     return tenant, user
 

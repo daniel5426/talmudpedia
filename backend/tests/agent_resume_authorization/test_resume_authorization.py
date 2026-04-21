@@ -12,7 +12,6 @@ from app.db.postgres.models.agent_threads import AgentThread, AgentThreadSurface
 from app.db.postgres.models.identity import (
     MembershipStatus,
     OrgMembership,
-    OrgRole,
     OrgUnit,
     OrgUnitType,
     Organization,
@@ -27,12 +26,11 @@ def _headers(user: User, tenant: Organization) -> dict[str, str]:
         create_access_token(
             subject=str(user.id),
             organization_id=str(tenant.id),
-            org_role="owner",
         ),
         SECRET_KEY,
         algorithms=[ALGORITHM],
     )
-    payload["scope"] = ["*"]
+    payload["scope"] = ["agents.execute"]
     token = jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
     return {"Authorization": f"Bearer {token}", "X-Organization-ID": str(tenant.id)}
 
@@ -61,14 +59,12 @@ async def _seed_tenant_with_users(db_session):
                 organization_id=tenant.id,
                 user_id=owner.id,
                 org_unit_id=org.id,
-                role=OrgRole.owner,
                 status=MembershipStatus.active,
             ),
             OrgMembership(
                 organization_id=tenant.id,
                 user_id=intruder.id,
                 org_unit_id=org.id,
-                role=OrgRole.member,
                 status=MembershipStatus.active,
             ),
         ]
@@ -106,7 +102,6 @@ async def _seed_second_tenant_user(db_session):
             organization_id=tenant.id,
             user_id=user.id,
             org_unit_id=org.id,
-            role=OrgRole.owner,
             status=MembershipStatus.active,
         )
     )
@@ -254,7 +249,7 @@ async def test_resume_run_rejects_cross_tenant_access(client, db_session, monkey
     )
 
     assert response.status_code == 403
-    assert "tenant mismatch" in response.json()["detail"].lower()
+    assert "organization mismatch" in response.json()["detail"].lower()
     assert calls == []
 
 

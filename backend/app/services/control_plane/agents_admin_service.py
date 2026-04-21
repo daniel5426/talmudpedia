@@ -64,7 +64,7 @@ class AgentAdminService:
         self.db = db
 
     def _service(self, ctx: ControlPlaneContext) -> AgentService:
-        return AgentService(db=self.db, organization_id=ctx.organization_id)
+        return AgentService(db=self.db, organization_id=ctx.organization_id, project_id=ctx.project_id)
 
     async def list_agents(
         self,
@@ -211,6 +211,7 @@ class AgentAdminService:
             select(AgentRun).where(
                 AgentRun.id == run_id,
                 AgentRun.organization_id == ctx.organization_id,
+                AgentRun.project_id == ctx.project_id,
             )
         )
         if run is None:
@@ -301,6 +302,7 @@ class AgentAdminService:
         payload = {
             "id": str(agent.id),
             "organization_id": str(agent.organization_id) if agent.organization_id else None,
+            "project_id": str(agent.project_id) if getattr(agent, "project_id", None) else None,
             "name": agent.name,
             "description": agent.description,
             "version": agent.version,

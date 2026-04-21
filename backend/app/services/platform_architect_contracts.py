@@ -1100,7 +1100,7 @@ def build_architect_graph_definition(model_id: str, tool_ids: list[str] | None =
         "Never wrap a tool call inside query, text, value, or markdown. "
         "Workflow policy: extract intent and constraints, build a step plan, prefer direct deterministic domain mutations "
         "for local work, use dedicated architect-worker tools for async or long-running delegated work, validate after "
-        "each mutation, and repair/replan with a hard max of 2 repair loops. "
+        "each mutation, and stop after repeated identical failures instead of looping on the same broken branch. "
         "Prefer semantic graph helpers first (agents.graph.add_tool_to_agent_node, agents.graph.set_agent_model, "
         "agents.graph.set_agent_instructions, rag.graph.attach_knowledge_store_to_node, "
         "rag.graph.set_pipeline_node_config). Use agents.graph.apply_patch or rag.graph.apply_patch only when a helper "

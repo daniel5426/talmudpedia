@@ -39,6 +39,7 @@ class UpdateAgentRequest(BaseModel):
 class AgentResponse(BaseModel):
     id: UUID
     organization_id: UUID
+    project_id: Optional[UUID] = None
     name: str
     description: Optional[str] = None
     graph_definition: GraphDefinitionSchema

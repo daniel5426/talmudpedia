@@ -22,6 +22,7 @@ class Agent(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=True, index=True)
     
     name = Column(String, nullable=False)
     system_key = Column(String, nullable=True, index=True)
@@ -79,14 +80,16 @@ class Agent(Base):
 
     # Relationships
     organization = relationship("Organization")
+    project = relationship("Project")
     creator = relationship("User")
     default_embed_policy_set = relationship("ResourcePolicySet", foreign_keys=[default_embed_policy_set_id])
     runs = relationship("AgentRun", back_populates="agent", cascade="all, delete-orphan")
 
     __table_args__ = (
         Index(
-            "uq_agents_organization_system_key",
+            "uq_agents_project_system_key",
             "organization_id",
+            "project_id",
             "system_key",
             unique=True,
             postgresql_where=and_(organization_id != None, system_key != None),
@@ -125,6 +128,7 @@ class AgentRun(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=True, index=True)
     agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id", ondelete="CASCADE"), nullable=False, index=True)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     
@@ -190,6 +194,7 @@ class AgentRun(Base):
 
     # Relationships
     organization = relationship("Organization")
+    project = relationship("Project")
     agent = relationship("Agent", back_populates="runs")
     user = relationship("User", foreign_keys=[user_id])
     initiator_user = relationship("User", foreign_keys=[initiator_user_id])

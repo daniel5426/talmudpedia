@@ -10,12 +10,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_current_principal, require_scopes
 from app.api.routers.auth import get_current_user
-from app.db.postgres.models.identity import OrgMembership, OrgRole, Organization, User
+from app.db.postgres.models.identity import OrgMembership, Organization, User
+from app.db.postgres.models.rbac import Role, RoleAssignment
 from app.db.postgres.models.workspace import Project, ProjectStatus
 from app.db.postgres.session import get_db
 from app.services.auth_context_service import (
     list_organization_projects,
     list_user_organizations,
+    resolve_effective_scopes,
     serialize_organization_summary,
     serialize_project_summary,
     serialize_user_summary,
@@ -174,7 +176,6 @@ async def update_project(
     principal: dict = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ):
-    _require_org_scope(principal, "projects.write")
     organization = await _get_org_or_404(db, organization_id)
     project = (
         await db.execute(
@@ -185,6 +186,19 @@ async def update_project(
     ).scalar_one_or_none()
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
+    current_scopes = set(principal.get("scopes") or [])
+    if "*" not in current_scopes:
+        current_user = principal.get("user")
+        if current_user is None:
+            raise HTTPException(status_code=403, detail="Missing required scope: project_settings.write")
+        effective_scopes = await resolve_effective_scopes(
+            db=db,
+            user=current_user,
+            organization_id=organization.id,
+            project_id=project.id,
+        )
+        if "project_settings.write" not in set(effective_scopes):
+            raise HTTPException(status_code=403, detail="Missing required scope: project_settings.write")
     if payload.name is not None:
         project.name = payload.name
     if payload.description is not None:
@@ -204,7 +218,12 @@ async def list_members(
     _require_org_scope(principal, "organization_members.read")
     organization = await _get_org_or_404(db, organization_id)
     memberships = (
-        await db.execute(select(OrgMembership).where(OrgMembership.organization_id == organization.id))
+        await db.execute(
+            select(OrgMembership).where(
+                OrgMembership.organization_id == organization.id,
+                OrgMembership.status == "active",
+            )
+        )
     ).scalars().all()
     users = {
         user.id: user
@@ -212,11 +231,22 @@ async def list_members(
             await db.execute(select(User).where(User.id.in_([item.user_id for item in memberships] or [UUID(int=0)])))
         ).scalars().all()
     }
+    org_role_rows = await db.execute(
+        select(RoleAssignment.user_id, Role.name)
+        .join(Role, Role.id == RoleAssignment.role_id)
+        .where(
+            RoleAssignment.organization_id == organization.id,
+            RoleAssignment.project_id.is_(None),
+            Role.family == "organization",
+            RoleAssignment.user_id.in_([item.user_id for item in memberships] or [UUID(int=0)]),
+        )
+    )
+    org_role_names = {user_id: role_name for user_id, role_name in org_role_rows.all()}
     return [
         {
             "membership_id": str(item.id),
             "user": serialize_user_summary(users[item.user_id]),
-            "organization_role": item.role.value if hasattr(item.role, "value") else str(item.role),
+            "organization_role": org_role_names.get(item.user_id, "Unassigned"),
             "joined_at": item.joined_at,
         }
         for item in memberships

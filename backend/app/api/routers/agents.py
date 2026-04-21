@@ -172,6 +172,7 @@ def agent_to_response(agent, compact: bool = False, *, tool_binding: ToolRegistr
     return AgentResponse(
         id=agent.id,
         organization_id=agent.organization_id,
+        project_id=getattr(agent, "project_id", None),
         name=agent.name,
         system_key=getattr(agent, "system_key", None),
         description=agent.description,
@@ -421,16 +422,13 @@ async def list_agents(
     organization_id= context["organization_id"]
     project_id = context.get("project_id")
     bootstrap = OrganizationBootstrapService(db)
-    did_backfill = await bootstrap.ensure_organization_default_agents_if_missing(
-        organization_id=organization_id,
-        actor_user_id=getattr(context.get("user"), "id", None),
-    )
+    did_backfill = False
     if project_id is not None:
         did_backfill = await bootstrap.ensure_project_default_agents_if_missing(
             organization_id=organization_id,
             project_id=project_id,
             actor_user_id=getattr(context.get("user"), "id", None),
-        ) or did_backfill
+        )
     if did_backfill or db.new or db.dirty:
         await db.commit()
     try:
@@ -518,7 +516,7 @@ async def update_graph(
 ):
     """Update agent graph."""
     organization_id= context["organization_id"]
-    service = AgentService(db=db, organization_id=organization_id)
+    service = AgentService(db=db, organization_id=organization_id, project_id=context.get("project_id"))
     
     try:
         agent = await service.update_graph(agent_id, request.model_dump())
@@ -537,7 +535,7 @@ async def delete_agent(
 ):
     """Delete or archive an agent."""
     organization_id= context["organization_id"]
-    service = AgentService(db=db, organization_id=organization_id)
+    service = AgentService(db=db, organization_id=organization_id, project_id=context.get("project_id"))
 
     await ensure_sensitive_action_approved(
         principal=principal,
@@ -576,7 +574,7 @@ async def validate_agent(
 async def publish_agent(
     agent_id: UUID,
     principal: Dict[str, Any] = Depends(get_current_principal),
-    _: Dict[str, Any] = Depends(require_scopes("agents.write")),
+    _: Dict[str, Any] = Depends(require_scopes("agents.publish")),
     context: Dict[str, Any] = Depends(get_agent_context),
     db: AsyncSession = Depends(get_db)
 ):
@@ -611,7 +609,7 @@ async def list_versions(
 ):
     """List agent versions."""
     organization_id= context["organization_id"]
-    service = AgentService(db=db, organization_id=organization_id)
+    service = AgentService(db=db, organization_id=organization_id, project_id=context.get("project_id"))
     
     try:
         versions = await service.list_versions(agent_id)
@@ -629,7 +627,7 @@ async def get_version(
 ):
     """Get specific version."""
     organization_id= context["organization_id"]
-    service = AgentService(db=db, organization_id=organization_id)
+    service = AgentService(db=db, organization_id=organization_id, project_id=context.get("project_id"))
     
     try:
         return await service.get_version(agent_id, version)
@@ -651,7 +649,7 @@ async def execute_agent(
 ):
     """Execute a published agent."""
     organization_id= context["organization_id"]
-    service = AgentService(db=db, organization_id=organization_id)
+    service = AgentService(db=db, organization_id=organization_id, project_id=context.get("project_id"))
     
     try:
         request_context = dict(request.context or {}) if isinstance(request.context, dict) else {}
@@ -732,6 +730,7 @@ async def stream_agent(
             agent_id=agent_id,
             surface_context=RuntimeSurfaceContext(
                 organization_id=organization_id,
+                project_id=context.get("project_id"),
                 surface=AgentThreadSurface.internal,
                 event_view=RuntimeEventView.internal_full,
                 user_id=context["user"].id if context.get("user") else None,
@@ -811,6 +810,7 @@ async def upload_agent_attachments(
             else _optional_uuid(context.get("initiator_user_id"))
         ),
         agent_id=agent.id,
+        project_id=agent.project_id,
         thread_id=thread_id,
     )
     attachment_service = RuntimeAttachmentService(db)
@@ -849,6 +849,8 @@ async def resume_run_v2(
 
     if str(run.organization_id) != str(context.get("organization_id")):
         raise HTTPException(status_code=403, detail="Organization mismatch")
+    if str(run.project_id) != str(context.get("project_id")):
+        raise HTTPException(status_code=403, detail="Project mismatch")
 
     user = context.get("user")
     if user is not None and not is_platform_admin_role(getattr(user, "role", None)):
@@ -876,6 +878,7 @@ async def cancel_run_v2(
         run_id=run_id,
         control=RuntimeRunControlContext(
             organization_id=context["organization_id"],
+            project_id=context.get("project_id"),
             user_id=getattr(context.get("user"), "id", None),
             is_service=bool(context.get("is_service")),
             is_platform_admin=RuntimeSurfaceService.is_platform_admin(context.get("user")),
@@ -957,4 +960,6 @@ async def get_run_tree(
         raise HTTPException(status_code=404, detail="Run not found")
     if str(run.organization_id) != str(context.get("organization_id")):
         raise HTTPException(status_code=403, detail="Organization mismatch")
+    if str(run.project_id) != str(context.get("project_id")):
+        raise HTTPException(status_code=403, detail="Project mismatch")
     return await OrchestrationKernelService(db).query_tree(run_id=run_id)

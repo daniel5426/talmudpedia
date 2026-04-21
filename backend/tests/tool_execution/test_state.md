@@ -16,6 +16,7 @@ Validate MCP/function/agent-call execution paths in the `ToolNodeExecutor`.
 - test_llm_provider_content_blocks.py
 
 ## Key Scenarios Covered
+- artifact-runtime tool fixtures now derive access from canonical `SecurityBootstrapService` owner assignments instead of membership-role fields
 - MCP JSON-RPC request shape and successful result handling
 - MCP runtime now rejects private/loopback hosts by default, supports explicit host allowlists, and normalizes transport / invalid-JSON failures into stable runtime errors
 - MCP error handling on missing result
@@ -190,6 +191,12 @@ Validate MCP/function/agent-call execution paths in the `ToolNodeExecutor`.
 - Command: `cd backend && SECRET_KEY=explicit-test-secret .venv/bin/python -m pytest tests/tool_execution/test_function_tool_execution.py tests/tool_execution/test_agent_call_tool_execution.py`
 - Date/Time: 2026-04-21 Asia/Hebron
 - Result: PASS (`33 passed`). Runtime tool execution tests now assert the canonical `agent_system_key` and `target_agent_id` contracts instead of slug-era fields.
+- Command: `SECRET_KEY=explicit-test-secret PYTHONPATH=backend backend/.venv/bin/python -m pytest -q backend/tests/artifact_runtime/test_execution_service.py backend/tests/artifact_runtime/test_runtime_secret_service.py backend/tests/artifact_runtime/test_artifact_working_draft_api.py backend/tests/artifact_runtime/test_revision_service.py backend/tests/artifact_runtime/test_artifact_versions_api.py backend/tests/tool_execution/test_artifact_runtime_tool_execution.py backend/tests/agent_artifact_runtime/test_agent_artifact_runtime.py backend/tests/artifact_test_runs/test_artifact_test_run_api.py backend/tests/apps_builder_sandbox_runtime/test_draft_dev_runtime_lifecycle.py backend/tests/coding_agent_chat_history_api/test_chat_history_endpoints.py backend/tests/rag_artifact_runtime/test_rag_artifact_runtime.py`
+- Date/Time: 2026-04-21 Asia/Hebron
+- Result: Fail early in `backend/tests/artifact_runtime/test_execution_service.py` on live artifact creation (`invalid input value for enum artifactownertype: "organization"`), so `test_artifact_runtime_tool_execution.py` did not get an isolated rerun in the combined pass.
+- Command: `SECRET_KEY=explicit-test-secret PYTHONPATH=backend backend/.venv/bin/python -m pytest -q backend/tests/tool_execution/test_artifact_runtime_tool_execution.py::test_tool_executor_rejects_non_uuid_artifact_bindings`
+- Date/Time: 2026-04-21 Asia/Hebron
+- Result: PASS (`1 passed, 7 warnings`)
 
 ## Known Gaps / Follow-ups
 - Add coverage for `agent_call` payload mode variants beyond sync (`spawn`/future orchestration modes).

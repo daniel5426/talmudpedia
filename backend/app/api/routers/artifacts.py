@@ -70,12 +70,21 @@ def _artifact_control_plane_context(*, organization: Organization | None, user: 
     principal = context or {}
     return ControlPlaneContext(
         organization_id=organization.id,
+        project_id=UUID(str(principal["project_id"])) if principal.get("project_id") else None,
         user=user,
         user_id=getattr(user, "id", None),
         auth_token=principal.get("auth_token"),
         scopes=tuple(principal.get("scopes") or ()),
         is_service=bool(principal.get("type") == "workload"),
     )
+
+
+def _principal_project_id(principal: Dict[str, Any] | None) -> UUID | None:
+    raw_project_id = (principal or {}).get("project_id")
+    try:
+        return UUID(str(raw_project_id)) if raw_project_id else None
+    except Exception:
+        return None
 
 
 async def _resolve_organization_from_artifact_if_missing(
@@ -269,6 +278,7 @@ async def _link_artifact_coding_scope_to_saved_artifact(
     *,
     db: AsyncSession,
     organization_id: UUID,
+    project_id: UUID | None,
     artifact_id: UUID,
     draft_key: str | None,
 ) -> None:
@@ -277,11 +287,13 @@ async def _link_artifact_coding_scope_to_saved_artifact(
         return
     await ArtifactCodingSharedDraftService(db).link_scope_to_artifact(
         organization_id=organization_id,
+        project_id=project_id,
         draft_key=normalized_draft_key,
         artifact_id=artifact_id,
     )
     await ArtifactCodingChatHistoryService(db).link_sessions_to_artifact(
         organization_id=organization_id,
+        project_id=project_id,
         draft_key=normalized_draft_key,
         artifact_id=artifact_id,
     )
@@ -374,12 +386,13 @@ async def list_artifacts(
     skip: int = 0,
     limit: int = 20,
     view: str = "summary",
+    principal: Dict[str, Any] = Depends(get_current_principal),
     artifact_ctx=Depends(get_artifact_context),
 ):
     organization, user, db = artifact_ctx
     query = ListQuery.from_payload({"skip": skip, "limit": limit, "view": view})
     page = await ArtifactAdminService(db).list_artifacts(
-        ctx=_artifact_control_plane_context(organization=organization, user=user),
+        ctx=_artifact_control_plane_context(organization=organization, user=user, context=principal),
         query=query,
     )
     return page.to_payload()
@@ -389,15 +402,18 @@ async def list_artifacts(
 async def get_artifact(
     artifact_id: str,
     organization_id: Optional[str] = None,
+    principal: Dict[str, Any] = Depends(get_current_principal),
     artifact_ctx=Depends(get_artifact_context),
 ):
     organization, _user, db = artifact_ctx
+    project_id = _principal_project_id(principal)
     artifact_uuid = _parse_artifact_uuid(artifact_id)
     if artifact_uuid is None:
         raise HTTPException(status_code=404, detail="Artifact not found")
     artifact = await ArtifactRegistryService(db).get_accessible_artifact(
         artifact_id=artifact_uuid,
         organization_id=organization.id if organization is not None else None,
+        project_id=project_id,
     )
     if artifact is None:
         raise HTTPException(status_code=404, detail="Artifact not found")
@@ -408,16 +424,19 @@ async def get_artifact(
 async def export_artifact(
     artifact_id: str,
     organization_id: Optional[str] = None,
+    principal: Dict[str, Any] = Depends(get_current_principal),
     _: Dict[str, Any] = Depends(require_scopes("artifacts.read")),
     artifact_ctx=Depends(get_artifact_context),
 ):
     organization, _user, db = artifact_ctx
+    project_id = _principal_project_id(principal)
     artifact_uuid = _parse_artifact_uuid(artifact_id)
     if artifact_uuid is None:
         raise HTTPException(status_code=404, detail="Artifact not found")
     artifact = await ArtifactRegistryService(db).get_accessible_artifact(
         artifact_id=artifact_uuid,
         organization_id=organization.id if organization is not None else None,
+        project_id=project_id,
     )
     if artifact is None:
         raise HTTPException(status_code=404, detail="Artifact not found")
@@ -431,14 +450,18 @@ async def export_artifact(
 async def import_artifact(
     request: ArtifactTransferFile,
     organization_id: Optional[str] = None,
+    principal: Dict[str, Any] = Depends(get_current_principal),
     _: Dict[str, Any] = Depends(require_scopes("artifacts.write")),
     artifact_ctx=Depends(get_artifact_context),
 ):
     organization, user, db = artifact_ctx
     if organization is None:
         raise HTTPException(status_code=400, detail="Organization context required")
+    project_id = _principal_project_id(principal)
+    if project_id is None:
+        raise HTTPException(status_code=422, detail="Active project context is required")
     registry = ArtifactRegistryService(db)
-    accessible_artifacts = await registry.list_accessible_artifacts(organization_id=organization.id)
+    accessible_artifacts = await registry.list_accessible_artifacts(organization_id=organization.id, project_id=project_id)
     imported_payload = request.artifact
     display_name = imported_payload.display_name
     if any(artifact.display_name == display_name for artifact in accessible_artifacts):
@@ -464,12 +487,17 @@ async def import_artifact(
         rag_contract=_model_dump(imported_payload.rag_contract) if imported_payload.rag_contract is not None else None,
         tool_contract=_model_dump(imported_payload.tool_contract) if imported_payload.tool_contract is not None else None,
     )
+    created.project_id = project_id
     try:
         await ToolBindingService(db).sync_artifact_tool_binding(created)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     await db.commit()
-    imported_artifact = await registry.get_organization_artifact(artifact_id=created.id, organization_id=organization.id)
+    imported_artifact = await registry.get_organization_artifact(
+        artifact_id=created.id,
+        organization_id=organization.id,
+        project_id=project_id,
+    )
     if imported_artifact is None:
         raise HTTPException(status_code=500, detail="Imported artifact could not be loaded")
     return ArtifactImportResponse(
@@ -546,16 +574,19 @@ def _artifact_form_snapshot(artifact: ArtifactModel) -> dict[str, Any]:
 async def list_artifact_versions(
     artifact_id: str,
     organization_id: Optional[str] = None,
+    principal: Dict[str, Any] = Depends(get_current_principal),
     _: Dict[str, Any] = Depends(require_scopes("artifacts.read")),
     artifact_ctx=Depends(get_artifact_context),
 ):
     organization, _user, db = artifact_ctx
+    project_id = _principal_project_id(principal)
     artifact_uuid = _parse_artifact_uuid(artifact_id)
     if artifact_uuid is None:
         raise HTTPException(status_code=404, detail="Artifact not found")
     artifact = await ArtifactRegistryService(db).get_accessible_artifact(
         artifact_id=artifact_uuid,
         organization_id=organization.id if organization is not None else None,
+        project_id=project_id,
     )
     if artifact is None:
         raise HTTPException(status_code=404, detail="Artifact not found")
@@ -575,10 +606,12 @@ async def get_artifact_version(
     artifact_id: str,
     revision_id: str,
     organization_id: Optional[str] = None,
+    principal: Dict[str, Any] = Depends(get_current_principal),
     _: Dict[str, Any] = Depends(require_scopes("artifacts.read")),
     artifact_ctx=Depends(get_artifact_context),
 ):
     organization, _user, db = artifact_ctx
+    project_id = _principal_project_id(principal)
     artifact_uuid = _parse_artifact_uuid(artifact_id)
     revision_uuid = _parse_artifact_uuid(revision_id)
     if artifact_uuid is None or revision_uuid is None:
@@ -586,6 +619,7 @@ async def get_artifact_version(
     artifact = await ArtifactRegistryService(db).get_accessible_artifact(
         artifact_id=artifact_uuid,
         organization_id=organization.id if organization is not None else None,
+        project_id=project_id,
     )
     if artifact is None:
         raise HTTPException(status_code=404, detail="Artifact not found")
@@ -599,16 +633,19 @@ async def get_artifact_version(
 async def get_artifact_working_draft(
     artifact_id: str,
     organization_id: Optional[str] = None,
+    principal: Dict[str, Any] = Depends(get_current_principal),
     _: Dict[str, Any] = Depends(require_scopes("artifacts.read")),
     artifact_ctx=Depends(get_artifact_context),
 ):
     organization, _user, db = artifact_ctx
+    project_id = _principal_project_id(principal)
     artifact_uuid = _parse_artifact_uuid(artifact_id)
     if artifact_uuid is None:
         raise HTTPException(status_code=404, detail="Artifact not found")
     artifact = await ArtifactRegistryService(db).get_accessible_artifact(
         artifact_id=artifact_uuid,
         organization_id=organization.id if organization is not None else None,
+        project_id=project_id,
     )
     if artifact is None:
         raise HTTPException(status_code=404, detail="Artifact not found")
@@ -631,14 +668,20 @@ async def update_artifact_working_draft(
     artifact_id: str,
     request: ArtifactWorkingDraftUpdateRequest,
     organization_id: Optional[str] = None,
+    principal: Dict[str, Any] = Depends(get_current_principal),
     _: Dict[str, Any] = Depends(require_scopes("artifacts.write")),
     artifact_ctx=Depends(get_artifact_context),
 ):
     organization, _user, db = artifact_ctx
+    project_id = _principal_project_id(principal)
     artifact_uuid = _parse_artifact_uuid(artifact_id)
     if artifact_uuid is None:
         raise HTTPException(status_code=404, detail="Artifact not found")
-    artifact = await ArtifactRegistryService(db).get_organization_artifact(artifact_id=artifact_uuid, organization_id=organization.id)
+    artifact = await ArtifactRegistryService(db).get_organization_artifact(
+        artifact_id=artifact_uuid,
+        organization_id=organization.id,
+        project_id=project_id,
+    )
     if artifact is None:
         raise HTTPException(status_code=404, detail="Artifact not found")
     shared_service = ArtifactCodingSharedDraftService(db)
@@ -667,13 +710,14 @@ async def update_artifact_working_draft(
 async def create_artifact_draft(
     request: ArtifactCreate,
     organization_id: Optional[str] = None,
+    principal: Dict[str, Any] = Depends(get_current_principal),
     _: Dict[str, Any] = Depends(require_scopes("artifacts.write")),
     artifact_ctx=Depends(get_artifact_context),
 ):
     organization, user, db = artifact_ctx
     try:
         payload = await ArtifactAdminService(db).create_artifact(
-            ctx=_artifact_control_plane_context(organization=organization, user=user),
+            ctx=_artifact_control_plane_context(organization=organization, user=user, context=principal),
             params=ControlPlaneCreateArtifactInput(
                 display_name=request.display_name,
                 description=request.description,
@@ -697,6 +741,7 @@ async def create_artifact_draft(
     await _link_artifact_coding_scope_to_saved_artifact(
         db=db,
         organization_id=organization.id,
+        project_id=_principal_project_id(principal),
         artifact_id=UUID(str(payload["id"])),
         draft_key=request.draft_key,
     )
@@ -709,6 +754,7 @@ async def update_artifact(
     artifact_id: str,
     update_data: ArtifactUpdate,
     organization_id: Optional[str] = None,
+    principal: Dict[str, Any] = Depends(get_current_principal),
     _: Dict[str, Any] = Depends(require_scopes("artifacts.write")),
     artifact_ctx=Depends(get_artifact_context),
 ):
@@ -720,7 +766,7 @@ async def update_artifact(
     runtime = payload.get("runtime") or {}
     try:
         response_payload = await ArtifactAdminService(db).update_artifact(
-            ctx=_artifact_control_plane_context(organization=organization, user=user),
+            ctx=_artifact_control_plane_context(organization=organization, user=user, context=principal),
             artifact_id=artifact_uuid,
             params=ControlPlaneUpdateArtifactInput(
                 display_name=payload.get("display_name"),
@@ -744,6 +790,7 @@ async def update_artifact(
     await _link_artifact_coding_scope_to_saved_artifact(
         db=db,
         organization_id=organization.id,
+        project_id=_principal_project_id(principal),
         artifact_id=artifact_uuid,
         draft_key=update_data.draft_key,
     )
@@ -756,14 +803,18 @@ async def publish_artifact(
     artifact_id: str,
     organization_id: Optional[str] = None,
     principal: Dict[str, Any] = Depends(get_current_principal),
-    _: Dict[str, Any] = Depends(require_scopes("artifacts.write")),
+    _: Dict[str, Any] = Depends(require_scopes("artifacts.publish")),
     artifact_ctx=Depends(get_artifact_context),
 ):
     organization, _user, db = artifact_ctx
     artifact_uuid = _parse_artifact_uuid(artifact_id)
     if artifact_uuid is None:
         raise HTTPException(status_code=404, detail="Artifact not found")
-    artifact = await ArtifactRegistryService(db).get_organization_artifact(artifact_id=artifact_uuid, organization_id=organization.id if organization else None)
+    artifact = await ArtifactRegistryService(db).get_organization_artifact(
+        artifact_id=artifact_uuid,
+        organization_id=organization.id if organization else None,
+        project_id=_principal_project_id(principal),
+    )
     if artifact is None:
         raise HTTPException(status_code=404, detail="Artifact not found")
     await ensure_sensitive_action_approved(
@@ -789,6 +840,7 @@ async def convert_artifact_kind(
     artifact_id: str,
     request: ArtifactConvertKindRequest,
     organization_id: Optional[str] = None,
+    principal: Dict[str, Any] = Depends(get_current_principal),
     _: Dict[str, Any] = Depends(require_scopes("artifacts.write")),
     artifact_ctx=Depends(get_artifact_context),
 ):
@@ -798,7 +850,7 @@ async def convert_artifact_kind(
         raise HTTPException(status_code=404, detail="Artifact not found")
     try:
         payload = await ArtifactAdminService(db).convert_kind(
-            ctx=_artifact_control_plane_context(organization=organization, user=user),
+            ctx=_artifact_control_plane_context(organization=organization, user=user, context=principal),
             artifact_id=artifact_uuid,
             kind=request.kind.value,
             agent_contract=_model_dump(request.agent_contract) if request.agent_contract is not None else None,
@@ -814,12 +866,16 @@ async def convert_artifact_kind(
 async def duplicate_artifact(
     artifact_id: str,
     organization_id: Optional[str] = None,
+    principal: Dict[str, Any] = Depends(get_current_principal),
     _: Dict[str, Any] = Depends(require_scopes("artifacts.write")),
     artifact_ctx=Depends(get_artifact_context),
 ):
     organization, user, db = artifact_ctx
     if organization is None:
         raise HTTPException(status_code=400, detail="Organization context required")
+    project_id = _principal_project_id(principal)
+    if project_id is None:
+        raise HTTPException(status_code=422, detail="Active project context is required")
     artifact_uuid = _parse_artifact_uuid(artifact_id)
     if artifact_uuid is None:
         raise HTTPException(status_code=404, detail="Artifact not found")
@@ -827,13 +883,14 @@ async def duplicate_artifact(
     source_artifact = await registry.get_accessible_artifact(
         artifact_id=artifact_uuid,
         organization_id=organization.id,
+        project_id=project_id,
     )
     if source_artifact is None:
         raise HTTPException(status_code=404, detail="Artifact not found")
     source_revision = source_artifact.latest_draft_revision or source_artifact.latest_published_revision
     if source_revision is None:
         raise HTTPException(status_code=409, detail="Artifact is missing a current revision")
-    accessible_artifacts = await registry.list_accessible_artifacts(organization_id=organization.id)
+    accessible_artifacts = await registry.list_accessible_artifacts(organization_id=organization.id, project_id=project_id)
     duplicate_name = _next_duplicate_display_name(
         source_artifact.display_name,
         [artifact.display_name for artifact in accessible_artifacts],
@@ -856,12 +913,17 @@ async def duplicate_artifact(
         rag_contract=dict(source_revision.rag_contract or {}) if source_revision.rag_contract is not None else None,
         tool_contract=dict(source_revision.tool_contract or {}) if source_revision.tool_contract is not None else None,
     )
+    duplicated.project_id = project_id
     try:
         await ToolBindingService(db).sync_artifact_tool_binding(duplicated)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     await db.commit()
-    refreshed = await registry.get_organization_artifact(artifact_id=duplicated.id, organization_id=organization.id)
+    refreshed = await registry.get_organization_artifact(
+        artifact_id=duplicated.id,
+        organization_id=organization.id,
+        project_id=project_id,
+    )
     return _artifact_to_schema(refreshed, include_code=True)
 
 
@@ -877,7 +939,11 @@ async def delete_artifact(
     artifact_uuid = _parse_artifact_uuid(artifact_id)
     if artifact_uuid is None:
         raise HTTPException(status_code=404, detail="Artifact not found")
-    artifact = await ArtifactRegistryService(db).get_organization_artifact(artifact_id=artifact_uuid, organization_id=organization.id if organization else None)
+    artifact = await ArtifactRegistryService(db).get_organization_artifact(
+        artifact_id=artifact_uuid,
+        organization_id=organization.id if organization else None,
+        project_id=_principal_project_id(principal),
+    )
     if artifact is None:
         raise HTTPException(status_code=404, detail="Artifact not found")
     await ensure_sensitive_action_approved(
@@ -901,6 +967,7 @@ async def delete_artifact(
 async def create_unsaved_test_run(
     request: ArtifactTestRequest,
     organization_id: Optional[str] = None,
+    principal: Dict[str, Any] = Depends(get_current_principal),
     _: Dict[str, Any] = Depends(require_scopes("artifacts.write")),
     artifact_ctx=Depends(get_artifact_context),
 ):
@@ -913,7 +980,7 @@ async def create_unsaved_test_run(
     )
     try:
         operation = await ArtifactAdminService(db).create_test_run(
-            ctx=_artifact_control_plane_context(organization=organization, user=user),
+            ctx=_artifact_control_plane_context(organization=organization, user=user, context=principal),
             artifact_id=_parse_artifact_uuid(request.artifact_id),
             source_files=[_model_dump(item) for item in request.source_files],
             entry_module_path=request.entry_module_path,
@@ -942,8 +1009,14 @@ async def create_saved_artifact_test_run(
     artifact_id: str,
     request: ArtifactTestRequest,
     organization_id: Optional[str] = None,
+    principal: Dict[str, Any] = Depends(get_current_principal),
     _: Dict[str, Any] = Depends(require_scopes("artifacts.write")),
     artifact_ctx=Depends(get_artifact_context),
 ):
     request.artifact_id = artifact_id
-    return await create_unsaved_test_run(request, organization_id=organization_id, artifact_ctx=artifact_ctx)
+    return await create_unsaved_test_run(
+        request,
+        organization_id=organization_id,
+        principal=principal,
+        artifact_ctx=artifact_ctx,
+    )

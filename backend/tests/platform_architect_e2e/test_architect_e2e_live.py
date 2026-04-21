@@ -17,7 +17,7 @@ from talmudpedia_control_sdk import ControlPlaneClient
 
 from app.core.scope_registry import get_required_scopes_for_action
 from app.services.architect_mode_service import ArchitectMode, ArchitectModeService
-from tests.platform_architect_e2e.db_checks import check_agent_run_exists, resolve_tenant_slug
+from tests.platform_architect_e2e.db_checks import check_agent_run_exists, resolve_organization_slug
 from tests.platform_architect_e2e.reporting import E2EReport
 from tests.platform_architect_e2e.scenario_matrix import SCENARIOS, ScenarioDefinition
 from tests.platform_architect_e2e.verifiers import (
@@ -30,15 +30,10 @@ from tests.platform_architect_e2e.verifiers import (
 
 TERMINAL_RUN_STATUSES = {"completed", "failed", "cancelled", "paused"}
 DEFAULT_TEST_BASE_URL = "http://localhost:8000"
-DEFAULT_TEST_API_KEY = (
-    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
-    "eyJleHAiOjE3Nzk4MjYzMjIsInN1YiI6Ijg4ZDY3MzE1LWU3N2ItNDg0ZS04ZWJiLTc5YmRkNTBkYTFjMCIs"
-    "InRlbmFudF9pZCI6ImY3NTM4ZWI1LTdmZjctNDg1Ny1hOGUxLTdiMjFjYzU4ZjEwYSIsIm9yZ191bml0X2lkIjo"
-    "iY2E0MjE0NDctY2Q0YS00NjM3LTg1ZDYtOWU2MzNmMGZkZjFiIiwib3JnX3JvbGUiOiJvd25lciJ9."
-    "9Kgqm_BbAr3xtN0k2JK3SkNxzebWrzmcyC4i_euk9OQ"
-)
-DEFAULT_TEST_TENANT_ID = "f7538eb5-7ff7-4857-a8e1-7b21cc58f10a"
-DEFAULT_TEST_TENANT_EMAIL = "danielbenassaya2626@gmail.com"
+DEFAULT_TEST_API_KEY = ""
+DEFAULT_TEST_ORGANIZATION_ID = ""
+DEFAULT_TEST_PROJECT_ID = ""
+DEFAULT_TEST_USER_EMAIL = "danielbenassaya2626@gmail.com"
 DEFAULT_TEST_CHAT_MODEL_SLUG = "gpt-5-mini-2025-08-07"
 
 
@@ -129,10 +124,11 @@ def _env(name: str, default: str | None = None) -> str | None:
 
 
 def _resolve_runtime_env() -> dict[str, str]:
-    base_url = _env("TEST_BASE_URL", DEFAULT_TEST_BASE_URL)
-    api_key = _env("TEST_API_KEY", DEFAULT_TEST_API_KEY)
-    organization_id = _env("TEST_TENANT_ID", DEFAULT_TEST_TENANT_ID)
-    tenant_email = _env("TEST_TENANT_EMAIL", DEFAULT_TEST_TENANT_EMAIL)
+    base_url = _env("PLATFORM_ARCHITECT_BASE_URL", _env("TEST_BASE_URL", DEFAULT_TEST_BASE_URL))
+    api_key = _env("PLATFORM_ARCHITECT_API_KEY", _env("TEST_API_KEY", DEFAULT_TEST_API_KEY))
+    organization_id = _env("PLATFORM_ARCHITECT_ORGANIZATION_ID", _env("TEST_ORGANIZATION_ID", DEFAULT_TEST_ORGANIZATION_ID))
+    project_id = _env("PLATFORM_ARCHITECT_PROJECT_ID", _env("TEST_PROJECT_ID", DEFAULT_TEST_PROJECT_ID))
+    user_email = _env("PLATFORM_ARCHITECT_USER_EMAIL", _env("TEST_USER_EMAIL", DEFAULT_TEST_USER_EMAIL))
     timeout_s = _env("ARCH_E2E_TIMEOUT_SECONDS", "120")
     resource_prefix = _env("ARCH_E2E_RESOURCE_PREFIX", "arch-e2e")
     report_path = _env(
@@ -145,7 +141,8 @@ def _resolve_runtime_env() -> dict[str, str]:
         "base_url": str(base_url).rstrip("/"),
         "api_key": str(api_key),
         "organization_id": str(organization_id),
-        "tenant_email": str(tenant_email),
+        "project_id": str(project_id),
+        "user_email": str(user_email),
         "timeout_s": str(timeout_s),
         "resource_prefix": str(resource_prefix),
         "report_path": str(report_path),
@@ -153,10 +150,11 @@ def _resolve_runtime_env() -> dict[str, str]:
     }
 
 
-def _headers(api_key: str, organization_id: str) -> dict[str, str]:
+def _headers(api_key: str, organization_id: str, project_id: str) -> dict[str, str]:
     return {
         "Authorization": f"Bearer {api_key}",
         "X-Organization-ID": organization_id,
+        "X-Project-ID": project_id,
         "Content-Type": "application/json",
     }
 
@@ -169,13 +167,12 @@ def _resolve_architect_agent_id(client: ControlPlaneClient) -> str:
         raise RuntimeError("Unable to list agents for architect resolution.")
 
     for item in agents:
-        if isinstance(item, dict) and item.get("slug") == "platform-architect":
+        if isinstance(item, dict) and item.get("system_key") == "platform_architect":
             agent_id = item.get("id")
             if agent_id:
                 return str(agent_id)
 
-    raise RuntimeError("platform-architect agent not found in tenant.")
-
+    raise RuntimeError("platform_architect agent not found in tenant.")
 
 def _start_run(
     base_url: str,
@@ -341,7 +338,7 @@ def _action_specific_api_check(
 @pytest.fixture(scope="session")
 def e2e_runtime() -> dict[str, Any]:
     env = _resolve_runtime_env()
-    tenant_slug = resolve_tenant_slug(env["organization_id"])
+    organization_slug = resolve_organization_slug(env["organization_id"])
     sdk = ControlPlaneClient(base_url=env["base_url"], token=env["api_key"], organization_id=env["organization_id"])
     architect_agent_id = _resolve_architect_agent_id(sdk)
     required_scopes, scope_to_actions = _build_scope_requirements()
@@ -378,11 +375,11 @@ def e2e_runtime() -> dict[str, Any]:
 
     return {
         **env,
-        "tenant_slug": tenant_slug,
+        "organization_slug": organization_slug,
         "sdk": sdk,
         "architect_agent_id": architect_agent_id,
         "report": report,
-        "headers": _headers(env["api_key"], env["organization_id"]),
+        "headers": _headers(env["api_key"], env["organization_id"], env["project_id"]),
         "requested_scopes": sorted(required_scopes),
     }
 
@@ -404,7 +401,7 @@ def test_platform_architect_capability_matrix_live(e2e_runtime, scenario: Scenar
         scenario=scenario,
         unique_prefix=unique_prefix,
         organization_id=e2e_runtime["organization_id"],
-        tenant_slug=e2e_runtime.get("tenant_slug"),
+        tenant_slug=e2e_runtime.get("organization_slug"),
         chat_model=e2e_runtime.get("chat_model", ""),
     )
 
@@ -431,11 +428,11 @@ def test_platform_architect_capability_matrix_live(e2e_runtime, scenario: Scenar
         scenario.target_action,
     )
 
-    db_check = check_agent_run_exists(run_id, e2e_runtime["organization_id"])
+    db_check = check_agent_run_exists(run_id, e2e_runtime["organization_id"], e2e_runtime["project_id"])
     api_side_effect_ok, api_side_effect_detail = _action_specific_api_check(
         scenario=scenario,
         sdk_client=e2e_runtime["sdk"],
-        tenant_slug=e2e_runtime.get("tenant_slug"),
+        tenant_slug=e2e_runtime.get("organization_slug"),
         unique_prefix=unique_prefix,
         assistant_json=assistant_json,
     )

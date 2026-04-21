@@ -17,6 +17,7 @@ Artifact runtime revision, deploy, and dispatch-time credential lifecycle.
 
 ## Key Scenarios Covered
 
+- tenant fixture access now comes from canonical `SecurityBootstrapService` owner assignments instead of membership-role fields
 - create tenant artifact draft with source-tree runtime payload
 - create tenant artifact draft without a user-authored slug
 - update artifact and create a new draft revision
@@ -151,6 +152,9 @@ Artifact runtime revision, deploy, and dispatch-time credential lifecycle.
 - Command: `SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest backend/tests/artifact_runtime/test_artifact_versions_api.py backend/tests/artifact_runtime/test_artifact_working_draft_api.py`
 - Date: 2026-04-21 Asia/Hebron
 - Result: Pass (`9 passed`). Artifact admin routes remain green after the `organization_id` hard cut.
+- Command: `SECRET_KEY=explicit-test-secret PYTHONPATH=backend backend/.venv/bin/python -m pytest -x -q backend/tests/artifact_runtime/test_execution_service.py`
+- Date: 2026-04-21 Asia/Hebron
+- Result: Fail (`invalid input value for enum artifactownertype: "organization"` from the live artifact create path after fixture bootstrap succeeded).
 
 ## Known Gaps
 

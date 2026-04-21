@@ -4,7 +4,7 @@ import pytest
 import jwt
 
 from app.core.security import ALGORITHM, SECRET_KEY, create_access_token, get_password_hash
-from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Organization, User
+from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgUnit, OrgUnitType, Organization, User
 from app.services.security_bootstrap_service import SecurityBootstrapService
 
 
@@ -12,7 +12,6 @@ def _auth_headers(
     user_id: str,
     organization_id: str,
     org_unit_id: str,
-    org_role: str = "owner",
     scopes: list[str] | None = None,
 ) -> dict[str, str]:
     payload = jwt.decode(
@@ -20,12 +19,11 @@ def _auth_headers(
             subject=user_id,
             organization_id=organization_id,
             org_unit_id=org_unit_id,
-            org_role=org_role,
         ),
         SECRET_KEY,
         algorithms=[ALGORITHM],
     )
-    payload["scope"] = scopes if scopes is not None else (["*"] if org_role == "owner" else [])
+    payload["scope"] = scopes if scopes is not None else ["*"]
     token = jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
     return {
         "Authorization": f"Bearer {token}",
@@ -63,14 +61,12 @@ async def _seed_tenant_users(db_session):
                 organization_id=tenant.id,
                 user_id=owner.id,
                 org_unit_id=org_unit.id,
-                role=OrgRole.owner,
                 status=MembershipStatus.active,
             ),
             OrgMembership(
                 organization_id=tenant.id,
                 user_id=member.id,
                 org_unit_id=org_unit.id,
-                role=OrgRole.member,
                 status=MembershipStatus.active,
             ),
         ]
@@ -111,7 +107,7 @@ async def test_models_list_allows_scoped_owner(client, db_session):
 @pytest.mark.asyncio
 async def test_knowledge_store_create_denied_for_member_without_write_scope(client, db_session):
     tenant, _owner, member, org_unit = await _seed_tenant_users(db_session)
-    headers = _auth_headers(str(member.id), str(tenant.id), str(org_unit.id), org_role="member")
+    headers = _auth_headers(str(member.id), str(tenant.id), str(org_unit.id), scopes=[])
 
     response = await client.post(
         "/admin/knowledge-stores?tenant_slug=" + tenant.slug,

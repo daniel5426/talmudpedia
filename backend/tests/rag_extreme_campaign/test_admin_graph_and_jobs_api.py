@@ -6,42 +6,37 @@ import pytest
 
 from app.api.dependencies import get_current_principal
 from app.api.routers.auth import get_current_user
-from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Organization, User
+from app.db.postgres.models.identity import Organization, User
 from app.db.postgres.models.rag import ExecutablePipeline, KnowledgeStore, PipelineJob, PipelineJobStatus, RetrievalPolicy, StorageBackend, VisualPipeline
 from app.db.postgres.models.registry import ModelRegistry, ModelCapabilityType, ModelStatus
+from app.db.postgres.models.workspace import Project
 from main import app
 
 
 async def _seed_context(db_session):
     tenant = Organization(id=uuid.uuid4(), name="RAG Campaign Organization", slug=f"rag-campaign-{uuid.uuid4().hex[:8]}")
     user = User(id=uuid.uuid4(), email=f"rag-campaign-{uuid.uuid4().hex[:6]}@example.com", role="admin")
-    org_unit = OrgUnit(
+    project = Project(
         id=uuid.uuid4(),
         organization_id=tenant.id,
-        name="RAG Campaign Org",
-        slug=f"rag-campaign-org-{uuid.uuid4().hex[:6]}",
-        type=OrgUnitType.org,
+        name="Default Project",
+        slug=f"project-{uuid.uuid4().hex[:8]}",
+        is_default=True,
+        created_by=user.id,
     )
-    membership = OrgMembership(
-        id=uuid.uuid4(),
-        organization_id=tenant.id,
-        user_id=user.id,
-        org_unit_id=org_unit.id,
-        role=OrgRole.owner,
-        status=MembershipStatus.active,
-    )
-    db_session.add_all([tenant, user, org_unit, membership])
+    db_session.add_all([tenant, user, project])
     await db_session.commit()
-    return tenant, user
+    return tenant, user, project
 
 
-def _override_principal(organization_id, user, scopes: list[str]):
+def _override_principal(organization_id, project_id, user, scopes: list[str]):
     async def _inner():
         return {
             "type": "user",
             "user": user,
             "user_id": str(user.id),
             "organization_id": str(organization_id),
+            "project_id": str(project_id),
             "scopes": scopes,
         }
 
@@ -92,10 +87,11 @@ async def _seed_embed_model(db_session, organization_id) -> str:
     return str(model.id)
 
 
-async def _seed_knowledge_store(db_session, organization_id, user_id) -> str:
+async def _seed_knowledge_store(db_session, organization_id, project_id, user_id) -> str:
     store = KnowledgeStore(
         id=uuid.uuid4(),
         organization_id=organization_id,
+        project_id=project_id,
         name="Campaign Store",
         description="RAG campaign API store",
         embedding_model_id="manual-store-model",
@@ -112,12 +108,13 @@ async def _seed_knowledge_store(db_session, organization_id, user_id) -> str:
 
 @pytest.mark.asyncio
 async def test_rag_admin_graph_apply_patch_persists_and_bumps_version(client, db_session, monkeypatch):
-    tenant, user = await _seed_context(db_session)
+    tenant, user, project = await _seed_context(db_session)
     embed_model_id = await _seed_embed_model(db_session, tenant.id)
-    knowledge_store_id = await _seed_knowledge_store(db_session, tenant.id, user.id)
+    knowledge_store_id = await _seed_knowledge_store(db_session, tenant.id, project.id, user.id)
 
     app.dependency_overrides[get_current_principal] = _override_principal(
         tenant.id,
+        project.id,
         user,
         ["pipelines.read", "pipelines.write"],
     )
@@ -164,12 +161,13 @@ async def test_rag_admin_graph_apply_patch_persists_and_bumps_version(client, db
 
 @pytest.mark.asyncio
 async def test_rag_admin_compile_and_job_creation_persist_rows(client, db_session, monkeypatch):
-    tenant, user = await _seed_context(db_session)
+    tenant, user, project = await _seed_context(db_session)
     embed_model_id = await _seed_embed_model(db_session, tenant.id)
-    knowledge_store_id = await _seed_knowledge_store(db_session, tenant.id, user.id)
+    knowledge_store_id = await _seed_knowledge_store(db_session, tenant.id, project.id, user.id)
 
     app.dependency_overrides[get_current_principal] = _override_principal(
         tenant.id,
+        project.id,
         user,
         ["pipelines.read", "pipelines.write"],
     )

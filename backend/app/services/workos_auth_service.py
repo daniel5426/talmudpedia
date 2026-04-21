@@ -15,7 +15,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from fastapi import HTTPException, Request, Response, status
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from workos import WorkOSClient
 
@@ -685,6 +685,16 @@ class WorkOSAuthService:
         await self.db.flush()
         return membership
 
+    async def _remove_local_membership(self, *, membership: OrgMembership) -> None:
+        await self.db.execute(
+            delete(RoleAssignment).where(
+                RoleAssignment.organization_id == membership.organization_id,
+                RoleAssignment.user_id == membership.user_id,
+            )
+        )
+        await self.db.delete(membership)
+        await self.db.flush()
+
     def _map_membership_status(self, value: Any) -> MembershipStatus:
         normalized = str(value or "active").strip().lower()
         if normalized == "inactive":
@@ -697,16 +707,42 @@ class WorkOSAuthService:
         if not local_user.workos_user_id:
             return
         memberships = self.client.user_management.list_organization_memberships(user_id=local_user.workos_user_id)
-        for workos_membership in _iter_collection(memberships):
+        membership_items = _iter_collection(memberships)
+        seen_membership_ids: set[str] = set()
+        seen_workos_org_ids: set[str] = set()
+        for workos_membership in membership_items:
             workos_org_id = _workos_attr(workos_membership, "organization_id", "organizationId")
             if not workos_org_id:
                 continue
+            membership_id = _workos_attr(workos_membership, "id")
+            if membership_id:
+                seen_membership_ids.add(str(membership_id))
+            seen_workos_org_ids.add(str(workos_org_id))
             local_org = await self._sync_local_organization_from_workos(
                 str(workos_org_id),
                 actor_user_id=local_user.id,
                 create_if_missing=True,
             )
             await self._upsert_local_membership(local_user, local_org, workos_membership)
+
+        local_memberships = (
+            await self.db.execute(
+                select(OrgMembership, Organization)
+                .join(Organization, Organization.id == OrgMembership.organization_id)
+                .where(
+                    OrgMembership.user_id == local_user.id,
+                    Organization.workos_organization_id.is_not(None),
+                )
+            )
+        ).all()
+        for membership, organization in local_memberships:
+            workos_membership_id = str(membership.workos_membership_id or "").strip()
+            workos_org_id = str(organization.workos_organization_id or "").strip()
+            if workos_membership_id and workos_membership_id in seen_membership_ids:
+                continue
+            if workos_org_id and workos_org_id in seen_workos_org_ids:
+                continue
+            await self._remove_local_membership(membership=membership)
         await self.db.flush()
 
     async def sync_workos_user_by_id(self, workos_user_id: str) -> User:

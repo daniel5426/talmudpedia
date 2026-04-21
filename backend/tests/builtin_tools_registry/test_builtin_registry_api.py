@@ -6,8 +6,15 @@ import jwt
 import pytest
 from sqlalchemy import select
 
+from app.core.scope_registry import (
+    ORGANIZATION_DEFAULT_ROLE_SCOPES,
+    ORGANIZATION_OWNER_ROLE,
+    PROJECT_DEFAULT_ROLE_SCOPES,
+    PROJECT_OWNER_ROLE,
+    normalize_scope_list,
+)
 from app.core.security import ALGORITHM, SECRET_KEY, create_access_token
-from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Organization, User
+from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgUnit, OrgUnitType, Organization, User
 from app.db.postgres.models.rag import PipelineType, VisualPipeline
 from app.db.postgres.models.registry import (
     ToolDefinitionScope,
@@ -43,7 +50,6 @@ async def _seed_tenant_and_user(db_session):
             organization_id=tenant.id,
             user_id=user.id,
             org_unit_id=org_unit.id,
-            role=OrgRole.owner,
             status=MembershipStatus.active,
         )
     )
@@ -65,12 +71,16 @@ def _headers(user: User, tenant: Organization) -> dict[str, str]:
         create_access_token(
             subject=str(user.id),
             organization_id=str(tenant.id),
-            org_role="owner",
         ),
         SECRET_KEY,
         algorithms=[ALGORITHM],
     )
-    payload["scope"] = ["*"]
+    payload["scope"] = normalize_scope_list(
+        [
+            *ORGANIZATION_DEFAULT_ROLE_SCOPES[ORGANIZATION_OWNER_ROLE],
+            *PROJECT_DEFAULT_ROLE_SCOPES[PROJECT_OWNER_ROLE],
+        ]
+    )
     token = jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
     return {"Authorization": f"Bearer {token}", "X-Organization-ID": str(tenant.id)}
 

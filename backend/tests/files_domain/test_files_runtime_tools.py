@@ -3,17 +3,26 @@ from __future__ import annotations
 from uuid import uuid4
 
 import pytest
+from sqlalchemy import select
 
 from app.db.postgres.models.agents import Agent, AgentRun, RunStatus
 from app.db.postgres.models.files import FileAccessMode
 from app.db.postgres.models.identity import Organization, User
+from app.db.postgres.models.registry import ToolImplementationType, ToolRegistry, ToolStatus
 from app.db.postgres.models.workspace import Project, ProjectStatus
 from app.agent.executors.standard import _file_space_prompt_preamble_from_state
 from app.services.control_plane.agents_admin_service import AgentAdminService, StartAgentRunInput
 from app.services.control_plane.context import ControlPlaneContext
 from app.agent.execution.tool_invocation import build_tool_invocation_envelope, compile_tool_arguments
 from app.services.file_spaces.service import FileSpaceService
-from app.services.file_space_tools import files_list, files_read, files_write
+from app.services.file_space_tools import (
+    FILE_SPACE_TOOL_SPECS,
+    FILE_SPACE_TOOLSET_ID,
+    ensure_file_space_tools,
+    files_list,
+    files_read,
+    files_write,
+)
 
 
 async def _seed_runtime_workspace(db_session):
@@ -232,6 +241,36 @@ async def test_files_list_accepts_default_space_alias(db_session):
     )
 
     assert [item["path"] for item in list_result["items"]] == ["notes.md"]
+
+
+@pytest.mark.asyncio
+async def test_seed_file_space_tools_creates_global_function_rows(db_session):
+    tool_ids = await ensure_file_space_tools(db_session)
+
+    rows = (
+        await db_session.execute(
+            select(ToolRegistry).where(
+                ToolRegistry.organization_id.is_(None),
+                ToolRegistry.builtin_key.in_([spec["builtin_key"] for spec in FILE_SPACE_TOOL_SPECS]),
+            )
+        )
+    ).scalars().all()
+
+    assert len(rows) == len(FILE_SPACE_TOOL_SPECS)
+    assert {str(row.id) for row in rows} == set(tool_ids)
+
+    by_key = {str(row.builtin_key): row for row in rows}
+    assert set(by_key.keys()) == {spec["builtin_key"] for spec in FILE_SPACE_TOOL_SPECS}
+
+    for spec in FILE_SPACE_TOOL_SPECS:
+        row = by_key[spec["builtin_key"]]
+        assert row.implementation_type == ToolImplementationType.FUNCTION
+        assert row.status == ToolStatus.PUBLISHED
+        assert row.is_system is True
+        assert row.is_active is True
+        assert row.config_schema["implementation"]["function_name"] == spec["function_name"]
+        assert row.config_schema["toolset"]["id"] == FILE_SPACE_TOOLSET_ID
+        assert set(row.config_schema["toolset"]["member_ids"]) == set(tool_ids)
 
 
 def test_standard_agent_prompt_preamble_includes_linked_file_spaces():

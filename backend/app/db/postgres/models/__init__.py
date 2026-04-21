@@ -1,4 +1,4 @@
-from .identity import Organization, OrganizationStatus, User, OrgUnit, OrgMembership, OrgInvite, OrgRole, MembershipStatus, OrgUnitType, UserRole
+from .identity import Organization, OrganizationStatus, User, OrgUnit, OrgMembership, OrgInvite, MembershipStatus, OrgUnitType, UserRole
 from .workspace import BrowserSession, BrowserSessionStatus, Project, ProjectStatus
 from .rbac import Role, RolePermission, RoleAssignment, Action, ResourceType, ActorType
 from .audit import AuditLog, AuditResult

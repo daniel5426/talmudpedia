@@ -57,15 +57,27 @@ class RagAdminService:
         self.db = db
         self.registry = OperatorRegistry.get_instance()
 
+    @staticmethod
+    def _require_project_id(ctx: ControlPlaneContext) -> UUID:
+        if ctx.project_id is None:
+            raise validation("Active project context is required")
+        return ctx.project_id
+
     async def list_visual_pipelines(self, *, ctx: ControlPlaneContext, query: ListQuery) -> ListPage:
+        project_id = self._require_project_id(ctx)
         stmt = (
             select(VisualPipeline)
             .where(VisualPipeline.organization_id == ctx.organization_id)
+            .where(VisualPipeline.project_id == project_id)
             .order_by(VisualPipeline.updated_at.desc())
             .offset(query.skip)
             .limit(query.limit)
         )
-        total_stmt = select(func.count()).select_from(VisualPipeline).where(VisualPipeline.organization_id == ctx.organization_id)
+        total_stmt = (
+            select(func.count())
+            .select_from(VisualPipeline)
+            .where(VisualPipeline.organization_id == ctx.organization_id, VisualPipeline.project_id == project_id)
+        )
         rows = (await self.db.execute(stmt)).scalars().all()
         total = int(await self.db.scalar(total_stmt) or 0)
         return ListPage(items=[self.serialize_pipeline(row, view=query.view) for row in rows], total=total, query=query)
@@ -103,6 +115,7 @@ class RagAdminService:
             raise validation("name is required", field="name")
         pipeline = VisualPipeline(
             organization_id=ctx.organization_id,
+            project_id=ctx.project_id,
             org_unit_id=params.org_unit_id,
             name=name,
             description=params.description,
@@ -185,6 +198,7 @@ class RagAdminService:
         executable = ExecutablePipeline(
             visual_pipeline_id=pipeline.id,
             organization_id=pipeline.organization_id,
+            project_id=pipeline.project_id,
             version=pipeline.version,
             compiled_graph=compile_result.executable_pipeline.model_dump(mode="json") if hasattr(compile_result.executable_pipeline, "model_dump") else {},
             is_valid=True,
@@ -237,6 +251,7 @@ class RagAdminService:
             raise validation("Invalid pipeline input", errors=errors)
         job = PipelineJob(
             organization_id=ctx.organization_id,
+            project_id=executable.project_id,
             executable_pipeline_id=executable_pipeline_id,
             status=PipelineJobStatus.QUEUED,
             input_params=normalized,
@@ -253,10 +268,12 @@ class RagAdminService:
         ).to_dict()
 
     async def get_job(self, *, ctx: ControlPlaneContext, job_id: UUID) -> dict[str, Any]:
+        project_id = self._require_project_id(ctx)
         job = await self.db.scalar(
             select(PipelineJob).where(
                 PipelineJob.id == job_id,
                 PipelineJob.organization_id == ctx.organization_id,
+                PipelineJob.project_id == project_id,
             )
         )
         if job is None:
@@ -269,10 +286,12 @@ class RagAdminService:
         ).to_dict()
 
     async def _get_pipeline(self, ctx: ControlPlaneContext, pipeline_id: UUID) -> VisualPipeline:
+        project_id = self._require_project_id(ctx)
         pipeline = await self.db.scalar(
             select(VisualPipeline).where(
                 VisualPipeline.id == pipeline_id,
                 VisualPipeline.organization_id == ctx.organization_id,
+                VisualPipeline.project_id == project_id,
             )
         )
         if pipeline is None:
@@ -280,10 +299,12 @@ class RagAdminService:
         return pipeline
 
     async def _get_executable_pipeline(self, ctx: ControlPlaneContext, executable_pipeline_id: UUID) -> ExecutablePipeline:
+        project_id = self._require_project_id(ctx)
         executable = await self.db.scalar(
             select(ExecutablePipeline).where(
                 ExecutablePipeline.id == executable_pipeline_id,
                 ExecutablePipeline.organization_id == ctx.organization_id,
+                ExecutablePipeline.project_id == project_id,
             )
         )
         if executable is None:
@@ -320,6 +341,7 @@ class RagAdminService:
             "id": str(executable.id),
             "visual_pipeline_id": str(executable.visual_pipeline_id),
             "organization_id": str(executable.organization_id),
+            "project_id": str(executable.project_id) if executable.project_id else None,
             "version": int(executable.version or 0),
             "pipeline_type": getattr(executable.pipeline_type, "value", executable.pipeline_type),
             "compiled_graph": dict(executable.compiled_graph or {}),
@@ -333,6 +355,7 @@ class RagAdminService:
         return {
             "id": str(job.id),
             "executable_pipeline_id": str(job.executable_pipeline_id),
+            "project_id": str(job.project_id) if job.project_id else None,
             "status": str(getattr(job.status, "value", job.status)).lower(),
             "input_params": dict(job.input_params or {}),
             "output": job.output,

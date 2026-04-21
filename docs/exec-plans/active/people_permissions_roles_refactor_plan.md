@@ -30,6 +30,15 @@ Finish the hard cut from the legacy mixed role model to the canonical V1 model:
 
 ## Current Baseline
 
+2026-04-21 hard-cut status:
+
+- local RBAC assignments are now the active source of truth for org/project roles in the touched settings, WorkOS sync, bootstrap, org-units, organizations, stats, and publish-boundary codepaths
+- legacy membership/invite role columns were removed from the ORM and active codepaths; alembic migration `e2f3a4b5c6d7_drop_legacy_org_role_columns.py` drops them from the schema
+- project-owner-only scopes now include `project_settings.*`, `project_members.*`, `project_api_keys.*`, `agents.publish`, `tools.publish`, and `artifacts.publish`
+- preset `Project Member` is limited to draft build/run/test/preview work; publish, exposure, per-project settings, per-project members, and project API keys are no longer included
+- settings members/project-members now render `organization_role` from canonical organization-family assignments, not membership storage
+- touched membership-removal paths now delete all in-org role assignments in the same transaction flow
+
 Completed in phase 1:
 
 - local control-plane authorization hard cut
@@ -239,6 +248,15 @@ Validation:
 
 ## Progress Log
 
+### 2026-04-21 hard-cut implementation
+
+- Backend: removed active legacy org-role authority from membership/invite handling, enforced membership invariants in settings role-assignment flows, tightened publish boundaries, and moved per-project settings/member/api-key mutations onto explicit project-owner scopes.
+- Frontend: expanded the project custom-role editor to expose Project Settings, Project Members, Project API Keys, Publish, and Exposure as separate permission groups.
+- Schema: added `backend/alembic/versions/e2f3a4b5c6d7_drop_legacy_org_role_columns.py`.
+- Validation:
+  - `SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest -q backend/tests/settings_people_permissions/test_settings_people_permissions_api.py backend/tests/workos_native_auth/test_auth_session_effective_scopes.py backend/tests/security_route_enforcement/test_route_scope_enforcement.py backend/tests/settings_api_keys/test_settings_api_keys_api.py backend/tests/admin_monitoring/test_admin_monitoring_api.py` -> `14 passed`
+  - `cd frontend-reshet && npm exec pnpm -- test -- --runTestsByPath src/__tests__/settings_people_permissions/settings_people_permissions_service.test.ts src/__tests__/settings_people_permissions/settings_people_permissions_dialogs.test.tsx src/__tests__/settings_people_permissions/settings_people_permissions_section.test.tsx --watch=false` -> `3 suites passed, 5 tests passed`
+
 ### Done
 
 - phase-1 control-plane authorization hard cut
@@ -261,9 +279,6 @@ Validation:
 ### Next Up
 
 - no active roadmap items remain in this plan
-
-
-Last Updated: 2026-04-21
 
 - 2026-04-20: implemented publish/runtime permission boundary hard cut for published apps, exposure scopes, preview-client token cleanup, public app `public_id`, and touched auth/settings id-based contract changes.
 

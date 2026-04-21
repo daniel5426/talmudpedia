@@ -12,7 +12,6 @@ from app.db.postgres.models.agents import Agent, AgentRun, AgentStatus, RunStatu
 from app.db.postgres.models.identity import (
     MembershipStatus,
     OrgMembership,
-    OrgRole,
     OrgUnit,
     OrgUnitType,
     Organization,
@@ -23,9 +22,12 @@ from app.db.postgres.models.published_apps import (
     PublishedAppRevisionBuildStatus,
     PublishedAppRevisionKind,
 )
+from app.db.postgres.models.workspace import Project
 from app.services.published_app_templates import build_template_files, get_template
 from app.services.published_app_versioning import create_app_version
 from app.services.security_bootstrap_service import SecurityBootstrapService
+
+_ACTIVE_PROJECT_IDS: dict[tuple[str, str, str], str] = {}
 
 
 async def seed_admin_tenant_and_agent(db_session):
@@ -51,16 +53,30 @@ async def seed_admin_tenant_and_agent(db_session):
         organization_id=tenant.id,
         user_id=user.id,
         org_unit_id=org_unit.id,
-        role=OrgRole.owner,
         status=MembershipStatus.active,
     )
     db_session.add(membership)
     bootstrap = SecurityBootstrapService(db_session)
     await bootstrap.ensure_default_roles(tenant.id)
     await bootstrap.ensure_organization_owner_assignment(organization_id=tenant.id, user_id=user.id, assigned_by=user.id)
+    project = Project(
+        organization_id=tenant.id,
+        name="Default Project",
+        slug=f"project-{uuid4().hex[:8]}",
+        created_by=user.id,
+    )
+    db_session.add(project)
+    await db_session.flush()
+    await bootstrap.ensure_project_owner_assignment(
+        organization_id=tenant.id,
+        project_id=project.id,
+        user_id=user.id,
+        assigned_by=user.id,
+    )
 
     agent = Agent(
         organization_id=tenant.id,
+        project_id=project.id,
         name="Published Agent",
         slug=f"agent-{uuid4().hex[:8]}",
         status=AgentStatus.published,
@@ -70,21 +86,24 @@ async def seed_admin_tenant_and_agent(db_session):
     db_session.add(agent)
     await db_session.flush()
     await db_session.commit()
+    _ACTIVE_PROJECT_IDS[(str(user.id), str(tenant.id), str(org_unit.id))] = str(project.id)
     return tenant, user, org_unit, agent
 
 
-def admin_headers(user_id: str, organization_id: str, org_unit_id: str) -> dict[str, str]:
+def admin_headers(user_id: str, organization_id: str, org_unit_id: str, project_id: str | None = None) -> dict[str, str]:
     payload = jwt.decode(
         create_access_token(
             subject=user_id,
             organization_id=organization_id,
             org_unit_id=org_unit_id,
-            org_role="owner",
         ),
         SECRET_KEY,
         algorithms=[ALGORITHM],
     )
     payload["scope"] = ["*"]
+    project_id = project_id or _ACTIVE_PROJECT_IDS.get((str(user_id), str(organization_id), str(org_unit_id)))
+    if project_id:
+        payload["project_id"] = str(project_id)
     token = jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
     return {"Authorization": f"Bearer {token}", "X-Organization-ID": organization_id}
 
@@ -144,6 +163,7 @@ async def seed_published_app(
     agent_id,
     created_by,
     *,
+    project_id=None,
     slug: str,
     auth_enabled: bool = True,
     auth_providers=None,
@@ -154,11 +174,15 @@ async def seed_published_app(
     allowed_origins=None,
     external_auth_oidc=None,
 ):
+    if project_id is None:
+        agent = await db_session.get(Agent, agent_id)
+        project_id = getattr(agent, "project_id", None) if agent is not None else None
     await db_session.execute(
         delete(PublishedApp).where(PublishedApp.public_id == slug)
     )
     app = PublishedApp(
         organization_id=organization_id,
+        project_id=project_id,
         agent_id=agent_id,
         name=f"App {slug}",
         public_id=slug,

@@ -292,7 +292,7 @@ def test_platform_architect_guardrails_block_repeated_identical_mutation_failure
     node_context = {
         "run_id": "run-1",
         "node_id": "tool-node",
-        "state_context": {"agent_slug": "platform-architect"},
+        "state_context": {"agent_system_key": "platform_architect"},
     }
     tool_result = {
         "context": {
@@ -308,7 +308,7 @@ def test_platform_architect_guardrails_block_repeated_identical_mutation_failure
 
     for _ in range(4):
         enforce_platform_architect_guardrails(
-            tool_slug="platform-agents",
+            builtin_key="platform-agents",
             tool_result=tool_result,
             input_data={"agent_id": "agent-1"},
             node_context=node_context,
@@ -317,7 +317,7 @@ def test_platform_architect_guardrails_block_repeated_identical_mutation_failure
 
     with pytest.raises(PlatformArchitectBlockedError) as exc_info:
         enforce_platform_architect_guardrails(
-            tool_slug="platform-agents",
+            builtin_key="platform-agents",
             tool_result=tool_result,
             input_data={"agent_id": "agent-1"},
             node_context=node_context,
@@ -334,7 +334,7 @@ def test_platform_architect_guardrails_allow_three_retries_for_noncanonical_cont
     node_context = {
         "run_id": "run-contract",
         "node_id": "tool-node",
-        "state_context": {"agent_slug": "platform-architect"},
+        "state_context": {"agent_system_key": "platform_architect"},
     }
     tool_result = {
         "context": {
@@ -351,7 +351,7 @@ def test_platform_architect_guardrails_allow_three_retries_for_noncanonical_cont
 
     for _ in range(3):
         enforce_platform_architect_guardrails(
-            tool_slug="platform-agents",
+            builtin_key="platform-agents",
             tool_result=tool_result,
             input_data={"query": '{"action":"agents.create","payload":{"name":"demo"}}'},
             node_context=node_context,
@@ -360,7 +360,7 @@ def test_platform_architect_guardrails_allow_three_retries_for_noncanonical_cont
 
     with pytest.raises(PlatformArchitectBlockedError) as exc_info:
         enforce_platform_architect_guardrails(
-            tool_slug="platform-agents",
+            builtin_key="platform-agents",
             tool_result=tool_result,
             input_data={"query": '{"action":"agents.create","payload":{"name":"demo"}}'},
             node_context=node_context,
@@ -375,7 +375,7 @@ def test_platform_architect_guardrails_allow_one_replan_for_unknown_action_then_
     node_context = {
         "run_id": "run-unknown-action",
         "node_id": "tool-node",
-        "state_context": {"agent_slug": "platform-architect"},
+        "state_context": {"agent_system_key": "platform_architect"},
     }
     tool_result = {
         "context": {
@@ -386,7 +386,7 @@ def test_platform_architect_guardrails_allow_one_replan_for_unknown_action_then_
 
     for _ in range(4):
         enforce_platform_architect_guardrails(
-            tool_slug="platform-rag",
+            builtin_key="platform-rag",
             tool_result=tool_result,
             input_data={},
             node_context=node_context,
@@ -395,7 +395,7 @@ def test_platform_architect_guardrails_allow_one_replan_for_unknown_action_then_
 
     with pytest.raises(PlatformArchitectBlockedError) as exc_info:
         enforce_platform_architect_guardrails(
-            tool_slug="platform-rag",
+            builtin_key="platform-rag",
             tool_result=tool_result,
             input_data={},
             node_context=node_context,
@@ -410,7 +410,7 @@ def test_platform_architect_guardrails_preserve_fastapi_validation_details_for_r
     node_context = {
         "run_id": "run-rag-create-validation",
         "node_id": "tool-node",
-        "state_context": {"agent_slug": "platform-architect"},
+        "state_context": {"agent_system_key": "platform_architect"},
     }
     tool_result = {
         "context": {
@@ -431,7 +431,7 @@ def test_platform_architect_guardrails_preserve_fastapi_validation_details_for_r
 
     for _ in range(4):
         enforce_platform_architect_guardrails(
-            tool_slug="platform-rag",
+            builtin_key="platform-rag",
             tool_result=tool_result,
             input_data={"payload": {"name": "website_ingestion_pipeline_runtime_url"}},
             node_context=node_context,
@@ -440,7 +440,7 @@ def test_platform_architect_guardrails_preserve_fastapi_validation_details_for_r
 
     with pytest.raises(PlatformArchitectBlockedError) as exc_info:
         enforce_platform_architect_guardrails(
-            tool_slug="platform-rag",
+            builtin_key="platform-rag",
             tool_result=tool_result,
             input_data={"payload": {"name": "website_ingestion_pipeline_runtime_url"}},
             node_context=node_context,

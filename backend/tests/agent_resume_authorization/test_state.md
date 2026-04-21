@@ -22,6 +22,9 @@ Covers authorization and cancellation behavior for agent run control endpoints, 
 - Command: `SECRET_KEY=test-secret-key PYTHONPATH=backend backend/.venv/bin/pytest -q backend/tests/agent_resume_authorization/test_resume_authorization.py`
 - Date/Time: 2026-04-21 Asia/Hebron
 - Result: PASS (`8 passed`)
+- Command: `SECRET_KEY=explicit-test-secret PYTHONPATH=/Users/danielbenassaya/Code/personal/talmudpedia backend/.venv/bin/python -m pytest -q backend/tests/agent_resume_authorization/test_resume_authorization.py`
+- Date/Time: 2026-04-21 Asia/Hebron
+- Result: PASS (`8 passed`). Legacy membership roles are removed; bearer headers now use explicit `agents.execute` scope claims.
 
 ## Known gaps or follow-ups
 - Add workload-principal coverage for runs with `workload_principal_id` set.

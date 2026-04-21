@@ -1,6 +1,6 @@
 # Security Bootstrap Defaults Test State
 
-Last Updated: 2026-04-20
+Last Updated: 2026-04-21
 
 ## Scope
 Validate tenant bootstrap seeding for default roles and owner assignment.
@@ -12,8 +12,12 @@ Validate tenant bootstrap seeding for default roles and owner assignment.
 - Default system roles seeded (`Owner`, `Reader`, `Member`, `Viewer`)
 - Owner assignment seeding is idempotent
 - `app.core.security` fails closed when `SECRET_KEY` is missing or still set to placeholder defaults
+- Membership fixtures no longer rely on the removed legacy org-membership role enum
 
 ## Last Run
+- Command: `SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest -q backend/tests/security_bootstrap_defaults backend/tests/security_admin_user_management backend/tests/organization_bootstrap backend/tests/admin_stats_accounting backend/tests/role_assignments_model`
+- Date/Time: 2026-04-21 21:13 EEST
+- Result: PASS (`18 passed`)
 - Command: `SECRET_KEY=explicit-test-secret-0123456789abcdef TEST_USE_REAL_DB=0 /Users/danielbenassaya/Code/personal/talmudpedia/backend/.venv-codex-tests/bin/python -m pytest -q backend/tests/security_bootstrap_defaults/test_security_bootstrap_defaults.py`
 - Date/Time: 2026-04-19 Asia/Hebron
 - Result: PASS (`5 passed`)

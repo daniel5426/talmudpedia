@@ -34,7 +34,7 @@ def _load_local_env_files() -> None:
             load_dotenv(candidate, override=False)
 
 
-def _mint_local_dev_jwt() -> tuple[str, str] | None:
+def _mint_local_dev_jwt() -> tuple[str, str, str] | None:
     _load_local_env_files()
     try:
         from sqlalchemy import select
@@ -42,18 +42,21 @@ def _mint_local_dev_jwt() -> tuple[str, str] | None:
         from app.db.postgres.engine import sessionmaker
         from app.db.postgres.models.agents import Agent
         from app.db.postgres.models.identity import MembershipStatus, OrgMembership, User
+        from app.db.postgres.models.workspace import Project
     except Exception:
         return None
 
-    async def _query() -> tuple[str, str] | None:
+    async def _query() -> tuple[str, str, str] | None:
         async with sessionmaker() as db:
             result = await db.execute(
-                select(User.id, OrgMembership.tenant_id)
+                select(User.id, OrgMembership.organization_id, Project.id)
                 .join(OrgMembership, OrgMembership.user_id == User.id)
+                .join(Project, Project.organization_id == OrgMembership.organization_id)
                 .join(
                     Agent,
-                    (Agent.tenant_id == OrgMembership.tenant_id)
-                    & (Agent.slug == "platform-architect"),
+                    (Agent.organization_id == OrgMembership.organization_id)
+                    & (Agent.project_id == Project.id)
+                    & (Agent.system_key == "platform_architect"),
                 )
                 .where(OrgMembership.status == MembershipStatus.active)
                 .order_by(Agent.created_at.desc())
@@ -75,35 +78,37 @@ def _mint_local_dev_jwt() -> tuple[str, str] | None:
     if resolved is None:
         return None
 
-    user_id, tenant_id = resolved
+    user_id, organization_id, project_id = resolved
     secret_key = os.getenv("SECRET_KEY", "YOUR_SECRET_KEY_HERE_CHANGE_IN_PRODUCTION")
     algorithm = os.getenv("JWT_ALGORITHM", "HS256")
     token = jwt.encode(
         {
             "sub": user_id,
-            "tenant_id": tenant_id,
+            "organization_id": organization_id,
+            "project_id": project_id,
             "scope": ["*"],
-            "org_role": "owner",
             "exp": datetime.now(timezone.utc) + timedelta(days=30),
         },
         secret_key,
         algorithm=algorithm,
     )
-    return token, tenant_id
+    return token, organization_id, project_id
 
 
 def _seed_local_dev_auth_defaults() -> None:
     if (
         ("PLATFORM_ARCHITECT_API_KEY" in os.environ or "TEST_API_KEY" in os.environ)
-        and ("PLATFORM_ARCHITECT_TENANT_ID" in os.environ or "TEST_TENANT_ID" in os.environ)
+        and ("PLATFORM_ARCHITECT_ORGANIZATION_ID" in os.environ or "TEST_ORGANIZATION_ID" in os.environ)
+        and ("PLATFORM_ARCHITECT_PROJECT_ID" in os.environ or "TEST_PROJECT_ID" in os.environ)
     ):
         return
     minted = _mint_local_dev_jwt()
     if minted is None:
         return
-    token, tenant_id = minted
+    token, organization_id, project_id = minted
     os.environ.setdefault("TEST_API_KEY", token)
-    os.environ.setdefault("TEST_TENANT_ID", tenant_id)
+    os.environ.setdefault("TEST_ORGANIZATION_ID", organization_id)
+    os.environ.setdefault("TEST_PROJECT_ID", project_id)
 
 
 def _load_context(raw: str | None) -> dict:
@@ -214,7 +219,7 @@ def _queue_command(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Live harness for platform-architect runs against a real tenant/runtime.")
+    parser = argparse.ArgumentParser(description="Live harness for platform-architect runs against a real organization/project runtime.")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     prompt_parser = subparsers.add_parser("prompt", help="Run one live architect prompt and persist a full run bundle.")

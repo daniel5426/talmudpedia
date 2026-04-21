@@ -67,6 +67,7 @@ AUDIO_MIME_TYPES = {
 class RuntimeAttachmentOwner:
     organization_id: UUID
     surface: AgentThreadSurface
+    project_id: UUID | None = None
     user_id: UUID | None = None
     app_account_id: UUID | None = None
     organization_api_key_id: UUID | None = None
@@ -109,6 +110,7 @@ class RuntimeAttachmentService:
             digest = hashlib.sha256(payload).hexdigest()
             attachment = RuntimeAttachment(
                 organization_id=owner.organization_id,
+                project_id=owner.project_id,
                 thread_id=owner.thread_id,
                 user_id=owner.user_id,
                 app_account_id=owner.app_account_id,
@@ -146,6 +148,7 @@ class RuntimeAttachmentService:
     ) -> AgentThread | None:
         return await ThreadService(self.db).get_thread_with_turns(
             organization_id=owner.organization_id,
+            project_id=owner.project_id,
             thread_id=thread_id,
             user_id=owner.user_id,
             app_account_id=owner.app_account_id,
@@ -259,6 +262,7 @@ class RuntimeAttachmentService:
             select(RuntimeAttachment)
             .where(
                 RuntimeAttachment.organization_id == owner.organization_id,
+                RuntimeAttachment.project_id == owner.project_id,
                 RuntimeAttachment.id.in_(parsed_ids),
             )
             .options(selectinload(RuntimeAttachment.turn_links))
@@ -273,6 +277,8 @@ class RuntimeAttachmentService:
 
     def _owner_matches(self, *, owner: RuntimeAttachmentOwner, attachment: RuntimeAttachment) -> bool:
         if attachment.surface != owner.surface:
+            return False
+        if attachment.project_id != owner.project_id:
             return False
         if owner.agent_id and attachment.agent_id and attachment.agent_id != owner.agent_id:
             return False
@@ -301,6 +307,8 @@ class RuntimeAttachmentService:
         for attachment in attachments:
             if attachment.thread_id is None and owner.thread_id is not None:
                 attachment.thread_id = owner.thread_id
+            if attachment.project_id is None and owner.project_id is not None:
+                attachment.project_id = owner.project_id
             if attachment.agent_id is None and owner.agent_id is not None:
                 attachment.agent_id = owner.agent_id
             if attachment.published_app_id is None and owner.published_app_id is not None:

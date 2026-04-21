@@ -7,8 +7,9 @@ from sqlalchemy import select
 
 from app.api.dependencies import get_current_principal
 from app.db.postgres.models.agents import Agent, AgentStatus
-from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Organization, User
+from app.db.postgres.models.identity import Organization, User
 from app.db.postgres.models.registry import ToolRegistry, ToolStatus, ToolVersion
+from app.db.postgres.models.workspace import Project
 from app.services.agent_service import AgentService
 from app.services.tool_binding_service import ToolBindingService
 from main import app
@@ -17,43 +18,38 @@ from main import app
 async def _seed_tenant_context(db_session):
     tenant = Organization(id=uuid.uuid4(), name="Agent Binding Organization", slug=f"agent-binding-{uuid.uuid4().hex[:8]}")
     user = User(id=uuid.uuid4(), email=f"agent-binding-{uuid.uuid4().hex[:6]}@example.com", role="admin")
-    org_unit = OrgUnit(
+    project = Project(
         id=uuid.uuid4(),
         organization_id=tenant.id,
-        name="Agent Binding Org",
-        slug=f"agent-binding-org-{uuid.uuid4().hex[:6]}",
-        type=OrgUnitType.org,
+        name="Default Project",
+        slug=f"project-{uuid.uuid4().hex[:8]}",
+        is_default=True,
+        created_by=user.id,
     )
-    membership = OrgMembership(
-        id=uuid.uuid4(),
-        organization_id=tenant.id,
-        user_id=user.id,
-        org_unit_id=org_unit.id,
-        role=OrgRole.owner,
-        status=MembershipStatus.active,
-    )
-    db_session.add_all([tenant, user, org_unit, membership])
+    db_session.add_all([tenant, user, project])
     await db_session.commit()
-    return tenant, user
+    return tenant, user, project
 
 
-def _override_principal(organization_id, user, scopes: list[str]):
+def _override_principal(organization_id, project_id, user, scopes: list[str]):
     async def _inner():
         return {
             "type": "user",
             "user": user,
             "user_id": str(user.id),
             "organization_id": str(organization_id),
+            "project_id": str(project_id),
             "scopes": scopes,
         }
 
     return _inner
 
 
-async def _seed_agent(db_session, *, organization_id, user_id, status: AgentStatus = AgentStatus.draft) -> Agent:
+async def _seed_agent(db_session, *, organization_id, project_id, user_id, status: AgentStatus = AgentStatus.draft) -> Agent:
     agent = Agent(
         id=uuid.uuid4(),
         organization_id=organization_id,
+        project_id=project_id,
         name="Delegated Helper",
         slug=f"delegated-helper-{uuid.uuid4().hex[:8]}",
         description="Agent export target",
@@ -97,16 +93,23 @@ async def _seed_agent(db_session, *, organization_id, user_id, status: AgentStat
 
 
 async def _get_agent_tool(db_session, agent_id) -> ToolRegistry | None:
-    slug = f"agent-tool-{str(agent_id).replace('-', '')[:12]}"
-    return (await db_session.execute(select(ToolRegistry).where(ToolRegistry.slug == slug))).scalar_one_or_none()
+    return (
+        await db_session.execute(
+            select(ToolRegistry).where(
+                ToolRegistry.source_object_type == "agent",
+                ToolRegistry.source_object_id == str(agent_id),
+            )
+        )
+    ).scalar_one_or_none()
 
 
 @pytest.mark.asyncio
 async def test_export_agent_tool_creates_agent_bound_registry_row(client, db_session):
-    tenant, user = await _seed_tenant_context(db_session)
-    agent = await _seed_agent(db_session, organization_id=tenant.id, user_id=user.id)
+    tenant, user, project = await _seed_tenant_context(db_session)
+    agent = await _seed_agent(db_session, organization_id=tenant.id, project_id=project.id, user_id=user.id)
     app.dependency_overrides[get_current_principal] = _override_principal(
         tenant.id,
+        project.id,
         user,
         ["agents.read", "agents.write", "tools.read"],
     )
@@ -153,9 +156,9 @@ async def test_export_agent_tool_creates_agent_bound_registry_row(client, db_ses
 
 @pytest.mark.asyncio
 async def test_publishing_agent_syncs_existing_exported_tool(db_session):
-    tenant, user = await _seed_tenant_context(db_session)
-    agent = await _seed_agent(db_session, organization_id=tenant.id, user_id=user.id)
-    service = AgentService(db_session, tenant.id)
+    tenant, user, project = await _seed_tenant_context(db_session)
+    agent = await _seed_agent(db_session, organization_id=tenant.id, project_id=project.id, user_id=user.id)
+    service = AgentService(db_session, tenant.id, project_id=project.id)
 
     exported = await ToolBindingService(db_session).export_agent_tool_binding(
         agent=agent,
@@ -181,14 +184,14 @@ async def test_publishing_agent_syncs_existing_exported_tool(db_session):
 
 @pytest.mark.asyncio
 async def test_deleting_agent_deletes_exported_tool_binding(db_session):
-    tenant, user = await _seed_tenant_context(db_session)
-    agent = await _seed_agent(db_session, organization_id=tenant.id, user_id=user.id)
+    tenant, user, project = await _seed_tenant_context(db_session)
+    agent = await _seed_agent(db_session, organization_id=tenant.id, project_id=project.id, user_id=user.id)
     tool = await ToolBindingService(db_session).export_agent_tool_binding(agent=agent, created_by=user.id)
     await db_session.commit()
 
     assert tool.id is not None
     assert await _get_agent_tool(db_session, agent.id) is not None
 
-    await AgentService(db_session, tenant.id).delete_agent(agent.id)
+    await AgentService(db_session, tenant.id, project_id=project.id).delete_agent(agent.id)
 
     assert await _get_agent_tool(db_session, agent.id) is None

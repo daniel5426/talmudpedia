@@ -35,6 +35,7 @@ class AgentThread(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=True, index=True)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     app_account_id = Column(UUID(as_uuid=True), ForeignKey("published_app_accounts.id", ondelete="SET NULL"), nullable=True, index=True)
     organization_api_key_id = Column(UUID(as_uuid=True), ForeignKey("organization_api_keys.id", ondelete="SET NULL"), nullable=True, index=True)
@@ -65,6 +66,7 @@ class AgentThread(Base):
         super().__init__(**kwargs)
 
     organization = relationship("Organization")
+    project = relationship("Project")
     user = relationship("User")
     app_account = relationship("PublishedAppAccount")
     organization_api_key = relationship("OrganizationAPIKey")
@@ -88,9 +90,9 @@ class AgentThread(Base):
     )
 
     __table_args__ = (
-        Index("ix_agent_threads_scope_activity", "organization_id", "user_id", "last_activity_at"),
-        Index("ix_agent_threads_app_account_activity", "organization_id", "app_account_id", "last_activity_at"),
-        Index("ix_agent_threads_embed_activity", "organization_id", "agent_id", "external_user_id", "last_activity_at"),
+        Index("ix_agent_threads_scope_activity", "organization_id", "project_id", "user_id", "last_activity_at"),
+        Index("ix_agent_threads_app_account_activity", "organization_id", "project_id", "app_account_id", "last_activity_at"),
+        Index("ix_agent_threads_embed_activity", "organization_id", "project_id", "agent_id", "external_user_id", "last_activity_at"),
     )
 
 

@@ -26,11 +26,6 @@ class UserRole(str, enum.Enum):
     admin = "admin"
     system = "system"
 
-class OrgRole(str, enum.Enum):
-    owner = "owner"
-    admin = "admin"
-    member = "member"
-
 class MembershipStatus(str, enum.Enum):
     active = "active"
     pending = "pending"

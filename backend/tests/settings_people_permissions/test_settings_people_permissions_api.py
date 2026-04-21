@@ -2,10 +2,14 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+import jwt
 from sqlalchemy import select
 
-from app.db.postgres.models.identity import MembershipStatus, OrgInvite, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Organization, User
+from app.core.security import ALGORITHM, SECRET_KEY, create_access_token
+from app.db.postgres.models.identity import MembershipStatus, OrgInvite, OrgMembership, OrgUnit, OrgUnitType, Organization, User
+from app.db.postgres.models.rbac import RoleAssignment
 from app.db.postgres.models.workspace import Project
+from app.services.auth_context_service import resolve_effective_scopes
 from app.services.security_bootstrap_service import SecurityBootstrapService
 from tests.published_apps._helpers import admin_headers
 
@@ -29,6 +33,21 @@ def _install_fake_workos(monkeypatch):
     return fake_client
 
 
+def _scoped_headers(*, user_id: str, organization_id: str, org_unit_id: str, scopes: list[str]) -> dict[str, str]:
+    payload = jwt.decode(
+        create_access_token(
+            subject=user_id,
+            organization_id=organization_id,
+            org_unit_id=org_unit_id,
+        ),
+        SECRET_KEY,
+        algorithms=[ALGORITHM],
+    )
+    payload["scope"] = scopes
+    token = jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+    return {"Authorization": f"Bearer {token}", "X-Organization-ID": organization_id}
+
+
 @pytest.mark.asyncio
 async def test_settings_people_permissions_members_invites_groups_roles_and_assignments(client, db_session, monkeypatch):
     fake_client = _install_fake_workos(monkeypatch)
@@ -40,7 +59,8 @@ async def test_settings_people_permissions_members_invites_groups_roles_and_assi
     )
     owner = User(email=f"owner-{uuid4().hex[:8]}@example.com", hashed_password="x", role="admin")
     member = User(email=f"member-{uuid4().hex[:8]}@example.com", hashed_password="x", role="user", full_name="Member User")
-    db_session.add_all([tenant, owner, member])
+    outsider = User(email=f"outsider-{uuid4().hex[:8]}@example.com", hashed_password="x", role="user", full_name="Outside User")
+    db_session.add_all([tenant, owner, member, outsider])
     await db_session.flush()
 
     root = OrgUnit(organization_id=tenant.id, name="Root", slug="root", type=OrgUnitType.org)
@@ -56,19 +76,40 @@ async def test_settings_people_permissions_members_invites_groups_roles_and_assi
     await db_session.flush()
 
     db_session.add_all([
-        OrgMembership(organization_id=tenant.id, user_id=owner.id, org_unit_id=root.id, role=OrgRole.owner, status=MembershipStatus.active),
-        OrgMembership(organization_id=tenant.id, user_id=member.id, org_unit_id=root.id, role=OrgRole.member, status=MembershipStatus.active),
+        OrgMembership(organization_id=tenant.id, user_id=owner.id, org_unit_id=root.id, status=MembershipStatus.active),
+        OrgMembership(organization_id=tenant.id, user_id=member.id, org_unit_id=root.id, status=MembershipStatus.active),
     ])
     bootstrap = SecurityBootstrapService(db_session)
     await bootstrap.ensure_default_roles(tenant.id)
     await bootstrap.ensure_organization_owner_assignment(organization_id=tenant.id, user_id=owner.id, assigned_by=owner.id)
+    await bootstrap.ensure_organization_reader_assignment(organization_id=tenant.id, user_id=member.id, assigned_by=owner.id)
+    await bootstrap.ensure_project_member_assignment(
+        organization_id=tenant.id,
+        project_id=project.id,
+        user_id=member.id,
+        assigned_by=owner.id,
+    )
     await db_session.commit()
 
     headers = admin_headers(str(owner.id), str(tenant.id), str(root.id))
+    member_scopes = await resolve_effective_scopes(
+        db=db_session,
+        user=member,
+        organization_id=tenant.id,
+        project_id=project.id,
+    )
+    member_headers = _scoped_headers(
+        user_id=str(member.id),
+        organization_id=str(tenant.id),
+        org_unit_id=str(root.id),
+        scopes=member_scopes,
+    )
 
     members_resp = await client.get("/api/settings/people/members", headers=headers)
     assert members_resp.status_code == 200
     assert len(members_resp.json()) == 2
+    member_row = next(item for item in members_resp.json() if item["user_id"] == str(member.id))
+    assert member_row["organization_role"] == "Reader"
 
     invites_resp = await client.get("/api/settings/people/invitations", headers=headers)
     assert invites_resp.status_code == 200
@@ -175,6 +216,18 @@ async def test_settings_people_permissions_members_invites_groups_roles_and_assi
     assert invalid_assignment.status_code == 400
     assert invalid_assignment.json()["detail"] == "Role family does not match assignment kind"
 
+    non_member_assignment = await client.post(
+        "/api/settings/people/role-assignments",
+        headers=headers,
+        json={
+            "user_id": str(outsider.id),
+            "role_id": role_id,
+            "assignment_kind": "organization",
+        },
+    )
+    assert non_member_assignment.status_code == 400
+    assert non_member_assignment.json()["detail"] == "User must be an active organization member"
+
     replacement_role = await client.post(
         "/api/settings/people/roles",
         headers=headers,
@@ -202,3 +255,56 @@ async def test_settings_people_permissions_members_invites_groups_roles_and_assi
     ]
     assert len(member_org_assignments) == 1
     assert member_org_assignments[0]["role_name"] == "Ops Auditor"
+
+    org_assignment_delete = await client.delete(
+        f"/api/settings/people/role-assignments/{member_org_assignments[0]['id']}",
+        headers=headers,
+    )
+    assert org_assignment_delete.status_code == 400
+    assert org_assignment_delete.json()["detail"] == "Organization role assignments cannot be deleted directly"
+
+    project_members_resp = await client.get(f"/api/settings/projects/{project.id}/members", headers=headers)
+    assert project_members_resp.status_code == 200
+    project_member_row = next(item for item in project_members_resp.json() if item["user_id"] == str(member.id))
+    assert project_member_row["organization_role"] == "Ops Auditor"
+
+    member_update_project = await client.patch(
+        f"/api/settings/projects/{project.id}",
+        headers=member_headers,
+        json={"name": "Project Renamed"},
+    )
+    assert member_update_project.status_code == 403
+    assert "project_settings.write" in member_update_project.json()["detail"]
+
+    member_project_members = await client.get(f"/api/settings/projects/{project.id}/members", headers=member_headers)
+    assert member_project_members.status_code == 403
+    assert "project_members.read" in member_project_members.json()["detail"]
+
+    member_project_api_key = await client.post(
+        "/api/settings/api-keys",
+        headers=member_headers,
+        json={"owner_scope": "project", "project_id": str(project.id), "name": "Member Attempt", "scopes": ["agents.embed"]},
+    )
+    assert member_project_api_key.status_code == 403
+    assert "project_api_keys.write" in member_project_api_key.json()["detail"]
+
+    member_published_app_update = await client.patch(
+        "/admin/apps/00000000-0000-0000-0000-000000000000",
+        headers=member_headers,
+        json={"name": "Should Fail"},
+    )
+    assert member_published_app_update.status_code == 403
+    assert "apps.publish" in member_published_app_update.json()["detail"]
+
+    member_membership_id = member_row["membership_id"]
+    remove_member_resp = await client.delete(f"/api/settings/people/members/{member_membership_id}", headers=headers)
+    assert remove_member_resp.status_code == 204
+    remaining_assignments = (
+        await db_session.execute(
+            select(RoleAssignment).where(
+                RoleAssignment.organization_id == tenant.id,
+                RoleAssignment.user_id == member.id,
+            )
+        )
+    ).scalars().all()
+    assert remaining_assignments == []

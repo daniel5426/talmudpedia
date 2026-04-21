@@ -39,7 +39,7 @@ def _stable_id(action: str) -> str:
 
 
 def _orchestration_expected_block_code() -> str:
-    organization_id = os.getenv("TEST_TENANT_ID")
+    organization_id = os.getenv("PLATFORM_ARCHITECT_ORGANIZATION_ID") or os.getenv("TEST_ORGANIZATION_ID")
     enabled = is_orchestration_surface_enabled(
         surface=ORCHESTRATION_SURFACE_OPTION_B,
         organization_id=organization_id,

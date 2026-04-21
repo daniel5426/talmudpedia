@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.agent.executors.retrieval_runtime import RetrievalPipelineRuntime
-from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Organization, User
+from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgUnit, OrgUnitType, Organization, User
 from app.db.postgres.models.operators import CustomOperator, OperatorCategory
 from app.db.postgres.models.rag import ExecutablePipeline, PipelineJob, PipelineJobStatus, PipelineType, VisualPipeline
 from app.rag.pipeline.compiler import PipelineCompiler
@@ -12,6 +12,7 @@ from app.rag.pipeline.custom_operator_sync import sync_custom_operators
 from app.rag.pipeline.executor import PipelineExecutor
 from app.rag.pipeline.registry import OperatorRegistry
 from app.services.artifact_runtime.revision_service import ArtifactRevisionService
+from app.services.security_bootstrap_service import SecurityBootstrapService
 
 
 async def _seed_tenant_context(db_session):
@@ -29,10 +30,16 @@ async def _seed_tenant_context(db_session):
         organization_id=tenant.id,
         user_id=user.id,
         org_unit_id=org_unit.id,
-        role=OrgRole.owner,
         status=MembershipStatus.active,
     )
     db_session.add_all([tenant, user, org_unit, membership])
+    bootstrap = SecurityBootstrapService(db_session)
+    await bootstrap.ensure_default_roles(tenant.id)
+    await bootstrap.ensure_organization_owner_assignment(
+        organization_id=tenant.id,
+        user_id=user.id,
+        assigned_by=user.id,
+    )
     await db_session.commit()
     return tenant, user
 

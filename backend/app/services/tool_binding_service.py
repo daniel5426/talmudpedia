@@ -204,6 +204,7 @@ class ToolBindingService:
         if tool is None:
             tool = ToolRegistry(
                 organization_id=pipeline.organization_id,
+                project_id=pipeline.project_id,
                 name=normalized_name or pipeline.name,
                 slug=row_key,
                 description=description if description is not None else pipeline.description,
@@ -240,6 +241,7 @@ class ToolBindingService:
             tool.name = pipeline.name
         tool.slug = row_key
         tool.implementation_type = ToolImplementationType.RAG_PIPELINE
+        tool.project_id = pipeline.project_id
         tool.visual_pipeline_id = pipeline.id
         tool.artifact_id = None
         tool.artifact_version = None
@@ -292,6 +294,7 @@ class ToolBindingService:
         if tool.name in {None, "", previous_name}:
             tool.name = pipeline.name
         tool.slug = row_key
+        tool.project_id = pipeline.project_id
         if tool.description in {None, "", previous_description}:
             tool.description = pipeline.description
         tool.version = _tool_semver(pipeline.version)
@@ -310,6 +313,7 @@ class ToolBindingService:
             return None
         tool.visual_pipeline_id = pipeline.id
         tool.executable_pipeline_id = None
+        tool.project_id = pipeline.project_id
         tool.version = _tool_semver(pipeline.version)
         if tool.status != ToolStatus.DISABLED:
             tool.status = ToolStatus.DRAFT
@@ -347,6 +351,7 @@ class ToolBindingService:
         tool.implementation_type = ToolImplementationType.RAG_PIPELINE
         tool.visual_pipeline_id = pipeline.id
         tool.executable_pipeline_id = executable_pipeline.id
+        tool.project_id = pipeline.project_id
         tool.status = ToolStatus.PUBLISHED
         tool.is_active = True
         tool.version = _tool_semver(executable_pipeline.version)
@@ -404,6 +409,7 @@ class ToolBindingService:
         if tool is None:
             tool = ToolRegistry(
                 organization_id=agent.organization_id,
+                project_id=agent.project_id,
                 name=str(name or agent.name).strip() or agent.name,
                 slug=self._tool_row_key("agent", agent.id),
                 description=description if description is not None else agent.description,
@@ -434,6 +440,7 @@ class ToolBindingService:
                 tool.description = description
             elif tool.description is None:
                 tool.description = agent.description
+            tool.project_id = agent.project_id
             tool.schema = schema
             tool.config_schema = config_schema
             tool.implementation_type = ToolImplementationType.AGENT_CALL
@@ -587,6 +594,7 @@ class ToolBindingService:
         if tool is None:
             tool = ToolRegistry(
                 organization_id=artifact.organization_id,
+                project_id=artifact.project_id,
                 name=revision.display_name,
                 slug=row_key,
                 description=revision.description,
@@ -614,6 +622,7 @@ class ToolBindingService:
             tool.name = revision.display_name
             tool.slug = row_key
             tool.description = revision.description
+            tool.project_id = artifact.project_id
             tool.schema = schema
             tool.config_schema = dict(revision.config_schema or {})
             tool.implementation_type = ToolImplementationType.ARTIFACT

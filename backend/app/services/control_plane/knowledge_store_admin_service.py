@@ -119,11 +119,19 @@ class KnowledgeStoreAdminService:
     def __init__(self, db: AsyncSession):
         self.db = db
 
+    @staticmethod
+    def _require_project_id(ctx: ControlPlaneContext) -> UUID:
+        if ctx.project_id is None:
+            raise validation("Active project context is required")
+        return ctx.project_id
+
     async def list_stores(self, *, ctx: ControlPlaneContext, organization_id: str | None = None) -> list[KnowledgeStore]:
         organization = await resolve_request_tenant(db=self.db, ctx=ctx, organization_id=organization_id)
+        project_id = self._require_project_id(ctx)
         stmt = (
             select(KnowledgeStore)
             .where(KnowledgeStore.organization_id == organization.id)
+            .where(KnowledgeStore.project_id == project_id)
             .where(KnowledgeStore.status != KnowledgeStoreStatus.ARCHIVED)
             .order_by(KnowledgeStore.created_at.desc())
         )
@@ -131,8 +139,9 @@ class KnowledgeStoreAdminService:
 
     async def get_store(self, *, ctx: ControlPlaneContext, store_id: UUID, organization_id: str | None = None) -> KnowledgeStore:
         organization = await resolve_request_tenant(db=self.db, ctx=ctx, organization_id=organization_id)
+        project_id = self._require_project_id(ctx)
         store = await self.db.get(KnowledgeStore, store_id)
-        if not store or store.organization_id != organization.id:
+        if not store or store.organization_id != organization.id or store.project_id != project_id:
             raise not_found("Knowledge store not found")
         return store
 
@@ -151,6 +160,7 @@ class KnowledgeStoreAdminService:
         credentials_ref: UUID | None,
     ) -> KnowledgeStore:
         organization = await resolve_request_tenant(db=self.db, ctx=ctx, organization_id=organization_id)
+        project_id = self._require_project_id(ctx)
         normalized_name = str(name or "").strip()
         if not normalized_name:
             raise validation("name is required", field="name")
@@ -175,6 +185,7 @@ class KnowledgeStoreAdminService:
             }
         store = KnowledgeStore(
             organization_id=organization.id,
+            project_id=project_id,
             name=normalized_name,
             description=description,
             embedding_model_id=normalized_embedding_model_id,

@@ -390,6 +390,7 @@ async def test_external_thread_detail_returns_subthread_tree_when_requested(clie
 
     child_thread = AgentThread(
         organization_id=tenant.id,
+        project_id=app.project_id,
         app_account_id=root_thread.app_account_id,
         agent_id=agent.id,
         published_app_id=app.id,
@@ -405,6 +406,7 @@ async def test_external_thread_detail_returns_subthread_tree_when_requested(clie
     await db_session.flush()
     child_run = AgentRun(
         organization_id=tenant.id,
+        project_id=app.project_id,
         agent_id=agent.id,
         initiator_user_id=owner.id,
         published_app_id=app.id,

@@ -36,7 +36,6 @@ def _headers(user: User, tenant: Organization) -> dict[str, str]:
     token = create_access_token(
         subject=str(user.id),
         organization_id=str(tenant.id),
-        org_role="owner",
     )
     return {"Authorization": f"Bearer {token}", "X-Organization-ID": str(tenant.id)}
 

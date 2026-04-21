@@ -13,8 +13,12 @@ from app.services.security_bootstrap_service import SecurityBootstrapService
 
 
 class OrganizationBootstrapService:
-    _ORG_DEFAULT_AGENT_SYSTEM_KEYS = ("platform_architect",)
-    _PROJECT_DEFAULT_AGENT_SYSTEM_KEYS = ("artifact_coding_agent", "published_app_coding_agent")
+    _ORG_DEFAULT_AGENT_SYSTEM_KEYS: tuple[str, ...] = ()
+    _PROJECT_DEFAULT_AGENT_SYSTEM_KEYS = (
+        "platform_architect",
+        "artifact_coding_agent",
+        "published_app_coding_agent",
+    )
 
     def __init__(self, db: AsyncSession):
         self.db = db
@@ -29,10 +33,12 @@ class OrganizationBootstrapService:
         *,
         organization_id: UUID,
         expected_system_keys: tuple[str, ...],
+        project_id: UUID | None = None,
     ) -> set[str]:
         rows = await self.db.execute(
             select(Agent.system_key).where(
                 Agent.organization_id == organization_id,
+                Agent.project_id == project_id,
                 Agent.system_key.in_(expected_system_keys),
             )
         )
@@ -88,10 +94,6 @@ class OrganizationBootstrapService:
             is_default=True,
             owner_user_id=owner.id,
         )
-        await self.ensure_organization_default_agents(
-            organization_id=organization.id,
-            actor_user_id=owner.id,
-        )
         await self.db.flush()
         return organization, project
 
@@ -137,13 +139,8 @@ class OrganizationBootstrapService:
         organization_id: UUID,
         actor_user_id: UUID | None = None,
     ) -> None:
-        from app.services.registry_seeding import ensure_platform_architect_agent
-
-        await ensure_platform_architect_agent(
-            self.db,
-            organization_id,
-            actor_user_id=actor_user_id,
-        )
+        _ = organization_id, actor_user_id
+        return None
 
     async def ensure_organization_default_agents_if_missing(
         self,
@@ -151,17 +148,8 @@ class OrganizationBootstrapService:
         organization_id: UUID,
         actor_user_id: UUID | None = None,
     ) -> bool:
-        missing = await self._missing_agent_system_keys(
-            organization_id=organization_id,
-            expected_system_keys=self._ORG_DEFAULT_AGENT_SYSTEM_KEYS,
-        )
-        if not missing:
-            return False
-        await self.ensure_organization_default_agents(
-            organization_id=organization_id,
-            actor_user_id=actor_user_id,
-        )
-        return True
+        _ = organization_id, actor_user_id
+        return False
 
     async def ensure_project_default_agents(
         self,
@@ -172,16 +160,24 @@ class OrganizationBootstrapService:
     ) -> None:
         from app.services.artifact_coding_agent_profile import ensure_artifact_coding_agent_profile
         from app.services.published_app_coding_agent_profile import ensure_coding_agent_profile
+        from app.services.registry_seeding import ensure_platform_architect_agent
 
-        _ = project_id
+        await ensure_platform_architect_agent(
+            self.db,
+            organization_id,
+            project_id=project_id,
+            actor_user_id=actor_user_id,
+        )
         await ensure_artifact_coding_agent_profile(
             self.db,
             organization_id,
+            project_id=project_id,
             actor_user_id=actor_user_id,
         )
         await ensure_coding_agent_profile(
             self.db,
             organization_id,
+            project_id=project_id,
             actor_user_id=actor_user_id,
         )
 
@@ -192,10 +188,10 @@ class OrganizationBootstrapService:
         project_id: UUID,
         actor_user_id: UUID | None = None,
     ) -> bool:
-        _ = project_id
         missing = await self._missing_agent_system_keys(
             organization_id=organization_id,
             expected_system_keys=self._PROJECT_DEFAULT_AGENT_SYSTEM_KEYS,
+            project_id=project_id,
         )
         if not missing:
             return False

@@ -332,6 +332,7 @@ async def _resolve_session_context(
         if run_bound_shared_draft is None:
             run_snapshot = await shared_draft_service.get_run_snapshot(
                 organization_id=run.organization_id,
+                project_id=run.project_id,
                 run_id=run.id,
             )
             if run_snapshot is not None:
@@ -354,6 +355,7 @@ async def _resolve_session_context(
         artifact = await ArtifactRegistryService(db).get_organization_artifact(
             artifact_id=resolved_artifact_id,
             organization_id=session.organization_id,
+            project_id=session.project_id,
         )
     return session, shared_draft, run, artifact
 

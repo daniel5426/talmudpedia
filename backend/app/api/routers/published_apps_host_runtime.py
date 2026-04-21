@@ -751,6 +751,7 @@ async def host_upload_attachments(
 
     owner = RuntimeAttachmentOwner(
         organization_id=app.organization_id,
+        project_id=app.project_id,
         surface=AgentThreadSurface.published_host_runtime,
         app_account_id=UUID(str(principal["app_account_id"])) if principal else None,
         published_app_id=app.id,
@@ -782,6 +783,7 @@ async def host_list_threads(
     threads, total = await RuntimeSurfaceService(db).list_threads(
         scope=RuntimeSurfaceContext(
             organization_id=app.organization_id,
+            project_id=app.project_id,
             surface=AgentThreadSurface.published_host_runtime,
             event_view=RuntimeEventView.public_safe,
             app_account_id=UUID(principal["app_account_id"]),
@@ -827,6 +829,7 @@ async def host_get_thread(
             await RuntimeSurfaceService(db).get_thread_detail(
                 scope=RuntimeSurfaceContext(
                     organization_id=app.organization_id,
+                    project_id=app.project_id,
                     surface=AgentThreadSurface.published_host_runtime,
                     event_view=RuntimeEventView.public_safe,
                     app_account_id=UUID(principal["app_account_id"]),

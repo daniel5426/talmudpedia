@@ -2,7 +2,7 @@ from uuid import uuid4
 
 import pytest
 
-from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Organization, User
+from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgUnit, OrgUnitType, Organization, User
 from app.db.postgres.models.workspace import Project
 from app.services.security_bootstrap_service import SecurityBootstrapService
 from app.services.workos_auth_service import LocalSessionBundle, WorkOSAuthService
@@ -41,7 +41,6 @@ async def test_auth_session_effective_scopes_ignore_workos_permissions(client, d
             organization_id=tenant.id,
             user_id=user.id,
             org_unit_id=root.id,
-            role=OrgRole.owner,
             status=MembershipStatus.active,
         )
     )

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import or_, select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -62,9 +62,10 @@ class PromptReferenceResolver:
         "human_input": {"prompt": "human_input.prompt"},
     }
 
-    def __init__(self, db: AsyncSession, organization_id: UUID | None):
+    def __init__(self, db: AsyncSession, organization_id: UUID | None, project_id: UUID | None = None):
         self._db = db
         self._organization_id = organization_id
+        self._project_id = project_id
 
     @staticmethod
     def parse_prompt_token_ids(text: Any) -> list[UUID]:
@@ -93,7 +94,15 @@ class PromptReferenceResolver:
         if self._organization_id is None:
             stmt = stmt.where(PromptLibrary.organization_id.is_(None))
         else:
-            stmt = stmt.where(or_(PromptLibrary.organization_id == self._organization_id, PromptLibrary.organization_id.is_(None)))
+            stmt = stmt.where(
+                or_(
+                    PromptLibrary.organization_id.is_(None),
+                    and_(
+                        PromptLibrary.organization_id == self._organization_id,
+                        PromptLibrary.project_id == self._project_id,
+                    ),
+                )
+            )
         prompt = (await self._db.execute(stmt)).scalar_one_or_none()
         if prompt is None:
             raise PromptReferenceError(f"Referenced prompt {prompt_id} was not found in organization/global scope")

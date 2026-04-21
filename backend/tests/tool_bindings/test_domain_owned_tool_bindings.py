@@ -9,7 +9,7 @@ from sqlalchemy import select
 
 from app.api.dependencies import get_current_principal
 from app.db.postgres.models.artifact_runtime import Artifact
-from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Organization, User
+from app.db.postgres.models.identity import Organization, User
 from app.db.postgres.models.rag import VisualPipeline
 from app.db.postgres.models.registry import ToolImplementationType, ToolRegistry, ToolStatus
 from main import app
@@ -18,22 +18,7 @@ from main import app
 async def _seed_tenant_context(db_session):
     tenant = Organization(id=uuid.uuid4(), name="Bindings Organization", slug=f"bindings-{uuid.uuid4().hex[:8]}")
     user = User(id=uuid.uuid4(), email=f"bindings-{uuid.uuid4().hex[:6]}@example.com", role="admin")
-    org_unit = OrgUnit(
-        id=uuid.uuid4(),
-        organization_id=tenant.id,
-        name="Bindings Org",
-        slug=f"bindings-org-{uuid.uuid4().hex[:6]}",
-        type=OrgUnitType.org,
-    )
-    membership = OrgMembership(
-        id=uuid.uuid4(),
-        organization_id=tenant.id,
-        user_id=user.id,
-        org_unit_id=org_unit.id,
-        role=OrgRole.owner,
-        status=MembershipStatus.active,
-    )
-    db_session.add_all([tenant, user, org_unit, membership])
+    db_session.add_all([tenant, user])
     await db_session.commit()
     return tenant, user
 

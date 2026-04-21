@@ -129,18 +129,21 @@ def _psql_scalar(sql: str) -> str | None:
     return proc.stdout.strip() or None
 
 
-def resolve_tenant_slug(organization_id: str) -> str | None:
-    safe_tenant = str(organization_id).replace("'", "''")
-    sql = f"SELECT slug FROM tenants WHERE id = '{safe_tenant}'::uuid LIMIT 1;"
+def resolve_organization_slug(organization_id: str) -> str | None:
+    safe_org = str(organization_id).replace("'", "''")
+    sql = f"SELECT slug FROM organizations WHERE id = '{safe_org}'::uuid LIMIT 1;"
     return _psql_scalar(sql)
 
 
-def check_agent_run_exists(run_id: str, organization_id: str) -> DBCheckResult:
+def check_agent_run_exists(run_id: str, organization_id: str, project_id: str) -> DBCheckResult:
     safe_run = str(run_id).replace("'", "''")
-    safe_tenant = str(organization_id).replace("'", "''")
+    safe_org = str(organization_id).replace("'", "''")
+    safe_project = str(project_id).replace("'", "''")
     sql = (
         "SELECT COUNT(*) FROM agent_runs "
-        f"WHERE id = '{safe_run}'::uuid AND organization_id = '{safe_tenant}'::uuid;"
+        f"WHERE id = '{safe_run}'::uuid "
+        f"AND organization_id = '{safe_org}'::uuid "
+        f"AND project_id = '{safe_project}'::uuid;"
     )
     output = _psql_scalar(sql)
     if output is None:

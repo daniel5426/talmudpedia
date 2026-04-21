@@ -81,6 +81,7 @@ async def upload_embedded_agent_attachments(
         raise HTTPException(status_code=404, detail="Published agent not found")
     owner = RuntimeAttachmentOwner(
         organization_id=agent.organization_id,
+        project_id=agent.project_id,
         surface=AgentThreadSurface.embedded_runtime,
         organization_api_key_id=UUID(str(principal["api_key_id"])),
         agent_id=agent.id,
@@ -119,6 +120,7 @@ async def list_embedded_agent_threads(
         scope=(
             RuntimeSurfaceContext(
                 organization_id=agent.organization_id,
+                project_id=agent.project_id,
                 surface=AgentThreadSurface.embedded_runtime,
                 event_view=RuntimeEventView.public_safe,
                 agent_id=agent.id,
@@ -155,6 +157,7 @@ async def get_embedded_agent_thread(
     return await RuntimeSurfaceService(db).get_thread_detail(
         scope=RuntimeSurfaceContext(
             organization_id=agent.organization_id,
+            project_id=agent.project_id,
             surface=AgentThreadSurface.embedded_runtime,
             event_view=RuntimeEventView.public_safe,
             agent_id=agent.id,
@@ -190,6 +193,7 @@ async def delete_embedded_agent_thread(
     deleted = await RuntimeSurfaceService(db).delete_thread(
         scope=RuntimeSurfaceContext(
             organization_id=agent.organization_id,
+            project_id=agent.project_id,
             surface=AgentThreadSurface.embedded_runtime,
             event_view=RuntimeEventView.public_safe,
             agent_id=agent.id,

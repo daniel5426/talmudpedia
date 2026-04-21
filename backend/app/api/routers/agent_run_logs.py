@@ -25,7 +25,10 @@ async def get_run_events(
 ):
     return await RuntimeSurfaceService(db).get_run_events(
         run_id=run_id,
-        control=RuntimeRunControlContext(organization_id=context["organization_id"]),
+        control=RuntimeRunControlContext(
+            organization_id=context["organization_id"],
+            project_id=context.get("project_id"),
+        ),
         after_sequence=after_sequence,
         limit=limit,
     )

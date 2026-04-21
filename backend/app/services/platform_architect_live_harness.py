@@ -156,6 +156,7 @@ class ArchitectLiveHarnessConfig:
     base_url: str
     api_key: str
     organization_id: str
+    project_id: str
     architect_agent_id: str | None = None
     output_dir: str = DEFAULT_OUTPUT_DIR
     timeout_s: int = DEFAULT_TIMEOUT_SECONDS
@@ -173,7 +174,8 @@ class ArchitectLiveHarnessConfig:
             or default_base_url
         ).rstrip("/")
         api_key = os.getenv("PLATFORM_ARCHITECT_API_KEY") or os.getenv("TEST_API_KEY") or ""
-        organization_id= os.getenv("PLATFORM_ARCHITECT_TENANT_ID") or os.getenv("TEST_ORGANIZATION_ID") or ""
+        organization_id = os.getenv("PLATFORM_ARCHITECT_ORGANIZATION_ID") or os.getenv("TEST_ORGANIZATION_ID") or ""
+        project_id = os.getenv("PLATFORM_ARCHITECT_PROJECT_ID") or os.getenv("TEST_PROJECT_ID") or ""
         architect_agent_id = os.getenv("PLATFORM_ARCHITECT_AGENT_ID") or None
         output_dir = os.getenv("PLATFORM_ARCHITECT_OUTPUT_DIR") or DEFAULT_OUTPUT_DIR
         timeout_raw = os.getenv("PLATFORM_ARCHITECT_TIMEOUT_SECONDS") or str(DEFAULT_TIMEOUT_SECONDS)
@@ -181,11 +183,14 @@ class ArchitectLiveHarnessConfig:
         if not api_key:
             raise RuntimeError("Missing PLATFORM_ARCHITECT_API_KEY or TEST_API_KEY")
         if not organization_id:
-            raise RuntimeError("Missing PLATFORM_ARCHITECT_TENANT_ID or TEST_ORGANIZATION_ID")
+            raise RuntimeError("Missing PLATFORM_ARCHITECT_ORGANIZATION_ID or TEST_ORGANIZATION_ID")
+        if not project_id:
+            raise RuntimeError("Missing PLATFORM_ARCHITECT_PROJECT_ID or TEST_PROJECT_ID")
         return cls(
             base_url=base_url,
             api_key=api_key,
             organization_id=organization_id,
+            project_id=project_id,
             architect_agent_id=architect_agent_id,
             output_dir=output_dir,
             timeout_s=timeout_s,
@@ -284,6 +289,7 @@ class PlatformArchitectLiveHarness:
         return {
             "Authorization": f"Bearer {self.config.api_key}",
             "X-Organization-ID": self.config.organization_id,
+            "X-Project-ID": self.config.project_id,
             "Content-Type": "application/json",
         }
 
@@ -328,6 +334,7 @@ class PlatformArchitectLiveHarness:
                     select(Agent.id).where(
                         Agent.system_key == "platform_architect",
                         Agent.organization_id == UUID(str(self.config.organization_id)),
+                        Agent.project_id == UUID(str(self.config.project_id)),
                     )
                 )
                 value = result.scalar_one_or_none()

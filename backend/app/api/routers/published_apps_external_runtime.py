@@ -240,6 +240,7 @@ async def external_upload_attachments(
         raise HTTPException(status_code=401, detail="Authentication required")
     owner = RuntimeAttachmentOwner(
         organization_id=app.organization_id,
+        project_id=app.project_id,
         surface=AgentThreadSurface.published_host_runtime,
         app_account_id=UUID(str(matched_principal["app_account_id"])) if matched_principal else None,
         published_app_id=app.id,
@@ -261,6 +262,7 @@ async def external_list_threads(
     threads, total = await RuntimeSurfaceService(db).list_threads(
         scope=RuntimeSurfaceContext(
             organization_id=app.organization_id,
+            project_id=app.project_id,
             surface=AgentThreadSurface.published_host_runtime,
             event_view=RuntimeEventView.public_safe,
             app_account_id=UUID(principal["app_account_id"]),
@@ -295,6 +297,7 @@ async def external_get_thread(
     return await RuntimeSurfaceService(db).get_thread_detail(
         scope=RuntimeSurfaceContext(
             organization_id=app.organization_id,
+            project_id=app.project_id,
             surface=AgentThreadSurface.published_host_runtime,
             event_view=RuntimeEventView.public_safe,
             app_account_id=UUID(principal["app_account_id"]),

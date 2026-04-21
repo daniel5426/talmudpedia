@@ -18,6 +18,9 @@ from app.db.postgres.models.rag import (
     VisualPipeline,
 )
 from app.db.postgres.models.registry import (
+    ModelCapabilityType,
+    ModelRegistry,
+    ModelStatus,
     ToolDefinitionScope,
     ToolImplementationType,
     ToolRegistry,
@@ -51,12 +54,28 @@ async def _seed_tenant_and_user(db_session):
     return tenant, user
 
 
+async def _create_chat_model(db_session, organization_id: UUID, suffix: str) -> str:
+    model = ModelRegistry(
+        organization_id=organization_id,
+        name=f"Agent Chat Model {suffix}",
+        capability_type=ModelCapabilityType.CHAT,
+        status=ModelStatus.ACTIVE,
+        is_active=True,
+        metadata_={},
+    )
+    db_session.add(model)
+    await db_session.commit()
+    await db_session.refresh(model)
+    return str(model.id)
+
+
 async def _create_simple_agent_with_tools(
     db_session,
     organization_id: UUID,
     user_id: UUID,
     tool_ids: list[UUID],
     slug_suffix: str,
+    model_id: str,
 ):
     graph = {
         "spec_version": "1.0",
@@ -68,7 +87,9 @@ async def _create_simple_agent_with_tools(
                 "position": {"x": 180, "y": 0},
                 "config": {
                     "name": "Agent",
-                    "model_id": "unit-model",
+                    "model_id": model_id,
+                    "instructions": "Be helpful.",
+                    "include_chat_history": True,
                     "tools": [str(tool_id) for tool_id in tool_ids],
                     "max_tool_iterations": 2,
                     "tool_execution_mode": "sequential",
@@ -87,7 +108,6 @@ async def _create_simple_agent_with_tools(
     return await service.create_agent(
         CreateAgentData(
             name=f"agent-{slug_suffix}",
-            slug=f"agent-{slug_suffix}",
             description="tool flow test",
             graph_definition=graph,
         ),
@@ -95,13 +115,21 @@ async def _create_simple_agent_with_tools(
     )
 
 
-async def _create_simple_agent(db_session, organization_id: UUID, user_id: UUID, tool_id: UUID, slug_suffix: str):
+async def _create_simple_agent(
+    db_session,
+    organization_id: UUID,
+    user_id: UUID,
+    tool_id: UUID,
+    slug_suffix: str,
+    model_id: str,
+):
     return await _create_simple_agent_with_tools(
         db_session=db_session,
         organization_id=organization_id,
         user_id=user_id,
         tool_ids=[tool_id],
         slug_suffix=slug_suffix,
+        model_id=model_id,
     )
 
 
@@ -117,6 +145,7 @@ def _tool_call_chunks(tool_name: str, args_payload: str):
 @pytest.mark.asyncio
 async def test_agent_web_search_full_flow_accepts_scalar_tool_args(db_session, monkeypatch):
     tenant, user = await _seed_tenant_and_user(db_session)
+    model_id = await _create_chat_model(db_session, tenant.id, uuid4().hex[:8])
 
     tool = ToolRegistry(
         organization_id=tenant.id,
@@ -180,7 +209,14 @@ async def test_agent_web_search_full_flow_accepts_scalar_tool_args(db_session, m
     monkeypatch.setattr(ModelResolver, "resolve", fake_resolve)
     monkeypatch.setattr("app.agent.executors.tool.create_web_search_provider", fake_provider_factory)
 
-    agent = await _create_simple_agent(db_session, tenant.id, user.id, tool.id, slug_suffix=uuid4().hex[:8])
+    agent = await _create_simple_agent(
+        db_session,
+        tenant.id,
+        user.id,
+        tool.id,
+        slug_suffix=uuid4().hex[:8],
+        model_id=model_id,
+    )
 
     executor = AgentExecutorService(db=db_session)
     run_id = await executor.start_run(
@@ -214,6 +250,7 @@ async def test_agent_web_search_full_flow_accepts_scalar_tool_args(db_session, m
 @pytest.mark.asyncio
 async def test_agent_retrieval_tool_full_flow_with_visual_pipeline(db_session, monkeypatch):
     tenant, user = await _seed_tenant_and_user(db_session)
+    model_id = await _create_chat_model(db_session, tenant.id, uuid4().hex[:8])
 
     visual = VisualPipeline(
         organization_id=tenant.id,
@@ -305,7 +342,14 @@ async def test_agent_retrieval_tool_full_flow_with_visual_pipeline(db_session, m
     monkeypatch.setattr(ModelResolver, "resolve", fake_resolve)
     monkeypatch.setattr(PipelineExecutor, "execute_job", fake_execute_job)
 
-    agent = await _create_simple_agent(db_session, tenant.id, user.id, tool.id, slug_suffix=uuid4().hex[:8])
+    agent = await _create_simple_agent(
+        db_session,
+        tenant.id,
+        user.id,
+        tool.id,
+        slug_suffix=uuid4().hex[:8],
+        model_id=model_id,
+    )
 
     executor = AgentExecutorService(db=db_session)
     run_id = await executor.start_run(
@@ -340,6 +384,7 @@ async def test_agent_retrieval_tool_full_flow_with_visual_pipeline(db_session, m
 @pytest.mark.asyncio
 async def test_agent_reasoning_loop_invokes_agent_call_tool_and_consumes_compact_result(db_session, monkeypatch):
     tenant, user = await _seed_tenant_and_user(db_session)
+    model_id = await _create_chat_model(db_session, tenant.id, uuid4().hex[:8])
 
     child_agent = await _create_simple_agent_with_tools(
         db_session=db_session,
@@ -347,6 +392,7 @@ async def test_agent_reasoning_loop_invokes_agent_call_tool_and_consumes_compact
         user_id=user.id,
         tool_ids=[],
         slug_suffix=f"child-{uuid4().hex[:8]}",
+        model_id=model_id,
     )
     child_agent.status = AgentStatus.published
     child_agent.published_at = datetime.now(timezone.utc)
@@ -383,6 +429,7 @@ async def test_agent_reasoning_loop_invokes_agent_call_tool_and_consumes_compact
         user_id=user.id,
         tool_id=tool.id,
         slug_suffix=f"parent-{uuid4().hex[:8]}",
+        model_id=model_id,
     )
 
     provider = _FakeProvider(

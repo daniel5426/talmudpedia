@@ -27,6 +27,7 @@ router = APIRouter(prefix="/prompts", tags=["prompts"])
 class PromptRecord(BaseModel):
     id: UUID
     organization_id: Optional[UUID] = None
+    project_id: Optional[UUID] = None
     name: str
     description: Optional[str] = None
     content: str
@@ -96,6 +97,7 @@ class PromptMentionRecord(BaseModel):
     description: Optional[str] = None
     scope: str
     organization_id: Optional[UUID] = None
+    project_id: Optional[UUID] = None
     updated_at: datetime
 
 
@@ -114,6 +116,7 @@ def _serialize_prompt(prompt: PromptLibrary) -> PromptRecord:
     return PromptRecord(
         id=prompt.id,
         organization_id=prompt.organization_id,
+        project_id=prompt.project_id,
         name=str(prompt.name or ""),
         description=prompt.description,
         content=str(prompt.content or ""),
@@ -154,6 +157,7 @@ def _service_from_context(
     return PromptLibraryService(
         db,
         organization_id=(UUID(str(principal["organization_id"])) if principal.get("organization_id") else None),
+        project_id=(UUID(str(principal["project_id"])) if principal.get("project_id") else None),
         actor_user_id=(UUID(str(actor_user_id)) if actor_user_id else None),
         actor_role=(str(actor_role) if actor_role is not None else None),
         is_service=bool(principal.get("type") == "workload"),
@@ -191,6 +195,7 @@ async def search_prompt_mentions(
             description=prompt.description,
             scope=str(getattr(prompt.scope, "value", prompt.scope)),
             organization_id=prompt.organization_id,
+            project_id=prompt.project_id,
             updated_at=prompt.updated_at,
         )
         for prompt in prompts

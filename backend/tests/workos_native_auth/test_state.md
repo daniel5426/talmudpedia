@@ -18,6 +18,7 @@ Last Updated: 2026-04-21
 - `/auth/session` resolves the same local `effective_scopes` even when WorkOS permission payloads vary.
 
 ## Last Run
+- 2026-04-21: `SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest -q backend/tests/settings_people_permissions/test_settings_people_permissions_api.py backend/tests/workos_native_auth/test_auth_session_effective_scopes.py backend/tests/security_route_enforcement/test_route_scope_enforcement.py backend/tests/settings_api_keys/test_settings_api_keys_api.py backend/tests/admin_monitoring/test_admin_monitoring_api.py` -> `14 passed`
 - 2026-04-19: `SECRET_KEY=explicit-test-secret-0123456789abcdef TEST_USE_REAL_DB=0 backend/.venv-codex-tests/bin/python -m pytest -q backend/tests/workos_native_auth/test_workos_native_auth_service.py` -> `2 passed`
 - 2026-04-19: `SECRET_KEY=explicit-test-secret-0123456789abcdef TEST_USE_REAL_DB=0 /Library/Frameworks/Python.framework/Versions/3.12/bin/python3.12 -m pytest -q backend/tests/workos_native_auth/test_workos_native_auth_service.py` -> `2 passed`
 - 2026-04-19: `SECRET_KEY=explicit-test-secret-0123456789abcdef TEST_USE_REAL_DB=0 /Library/Frameworks/Python.framework/Versions/3.12/bin/python3.12 -m pytest -q backend/tests/workos_native_auth/test_workos_native_auth_service.py` -> `3 passed`

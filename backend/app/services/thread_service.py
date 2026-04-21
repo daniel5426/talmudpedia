@@ -91,6 +91,7 @@ class ThreadService:
         self,
         *,
         organization_id: UUID,
+        project_id: UUID | None = None,
         user_id: Optional[UUID],
         app_account_id: Optional[UUID] = None,
         organization_api_key_id: Optional[UUID] = None,
@@ -105,11 +106,16 @@ class ThreadService:
     ) -> ThreadResolveResult:
         lineage_context = await self._build_lineage_context(
             organization_id=organization_id,
+            project_id=project_id,
             parent_run_id=parent_run_id,
         )
         if thread_id is not None:
             thread = await self.db.get(AgentThread, thread_id)
-            if thread is None or thread.organization_id != organization_id:
+            if (
+                thread is None
+                or thread.organization_id != organization_id
+                or thread.project_id != project_id
+            ):
                 raise ThreadAccessError("Thread not found")
             if thread.status == AgentThreadStatus.archived:
                 raise ThreadAccessError("Thread is archived")
@@ -133,6 +139,7 @@ class ThreadService:
 
         thread = AgentThread(
             organization_id=organization_id,
+            project_id=project_id,
             user_id=user_id,
             app_account_id=app_account_id,
             organization_api_key_id=organization_api_key_id,
@@ -259,6 +266,7 @@ class ThreadService:
         self,
         *,
         organization_id: UUID,
+        project_id: UUID | None = None,
         user_id: Optional[UUID] = None,
         app_account_id: Optional[UUID] = None,
         published_app_id: Optional[UUID] = None,
@@ -268,7 +276,10 @@ class ThreadService:
         skip: int = 0,
         limit: int = 20,
     ) -> tuple[list[AgentThread], int]:
-        base = select(AgentThread).where(AgentThread.organization_id == organization_id)
+        base = select(AgentThread).where(
+            AgentThread.organization_id == organization_id,
+            AgentThread.project_id == project_id,
+        )
         if user_id is not None:
             base = base.where(AgentThread.user_id == user_id)
         if app_account_id is not None:
@@ -299,6 +310,7 @@ class ThreadService:
         self,
         *,
         organization_id: Optional[UUID],
+        project_id: UUID | None = None,
         thread_id: UUID,
         user_id: Optional[UUID] = None,
         app_account_id: Optional[UUID] = None,
@@ -309,6 +321,7 @@ class ThreadService:
     ) -> Optional[AgentThread]:
         thread = await self._get_accessible_thread(
             organization_id=organization_id,
+            project_id=project_id,
             thread_id=thread_id,
             user_id=user_id,
             app_account_id=app_account_id,
@@ -328,6 +341,7 @@ class ThreadService:
         self,
         *,
         organization_id: Optional[UUID],
+        project_id: UUID | None = None,
         thread_id: UUID,
         user_id: Optional[UUID] = None,
         app_account_id: Optional[UUID] = None,
@@ -347,6 +361,8 @@ class ThreadService:
             )
         if organization_id is not None:
             query = query.where(AgentThread.organization_id == organization_id)
+        if project_id is not None or organization_id is not None:
+            query = query.where(AgentThread.project_id == project_id)
         thread = (await self.db.execute(query)).scalar_one_or_none()
         if thread is None:
             return None
@@ -370,6 +386,7 @@ class ThreadService:
         self,
         *,
         organization_id: Optional[UUID],
+        project_id: UUID | None = None,
         thread_id: UUID,
         user_id: Optional[UUID] = None,
         app_account_id: Optional[UUID] = None,
@@ -382,6 +399,7 @@ class ThreadService:
     ) -> Optional[ThreadTurnPageResult]:
         thread = await self._get_accessible_thread(
             organization_id=organization_id,
+            project_id=project_id,
             thread_id=thread_id,
             user_id=user_id,
             app_account_id=app_account_id,
@@ -448,13 +466,15 @@ class ThreadService:
             child_limit=max(1, int(child_limit)),
         )
 
-    async def delete_threads(self, *, organization_id: UUID, thread_ids: list[UUID]) -> int:
+    async def delete_threads(self, *, organization_id: UUID, project_id: UUID | None, thread_ids: list[UUID]) -> int:
         if not thread_ids:
             return 0
         result = await self.db.execute(
             select(AgentThread)
             .where(
-                and_(AgentThread.organization_id == organization_id, AgentThread.id.in_(thread_ids))
+                AgentThread.organization_id == organization_id,
+                AgentThread.project_id == project_id,
+                AgentThread.id.in_(thread_ids),
             )
             .options(selectinload(AgentThread.attachments))
         )
@@ -463,6 +483,7 @@ class ThreadService:
         if all_thread_ids:
             descendants = await self._collect_descendant_thread_ids(
                 organization_id=organization_id,
+                project_id=project_id,
                 parent_thread_ids=all_thread_ids,
             )
             all_thread_ids.update(descendants)
@@ -470,7 +491,9 @@ class ThreadService:
             result = await self.db.execute(
                 select(AgentThread)
                 .where(
-                    and_(AgentThread.organization_id == organization_id, AgentThread.id.in_(all_thread_ids))
+                    AgentThread.organization_id == organization_id,
+                    AgentThread.project_id == project_id,
+                    AgentThread.id.in_(all_thread_ids),
                 )
                 .options(selectinload(AgentThread.attachments))
             )
@@ -500,15 +523,26 @@ class ThreadService:
         self,
         *,
         organization_id: UUID,
+        project_id: UUID | None,
         parent_run_id: UUID | None,
     ) -> ThreadLineageResolveContext | None:
         if parent_run_id is None:
             return None
-        parent_run = await self.db.get(AgentRun, parent_run_id)
-        if parent_run is None or parent_run.organization_id != organization_id or parent_run.thread_id is None:
+        parent_run = await self.db.scalar(
+            select(AgentRun).where(
+                AgentRun.id == parent_run_id,
+                AgentRun.organization_id == organization_id,
+                AgentRun.project_id == project_id,
+            )
+        )
+        if parent_run is None or parent_run.thread_id is None:
             raise ThreadAccessError("Parent run thread not found")
         parent_thread = await self.db.get(AgentThread, parent_run.thread_id)
-        if parent_thread is None or parent_thread.organization_id != organization_id:
+        if (
+            parent_thread is None
+            or parent_thread.organization_id != organization_id
+            or parent_thread.project_id != project_id
+        ):
             raise ThreadAccessError("Parent run thread not found")
         await self._ensure_thread_lineage(parent_thread)
         parent_turn_id = await self.db.scalar(
@@ -556,6 +590,7 @@ class ThreadService:
     ) -> ThreadSubtreeNode:
         child_threads = await self._load_direct_child_threads(
             organization_id=thread.organization_id,
+            project_id=thread.project_id,
             parent_thread_id=thread.id,
             child_limit=child_limit,
         )
@@ -586,6 +621,7 @@ class ThreadService:
         self,
         *,
         organization_id: UUID,
+        project_id: UUID | None,
         parent_thread_id: UUID,
         child_limit: int,
     ) -> list[AgentThread]:
@@ -594,6 +630,7 @@ class ThreadService:
                 select(AgentThread)
                 .where(
                     AgentThread.organization_id == organization_id,
+                    AgentThread.project_id == project_id,
                     AgentThread.parent_thread_id == parent_thread_id,
                 )
                 .options(selectinload(AgentThread.agent))
@@ -651,6 +688,7 @@ class ThreadService:
         self,
         *,
         organization_id: UUID,
+        project_id: UUID | None,
         parent_thread_ids: set[UUID],
     ) -> set[UUID]:
         collected: set[UUID] = set()
@@ -661,6 +699,7 @@ class ThreadService:
                     select(AgentThread.id)
                     .where(
                         AgentThread.organization_id == organization_id,
+                        AgentThread.project_id == project_id,
                         AgentThread.parent_thread_id.in_(frontier),
                     )
                 )

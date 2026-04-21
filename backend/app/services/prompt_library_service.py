@@ -56,19 +56,21 @@ class PromptLibraryService:
         db: AsyncSession,
         *,
         organization_id: UUID | None,
+        project_id: UUID | None = None,
         actor_user_id: UUID | None = None,
         actor_role: str | None = None,
         is_service: bool = False,
     ):
         self._db = db
         self._organization_id = organization_id
+        self._project_id = project_id
         self._actor_user_id = actor_user_id
         self._actor_role = actor_role
         self._is_service = is_service
 
     @property
     def resolver(self) -> PromptReferenceResolver:
-        return PromptReferenceResolver(self._db, self._organization_id)
+        return PromptReferenceResolver(self._db, self._organization_id, self._project_id)
 
     def _can_manage_global(self) -> bool:
         if self._is_service:
@@ -84,6 +86,16 @@ class PromptLibraryService:
         if self._organization_id is None:
             raise PromptAccessError("Organization context required for organization prompts")
         return self._organization_id
+
+    def _scope_project_id(self, scope: PromptScope) -> UUID | None:
+        scope_value = getattr(scope, "value", scope)
+        if str(scope_value or "").strip().lower() == PromptScope.GLOBAL.value:
+            return None
+        if self._organization_id is None:
+            raise PromptAccessError("Organization context required for organization prompts")
+        if self._project_id is None:
+            raise PromptAccessError("Active project context required for organization prompts")
+        return self._project_id
 
     @staticmethod
     def _normalize_string_list(value: Any) -> list[str]:
@@ -119,7 +131,15 @@ class PromptLibraryService:
         limit: int = 100,
         offset: int = 0,
     ) -> tuple[list[PromptLibrary], int]:
-        conditions = [or_(PromptLibrary.organization_id == self._organization_id, PromptLibrary.organization_id.is_(None))]
+        conditions = [
+            or_(
+                PromptLibrary.organization_id.is_(None),
+                and_(
+                    PromptLibrary.organization_id == self._organization_id,
+                    PromptLibrary.project_id == self._project_id,
+                ),
+            )
+        ]
         if status is not None:
             conditions.append(PromptLibrary.status == getattr(status, "value", status))
         if q:
@@ -150,7 +170,13 @@ class PromptLibraryService:
         limit: int = 25,
     ) -> list[PromptLibrary]:
         conditions = [
-            or_(PromptLibrary.organization_id == self._organization_id, PromptLibrary.organization_id.is_(None)),
+            or_(
+                PromptLibrary.organization_id.is_(None),
+                and_(
+                    PromptLibrary.organization_id == self._organization_id,
+                    PromptLibrary.project_id == self._project_id,
+                ),
+            ),
             PromptLibrary.status == PromptStatus.ACTIVE.value,
         ]
         if q:
@@ -180,7 +206,13 @@ class PromptLibraryService:
     async def get_prompt(self, prompt_id: UUID) -> PromptLibrary:
         stmt = select(PromptLibrary).where(
             PromptLibrary.id == prompt_id,
-            or_(PromptLibrary.organization_id == self._organization_id, PromptLibrary.organization_id.is_(None)),
+            or_(
+                PromptLibrary.organization_id.is_(None),
+                and_(
+                    PromptLibrary.organization_id == self._organization_id,
+                    PromptLibrary.project_id == self._project_id,
+                ),
+            ),
         )
         prompt = (await self._db.execute(stmt)).scalar_one_or_none()
         if prompt is None:
@@ -189,8 +221,10 @@ class PromptLibraryService:
 
     async def create_prompt(self, data: PromptCreateData) -> PromptLibrary:
         organization_id= self._scope_organization_id(data.scope)
+        project_id = self._scope_project_id(data.scope)
         prompt = PromptLibrary(
             organization_id=organization_id,
+            project_id=project_id,
             name=str(data.name or "").strip(),
             description=data.description,
             content=str(data.content or ""),
@@ -204,7 +238,7 @@ class PromptLibraryService:
         )
         if not prompt.name:
             raise PromptLibraryError("Prompt name is required")
-        await PromptReferenceResolver(self._db, organization_id).validate_text(
+        await PromptReferenceResolver(self._db, organization_id, project_id).validate_text(
             prompt.content,
             surface=None,
             current_prompt_id=prompt.id,
@@ -247,7 +281,7 @@ class PromptLibraryService:
         if not changed:
             return prompt
 
-        await PromptReferenceResolver(self._db, prompt.organization_id).validate_text(
+        await PromptReferenceResolver(self._db, prompt.organization_id, prompt.project_id).validate_text(
             prompt.content,
             surface=None,
             current_prompt_id=prompt.id,
@@ -305,7 +339,7 @@ class PromptLibraryService:
         prompt.allowed_surfaces = self._normalize_string_list(snapshot.allowed_surfaces)
         prompt.tags = self._normalize_string_list(snapshot.tags)
         prompt.version = int(prompt.version or 1) + 1
-        await PromptReferenceResolver(self._db, prompt.organization_id).validate_text(
+        await PromptReferenceResolver(self._db, prompt.organization_id, prompt.project_id).validate_text(
             prompt.content,
             surface=None,
             current_prompt_id=prompt.id,

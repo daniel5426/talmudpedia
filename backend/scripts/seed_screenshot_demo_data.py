@@ -14,6 +14,7 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 sys.path.append(str(BACKEND_DIR))
 
 from app.core.env_loader import load_backend_env
+from app.core.scope_registry import ORGANIZATION_OWNER_ROLE, ROLE_FAMILY_ORGANIZATION
 
 load_backend_env(backend_dir=BACKEND_DIR, override=False, required=False)
 os.environ.setdefault("DB_TARGET", "local")
@@ -21,7 +22,7 @@ os.environ.setdefault("DB_TARGET", "local")
 from app.db.postgres.engine import sessionmaker
 from app.db.postgres.models.agent_threads import AgentThread, AgentThreadSurface, AgentThreadStatus
 from app.db.postgres.models.agents import Agent, AgentRun, AgentStatus, RunStatus
-from app.db.postgres.models.identity import OrgMembership, OrgRole, Tenant
+from app.db.postgres.models.identity import Tenant
 from app.db.postgres.models.published_app_analytics import (
     PublishedAppAnalyticsEvent,
     PublishedAppAnalyticsEventType,
@@ -34,6 +35,7 @@ from app.db.postgres.models.published_apps import (
     PublishedAppStatus,
     PublishedAppVisibility,
 )
+from app.db.postgres.models.rbac import Role, RoleAssignment
 
 
 UTC = timezone.utc
@@ -312,17 +314,19 @@ async def resolve_tenant(session, tenant_slug: str | None, tenant_id: str | None
 
 
 async def resolve_owner_user_id(session, tenant_id) -> str | None:
-    membership = (
+    assignment = (
         await session.execute(
-            select(OrgMembership.user_id)
+            select(RoleAssignment.user_id)
+            .join(Role, Role.id == RoleAssignment.role_id)
             .where(
-                OrgMembership.tenant_id == tenant_id,
-                OrgMembership.role == OrgRole.owner,
+                RoleAssignment.organization_id == tenant_id,
+                Role.family == ROLE_FAMILY_ORGANIZATION,
+                Role.name == ORGANIZATION_OWNER_ROLE,
             )
             .limit(1)
         )
     ).scalar_one_or_none()
-    return membership
+    return assignment
 
 
 async def pick_published_agents(session, tenant_id) -> list[Agent]:

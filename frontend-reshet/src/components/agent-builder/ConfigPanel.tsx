@@ -1786,7 +1786,7 @@ export function ConfigPanel({
     const promptMentionModal = usePromptMentionModal<{ fieldName: string; mentionIndex: number }>()
     const resolvedGraphDefinition = graphDefinition || { spec_version: "4.0", nodes: [], edges: [] }
 
-    const { currentOrganization } = useOrganization()
+    const { currentOrganization, currentProject } = useOrganization()
 
     useEffect(() => {
         const initialConfig = normalizeNodeContractConfig(data.nodeType, data.config || {})
@@ -1847,7 +1847,7 @@ export function ConfigPanel({
             }
         }
         loadResources()
-    }, [currentOrganization?.id, data.nodeType])
+    }, [currentOrganization?.id, currentProject?.id, data.nodeType])
 
     useEffect(() => {
         agentService.listOperators()

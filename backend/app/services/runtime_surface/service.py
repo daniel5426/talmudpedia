@@ -50,6 +50,7 @@ class RuntimeSurfaceService:
         if options.preload_thread_messages and request.thread_id is not None:
             existing_thread = await ThreadService(self.db).get_thread_with_turns(
                 organization_id=thread_scope.organization_id,
+                project_id=thread_scope.project_id,
                 thread_id=request.thread_id,
                 user_id=thread_scope.user_id,
                 app_account_id=thread_scope.app_account_id,
@@ -65,6 +66,7 @@ class RuntimeSurfaceService:
 
         request_context = dict(request.context or {})
         request_context.setdefault("organization_id", str(surface_context.organization_id))
+        request_context.setdefault("project_id", str(surface_context.project_id) if surface_context.project_id else None)
         request_context.setdefault(
             "user_id",
             surface_context.request_user_id if surface_context.request_user_id is not None else (
@@ -129,6 +131,7 @@ class RuntimeSurfaceService:
                 if cleanup_thread_ids:
                     await ThreadService(self.db).delete_threads(
                         organization_id=surface_context.organization_id,
+                        project_id=surface_context.project_id,
                         thread_ids=cleanup_thread_ids,
                     )
 
@@ -155,6 +158,7 @@ class RuntimeSurfaceService:
     ) -> tuple[list[Any], int]:
         return await ThreadService(self.db).list_threads(
             organization_id=scope.organization_id,
+            project_id=scope.project_id,
             user_id=scope.user_id,
             app_account_id=scope.app_account_id,
             published_app_id=scope.published_app_id,
@@ -179,6 +183,7 @@ class RuntimeSurfaceService:
             await self.db.commit()
         page_result = await service.get_thread_turn_page(
             organization_id=scope.organization_id,
+            project_id=scope.project_id,
             thread_id=thread_id,
             user_id=scope.user_id,
             app_account_id=scope.app_account_id,
@@ -216,6 +221,7 @@ class RuntimeSurfaceService:
     ) -> bool:
         thread = await ThreadService(self.db).get_thread_with_turns(
             organization_id=scope.organization_id,
+            project_id=scope.project_id,
             thread_id=thread_id,
             user_id=scope.user_id,
             app_account_id=scope.app_account_id,
@@ -228,6 +234,7 @@ class RuntimeSurfaceService:
             raise HTTPException(status_code=404, detail="Thread not found")
         deleted = await ThreadService(self.db).delete_threads(
             organization_id=scope.organization_id,
+            project_id=scope.project_id,
             thread_ids=[thread.id],
         )
         return bool(deleted)
@@ -245,6 +252,8 @@ class RuntimeSurfaceService:
             raise HTTPException(status_code=404, detail="Run not found")
         if str(run.organization_id) != str(control.organization_id):
             raise HTTPException(status_code=403, detail="Organization mismatch")
+        if str(run.project_id) != str(control.project_id):
+            raise HTTPException(status_code=403, detail="Project mismatch")
         events = await list_run_events(
             db=self.db,
             run_id=run_id,
@@ -271,6 +280,8 @@ class RuntimeSurfaceService:
             raise HTTPException(status_code=404, detail="Run not found")
         if str(run.organization_id) != str(control.organization_id):
             raise HTTPException(status_code=403, detail="Organization mismatch")
+        if str(run.project_id) != str(control.project_id):
+            raise HTTPException(status_code=403, detail="Project mismatch")
 
         if not control.is_service and not control.is_platform_admin:
             allowed_user_ids = {

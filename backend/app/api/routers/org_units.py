@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, delete, or_
 
 from app.db.postgres.models.identity import User, Organization, OrganizationStatus, OrgUnit, OrgUnitType, OrgMembership, MembershipStatus
+from app.db.postgres.models.rbac import RoleAssignment
 from app.db.postgres.models.registry import ModelRegistry, ModelCapabilityType, ModelStatus
 from app.db.postgres.models.rag import RetrievalPolicy
 from app.db.postgres.session import get_db
@@ -637,6 +638,12 @@ async def remove_member(
     if not membership:
         raise HTTPException(status_code=404, detail="Membership not found")
 
+    await db.execute(
+        delete(RoleAssignment).where(
+            RoleAssignment.organization_id == organization.id,
+            RoleAssignment.user_id == membership.user_id,
+        )
+    )
     await db.delete(membership)
     await db.commit()
 

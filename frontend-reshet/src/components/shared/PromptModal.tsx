@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import {
   Activity,
   Archive,
@@ -26,6 +26,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
 import { promptsService, type PromptRecord, type PromptUsageRecord, type PromptVersionRecord } from "@/services/prompts"
 import { cn } from "@/lib/utils"
+import { useAuthStore } from "@/lib/store/useAuthStore"
 
 interface PromptModalProps {
   promptId: string | null
@@ -53,6 +54,7 @@ export function PromptModal({
   onFill,
   onPromptUpdated,
 }: PromptModalProps) {
+  const currentProjectId = useAuthStore((state) => state.activeProject?.id ?? null)
   const [prompt, setPrompt] = useState<PromptRecord | null>(null)
   const [loading, setLoading] = useState(false)
   const [showMoreFields, setShowMoreFields] = useState(false)
@@ -75,6 +77,7 @@ export function PromptModal({
   const [usage, setUsage] = useState<PromptUsageRecord[]>([])
   const [usageLoading, setUsageLoading] = useState(false)
   const [usageOpen, setUsageOpen] = useState(false)
+  const previousProjectIdRef = useRef<string | null>(currentProjectId)
 
   const hydratePrompt = useCallback((nextPrompt: PromptRecord) => {
     setPrompt(nextPrompt)
@@ -145,6 +148,19 @@ export function PromptModal({
       .catch(() => setUsage([]))
       .finally(() => setUsageLoading(false))
   }, [usageOpen, prompt?.id])
+
+  useEffect(() => {
+    const nextProjectId = currentProjectId
+    if (previousProjectIdRef.current !== null && previousProjectIdRef.current !== nextProjectId) {
+      setPrompt(null)
+      setVersions([])
+      setUsage([])
+      setEditDirty(false)
+      setSaveError(null)
+      onOpenChange(false)
+    }
+    previousProjectIdRef.current = nextProjectId
+  }, [currentProjectId, onOpenChange])
 
   const commitUpdatedPrompt = useCallback((nextPrompt: PromptRecord) => {
     hydratePrompt(nextPrompt)

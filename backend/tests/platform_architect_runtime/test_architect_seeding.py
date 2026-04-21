@@ -1,4 +1,9 @@
+import pytest
+from sqlalchemy import select
+
 from app.services import registry_seeding
+from app.db.postgres.models.artifact_runtime import Artifact
+from app.db.postgres.models.registry import ToolImplementationType, ToolRegistry, ToolStatus
 from app.services.platform_native_tools import PLATFORM_NATIVE_FUNCTIONS
 
 
@@ -96,6 +101,33 @@ def test_platform_architect_domain_tools_bind_to_native_platform_functions():
     for slug in registry_seeding.PLATFORM_ARCHITECT_DOMAIN_TOOLS:
         function_name = PLATFORM_NATIVE_FUNCTIONS[slug]
         assert function_name.startswith("platform_native_")
+
+
+@pytest.mark.asyncio
+async def test_seed_platform_sdk_tool_creates_published_system_artifact_binding(db_session):
+    tool = await registry_seeding.seed_platform_sdk_tool(db_session)
+    await registry_seeding.seed_platform_sdk_tool(db_session)
+
+    artifact = (
+        await db_session.execute(select(Artifact).where(Artifact.system_key == "platform_sdk"))
+    ).scalar_one()
+    tool_rows = (
+        await db_session.execute(
+            select(ToolRegistry).where(
+                ToolRegistry.organization_id.is_(None),
+                ToolRegistry.builtin_key == "platform_sdk",
+            )
+        )
+    ).scalars().all()
+
+    assert len(tool_rows) == 1
+    assert tool.id == tool_rows[0].id
+    assert tool.implementation_type == ToolImplementationType.ARTIFACT
+    assert tool.status == ToolStatus.PUBLISHED
+    assert tool.is_system is True
+    assert tool.artifact_id == str(artifact.id)
+    assert tool.artifact_revision_id == artifact.latest_published_revision_id
+    assert tool.config_schema["artifact_binding"]["system_key"] == "platform_sdk"
 
 
 def test_platform_domain_schema_is_action_specific_one_of():

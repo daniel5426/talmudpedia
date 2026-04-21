@@ -24,8 +24,9 @@ import { AgentBuilder } from "@/components/agent-builder"
 import { normalizeGraphDefinition } from "@/components/agent-builder/graphspec"
 import { HeaderConfigEditor } from "@/components/builder"
 import { INTEGRATION_CATALOG, matchServerToCatalog, pickPreferredCatalogServer } from "@/services/integration-catalog"
+import { useAuthStore } from "@/lib/store/useAuthStore"
 
-export default function AgentBuilderPage() {
+function AgentBuilderContent() {
     const { id } = useParams()
     const router = useRouter()
     const [agent, setAgent] = useState<Agent | null>(null)
@@ -516,4 +517,10 @@ export default function AgentBuilderPage() {
             </Dialog>
         </div>
     )
+}
+
+export default function AgentBuilderPage() {
+    const currentProjectId = useAuthStore((state) => state.activeProject?.id ?? null)
+
+    return <AgentBuilderContent key={currentProjectId ?? "no-project"} />
 }

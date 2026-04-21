@@ -13,7 +13,7 @@ from sqlalchemy import select
 from app.api.routers import published_apps_admin_files as builder_files_module
 from app.api.routers import published_apps_admin_routes_builder as builder_routes_module
 from app.core.security import get_password_hash
-from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, User
+from app.db.postgres.models.identity import MembershipStatus, OrgMembership, User
 from app.db.postgres.models.published_apps import (
     PublishedApp,
     PublishedAppDraftDevSession,
@@ -35,6 +35,7 @@ from app.services.published_app_draft_revision_materializer import PublishedAppD
 from app.services.published_app_live_preview import build_live_preview_overlay_workspace_fingerprint
 from app.services.published_app_templates import TemplateRuntimeContext
 from app.services.published_app_versioning import create_app_version
+from app.services.security_bootstrap_service import SecurityBootstrapService
 from tests.published_apps._helpers import admin_headers, seed_admin_tenant_and_agent
 
 
@@ -135,9 +136,15 @@ async def _seed_second_owner(db_session, *, organization_id, org_unit_id) -> Use
             organization_id=organization_id,
             user_id=user.id,
             org_unit_id=org_unit_id,
-            role=OrgRole.owner,
             status=MembershipStatus.active,
         )
+    )
+    bootstrap = SecurityBootstrapService(db_session)
+    await bootstrap.ensure_default_roles(organization_id)
+    await bootstrap.ensure_organization_owner_assignment(
+        organization_id=organization_id,
+        user_id=user.id,
+        assigned_by=user.id,
     )
     await db_session.commit()
     await db_session.refresh(user)

@@ -8,7 +8,7 @@ from pathlib import PurePosixPath
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import and_, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.postgres.models.registry import (
@@ -666,12 +666,11 @@ async def ensure_file_space_tools(db: AsyncSession) -> list[str]:
     tool_ids: list[str] = []
     tool_rows: list[ToolRegistry] = []
     for spec in FILE_SPACE_TOOL_SPECS:
+        system_slug = _system_tool_row_key(spec["builtin_key"])
         result = await db.execute(
             select(ToolRegistry).where(
-                and_(
-                    ToolRegistry.organization_id.is_(None),
-                    ToolRegistry.builtin_key == spec["builtin_key"],
-                )
+                ToolRegistry.organization_id.is_(None),
+                ToolRegistry.builtin_key == spec["builtin_key"],
             )
         )
         tool = result.scalar_one_or_none()
@@ -686,7 +685,7 @@ async def ensure_file_space_tools(db: AsyncSession) -> list[str]:
             tool = ToolRegistry(
                 organization_id=None,
                 name=spec["name"],
-                slug=_system_tool_row_key(spec["builtin_key"]),
+                slug=system_slug,
                 description=spec["description"],
                 scope=ToolDefinitionScope.GLOBAL,
                 schema=spec["schema"],
@@ -694,6 +693,7 @@ async def ensure_file_space_tools(db: AsyncSession) -> list[str]:
                 status=ToolStatus.PUBLISHED,
                 version="1.0.0",
                 implementation_type=ToolImplementationType.FUNCTION,
+                builtin_key=spec["builtin_key"],
                 is_active=True,
                 is_system=True,
                 published_at=datetime.now(timezone.utc),
@@ -703,6 +703,7 @@ async def ensure_file_space_tools(db: AsyncSession) -> list[str]:
             await db.flush()
         else:
             tool.name = spec["name"]
+            tool.slug = system_slug
             tool.description = spec["description"]
             tool.scope = ToolDefinitionScope.GLOBAL
             tool.schema = spec["schema"]
@@ -710,6 +711,7 @@ async def ensure_file_space_tools(db: AsyncSession) -> list[str]:
             tool.status = ToolStatus.PUBLISHED
             tool.version = "1.0.0"
             tool.implementation_type = ToolImplementationType.FUNCTION
+            tool.builtin_key = spec["builtin_key"]
             tool.is_active = True
             tool.is_system = True
             tool.published_at = tool.published_at or datetime.now(timezone.utc)

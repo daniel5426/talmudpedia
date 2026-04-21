@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.db.postgres.models.agents import Agent
-from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Organization, User
+from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgUnit, OrgUnitType, Organization, User
 from app.db.postgres.models.registry import ModelCapabilityType, ModelRegistry, ModelStatus
 from app.db.postgres.models.workspace import Project
 from app.services.agent_service import AgentService
@@ -71,11 +71,11 @@ async def test_create_organization_with_default_project_materializes_default_age
     assert "platform_architect" in system_keys
     assert "artifact_coding_agent" in system_keys
     assert "published_app_coding_agent" in system_keys
-    service = AgentService(db=db_session, organization_id=organization.id)
+    project_service = AgentService(db=db_session, organization_id=organization.id, project_id=project.id)
     for agent in agents:
-        if agent.system_key == "published_app_coding_agent":
+        if agent.project_id != project.id or agent.system_key == "published_app_coding_agent":
             continue
-        validation = await service.validate_agent(agent.id)
+        validation = await project_service.validate_agent(agent.id)
         assert validation.valid, f"{agent.system_key} validation failed: {validation.errors}"
 
 
@@ -107,9 +107,9 @@ async def test_create_project_bootstrap_keeps_default_agent_profiles_idempotent(
     for agent in agents:
         counts[agent.system_key] = counts.get(agent.system_key, 0) + 1
 
-    assert counts["platform_architect"] == 1
-    assert counts["artifact_coding_agent"] == 1
-    assert counts["published_app_coding_agent"] == 1
+    assert counts["platform_architect"] == 2
+    assert counts["artifact_coding_agent"] == 2
+    assert counts["published_app_coding_agent"] == 2
 
 
 @pytest.mark.asyncio
@@ -130,10 +130,6 @@ async def test_backfill_helpers_materialize_profiles_for_existing_org_without_st
     await db_session.flush()
 
     service = OrganizationBootstrapService(db_session)
-    await service.ensure_organization_default_agents(
-        organization_id=organization.id,
-        actor_user_id=owner.id,
-    )
     await service.ensure_project_default_agents(
         organization_id=organization.id,
         project_id=project.id,
@@ -177,7 +173,6 @@ async def test_agents_list_backfill_persists_seeded_profiles_across_requests(db_
             organization_id=organization.id,
             user_id=owner.id,
             org_unit_id=root_unit.id,
-            role=OrgRole.owner,
             status=MembershipStatus.active,
         )
     )
@@ -212,6 +207,7 @@ async def test_agents_list_backfill_persists_seeded_profiles_across_requests(db_
         "Platform Architect",
         "Published App Coding Agent",
     ]
+    assert {item["project_id"] for item in response["items"]} == {str(project.id)}
 
     verify_session_factory = async_sessionmaker(bind=db_session.bind, expire_on_commit=False)
     async with verify_session_factory() as verify_session:
@@ -244,20 +240,13 @@ async def test_agents_list_skips_backfill_when_default_profiles_already_exist(db
     )
     await db_session.commit()
 
-    org_calls = {"count": 0}
     project_calls = {"count": 0}
-
-    async def _fail_org_ensure(self, *, organization_id, actor_user_id=None):
-        _ = self, organization_id, actor_user_id
-        org_calls["count"] += 1
-        raise AssertionError("organization backfill should not run for an already-bootstrapped tenant")
 
     async def _fail_project_ensure(self, *, organization_id, project_id, actor_user_id=None):
         _ = self, organization_id, project_id, actor_user_id
         project_calls["count"] += 1
         raise AssertionError("project backfill should not run for an already-bootstrapped tenant")
 
-    monkeypatch.setattr(OrganizationBootstrapService, "ensure_organization_default_agents", _fail_org_ensure)
     monkeypatch.setattr(OrganizationBootstrapService, "ensure_project_default_agents", _fail_project_ensure)
 
     response = await list_agents(
@@ -279,5 +268,4 @@ async def test_agents_list_skips_backfill_when_default_profiles_already_exist(db
         "Platform Architect",
         "Published App Coding Agent",
     ]
-    assert org_calls["count"] == 0
     assert project_calls["count"] == 0

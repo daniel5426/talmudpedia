@@ -8,7 +8,7 @@ import pytest_asyncio
 
 from app.core.security import get_password_hash
 from app.db.postgres.models.agents import Agent, AgentRun, RunStatus
-from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Organization, User
+from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgUnit, OrgUnitType, Organization, User
 from app.db.postgres.models.published_apps import PublishedApp, PublishedAppAccount
 from app.db.postgres.models.rag import KnowledgeStore
 from app.db.postgres.models.registry import ModelCapabilityType, ModelRegistry, ToolRegistry
@@ -50,7 +50,6 @@ async def _seed_tenant_with_user(db_session, *, user_role: str = "admin"):
             organization_id=tenant.id,
             user_id=user.id,
             org_unit_id=org_unit.id,
-            role=OrgRole.owner,
             status=MembershipStatus.active,
         )
     )

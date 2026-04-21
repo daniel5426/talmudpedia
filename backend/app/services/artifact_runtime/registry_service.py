@@ -17,6 +17,7 @@ class ArtifactRegistryService:
         self,
         *,
         organization_id: UUID | None,
+        project_id: UUID | None = None,
         kind: ArtifactKind | str | None = None,
     ) -> list[Artifact]:
         query = (
@@ -31,7 +32,7 @@ class ArtifactRegistryService:
             query = query.where(
                 or_(
                     Artifact.owner_type == ArtifactOwnerType.SYSTEM,
-                    Artifact.organization_id == organization_id,
+                    (Artifact.organization_id == organization_id) & (Artifact.project_id == project_id),
                 )
             )
         if kind is not None:
@@ -39,10 +40,10 @@ class ArtifactRegistryService:
         result = await self._db.execute(query)
         return list(result.scalars().all())
 
-    async def list_organization_artifacts(self, *, organization_id: UUID) -> list[Artifact]:
-        return await self.list_accessible_artifacts(organization_id=organization_id)
+    async def list_organization_artifacts(self, *, organization_id: UUID, project_id: UUID | None = None) -> list[Artifact]:
+        return await self.list_accessible_artifacts(organization_id=organization_id, project_id=project_id)
 
-    async def get_accessible_artifact(self, *, artifact_id: UUID, organization_id: UUID | None) -> Artifact | None:
+    async def get_accessible_artifact(self, *, artifact_id: UUID, organization_id: UUID | None, project_id: UUID | None = None) -> Artifact | None:
         query = (
             select(Artifact)
             .where(Artifact.id == artifact_id)
@@ -56,17 +57,18 @@ class ArtifactRegistryService:
             query = query.where(
                 or_(
                     Artifact.owner_type == ArtifactOwnerType.SYSTEM,
-                    Artifact.organization_id == organization_id,
+                    (Artifact.organization_id == organization_id) & (Artifact.project_id == project_id),
                 )
             )
         return await self._db.scalar(query)
 
-    async def get_organization_artifact(self, *, artifact_id: UUID, organization_id: UUID) -> Artifact | None:
+    async def get_organization_artifact(self, *, artifact_id: UUID, organization_id: UUID, project_id: UUID | None = None) -> Artifact | None:
         return await self._db.scalar(
             select(Artifact)
             .where(
                 Artifact.id == artifact_id,
                 Artifact.organization_id == organization_id,
+                Artifact.project_id == project_id,
                 Artifact.owner_type == ArtifactOwnerType.TENANT,
             )
             .options(
@@ -90,7 +92,7 @@ class ArtifactRegistryService:
             )
         )
 
-    async def get_revision(self, *, revision_id: UUID, organization_id: UUID | None) -> ArtifactRevision | None:
+    async def get_revision(self, *, revision_id: UUID, organization_id: UUID | None, project_id: UUID | None = None) -> ArtifactRevision | None:
         query = (
             select(ArtifactRevision)
             .where(ArtifactRevision.id == revision_id)
@@ -100,7 +102,7 @@ class ArtifactRegistryService:
             query = query.join(Artifact, Artifact.id == ArtifactRevision.artifact_id, isouter=True).where(
                 or_(
                     Artifact.owner_type == ArtifactOwnerType.SYSTEM,
-                    Artifact.organization_id == organization_id,
+                    (Artifact.organization_id == organization_id) & (Artifact.project_id == project_id),
                 )
             )
         return await self._db.scalar(query)
@@ -110,11 +112,13 @@ class ArtifactRegistryService:
         *,
         organization_id: UUID,
         custom_operator_id: UUID,
+        project_id: UUID | None = None,
     ) -> Artifact | None:
         return await self._db.scalar(
             select(Artifact)
             .where(
                 Artifact.organization_id == organization_id,
+                Artifact.project_id == project_id,
                 Artifact.legacy_custom_operator_id == custom_operator_id,
                 Artifact.kind == ArtifactKind.RAG_OPERATOR,
             )

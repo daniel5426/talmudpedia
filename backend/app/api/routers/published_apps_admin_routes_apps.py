@@ -69,7 +69,10 @@ async def list_published_apps(
     _assert_can_manage_apps(ctx)
     result = await db.execute(
         select(PublishedApp)
-        .where(PublishedApp.organization_id == ctx["organization_id"])
+        .where(
+            PublishedApp.organization_id == ctx["organization_id"],
+            PublishedApp.project_id == ctx["project_id"],
+        )
         .order_by(PublishedApp.updated_at.desc())
     )
     return [_app_to_response(app) for app in result.scalars().all()]
@@ -112,6 +115,7 @@ async def create_published_app(
 
     app = PublishedApp(
         organization_id=ctx["organization_id"],
+        project_id=ctx["project_id"],
         agent_id=payload.agent_id,
         name=payload.name.strip(),
         description=(payload.description or "").strip() or None,

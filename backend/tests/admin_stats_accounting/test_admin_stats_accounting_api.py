@@ -3,10 +3,11 @@ from uuid import uuid4
 
 import pytest
 
+from app.core.scope_registry import ORGANIZATION_DEFAULT_ROLE_SCOPES, ORGANIZATION_OWNER_ROLE
 from app.core.security import create_access_token, get_password_hash
 from app.db.postgres.models.agent_threads import AgentThread, AgentThreadStatus, AgentThreadSurface
 from app.db.postgres.models.agents import Agent, AgentRun, AgentStatus, RunStatus
-from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Organization, User
+from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgUnit, OrgUnitType, Organization, User
 from app.services.security_bootstrap_service import SecurityBootstrapService
 
 
@@ -15,9 +16,15 @@ def _auth_headers(user_id: str, organization_id: str, org_unit_id: str) -> dict[
         subject=user_id,
         organization_id=organization_id,
         org_unit_id=org_unit_id,
-        org_role="owner",
     )
-    return {"Authorization": f"Bearer {token}", "X-Organization-ID": organization_id}
+    from app.core.security import ALGORITHM, SECRET_KEY
+
+    import jwt
+
+    payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+    payload["scope"] = list(ORGANIZATION_DEFAULT_ROLE_SCOPES[ORGANIZATION_OWNER_ROLE])
+    scoped_token = jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+    return {"Authorization": f"Bearer {scoped_token}", "X-Organization-ID": organization_id}
 
 
 async def _seed_accounting_fixture(db_session):
@@ -45,7 +52,6 @@ async def _seed_accounting_fixture(db_session):
             organization_id=tenant.id,
             user_id=owner.id,
             org_unit_id=org_unit.id,
-            role=OrgRole.owner,
             status=MembershipStatus.active,
         )
     )

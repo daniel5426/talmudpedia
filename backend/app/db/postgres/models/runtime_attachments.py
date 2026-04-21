@@ -27,6 +27,7 @@ class RuntimeAttachment(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=True, index=True)
     thread_id = Column(UUID(as_uuid=True), ForeignKey("agent_threads.id", ondelete="CASCADE"), nullable=True, index=True)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     app_account_id = Column(UUID(as_uuid=True), ForeignKey("published_app_accounts.id", ondelete="SET NULL"), nullable=True, index=True)
@@ -50,6 +51,7 @@ class RuntimeAttachment(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
     organization = relationship("Organization")
+    project = relationship("Project")
     thread = relationship("AgentThread", back_populates="attachments")
     user = relationship("User")
     app_account = relationship("PublishedAppAccount")
@@ -63,8 +65,8 @@ class RuntimeAttachment(Base):
     )
 
     __table_args__ = (
-        Index("ix_runtime_attachments_scope_lookup", "organization_id", "surface", "thread_id", "created_at"),
-        Index("ix_runtime_attachments_embed_lookup", "organization_id", "agent_id", "external_user_id", "created_at"),
+        Index("ix_runtime_attachments_scope_lookup", "organization_id", "project_id", "surface", "thread_id", "created_at"),
+        Index("ix_runtime_attachments_embed_lookup", "organization_id", "project_id", "agent_id", "external_user_id", "created_at"),
     )
 
 

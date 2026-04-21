@@ -149,6 +149,7 @@ class SpeechToTextNodeExecutor(BaseNodeExecutor):
             surface = AgentThreadSurface.internal
         return RuntimeAttachmentOwner(
             organization_id=self.organization_id,
+            project_id=self._maybe_uuid(runtime_context.get("project_id")),
             surface=surface,
             user_id=self._maybe_uuid(runtime_context.get("user_id")),
             app_account_id=self._maybe_uuid(runtime_context.get("published_app_account_id")),

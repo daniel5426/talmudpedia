@@ -18,6 +18,7 @@ Last Updated: 2026-04-21
 - `backend/tests/apps_builder_sandbox_runtime/test_live_coding_run_e2e.py`
 
 ## Key scenarios covered
+- secondary editor fixtures now derive app-builder access from canonical `SecurityBootstrapService` owner assignments instead of membership-role fields
 - The draft-dev runtime client delegates `start_session` to the selected Sprite backend and injects the stable preview proxy base path.
 - The draft-dev runtime client can also push live-preview context updates back to the selected sandbox backend after coding-run reconciliation.
 - The preview proxy enforces preview token validation before forwarding to the upstream Sprite URL.
@@ -222,6 +223,9 @@ Last Updated: 2026-04-21
 - Command: `cd backend && PYTHONPATH=. python3 -m pytest -q tests/apps_builder_sandbox_runtime/test_sprite_backend_config.py tests/opencode_server_client/test_opencode_server_client.py -k 'heartbeat_waits_for_preview_without_restarting_services or heartbeat_does_not_refresh_when_nested_service_states_are_running or heartbeat_refreshes_preview_services_when_preview_services_are_not_running or ensure_opencode_service_reuses_nested_running_service or sprite_build_opencode_client_reuses_cached_service_and_tunnel or sprite_start_opencode_run_retries_after_refreshable_disconnect or sandbox_mode_stream_can_use_explicit_sandbox_id_without_in_memory_mapping'`
 - Date: 2026-04-16 Asia/Hebron
 - Result: FAIL in the current shell before test collection (`python3` lacks `pytest`, and the local interpreter also lacks backend deps like `fastapi`)
+- Command: `SECRET_KEY=explicit-test-secret PYTHONPATH=backend backend/.venv/bin/python -m pytest -q backend/tests/artifact_runtime/test_execution_service.py backend/tests/artifact_runtime/test_runtime_secret_service.py backend/tests/artifact_runtime/test_artifact_working_draft_api.py backend/tests/artifact_runtime/test_revision_service.py backend/tests/artifact_runtime/test_artifact_versions_api.py backend/tests/tool_execution/test_artifact_runtime_tool_execution.py backend/tests/agent_artifact_runtime/test_agent_artifact_runtime.py backend/tests/artifact_test_runs/test_artifact_test_run_api.py backend/tests/apps_builder_sandbox_runtime/test_draft_dev_runtime_lifecycle.py backend/tests/coding_agent_chat_history_api/test_chat_history_endpoints.py backend/tests/rag_artifact_runtime/test_rag_artifact_runtime.py`
+- Date: 2026-04-21 Asia/Hebron
+- Result: Fail early in `backend/tests/artifact_runtime/test_execution_service.py` on live artifact creation (`invalid input value for enum artifactownertype: "organization"`). `test_sprite_live_smoke.py` also was not rerun in this pass because it requires live Sprite credentials.
 
 ## Known gaps or follow-ups
 - Run the live coding-run e2e regularly in an environment with Sprite + OpenCode credentials so timing regressions are caught before manual QA.

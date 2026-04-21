@@ -1,6 +1,6 @@
 # Agent Threads Tests State
 
-Last Updated: 2026-04-12
+Last Updated: 2026-04-21
 
 ## Scope of the feature
 Thread turn sequencing, lineage stamping/validation, retrieval behavior, and separation of persisted chat reply text from workflow-facing `final_output`.
@@ -19,8 +19,12 @@ Thread turn sequencing, lineage stamping/validation, retrieval behavior, and sep
 - Child threads inherit root/parent lineage from the spawning run.
 - Manual continuation of an existing child thread keeps original lineage.
 - Reusing a child thread from a different root thread is rejected.
+- Thread create/read/list/delete behavior now enforces active-project visibility for project-scoped agent runs and child-thread lineage.
 
 ## Last run command + date/time + result
+- Command: `SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest -q backend/tests/agent_threads/test_thread_service.py`
+- Date/Time: 2026-04-21 Asia/Hebron
+- Result: PASS
 - Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/agent_execution_events/test_chat_response_blocks.py backend/tests/agent_execution_events/test_tool_event_metadata.py backend/tests/agent_threads/test_thread_service.py`
 - Date/Time: 2026-04-12 Asia/Hebron
 - Result: PASS (`26 passed, 3 warnings`)

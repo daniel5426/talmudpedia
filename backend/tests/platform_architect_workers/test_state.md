@@ -1,6 +1,6 @@
 # Platform Architect Workers Tests State
 
-Last Updated: 2026-04-14
+Last Updated: 2026-04-22
 
 ## Scope of the feature
 Focused coverage for the architect-specific async worker runtime, binding-backed artifact delegation flow, and seeded architect DB-backed orchestration behavior.
@@ -35,6 +35,7 @@ Focused coverage for the architect-specific async worker runtime, binding-backed
 - Artifact-coding delegated workers now mutate and validate the shared draft only; architect-owned binding persistence remains the canonical completion path.
 - Worker-binding schemas now accept canonical create-mode language selection and canonical snapshot `dependencies` instead of `python_dependencies`.
 - Seeded architect instructions now cover create-only artifact language selection, safe credential-reference authoring via `artifact_coding_list_credentials`, and the full artifact-backed tool lifecycle.
+- Seeded architect worker runtime now carries `project_id`, and binding-backed artifact delegation resolves same-project artifact coding agents.
 
 ## Last run command + date/time + result
 - Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/platform_architect_workers/test_worker_runtime.py backend/tests/platform_architect_workers/test_architect_worker_integration.py backend/tests/platform_architect_runtime/test_architect_seeding.py backend/tests/artifact_coding_agent/test_runtime_service.py backend/tests/platform_sdk_tool/test_platform_sdk_sdk_parity_additional_actions.py`
@@ -88,6 +89,9 @@ Focused coverage for the architect-specific async worker runtime, binding-backed
 - Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/platform_architect_workers/test_worker_runtime.py backend/tests/platform_architect_workers/test_architect_worker_integration.py`
 - Date/Time: 2026-04-14 Asia/Hebron
 - Result: PASS (`20 passed, 16 warnings`)
+- Command: `SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest -q backend/tests/platform_architect_workers/test_architect_worker_integration.py backend/tests/platform_architect_runtime/test_architect_seeding.py`
+- Date/Time: 2026-04-22 Asia/Hebron
+- Result: PASS (`7 passed, 12 warnings`). Project-scoped architect seeding and worker delegation remain green.
 
 ## Known gaps or follow-ups
 - Group fanout is covered at runtime level, but there is not yet a DB-backed seeded architect E2E for parallel multi-binding spawn/join.

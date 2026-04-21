@@ -78,8 +78,8 @@ PUBLISH_ACTIONS = {
 }
 
 
-def execute(state: Dict[str, Any], config: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
-    inputs = _resolve_inputs(state, context)
+def execute(inputs: Dict[str, Any], config: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
+    inputs = _resolve_inputs(inputs, context)
     noncanonical_input_error = _extract_noncanonical_input_error(inputs)
 
     payload = dict(inputs.get("payload")) if isinstance(inputs.get("payload"), dict) else {}
@@ -96,8 +96,8 @@ def execute(state: Dict[str, Any], config: Dict[str, Any], context: Dict[str, An
     dry_run = bool(inputs.get("dry_run") or payload.get("dry_run", False))
     explicit_action = _extract_explicit_action(inputs)
     action = _resolve_action(explicit_action, inputs, payload, [], tests)
-    organization_for_flags = _resolve_effective_organization_id(inputs, payload, state, context)
-    organization_mismatch_error = _validate_organization_override(inputs, payload, state, context)
+    organization_for_flags = _resolve_effective_organization_id(inputs, payload, context)
+    organization_mismatch_error = _validate_organization_override(inputs, payload, context)
 
     if noncanonical_input_error is not None:
         attempted_action = str(noncanonical_input_error.get("attempted_action") or "noop")
@@ -166,7 +166,7 @@ def execute(state: Dict[str, Any], config: Dict[str, Any], context: Dict[str, An
         return _finalize_output(output, inputs=inputs, payload=payload, builtin_key=None)
 
     canonical_action = _canonicalize_action(action)
-    builtin_key = _resolve_builtin_key(inputs=inputs, payload=payload, state=state, context=context, config=config)
+    builtin_key = _resolve_builtin_key(inputs=inputs, payload=payload, context=context, config=config)
     domain_error = _validate_domain_action_access(canonical_action=canonical_action, builtin_key=builtin_key)
     if domain_error is not None:
         output = {
@@ -252,13 +252,15 @@ def execute(state: Dict[str, Any], config: Dict[str, Any], context: Dict[str, An
     base_url, api_key, organization_id, extra_headers = _resolve_auth(
         inputs,
         payload,
-        state=state,
         context=context,
         action=canonical_action,
         required_scopes=required_scopes,
     )
 
-    client = Client(base_url=base_url, api_key=api_key, organization_id=organization_id, extra_headers=extra_headers)
+    client = Client(base_url=base_url, api_key=api_key, extra_headers=extra_headers)
+    if organization_id:
+        client.headers["X-Organization-ID"] = str(organization_id)
+        client.organization_id = str(organization_id)
     if api_key and not client.headers.get("Authorization"):
         client.headers["Authorization"] = f"Bearer {api_key}"
     if not client.headers.get("X-SDK-Contract"):
@@ -298,7 +300,6 @@ def execute(state: Dict[str, Any], config: Dict[str, Any], context: Dict[str, An
     auth_context = _build_safe_auth_context(
         inputs=inputs,
         payload=payload,
-        state=state,
         context=context,
         action=canonical_action,
         required_scopes=required_scopes,
@@ -348,10 +349,9 @@ def _canonicalize_action(action: str) -> str:
 def _resolve_effective_organization_id(
     inputs: Dict[str, Any],
     payload: Dict[str, Any],
-    state: Optional[Dict[str, Any]],
     context: Optional[Dict[str, Any]],
 ) -> Optional[str]:
-    runtime_organization_id = _resolve_runtime_organization_id(state, context)
+    runtime_organization_id = _resolve_runtime_organization_id(context)
     if runtime_organization_id is not None:
         return runtime_organization_id
     explicit_organization_id = _resolve_explicit_organization_id(inputs, payload)
@@ -360,13 +360,9 @@ def _resolve_effective_organization_id(
     return None
 
 
-def _resolve_runtime_organization_id(
-    state: Optional[Dict[str, Any]],
-    context: Optional[Dict[str, Any]],
-) -> Optional[str]:
-    state_ctx = state.get("context") if isinstance(state, dict) and isinstance(state.get("context"), dict) else {}
+def _resolve_runtime_organization_id(context: Optional[Dict[str, Any]]) -> Optional[str]:
     tool_ctx = context if isinstance(context, dict) else {}
-    organization_id= state_ctx.get("organization_id") or tool_ctx.get("organization_id")
+    organization_id = tool_ctx.get("organization_id")
     if organization_id is None:
         return None
     return str(organization_id)
@@ -382,10 +378,9 @@ def _resolve_explicit_organization_id(inputs: Dict[str, Any], payload: Dict[str,
 def _validate_organization_override(
     inputs: Dict[str, Any],
     payload: Dict[str, Any],
-    state: Optional[Dict[str, Any]],
     context: Optional[Dict[str, Any]],
 ) -> Optional[Dict[str, Any]]:
-    runtime_organization_id = _resolve_runtime_organization_id(state, context)
+    runtime_organization_id = _resolve_runtime_organization_id(context)
     explicit_organization_id = _resolve_explicit_organization_id(inputs, payload)
     if not runtime_organization_id or not explicit_organization_id:
         return None
@@ -406,7 +401,6 @@ def _resolve_builtin_key(
     *,
     inputs: Dict[str, Any],
     payload: Dict[str, Any],
-    state: Optional[Dict[str, Any]],
     context: Optional[Dict[str, Any]],
     config: Optional[Dict[str, Any]],
 ) -> Optional[str]:
@@ -416,8 +410,6 @@ def _resolve_builtin_key(
         (config or {}).get("builtin_key"),
         (context or {}).get("builtin_key"),
     ]
-    state_ctx = state.get("context") if isinstance(state, dict) and isinstance(state.get("context"), dict) else {}
-    candidates.append(state_ctx.get("builtin_key"))
     for candidate in candidates:
         if isinstance(candidate, str) and candidate.strip():
             return candidate.strip()
@@ -443,28 +435,14 @@ def _validate_domain_action_access(canonical_action: str, builtin_key: Optional[
     }
 
 
-def _resolve_inputs(state: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
+def _resolve_inputs(raw_inputs: Any, context: Dict[str, Any]) -> Dict[str, Any]:
+    if isinstance(raw_inputs, dict) and raw_inputs:
+        return raw_inputs
+
     if isinstance(context, dict):
         ctx_inputs = context.get("inputs")
         if isinstance(ctx_inputs, dict) and ctx_inputs:
             return ctx_inputs
-
-    state_context = state.get("context")
-    if isinstance(state_context, dict) and state_context:
-        return state_context
-
-    last_output = (state.get("state") or {}).get("last_agent_output")
-    if isinstance(last_output, dict) and last_output:
-        return last_output
-
-    messages = state.get("messages") or []
-    if messages:
-        last_msg = messages[-1]
-        if isinstance(last_msg, dict):
-            content = last_msg.get("content")
-        else:
-            content = getattr(last_msg, "content", str(last_msg))
-        return {"text": content}
 
     return {}
 
@@ -593,7 +571,6 @@ def _build_safe_auth_context(
     *,
     inputs: Dict[str, Any],
     payload: Dict[str, Any],
-    state: Optional[Dict[str, Any]],
     context: Optional[Dict[str, Any]],
     action: str,
     required_scopes: List[str],
@@ -602,11 +579,10 @@ def _build_safe_auth_context(
     api_key: Optional[str],
     extra_headers: Dict[str, str],
 ) -> Dict[str, Any]:
-    state_ctx = state.get("context") if isinstance(state, dict) and isinstance(state.get("context"), dict) else {}
     tool_ctx = context if isinstance(context, dict) else {}
     auth_ctx = tool_ctx.get("auth") if isinstance(tool_ctx.get("auth"), dict) else {}
     explicit_organization_id = _resolve_explicit_organization_id(inputs, payload)
-    runtime_organization_id = _resolve_runtime_organization_id(state, context)
+    runtime_organization_id = _resolve_runtime_organization_id(context)
     token_sources = {
         "payload_token": bool(payload.get("token")),
         "payload_api_key": bool(payload.get("api_key")),
@@ -614,7 +590,6 @@ def _build_safe_auth_context(
         "inputs_token": bool(inputs.get("token")),
         "inputs_api_key": bool(inputs.get("api_key")),
         "inputs_bearer_token": bool(inputs.get("bearer_token")),
-        "state_context_token": bool(state_ctx.get("token")),
         "tool_context_token": bool(tool_ctx.get("token")),
         "auth_context_token": bool(auth_ctx.get("token")),
         "auth_context_bearer_token": bool(auth_ctx.get("bearer_token")),
@@ -685,7 +660,6 @@ def _has_explicit_publish_intent(inputs: Dict[str, Any], payload: Dict[str, Any]
 def _resolve_auth(
     inputs: Dict[str, Any],
     payload: Dict[str, Any],
-    state: Optional[Dict[str, Any]] = None,
     context: Optional[Dict[str, Any]] = None,
     action: Optional[str] = None,
     required_scopes: Optional[List[str]] = None,
@@ -698,14 +672,11 @@ def _resolve_auth(
         or resolve_local_backend_origin()
     )
 
-    state_ctx = state.get("context") if isinstance(state, dict) else {}
-    if state_ctx is None:
-        state_ctx = {}
     tool_ctx = context if isinstance(context, dict) else {}
     if tool_ctx is None:
         tool_ctx = {}
 
-    organization_id= _resolve_effective_organization_id(inputs, payload, state, context)
+    organization_id = _resolve_effective_organization_id(inputs, payload, context)
 
     token = (
         payload.get("token")
@@ -714,7 +685,6 @@ def _resolve_auth(
         or inputs.get("api_key")
         or payload.get("bearer_token")
         or inputs.get("bearer_token")
-        or state_ctx.get("token")
         or tool_ctx.get("token")
     )
 
@@ -847,7 +817,6 @@ def _run_agent(client: Client, payload: Dict[str, Any], dry_run: bool) -> Tuple[
         payload,
         dry_run,
         control_client_factory=_control_client,
-        resolve_agent_id_by_slug_fn=_resolve_agent_id_by_slug,
     )
 
 
@@ -856,7 +825,6 @@ def _run_tests(client: Client, tests: List[Dict[str, Any]], dry_run: bool) -> Tu
         client,
         tests,
         dry_run,
-        resolve_agent_id_by_slug_fn=_resolve_agent_id_by_slug,
         call_agent_execute_fn=_call_agent_execute,
         augment_agent_response_fn=_augment_agent_response,
         evaluate_assertions_fn=_evaluate_assertions,

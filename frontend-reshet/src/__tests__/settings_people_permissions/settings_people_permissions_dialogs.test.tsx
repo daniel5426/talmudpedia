@@ -46,7 +46,11 @@ describe("settings people permissions dialogs", () => {
       />
     )
 
+    expect(screen.getByText("Project Settings")).toBeInTheDocument()
+    expect(screen.getByText("Project Members")).toBeInTheDocument()
     expect(screen.getByText("Project API Keys")).toBeInTheDocument()
+    expect(screen.getByText("Publish")).toBeInTheDocument()
+    expect(screen.getByText("Exposure")).toBeInTheDocument()
     expect(screen.getByText("Agents")).toBeInTheDocument()
     expect(screen.queryByText("Organization Settings")).not.toBeInTheDocument()
   })

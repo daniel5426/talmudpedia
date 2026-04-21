@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useMemo } from "react"
+import { useState, useEffect, useMemo, useCallback } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { Bot, Plus } from "lucide-react"
 
@@ -12,6 +12,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { agentService, adminService, Agent } from "@/services"
 import { AgentCard } from "@/components/agent-card"
 import { CreateAgentDialog } from "@/components/agents/CreateAgentDialog"
+import { useAuthStore } from "@/lib/store/useAuthStore"
 
 function AgentCardSkeleton() {
     return (
@@ -39,6 +40,7 @@ function AgentCardSkeleton() {
 export default function AgentsPage() {
     const router = useRouter()
     const searchParams = useSearchParams()
+    const currentProjectId = useAuthStore((state) => state.activeProject?.id ?? null)
     const [agents, setAgents] = useState<Agent[]>([])
     const [isLoading, setIsLoading] = useState(true)
     const [error, setError] = useState<string | null>(null)
@@ -47,11 +49,7 @@ export default function AgentsPage() {
     const [agentMetrics, setAgentMetrics] = useState<Record<string, { threads: number; runs: number; failureRate: number; threadTrend: { date: string; value: number }[] }>>({})
     const isCreateDialogOpen = searchParams.get("create") === "1"
 
-    useEffect(() => {
-        loadAgents()
-    }, [])
-
-    const loadAgents = async () => {
+    const loadAgents = useCallback(async () => {
         try {
             setIsLoading(true)
             const [data, stats] = await Promise.all([
@@ -76,16 +74,23 @@ export default function AgentsPage() {
         } finally {
             setIsLoading(false)
         }
-    }
+    }, [])
+
+    useEffect(() => {
+        setAgents([])
+        setAgentMetrics({})
+        setError(null)
+        void loadAgents()
+    }, [currentProjectId, loadAgents])
 
     const filteredAgents = useMemo(() => {
         const q = searchQuery.toLowerCase().trim()
-    if (!q) return agents
-    return agents.filter(agent =>
+        if (!q) return agents
+        return agents.filter(agent =>
             agent.name.toLowerCase().includes(q) ||
             agent.id.toLowerCase().includes(q)
         )
-  }, [agents, searchQuery])
+    }, [agents, searchQuery])
 
     const handleDelete = async (agent: Agent) => {
         if (!window.confirm(`Delete agent "${agent.name}"? This cannot be undone.`)) return

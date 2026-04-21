@@ -76,6 +76,7 @@ class Artifact(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=True, index=True)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=True, index=True)
 
     display_name = Column(String, nullable=False)
     description = Column(String, nullable=True)
@@ -111,6 +112,7 @@ class Artifact(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
     organization = relationship("Organization")
+    project = relationship("Project")
     creator = relationship("User", foreign_keys=[created_by])
     revisions = relationship(
         "ArtifactRevision",
@@ -181,6 +183,7 @@ class ArtifactRun(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=True, index=True)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=True, index=True)
     artifact_id = Column(UUID(as_uuid=True), ForeignKey("artifacts.id", ondelete="SET NULL"), nullable=True, index=True)
     revision_id = Column(UUID(as_uuid=True), ForeignKey("artifact_revisions.id", ondelete="CASCADE"), nullable=False, index=True)
 
@@ -216,6 +219,7 @@ class ArtifactRun(Base):
     duration_ms = Column(Integer, nullable=True)
 
     organization = relationship("Organization")
+    project = relationship("Project")
     artifact = relationship("Artifact")
     revision = relationship("ArtifactRevision")
     events = relationship("ArtifactRunEvent", back_populates="run", cascade="all, delete-orphan")
@@ -298,6 +302,7 @@ class ArtifactCodingSession(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=True, index=True)
     artifact_id = Column(UUID(as_uuid=True), ForeignKey("artifacts.id", ondelete="SET NULL"), nullable=True, index=True)
     shared_draft_id = Column(
         UUID(as_uuid=True),
@@ -319,6 +324,7 @@ class ArtifactCodingSession(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
     organization = relationship("Organization")
+    project = relationship("Project")
     artifact = relationship("Artifact", foreign_keys=[artifact_id])
     shared_draft = relationship("ArtifactCodingSharedDraft", foreign_keys=[shared_draft_id])
     linked_artifact = relationship("Artifact", foreign_keys=[linked_artifact_id])
@@ -333,7 +339,7 @@ class ArtifactCodingSession(Base):
     )
 
     __table_args__ = (
-        Index("ix_artifact_coding_sessions_scope_activity", "organization_id", "artifact_id", "draft_key", "last_message_at"),
+        Index("ix_artifact_coding_sessions_scope_activity", "organization_id", "project_id", "artifact_id", "draft_key", "last_message_at"),
     )
 
 
@@ -342,6 +348,7 @@ class ArtifactCodingSharedDraft(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=True, index=True)
     artifact_id = Column(UUID(as_uuid=True), ForeignKey("artifacts.id", ondelete="SET NULL"), nullable=True, index=True)
     draft_key = Column(String(128), nullable=True, index=True)
     linked_artifact_id = Column(UUID(as_uuid=True), ForeignKey("artifacts.id", ondelete="SET NULL"), nullable=True, index=True)
@@ -353,6 +360,7 @@ class ArtifactCodingSharedDraft(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
     organization = relationship("Organization")
+    project = relationship("Project")
     artifact = relationship("Artifact", foreign_keys=[artifact_id])
     linked_artifact = relationship("Artifact", foreign_keys=[linked_artifact_id])
     last_test_run = relationship("ArtifactRun", foreign_keys=[last_test_run_id])
@@ -364,6 +372,7 @@ class ArtifactCodingRunSnapshot(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=True, index=True)
     shared_draft_id = Column(UUID(as_uuid=True), ForeignKey("artifact_coding_shared_drafts.id", ondelete="CASCADE"), nullable=False, index=True)
     run_id = Column(UUID(as_uuid=True), ForeignKey("agent_runs.id", ondelete="CASCADE"), nullable=False, index=True)
     session_id = Column(UUID(as_uuid=True), ForeignKey("artifact_coding_sessions.id", ondelete="SET NULL"), nullable=True, index=True)
@@ -374,6 +383,7 @@ class ArtifactCodingRunSnapshot(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     organization = relationship("Organization")
+    project = relationship("Project")
     shared_draft = relationship("ArtifactCodingSharedDraft", foreign_keys=[shared_draft_id])
     run = relationship("AgentRun", foreign_keys=[run_id])
     session = relationship("ArtifactCodingSession", foreign_keys=[session_id])

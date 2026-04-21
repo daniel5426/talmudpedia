@@ -21,6 +21,7 @@ Frontend coverage for published-apps admin and public runtime surfaces outside t
 ## Key Scenarios Covered
 - Apps admin page list/create/update behavior.
 - Apps admin page inline stats: fetch, display, loading skeleton, error degradation, date range switching.
+- Apps admin page reloads cleanly when the active project changes, so stale project data does not survive a switch.
 - Builder file-filter and blocked path rules.
 - Chat timeline/thread rendering behaviors.
 - Post-idle history hydration does not overwrite a newer in-flight send with stale previous-turn history.
@@ -39,6 +40,9 @@ Frontend coverage for published-apps admin and public runtime surfaces outside t
 - Preview keeps the full warmup overlay visible until the iframe is actually usable, instead of disappearing as soon as the iframe node is mounted.
 
 ## Last Run
+- Command: `cd /Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet && npm test -- --runTestsByPath src/__tests__/published_apps/apps_admin_page.test.tsx --watch=false`
+- Date: 2026-04-21 Asia/Hebron
+- Result: PASS (`1 suite, 7 tests`)
 - Command: `cd /Users/danielbenassaya/Code/personal/talmudpedia && pnpm --dir frontend-reshet test -- --runInBand src/__tests__/published_apps/chat_history_timeline.test.ts src/__tests__/published_apps/coding_agent_stream_speed.test.ts src/__tests__/published_apps/coding_agent_stream_url.test.ts src/__tests__/published_apps/chat_session_hydration.test.ts`
 - Date: 2026-04-18 21:52 EEST
 - Result: PASS (`4 suites, 11 tests`)

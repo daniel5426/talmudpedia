@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 from sqlalchemy import select
 
-from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Organization, User
+from app.db.postgres.models.identity import Organization, User
 from app.db.postgres.models.rag import (
     ExecutablePipeline,
     KnowledgeStore,
@@ -26,22 +26,7 @@ from app.rag.pipeline.executor import PipelineExecutor
 async def _seed_tenant_context(db_session):
     tenant = Organization(id=uuid.uuid4(), name="RAG Ingestion Organization", slug=f"rag-ingest-{uuid.uuid4().hex[:8]}")
     user = User(id=uuid.uuid4(), email=f"rag-ingest-{uuid.uuid4().hex[:6]}@example.com", role="admin")
-    org_unit = OrgUnit(
-        id=uuid.uuid4(),
-        organization_id=tenant.id,
-        name="RAG Ingestion Org",
-        slug=f"rag-ingest-org-{uuid.uuid4().hex[:6]}",
-        type=OrgUnitType.org,
-    )
-    membership = OrgMembership(
-        id=uuid.uuid4(),
-        organization_id=tenant.id,
-        user_id=user.id,
-        org_unit_id=org_unit.id,
-        role=OrgRole.owner,
-        status=MembershipStatus.active,
-    )
-    db_session.add_all([tenant, user, org_unit, membership])
+    db_session.add_all([tenant, user])
     await db_session.commit()
     return tenant, user
 

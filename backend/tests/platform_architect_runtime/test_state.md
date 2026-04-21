@@ -1,6 +1,6 @@
 # Platform Architect Runtime Tests
 
-Last Updated: 2026-04-21
+Last Updated: 2026-04-22
 
 ## Scope
 - Platform Architect v1.2 direct domain-tool loop runtime (no `architect.run` path).
@@ -31,6 +31,7 @@ Last Updated: 2026-04-21
 - Platform architect domain schema includes `agents.nodes.catalog/schema/validate` action contracts.
 - Platform architect domain schema now includes `rag.operators.catalog/schema` action contracts for RAG-native discovery.
 - Platform architect domain schema now includes `agents.create_shell` and `rag.create_pipeline_shell` as the preferred lightweight creation actions.
+- Platform SDK bootstrap seeding now locks to canonical `builtin_key=platform_sdk` plus system artifact binding metadata and is covered directly.
 - Seeded architect runtime no longer forces JSON-only output in prompt or node config.
 - Seeded architect runtime now defaults `temperature` to `1`.
 - Seeded architect runtime now sets `max_tool_iterations` to `26`.
@@ -38,7 +39,8 @@ Last Updated: 2026-04-21
 - Seeded architect prompt now treats artifact-coding delegated workers as draft-mutation-only workers and keeps persistence architect-owned through `architect-worker-binding-persist-artifact`.
 - Seeded architect prompt now forbids asking artifact-coding workers to mutate runtime-owned readiness fields like `persistence_readiness`.
 - Seeded architect prompt now treats ambiguous read-surface prompts more explicitly: prompt/template discovery must use `prompts.list`, and platform tool inventory must treat tools as canonical action ids by domain, not domain container slugs, without inventing `help` actions or leaking architect-worker tools.
-- Seeded architect prompt now makes shell-create payload contracts explicit: `agents.create_shell` must send `name+slug`, `rag.create_pipeline_shell` must use only `name` plus optional `pipeline_type=retrieval`, and knowledge-store create flows must resolve an embedding-capable model before create.
+- Seeded architect prompt now makes shell-create payload contracts explicit: `agents.create_shell` must use `name` only, `rag.create_pipeline_shell` must use only `name` plus optional `pipeline_type=retrieval`, and knowledge-store create flows must resolve an embedding-capable model before create.
+- Direct guardrail tests now call the live guardrail contract shape with `builtin_key` and `state_context.agent_system_key`, matching runtime tool execution.
 - Seeded artifact-coding worker instructions now spell out the required draft fields for a new artifact before the architect can persist it.
 - Architect domain tools now bind to native backend control-plane function dispatch instead of the runtime SDK shim.
 - Native `platform-*` dispatch preserves runtime auth/tenant context and rejects cross-domain action mismatch before execution.
@@ -139,3 +141,13 @@ Last Updated: 2026-04-21
 - Result: PASS (`18 passed, 6 warnings`)
 - Command: `cd backend && SECRET_KEY=explicit-test-secret .venv/bin/python -m pytest tests/admin_monitoring/test_admin_monitoring_api.py tests/graph_mutation_agents/test_agent_graph_mutation_routes.py tests/platform_architect_runtime/test_native_platform_tools.py tests/organization_bootstrap/test_default_agent_profiles.py tests/settings_api_keys/test_settings_api_keys_api.py tests/workos_native_auth/test_auth_session_effective_scopes.py tests/security_route_enforcement/test_route_scope_enforcement.py tests/published_apps/test_admin_apps_crud.py tests/published_apps/test_public_app_resolve_and_config.py tests/published_apps_host_runtime/test_host_runtime_same_url_auth.py -q`
 - Result: PASS (`52 passed`)
+
+## 2026-04-21 guardrail alignment validation
+- Command: `SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest -q backend/tests/platform_architect_runtime/test_platform_architect_runtime.py -k 'guardrails'`
+- Result: PASS (`4 passed, 14 deselected, 6 warnings`)
+- Command: `SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest -q backend/tests/platform_architect_runtime/test_architect_seeding.py`
+- Result: PASS (`4 passed, 6 warnings`)
+
+## 2026-04-22 system bootstrap validation
+- Command: `TEST_USE_REAL_DB=0 SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest -q backend/tests/platform_architect_runtime/test_architect_seeding.py::test_seed_platform_sdk_tool_creates_published_system_artifact_binding`
+- Result: PASS (`1 passed`)

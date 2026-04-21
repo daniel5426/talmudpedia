@@ -18,7 +18,8 @@ from app.api.routers.artifact_coding_agent import (
 from app.db.postgres.models.agent_threads import AgentThreadTurn, AgentThreadTurnStatus
 from app.db.postgres.models.agents import AgentRun, RunStatus
 from app.db.postgres.models.artifact_runtime import ArtifactCodingMessage, ArtifactCodingSession, ArtifactCodingSharedDraft, ArtifactRevision, ArtifactRun, ArtifactRunDomain, ArtifactRunEvent, ArtifactRunStatus
-from app.db.postgres.models.registry import IntegrationCredential, IntegrationCredentialCategory, ToolRegistry
+from app.db.postgres.models.registry import IntegrationCredential, IntegrationCredentialCategory, ModelCapabilityType, ModelRegistry, ModelStatus, ToolRegistry
+from app.db.postgres.models.workspace import Project
 from app.services.artifact_coding_shared_draft_service import ArtifactCodingSharedDraftService
 from app.db.postgres.models.identity import Organization, User
 from app.services.artifact_coding_chat_history_service import ArtifactCodingChatHistoryService
@@ -56,6 +57,40 @@ async def _seed_tenant_and_user(db_session):
     await db_session.refresh(tenant)
     await db_session.refresh(user)
     return tenant, user
+
+
+async def _seed_tenant_user_and_project(db_session):
+    tenant, user = await _seed_tenant_and_user(db_session)
+    existing_defaults = (
+        await db_session.execute(
+            select(ModelRegistry).where(
+                ModelRegistry.organization_id.is_(None),
+                ModelRegistry.capability_type == ModelCapabilityType.CHAT,
+                ModelRegistry.is_default.is_(True),
+            )
+        )
+    ).scalars().all()
+    for item in existing_defaults:
+        item.is_default = False
+    project = Project(
+        organization_id=tenant.id,
+        name="Artifact Project",
+        slug=f"artifact-project-{uuid4().hex[:8]}",
+        is_default=True,
+        created_by=user.id,
+    )
+    model = ModelRegistry(
+        organization_id=None,
+        name="Artifact Test Chat Model",
+        capability_type=ModelCapabilityType.CHAT,
+        status=ModelStatus.ACTIVE,
+        is_active=True,
+        is_default=True,
+    )
+    db_session.add_all([project, model])
+    await db_session.commit()
+    await db_session.refresh(project)
+    return tenant, user, project
 
 
 def _tool_impl_create_payload(name: str) -> dict[str, object]:
@@ -190,8 +225,8 @@ async def test_run_response_snapshot_includes_context_window(db_session):
 
 @pytest.mark.asyncio
 async def test_runtime_service_relinks_draft_key_to_saved_artifact_without_new_shared_draft(db_session):
-    tenant, user = await _seed_tenant_and_user(db_session)
-    agent = await ensure_artifact_coding_agent_profile(db_session, tenant.id, actor_user_id=user.id)
+    tenant, user, project = await _seed_tenant_user_and_project(db_session)
+    agent = await ensure_artifact_coding_agent_profile(db_session, tenant.id, project_id=project.id, actor_user_id=user.id)
 
     runtime = ArtifactCodingRuntimeService(db_session)
     draft_key = f"draft-{uuid4().hex[:8]}"
@@ -210,6 +245,7 @@ async def test_runtime_service_relinks_draft_key_to_saved_artifact_without_new_s
 
     prepared = await runtime.prepare_session(
         organization_id=tenant.id,
+        project_id=project.id,
         user_id=user.id,
         agent_id=agent.id,
         title_prompt="Create a delegated tool artifact",
@@ -240,6 +276,7 @@ async def test_runtime_service_relinks_draft_key_to_saved_artifact_without_new_s
 
     relinked = await runtime.prepare_session(
         organization_id=tenant.id,
+        project_id=project.id,
         user_id=user.id,
         agent_id=agent.id,
         title_prompt="Persist delegated tool artifact",
@@ -253,12 +290,17 @@ async def test_runtime_service_relinks_draft_key_to_saved_artifact_without_new_s
 
     shared_drafts = (
         await db_session.execute(
-            select(ArtifactCodingSharedDraft).where(ArtifactCodingSharedDraft.organization_id == tenant.id)
+            select(ArtifactCodingSharedDraft).where(
+                ArtifactCodingSharedDraft.organization_id == tenant.id,
+                ArtifactCodingSharedDraft.project_id == project.id,
+            )
         )
     ).scalars().all()
 
     assert len(shared_drafts) == 1
     assert relinked.shared_draft.id == prepared.shared_draft.id
+    assert prepared.session.project_id == project.id
+    assert relinked.shared_draft.project_id == project.id
 
     updated_state = runtime.serialize_runtime_state(
         session=relinked.session,
@@ -318,12 +360,13 @@ async def test_build_initial_snapshot_from_seed_supports_javascript_create_mode(
 
 @pytest.mark.asyncio
 async def test_prepare_session_without_scope_keeps_direct_shared_draft_link(db_session):
-    tenant, user = await _seed_tenant_and_user(db_session)
-    agent = await ensure_artifact_coding_agent_profile(db_session, tenant.id, actor_user_id=user.id)
+    tenant, user, project = await _seed_tenant_user_and_project(db_session)
+    agent = await ensure_artifact_coding_agent_profile(db_session, tenant.id, project_id=project.id, actor_user_id=user.id)
 
     runtime = ArtifactCodingRuntimeService(db_session)
     prepared = await runtime.prepare_session(
         organization_id=tenant.id,
+        project_id=project.id,
         user_id=user.id,
         agent_id=agent.id,
         title_prompt="Create a scope-free delegated draft",
@@ -343,7 +386,10 @@ async def test_prepare_session_without_scope_keeps_direct_shared_draft_link(db_s
 
     shared_drafts_before = (
         await db_session.execute(
-            select(ArtifactCodingSharedDraft).where(ArtifactCodingSharedDraft.organization_id == tenant.id)
+            select(ArtifactCodingSharedDraft).where(
+                ArtifactCodingSharedDraft.organization_id == tenant.id,
+                ArtifactCodingSharedDraft.project_id == project.id,
+            )
         )
     ).scalars().all()
 
@@ -353,30 +399,37 @@ async def test_prepare_session_without_scope_keeps_direct_shared_draft_link(db_s
     resolved = await ArtifactCodingSharedDraftService(db_session).resolve_for_session(session=prepared.session)
     state_session, state_shared_draft, _artifact, _run, _last_test_run = await runtime.get_session_state_for_user(
         organization_id=tenant.id,
+        project_id=project.id,
         user_id=user.id,
         session_id=prepared.session.id,
     )
     shared_drafts_after = (
         await db_session.execute(
-            select(ArtifactCodingSharedDraft).where(ArtifactCodingSharedDraft.organization_id == tenant.id)
+            select(ArtifactCodingSharedDraft).where(
+                ArtifactCodingSharedDraft.organization_id == tenant.id,
+                ArtifactCodingSharedDraft.project_id == project.id,
+            )
         )
     ).scalars().all()
 
     assert len(shared_drafts_after) == 1
     assert resolved.id == prepared.shared_draft.id
     assert state_session.shared_draft_id == prepared.shared_draft.id
+    assert state_session.project_id == project.id
     assert state_shared_draft.id == prepared.shared_draft.id
+    assert state_shared_draft.project_id == project.id
     assert state_shared_draft.working_draft_snapshot["kind"] == "tool_impl"
     assert state_shared_draft.working_draft_snapshot["entry_module_path"] == "src/main.py"
 
 
 @pytest.mark.asyncio
 async def test_artifact_tools_use_run_pinned_shared_draft_when_session_binding_changes(db_session):
-    tenant, user = await _seed_tenant_and_user(db_session)
+    tenant, user, project = await _seed_tenant_user_and_project(db_session)
     runtime = ArtifactCodingRuntimeService(db_session)
-    agent = await ensure_artifact_coding_agent_profile(db_session, tenant.id, actor_user_id=user.id)
+    agent = await ensure_artifact_coding_agent_profile(db_session, tenant.id, project_id=project.id, actor_user_id=user.id)
     prepared = await runtime.prepare_session(
         organization_id=tenant.id,
+        project_id=project.id,
         user_id=user.id,
         agent_id=agent.id,
         title_prompt="Use the pinned draft",
@@ -393,6 +446,7 @@ async def test_artifact_tools_use_run_pinned_shared_draft_when_session_binding_c
     )
     alternate_shared_draft = await ArtifactCodingSharedDraftService(db_session).get_or_create_for_scope(
         organization_id=tenant.id,
+        project_id=project.id,
         artifact_id=None,
         draft_key=f"draft-{uuid4().hex[:8]}",
         initial_snapshot=runtime.build_initial_snapshot_from_seed(
@@ -407,6 +461,7 @@ async def test_artifact_tools_use_run_pinned_shared_draft_when_session_binding_c
     alternate_shared_draft.working_draft_snapshot["display_name"] = "Rebound Draft"
     run = AgentRun(
         organization_id=tenant.id,
+        project_id=project.id,
         agent_id=agent.id,
         user_id=user.id,
         initiator_user_id=user.id,
@@ -432,6 +487,7 @@ async def test_artifact_tools_use_run_pinned_shared_draft_when_session_binding_c
 
     assert resolved_run.id == run.id
     assert shared_draft.id == prepared.shared_draft.id
+    assert shared_draft.project_id == project.id
     assert shared_draft.working_draft_snapshot["display_name"] == "Pinned Draft"
 
 

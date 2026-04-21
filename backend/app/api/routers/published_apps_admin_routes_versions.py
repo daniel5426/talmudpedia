@@ -332,6 +332,7 @@ async def publish_version(
     publish_job = PublishedAppPublishJob(
         published_app_id=app.id,
         organization_id=app.organization_id,
+        project_id=app.project_id,
         requested_by=actor_id,
         source_revision_id=revision.id,
         saved_draft_revision_id=revision.id,

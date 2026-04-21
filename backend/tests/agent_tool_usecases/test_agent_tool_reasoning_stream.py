@@ -20,6 +20,9 @@ from app.db.postgres.models.rag import (
     VisualPipeline,
 )
 from app.db.postgres.models.registry import (
+    ModelCapabilityType,
+    ModelRegistry,
+    ModelStatus,
     ToolDefinitionScope,
     ToolImplementationType,
     ToolRegistry,
@@ -64,6 +67,21 @@ async def _seed_tenant_and_user(db_session):
     await db_session.refresh(tenant)
     await db_session.refresh(user)
     return tenant, user
+
+
+async def _create_chat_model(db_session, organization_id: UUID, suffix: str) -> str:
+    model = ModelRegistry(
+        organization_id=organization_id,
+        name=f"Reasoning Chat Model {suffix}",
+        capability_type=ModelCapabilityType.CHAT,
+        status=ModelStatus.ACTIVE,
+        is_active=True,
+        metadata_={},
+    )
+    db_session.add(model)
+    await db_session.commit()
+    await db_session.refresh(model)
+    return str(model.id)
 
 
 async def _create_tool(
@@ -139,6 +157,7 @@ async def _create_agent_with_tools(
     *,
     organization_id: UUID,
     user_id: UUID,
+    model_id: str,
     tool_ids: list[UUID],
     slug_suffix: str,
     tool_execution_mode: str = "sequential",
@@ -147,7 +166,9 @@ async def _create_agent_with_tools(
 ):
     agent_config = {
         "name": "Agent",
-        "model_id": "unit-model",
+        "model_id": model_id,
+        "instructions": "Be helpful.",
+        "include_chat_history": True,
         "tools": [str(tid) for tid in tool_ids],
         "max_tool_iterations": 5,
         "tool_execution_mode": tool_execution_mode,
@@ -179,7 +200,6 @@ async def _create_agent_with_tools(
     return await service.create_agent(
         CreateAgentData(
             name=f"agent-{slug_suffix}",
-            slug=f"agent-{slug_suffix}",
             description="agent tool reasoning stream tests",
             graph_definition=graph,
         ),
@@ -247,6 +267,7 @@ def _assert_active_complete_reasoning_lifecycle(events: list[dict], *, expected_
 async def test_debug_stream_generates_reasoning_steps_for_each_tool_and_step(db_session, monkeypatch):
     tenant, user = await _seed_tenant_and_user(db_session)
     suffix = uuid4().hex[:8]
+    model_id = await _create_chat_model(db_session, tenant.id, suffix)
 
     web_search_tool = await _create_tool(
         db_session,
@@ -333,6 +354,7 @@ async def test_debug_stream_generates_reasoning_steps_for_each_tool_and_step(db_
         db_session,
         organization_id=tenant.id,
         user_id=user.id,
+        model_id=model_id,
         tool_ids=[web_search_tool.id, datetime_tool.id],
         slug_suffix=suffix,
     )
@@ -381,6 +403,7 @@ async def test_debug_stream_generates_reasoning_steps_for_each_tool_and_step(db_
 async def test_production_stream_includes_internal_tool_and_reasoning_events(db_session, monkeypatch):
     tenant, user = await _seed_tenant_and_user(db_session)
     suffix = uuid4().hex[:8]
+    model_id = await _create_chat_model(db_session, tenant.id, suffix)
 
     web_search_tool = await _create_tool(
         db_session,
@@ -429,6 +452,7 @@ async def test_production_stream_includes_internal_tool_and_reasoning_events(db_
         db_session,
         organization_id=tenant.id,
         user_id=user.id,
+        model_id=model_id,
         tool_ids=[web_search_tool.id],
         slug_suffix=f"prod-{suffix}",
     )
@@ -459,6 +483,7 @@ async def test_production_stream_includes_internal_tool_and_reasoning_events(db_
 async def test_debug_stream_tool_error_emits_failed_terminal_tool_event(db_session, monkeypatch):
     tenant, user = await _seed_tenant_and_user(db_session)
     suffix = uuid4().hex[:8]
+    model_id = await _create_chat_model(db_session, tenant.id, suffix)
 
     web_fetch_tool = await _create_tool(
         db_session,
@@ -493,6 +518,7 @@ async def test_debug_stream_tool_error_emits_failed_terminal_tool_event(db_sessi
         db_session,
         organization_id=tenant.id,
         user_id=user.id,
+        model_id=model_id,
         tool_ids=[web_fetch_tool.id],
         slug_suffix=f"err-{suffix}",
     )
@@ -526,6 +552,7 @@ async def test_debug_stream_tool_error_emits_failed_terminal_tool_event(db_sessi
 async def test_parallel_tool_calls_emit_reasoning_steps_for_each_call(db_session, monkeypatch):
     tenant, user = await _seed_tenant_and_user(db_session)
     suffix = uuid4().hex[:8]
+    model_id = await _create_chat_model(db_session, tenant.id, suffix)
 
     datetime_tool = await _create_tool(
         db_session,
@@ -593,6 +620,7 @@ async def test_parallel_tool_calls_emit_reasoning_steps_for_each_call(db_session
         db_session,
         organization_id=tenant.id,
         user_id=user.id,
+        model_id=model_id,
         tool_ids=[datetime_tool.id, json_transform_tool.id],
         slug_suffix=f"parallel-{suffix}",
         tool_execution_mode="parallel_safe",
@@ -628,6 +656,7 @@ async def test_parallel_tool_calls_emit_reasoning_steps_for_each_call(db_session
 async def test_multiple_agents_web_search_and_retrieval_calls_reflect_in_production_reasoning(db_session, monkeypatch):
     tenant, user = await _seed_tenant_and_user(db_session)
     suffix = uuid4().hex[:8]
+    model_id = await _create_chat_model(db_session, tenant.id, suffix)
 
     retrieval_pipeline = await _create_retrieval_pipeline(
         db_session,
@@ -740,6 +769,7 @@ async def test_multiple_agents_web_search_and_retrieval_calls_reflect_in_product
         db_session,
         organization_id=tenant.id,
         user_id=user.id,
+        model_id=model_id,
         tool_ids=[web_search_tool.id],
         slug_suffix=f"multi-web-{suffix}",
     )
@@ -747,6 +777,7 @@ async def test_multiple_agents_web_search_and_retrieval_calls_reflect_in_product
         db_session,
         organization_id=tenant.id,
         user_id=user.id,
+        model_id=model_id,
         tool_ids=[retrieval_tool.id],
         slug_suffix=f"multi-retrieval-{suffix}",
     )
@@ -754,6 +785,7 @@ async def test_multiple_agents_web_search_and_retrieval_calls_reflect_in_product
         db_session,
         organization_id=tenant.id,
         user_id=user.id,
+        model_id=model_id,
         tool_ids=[web_search_tool.id, retrieval_tool.id],
         slug_suffix=f"multi-mixed-{suffix}",
     )

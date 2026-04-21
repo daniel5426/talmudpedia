@@ -38,5 +38,9 @@ Last Updated: 2026-04-20
 - Date/Time: 2026-04-09 Asia/Hebron
 - Result: PASS (`26 passed`)
 
+- Command: `SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest -q backend/tests/published_apps/test_admin_apps_crud.py backend/tests/published_apps/test_public_app_resolve_and_config.py backend/tests/published_apps_external_runtime/test_external_runtime_api.py backend/tests/published_apps_host_runtime/test_host_runtime_same_url_auth.py`
+- Date/Time: 2026-04-21 Asia/Hebron
+- Result: PASS (`39 passed`, includes external runtime project scoping coverage)
+
 ## Known Gaps or Follow-ups
 - Add explicit preflight `OPTIONS` coverage for allowed and blocked origins.

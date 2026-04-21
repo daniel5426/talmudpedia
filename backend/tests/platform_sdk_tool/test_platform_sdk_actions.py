@@ -46,17 +46,28 @@ def test_execute_requires_explicit_action():
             "value": "",
         }
     }
-    out = handler.execute(state={}, config={}, context=context)
+    out = handler.execute(inputs={}, config={}, context=context)
     assert out["context"]["action"] == "noop"
     assert out["context"]["result"]["status"] == "validation_error"
     assert any(err.get("error") == "missing_action" for err in out["context"]["errors"])
     assert any(err.get("code") == "MISSING_REQUIRED_FIELD" for err in out["context"]["errors"])
 
 
+def test_execute_prefers_top_level_inputs_over_wrapped_context_inputs():
+    out = handler.execute(
+        {"action": "validate_plan", "organization_id": "tenant-1"},
+        {},
+        {"inputs": {"action": "fetch_catalog", "organization_id": "tenant-1"}},
+    )
+
+    assert out["context"]["action"] == "validate_plan"
+    assert out["context"]["result"]["reason"] == "deprecated_action"
+
+
 def test_execute_rejects_wrapped_json_action_from_value_wrapper():
     wrapped = '{"action":"rag.create_visual_pipeline","payload":{"name":"Vector Search","tenant_slug":"tenant-a","graph_definition":{"nodes":[],"edges":[]}}}'
     out = handler.execute(
-        state={},
+        inputs={},
         config={},
         context={
             "inputs": {
@@ -83,7 +94,7 @@ def test_execute_rejects_wrapped_json_action_from_value_wrapper():
 
 def test_execute_rejects_noncanonical_wrapped_text_input():
     out = handler.execute(
-        state={},
+        inputs={},
         config={},
         context={
             "inputs": {
@@ -108,7 +119,7 @@ def test_execute_reports_noncanonical_wrapped_json_as_contract_error():
     )
 
     out = handler.execute(
-        state={},
+        inputs={},
         config={},
         context={
             "inputs": {
@@ -130,11 +141,7 @@ def test_execute_reports_noncanonical_wrapped_json_as_contract_error():
 
 
 def test_execute_rejects_deprecated_plan_actions():
-    out = handler.execute(
-        state={},
-        config={},
-        context={"inputs": {"action": "validate_plan", "organization_id": "tenant-1", "token": "t"}},
-    )
+    out = handler.execute(inputs={}, config={}, context={"inputs": {"action": "validate_plan", "organization_id": "tenant-1", "token": "t"}})
 
     assert out["context"]["action"] == "validate_plan"
     assert out["context"]["result"]["reason"] == "deprecated_action"
@@ -142,11 +149,7 @@ def test_execute_rejects_deprecated_plan_actions():
 
 
 def test_execute_reports_unknown_rag_action_explicitly():
-    out = handler.execute(
-        state={},
-        config={},
-        context={"inputs": {"action": "rag.nodes.catalog", "organization_id": "tenant-1", "token": "t"}},
-    )
+    out = handler.execute(inputs={}, config={}, context={"inputs": {"action": "rag.nodes.catalog", "organization_id": "tenant-1", "token": "t"}})
 
     assert out["context"]["action"] == "rag.nodes.catalog"
     assert out["context"]["result"]["message"] == "Unknown action 'rag.nodes.catalog'."
@@ -166,11 +169,7 @@ def test_execute_maps_legacy_alias_to_canonical_action(monkeypatch):
     )
     monkeypatch.setattr(handler, "_fetch_catalog", lambda client, payload: ({"ok": True}, []))
 
-    out = handler.execute(
-        state={},
-        config={},
-        context={"inputs": {"action": "fetch_catalog", "organization_id": "tenant-1", "token": "t"}},
-    )
+    out = handler.execute(inputs={}, config={}, context={"inputs": {"action": "fetch_catalog", "organization_id": "tenant-1", "token": "t"}})
 
     assert out["context"]["action"] == "catalog.list_capabilities"
     assert out["context"]["result"] == {"ok": True}
@@ -194,7 +193,7 @@ def test_execute_maps_create_agent_alias_to_agents_create(monkeypatch):
     })())
 
     out = handler.execute(
-        state={},
+        inputs={},
         config={},
         context={
             "inputs": {

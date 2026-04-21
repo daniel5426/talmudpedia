@@ -8,6 +8,7 @@ from app.db.postgres.models.identity import Tenant, User, OrgMembership
 from app.db.postgres.models.agents import Agent, AgentRun, RunStatus
 from app.api.routers.auth import get_current_user
 from app.agent.registry import AgentExecutorRegistry, AgentOperatorRegistry, AgentOperatorSpec
+from app.services.security_bootstrap_service import SecurityBootstrapService
 from unittest.mock import patch
 from main import app
 
@@ -67,7 +68,7 @@ async def test_list_operators(authorized_client):
 @pytest_asyncio.fixture
 async def setup_api_env(db_session):
     """Setup tenant, user, and membership for API testing."""
-    from app.db.postgres.models.identity import OrgUnit, OrgUnitType, OrgRole, MembershipStatus
+    from app.db.postgres.models.identity import OrgUnit, OrgUnitType, MembershipStatus
     
     tenant = Tenant(name="API Test Tenant", slug="api-test-tenant")
     db_session.add(tenant)
@@ -90,11 +91,14 @@ async def setup_api_env(db_session):
         tenant_id=tenant.id,
         user_id=user.id,
         org_unit_id=unit.id,
-        role=OrgRole.admin,
         status=MembershipStatus.active
     )
     db_session.add(membership)
     await db_session.flush()
+    await SecurityBootstrapService(db_session).ensure_organization_owner_assignment(
+        organization_id=tenant.id,
+        user_id=user.id,
+    )
     
     await db_session.commit()
     

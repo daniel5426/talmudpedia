@@ -17,7 +17,7 @@ from sqlalchemy.dialects import postgresql
 revision: str = "8f1a2b3c4d5e"
 down_revision: Union[str, None] = "4e3b3d2e51c9"
 branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = "9c4d2e1f7a8b"
 
 
 ROLE_ASSIGNMENTS = "role_assignments"

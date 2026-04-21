@@ -1,6 +1,6 @@
 # Agent Tool Usecases Tests
 
-Last Updated: 2026-03-22
+Last Updated: 2026-04-21
 
 ## Scope
 Covers end-to-end agent tool-call execution flows for built-in tools through the real agent runtime path (`AgentExecutorService` -> `ReasoningNodeExecutor` -> `ToolNodeExecutor`).
@@ -44,6 +44,9 @@ Covers end-to-end agent tool-call execution flows for built-in tools through the
 - Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/agent_tool_usecases/test_agent_tool_reasoning_stream.py -k 'debug_stream_generates_reasoning_steps_for_each_tool_and_step or production_stream_includes_internal_tool_and_reasoning_events or parallel_tool_calls_emit_reasoning_steps_for_each_call or multiple_agents_web_search_and_retrieval_calls_reflect_in_production_reasoning'`
 - Date/Time: 2026-03-22 Asia/Hebron
 - Result: pass (`4 passed, 1 deselected`)
+- Command: `SECRET_KEY=explicit-test-secret PYTHONPATH=/Users/danielbenassaya/Code/personal/talmudpedia backend/.venv/bin/python -m pytest -q backend/tests/agent_tool_usecases`
+- Date/Time: 2026-04-21 Asia/Hebron
+- Result: fail (`10 failed`). After removing legacy auth-role assumptions and updating agent-create helpers to the live `CreateAgentData` contract, the remaining failures are upstream runtime issues: graph writes now require real active model UUIDs, and run startup currently falls into a recursive `ModelResolver._resolve_binding_context` path in the local environment.
 
 ## Manual Real-Provider Validation (No Mocks)
 - Date/Time: 2026-02-12 01:18 EET
@@ -53,3 +56,4 @@ Covers end-to-end agent tool-call execution flows for built-in tools through the
 
 ## Known gaps or follow-ups
 - Add automated CI gate for live-provider checks in an isolated environment (currently manual because it requires real secrets/network).
+- Local runtime currently blocks the suite after graph-contract updates because `ModelResolver` recurses during run startup in this environment.

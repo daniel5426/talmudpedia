@@ -88,6 +88,7 @@ class ToolRegistry(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=True, index=True) # Null for Global tools
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=True, index=True)
     
     name = Column(String, nullable=False, index=True)
     slug = Column(String, unique=True, nullable=False, index=True)  # Opaque internal row key; canonical identity is id/builtin_key.
@@ -129,6 +130,7 @@ class ToolRegistry(Base):
 
     # Relationships
     organization = relationship("Organization")
+    project = relationship("Project")
     builtin_template = relationship("ToolRegistry", remote_side=[id])
     visual_pipeline = relationship("VisualPipeline", foreign_keys=[visual_pipeline_id])
     executable_pipeline = relationship("ExecutablePipeline", foreign_keys=[executable_pipeline_id])

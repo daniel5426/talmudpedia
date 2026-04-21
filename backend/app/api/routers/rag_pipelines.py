@@ -65,6 +65,7 @@ def _pipeline_control_plane_ctx(*, organization, user, context: Dict[str, Any] |
     principal = context or {}
     return ControlPlaneContext(
         organization_id=organization.id,
+        project_id=UUID(str(principal["project_id"])) if principal.get("project_id") else None,
         user=user,
         user_id=getattr(user, "id", None),
         auth_token=principal.get("auth_token"),
@@ -1151,6 +1152,7 @@ async def create_pipeline_job(
     http_request: Request,
     background_tasks: BackgroundTasks,
     organization_id: Optional[str] = None,
+    context: Dict[str, Any] = Depends(get_current_principal),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -1162,7 +1164,7 @@ async def create_pipeline_job(
 
     try:
         operation = await RagAdminService(db).create_job(
-            ctx=_pipeline_control_plane_ctx(organization=organization, user=user),
+            ctx=_pipeline_control_plane_ctx(organization=organization, user=user, context=context),
             executable_pipeline_id=request.executable_pipeline_id,
             input_params=request.input_params,
         )
@@ -1200,6 +1202,7 @@ async def list_pipeline_jobs(
     skip: int = 0,
     limit: int = 20,
     organization_id: Optional[str] = None,
+    context: Dict[str, Any] = Depends(get_current_principal),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -1210,6 +1213,8 @@ async def list_pipeline_jobs(
     
     if organization:
         query = query.where(PipelineJob.organization_id == organization.id)
+        if context.get("project_id"):
+            query = query.where(PipelineJob.project_id == UUID(str(context["project_id"])))
     
     if executable_pipeline_id:
         query = query.where(PipelineJob.executable_pipeline_id == executable_pipeline_id)
@@ -1245,6 +1250,7 @@ async def list_pipeline_jobs(
 async def get_pipeline_job(
     job_id: UUID,
     organization_id: Optional[str] = None,
+    context: Dict[str, Any] = Depends(get_current_principal),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -1259,7 +1265,7 @@ async def get_pipeline_job(
         return job_to_dict(job)
     try:
         operation = await RagAdminService(db).get_job(
-            ctx=_pipeline_control_plane_ctx(organization=organization, user=user),
+            ctx=_pipeline_control_plane_ctx(organization=organization, user=user, context=context),
             job_id=job_id,
         )
     except ControlPlaneError as exc:

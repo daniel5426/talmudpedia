@@ -439,6 +439,25 @@ class ToolRegistryAdminService:
     def __init__(self, db: AsyncSession):
         self.db = db
 
+    @staticmethod
+    def _require_project_id(ctx: ControlPlaneContext) -> UUID:
+        if ctx.project_id is None:
+            raise validation("Active project context is required")
+        return ctx.project_id
+
+    def _scoped_conditions(self, *, ctx: ControlPlaneContext) -> list[Any]:
+        project_id = self._require_project_id(ctx)
+        return [
+            or_(
+                ToolRegistry.organization_id.is_(None),
+                and_(
+                    ToolRegistry.organization_id == ctx.organization_id,
+                    ToolRegistry.project_id == project_id,
+                ),
+            ),
+            ~and_(ToolRegistry.organization_id != None, ToolRegistry.builtin_key != None, ToolRegistry.is_system == False),
+        ]
+
     async def list_tools(
         self,
         *,
@@ -452,8 +471,7 @@ class ToolRegistryAdminService:
         skip: int = 0,
         limit: int = 50,
     ) -> tuple[list[ToolRegistry], int]:
-        conditions = [or_(ToolRegistry.organization_id == ctx.organization_id, ToolRegistry.organization_id == None)]
-        conditions.append(~and_(ToolRegistry.organization_id != None, ToolRegistry.builtin_key != None, ToolRegistry.is_system == False))
+        conditions = self._scoped_conditions(ctx=ctx)
         if scope:
             conditions.append(ToolRegistry.scope == scope)
         if name is not None and str(name).strip():
@@ -486,7 +504,7 @@ class ToolRegistryAdminService:
         return tools, total
 
     async def get_tool(self, *, ctx: ControlPlaneContext, tool_id: UUID | None = None) -> ToolRegistry:
-        conditions = [or_(ToolRegistry.organization_id == ctx.organization_id, ToolRegistry.organization_id == None)]
+        conditions = self._scoped_conditions(ctx=ctx)
         if tool_id is not None:
             conditions.append(ToolRegistry.id == tool_id)
         else:
@@ -501,6 +519,7 @@ class ToolRegistryAdminService:
         return tool
 
     async def create_tool(self, *, ctx: ControlPlaneContext, request: Any) -> ToolRegistry:
+        project_id = self._require_project_id(ctx)
         if request.scope != ToolDefinitionScope.TENANT:
             raise validation("Only organization-scoped tools can be created via this endpoint")
         slug = internal_tool_key()
@@ -532,7 +551,7 @@ class ToolRegistryAdminService:
         input_schema = deepcopy(request.input_schema or {})
         output_schema = deepcopy(request.output_schema or {})
         try:
-            await PromptReferenceResolver(self.db, ctx.organization_id).validate_tool_payload(
+            await PromptReferenceResolver(self.db, ctx.organization_id, project_id).validate_tool_payload(
                 description=request.description,
                 input_schema=input_schema,
                 output_schema=output_schema,
@@ -549,6 +568,7 @@ class ToolRegistryAdminService:
         )
         tool = ToolRegistry(
             organization_id=ctx.organization_id,
+            project_id=project_id,
             name=request.name,
             slug=slug,
             description=request.description,
@@ -575,8 +595,15 @@ class ToolRegistryAdminService:
         return tool
 
     async def update_tool(self, *, ctx: ControlPlaneContext, tool_id: UUID, request: Any) -> ToolRegistry:
+        project_id = self._require_project_id(ctx)
         tool = (
-            await self.db.execute(select(ToolRegistry).where(ToolRegistry.id == tool_id, ToolRegistry.organization_id == ctx.organization_id))
+            await self.db.execute(
+                select(ToolRegistry).where(
+                    ToolRegistry.id == tool_id,
+                    ToolRegistry.organization_id == ctx.organization_id,
+                    ToolRegistry.project_id == project_id,
+                )
+            )
         ).scalar_one_or_none()
         if tool is None:
             raise not_found("Tool not found")
@@ -599,7 +626,7 @@ class ToolRegistryAdminService:
                 schema["output"] = request.output_schema
             tool.schema = schema
         try:
-            await PromptReferenceResolver(self.db, ctx.organization_id).validate_tool_payload(
+            await PromptReferenceResolver(self.db, ctx.organization_id, project_id).validate_tool_payload(
                 description=tool.description if request.description is None else request.description,
                 input_schema=((tool.schema or {}).get("input") if isinstance(tool.schema, dict) else {}),
                 output_schema=((tool.schema or {}).get("output") if isinstance(tool.schema, dict) else {}),
@@ -652,8 +679,15 @@ class ToolRegistryAdminService:
         return tool
 
     async def publish_tool(self, *, ctx: ControlPlaneContext, tool_id: UUID) -> ToolRegistry:
+        project_id = self._require_project_id(ctx)
         tool = (
-            await self.db.execute(select(ToolRegistry).where(ToolRegistry.id == tool_id, ToolRegistry.organization_id == ctx.organization_id))
+            await self.db.execute(
+                select(ToolRegistry).where(
+                    ToolRegistry.id == tool_id,
+                    ToolRegistry.organization_id == ctx.organization_id,
+                    ToolRegistry.project_id == project_id,
+                )
+            )
         ).scalar_one_or_none()
         if tool is None:
             raise not_found("Tool not found")
@@ -675,10 +709,17 @@ class ToolRegistryAdminService:
         return await publish_tool_record(db=self.db, ctx=ctx, tool=tool)
 
     async def create_tool_version(self, *, ctx: ControlPlaneContext, tool_id: UUID, new_version: str) -> ToolRegistry:
+        project_id = self._require_project_id(ctx)
         if not re.match(r"^\\d+\\.\\d+\\.\\d+$", new_version):
             raise validation("new_version must be valid semver (e.g. 1.0.0)")
         tool = (
-            await self.db.execute(select(ToolRegistry).where(ToolRegistry.id == tool_id, ToolRegistry.organization_id == ctx.organization_id))
+            await self.db.execute(
+                select(ToolRegistry).where(
+                    ToolRegistry.id == tool_id,
+                    ToolRegistry.organization_id == ctx.organization_id,
+                    ToolRegistry.project_id == project_id,
+                )
+            )
         ).scalar_one_or_none()
         if tool is None:
             raise not_found("Tool not found")

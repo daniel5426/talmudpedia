@@ -1,6 +1,6 @@
 # Platform Architect E2E Tests State
 
-Last Updated: 2026-04-15
+Last Updated: 2026-04-22
 
 ## Scope of the feature
 Live end-to-end validation of the seeded `platform-architect` agent against the full domain action matrix, with API and DB-backed evidence checks.
@@ -20,10 +20,13 @@ Live end-to-end validation of the seeded `platform-architect` agent against the 
 - Session report persisted as JSON for run review.
 - Session preflight validates delegated scope coverage (required action scopes vs architect workload policy and initiator effective scopes) before running matrix scenarios.
 - Architect run start now sends explicit `context.requested_scopes` derived from scenario matrix required scopes to stabilize delegated grant minting.
+- Architect resolution in the live E2E entrypoint now keys off `system_key=platform_architect` instead of the removed legacy public slug.
 - Artifact-create side-effect verification now checks canonical artifact metadata like `display_name` for `artifacts.create`.
 - Optional/manual live smoke coverage now exists for the architect artifact-worker flow behind `ARCH_E2E_ARTIFACT_WORKER_SMOKE=1`.
 - Live harness support now exists outside pytest through `backend/scripts/platform_architect_live_harness.py`, with queue/watch mode and persisted JSON run bundles.
 - The live harness now self-bootstraps local auth from the real DB when env auth is missing, and persists both full forensic bundles and compact summary bundles.
+- The live harness and live E2E helpers now use canonical `organization_id + project_id` env/runtime context instead of legacy tenant-only auth assumptions.
+- DB-side live E2E checks now resolve organization slug from `organizations` and assert `agent_runs.project_id` for architect runs.
 
 ## Last run command + date/time + result
 - Command: `cd backend && TEST_USE_REAL_DB=1 pytest -q tests/platform_architect_e2e/test_architect_e2e_live.py -m real_db`
@@ -32,6 +35,12 @@ Live end-to-end validation of the seeded `platform-architect` agent against the 
 - Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/platform_architect_e2e/test_live_harness.py`
 - Date/Time: 2026-04-15 01:18 EEST
 - Result: passed (`7 passed, 1 warning`)
+- Command: `SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest -q backend/tests/platform_architect_e2e/test_live_harness.py -k 'resolve_architect_agent_id or test_live_harness'`
+- Date/Time: 2026-04-21 Asia/Hebron
+- Result: passed (`8 passed, 1 warning`)
+- Command: `TEST_USE_REAL_DB=0 SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest -q backend/tests/platform_architect_e2e/test_live_harness.py`
+- Date/Time: 2026-04-22 Asia/Hebron
+- Result: passed (`8 passed`)
 
 ## Known gaps or follow-ups
 - Add dedicated live E2E scenarios for `agents.nodes.catalog`, `agents.nodes.schema`, and `agents.nodes.validate` to verify architect preflight/repair loops in real tenant data.
@@ -41,3 +50,4 @@ Live end-to-end validation of the seeded `platform-architect` agent against the 
 - Preflight depends on decoding JWT `sub` for initiator scope intersection details; opaque tokens without JWT claims degrade to policy-only scope diagnostics.
 - The artifact-worker smoke test is opt-in/manual and is not part of the matrix baseline command.
 - The live harness persists raw run bundles plus compact summary bundles; the summary should be the default diagnosis surface for iterative Codex loops, with the raw bundle reserved for deeper forensics.
+- The broad live worker integration slice still has a separate SQLite-only `ModelResolver._resolve_binding_context` recursion failure; it is not part of the live-harness hard-cut changes in this feature directory.

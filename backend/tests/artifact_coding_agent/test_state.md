@@ -1,6 +1,6 @@
 # Artifact Coding Agent Tests
 
-Last Updated: 2026-03-30
+Last Updated: 2026-04-22
 
 ## Scope
 
@@ -27,6 +27,7 @@ Track backend coverage for the artifact-coding agent runtime across locked draft
 - architect-worker continuation now stays separate from true orchestrator/system instructions, so only explicit orchestrator control turns map to model-facing `system`
 - runtime state serialization now exposes `persistence_readiness` separately from `verification_state`
 - artifact coding tools now resolve against the run-pinned shared draft even if the mutable session binding changes later
+- project-scoped artifact-coding sessions/shared drafts now preserve `project_id` through prepare, relink, lookup, and run-pinned draft resolution
 - completed artifact-coding runs that emitted `tool.failed` are reconciled to true failed runs and persist a failure assistant message instead of a false success summary
 - session-detail reload now returns run events for runs that only have a stored user turn, so failed/interrupted partial history is still reconstructible from trace events
 - artifact prompt submission now creates the backing `agent_thread_turn` immediately, so admin thread detail does not go blank when a run is aborted before executor startup finishes
@@ -137,6 +138,9 @@ Track backend coverage for the artifact-coding agent runtime across locked draft
 - Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/artifact_coding_agent/test_runtime_service.py`
 - Date: 2026-03-30 01:07 EEST
 - Result: PASS (`36 passed, 5 warnings`)
+- Command: `TEST_USE_REAL_DB=0 SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest -q backend/tests/artifact_coding_agent/test_runtime_service.py::test_runtime_service_relinks_draft_key_to_saved_artifact_without_new_shared_draft backend/tests/artifact_coding_agent/test_runtime_service.py::test_prepare_session_without_scope_keeps_direct_shared_draft_link backend/tests/artifact_coding_agent/test_runtime_service.py::test_artifact_tools_use_run_pinned_shared_draft_when_session_binding_changes`
+- Date: 2026-04-22 Asia/Hebron
+- Result: PASS (`3 passed`)
 
 ## Known Gaps
 

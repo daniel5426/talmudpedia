@@ -135,11 +135,13 @@ class ArtifactCodingRuntimeService:
         self,
         *,
         organization_id: UUID,
+        project_id: UUID | None,
         user_id: UUID,
         session_id: UUID,
     ) -> ArtifactCodingSession:
         session = await self.history.get_session_for_user(
             organization_id=organization_id,
+            project_id=project_id,
             user_id=user_id,
             session_id=session_id,
         )
@@ -214,6 +216,7 @@ class ArtifactCodingRuntimeService:
         self,
         *,
         organization_id: UUID,
+        project_id: UUID | None,
         artifact_id: UUID | None,
         draft_snapshot: dict[str, Any] | None,
     ) -> dict[str, Any]:
@@ -223,6 +226,7 @@ class ArtifactCodingRuntimeService:
             artifact = await self.registry.get_organization_artifact(
                 artifact_id=artifact_id,
                 organization_id=organization_id,
+                project_id=project_id,
             )
             return self._snapshot_from_artifact(artifact)
         return _initial_snapshot_for_kind("agent_node")
@@ -231,6 +235,7 @@ class ArtifactCodingRuntimeService:
         self,
         *,
         organization_id: UUID,
+        project_id: UUID | None = None,
         user_id: UUID,
         agent_id: UUID,
         title_prompt: str,
@@ -243,12 +248,14 @@ class ArtifactCodingRuntimeService:
         draft_key = self._normalize_draft_key(draft_key)
         initial_snapshot = await self._resolve_initial_snapshot(
             organization_id=organization_id,
+            project_id=project_id,
             artifact_id=artifact_id,
             draft_snapshot=draft_snapshot,
         )
         if chat_session_id is not None:
             session = await self._get_session_for_user(
                 organization_id=organization_id,
+                project_id=project_id,
                 user_id=user_id,
                 session_id=chat_session_id,
             )
@@ -266,6 +273,7 @@ class ArtifactCodingRuntimeService:
             thread = (
                 await ThreadService(self.db).resolve_or_create_thread(
                     organization_id=organization_id,
+                    project_id=project_id,
                     user_id=user_id,
                     app_account_id=None,
                     agent_id=agent_id,
@@ -277,12 +285,14 @@ class ArtifactCodingRuntimeService:
             ).thread
             shared_draft = await self.shared_drafts.get_or_create_for_scope(
                 organization_id=organization_id,
+                project_id=project_id,
                 artifact_id=artifact_id,
                 draft_key=draft_key,
                 initial_snapshot=initial_snapshot,
             )
             session = await self.history.create_session(
                 organization_id=organization_id,
+                project_id=project_id,
                 artifact_id=artifact_id,
                 shared_draft_id=shared_draft.id,
                 draft_key=draft_key,
@@ -319,12 +329,14 @@ class ArtifactCodingRuntimeService:
         if artifact_id is not None and effective_draft_key:
             await self.shared_drafts.link_scope_to_artifact(
                 organization_id=organization_id,
+                project_id=project_id,
                 draft_key=effective_draft_key,
                 artifact_id=artifact_id,
             )
             if should_link_existing_draft_session:
                 await self.history.link_sessions_to_artifact(
                     organization_id=organization_id,
+                    project_id=project_id,
                     draft_key=effective_draft_key,
                     artifact_id=artifact_id,
                 )
@@ -339,6 +351,7 @@ class ArtifactCodingRuntimeService:
         self,
         *,
         organization_id: UUID,
+        project_id: UUID | None = None,
         user_id: UUID,
         user_prompt: str,
         artifact_id: UUID | None,
@@ -347,9 +360,15 @@ class ArtifactCodingRuntimeService:
         draft_snapshot: dict[str, Any] | None,
         model_id: str | None,
     ) -> tuple[ArtifactCodingSession, ArtifactCodingSharedDraft, AgentRun]:
-        agent = await ensure_artifact_coding_agent_profile(self.db, organization_id, actor_user_id=user_id)
+        agent = await ensure_artifact_coding_agent_profile(
+            self.db,
+            organization_id,
+            project_id=project_id,
+            actor_user_id=user_id,
+        )
         prepared = await self.prepare_session(
             organization_id=organization_id,
+            project_id=project_id,
             user_id=user_id,
             agent_id=agent.id,
             title_prompt=user_prompt,
@@ -364,6 +383,7 @@ class ArtifactCodingRuntimeService:
 
         return await self._start_session_run(
             organization_id=organization_id,
+            project_id=project_id,
             user_id=user_id,
             session=session,
             shared_draft=shared_draft,
@@ -377,6 +397,7 @@ class ArtifactCodingRuntimeService:
         self,
         *,
         organization_id: UUID,
+        project_id: UUID | None = None,
         user_id: UUID,
         chat_session_id: UUID,
         orchestrator_prompt: str,
@@ -384,12 +405,14 @@ class ArtifactCodingRuntimeService:
     ) -> tuple[ArtifactCodingSession, ArtifactCodingSharedDraft, AgentRun]:
         session = await self._get_session_for_user(
             organization_id=organization_id,
+            project_id=project_id,
             user_id=user_id,
             session_id=chat_session_id,
         )
         shared_draft = await self.shared_drafts.resolve_for_session(session=session)
         return await self._start_session_run(
             organization_id=organization_id,
+            project_id=project_id,
             user_id=user_id,
             session=session,
             shared_draft=shared_draft,
@@ -403,6 +426,7 @@ class ArtifactCodingRuntimeService:
         self,
         *,
         organization_id: UUID,
+        project_id: UUID | None = None,
         user_id: UUID,
         session: ArtifactCodingSession,
         shared_draft: ArtifactCodingSharedDraft,
@@ -411,9 +435,15 @@ class ArtifactCodingRuntimeService:
         model_id: str | None,
         background: bool,
     ) -> tuple[ArtifactCodingSession, ArtifactCodingSharedDraft, AgentRun]:
-        agent = await ensure_artifact_coding_agent_profile(self.db, organization_id, actor_user_id=user_id)
+        agent = await ensure_artifact_coding_agent_profile(
+            self.db,
+            organization_id,
+            project_id=project_id,
+            actor_user_id=user_id,
+        )
         prepared = await self.prepare_session_run_input(
             organization_id=organization_id,
+            project_id=project_id,
             user_id=user_id,
             session=session,
             shared_draft=shared_draft,
@@ -450,6 +480,7 @@ class ArtifactCodingRuntimeService:
         self,
         *,
         organization_id: UUID,
+        project_id: UUID | None = None,
         user_id: UUID,
         session: ArtifactCodingSession,
         shared_draft: ArtifactCodingSharedDraft,
@@ -488,6 +519,7 @@ class ArtifactCodingRuntimeService:
             "requested_model_id": model_id,
             "thread_id": str(session.agent_thread_id),
             "organization_id": str(organization_id),
+            "project_id": str(project_id) if project_id else None,
             "user_id": str(user_id),
             "initiator_user_id": str(user_id),
             "conversation_message_role": prompt_role,
@@ -636,12 +668,14 @@ class ArtifactCodingRuntimeService:
         self,
         *,
         organization_id: UUID,
+        project_id: UUID | None = None,
         user_id: UUID,
         session_id: UUID,
         reconcile_run_id: UUID | None = None,
     ) -> tuple[ArtifactCodingSession, ArtifactCodingSharedDraft, Artifact | None, AgentRun | None, ArtifactRun | None]:
         session = await self._get_session_for_user(
             organization_id=organization_id,
+            project_id=project_id,
             user_id=user_id,
             session_id=session_id,
         )
@@ -664,6 +698,7 @@ class ArtifactCodingRuntimeService:
             artifact = await self.registry.get_organization_artifact(
                 artifact_id=artifact_id,
                 organization_id=organization_id,
+                project_id=project_id,
             )
         last_test_run = await self.db.get(ArtifactRun, shared_draft.last_test_run_id) if shared_draft.last_test_run_id else None
         return session, shared_draft, artifact, run, last_test_run

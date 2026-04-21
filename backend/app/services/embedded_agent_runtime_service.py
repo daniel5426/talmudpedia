@@ -52,6 +52,7 @@ async def stream_embedded_agent(
             agent_id=agent.id,
             surface_context=RuntimeSurfaceContext(
                 organization_id=agent.organization_id,
+                project_id=agent.project_id,
                 surface=AgentThreadSurface.embedded_runtime,
                 event_view=RuntimeEventView.public_safe,
                 agent_id=agent.id,

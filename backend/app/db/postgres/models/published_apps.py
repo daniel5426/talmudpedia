@@ -110,6 +110,7 @@ class PublishedApp(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=True, index=True)
     agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id", ondelete="RESTRICT"), nullable=False, index=True)
 
     name = Column(String, nullable=False)
@@ -149,6 +150,7 @@ class PublishedApp(Base):
     published_at = Column(DateTime(timezone=True), nullable=True)
 
     organization = relationship("Organization")
+    project = relationship("Project")
     agent = relationship("Agent")
     creator = relationship("User")
     default_policy_set = relationship("ResourcePolicySet", foreign_keys=[default_policy_set_id])
@@ -199,7 +201,7 @@ class PublishedApp(Base):
     )
 
     __table_args__ = (
-        UniqueConstraint("organization_id", "name", name="uq_published_apps_organization_name"),
+        UniqueConstraint("organization_id", "project_id", "name", name="uq_published_apps_project_name"),
         UniqueConstraint("organization_id", "public_id", name="uq_published_apps_organization_public_id"),
     )
 
@@ -677,6 +679,7 @@ class PublishedAppDraftWorkspace(Base):
         nullable=False,
         index=True,
     )
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=True, index=True)
     revision_id = Column(
         UUID(as_uuid=True),
         ForeignKey("published_app_revisions.id", ondelete="SET NULL"),
@@ -707,6 +710,7 @@ class PublishedAppDraftWorkspace(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
     published_app = relationship("PublishedApp", back_populates="draft_workspace")
+    project = relationship("Project")
     revision = relationship("PublishedAppRevision")
     draft_dev_sessions = relationship("PublishedAppDraftDevSession", back_populates="draft_workspace")
 
@@ -725,6 +729,7 @@ class PublishedAppDraftDevSession(Base):
         nullable=False,
         index=True,
     )
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=True, index=True)
     user_id = Column(
         UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="CASCADE"),
@@ -762,6 +767,7 @@ class PublishedAppDraftDevSession(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
     published_app = relationship("PublishedApp", back_populates="draft_dev_sessions")
+    project = relationship("Project")
     draft_workspace = relationship("PublishedAppDraftWorkspace", back_populates="draft_dev_sessions")
     revision = relationship("PublishedAppRevision")
     user = relationship("User")
@@ -788,6 +794,7 @@ class PublishedAppPublishJob(Base):
         nullable=False,
         index=True,
     )
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=True, index=True)
     requested_by = Column(
         UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="SET NULL"),
@@ -828,6 +835,7 @@ class PublishedAppPublishJob(Base):
 
     published_app = relationship("PublishedApp", back_populates="publish_jobs")
     organization = relationship("Organization")
+    project = relationship("Project")
     requester = relationship("User")
     source_revision = relationship("PublishedAppRevision", foreign_keys=[source_revision_id])
     saved_draft_revision = relationship("PublishedAppRevision", foreign_keys=[saved_draft_revision_id])

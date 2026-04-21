@@ -524,6 +524,7 @@ class PublishedAppDraftDevRuntimeService:
         candidate = PublishedAppDraftWorkspace(
             id=uuid4(),
             published_app_id=app.id,
+            project_id=app.project_id,
             sprite_name="",
             status=PublishedAppDraftWorkspaceStatus.stopped,
             runtime_backend=self.client.backend_name,
@@ -556,6 +557,7 @@ class PublishedAppDraftDevRuntimeService:
         candidate = PublishedAppDraftDevSession(
             id=uuid4(),
             published_app_id=app.id,
+            project_id=app.project_id,
             user_id=user_id,
             revision_id=revision.id,
             status=PublishedAppDraftDevSessionStatus.starting,
