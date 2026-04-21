@@ -131,7 +131,12 @@ def _serialize_message_for_accounting(message: Any) -> dict[str, Any]:
 
 def _serialize_tool_for_accounting(tool: Any) -> dict[str, Any]:
     return {
-        "name": str(getattr(tool, "name", None) or getattr(tool, "slug", None) or ""),
+        "name": str(
+            getattr(tool, "builtin_key", None)
+            or getattr(tool, "name", None)
+            or getattr(tool, "id", None)
+            or ""
+        ),
         "description": getattr(tool, "description", None),
         "input_schema": getattr(tool, "input_schema", None),
         "parameter_schema": getattr(tool, "parameter_schema", None),
@@ -957,7 +962,12 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
         )
 
     def _build_langchain_tool(self, tool: Any) -> BaseTool:
-        tool_name = getattr(tool, "slug", None) or getattr(tool, "name", "tool")
+        tool_name = (
+            getattr(tool, "builtin_key", None)
+            or getattr(tool, "name", None)
+            or getattr(tool, "id", None)
+            or "tool"
+        )
         description = getattr(tool, "description", "") or ""
         schema = parse_schema_dict(getattr(tool, "schema", {}) or {})
         input_schema = sanitize_schema_dict(schema.get("input", {}) if isinstance(schema, dict) else {}, tool_name=tool_name)
@@ -1008,18 +1018,18 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
             return []
 
         stmt = select(ToolRegistry).where(ToolRegistry.id.in_(valid_ids))
-        if self.tenant_id is None:
-            stmt = stmt.where(ToolRegistry.tenant_id == None)
+        if self.organization_id is None:
+            stmt = stmt.where(ToolRegistry.organization_id == None)
         else:
             stmt = stmt.where(
                 or_(
-                    ToolRegistry.tenant_id == self.tenant_id,
-                    ToolRegistry.tenant_id == None,
+                    ToolRegistry.organization_id == self.organization_id,
+                    ToolRegistry.organization_id == None,
                 )
             )
         result = await self.db.execute(stmt)
         tools = list(result.scalars().all())
-        resolver = PromptReferenceResolver(self.db, self.tenant_id)
+        resolver = PromptReferenceResolver(self.db, self.organization_id)
         resolved_tools: list[Any] = []
         for tool in tools:
             schema = tool.schema if isinstance(tool.schema, dict) else {}
@@ -1036,7 +1046,7 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
             if not tool_payload:
                 for attr in (
                     "id",
-                    "tenant_id",
+                    "organization_id",
                     "name",
                     "slug",
                     "description",
@@ -1313,13 +1323,13 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
             if not tool:
                 continue
             record_id = str(getattr(tool, "id", "") or "").strip()
+            record_key = str(getattr(tool, "builtin_key", "") or "").strip()
             record_name = str(getattr(tool, "name", "") or "").strip()
-            record_slug = str(getattr(tool, "slug", "") or "").strip()
-            if tool_name_lower in {record_name.lower(), record_slug.lower()}:
+            if tool_name_lower in {record_name.lower(), record_key.lower()}:
                 return record_id or None
             normalized_name = _normalize_tool_label(record_name)
-            normalized_slug = _normalize_tool_label(record_slug)
-            if normalized_tool_name and normalized_tool_name in {normalized_name, normalized_slug}:
+            normalized_key = _normalize_tool_label(record_key)
+            if normalized_tool_name and normalized_tool_name in {normalized_name, normalized_key}:
                 return record_id or None
 
         if not self.db:
@@ -1341,13 +1351,13 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
                 return None
 
             stmt = select(ToolRegistry).where(ToolRegistry.id.in_(tool_ids))
-            if self.tenant_id is None:
-                stmt = stmt.where(ToolRegistry.tenant_id == None)
+            if self.organization_id is None:
+                stmt = stmt.where(ToolRegistry.organization_id == None)
             else:
                 stmt = stmt.where(
                     or_(
-                        ToolRegistry.tenant_id == self.tenant_id,
-                        ToolRegistry.tenant_id == None,
+                        ToolRegistry.organization_id == self.organization_id,
+                        ToolRegistry.organization_id == None,
                     )
                 )
             result = await self.db.execute(stmt)
@@ -1359,17 +1369,17 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
         for tool in tools:
             if not tool:
                 continue
+            builtin_key = str(getattr(tool, "builtin_key", "") or "").lower()
             name = str(tool.name).lower() if tool.name else ""
-            slug = str(tool.slug).lower() if getattr(tool, "slug", None) else ""
-            if tool_name_lower in (name, slug):
+            if tool_name_lower in (name, builtin_key):
                 return str(tool.id)
             normalized_name = _normalize_tool_label(tool.name)
-            normalized_slug = _normalize_tool_label(getattr(tool, "slug", ""))
-            if normalized_tool_name and normalized_tool_name in (normalized_name, normalized_slug):
+            normalized_key = _normalize_tool_label(getattr(tool, "builtin_key", ""))
+            if normalized_tool_name and normalized_tool_name in (normalized_name, normalized_key):
                 return str(tool.id)
             if normalized_tool_name and (
                 f" {normalized_tool_name} " in f" {normalized_name} "
-                or f" {normalized_tool_name} " in f" {normalized_slug} "
+                or f" {normalized_tool_name} " in f" {normalized_key} "
             ):
                 normalized_matches.append(str(tool.id))
 
@@ -1388,7 +1398,7 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
             merged_nested_ctx.update(nested_state.get("context") or {})
             nested_state["context"] = merged_nested_ctx
         tool_state["state"] = nested_state
-        # Keep existing context metadata (run/grant/tenant/token) while overlaying tool input.
+        # Keep existing context metadata (run/grant/organization/token) while overlaying tool input.
         base_context = state.get("context") if isinstance(state, dict) and isinstance(state.get("context"), dict) else {}
         merged_context = dict(base_context or {})
         if isinstance(tool_input, dict):
@@ -1488,7 +1498,7 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
         node_name = config.get("name", "Agent")
         
         # Resolve model
-        resolver = ModelResolver(self.db, self.tenant_id)
+        resolver = ModelResolver(self.db, self.organization_id)
         policy_snapshot = _policy_snapshot_from_state(state)
         try:
             resolved_execution = await resolver.resolve_for_execution(model_id, policy_snapshot=policy_snapshot)
@@ -1543,14 +1553,14 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
 
             tool_records = await self._load_tool_records(tools)
             mcp_tools: list[Any] = []
-            if self.db is not None and self.tenant_id is not None:
+            if self.db is not None and self.organization_id is not None:
                 agent_id_raw = (context or {}).get("agent_id")
                 if agent_id_raw:
                     try:
                         agent_uuid = UUID(str(agent_id_raw))
                         runtime_user_id = (context or {}).get("initiator_user_id") or (context or {}).get("user_id")
                         runtime_user_uuid = UUID(str(runtime_user_id)) if runtime_user_id else None
-                        mcp_tools = await McpRuntimeService(self.db, self.tenant_id).list_agent_tools(
+                        mcp_tools = await McpRuntimeService(self.db, self.organization_id).list_agent_tools(
                             agent_id=agent_uuid,
                             user_id=runtime_user_uuid,
                         )
@@ -1559,10 +1569,13 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
             if mcp_tools:
                 tool_records.extend(mcp_tools)
             tool_records_by_id = {str(t.id): t for t in tool_records if getattr(t, "id", None)}
-            tool_records_by_slug = {
-                str(getattr(t, "slug", "")).strip(): t
+            tool_records_by_name = {
+                str(
+                    getattr(t, "builtin_key", None)
+                    or getattr(t, "name", "")
+                ).strip(): t
                 for t in tool_records
-                if getattr(t, "slug", None)
+                if getattr(t, "builtin_key", None) or getattr(t, "name", None)
             }
             effective_tools = list(tools or []) + [str(t.id) for t in mcp_tools if getattr(t, "id", None)]
             langchain_tools = [self._build_langchain_tool(t) for t in tool_records] if tool_records else []
@@ -1601,7 +1614,7 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
                     api_key=getattr(adapter.provider, "api_key", None),
                 )
                 max_context_tokens, max_context_tokens_source = await ModelLimitsService(self.db).resolve_input_limit(
-                    tenant_id=self.tenant_id,
+                    organization_id=self.organization_id,
                     model_id=str(getattr(resolved_execution.logical_model, "id", None) or model_id),
                     resolved_provider=resolved_execution.resolved_provider,
                     resolved_provider_model_id=resolved_execution.binding.provider_model_id,
@@ -1747,9 +1760,12 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
                         tool_record = None
                         if not call_name and call_tool_id:
                             tool_record = tool_records_by_id.get(str(call_tool_id))
-                            call_name = getattr(tool_record, "slug", None) or getattr(tool_record, "name", None)
+                            call_name = (
+                                getattr(tool_record, "builtin_key", None)
+                                or getattr(tool_record, "name", None)
+                            )
                         elif call_name:
-                            tool_record = tool_records_by_slug.get(str(call_name).strip())
+                            tool_record = tool_records_by_name.get(str(call_name).strip())
 
                         if not call_name:
                             continue
@@ -1846,7 +1862,7 @@ class ReasoningNodeExecutor(BaseNodeExecutor):
                     }
 
                 from app.agent.executors.tool import ToolNodeExecutor
-                tool_executor = ToolNodeExecutor(self.tenant_id, self.db)
+                tool_executor = ToolNodeExecutor(self.organization_id, self.db)
 
                 async def _run_tool_call(call: Dict[str, Any]) -> Tuple[str, Any]:
                     tool_state = self._build_tool_state(state, call["input"])
@@ -2326,7 +2342,7 @@ def register_standard_operators():
             "inputType": "any",
             "outputType": "context",
             "configFields": [
-                {"name": "model_id", "label": "STT Model", "fieldType": "model", "required": False, "description": "Defaults to the tenant/global speech-to-text model"},
+                {"name": "model_id", "label": "STT Model", "fieldType": "model", "required": False, "description": "Defaults to the organization/global speech-to-text model"},
                 {"name": "source", "label": "Audio Source", "fieldType": "value_ref", "required": True, "description": "Select workflow_input.audio or another audio attachment value"},
                 {"name": "language_hints", "label": "Language Hints", "fieldType": "text", "required": False, "description": "Optional comma-separated language codes"},
                 {"name": "prompt", "label": "Prompt", "fieldType": "text", "required": False, "description": "Optional provider hint text"},
@@ -2460,7 +2476,6 @@ def register_standard_operators():
             "type": "object",
             "properties": {
                 "target_agent_id": {"type": "string"},
-                "target_agent_slug": {"type": "string"},
                 "mapped_input_payload": {"type": "object"},
                 "scope_subset": {"type": "array", "items": {"type": "string"}},
                 "idempotency_key": {"type": "string"},
@@ -2475,8 +2490,7 @@ def register_standard_operators():
             "inputType": "context",
             "outputType": "context",
             "configFields": [
-                {"name": "target_agent_slug", "label": "Target Agent", "fieldType": "agent_select", "required": False, "visibility": "simple", "group": "what_to_run"},
-                {"name": "target_agent_id", "label": "Target Agent (ID)", "fieldType": "agent_select", "required": False, "visibility": "advanced", "group": "what_to_run", "helpKind": "runtime-internal"},
+                {"name": "target_agent_id", "label": "Target Agent", "fieldType": "agent_select", "required": True, "visibility": "simple", "group": "what_to_run"},
                 {"name": "scope_subset", "label": "Scope Subset", "fieldType": "scope_subset", "required": True, "visibility": "simple", "group": "permissions", "helpKind": "required-for-compile"},
                 {"name": "idempotency_key", "label": "Idempotency Key", "fieldType": "string", "required": False, "visibility": "advanced", "group": "reliability", "helpKind": "runtime-internal"},
                 {

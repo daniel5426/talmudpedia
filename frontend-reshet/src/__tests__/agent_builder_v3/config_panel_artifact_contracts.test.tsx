@@ -20,7 +20,7 @@ jest.mock("@/services", () => ({
       {
         type: artifactType,
         category: "action",
-        display_name: "Tenant Artifact",
+        display_name: "Organization Artifact",
         description: "Artifact-backed node",
         reads: [],
         writes: [],
@@ -43,8 +43,8 @@ jest.mock("@/services", () => ({
   },
 }))
 
-jest.mock("@/contexts/TenantContext", () => ({
-  useTenant: () => ({ currentTenant: null }),
+jest.mock("@/contexts/OrganizationContext", () => ({
+  useOrganization: () => ({ currentOrganization: null }),
 }))
 
 jest.mock("@/components/shared/PromptModal", () => ({
@@ -69,7 +69,7 @@ describe("ConfigPanel artifact contracts", () => {
         data={{
           nodeType: artifactType as any,
           category: "action",
-          displayName: "Tenant Artifact",
+          displayName: "Organization Artifact",
           config: {},
           inputType: "any",
           outputType: "context",

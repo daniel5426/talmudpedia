@@ -7,7 +7,7 @@ from sqlalchemy import select
 
 from app.api.dependencies import get_current_principal
 from app.db.postgres.models.agents import Agent, AgentStatus
-from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Tenant, User
+from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Organization, User
 from app.db.postgres.models.registry import ToolRegistry, ToolStatus, ToolVersion
 from app.services.agent_service import AgentService
 from app.services.tool_binding_service import ToolBindingService
@@ -15,18 +15,18 @@ from main import app
 
 
 async def _seed_tenant_context(db_session):
-    tenant = Tenant(id=uuid.uuid4(), name="Agent Binding Tenant", slug=f"agent-binding-{uuid.uuid4().hex[:8]}")
+    tenant = Organization(id=uuid.uuid4(), name="Agent Binding Organization", slug=f"agent-binding-{uuid.uuid4().hex[:8]}")
     user = User(id=uuid.uuid4(), email=f"agent-binding-{uuid.uuid4().hex[:6]}@example.com", role="admin")
     org_unit = OrgUnit(
         id=uuid.uuid4(),
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name="Agent Binding Org",
         slug=f"agent-binding-org-{uuid.uuid4().hex[:6]}",
         type=OrgUnitType.org,
     )
     membership = OrgMembership(
         id=uuid.uuid4(),
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         org_unit_id=org_unit.id,
         role=OrgRole.owner,
@@ -37,23 +37,23 @@ async def _seed_tenant_context(db_session):
     return tenant, user
 
 
-def _override_principal(tenant_id, user, scopes: list[str]):
+def _override_principal(organization_id, user, scopes: list[str]):
     async def _inner():
         return {
             "type": "user",
             "user": user,
             "user_id": str(user.id),
-            "tenant_id": str(tenant_id),
+            "organization_id": str(organization_id),
             "scopes": scopes,
         }
 
     return _inner
 
 
-async def _seed_agent(db_session, *, tenant_id, user_id, status: AgentStatus = AgentStatus.draft) -> Agent:
+async def _seed_agent(db_session, *, organization_id, user_id, status: AgentStatus = AgentStatus.draft) -> Agent:
     agent = Agent(
         id=uuid.uuid4(),
-        tenant_id=tenant_id,
+        organization_id=organization_id,
         name="Delegated Helper",
         slug=f"delegated-helper-{uuid.uuid4().hex[:8]}",
         description="Agent export target",
@@ -104,7 +104,7 @@ async def _get_agent_tool(db_session, agent_id) -> ToolRegistry | None:
 @pytest.mark.asyncio
 async def test_export_agent_tool_creates_agent_bound_registry_row(client, db_session):
     tenant, user = await _seed_tenant_context(db_session)
-    agent = await _seed_agent(db_session, tenant_id=tenant.id, user_id=user.id)
+    agent = await _seed_agent(db_session, organization_id=tenant.id, user_id=user.id)
     app.dependency_overrides[get_current_principal] = _override_principal(
         tenant.id,
         user,
@@ -154,7 +154,7 @@ async def test_export_agent_tool_creates_agent_bound_registry_row(client, db_ses
 @pytest.mark.asyncio
 async def test_publishing_agent_syncs_existing_exported_tool(db_session):
     tenant, user = await _seed_tenant_context(db_session)
-    agent = await _seed_agent(db_session, tenant_id=tenant.id, user_id=user.id)
+    agent = await _seed_agent(db_session, organization_id=tenant.id, user_id=user.id)
     service = AgentService(db_session, tenant.id)
 
     exported = await ToolBindingService(db_session).export_agent_tool_binding(
@@ -182,7 +182,7 @@ async def test_publishing_agent_syncs_existing_exported_tool(db_session):
 @pytest.mark.asyncio
 async def test_deleting_agent_deletes_exported_tool_binding(db_session):
     tenant, user = await _seed_tenant_context(db_session)
-    agent = await _seed_agent(db_session, tenant_id=tenant.id, user_id=user.id)
+    agent = await _seed_agent(db_session, organization_id=tenant.id, user_id=user.id)
     tool = await ToolBindingService(db_session).export_agent_tool_binding(agent=agent, created_by=user.id)
     await db_session.commit()
 

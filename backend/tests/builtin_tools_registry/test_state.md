@@ -1,6 +1,6 @@
 # Built-in Tools Registry Tests
 
-Last Updated: 2026-04-13
+Last Updated: 2026-04-21
 
 ## Scope
 Covers built-in catalog behavior plus ownership-aware `/tools` control-plane behavior for system rows and owner-managed bound rows.
@@ -30,6 +30,12 @@ Covers built-in catalog behavior plus ownership-aware `/tools` control-plane beh
 - Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/builtin_tools_registry/test_builtin_registry_api.py backend/tests/tools_guardrails/test_tools_api_guardrails.py backend/tests/tools_guardrails/test_tool_tenant_scoping.py backend/tests/published_apps/test_builder_agent_integration_contract.py::test_builder_agent_contract_includes_ui_blocks_frontend_requirements`
 - Date/Time: 2026-04-13 Asia/Hebron
 - Result: PASS (`22 passed, 9 warnings`)
+- Command: `SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest backend/tests/builtin_tools_registry/test_builtin_registry_api.py`
+- Date/Time: 2026-04-21 Asia/Hebron
+- Result: PASS (`9 passed`)
+- Command: `SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest backend/tests/organization_bootstrap/test_default_agent_profiles.py backend/tests/builtin_tools_registry/test_builtin_registry_api.py backend/tests/platform_architect_runtime/test_architect_seeding.py backend/tests/platform_architect_runtime/test_native_platform_tools.py backend/tests/settings_people_permissions/test_settings_people_permissions_api.py backend/tests/graph_mutation_agents/test_agent_graph_mutation_routes.py backend/tests/rag_extreme_campaign/test_admin_graph_and_jobs_api.py backend/tests/artifact_runtime/test_artifact_versions_api.py`
+- Date/Time: 2026-04-21 Asia/Hebron
+- Result: PASS (`30 passed`). Built-in catalog assertions were updated to the post-slug-cut global builtin/system catalog contract (`organization_id`, no slug assumptions, larger page size for bounded list checks).
 
 ## Known gaps or follow-ups
 - Add disabled-flag coverage for built-in catalog endpoint (`BUILTIN_TOOLS_V1=0`).

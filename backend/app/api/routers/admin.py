@@ -14,6 +14,7 @@ from app.db.postgres.models.agent_threads import AgentThread, AgentThreadTurn
 from app.db.postgres.models.agents import AgentRun
 from app.core.scope_registry import is_platform_admin_role
 from app.services.admin_monitoring_service import AdminMonitoringService
+from app.services.runtime_surface.threads import serialize_turn_base
 from app.services.thread_detail_service import serialize_thread_tree
 from app.services.runtime_attachment_service import RuntimeAttachmentService
 from app.services.model_accounting import usage_payload_from_run, usage_total_expr
@@ -38,26 +39,9 @@ def _serialize_run_usage(run: AgentRun | None) -> dict[str, Any] | None:
 
 
 async def _serialize_admin_turn(turn: AgentThreadTurn) -> dict[str, Any]:
-    metadata = turn.metadata_ if isinstance(turn.metadata_, dict) else {}
-    return {
-        "id": str(turn.id),
-        "run_id": str(turn.run_id),
-        "turn_index": int(turn.turn_index or 0),
-        "status": turn.status.value if hasattr(turn.status, "value") else str(turn.status),
-        "user_input_text": turn.user_input_text,
-        "assistant_output_text": turn.assistant_output_text,
-        "run_usage": _serialize_run_usage(getattr(turn, "run", None)),
-        "context_window": getattr(getattr(turn, "run", None), "context_window_json", None),
-        "created_at": turn.created_at,
-        "completed_at": turn.completed_at,
-        "attachments": [
-            RuntimeAttachmentService.serialize_attachment(link.attachment)
-            for link in (turn.attachment_links or [])
-            if getattr(link, "attachment", None) is not None
-        ],
-        "metadata": metadata,
-        "response_blocks": metadata.get("response_blocks") if isinstance(metadata.get("response_blocks"), list) else [],
-    }
+    payload = serialize_turn_base(turn, run_usage=_serialize_run_usage(getattr(turn, "run", None)))
+    payload["context_window"] = getattr(getattr(turn, "run", None), "context_window_json", None)
+    return payload
 
 # --- Dependencies & Helpers ---
 
@@ -67,8 +51,8 @@ async def get_admin_context(
 ) -> Dict[str, Any]:
     """
     Returns admin context.
-    - platform admin users can access global view (tenant_id=None)
-    - tenant users require membership and operate within token tenant context
+    - platform admin users can access global view (organization_id=None)
+    - organization users require membership and operate within token organization context
     """
     if principal.get("type") != "user":
         raise HTTPException(status_code=403, detail="Only user principals can access admin APIs")
@@ -78,24 +62,24 @@ async def get_admin_context(
         raise HTTPException(status_code=401, detail="User not found")
 
     if is_platform_admin_role(getattr(current_user, "role", None)):
-        return {"user": current_user, "tenant_id": None}
+        return {"user": current_user, "organization_id": None}
 
-    tenant_id_raw = principal.get("tenant_id")
-    if not tenant_id_raw:
-        raise HTTPException(status_code=403, detail="Tenant context required")
+    organization_id_raw = principal.get("organization_id")
+    if not organization_id_raw:
+        raise HTTPException(status_code=403, detail="Organization context required")
     try:
-        tenant_id = UUID(str(tenant_id_raw))
+        organization_id = UUID(str(organization_id_raw))
     except Exception:
-        raise HTTPException(status_code=400, detail="Invalid tenant context")
+        raise HTTPException(status_code=400, detail="Invalid organization context")
 
     result = await db.execute(select(OrgMembership).where(
         OrgMembership.user_id == current_user.id,
-        OrgMembership.tenant_id == tenant_id,
+        OrgMembership.organization_id == organization_id,
     ).limit(1))
     membership = result.scalar_one_or_none()
     if membership is None:
-        raise HTTPException(status_code=403, detail="Not authorized for tenant")
-    return {"user": current_user, "tenant_id": membership.tenant_id}
+        raise HTTPException(status_code=403, detail="Not authorized for organization")
+    return {"user": current_user, "organization_id": membership.organization_id}
 
 class UserUpdate(BaseModel):
     full_name: Optional[str] = None
@@ -110,7 +94,7 @@ async def get_admin_stats(
     context: Dict[str, Any] = Depends(get_admin_context),
     db: AsyncSession = Depends(get_db)
 ):
-    tenant_id = context["tenant_id"]
+    organization_id= context["organization_id"]
     
     # Date Filtering Logic
     now = datetime.now(timezone.utc)
@@ -138,20 +122,20 @@ async def get_admin_stats(
             )
         )
     )
-    if tenant_id:
-        q_active = q_active.where(AgentRun.tenant_id == tenant_id)
+    if organization_id:
+        q_active = q_active.where(AgentRun.organization_id == organization_id)
     total_active_users = int((await db.execute(q_active)).scalar() or 0)
 
     # 2. Total Threads
     q_threads = select(func.count(AgentThread.id))
-    if tenant_id:
-        q_threads = q_threads.where(AgentThread.tenant_id == tenant_id)
+    if organization_id:
+        q_threads = q_threads.where(AgentThread.organization_id == organization_id)
     total_chats = int((await db.execute(q_threads)).scalar() or 0)
 
     # 3. Total Turns (treated as message units for dashboard continuity).
     q_turns = select(func.count(AgentThreadTurn.id)).join(AgentThread, AgentThreadTurn.thread_id == AgentThread.id)
-    if tenant_id:
-        q_turns = q_turns.where(AgentThread.tenant_id == tenant_id)
+    if organization_id:
+        q_turns = q_turns.where(AgentThread.organization_id == organization_id)
     total_messages = int((await db.execute(q_turns)).scalar() or 0)
 
     # 4. Avg Turns/Thread
@@ -159,8 +143,8 @@ async def get_admin_stats(
 
     # 5. Token Usage from run ledger.
     q_tokens = select(func.coalesce(func.sum(usage_total_expr(AgentRun)), 0))
-    if tenant_id:
-        q_tokens = q_tokens.where(AgentRun.tenant_id == tenant_id)
+    if organization_id:
+        q_tokens = q_tokens.where(AgentRun.organization_id == organization_id)
     estimated_tokens = int((await db.execute(q_tokens)).scalar() or 0)
 
     # 6. Daily Active Users (DAU) from run activity.
@@ -179,15 +163,15 @@ async def get_admin_stats(
         .group_by(func.date_trunc(text("'day'"), AgentRun.created_at))
         .order_by(text("date ASC"))
     )
-    if tenant_id:
-        q_dau = q_dau.where(AgentRun.tenant_id == tenant_id)
+    if organization_id:
+        q_dau = q_dau.where(AgentRun.organization_id == organization_id)
     dau_result = (await db.execute(q_dau)).all()
     daily_active_users = [{"date": r.date.strftime("%Y-%m-%d"), "count": int(r.count or 0)} for r in dau_result]
 
     # 7. New Users (Last 7 Days)
     q_new_users = select(func.count(User.id)).where(User.created_at >= seven_days_ago)
-    if tenant_id:
-        q_new_users = q_new_users.join(OrgMembership).where(OrgMembership.tenant_id == tenant_id)
+    if organization_id:
+        q_new_users = q_new_users.join(OrgMembership).where(OrgMembership.organization_id == organization_id)
     new_users_count = int((await db.execute(q_new_users)).scalar() or 0)
 
     # 8. Thread Volume Trend
@@ -200,8 +184,8 @@ async def get_admin_stats(
         .group_by(func.date_trunc(text("'day'"), AgentThread.created_at))
         .order_by(text("date ASC"))
     )
-    if tenant_id:
-        q_vol = q_vol.where(AgentThread.tenant_id == tenant_id)
+    if organization_id:
+        q_vol = q_vol.where(AgentThread.organization_id == organization_id)
     vol_result = (await db.execute(q_vol)).all()
     daily_chat_stats = [{"date": r.date.strftime("%Y-%m-%d"), "chats": int(r.count or 0)} for r in vol_result]
 
@@ -214,8 +198,8 @@ async def get_admin_stats(
         .order_by(desc("msg_count"))
         .limit(5)
     )
-    if tenant_id:
-        q_top = q_top.where(AgentRun.tenant_id == tenant_id)
+    if organization_id:
+        q_top = q_top.where(AgentRun.organization_id == organization_id)
     top_users_res = (await db.execute(q_top)).all()
     top_users = [{"email": r.email, "count": int(r.msg_count or 0)} for r in top_users_res]
 
@@ -226,8 +210,8 @@ async def get_admin_stats(
         .limit(5)
         .options(selectinload(AgentThread.user))
     )
-    if tenant_id:
-        q_recent = q_recent.where(AgentThread.tenant_id == tenant_id)
+    if organization_id:
+        q_recent = q_recent.where(AgentThread.organization_id == organization_id)
     recent_threads_res = (await db.execute(q_recent)).scalars().all()
 
     latest_chats = [
@@ -242,8 +226,8 @@ async def get_admin_stats(
 
     # Total Users Count
     q_total_users = select(func.count(User.id))
-    if tenant_id:
-        q_total_users = q_total_users.join(OrgMembership).where(OrgMembership.tenant_id == tenant_id)
+    if organization_id:
+        q_total_users = q_total_users.join(OrgMembership).where(OrgMembership.organization_id == organization_id)
     total_users = int((await db.execute(q_total_users)).scalar() or 0)
 
     return {
@@ -271,12 +255,12 @@ async def bulk_delete_users(
         # Convert strings to UUIDs
         uuids = [UUID(uid) for uid in user_ids]
         
-        # Security: If tenant admin, verify these users belong to tenant
-        tenant_id = context["tenant_id"]
-        if tenant_id:
+        # Security: If organization admin, verify these users belong to organization
+        organization_id= context["organization_id"]
+        if organization_id:
             # Subquery to check membership
             verify_q = select(OrgMembership.user_id).where(
-                and_(OrgMembership.tenant_id == tenant_id, OrgMembership.user_id.in_(uuids))
+                and_(OrgMembership.organization_id == organization_id, OrgMembership.user_id.in_(uuids))
             )
             verified_ids = (await db.execute(verify_q)).scalars().all()
             if len(verified_ids) != len(uuids):
@@ -302,15 +286,15 @@ async def bulk_delete_threads(
 ):
     try:
         uuids = [UUID(tid) for tid in thread_ids]
-        tenant_id = context["tenant_id"]
+        organization_id= context["organization_id"]
 
         q = text("DELETE FROM agent_threads WHERE id = ANY(:ids)")
         params = {"ids": uuids}
 
-        if tenant_id:
-             # Safer for tenant: delete with and clause
-             q = text("DELETE FROM agent_threads WHERE id = ANY(:ids) AND tenant_id = :tenant_id")
-             params["tenant_id"] = tenant_id
+        if organization_id:
+             # Safer for organization: delete with and clause
+             q = text("DELETE FROM agent_threads WHERE id = ANY(:ids) AND organization_id= :organization_id")
+             params["organization_id"] = organization_id
 
         result = await db.execute(q, params)
         await db.commit()
@@ -331,10 +315,10 @@ async def get_users(
     context: Dict[str, Any] = Depends(get_admin_context),
     db: AsyncSession = Depends(get_db)
 ):
-    tenant_id = context["tenant_id"]
+    organization_id= context["organization_id"]
     period_start, period_end = _current_month_bounds_utc()
 
-    monitoring = AdminMonitoringService(db=db, tenant_id=tenant_id)
+    monitoring = AdminMonitoringService(db=db, organization_id=organization_id)
     users, total = await monitoring.list_monitored_actors(
         month_start=period_start,
         month_end=period_end,
@@ -384,9 +368,9 @@ async def get_threads(
     context: Dict[str, Any] = Depends(get_admin_context),
     db: AsyncSession = Depends(get_db)
 ):
-    tenant_id = context["tenant_id"]
+    organization_id= context["organization_id"]
     period_start, period_end = _current_month_bounds_utc()
-    monitoring = AdminMonitoringService(db=db, tenant_id=tenant_id)
+    monitoring = AdminMonitoringService(db=db, organization_id=organization_id)
     rows, total = await monitoring.list_threads(
         month_start=period_start,
         month_end=period_end,
@@ -407,7 +391,7 @@ async def get_threads(
                 "updated_at": row.updated_at,
                 "agent_id": row.agent_id,
                 "agent_name": row.agent_name,
-                "agent_slug": row.agent_slug,
+                "agent_system_key": row.agent_system_key,
                 "surface": row.surface,
                 "actor_id": row.actor_id,
                 "actor_type": row.actor_type,
@@ -449,15 +433,15 @@ async def get_thread_details(
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid thread ID")
 
-    tenant_id = context["tenant_id"]
+    organization_id= context["organization_id"]
     service = ThreadService(db)
-    monitoring = AdminMonitoringService(db=db, tenant_id=tenant_id)
+    monitoring = AdminMonitoringService(db=db, organization_id=organization_id)
     period_start, period_end = _current_month_bounds_utc()
     repaired = await service.repair_thread_turn_indices(thread_id=tid)
     if repaired:
         await db.commit()
     page_result = await service.get_thread_turn_page(
-        tenant_id=tenant_id,
+        organization_id=organization_id,
         thread_id=tid,
         before_turn_index=before_turn_index,
         limit=limit,
@@ -492,7 +476,7 @@ async def get_thread_details(
         "user_id": str(thread.user_id) if thread.user_id else None,
         "agent_id": str(thread.agent_id) if thread.agent_id else None,
         "agent_name": thread_row.agent_name if thread_row else None,
-        "agent_slug": thread_row.agent_slug if thread_row else None,
+        "agent_system_key": thread_row.agent_system_key if thread_row else None,
         "actor_id": thread_row.actor_id if thread_row else None,
         "actor_type": thread_row.actor_type if thread_row else None,
         "actor_display": thread_row.actor_display if thread_row else None,
@@ -534,9 +518,9 @@ async def get_user_details(
     context: Dict[str, Any] = Depends(get_admin_context),
     db: AsyncSession = Depends(get_db)
 ):
-    tenant_id = context["tenant_id"]
+    organization_id= context["organization_id"]
     period_start, period_end = _current_month_bounds_utc()
-    monitoring = AdminMonitoringService(db=db, tenant_id=tenant_id)
+    monitoring = AdminMonitoringService(db=db, organization_id=organization_id)
     detail = await monitoring.get_monitored_actor_detail(
         user_id,
         month_start=period_start,
@@ -576,14 +560,14 @@ async def update_user(
 ):
     try:
         uid = UUID(user_id)
-        tenant_id = context["tenant_id"]
+        organization_id= context["organization_id"]
         
-         # Verify tenant access
-        if tenant_id:
+         # Verify organization access
+        if organization_id:
              check_mem = await db.execute(
                  select(OrgMembership).where(
                      OrgMembership.user_id == uid, 
-                     OrgMembership.tenant_id == tenant_id
+                     OrgMembership.organization_id == organization_id
                  )
              )
              if not check_mem.scalar_one_or_none():
@@ -613,9 +597,9 @@ async def get_user_threads(
     context: Dict[str, Any] = Depends(get_admin_context),
     db: AsyncSession = Depends(get_db)
 ):
-    tenant_id = context["tenant_id"]
+    organization_id= context["organization_id"]
     period_start, period_end = _current_month_bounds_utc()
-    monitoring = AdminMonitoringService(db=db, tenant_id=tenant_id)
+    monitoring = AdminMonitoringService(db=db, organization_id=organization_id)
     rows, total = await monitoring.list_threads(
         month_start=period_start,
         month_end=period_end,
@@ -634,7 +618,7 @@ async def get_user_threads(
                 "updated_at": row.updated_at,
                 "agent_id": row.agent_id,
                 "agent_name": row.agent_name,
-                "agent_slug": row.agent_slug,
+                "agent_system_key": row.agent_system_key,
                 "surface": row.surface,
                 "actor_id": row.actor_id,
                 "actor_type": row.actor_type,

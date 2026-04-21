@@ -456,7 +456,7 @@ class PublishedAppWorkspaceBuildService:
             ).strip() or None
             storage = PublishedAppBundleStorage.from_env()
             dist_storage_prefix = PublishedAppBundleStorage.build_workspace_build_dist_prefix(
-                tenant_id=str(app.tenant_id),
+                organization_id=str(app.organization_id),
                 app_id=str(app.id),
                 workspace_build_id=str(build.id),
             )
@@ -491,7 +491,7 @@ class PublishedAppWorkspaceBuildService:
             sandbox_id = str(workspace.sandbox_id or "").strip()
             runtime_context = TemplateRuntimeContext(
                 app_id=str(app.id),
-                app_slug=str(app.slug or ""),
+                app_public_id=str(app.public_id or ""),
                 agent_id=str(app.agent_id or ""),
             )
             normalized_entry_file = str(entry_file or "").strip() or "src/main.tsx"

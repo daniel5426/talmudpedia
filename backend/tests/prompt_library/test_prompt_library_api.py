@@ -8,7 +8,7 @@ from sqlalchemy import select
 from app.api.dependencies import get_current_principal
 from app.agent.execution.service import AgentExecutorService
 from app.db.postgres.models.agents import Agent, AgentRun, RunStatus
-from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Tenant, User
+from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Organization, User
 from app.db.postgres.models.prompts import PromptLibrary
 from app.db.postgres.models.registry import ToolDefinitionScope, ToolImplementationType, ToolRegistry, ToolStatus
 from app.db.postgres.models.artifact_runtime import Artifact, ArtifactKind, ArtifactOwnerType, ArtifactRevision, ArtifactStatus
@@ -17,18 +17,18 @@ from main import app
 
 
 async def _seed_tenant_context(db_session):
-    tenant = Tenant(id=uuid.uuid4(), name="Prompt Tenant", slug=f"prompt-{uuid.uuid4().hex[:8]}")
+    tenant = Organization(id=uuid.uuid4(), name="Prompt Organization", slug=f"prompt-{uuid.uuid4().hex[:8]}")
     user = User(id=uuid.uuid4(), email=f"prompt-{uuid.uuid4().hex[:6]}@example.com", role="admin")
     org_unit = OrgUnit(
         id=uuid.uuid4(),
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name="Prompt Org",
         slug=f"prompt-org-{uuid.uuid4().hex[:6]}",
         type=OrgUnitType.org,
     )
     membership = OrgMembership(
         id=uuid.uuid4(),
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         org_unit_id=org_unit.id,
         role=OrgRole.owner,
@@ -39,9 +39,9 @@ async def _seed_tenant_context(db_session):
     return tenant, user
 
 
-def _override_principal(tenant_id, user, scopes: list[str]):
+def _override_principal(organization_id, user, scopes: list[str]):
     user_id = str(user.id)
-    tenant_id_text = str(tenant_id)
+    tenant_id_text = str(organization_id)
     role = str(getattr(user, "role", "admin") or "admin")
 
     async def _inner():
@@ -49,7 +49,7 @@ def _override_principal(tenant_id, user, scopes: list[str]):
             "type": "user",
             "user": None,
             "user_id": user_id,
-            "tenant_id": tenant_id_text,
+            "organization_id": tenant_id_text,
             "scopes": scopes,
             "role": role,
         }
@@ -124,7 +124,7 @@ async def test_prompt_delete_is_blocked_when_agent_references_it(client, db_sess
 
         agent = Agent(
             id=uuid.uuid4(),
-            tenant_id=tenant.id,
+            organization_id=tenant.id,
             name="Prompt Agent",
             slug=f"prompt-agent-{uuid.uuid4().hex[:6]}",
             graph_definition={
@@ -156,7 +156,7 @@ async def test_paused_run_status_includes_resolved_interaction_prompt(db_session
     tenant, user = await _seed_tenant_context(db_session)
     prompt = PromptLibrary(
         id=uuid.uuid4(),
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name="Approval Prompt",
         content="Approve {{ticket}}?",
         scope="tenant",
@@ -169,7 +169,7 @@ async def test_paused_run_status_includes_resolved_interaction_prompt(db_session
     )
     agent = Agent(
         id=uuid.uuid4(),
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name="Paused Agent",
         slug=f"paused-agent-{uuid.uuid4().hex[:6]}",
         graph_definition={
@@ -202,7 +202,7 @@ async def test_usage_scanner_covers_tools_and_artifacts(db_session):
     tenant, _user = await _seed_tenant_context(db_session)
     prompt = PromptLibrary(
         id=uuid.uuid4(),
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name="Schema Prompt",
         content="Used in schemas",
         scope="tenant",
@@ -215,7 +215,7 @@ async def test_usage_scanner_covers_tools_and_artifacts(db_session):
     )
     tool = ToolRegistry(
         id=uuid.uuid4(),
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name="Prompt Tool",
         slug=f"prompt-tool-{uuid.uuid4().hex[:6]}",
         description=f"[[prompt:{prompt.id}]]",
@@ -233,7 +233,7 @@ async def test_usage_scanner_covers_tools_and_artifacts(db_session):
     )
     artifact = Artifact(
         id=uuid.uuid4(),
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         display_name="Prompt Artifact",
         kind=ArtifactKind.TOOL_IMPL,
         owner_type=ArtifactOwnerType.TENANT,
@@ -242,7 +242,7 @@ async def test_usage_scanner_covers_tools_and_artifacts(db_session):
     revision = ArtifactRevision(
         id=uuid.uuid4(),
         artifact_id=artifact.id,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         revision_number=1,
         version_label="draft",
         is_published=False,

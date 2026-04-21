@@ -42,8 +42,8 @@ jest.mock("@/services", () => ({
   },
 }))
 
-jest.mock("@/contexts/TenantContext", () => ({
-  useTenant: () => ({ currentTenant: null }),
+jest.mock("@/contexts/OrganizationContext", () => ({
+  useOrganization: () => ({ currentOrganization: null }),
 }))
 
 jest.mock("@/components/shared/PromptModal", () => ({

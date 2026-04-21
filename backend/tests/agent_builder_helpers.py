@@ -179,7 +179,7 @@ def full_config_for(
 
 async def pick_model_slug(
     db_session,
-    tenant_id,
+    organization_id,
     capability: ModelCapabilityType,
     override_env: str,
 ) -> Optional[str]:
@@ -187,7 +187,7 @@ async def pick_model_slug(
     if override:
         return override
 
-    tenant_priority = case((ModelRegistry.tenant_id == tenant_id, 1), else_=0).desc()
+    tenant_priority = case((ModelRegistry.organization_id == organization_id, 1), else_=0).desc()
     default_priority = case((ModelRegistry.is_default == True, 1), else_=0).desc()
     stmt = (
         select(ModelRegistry)
@@ -195,7 +195,7 @@ async def pick_model_slug(
             ModelRegistry.is_active == True,
             ModelRegistry.status == ModelStatus.ACTIVE,
             ModelRegistry.capability_type == capability,
-            or_(ModelRegistry.tenant_id == tenant_id, ModelRegistry.tenant_id.is_(None)),
+            or_(ModelRegistry.organization_id == organization_id, ModelRegistry.organization_id.is_(None)),
         )
         .order_by(tenant_priority, default_priority, ModelRegistry.updated_at.desc())
         .limit(1)
@@ -205,12 +205,12 @@ async def pick_model_slug(
     return str(model.id) if model else None
 
 
-async def get_chat_model_slug(db_session, tenant_id) -> Optional[str]:
-    return await pick_model_slug(db_session, tenant_id, ModelCapabilityType.CHAT, "TEST_CHAT_MODEL_SLUG")
+async def get_chat_model_slug(db_session, organization_id) -> Optional[str]:
+    return await pick_model_slug(db_session, organization_id, ModelCapabilityType.CHAT, "TEST_CHAT_MODEL_SLUG")
 
 
-async def get_embedding_model_slug(db_session, tenant_id) -> Optional[str]:
-    return await pick_model_slug(db_session, tenant_id, ModelCapabilityType.EMBEDDING, "TEST_EMBED_MODEL_SLUG")
+async def get_embedding_model_slug(db_session, organization_id) -> Optional[str]:
+    return await pick_model_slug(db_session, organization_id, ModelCapabilityType.EMBEDDING, "TEST_EMBED_MODEL_SLUG")
 
 
 def require_pgvector():
@@ -220,13 +220,13 @@ def require_pgvector():
 
 async def create_agent(
     db_session,
-    tenant_id,
+    organization_id,
     user_id,
     name: str,
     slug: str,
     graph_definition: Dict[str, Any],
 ):
-    service = AgentService(db=db_session, tenant_id=tenant_id)
+    service = AgentService(db=db_session, organization_id=organization_id)
     return await service.create_agent(
         CreateAgentData(
             name=name,
@@ -240,13 +240,13 @@ async def create_agent(
 
 async def execute_agent_via_service(
     db_session,
-    tenant_id,
+    organization_id,
     agent_id,
     user_id,
     input_text: str = "hello",
     context: Optional[Dict[str, Any]] = None,
 ):
-    service = AgentService(db=db_session, tenant_id=tenant_id)
+    service = AgentService(db=db_session, organization_id=organization_id)
     return await service.execute_agent(
         agent_id=agent_id,
         data=ExecuteAgentData(input=input_text, context=context or {}),
@@ -267,8 +267,8 @@ async def execute_agent_with_input_params(
     return await db_session.get(AgentRun, run_id)
 
 
-async def delete_agent(db_session, tenant_id, agent_id):
-    service = AgentService(db=db_session, tenant_id=tenant_id)
+async def delete_agent(db_session, organization_id, agent_id):
+    service = AgentService(db=db_session, organization_id=organization_id)
     try:
         await service.delete_agent(agent_id)
     except Exception:
@@ -277,7 +277,7 @@ async def delete_agent(db_session, tenant_id, agent_id):
 
 async def create_retrieval_setup(
     db_session,
-    tenant_id,
+    organization_id,
     user_id,
     run_prefix: str,
 ) -> Tuple[str, str, str]:
@@ -285,13 +285,13 @@ async def create_retrieval_setup(
     Returns (pipeline_id, knowledge_store_id, collection_name).
     """
     require_pgvector()
-    embed_model_id = await get_embedding_model_slug(db_session, tenant_id)
+    embed_model_id = await get_embedding_model_slug(db_session, organization_id)
     if not embed_model_id:
         pytest.skip("No embedding model available for retrieval tests.")
 
     collection_name = f"{run_prefix}_vec"
     store = KnowledgeStore(
-        tenant_id=tenant_id,
+        organization_id=organization_id,
         name=f"{run_prefix}-ks",
         description="test store",
         embedding_model_id=embed_model_id,
@@ -305,7 +305,7 @@ async def create_retrieval_setup(
     await db_session.refresh(store)
 
     # Seed pgvector index with one embedded doc
-    resolver = ModelResolver(db_session, tenant_id)
+    resolver = ModelResolver(db_session, organization_id)
     try:
         embedder = await resolver.resolve_embedding(embed_model_id)
         embedded = await embedder.embed("hello retrieval")
@@ -340,7 +340,7 @@ async def create_retrieval_setup(
     ]
 
     pipeline = VisualPipeline(
-        tenant_id=tenant_id,
+        organization_id=organization_id,
         name=f"{run_prefix}-retrieval",
         description="retrieval pipeline",
         nodes=nodes,
@@ -354,14 +354,14 @@ async def create_retrieval_setup(
     await db_session.refresh(pipeline)
 
     compiler = PipelineCompiler()
-    model_resolver = ModelResolver(db_session, tenant_id)
-    compile_result = await compiler.compile_async(pipeline, model_resolver, compiled_by=str(user_id), tenant_id=str(tenant_id))
+    model_resolver = ModelResolver(db_session, organization_id)
+    compile_result = await compiler.compile_async(pipeline, model_resolver, compiled_by=str(user_id), organization_id=str(organization_id))
     if not compile_result.success or not compile_result.executable_pipeline:
         pytest.skip("Failed to compile retrieval pipeline for tests.")
 
     exec_pipeline = ExecutablePipeline(
         visual_pipeline_id=pipeline.id,
-        tenant_id=tenant_id,
+        organization_id=organization_id,
         version=pipeline.version,
         compiled_graph=compile_result.executable_pipeline.model_dump(mode="json"),
         is_valid=True,

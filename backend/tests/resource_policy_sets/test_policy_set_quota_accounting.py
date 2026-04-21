@@ -24,12 +24,12 @@ async def test_reservation_is_noop_without_snapshot_principal_or_model(
 ):
     tenant = tenant_context["tenant"]
     user = tenant_context["user"]
-    model = await resource_factory.model(tenant_id=tenant.id, name="Noop Model")
+    model = await resource_factory.model(organization_id=tenant.id, name="Noop Model")
     snapshot_without_principal = make_snapshot()
     snapshot_without_quota = make_snapshot(
         principal=ResourcePolicyPrincipalRef(
             principal_type=ResourcePolicyPrincipalType.TENANT_USER,
-            tenant_id=tenant.id,
+            organization_id=tenant.id,
             user_id=user.id,
         )
     )
@@ -37,21 +37,21 @@ async def test_reservation_is_noop_without_snapshot_principal_or_model(
 
     result_none = await service.reserve_for_run(
         run_id=uuid4(),
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         snapshot=None,
         model_id=model.id,
         input_params={"input": "hello"},
     )
     result_no_principal = await service.reserve_for_run(
         run_id=uuid4(),
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         snapshot=snapshot_without_principal,
         model_id=model.id,
         input_params={"input": "hello"},
     )
     result_no_quota = await service.reserve_for_run(
         run_id=uuid4(),
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         snapshot=snapshot_without_quota,
         model_id=model.id,
         input_params={"input": "hello"},
@@ -72,11 +72,11 @@ async def test_reservation_accumulates_by_principal_model_and_month(
 ):
     tenant = tenant_context["tenant"]
     user = tenant_context["user"]
-    model = await resource_factory.model(tenant_id=tenant.id, name="Quota Model")
-    second_model = await resource_factory.model(tenant_id=tenant.id, name="Quota Model 2")
+    model = await resource_factory.model(organization_id=tenant.id, name="Quota Model")
+    second_model = await resource_factory.model(organization_id=tenant.id, name="Quota Model 2")
     principal = ResourcePolicyPrincipalRef(
         principal_type=ResourcePolicyPrincipalType.TENANT_USER,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
     )
     snapshot = make_snapshot(
@@ -101,21 +101,21 @@ async def test_reservation_accumulates_by_principal_model_and_month(
     service = ResourcePolicyQuotaService(db_session)
     first = await service.reserve_for_run(
         run_id=uuid4(),
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         snapshot=snapshot,
         model_id=model.id,
         input_params={"context": {"quota_max_output_tokens": 5}},
     )
     second = await service.reserve_for_run(
         run_id=uuid4(),
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         snapshot=snapshot,
         model_id=model.id,
         input_params={"context": {"quota_max_output_tokens": 5}},
     )
     third = await service.reserve_for_run(
         run_id=uuid4(),
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         snapshot=snapshot,
         model_id=second_model.id,
         input_params={"context": {"quota_max_output_tokens": 10}},
@@ -150,10 +150,10 @@ async def test_reservation_rejects_projected_overage_and_month_rollover_starts_n
 ):
     tenant = tenant_context["tenant"]
     user = tenant_context["user"]
-    model = await resource_factory.model(tenant_id=tenant.id, name="Overage Model")
+    model = await resource_factory.model(organization_id=tenant.id, name="Overage Model")
     principal = ResourcePolicyPrincipalRef(
         principal_type=ResourcePolicyPrincipalType.TENANT_USER,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
     )
     snapshot = make_snapshot(
@@ -177,7 +177,7 @@ async def test_reservation_rejects_projected_overage_and_month_rollover_starts_n
 
     await service.reserve_for_run(
         run_id=uuid4(),
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         snapshot=snapshot,
         model_id=model.id,
         input_params={"context": {"quota_max_output_tokens": 5}},
@@ -186,7 +186,7 @@ async def test_reservation_rejects_projected_overage_and_month_rollover_starts_n
     with pytest.raises(ResourcePolicyQuotaExceeded):
         await service.reserve_for_run(
             run_id=uuid4(),
-            tenant_id=tenant.id,
+            organization_id=tenant.id,
             snapshot=snapshot,
             model_id=model.id,
             input_params={"context": {"quota_max_output_tokens": 6}},
@@ -194,7 +194,7 @@ async def test_reservation_rejects_projected_overage_and_month_rollover_starts_n
 
     april_reservation = await service.reserve_for_run(
         run_id=uuid4(),
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         snapshot=snapshot,
         model_id=model.id,
         input_params={"context": {"quota_max_output_tokens": 5}},
@@ -224,11 +224,11 @@ async def test_settlement_uses_total_tokens_is_idempotent_and_noops_without_mode
 ):
     tenant = tenant_context["tenant"]
     user = tenant_context["user"]
-    agent = await resource_factory.agent(tenant_id=tenant.id, created_by=user.id, name="Quota Agent")
-    model = await resource_factory.model(tenant_id=tenant.id, name="Settle Model")
+    agent = await resource_factory.agent(organization_id=tenant.id, created_by=user.id, name="Quota Agent")
+    model = await resource_factory.model(organization_id=tenant.id, name="Settle Model")
     principal = ResourcePolicyPrincipalRef(
         principal_type=ResourcePolicyPrincipalType.TENANT_USER,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
     )
     snapshot = make_snapshot(
@@ -249,7 +249,7 @@ async def test_settlement_uses_total_tokens_is_idempotent_and_noops_without_mode
 
     service = ResourcePolicyQuotaService(db_session)
     run = await resource_factory.run(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         agent_id=agent.id,
         user_id=user.id,
         resolved_model_id=model.id,
@@ -258,7 +258,7 @@ async def test_settlement_uses_total_tokens_is_idempotent_and_noops_without_mode
     )
     await service.reserve_for_run(
         run_id=run.id,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         snapshot=snapshot,
         model_id=model.id,
         input_params={"context": {"quota_max_output_tokens": 5}},
@@ -283,9 +283,9 @@ async def test_settlement_uses_total_tokens_is_idempotent_and_noops_without_mode
     assert min(counter.reserved_tokens for counter in counters) == 0
     assert reservation.settled_at is not None
 
-    no_model_run = await resource_factory.run(tenant_id=tenant.id, agent_id=agent.id, user_id=user.id)
+    no_model_run = await resource_factory.run(organization_id=tenant.id, agent_id=agent.id, user_id=user.id)
     no_reservation_run = await resource_factory.run(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         agent_id=agent.id,
         user_id=user.id,
         resolved_model_id=model.id,

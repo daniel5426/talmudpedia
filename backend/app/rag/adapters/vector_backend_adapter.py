@@ -82,7 +82,7 @@ class PineconeAdapter(VectorBackendAdapter):
             raise ValueError("Missing Pinecone index_name in knowledge store backend configuration")
         if not self._api_key:
             raise ValueError(
-                "Missing Pinecone API key. Configure a tenant vector_store credential and bind it to the knowledge store."
+                "Missing Pinecone API key. Configure a organization vector_store credential and bind it to the knowledge store."
             )
 
         self._store = PineconeVectorStore(api_key=self._api_key, allow_env_fallback=False)

@@ -8,9 +8,9 @@ from app.agent.execution.adapter import StreamAdapter
 from app.agent.execution.stream_contract_v2 import normalize_filtered_event_to_v2
 from app.agent.execution.types import ExecutionMode
 from app.services.ui_blocks import (
+    UI_BLOCKS_BUILTIN_KEY,
     UI_BLOCKS_OUTPUT_KIND,
     UI_BLOCKS_RENDERER_KIND,
-    UI_BLOCKS_TOOL_SLUG,
     validate_ui_blocks_bundle,
 )
 
@@ -230,11 +230,11 @@ def _tool_title(payload: dict[str, Any], tool_name: str) -> str:
 
 def _is_ui_blocks_payload(payload: dict[str, Any], existing: ChatRenderBlock | None = None) -> bool:
     renderer_kind = _to_text(payload.get("renderer_kind")).strip().lower()
-    tool_slug = _to_text(payload.get("tool_slug")).strip().lower()
+    builtin_key = _to_text(payload.get("builtin_key")).strip().lower()
     output_kind = _to_text(payload.get("output_kind")).strip().lower()
     if renderer_kind == UI_BLOCKS_RENDERER_KIND:
         return True
-    if tool_slug == UI_BLOCKS_TOOL_SLUG:
+    if builtin_key == UI_BLOCKS_BUILTIN_KEY:
         return True
     if output_kind == UI_BLOCKS_OUTPUT_KIND:
         return True
@@ -381,7 +381,7 @@ def apply_stream_v2_event_to_response_blocks(
             "tool": {
                 "toolCallId": tool_call_id,
                 "toolName": tool_name,
-                "toolSlug": payload.get("tool_slug"),
+                "builtinKey": payload.get("builtin_key"),
                 "action": payload.get("action"),
                 "displayName": payload.get("display_name"),
                 "summary": payload.get("summary"),
@@ -437,7 +437,7 @@ def apply_stream_v2_event_to_response_blocks(
             "tool": {
                 "toolCallId": tool_call_id or ((existing_tool or {}).get("tool") or {}).get("toolCallId"),
                 "toolName": tool_name,
-                "toolSlug": payload.get("tool_slug") or ((existing_tool or {}).get("tool") or {}).get("toolSlug"),
+                "builtinKey": payload.get("builtin_key") or ((existing_tool or {}).get("tool") or {}).get("builtinKey"),
                 "action": payload.get("action") or ((existing_tool or {}).get("tool") or {}).get("action"),
                 "displayName": payload.get("display_name") or ((existing_tool or {}).get("tool") or {}).get("displayName"),
                 "summary": payload.get("summary") or ((existing_tool or {}).get("tool") or {}).get("summary"),

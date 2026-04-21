@@ -48,7 +48,6 @@ type UseAppsBuilderSandboxLifecycleResult = {
   draftDevError: string | null;
   previewAssetUrl: string | null;
   previewTransportGeneration: number | null;
-  previewAuthToken: string | null;
   previewLoadingMessage: string;
   publishLockMessage: string | null;
   isReady: boolean;
@@ -110,8 +109,6 @@ function normalizePreviewSessionUrlForReloadCompare(url: string | null | undefin
   if (!url) return "";
   try {
     const parsed = new URL(url);
-    parsed.searchParams.delete("preview_token");
-    parsed.searchParams.delete("runtime_preview_token");
     const normalizedPath = parsed.pathname.endsWith("/") ? parsed.pathname.slice(0, -1) : parsed.pathname;
     parsed.pathname = normalizedPath || "/";
     parsed.search = parsed.searchParams.toString();
@@ -152,7 +149,6 @@ export function useAppsBuilderSandboxLifecycle({
   const [draftDevError, setDraftDevError] = useState<string | null>(null);
   const [previewAssetUrl, setPreviewAssetUrl] = useState<string | null>(null);
   const [previewTransportGeneration, setPreviewTransportGeneration] = useState<number | null>(null);
-  const [previewAuthToken, setPreviewAuthToken] = useState<string | null>(null);
   const [publishLockMessage, setPublishLockMessage] = useState<string | null>(null);
   const [recoveryExhausted, setRecoveryExhausted] = useState(false);
 
@@ -200,7 +196,6 @@ export function useAppsBuilderSandboxLifecycle({
           ? Number((session as DraftDevSessionResponse & { runtime_generation?: number | null }).runtime_generation)
           : null,
     );
-    setPreviewAuthToken(session.preview_auth_token || null);
     setRecoveryExhausted(false);
 
     const nextPreviewUrl = session.preview_url || null;
@@ -210,7 +205,7 @@ export function useAppsBuilderSandboxLifecycle({
         status: session.status,
         nextPreviewUrl,
         currentPreviewUrl: current,
-        previewAuthTokenPresent: Boolean(session.preview_auth_token),
+        previewAuthTokenPresent: false,
         workspaceRevisionToken: session.workspace_revision_token || null,
         activeCodingRunCount: session.active_coding_run_count,
       });
@@ -680,7 +675,6 @@ export function useAppsBuilderSandboxLifecycle({
     draftDevError,
     previewAssetUrl,
     previewTransportGeneration,
-    previewAuthToken,
     previewLoadingMessage,
     publishLockMessage,
     isReady,

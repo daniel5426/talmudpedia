@@ -1,24 +1,28 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from urllib.parse import parse_qs, urlparse
+from uuid import uuid4
 
 import pytest
 
 from app.api.routers import published_apps_builder_preview_proxy as preview_proxy_router
+from app.db.postgres.models.agent_threads import AgentThreadSurface
 from app.services import published_app_draft_dev_runtime_client as runtime_client_module
 from app.services.published_app_auth_service import PublishedAppAuthRateLimitError
 from app.services.published_app_draft_dev_runtime_client import (
     PublishedAppDraftDevRuntimeClient,
     PublishedAppDraftDevRuntimeClientConfig,
 )
+from app.services.runtime_surface import RuntimeSurfaceService
 
 
 def _fake_preview_app_and_revision():
     return (
         SimpleNamespace(
             id="app-1",
-            tenant_id="tenant-1",
+            organization_id="tenant-1",
             slug="sefaria",
             name="Sefaria",
             description=None,
@@ -86,7 +90,7 @@ async def test_runtime_client_delegates_start_session_to_selected_sprite_backend
     result = await client.start_session(
         session_id="session-1",
         runtime_generation=1,
-        tenant_id="tenant-1",
+        organization_id="tenant-1",
         app_id="app-1",
         user_id="user-1",
         revision_id="revision-1",
@@ -255,6 +259,88 @@ async def test_builder_preview_proxy_prefers_cookie_token_over_stale_query_token
     )
 
     assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_builder_preview_thread_list_uses_runtime_surface(monkeypatch: pytest.MonkeyPatch, client):
+    app = SimpleNamespace(id=uuid4(), organization_id=uuid4())
+    thread = SimpleNamespace(
+        id=uuid4(),
+        title="Preview thread",
+        status="active",
+        surface=AgentThreadSurface.published_host_runtime,
+        agent_id=None,
+        last_run_id=None,
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+        last_activity_at=datetime.now(timezone.utc),
+        external_user_id=None,
+        external_session_id=None,
+    )
+    calls: list[tuple[int, int, str, str]] = []
+
+    async def _fake_load_preview_request_context(**kwargs):
+        _ = kwargs
+        return SimpleNamespace(id="session-1"), app, SimpleNamespace(id="revision-1"), {"scope": ["apps.preview"]}, "token-1"
+
+    async def _fake_resolve_optional_principal_from_cookie(**kwargs):
+        _ = kwargs
+        return {"app_account_id": str(uuid4())}, False
+
+    async def _fake_list_threads(self, *, scope, skip, limit):
+        calls.append((skip, limit, str(scope.organization_id), str(scope.published_app_id)))
+        return [thread], 1
+
+    monkeypatch.setattr(preview_proxy_router, "_load_preview_request_context", _fake_load_preview_request_context)
+    monkeypatch.setattr(preview_proxy_router, "_resolve_optional_principal_from_cookie", _fake_resolve_optional_principal_from_cookie)
+    monkeypatch.setattr(RuntimeSurfaceService, "list_threads", _fake_list_threads)
+
+    response = await client.get("/public/apps-builder/draft-dev/sessions/session-1/preview/_talmudpedia/threads")
+
+    assert response.status_code == 200
+    assert response.json()["total"] == 1
+    assert response.json()["items"][0]["title"] == "Preview thread"
+    assert calls == [(0, 20, str(app.organization_id), str(app.id))]
+
+
+@pytest.mark.asyncio
+async def test_builder_preview_thread_detail_uses_runtime_surface(monkeypatch: pytest.MonkeyPatch, client):
+    app = SimpleNamespace(id=uuid4(), organization_id=uuid4())
+    thread_id = uuid4()
+    calls: list[tuple[str, int, bool, str, str]] = []
+
+    async def _fake_load_preview_request_context(**kwargs):
+        _ = kwargs
+        return SimpleNamespace(id="session-1"), app, SimpleNamespace(id="revision-1"), {"scope": ["apps.preview"]}, "token-1"
+
+    async def _fake_resolve_optional_principal_from_cookie(**kwargs):
+        _ = kwargs
+        return {"app_account_id": str(uuid4())}, False
+
+    async def _fake_get_thread_detail(self, *, scope, thread_id, options, event_view):
+        _ = event_view
+        calls.append(
+            (
+                str(thread_id),
+                options.limit,
+                options.include_subthreads,
+                str(scope.organization_id),
+                str(scope.published_app_id),
+            )
+        )
+        return {"id": str(thread_id), "turns": [], "paging": {"has_more": False, "next_before_turn_index": None}}
+
+    monkeypatch.setattr(preview_proxy_router, "_load_preview_request_context", _fake_load_preview_request_context)
+    monkeypatch.setattr(preview_proxy_router, "_resolve_optional_principal_from_cookie", _fake_resolve_optional_principal_from_cookie)
+    monkeypatch.setattr(RuntimeSurfaceService, "get_thread_detail", _fake_get_thread_detail)
+
+    response = await client.get(
+        f"/public/apps-builder/draft-dev/sessions/session-1/preview/_talmudpedia/threads/{thread_id}?include_subthreads=true&limit=7",
+    )
+
+    assert response.status_code == 200
+    assert response.json()["id"] == str(thread_id)
+    assert calls == [(str(thread_id), 7, True, str(app.organization_id), str(app.id))]
 
 
 @pytest.mark.asyncio
@@ -542,8 +628,8 @@ async def test_builder_preview_google_start_sets_csrf_state_cookie(monkeypatch: 
         app.auth_providers = ["google"]
         return session, app, revision, None, None
 
-    async def _fake_get_google_credential(self, tenant_id):
-        _ = self, tenant_id
+    async def _fake_get_google_credential(self, organization_id):
+        _ = self, organization_id
         return SimpleNamespace(credentials={"client_id": "google-client", "redirect_uri": "https://accounts.example/callback"})
 
     monkeypatch.setattr(preview_proxy_router, "_load_preview_request_context", _fake_load_preview_request_context)
@@ -572,8 +658,8 @@ async def test_builder_preview_google_callback_rejects_missing_csrf_state_cookie
         app.auth_providers = ["google"]
         return session, app, revision, None, None
 
-    async def _fake_get_google_credential(self, tenant_id):
-        _ = self, tenant_id
+    async def _fake_get_google_credential(self, organization_id):
+        _ = self, organization_id
         return SimpleNamespace(
             credentials={
                 "client_id": "google-client",

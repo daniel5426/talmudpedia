@@ -6,7 +6,7 @@ import pytest
 from sqlalchemy import select
 
 from app.db.postgres.models.artifact_runtime import ArtifactRun, ArtifactRunStatus
-from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Tenant, User
+from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Organization, User
 from app.db.postgres.models.registry import IntegrationCredential, IntegrationCredentialCategory
 from app.services.artifact_runtime.execution_service import ArtifactExecutionService
 from app.services.artifact_runtime.handler_runner import invoke_artifact_handler
@@ -16,18 +16,18 @@ from app.services.artifact_runtime.revision_service import ArtifactRevisionServi
 
 
 async def _seed_tenant_context(db_session):
-    tenant = Tenant(id=uuid.uuid4(), name="Runtime Tenant", slug=f"runtime-{uuid.uuid4().hex[:8]}")
+    tenant = Organization(id=uuid.uuid4(), name="Runtime Organization", slug=f"runtime-{uuid.uuid4().hex[:8]}")
     user = User(id=uuid.uuid4(), email=f"runtime-{uuid.uuid4().hex[:6]}@example.com", role="admin")
     org_unit = OrgUnit(
         id=uuid.uuid4(),
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name="Runtime Org",
         slug=f"runtime-org-{uuid.uuid4().hex[:6]}",
         type=OrgUnitType.org,
     )
     membership = OrgMembership(
         id=uuid.uuid4(),
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         org_unit_id=org_unit.id,
         role=OrgRole.owner,
@@ -38,10 +38,10 @@ async def _seed_tenant_context(db_session):
     return tenant, user
 
 
-async def _create_artifact(db_session, tenant_id, created_by, *, publish: bool, kind: str):
+async def _create_artifact(db_session, organization_id, created_by, *, publish: bool, kind: str):
     revisions = ArtifactRevisionService(db_session)
     artifact = await revisions.create_artifact(
-        tenant_id=tenant_id,
+        organization_id=organization_id,
         created_by=created_by,
         display_name="Runtime Artifact",
         description=None,
@@ -70,8 +70,8 @@ async def test_execute_live_run_records_domain_queue_and_raw_inputs(db_session, 
 
     captured = {}
 
-    async def fake_ensure_deployment(self, *, revision, namespace, tenant_id=None):
-        captured["deployment"] = {"revision_id": revision.id, "namespace": namespace, "tenant_id": tenant_id}
+    async def fake_ensure_deployment(self, *, revision, namespace, organization_id=None):
+        captured["deployment"] = {"revision_id": revision.id, "namespace": namespace, "organization_id": organization_id}
         return SimpleNamespace(
             worker_name="cf-worker",
             deployment_id="dep-1",
@@ -99,7 +99,7 @@ async def test_execute_live_run_records_domain_queue_and_raw_inputs(db_session, 
 
     service = ArtifactExecutionService(db_session)
     run = await service.execute_live_run(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         created_by=user.id,
         revision_id=artifact.latest_published_revision_id,
         domain="agent",
@@ -113,7 +113,7 @@ async def test_execute_live_run_records_domain_queue_and_raw_inputs(db_session, 
     assert str(getattr(run.domain, "value", run.domain)) == "agent"
     assert run.queue_class == "artifact_prod_interactive"
     assert captured["deployment"]["namespace"] == "production"
-    assert captured["deployment"]["tenant_id"] == tenant.id
+    assert captured["deployment"]["organization_id"] == tenant.id
     assert captured["request"]["inputs"] == ["raw", {"nested": True}]
     assert run.result_payload == {"echo": ["raw", {"nested": True}]}
     assert run.runtime_metadata["provider"] == "cloudflare_workers"
@@ -125,7 +125,7 @@ async def test_execute_live_run_injects_context_credentials_and_uses_deployed_co
     artifact = await _create_artifact(db_session, tenant.id, user.id, publish=True, kind="tool_impl")
     captured = {}
 
-    async def fake_ensure_deployment(self, *, revision, namespace, tenant_id=None):
+    async def fake_ensure_deployment(self, *, revision, namespace, organization_id=None):
         return SimpleNamespace(
             worker_name="artifact-revision-inline",
             deployment_id="dep-inline",
@@ -153,7 +153,7 @@ async def test_execute_live_run_injects_context_credentials_and_uses_deployed_co
 
     service = ArtifactExecutionService(db_session)
     run = await service.execute_live_run(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         created_by=user.id,
         revision_id=artifact.latest_published_revision_id,
         domain="tool",
@@ -172,7 +172,7 @@ async def test_execute_live_run_passes_execution_tenant_for_system_revision(db_s
     tenant, user = await _seed_tenant_context(db_session)
     revisions = ArtifactRevisionService(db_session)
     artifact = await revisions.create_artifact(
-        tenant_id=None,
+        organization_id=None,
         created_by=None,
         display_name="System Runtime Artifact",
         description=None,
@@ -193,9 +193,9 @@ async def test_execute_live_run_passes_execution_tenant_for_system_revision(db_s
 
     captured = {}
 
-    async def fake_ensure_deployment(self, *, revision, namespace, tenant_id=None):
-        captured["tenant_id"] = tenant_id
-        captured["revision_tenant_id"] = revision.tenant_id
+    async def fake_ensure_deployment(self, *, revision, namespace, organization_id=None):
+        captured["organization_id"] = organization_id
+        captured["revision_tenant_id"] = revision.organization_id
         return SimpleNamespace(
             worker_name="cf-worker",
             deployment_id="dep-system",
@@ -221,7 +221,7 @@ async def test_execute_live_run_passes_execution_tenant_for_system_revision(db_s
     monkeypatch.setattr("app.services.artifact_runtime.cloudflare_dispatch_client.CloudflareDispatchClient.execute", fake_execute)
 
     run = await ArtifactExecutionService(db_session).execute_live_run(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         created_by=user.id,
         revision_id=artifact.latest_published_revision_id,
         domain="tool",
@@ -233,7 +233,7 @@ async def test_execute_live_run_passes_execution_tenant_for_system_revision(db_s
 
     assert run is not None
     assert captured["revision_tenant_id"] is None
-    assert captured["tenant_id"] == tenant.id
+    assert captured["organization_id"] == tenant.id
 
 
 @pytest.mark.asyncio
@@ -243,7 +243,7 @@ async def test_start_test_run_rejects_python_entrypoint_without_execute(db_sessi
 
     with pytest.raises(ValueError, match=r"Artifact entry module main\.py must define execute\(inputs, config, context\)"):
         await service.start_test_run(
-            tenant_id=tenant.id,
+            organization_id=tenant.id,
             created_by=user.id,
             artifact_id=None,
             source_files=[{"path": "main.py", "content": "def helper(inputs):\n    return inputs\n"}],
@@ -267,7 +267,7 @@ async def test_start_test_run_rejects_saved_javascript_entrypoint_without_export
     tenant, user = await _seed_tenant_context(db_session)
     revisions = ArtifactRevisionService(db_session)
     artifact = await revisions.create_artifact(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         created_by=user.id,
         display_name="Broken JS Artifact",
         description=None,
@@ -285,7 +285,7 @@ async def test_start_test_run_rejects_saved_javascript_entrypoint_without_export
 
     with pytest.raises(ValueError, match=r"Artifact entry module main\.js must export execute\(inputs, config, context\)"):
         await ArtifactExecutionService(db_session).start_test_run(
-            tenant_id=tenant.id,
+            organization_id=tenant.id,
             created_by=user.id,
             artifact_id=artifact.id,
             input_data={},
@@ -323,7 +323,7 @@ async def test_execute_live_run_background_routes_to_requested_queue(db_session,
 
     service = ArtifactExecutionService(db_session)
     run = await service.execute_live_run(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         created_by=user.id,
         revision_id=artifact.latest_published_revision_id,
         domain="rag",
@@ -348,7 +348,7 @@ async def test_execute_live_run_rejects_unpublished_revision_for_live_domains(db
     service = ArtifactExecutionService(db_session)
     with pytest.raises(PermissionError):
         await service.execute_live_run(
-            tenant_id=tenant.id,
+            organization_id=tenant.id,
             created_by=user.id,
             revision_id=artifact.latest_draft_revision_id,
             domain="tool",
@@ -364,7 +364,7 @@ async def test_interactive_run_fails_fast_when_tenant_capacity_is_exhausted(db_s
     tenant, user = await _seed_tenant_context(db_session)
     artifact = await _create_artifact(db_session, tenant.id, user.id, publish=True, kind="agent_node")
 
-    async def deny_capacity(self, *, tenant_id, queue_class):
+    async def deny_capacity(self, *, organization_id, queue_class):
         raise ArtifactConcurrencyLimitExceeded(
             queue_class=queue_class,
             active_count=5,
@@ -379,7 +379,7 @@ async def test_interactive_run_fails_fast_when_tenant_capacity_is_exhausted(db_s
     service = ArtifactExecutionService(db_session)
     with pytest.raises(ArtifactConcurrencyLimitExceeded):
         await service.execute_live_run(
-            tenant_id=tenant.id,
+            organization_id=tenant.id,
             created_by=user.id,
             revision_id=artifact.latest_published_revision_id,
             domain="agent",
@@ -395,7 +395,7 @@ async def test_test_queue_defaults_to_concurrency_limit_10(db_session):
     tenant, _user = await _seed_tenant_context(db_session)
 
     snapshot = await ArtifactRuntimePolicyService(db_session).get_snapshot(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         queue_class="artifact_test",
     )
 
@@ -408,7 +408,7 @@ async def test_policy_service_reconciles_stale_artifact_test_runs(db_session):
     artifact = await _create_artifact(db_session, tenant.id, user.id, publish=True, kind="tool_impl")
     stale_started_at = datetime.now(timezone.utc) - timedelta(minutes=30)
     stale_run = ArtifactRun(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         artifact_id=artifact.id,
         revision_id=artifact.latest_published_revision_id,
         domain="test",
@@ -422,7 +422,7 @@ async def test_policy_service_reconciles_stale_artifact_test_runs(db_session):
     await db_session.commit()
 
     status = await ArtifactRuntimePolicyService(db_session).get_queue_status(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         queue_class="artifact_test",
     )
     await db_session.commit()
@@ -441,7 +441,7 @@ async def test_execute_live_run_persists_worker_http_500_details(db_session, mon
     tenant, user = await _seed_tenant_context(db_session)
     artifact = await _create_artifact(db_session, tenant.id, user.id, publish=True, kind="tool_impl")
 
-    async def fake_ensure_deployment(self, *, revision, namespace, tenant_id=None):
+    async def fake_ensure_deployment(self, *, revision, namespace, organization_id=None):
         return SimpleNamespace(
             worker_name="artifact-free-plan-runtime",
             deployment_id="dep-500",
@@ -463,7 +463,7 @@ async def test_execute_live_run_persists_worker_http_500_details(db_session, mon
 
     with pytest.raises(CloudflareDispatchHTTPError):
         await ArtifactExecutionService(db_session).execute_live_run(
-            tenant_id=tenant.id,
+            organization_id=tenant.id,
             created_by=user.id,
             revision_id=artifact.latest_published_revision_id,
             domain="tool",
@@ -474,7 +474,7 @@ async def test_execute_live_run_persists_worker_http_500_details(db_session, mon
         )
 
     result = await db_session.execute(
-        select(ArtifactRun).where(ArtifactRun.tenant_id == tenant.id).order_by(ArtifactRun.created_at.desc())
+        select(ArtifactRun).where(ArtifactRun.organization_id == tenant.id).order_by(ArtifactRun.created_at.desc())
     )
     failed_run = next(run for run in result.scalars().all() if str(getattr(run.status, "value", run.status)) == "failed")
     assert failed_run.error_payload["code"] == "CLOUDFLARE_DISPATCH_HTTP_ERROR"
@@ -526,7 +526,7 @@ async def test_handler_runner_requires_modern_three_argument_contract():
 async def test_execute_live_run_rewrites_runtime_credentials_without_persisting_secrets(db_session, monkeypatch):
     tenant, user = await _seed_tenant_context(db_session)
     credential = IntegrationCredential(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         category=IntegrationCredentialCategory.LLM_PROVIDER,
         provider_key="openai",
         display_name="OpenAI Runtime",
@@ -538,7 +538,7 @@ async def test_execute_live_run_rewrites_runtime_credentials_without_persisting_
     await db_session.flush()
 
     artifact = await ArtifactRevisionService(db_session).create_artifact(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         created_by=user.id,
         display_name="Bound Runtime Artifact",
         description=None,
@@ -556,7 +556,7 @@ async def test_execute_live_run_rewrites_runtime_credentials_without_persisting_
 
     captured = {}
 
-    async def fake_ensure_deployment(self, *, revision, namespace, tenant_id=None):
+    async def fake_ensure_deployment(self, *, revision, namespace, organization_id=None):
         return SimpleNamespace(
             worker_name="cf-worker",
             deployment_id="dep-bound",
@@ -583,7 +583,7 @@ async def test_execute_live_run_rewrites_runtime_credentials_without_persisting_
     monkeypatch.setattr("app.services.artifact_runtime.cloudflare_dispatch_client.CloudflareDispatchClient.execute", fake_execute)
 
     run = await ArtifactExecutionService(db_session).execute_live_run(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         created_by=user.id,
         revision_id=artifact.latest_published_revision_id,
         domain="tool",
@@ -612,7 +612,7 @@ async def test_execute_live_run_rewrites_runtime_credentials_without_persisting_
 async def test_execute_live_run_rejects_disabled_credential_at_runtime(db_session, monkeypatch):
     tenant, user = await _seed_tenant_context(db_session)
     credential = IntegrationCredential(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         category=IntegrationCredentialCategory.LLM_PROVIDER,
         provider_key="openai",
         display_name="OpenAI Runtime",
@@ -624,7 +624,7 @@ async def test_execute_live_run_rejects_disabled_credential_at_runtime(db_sessio
     await db_session.flush()
 
     artifact = await ArtifactRevisionService(db_session).create_artifact(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         created_by=user.id,
         display_name="Disabled Runtime Artifact",
         description=None,
@@ -641,7 +641,7 @@ async def test_execute_live_run_rejects_disabled_credential_at_runtime(db_sessio
     credential.is_enabled = False
     await db_session.commit()
 
-    async def fake_ensure_deployment(self, *, revision, namespace, tenant_id=None):
+    async def fake_ensure_deployment(self, *, revision, namespace, organization_id=None):
         return SimpleNamespace(
             worker_name="cf-worker",
             deployment_id="dep-disabled",
@@ -653,7 +653,7 @@ async def test_execute_live_run_rejects_disabled_credential_at_runtime(db_sessio
 
     with pytest.raises(RuntimeError, match="Credential disabled"):
         await ArtifactExecutionService(db_session).execute_live_run(
-            tenant_id=tenant.id,
+            organization_id=tenant.id,
             created_by=user.id,
             revision_id=artifact.latest_published_revision_id,
             domain="tool",
@@ -670,7 +670,7 @@ async def test_start_test_run_returns_failed_run_when_eager_dispatch_crashes(db_
     artifact = await _create_artifact(db_session, tenant.id, user.id, publish=True, kind="tool_impl")
     monkeypatch.setenv("ARTIFACT_RUN_TASK_EAGER", "1")
 
-    async def fake_ensure_deployment(self, *, revision, namespace, tenant_id=None):
+    async def fake_ensure_deployment(self, *, revision, namespace, organization_id=None):
         return SimpleNamespace(
             worker_name="artifact-test-worker",
             deployment_id="dep-test-500",
@@ -691,7 +691,7 @@ async def test_start_test_run_returns_failed_run_when_eager_dispatch_crashes(db_
     monkeypatch.setattr("app.services.artifact_runtime.cloudflare_dispatch_client.CloudflareDispatchClient.execute", fake_execute)
 
     run = await ArtifactExecutionService(db_session).start_test_run(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         created_by=user.id,
         artifact_id=artifact.id,
         source_files=None,
@@ -722,7 +722,7 @@ async def test_start_test_run_passes_raw_input_payload_to_dispatch(db_session, m
     monkeypatch.setenv("ARTIFACT_RUN_TASK_EAGER", "1")
     captured: dict[str, object] = {}
 
-    async def fake_ensure_deployment(self, *, revision, namespace, tenant_id=None):
+    async def fake_ensure_deployment(self, *, revision, namespace, organization_id=None):
         return SimpleNamespace(
             worker_name="artifact-test-worker",
             deployment_id="dep-test-raw",
@@ -749,7 +749,7 @@ async def test_start_test_run_passes_raw_input_payload_to_dispatch(db_session, m
     monkeypatch.setattr("app.services.artifact_runtime.cloudflare_dispatch_client.CloudflareDispatchClient.execute", fake_execute)
 
     run = await ArtifactExecutionService(db_session).start_test_run(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         created_by=user.id,
         artifact_id=artifact.id,
         source_files=None,

@@ -62,9 +62,9 @@ class PromptReferenceResolver:
         "human_input": {"prompt": "human_input.prompt"},
     }
 
-    def __init__(self, db: AsyncSession, tenant_id: UUID | None):
+    def __init__(self, db: AsyncSession, organization_id: UUID | None):
         self._db = db
-        self._tenant_id = tenant_id
+        self._organization_id = organization_id
 
     @staticmethod
     def parse_prompt_token_ids(text: Any) -> list[UUID]:
@@ -90,13 +90,13 @@ class PromptReferenceResolver:
             return cached
 
         stmt = select(PromptLibrary).where(PromptLibrary.id == prompt_id)
-        if self._tenant_id is None:
-            stmt = stmt.where(PromptLibrary.tenant_id.is_(None))
+        if self._organization_id is None:
+            stmt = stmt.where(PromptLibrary.organization_id.is_(None))
         else:
-            stmt = stmt.where(or_(PromptLibrary.tenant_id == self._tenant_id, PromptLibrary.tenant_id.is_(None)))
+            stmt = stmt.where(or_(PromptLibrary.organization_id == self._organization_id, PromptLibrary.organization_id.is_(None)))
         prompt = (await self._db.execute(stmt)).scalar_one_or_none()
         if prompt is None:
-            raise PromptReferenceError(f"Referenced prompt {prompt_id} was not found in tenant/global scope")
+            raise PromptReferenceError(f"Referenced prompt {prompt_id} was not found in organization/global scope")
         cache[cache_key] = prompt
         return prompt
 
@@ -344,7 +344,7 @@ class PromptReferenceResolver:
         prompt_token = f"[[prompt:{prompt_id}]]"
         usages: list[dict[str, Any]] = []
 
-        agent_stmt = select(Agent).where(or_(Agent.tenant_id == self._tenant_id, Agent.tenant_id.is_(None)))
+        agent_stmt = select(Agent).where(or_(Agent.organization_id == self._organization_id, Agent.organization_id.is_(None)))
         for agent in (await self._db.execute(agent_stmt)).scalars().all():
             graph_definition = agent.graph_definition if isinstance(agent.graph_definition, dict) else {}
             for node_id, pointer, surface, value in self.iter_graph_prompt_fields(graph_definition):
@@ -356,12 +356,12 @@ class PromptReferenceResolver:
                             "resource_name": str(agent.name or ""),
                             "surface": surface,
                             "location_pointer": pointer,
-                            "tenant_id": str(agent.tenant_id) if agent.tenant_id else None,
+                            "organization_id": str(agent.organization_id) if agent.organization_id else None,
                             "node_id": node_id,
                         }
                     )
 
-        tool_stmt = select(ToolRegistry).where(or_(ToolRegistry.tenant_id == self._tenant_id, ToolRegistry.tenant_id.is_(None)))
+        tool_stmt = select(ToolRegistry).where(or_(ToolRegistry.organization_id == self._organization_id, ToolRegistry.organization_id.is_(None)))
         for tool in (await self._db.execute(tool_stmt)).scalars().all():
             description = str(tool.description or "")
             if prompt_token in description:
@@ -372,7 +372,7 @@ class PromptReferenceResolver:
                         "resource_name": str(tool.name or ""),
                         "surface": "tool.description",
                         "location_pointer": "/description",
-                        "tenant_id": str(tool.tenant_id) if tool.tenant_id else None,
+                        "organization_id": str(tool.organization_id) if tool.organization_id else None,
                         "node_id": None,
                     }
                 )
@@ -388,7 +388,7 @@ class PromptReferenceResolver:
                                 "resource_name": str(tool.name or ""),
                                 "surface": "tool.schema.description",
                                 "location_pointer": pointer,
-                                "tenant_id": str(tool.tenant_id) if tool.tenant_id else None,
+                                "organization_id": str(tool.organization_id) if tool.organization_id else None,
                                 "node_id": None,
                             }
                         )
@@ -399,7 +399,7 @@ class PromptReferenceResolver:
             select(Artifact, draft_revision, published_revision)
             .outerjoin(draft_revision, draft_revision.id == Artifact.latest_draft_revision_id)
             .outerjoin(published_revision, published_revision.id == Artifact.latest_published_revision_id)
-            .where(or_(Artifact.tenant_id == self._tenant_id, Artifact.tenant_id.is_(None)))
+            .where(or_(Artifact.organization_id == self._organization_id, Artifact.organization_id.is_(None)))
         )
         artifact_rows = (await self._db.execute(artifact_stmt)).all()
         seen_revision_ids: set[str] = set()
@@ -426,7 +426,7 @@ class PromptReferenceResolver:
                                     "resource_name": str(artifact.display_name or ""),
                                     "surface": "artifact.tool_contract.description",
                                     "location_pointer": pointer,
-                                    "tenant_id": str(artifact.tenant_id) if artifact.tenant_id else None,
+                                    "organization_id": str(artifact.organization_id) if artifact.organization_id else None,
                                     "node_id": None,
                                 }
                             )

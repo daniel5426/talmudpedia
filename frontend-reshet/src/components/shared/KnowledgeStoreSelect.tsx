@@ -5,7 +5,7 @@ import { Check, X, Database } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Input } from "@/components/ui/input"
 import { knowledgeStoresService, KnowledgeStore } from "@/services"
-import { useTenant } from "@/contexts/TenantContext"
+import { useOrganization } from "@/contexts/OrganizationContext"
 
 interface KnowledgeStoreSelectProps {
     value: string
@@ -39,13 +39,13 @@ export function KnowledgeStoreSelect({
     const [selectedIndex, setSelectedIndex] = useState(0)
     const [isFocused, setIsFocused] = useState(false)
 
-    const { currentTenant } = useTenant()
+    const { currentOrganization } = useOrganization()
 
     useEffect(() => {
         async function loadStores() {
             try {
                 setLoading(true)
-                const data = await knowledgeStoresService.list(currentTenant?.slug, { limit: 100, view: "summary" })
+                const data = await knowledgeStoresService.list(currentOrganization?.id, { limit: 100, view: "summary" })
                 setStores(data.items)
             } catch (error) {
                 console.error("Failed to load knowledge stores:", error)
@@ -54,7 +54,7 @@ export function KnowledgeStoreSelect({
             }
         }
         loadStores()
-    }, [currentTenant?.slug])
+    }, [currentOrganization?.id])
 
     const normalizedValue = normalizeText(value)
     const normalizedQuery = normalizeText(query)

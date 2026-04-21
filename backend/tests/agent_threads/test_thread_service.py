@@ -7,19 +7,19 @@ import pytest
 
 from app.db.postgres.models.agent_threads import AgentThread, AgentThreadSurface, AgentThreadTurn, AgentThreadTurnStatus
 from app.db.postgres.models.agents import Agent, AgentRun
-from app.db.postgres.models.identity import Tenant, User
+from app.db.postgres.models.identity import Organization, User
 from app.services.thread_service import ThreadAccessError, ThreadService
 
 
 async def _seed_thread_context(db_session):
     suffix = uuid4().hex[:8]
-    tenant = Tenant(name=f"Thread Tenant {suffix}", slug=f"thread-tenant-{suffix}")
+    tenant = Organization(name=f"Thread Organization {suffix}", slug=f"thread-tenant-{suffix}")
     user = User(email=f"thread-user-{suffix}@example.com", role="admin")
     db_session.add_all([tenant, user])
     await db_session.flush()
 
     agent = Agent(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name="Thread Test Agent",
         slug=f"thread-test-agent-{suffix}",
         description="Thread test agent",
@@ -33,7 +33,7 @@ async def _seed_thread_context(db_session):
 async def test_start_turn_increments_after_existing_zero_index(db_session):
     tenant, user, agent = await _seed_thread_context(db_session)
     thread = AgentThread(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         agent_id=agent.id,
         surface=AgentThreadSurface.internal,
@@ -43,7 +43,7 @@ async def test_start_turn_increments_after_existing_zero_index(db_session):
     await db_session.flush()
 
     first_run = AgentRun(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         agent_id=agent.id,
         user_id=user.id,
         initiator_user_id=user.id,
@@ -51,7 +51,7 @@ async def test_start_turn_increments_after_existing_zero_index(db_session):
         input_params={"input": "first"},
     )
     second_run = AgentRun(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         agent_id=agent.id,
         user_id=user.id,
         initiator_user_id=user.id,
@@ -85,7 +85,7 @@ async def test_start_turn_increments_after_existing_zero_index(db_session):
 async def test_repair_thread_turn_indices_resequences_duplicate_zero_turns(db_session):
     tenant, user, agent = await _seed_thread_context(db_session)
     thread = AgentThread(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         agent_id=agent.id,
         surface=AgentThreadSurface.internal,
@@ -95,7 +95,7 @@ async def test_repair_thread_turn_indices_resequences_duplicate_zero_turns(db_se
     await db_session.flush()
 
     older_run = AgentRun(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         agent_id=agent.id,
         user_id=user.id,
         initiator_user_id=user.id,
@@ -103,7 +103,7 @@ async def test_repair_thread_turn_indices_resequences_duplicate_zero_turns(db_se
         input_params={"input": "older"},
     )
     newer_run = AgentRun(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         agent_id=agent.id,
         user_id=user.id,
         initiator_user_id=user.id,
@@ -142,7 +142,7 @@ async def test_repair_thread_turn_indices_resequences_duplicate_zero_turns(db_se
     assert changed is True
 
     repaired = await service.get_thread_with_turns(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         thread_id=thread.id,
         user_id=user.id,
     )
@@ -156,7 +156,7 @@ async def test_repair_thread_turn_indices_resequences_duplicate_zero_turns(db_se
 async def test_complete_turn_keeps_assistant_text_separate_from_structured_final_output(db_session):
     tenant, user, agent = await _seed_thread_context(db_session)
     thread = AgentThread(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         agent_id=agent.id,
         surface=AgentThreadSurface.internal,
@@ -166,7 +166,7 @@ async def test_complete_turn_keeps_assistant_text_separate_from_structured_final
     await db_session.flush()
 
     run = AgentRun(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         agent_id=agent.id,
         user_id=user.id,
         initiator_user_id=user.id,
@@ -191,7 +191,7 @@ async def test_complete_turn_keeps_assistant_text_separate_from_structured_final
     await db_session.commit()
 
     stored = await service.get_thread_with_turns(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         thread_id=thread.id,
         user_id=user.id,
     )
@@ -206,7 +206,7 @@ async def test_complete_turn_keeps_assistant_text_separate_from_structured_final
 async def test_complete_turn_keeps_assistant_text_when_string_final_output_differs(db_session):
     tenant, user, agent = await _seed_thread_context(db_session)
     thread = AgentThread(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         agent_id=agent.id,
         surface=AgentThreadSurface.internal,
@@ -216,7 +216,7 @@ async def test_complete_turn_keeps_assistant_text_when_string_final_output_diffe
     await db_session.flush()
 
     run = AgentRun(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         agent_id=agent.id,
         user_id=user.id,
         initiator_user_id=user.id,
@@ -241,7 +241,7 @@ async def test_complete_turn_keeps_assistant_text_when_string_final_output_diffe
     await db_session.commit()
 
     stored = await service.get_thread_with_turns(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         thread_id=thread.id,
         user_id=user.id,
     )
@@ -256,7 +256,7 @@ async def test_complete_turn_keeps_assistant_text_when_string_final_output_diffe
 async def test_complete_turn_persists_response_blocks_metadata(db_session):
     tenant, user, agent = await _seed_thread_context(db_session)
     thread = AgentThread(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         agent_id=agent.id,
         surface=AgentThreadSurface.internal,
@@ -266,7 +266,7 @@ async def test_complete_turn_persists_response_blocks_metadata(db_session):
     await db_session.flush()
 
     run = AgentRun(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         agent_id=agent.id,
         user_id=user.id,
         initiator_user_id=user.id,
@@ -302,7 +302,7 @@ async def test_complete_turn_persists_response_blocks_metadata(db_session):
     await db_session.commit()
 
     stored = await service.get_thread_with_turns(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         thread_id=thread.id,
         user_id=user.id,
     )
@@ -319,7 +319,7 @@ async def test_resolve_or_create_thread_sets_root_lineage_for_new_root_thread(db
 
     service = ThreadService(db_session)
     resolved = await service.resolve_or_create_thread(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         agent_id=agent.id,
         published_app_id=None,
@@ -341,7 +341,7 @@ async def test_resolve_or_create_thread_stamps_child_lineage_from_parent_run(db_
     tenant, user, agent = await _seed_thread_context(db_session)
     service = ThreadService(db_session)
     parent = await service.resolve_or_create_thread(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         agent_id=agent.id,
         published_app_id=None,
@@ -350,7 +350,7 @@ async def test_resolve_or_create_thread_stamps_child_lineage_from_parent_run(db_
         input_text="Parent thread",
     )
     parent_run = AgentRun(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         agent_id=agent.id,
         user_id=user.id,
         initiator_user_id=user.id,
@@ -366,7 +366,7 @@ async def test_resolve_or_create_thread_stamps_child_lineage_from_parent_run(db_
     )
 
     child = await service.resolve_or_create_thread(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         agent_id=agent.id,
         published_app_id=None,
@@ -388,7 +388,7 @@ async def test_resolve_or_create_thread_keeps_existing_child_lineage_on_manual_c
     tenant, user, agent = await _seed_thread_context(db_session)
     service = ThreadService(db_session)
     root = await service.resolve_or_create_thread(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         agent_id=agent.id,
         published_app_id=None,
@@ -397,7 +397,7 @@ async def test_resolve_or_create_thread_keeps_existing_child_lineage_on_manual_c
         input_text="Root thread",
     )
     parent_run = AgentRun(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         agent_id=agent.id,
         user_id=user.id,
         initiator_user_id=user.id,
@@ -412,7 +412,7 @@ async def test_resolve_or_create_thread_keeps_existing_child_lineage_on_manual_c
         user_input_text="Parent prompt",
     )
     child = await service.resolve_or_create_thread(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         agent_id=agent.id,
         published_app_id=None,
@@ -425,7 +425,7 @@ async def test_resolve_or_create_thread_keeps_existing_child_lineage_on_manual_c
     original_root_thread_id = child.thread.root_thread_id
 
     continued = await service.resolve_or_create_thread(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         agent_id=agent.id,
         published_app_id=None,
@@ -445,7 +445,7 @@ async def test_resolve_or_create_thread_rejects_existing_child_thread_from_diffe
     tenant, user, agent = await _seed_thread_context(db_session)
     service = ThreadService(db_session)
     root_one = await service.resolve_or_create_thread(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         agent_id=agent.id,
         published_app_id=None,
@@ -454,7 +454,7 @@ async def test_resolve_or_create_thread_rejects_existing_child_thread_from_diffe
         input_text="Root one",
     )
     root_two = await service.resolve_or_create_thread(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         agent_id=agent.id,
         published_app_id=None,
@@ -464,7 +464,7 @@ async def test_resolve_or_create_thread_rejects_existing_child_thread_from_diffe
     )
 
     parent_run_one = AgentRun(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         agent_id=agent.id,
         user_id=user.id,
         initiator_user_id=user.id,
@@ -472,7 +472,7 @@ async def test_resolve_or_create_thread_rejects_existing_child_thread_from_diffe
         input_params={"input": "Parent one"},
     )
     parent_run_two = AgentRun(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         agent_id=agent.id,
         user_id=user.id,
         initiator_user_id=user.id,
@@ -492,7 +492,7 @@ async def test_resolve_or_create_thread_rejects_existing_child_thread_from_diffe
         user_input_text="Parent two",
     )
     child = await service.resolve_or_create_thread(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         agent_id=agent.id,
         published_app_id=None,
@@ -504,7 +504,7 @@ async def test_resolve_or_create_thread_rejects_existing_child_thread_from_diffe
 
     with pytest.raises(ThreadAccessError, match="Thread lineage mismatch"):
         await service.resolve_or_create_thread(
-            tenant_id=tenant.id,
+            organization_id=tenant.id,
             user_id=user.id,
             agent_id=agent.id,
             published_app_id=None,

@@ -47,7 +47,7 @@ class PlatformArchitectBlockedError(RuntimeError):
 
 def enforce_platform_architect_guardrails(
     *,
-    tool_slug: str | None,
+    builtin_key: str | None,
     tool_result: Any,
     input_data: dict[str, Any] | None,
     node_context: dict[str, Any] | None,
@@ -55,7 +55,7 @@ def enforce_platform_architect_guardrails(
 ) -> None:
     if not _is_platform_architect(node_context):
         return
-    if not isinstance(tool_slug, str) or not tool_slug.startswith("platform-"):
+    if not isinstance(builtin_key, str) or not builtin_key.startswith("platform-"):
         return
 
     envelope = _extract_sdk_envelope(tool_result)
@@ -151,7 +151,7 @@ def _is_platform_architect(node_context: dict[str, Any] | None) -> bool:
     state_context = (node_context or {}).get("state_context")
     if not isinstance(state_context, dict):
         return False
-    return str(state_context.get("agent_slug") or "").strip() == "platform-architect"
+    return str(state_context.get("agent_system_key") or "").strip() == "platform_architect"
 
 
 def _is_mutation_action(action: str) -> bool:
@@ -252,7 +252,7 @@ def _target_resource(input_data: dict[str, Any]) -> str:
             value = payload.get(key)
             if value:
                 return f"{key}:{value}"
-        for key in ("name", "display_name", "slug"):
+        for key in ("name", "display_name", "builtin_key", "system_key"):
             value = payload.get(key)
             if value:
                 return f"{key}:{value}"

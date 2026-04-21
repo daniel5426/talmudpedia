@@ -18,10 +18,10 @@ describe("published runtime service transport", () => {
       writable: true,
     });
 
-    await publishedRuntimeService.login("slug-1", { email: "u@example.com", password: "secret123" });
+    await publishedRuntimeService.login("public-1", { email: "u@example.com", password: "secret123" });
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock.mock.calls[0][0]).toContain("/public/apps/slug-1/auth/login");
+    expect(fetchMock.mock.calls[0][0]).toContain("/public/external/apps/public-1/auth/login");
     expect(fetchMock.mock.calls[0][1]).toMatchObject({
       method: "POST",
       credentials: "omit",
@@ -41,10 +41,10 @@ describe("published runtime service transport", () => {
       writable: true,
     });
 
-    await publishedRuntimeService.streamChat("slug-1", { input: "hello" }, "token-abc");
+    await publishedRuntimeService.streamChat("public-1", { input: "hello" }, "token-abc");
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock.mock.calls[0][0]).toContain("/public/apps/slug-1/chat/stream");
+    expect(fetchMock.mock.calls[0][0]).toContain("/public/external/apps/public-1/chat/stream");
     expect(fetchMock.mock.calls[0][1]).toMatchObject({
       method: "POST",
       credentials: "omit",

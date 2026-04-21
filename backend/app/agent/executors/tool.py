@@ -40,7 +40,7 @@ from app.db.postgres.models.artifact_runtime import ArtifactKind, ArtifactRunDom
 from app.db.postgres.models.registry import IntegrationCredentialCategory, ToolRegistry
 from app.services.artifact_runtime.execution_service import ArtifactExecutionService
 from app.services.artifact_runtime.registry_service import ArtifactRegistryService
-from app.services.artifact_coding_agent_tools import is_artifact_coding_mutation_tool_slug
+from app.services.artifact_coding_agent_tools import is_artifact_coding_mutation_builtin_key
 from app.services.credentials_service import CredentialsService
 from app.services.mcp_client import call_mcp_tool
 from app.services.mcp_service import (
@@ -62,7 +62,7 @@ from app.services.web_search import create_web_search_provider
 logger = logging.getLogger(__name__)
 
 AGENT_TOOL_MODALITY_FIELDS = {"text", "files", "audio", "images"}
-STRICT_PLATFORM_TOOL_SLUGS = frozenset(
+STRICT_PLATFORM_BUILTIN_KEYS = frozenset(
     {
         "platform-assets",
         "platform-agents",
@@ -107,8 +107,8 @@ def _tool_input_shape(input_data: Any) -> dict[str, Any]:
 class ToolNodeExecutor(BaseNodeExecutor):
     @staticmethod
     def _is_strict_platform_tool(tool: Any) -> bool:
-        tool_slug = str(getattr(tool, "slug", "") or "").strip()
-        return is_strict_tool_input(tool) and tool_slug in STRICT_PLATFORM_TOOL_SLUGS
+        builtin_key = str(getattr(tool, "builtin_key", "") or "").strip()
+        return is_strict_tool_input(tool) and builtin_key in STRICT_PLATFORM_BUILTIN_KEYS
 
     @staticmethod
     def _coerce_scalar_text(value: Any) -> str | None:
@@ -189,27 +189,22 @@ class ToolNodeExecutor(BaseNodeExecutor):
         self,
         *,
         target_agent_id_raw: Any,
-        target_agent_slug_raw: Any,
     ) -> Any:
-        if not self.tenant_id:
-            raise PermissionError("agent_call tools require tenant context")
+        if not self.organization_id:
+            raise PermissionError("agent_call tools require organization context")
 
         from app.db.postgres.models.agents import Agent, AgentStatus
 
         target_agent_id = self._parse_uuid(target_agent_id_raw)
-        target_agent_slug = str(target_agent_slug_raw or "").strip() or None
-        if target_agent_id is None and not target_agent_slug:
-            raise ValueError("agent_call tool requires target_agent_id or target_agent_slug")
+        if target_agent_id is None:
+            raise ValueError("agent_call tool requires target_agent_id")
 
-        stmt = select(Agent).where(Agent.tenant_id == self.tenant_id)
-        if target_agent_id is not None:
-            stmt = stmt.where(Agent.id == target_agent_id)
-        else:
-            stmt = stmt.where(Agent.slug == target_agent_slug)
+        stmt = select(Agent).where(Agent.organization_id == self.organization_id)
+        stmt = stmt.where(Agent.id == target_agent_id)
 
         target = (await self.db.execute(stmt)).scalar_one_or_none()
         if target is None:
-            raise ValueError("Target agent not found in tenant scope")
+            raise ValueError("Target agent not found in organization scope")
 
         status = getattr(getattr(target, "status", None), "value", getattr(target, "status", None))
         if str(status or "").lower() != AgentStatus.published.value:
@@ -348,7 +343,6 @@ class ToolNodeExecutor(BaseNodeExecutor):
         await self._assert_current_run_accepting_work(node_context)
         target = await self._resolve_agent_target(
             target_agent_id_raw=implementation_config.get("target_agent_id") or input_data.get("target_agent_id"),
-            target_agent_slug_raw=implementation_config.get("target_agent_slug") or input_data.get("target_agent_slug"),
         )
 
         timeout_s = int(
@@ -368,7 +362,7 @@ class ToolNodeExecutor(BaseNodeExecutor):
         # Propagate runtime auth/resource context to child runs.
         inherited_keys = (
             "token",
-            "tenant_id",
+            "organization_id",
             "user_id",
             "initiator_user_id",
             "root_run_id",
@@ -379,7 +373,7 @@ class ToolNodeExecutor(BaseNodeExecutor):
             "published_app_account_id",
             "external_user_id",
             "external_session_id",
-            "tenant_api_key_id",
+            "organization_api_key_id",
             "resource_policy_snapshot",
             "resource_policy_principal",
             "architect_mode",
@@ -389,8 +383,8 @@ class ToolNodeExecutor(BaseNodeExecutor):
             value = (node_context or {}).get(key)
             if value is not None and key not in child_context:
                 child_context[key] = value
-        if self.tenant_id and not child_context.get("tenant_id"):
-            child_context["tenant_id"] = str(self.tenant_id)
+        if self.organization_id and not child_context.get("organization_id"):
+            child_context["organization_id"] = str(self.organization_id)
 
         state_context = (node_context or {}).get("state_context")
         if isinstance(state_context, dict) and "requested_scopes" not in child_context:
@@ -433,9 +427,14 @@ class ToolNodeExecutor(BaseNodeExecutor):
                     "child_run_id": str(child_run_id),
                     "status": "running",
                     "source_node_id": source_node_id,
-                    "tool_slug": getattr(_tool, "slug", None),
+                    "builtin_key": getattr(_tool, "builtin_key", None),
                     "agent_id": str(target.id),
-                    "agent_name": str(getattr(target, "name", "") or getattr(target, "slug", "") or ""),
+                    "agent_name": str(
+                        getattr(target, "name", "")
+                        or getattr(target, "system_key", "")
+                        or getattr(target, "id", "")
+                        or ""
+                    ),
                 },
                 node_id=source_node_id,
                 category="tool_execution",
@@ -468,7 +467,6 @@ class ToolNodeExecutor(BaseNodeExecutor):
         result = {
             "mode": "sync",
             "target_agent_id": str(target.id),
-            "target_agent_slug": str(getattr(target, "slug", "")),
             "run_id": str(execution.run_id),
             "status": status_text,
         }
@@ -593,11 +591,11 @@ class ToolNodeExecutor(BaseNodeExecutor):
         context = envelope.runtime_context
         timeout_s = envelope.execution_policy.timeout_s
         if str(implementation_config.get("type") or "").strip().lower() == "mcp_mount":
-            if not self.tenant_id:
-                raise PermissionError("Mounted MCP tools require tenant context")
+            if not self.organization_id:
+                raise PermissionError("Mounted MCP tools require organization context")
             runtime_user_id = (context or {}).get("initiator_user_id") or (context or {}).get("user_id")
             runtime_user_uuid = self._parse_uuid(runtime_user_id)
-            return await McpRuntimeService(self.db, self.tenant_id).execute_virtual_tool(
+            return await McpRuntimeService(self.db, self.organization_id).execute_virtual_tool(
                 tool_id=str(getattr(_tool, "id", "") or implementation_config.get("tool_id") or ""),
                 arguments=input_data,
                 user_id=runtime_user_uuid,
@@ -620,8 +618,8 @@ class ToolNodeExecutor(BaseNodeExecutor):
     ) -> dict[str, Any]:
         input_data = self._compiled_input_dict(envelope)
         implementation_config = envelope.tool_descriptor.implementation_config
-        if not self.tenant_id:
-            raise PermissionError("Retrieval pipeline tools require tenant context")
+        if not self.organization_id:
+            raise PermissionError("Retrieval pipeline tools require organization context")
 
         pipeline_id_raw = implementation_config.get("pipeline_id") or input_data.get("pipeline_id")
         if not pipeline_id_raw:
@@ -644,7 +642,7 @@ class ToolNodeExecutor(BaseNodeExecutor):
             else (nested_input.get("filters") if isinstance(nested_input.get("filters"), dict) else None)
         )
 
-        runtime = RetrievalPipelineRuntime(self.db, self.tenant_id)
+        runtime = RetrievalPipelineRuntime(self.db, self.organization_id)
         results, _job = await runtime.run_query(
             pipeline_id=UUID(str(pipeline_id_raw)),
             query=query,
@@ -730,7 +728,7 @@ class ToolNodeExecutor(BaseNodeExecutor):
 
         api_key = implementation_config.get("api_key")
         endpoint = implementation_config.get("endpoint")
-        credentials_service = CredentialsService(self.db, self.tenant_id) if self.tenant_id else None
+        credentials_service = CredentialsService(self.db, self.organization_id) if self.organization_id else None
 
         cred_ref = implementation_config.get("credentials_ref")
         if not api_key and cred_ref and credentials_service:
@@ -743,7 +741,7 @@ class ToolNodeExecutor(BaseNodeExecutor):
             api_key = payload.get("api_key") or payload.get("token")
             endpoint = endpoint or payload.get("endpoint")
 
-        # Preferred tenant override path:
+        # Preferred organization override path:
         # IntegrationCredential(category=tool_provider, provider_key="{provider}")
         if not api_key and credentials_service:
             credential = await credentials_service.get_default_provider_credential(
@@ -771,7 +769,7 @@ class ToolNodeExecutor(BaseNodeExecutor):
         if not api_key:
             raise ValueError(
                 "web_search provider credentials are missing. "
-                "Set provider env key or add tenant credentials "
+                "Set provider env key or add organization credentials "
                 "(category=tool_provider, provider_key=<serper|tavily|exa>, credentials.api_key)."
             )
 
@@ -1095,7 +1093,7 @@ class ToolNodeExecutor(BaseNodeExecutor):
             return None, pipeline_id
         return None, None
 
-    async def _resolve_tenant_artifact_revision_id(
+    async def _resolve_organization_artifact_revision_id(
         self,
         *,
         artifact_id: str,
@@ -1107,7 +1105,7 @@ class ToolNodeExecutor(BaseNodeExecutor):
             if self.db is None:
                 return revision_uuid
             registry = ArtifactRegistryService(self.db)
-            revision = await registry.get_revision(revision_id=revision_uuid, tenant_id=self.tenant_id)
+            revision = await registry.get_revision(revision_id=revision_uuid, organization_id=self.organization_id)
             if revision is None:
                 raise ValueError("Pinned tool artifact revision not found")
             if require_published and (not revision.is_published or revision.is_ephemeral):
@@ -1116,14 +1114,14 @@ class ToolNodeExecutor(BaseNodeExecutor):
 
         artifact_uuid = self._parse_uuid(artifact_id)
         if artifact_uuid is None:
-            raise ValueError("Tenant artifact tools require a UUID artifact id")
+            raise ValueError("Organization artifact tools require a UUID artifact id")
         if self.db is None:
             raise ValueError("Tool artifact resolution requires a database session")
 
         registry = ArtifactRegistryService(self.db)
-        artifact = await registry.get_tenant_artifact(artifact_id=artifact_uuid, tenant_id=self.tenant_id)
+        artifact = await registry.get_organization_artifact(artifact_id=artifact_uuid, organization_id=self.organization_id)
         if artifact is None:
-            raise ValueError("Artifact-backed tool references an artifact outside tenant scope")
+            raise ValueError("Artifact-backed tool references an artifact outside organization scope")
         if artifact.kind != ArtifactKind.TOOL_IMPL:
             raise ValueError("Artifact-backed tools require a tool_impl artifact")
         revision = artifact.latest_published_revision if require_published else (artifact.latest_draft_revision or artifact.latest_published_revision)
@@ -1133,7 +1131,7 @@ class ToolNodeExecutor(BaseNodeExecutor):
             raise PermissionError("Published artifact-backed tools require a published immutable revision")
         return revision.id
 
-    async def _execute_tenant_artifact_tool(
+    async def _execute_organization_artifact_tool(
         self,
         *,
         tool: Any,
@@ -1145,7 +1143,7 @@ class ToolNodeExecutor(BaseNodeExecutor):
         if not artifact_id:
             raise ValueError("Missing artifact binding for artifact-backed tool")
 
-        revision_id = await self._resolve_tenant_artifact_revision_id(
+        revision_id = await self._resolve_organization_artifact_revision_id(
             artifact_id=artifact_id,
             pinned_revision_id=getattr(tool, "artifact_revision_id", None),
             require_published=self._is_production_mode(context),
@@ -1154,7 +1152,7 @@ class ToolNodeExecutor(BaseNodeExecutor):
         if self.db is not None:
             revision = await ArtifactRegistryService(self.db).get_revision(
                 revision_id=revision_id,
-                tenant_id=self.tenant_id,
+                organization_id=self.organization_id,
             )
             if revision is None:
                 raise ValueError("Tool artifact revision not found")
@@ -1166,7 +1164,7 @@ class ToolNodeExecutor(BaseNodeExecutor):
             runtime_config.pop("execution", None)
 
         run = await ArtifactExecutionService(self.db).execute_live_run(
-            tenant_id=self.tenant_id,
+            organization_id=self.organization_id,
             created_by=self._parse_uuid((context or {}).get("initiator_user_id")),
             revision_id=revision_id,
             domain=ArtifactRunDomain.TOOL,
@@ -1175,14 +1173,14 @@ class ToolNodeExecutor(BaseNodeExecutor):
             config_payload=runtime_config,
             context_payload={
                 "tool_id": str(getattr(tool, "id", "")),
-                "tool_slug": getattr(tool, "slug", None),
+                "builtin_key": getattr(tool, "builtin_key", None),
                 "tool_name": getattr(tool, "name", None),
                 "node_id": (context or {}).get("node_id"),
                 "run_id": (context or {}).get("run_id"),
-                "tenant_id": str(self.tenant_id) if self.tenant_id else None,
+                "organization_id": str(self.organization_id) if self.organization_id else None,
                 "initiator_user_id": (context or {}).get("initiator_user_id"),
                 "agent_id": (context or {}).get("agent_id"),
-                "agent_slug": (context or {}).get("agent_slug"),
+                "agent_system_key": (context or {}).get("agent_system_key"),
                 "architect_mode": (context or {}).get("architect_mode"),
                 "mode": (context or {}).get("mode"),
             },
@@ -1211,15 +1209,15 @@ class ToolNodeExecutor(BaseNodeExecutor):
     ) -> dict[str, Any]:
         input_data = self._compiled_input_dict(envelope)
         implementation_config = envelope.tool_descriptor.implementation_config
-        if not self.tenant_id:
-            raise PermissionError("Pipeline tools require tenant context")
+        if not self.organization_id:
+            raise PermissionError("Pipeline tools require organization context")
 
         executable_pipeline_id, visual_pipeline_id = self._resolve_tool_pipeline_binding(tool)
         if executable_pipeline_id is None:
             explicit_pipeline = self._parse_uuid(implementation_config.get("pipeline_id"))
             if explicit_pipeline is not None:
                 visual_pipeline_id = explicit_pipeline
-        runtime = PipelineToolRuntime(self.db, self.tenant_id)
+        runtime = PipelineToolRuntime(self.db, self.organization_id)
         executable = await runtime.resolve_executable_pipeline(
             executable_pipeline_id=executable_pipeline_id,
             visual_pipeline_id=visual_pipeline_id,
@@ -1269,15 +1267,13 @@ class ToolNodeExecutor(BaseNodeExecutor):
     async def _load_tool(self, tool_id: UUID | str) -> Any:
         tool_id_text = str(tool_id)
         if tool_id_text.startswith("mcp:"):
-            if not self.tenant_id:
-                raise PermissionError("Mounted MCP tools require tenant context")
-            mount, server, discovered = await McpRuntimeService(self.db, self.tenant_id).resolve_virtual_tool(tool_id_text)
-            server_slug = re.sub(r"[^a-zA-Z0-9]+", "_", str(server.name or "").strip().lower()).strip("_") or "mcp"
-            tool_slug = re.sub(r"[^a-zA-Z0-9]+", "_", str(discovered.name or "").strip().lower()).strip("_") or "tool"
+            if not self.organization_id:
+                raise PermissionError("Mounted MCP tools require organization context")
+            mount, server, discovered = await McpRuntimeService(self.db, self.organization_id).resolve_virtual_tool(tool_id_text)
             return SimpleNamespace(
                 id=tool_id_text,
                 name=discovered.title or discovered.name,
-                slug=f"mcp_{server_slug}_{tool_slug}",
+                slug=None,
                 description=discovered.description or f"MCP tool from {server.name}",
                 schema={"input": discovered.input_schema or {}, "output": {}},
                 config_schema={
@@ -1303,9 +1299,9 @@ class ToolNodeExecutor(BaseNodeExecutor):
         tool = None
         try:
             if await self._has_artifact_columns():
-                scope_condition = ToolRegistry.tenant_id == None if self.tenant_id is None else or_(
-                    ToolRegistry.tenant_id == self.tenant_id,
-                    ToolRegistry.tenant_id == None,
+                scope_condition = ToolRegistry.organization_id == None if self.organization_id is None else or_(
+                    ToolRegistry.organization_id == self.organization_id,
+                    ToolRegistry.organization_id == None,
                 )
                 result = await self.db.execute(
                     select(ToolRegistry).where(
@@ -1324,27 +1320,27 @@ class ToolNodeExecutor(BaseNodeExecutor):
             except Exception:
                 pass
 
-            if self.tenant_id is None:
+            if self.organization_id is None:
                 raw_query = """
                     SELECT id, name, slug, description, scope, schema, config_schema, is_active, is_system
                     FROM tool_registry
-                    WHERE id = :tool_id AND tenant_id IS NULL
+                    WHERE id = :tool_id AND organization_id IS NULL
                 """
                 raw_params = {"tool_id": str(tool_id)}
             else:
                 raw_query = """
                     SELECT id, name, slug, description, scope, schema, config_schema, is_active, is_system
                     FROM tool_registry
-                    WHERE id = :tool_id AND (tenant_id = :tenant_id OR tenant_id IS NULL)
+                    WHERE id = :tool_id AND (organization_id= :organization_id OR organization_id IS NULL)
                 """
-                raw_params = {"tool_id": str(tool_id), "tenant_id": str(self.tenant_id)}
+                raw_params = {"tool_id": str(tool_id), "organization_id": str(self.organization_id)}
 
             row = (await self.db.execute(text(raw_query), raw_params)).first()
             if row:
                 tool = SimpleNamespace(
                     id=row[0],
                     name=row[1],
-                    slug=row[2],
+                    slug=None,
                     description=row[3],
                     scope=row[4],
                     schema=row[5] or {},
@@ -1391,7 +1387,7 @@ class ToolNodeExecutor(BaseNodeExecutor):
         node_id = context.get("node_id", "tool_node") if context else "tool_node"
         source_node_id = self._resolve_source_node_id(context)
         tool_event_metadata = resolve_tool_event_metadata(
-            tool_slug=getattr(tool, "slug", None),
+            builtin_key=getattr(tool, "builtin_key", None),
             tool_name=tool.name,
             input_data=input_data,
         )
@@ -1403,8 +1399,8 @@ class ToolNodeExecutor(BaseNodeExecutor):
         def emit_artifact_draft_update(result: Any) -> None:
             if not emitter:
                 return
-            tool_slug = getattr(tool, "slug", None)
-            if not is_artifact_coding_mutation_tool_slug(tool_slug):
+            builtin_key = getattr(tool, "builtin_key", None)
+            if not is_artifact_coding_mutation_builtin_key(builtin_key):
                 return
             session_id = str((context or {}).get("artifact_coding_session_id") or "").strip()
             if not session_id:
@@ -1415,7 +1411,7 @@ class ToolNodeExecutor(BaseNodeExecutor):
                 {
                     "session_id": session_id,
                     "shared_draft_id": str((context or {}).get("artifact_coding_shared_draft_id") or "").strip() or None,
-                    "tool_slug": tool_slug,
+                    "builtin_key": getattr(tool, "builtin_key", None),
                     "summary": payload.get("summary"),
                     "changed_fields": payload.get("changed_fields") if isinstance(payload.get("changed_fields"), list) else [],
                 },
@@ -1453,7 +1449,7 @@ class ToolNodeExecutor(BaseNodeExecutor):
                 "tool.execution_prepared",
                 {
                     "tool_id": str(tool_id_str),
-                    "tool_slug": getattr(tool, "slug", None),
+                    "builtin_key": getattr(tool, "builtin_key", None),
                     "implementation_type": impl_type,
                     "validation_mode": envelope.execution_policy.validation_mode,
                     "model_input_shape": _tool_input_shape(envelope.model_input_raw),
@@ -1473,7 +1469,7 @@ class ToolNodeExecutor(BaseNodeExecutor):
                 emitter.emit_internal_event(
                     "tool.arguments_compiled",
                     {
-                        "tool_slug": getattr(tool, "slug", None),
+                        "builtin_key": getattr(tool, "builtin_key", None),
                         "implementation_type": impl_type,
                         "status": "failed",
                         "validation_mode": envelope.execution_policy.validation_mode,
@@ -1491,7 +1487,7 @@ class ToolNodeExecutor(BaseNodeExecutor):
             emitter.emit_internal_event(
                 "tool.arguments_compiled",
                 {
-                    "tool_slug": getattr(tool, "slug", None),
+                    "builtin_key": getattr(tool, "builtin_key", None),
                     "implementation_type": impl_type,
                     "status": "ok",
                     "validation_mode": envelope.execution_policy.validation_mode,
@@ -1508,12 +1504,12 @@ class ToolNodeExecutor(BaseNodeExecutor):
             artifact_id, artifact_version = self._resolve_tool_artifact_binding(tool)
             artifact_uuid = self._parse_uuid(artifact_id)
             if artifact_id and artifact_uuid is not None:
-                result = await self._execute_tenant_artifact_tool(
+                result = await self._execute_organization_artifact_tool(
                     tool=tool,
                     envelope=envelope,
                 )
                 enforce_platform_architect_guardrails(
-                    tool_slug=getattr(tool, "slug", None),
+                    builtin_key=getattr(tool, "builtin_key", None),
                     tool_result=result,
                     input_data=self._compiled_input_dict(envelope),
                     node_context=context,
@@ -1530,12 +1526,12 @@ class ToolNodeExecutor(BaseNodeExecutor):
             if impl_type == "artifact" and implementation_config.get("artifact_id"):
                 implementation_artifact_id = str(implementation_config.get("artifact_id"))
                 if self._parse_uuid(implementation_artifact_id) is not None:
-                    result = await self._execute_tenant_artifact_tool(
+                    result = await self._execute_organization_artifact_tool(
                         tool=tool,
                         envelope=envelope,
                     )
                     enforce_platform_architect_guardrails(
-                        tool_slug=getattr(tool, "slug", None),
+                        builtin_key=getattr(tool, "builtin_key", None),
                         tool_result=result,
                         input_data=self._compiled_input_dict(envelope),
                         node_context=context,
@@ -1573,7 +1569,7 @@ class ToolNodeExecutor(BaseNodeExecutor):
                     raise NotImplementedError(f"Unsupported tool implementation type: {impl_type}")
 
             enforce_platform_architect_guardrails(
-                tool_slug=getattr(tool, "slug", None),
+                builtin_key=getattr(tool, "builtin_key", None),
                 tool_result=output_data,
                 input_data=self._compiled_input_dict(envelope),
                 node_context=context,
@@ -1583,7 +1579,7 @@ class ToolNodeExecutor(BaseNodeExecutor):
                 emitter.emit_internal_event(
                     "tool.execution_completed",
                     {
-                        "tool_slug": getattr(tool, "slug", None),
+                        "builtin_key": getattr(tool, "builtin_key", None),
                         "implementation_type": impl_type,
                         "validation_mode": envelope.execution_policy.validation_mode,
                         "dispatch_target": dispatch_target,
@@ -1640,7 +1636,7 @@ class ToolNodeExecutor(BaseNodeExecutor):
                 emitter.emit_internal_event(
                     "tool.execution_completed",
                     {
-                        "tool_slug": getattr(tool, "slug", None),
+                        "builtin_key": getattr(tool, "builtin_key", None),
                         "implementation_type": impl_type,
                         "validation_mode": envelope.execution_policy.validation_mode,
                         "dispatch_target": dispatch_target,

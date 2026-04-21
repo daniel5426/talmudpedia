@@ -5,7 +5,7 @@ from app.agent.executors.interaction import HumanInputNodeExecutor
 
 @pytest.mark.asyncio
 async def test_user_approval_can_execute_gates_on_payload():
-    executor = HumanInputNodeExecutor(tenant_id=None, db=None)
+    executor = HumanInputNodeExecutor(organization_id=None, db=None)
 
     can_execute = await executor.can_execute({}, {}, {"node_type": "user_approval"})
     assert can_execute is False
@@ -16,7 +16,7 @@ async def test_user_approval_can_execute_gates_on_payload():
 
 @pytest.mark.asyncio
 async def test_user_approval_execute_approve_reject():
-    executor = HumanInputNodeExecutor(tenant_id=None, db=None)
+    executor = HumanInputNodeExecutor(organization_id=None, db=None)
 
     approved = await executor.execute({"approval": "yes"}, {}, {"node_type": "user_approval"})
     assert approved["branch_taken"] == "approve"
@@ -29,7 +29,7 @@ async def test_user_approval_execute_approve_reject():
 
 @pytest.mark.asyncio
 async def test_user_approval_rejects_invalid_payload():
-    executor = HumanInputNodeExecutor(tenant_id=None, db=None)
+    executor = HumanInputNodeExecutor(organization_id=None, db=None)
 
     with pytest.raises(ValueError):
         await executor.execute({"approval": "maybe"}, {}, {"node_type": "user_approval"})
@@ -37,7 +37,7 @@ async def test_user_approval_rejects_invalid_payload():
 
 @pytest.mark.asyncio
 async def test_human_input_accepts_message_or_input():
-    executor = HumanInputNodeExecutor(tenant_id=None, db=None)
+    executor = HumanInputNodeExecutor(organization_id=None, db=None)
 
     can_execute = await executor.can_execute({}, {}, {"node_type": "human_input"})
     assert can_execute is False

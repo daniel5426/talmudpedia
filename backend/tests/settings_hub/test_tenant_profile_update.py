@@ -1,21 +1,34 @@
 import pytest
 
+from app.api.dependencies import get_current_principal
 from app.api.routers.auth import get_current_user
-from app.db.postgres.models.identity import OrgMembership, OrgRole, Tenant, User, MembershipStatus, OrgUnit, OrgUnitType
+from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Organization, User
+
+
+def _override_principal(tenant: Organization, user: User, scopes: list[str]):
+    async def _inner():
+        return {
+            "sub": str(user.id),
+            "user_id": str(user.id),
+            "organization_id": str(tenant.id),
+            "scopes": scopes,
+        }
+
+    return _inner
 
 
 @pytest.mark.asyncio
 async def test_owner_can_patch_tenant_profile(client, db_session, run_prefix):
-    tenant = Tenant(name="Tenant A", slug=f"tenant-a-{run_prefix}")
+    tenant = Organization(name="Organization A", slug=f"tenant-a-{run_prefix}")
     owner = User(email=f"owner-{run_prefix}@tenant-a.com", hashed_password="x", role="user")
     db_session.add_all([tenant, owner])
     await db_session.flush()
-    root = OrgUnit(tenant_id=tenant.id, parent_id=None, name="Root", slug=f"root-tenant-a-{run_prefix}", type=OrgUnitType.org)
+    root = OrgUnit(organization_id=tenant.id, parent_id=None, name="Root", slug=f"root-tenant-a-{run_prefix}", type=OrgUnitType.org)
     db_session.add(root)
     await db_session.flush()
 
     membership = OrgMembership(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=owner.id,
         org_unit_id=root.id,
         role=OrgRole.owner,
@@ -30,30 +43,31 @@ async def test_owner_can_patch_tenant_profile(client, db_session, run_prefix):
         return owner
 
     app.dependency_overrides[get_current_user] = override_current_user
+    app.dependency_overrides[get_current_principal] = _override_principal(tenant, owner, ["*"])
     response = await client.patch(
-        f"/api/tenants/{tenant.slug}",
-        json={"name": "Tenant A Updated", "status": "suspended"},
+        f"/api/tenants/{tenant.id}",
+        json={"name": "Organization A Updated", "status": "suspended"},
     )
     app.dependency_overrides.clear()
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["name"] == "Tenant A Updated"
+    assert payload["name"] == "Organization A Updated"
     assert payload["status"] == "suspended"
 
 
 @pytest.mark.asyncio
 async def test_member_cannot_patch_tenant_profile(client, db_session, run_prefix):
-    tenant = Tenant(name="Tenant A", slug=f"tenant-member-{run_prefix}")
+    tenant = Organization(name="Organization A", slug=f"tenant-member-{run_prefix}")
     member_user = User(email=f"member-{run_prefix}@tenant-a.com", hashed_password="x", role="user")
     db_session.add_all([tenant, member_user])
     await db_session.flush()
-    root = OrgUnit(tenant_id=tenant.id, parent_id=None, name="Root", slug=f"root-tenant-member-{run_prefix}", type=OrgUnitType.org)
+    root = OrgUnit(organization_id=tenant.id, parent_id=None, name="Root", slug=f"root-tenant-member-{run_prefix}", type=OrgUnitType.org)
     db_session.add(root)
     await db_session.flush()
 
     membership = OrgMembership(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=member_user.id,
         org_unit_id=root.id,
         role=OrgRole.member,
@@ -68,47 +82,11 @@ async def test_member_cannot_patch_tenant_profile(client, db_session, run_prefix
         return member_user
 
     app.dependency_overrides[get_current_user] = override_current_user
+    app.dependency_overrides[get_current_principal] = _override_principal(tenant, member_user, ["organization_units.read"])
     response = await client.patch(
-        f"/api/tenants/{tenant.slug}",
+        f"/api/tenants/{tenant.id}",
         json={"name": "Should Fail"},
     )
     app.dependency_overrides.clear()
 
     assert response.status_code == 403
-
-
-@pytest.mark.asyncio
-async def test_patch_tenant_slug_conflict_returns_400(client, db_session, run_prefix):
-    tenant_a = Tenant(name="Tenant A", slug=f"tenant-a-conflict-{run_prefix}")
-    tenant_b = Tenant(name="Tenant B", slug=f"tenant-b-conflict-{run_prefix}")
-    owner = User(email=f"owner-{run_prefix}@tenant-conflict.com", hashed_password="x", role="user")
-    db_session.add_all([tenant_a, tenant_b, owner])
-    await db_session.flush()
-    root = OrgUnit(tenant_id=tenant_a.id, parent_id=None, name="Root", slug=f"root-tenant-conflict-{run_prefix}", type=OrgUnitType.org)
-    db_session.add(root)
-    await db_session.flush()
-
-    membership = OrgMembership(
-        tenant_id=tenant_a.id,
-        user_id=owner.id,
-        org_unit_id=root.id,
-        role=OrgRole.owner,
-        status=MembershipStatus.active,
-    )
-    db_session.add(membership)
-    await db_session.commit()
-
-    from main import app
-
-    async def override_current_user():
-        return owner
-
-    app.dependency_overrides[get_current_user] = override_current_user
-    response = await client.patch(
-        f"/api/tenants/{tenant_a.slug}",
-        json={"slug": tenant_b.slug},
-    )
-    app.dependency_overrides.clear()
-
-    assert response.status_code == 400
-    assert response.json()["detail"] == "Tenant slug already exists"

@@ -2,8 +2,8 @@ import { render, screen, waitFor } from "@testing-library/react"
 
 import { UsersTable } from "@/components/admin/users-table"
 
-jest.mock("@/contexts/TenantContext", () => ({
-  useTenant: () => ({ currentTenant: null }),
+jest.mock("@/contexts/OrganizationContext", () => ({
+  useOrganization: () => ({ currentOrganization: null }),
 }))
 
 jest.mock("@/components/direction-provider", () => ({
@@ -14,15 +14,6 @@ jest.mock("@/services", () => ({
   adminService: {
     updateUser: jest.fn(),
     bulkDeleteUsers: jest.fn(),
-  },
-}))
-
-jest.mock("@/services/rbac", () => ({
-  rbacService: {
-    listRoles: jest.fn().mockResolvedValue([]),
-    listRoleAssignments: jest.fn().mockResolvedValue([]),
-    createRoleAssignment: jest.fn(),
-    deleteRoleAssignment: jest.fn(),
   },
 }))
 

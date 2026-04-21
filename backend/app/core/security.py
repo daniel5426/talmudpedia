@@ -36,7 +36,7 @@ def get_password_hash(password: str) -> str:
 
 def create_access_token(
     subject: Union[str, Any], 
-    tenant_id: Optional[str] = None,
+    organization_id: Optional[str] = None,
     org_unit_id: Optional[str] = None,
     org_role: Optional[str] = None,
     expires_delta: Optional[timedelta] = None
@@ -47,8 +47,8 @@ def create_access_token(
         expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     
     to_encode = {"exp": expire, "sub": str(subject)}
-    if tenant_id:
-        to_encode["tenant_id"] = str(tenant_id)
+    if organization_id:
+        to_encode["organization_id"] = str(organization_id)
     if org_unit_id:
         to_encode["org_unit_id"] = str(org_unit_id)
     if org_role:
@@ -61,7 +61,7 @@ def create_access_token(
 def create_published_app_session_token(
     *,
     subject: Union[str, Any],
-    tenant_id: str,
+    organization_id: str,
     app_id: str,
     app_account_id: str,
     session_id: str,
@@ -75,7 +75,7 @@ def create_published_app_session_token(
     to_encode: dict[str, Any] = {
         "exp": expire,
         "sub": str(subject),
-        "tenant_id": str(tenant_id),
+        "organization_id": str(organization_id),
         "app_id": str(app_id),
         "app_account_id": str(app_account_id),
         "session_id": str(session_id),
@@ -91,7 +91,7 @@ def decode_published_app_session_token(token: str) -> dict[str, Any]:
     payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
     if payload.get("token_use") != PUBLISHED_APP_TOKEN_USE:
         raise jwt.InvalidTokenError("Invalid token_use")
-    if not payload.get("tenant_id") or not payload.get("app_id") or not payload.get("app_account_id") or not payload.get("session_id"):
+    if not payload.get("organization_id") or not payload.get("app_id") or not payload.get("app_account_id") or not payload.get("session_id"):
         raise jwt.InvalidTokenError("Invalid published app token claims")
     return payload
 
@@ -99,7 +99,7 @@ def decode_published_app_session_token(token: str) -> dict[str, Any]:
 def create_published_app_preview_token(
     *,
     subject: Union[str, Any],
-    tenant_id: str,
+    organization_id: str,
     app_id: str,
     revision_id: str,
     scopes: Optional[list[str]] = None,
@@ -111,7 +111,7 @@ def create_published_app_preview_token(
     to_encode: dict[str, Any] = {
         "exp": expire,
         "sub": str(subject),
-        "tenant_id": str(tenant_id),
+        "organization_id": str(organization_id),
         "app_id": str(app_id),
         "revision_id": str(revision_id),
         "token_use": PUBLISHED_APP_PREVIEW_TOKEN_USE,
@@ -125,7 +125,7 @@ def decode_published_app_preview_token(token: str) -> dict[str, Any]:
     payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
     if payload.get("token_use") != PUBLISHED_APP_PREVIEW_TOKEN_USE:
         raise jwt.InvalidTokenError("Invalid token_use")
-    if not payload.get("tenant_id") or not payload.get("app_id") or not payload.get("revision_id"):
+    if not payload.get("organization_id") or not payload.get("app_id") or not payload.get("revision_id"):
         raise jwt.InvalidTokenError("Invalid published app preview token claims")
     return payload
 
@@ -133,7 +133,7 @@ def decode_published_app_preview_token(token: str) -> dict[str, Any]:
 def create_published_app_draft_dev_token(
     *,
     subject: Union[str, Any],
-    tenant_id: str,
+    organization_id: str,
     app_id: str,
     user_id: str,
     session_id: str,
@@ -146,7 +146,7 @@ def create_published_app_draft_dev_token(
     to_encode: dict[str, Any] = {
         "exp": expire,
         "sub": str(subject),
-        "tenant_id": str(tenant_id),
+        "organization_id": str(organization_id),
         "app_id": str(app_id),
         "user_id": str(user_id),
         "session_id": str(session_id),
@@ -161,6 +161,6 @@ def decode_published_app_draft_dev_token(token: str) -> dict[str, Any]:
     payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
     if payload.get("token_use") != PUBLISHED_APP_DRAFT_DEV_TOKEN_USE:
         raise jwt.InvalidTokenError("Invalid token_use")
-    if not payload.get("tenant_id") or not payload.get("app_id") or not payload.get("session_id") or not payload.get("user_id"):
+    if not payload.get("organization_id") or not payload.get("app_id") or not payload.get("session_id") or not payload.get("user_id"):
         raise jwt.InvalidTokenError("Invalid published app draft dev token claims")
     return payload

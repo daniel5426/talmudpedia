@@ -29,7 +29,7 @@ Key scenarios covered:
 - Env-gated HTTP smoke coverage for SDK read surfaces (`catalog`, `agents`, `tools`, `models`, `credentials`) and tenant-slug surfaces (`artifacts`, `rag`, `knowledge_stores`).
 - Guardrail test blocks `/api/agents` references in control-plane SDK/tool Python code.
 
-Last run command: `cd backend && PYTHONPATH=. pytest -q tests/tenant_api_keys/test_api_keys_api.py tests/embedded_agent_runtime/test_embedded_agent_runtime_api.py tests/control_plane_sdk tests/published_apps_external_runtime/test_external_runtime_api.py tests/published_apps_host_runtime/test_host_runtime_same_url_auth.py tests/security_scope_registry/test_scope_registry.py`
+Last run command: `cd backend && PYTHONPATH=. pytest -q tests/organization_api_keys/test_api_keys_api.py tests/embedded_agent_runtime/test_embedded_agent_runtime_api.py tests/control_plane_sdk tests/published_apps_external_runtime/test_external_runtime_api.py tests/published_apps_host_runtime/test_host_runtime_same_url_auth.py tests/security_scope_registry/test_scope_registry.py`
 Last run date/time: 2026-03-16 19:38 EET
 Last run result: pass (`45 passed, 2 skipped`)
 

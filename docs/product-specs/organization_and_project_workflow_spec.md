@@ -1,6 +1,6 @@
 # Organization And Project Workflow Spec
 
-Last Updated: 2026-04-19
+Last Updated: 2026-04-20
 
 This document is the canonical product/specification reference for the browser sign-in flow, active organization/project context, and the organization/project admin workflow.
 
@@ -129,14 +129,14 @@ Current implemented organization APIs:
 
 - `GET /api/organizations`
 - `POST /api/organizations`
-- `GET /api/organizations/{organization_slug}`
-- `PATCH /api/organizations/{organization_slug}`
-- `GET /api/organizations/{organization_slug}/projects`
-- `POST /api/organizations/{organization_slug}/projects`
-- `PATCH /api/organizations/{organization_slug}/projects/{project_slug}`
-- `GET /api/organizations/{organization_slug}/members`
-- `GET /api/organizations/{organization_slug}/invites`
-- `POST /api/organizations/{organization_slug}/invites`
+- `GET /api/organizations/{organization_id}`
+- `PATCH /api/organizations/{organization_id}`
+- `GET /api/organizations/{organization_id}/projects`
+- `POST /api/organizations/{organization_id}/projects`
+- `PATCH /api/organizations/{organization_id}/projects/{project_id}`
+- `GET /api/organizations/{organization_id}/members`
+- `GET /api/organizations/{organization_id}/invites`
+- `POST /api/organizations/{organization_id}/invites`
 - `POST /api/organizations/invites/accept`
 
 ## Authorization Model

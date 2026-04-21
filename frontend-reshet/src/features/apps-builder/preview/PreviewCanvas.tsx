@@ -10,7 +10,6 @@ import { logBuilderPreviewDebug, type PreviewTransportStatus } from "@/features/
 
 type PreviewCanvasProps = {
   previewUrl?: string | null;
-  previewAuthToken?: string | null;
   transportKey?: string | null;
   transportStatus?: PreviewTransportStatus | null;
   hasUsableFrame?: boolean;
@@ -114,7 +113,6 @@ function PreviewWarmupState({
 function postPreviewAuthToken(
   frame: HTMLIFrameElement | null,
   targetUrl: string | null | undefined,
-  previewAuthToken?: string | null,
 ): void {
   if (!frame?.contentWindow) {
     return;
@@ -128,14 +126,14 @@ function postPreviewAuthToken(
   frame.contentWindow.postMessage(
     {
       type: PREVIEW_AUTH_MESSAGE_TYPE,
-      token: String(previewAuthToken || "").trim() || null,
+      token: null,
     },
     targetOrigin,
   );
   logBuilderPreviewDebug("preview", "auth_posted", {
     targetOrigin,
     previewUrl: targetUrl || null,
-    previewAuthTokenPresent: Boolean(String(previewAuthToken || "").trim()),
+    previewAuthTokenPresent: false,
   });
 }
 
@@ -218,8 +216,7 @@ export const PreviewCanvas = forwardRef<HTMLIFrameElement, PreviewCanvasProps>(
   function PreviewCanvas(
     {
       previewUrl,
-      previewAuthToken,
-      transportKey,
+          transportKey,
       transportStatus = "idle",
       hasUsableFrame = false,
       loadingMessage,
@@ -277,8 +274,8 @@ export const PreviewCanvas = forwardRef<HTMLIFrameElement, PreviewCanvasProps>(
       if (!visibleFrameRef.current || !visibleFrame?.src) {
         return;
       }
-      postPreviewAuthToken(visibleFrameRef.current, visibleFrame.src, previewAuthToken);
-    }, [previewAuthToken, visibleFrame]);
+      postPreviewAuthToken(visibleFrameRef.current, visibleFrame.src);
+    }, [visibleFrame]);
 
     useEffect(() => {
       const handleMessage = (event: MessageEvent) => {
@@ -315,26 +312,26 @@ export const PreviewCanvas = forwardRef<HTMLIFrameElement, PreviewCanvasProps>(
       if (!visibleFrameRef.current || !visibleFrame) {
         return;
       }
-      postPreviewAuthToken(visibleFrameRef.current, visibleFrame.src, previewAuthToken);
+      postPreviewAuthToken(visibleFrameRef.current, visibleFrame.src);
       onFrameReady?.(visibleFrame.key);
       logBuilderPreviewDebug("preview", "frame_load.visible", {
         transportKey: visibleFrame.key,
         previewUrl: visibleFrame.src,
       });
-    }, [onFrameReady, previewAuthToken, visibleFrame]);
+    }, [onFrameReady, visibleFrame]);
 
     const handleStagedLoad = useCallback(() => {
       if (!stagedFrameRef.current || !stagedFrame) {
         return;
       }
-      postPreviewAuthToken(stagedFrameRef.current, stagedFrame.src, previewAuthToken);
+      postPreviewAuthToken(stagedFrameRef.current, stagedFrame.src);
       dispatchFrameState({ type: "staged_loaded" });
       onFrameReady?.(stagedFrame.key);
       logBuilderPreviewDebug("preview", "frame_load.staged_swap", {
         transportKey: stagedFrame.key,
         previewUrl: stagedFrame.src,
       });
-    }, [onFrameReady, previewAuthToken, stagedFrame]);
+    }, [onFrameReady, stagedFrame]);
 
     useEffect(() => {
       logBuilderPreviewDebug("preview", "canvas_state", {

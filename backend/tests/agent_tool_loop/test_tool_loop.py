@@ -89,7 +89,7 @@ async def test_streaming_tool_deltas_execute_and_continue(monkeypatch):
     tool_record = make_tool_record(tool_id, "tool_one", {"is_pure": True})
     db = FakeDB([tool_record])
 
-    executor = ReasoningNodeExecutor(tenant_id=None, db=db)
+    executor = ReasoningNodeExecutor(organization_id=None, db=db)
 
     result = await executor.execute(
         {"messages": [{"role": "user", "content": "hi"}]},
@@ -139,7 +139,7 @@ async def test_parallel_safe_order_is_deterministic(monkeypatch):
     ]
     db = FakeDB(tool_records)
 
-    executor = ReasoningNodeExecutor(tenant_id=None, db=db)
+    executor = ReasoningNodeExecutor(organization_id=None, db=db)
 
     result = await executor.execute(
         {"messages": [{"role": "user", "content": "hi"}]},
@@ -178,7 +178,7 @@ async def test_timeout_is_enforced(monkeypatch):
     tool_record = make_tool_record(tool_id, "tool_one", {"is_pure": True, "timeout_s": 0.01})
     db = FakeDB([tool_record])
 
-    executor = ReasoningNodeExecutor(tenant_id=None, db=db)
+    executor = ReasoningNodeExecutor(organization_id=None, db=db)
 
     result = await executor.execute(
         {"messages": [{"role": "user", "content": "hi"}]},
@@ -212,7 +212,7 @@ async def test_json_tool_call_fallback(monkeypatch):
     tool_record = make_tool_record(tool_id, "tool_one", {"is_pure": False})
     db = FakeDB([tool_record])
 
-    executor = ReasoningNodeExecutor(tenant_id=None, db=db)
+    executor = ReasoningNodeExecutor(organization_id=None, db=db)
 
     result = await executor.execute(
         {"messages": [{"role": "user", "content": "hi"}]},
@@ -243,7 +243,7 @@ async def test_max_iterations_enforced(monkeypatch):
     tool_record = make_tool_record(tool_id, "tool_one", {"is_pure": True})
     db = FakeDB([tool_record])
 
-    executor = ReasoningNodeExecutor(tenant_id=None, db=db)
+    executor = ReasoningNodeExecutor(organization_id=None, db=db)
 
     result = await executor.execute(
         {"messages": [{"role": "user", "content": "hi"}]},
@@ -297,7 +297,7 @@ async def test_concurrency_group_limit(monkeypatch):
     ]
     db = FakeDB(tool_records)
 
-    executor = ReasoningNodeExecutor(tenant_id=None, db=db)
+    executor = ReasoningNodeExecutor(organization_id=None, db=db)
 
     await executor.execute(
         {"messages": [{"role": "user", "content": "hi"}]},
@@ -340,7 +340,7 @@ async def test_tool_call_chunk_index_continuations_merge_into_single_call(monkey
     tool_record = make_tool_record(tool_id, "tool_one", {"is_pure": True})
     db = FakeDB([tool_record])
 
-    executor = ReasoningNodeExecutor(tenant_id=None, db=db)
+    executor = ReasoningNodeExecutor(organization_id=None, db=db)
 
     result = await executor.execute(
         {"messages": [{"role": "user", "content": "hi"}]},

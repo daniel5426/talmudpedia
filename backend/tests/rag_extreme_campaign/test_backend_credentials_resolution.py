@@ -36,7 +36,7 @@ async def test_credentials_service_default_provider_credential_preserves_protect
     provider_key = f"pinecone-campaign-{uuid.uuid4().hex[:8]}"
     credential = IntegrationCredential(
         id=uuid.uuid4(),
-        tenant_id=test_tenant_id,
+        organization_id=test_tenant_id,
         category=IntegrationCredentialCategory.VECTOR_STORE,
         provider_key=provider_key,
         provider_variant=None,
@@ -73,7 +73,7 @@ async def test_credentials_service_default_provider_credential_preserves_protect
 async def test_credentials_service_rejects_disabled_explicit_credential(db_session, test_tenant_id):
     credential = IntegrationCredential(
         id=uuid.uuid4(),
-        tenant_id=test_tenant_id,
+        organization_id=test_tenant_id,
         category=IntegrationCredentialCategory.VECTOR_STORE,
         provider_key="pinecone",
         provider_variant=None,

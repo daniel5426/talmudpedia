@@ -31,7 +31,7 @@ class CustomOperator(Base):
     __tablename__ = "custom_operators"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
     
     name = Column(String, nullable=False)
     display_name = Column(String, nullable=False)
@@ -57,5 +57,5 @@ class CustomOperator(Base):
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
 
     # Relationships
-    tenant = relationship("Tenant")
+    organization = relationship("Organization")
     creator = relationship("User")

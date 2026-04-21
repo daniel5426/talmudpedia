@@ -64,6 +64,7 @@ Current deterministic representation examples:
 - `markdown_rendered`
 - `delimited_table`
 - `workbook`
+- `document_text`
 - `binary_meta`
 
 ## Toolset UX

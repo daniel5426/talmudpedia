@@ -234,7 +234,7 @@ describe("resource policy sets page", () => {
     expect(await screen.findByText("Base Policy")).toBeInTheDocument()
   })
 
-  it("creates a tenant user assignment from the assignments section", async () => {
+  it("creates a organization user assignment from the assignments section", async () => {
     listPolicySetsMock.mockResolvedValue([
       { id: "set-1", name: "Base Policy", description: null, is_active: true, included_policy_set_ids: [], rules: [] },
     ])
@@ -250,7 +250,7 @@ describe("resource policy sets page", () => {
 
     await waitFor(() => {
       expect(upsertAssignmentMock).toHaveBeenCalledWith({
-        principal_type: "tenant_user",
+        principal_type: "organization_user",
         policy_set_id: "set-1",
         user_id: "user-1",
       })

@@ -552,7 +552,6 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     draftDevError,
     previewAssetUrl,
     previewTransportGeneration,
-    previewAuthToken,
     previewLoadingMessage,
     publishLockMessage,
     isReady: isSandboxReady,
@@ -580,7 +579,6 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
   );
   const livePreviewState = useBuilderLivePreviewStatus({
     previewBaseUrl: previewAssetUrl,
-    previewAuthToken,
     sessionLivePreview: draftDevSession?.live_preview,
     enabled: hasActiveCodingRunLock || postRunPreviewPollingActive || (
       activeTab === "preview"
@@ -634,13 +632,12 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
   }, [appRoutes, previewRouteInput]);
   const orderedTemplates = useMemo(() => sortTemplates(state?.templates || []), [state?.templates]);
   const platformDomain = useMemo(
-    () => `${state?.app.slug || "app"}.${process.env.NEXT_PUBLIC_APPS_BASE_DOMAIN || "apps.localhost"}`,
-    [state?.app.slug],
+    () => `${state?.app.public_id || "app"}.${process.env.NEXT_PUBLIC_APPS_BASE_DOMAIN || "apps.localhost"}`,
+    [state?.app.public_id],
   );
   const livePreviewTransport = useBuilderPreviewTransport({
     sessionId: draftDevSession?.session_id || null,
     previewBaseUrl: previewAssetUrl,
-    previewAuthToken,
     previewRoute,
     previewTransportGeneration,
     livePreviewStatus: livePreviewState?.status || null,
@@ -799,7 +796,6 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     publishStatus: versionPublishStatus,
     inspectedVersionId,
     inspectedPreviewUrl,
-    inspectedRuntimeToken,
     inspectedPreviewNotice,
     refreshVersions,
     selectVersion,
@@ -853,7 +849,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     if (!inspectedPreviewUrl) {
       return null;
     }
-    const basePreviewUrl = appendPreviewRuntimeToken(inspectedPreviewUrl, inspectedRuntimeToken);
+    const basePreviewUrl = inspectedPreviewUrl;
     if (previewReloadToken <= 0) {
       return basePreviewUrl;
     }
@@ -865,7 +861,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
       const separator = basePreviewUrl.includes("?") ? "&" : "?";
       return `${basePreviewUrl}${separator}__reload=${previewReloadToken}`;
     }
-  }, [inspectedPreviewUrl, inspectedRuntimeToken, previewReloadToken]);
+  }, [inspectedPreviewUrl, previewReloadToken]);
   const inspectedPreviewTransportStatus = useMemo(() => {
     if (inspectedPreviewNotice) {
       return "failed" as const;
@@ -879,7 +875,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     return "idle" as const;
   }, [inspectedPreviewFrameUrl, inspectedPreviewNotice, isLoadingVersionPreview]);
   const effectivePreviewUrl = isInspectingVersion ? inspectedPreviewFrameUrl : livePreviewTransport.documentUrl;
-  const effectivePreviewToken = isInspectingVersion ? inspectedRuntimeToken : previewAuthToken;
+  const effectivePreviewToken = null;
   const livePreviewError = (
     livePreviewState?.status === "failed_keep_last_good"
     || livePreviewState?.status === "failed_no_build"
@@ -1055,7 +1051,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = url;
-      anchor.download = filename || `${state?.app.slug || "app"}-standalone-export.zip`;
+      anchor.download = filename || `${state?.app.public_id || "app"}-standalone-export.zip`;
       document.body.appendChild(anchor);
       anchor.click();
       anchor.remove();
@@ -1067,7 +1063,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     } finally {
       setIsExportingArchive(false);
     }
-  }, [appId, state?.app.slug]);
+  }, [appId, state?.app.public_id]);
 
   useEffect(() => {
     if (activeTab !== "config") return;
@@ -1091,10 +1087,6 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
         description: app.description || "",
         logo_url: app.logo_url || "",
         agent_id: app.agent_id,
-        visibility: app.visibility,
-        auth_enabled: app.auth_enabled,
-        auth_providers: app.auth_providers,
-        auth_template_key: app.auth_template_key,
       });
       setState((prev) => {
         if (!prev) return prev;
@@ -1348,7 +1340,6 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
                 ? buildBuilderPreviewDocumentUrl({
                     baseUrl: draftDevSession.preview_url,
                     route: previewRoute,
-                    runtimeToken: previewAuthToken || draftDevSession?.preview_auth_token || null,
                     buildId: livePreviewState?.last_successful_build_id || null,
                   })
                 : null
@@ -1375,7 +1366,6 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
         buildBuilderPreviewDocumentUrl({
           baseUrl: session.preview_url,
           route: previewRoute,
-          runtimeToken: session.preview_auth_token || previewAuthToken,
           buildId: livePreviewState?.last_successful_build_id || null,
         }),
         "_blank",
@@ -1391,7 +1381,6 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     ensureDraftDevSession,
     state?.app.published_url,
     state?.app.status,
-    previewAuthToken,
     draftDevStatus,
     livePreviewTransport.documentUrl,
     livePreviewState?.last_successful_build_id,
@@ -1766,7 +1755,6 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
                     ) : (
                       <PreviewCanvas
                         previewUrl={effectivePreviewUrl}
-                        previewAuthToken={effectivePreviewToken}
                         transportKey={effectivePreviewTransportKey}
                         transportStatus={effectivePreviewTransportStatus}
                         hasUsableFrame={effectivePreviewHasUsableFrame}

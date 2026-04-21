@@ -155,7 +155,7 @@ def _summarize_run_tree(run_tree: dict[str, Any]) -> dict[str, Any]:
 class ArchitectLiveHarnessConfig:
     base_url: str
     api_key: str
-    tenant_id: str
+    organization_id: str
     architect_agent_id: str | None = None
     output_dir: str = DEFAULT_OUTPUT_DIR
     timeout_s: int = DEFAULT_TIMEOUT_SECONDS
@@ -173,19 +173,19 @@ class ArchitectLiveHarnessConfig:
             or default_base_url
         ).rstrip("/")
         api_key = os.getenv("PLATFORM_ARCHITECT_API_KEY") or os.getenv("TEST_API_KEY") or ""
-        tenant_id = os.getenv("PLATFORM_ARCHITECT_TENANT_ID") or os.getenv("TEST_TENANT_ID") or ""
+        organization_id= os.getenv("PLATFORM_ARCHITECT_TENANT_ID") or os.getenv("TEST_ORGANIZATION_ID") or ""
         architect_agent_id = os.getenv("PLATFORM_ARCHITECT_AGENT_ID") or None
         output_dir = os.getenv("PLATFORM_ARCHITECT_OUTPUT_DIR") or DEFAULT_OUTPUT_DIR
         timeout_raw = os.getenv("PLATFORM_ARCHITECT_TIMEOUT_SECONDS") or str(DEFAULT_TIMEOUT_SECONDS)
         timeout_s = int(timeout_raw)
         if not api_key:
             raise RuntimeError("Missing PLATFORM_ARCHITECT_API_KEY or TEST_API_KEY")
-        if not tenant_id:
-            raise RuntimeError("Missing PLATFORM_ARCHITECT_TENANT_ID or TEST_TENANT_ID")
+        if not organization_id:
+            raise RuntimeError("Missing PLATFORM_ARCHITECT_TENANT_ID or TEST_ORGANIZATION_ID")
         return cls(
             base_url=base_url,
             api_key=api_key,
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             architect_agent_id=architect_agent_id,
             output_dir=output_dir,
             timeout_s=timeout_s,
@@ -283,7 +283,7 @@ class PlatformArchitectLiveHarness:
     def headers(self) -> dict[str, str]:
         return {
             "Authorization": f"Bearer {self.config.api_key}",
-            "X-Tenant-ID": self.config.tenant_id,
+            "X-Organization-ID": self.config.organization_id,
             "Content-Type": "application/json",
         }
 
@@ -309,7 +309,7 @@ class PlatformArchitectLiveHarness:
             items = payload.get("items") if isinstance(payload, dict) else None
             if isinstance(items, list):
                 for item in items:
-                    if isinstance(item, dict) and item.get("slug") == "platform-architect" and item.get("id"):
+                    if isinstance(item, dict) and item.get("system_key") == "platform_architect" and item.get("id"):
                         return str(item["id"])
         except Exception:
             pass
@@ -326,8 +326,8 @@ class PlatformArchitectLiveHarness:
             async with sessionmaker() as db:
                 result = await db.execute(
                     select(Agent.id).where(
-                        Agent.slug == "platform-architect",
-                        Agent.tenant_id == UUID(str(self.config.tenant_id)),
+                        Agent.system_key == "platform_architect",
+                        Agent.organization_id == UUID(str(self.config.organization_id)),
                     )
                 )
                 value = result.scalar_one_or_none()
@@ -344,7 +344,7 @@ class PlatformArchitectLiveHarness:
             finally:
                 loop.close()
         if not agent_id:
-            raise RuntimeError("platform-architect agent not found via HTTP or DB lookup")
+            raise RuntimeError("platform-architect agent not found via HTTP or DB system_key lookup")
         return agent_id
 
     def start_run(self, *, prompt: str, runtime_context: dict[str, Any] | None = None, agent_id: str | None = None) -> str:

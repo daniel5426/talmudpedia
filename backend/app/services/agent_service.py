@@ -2,7 +2,7 @@ import logging
 import json
 from datetime import datetime, timezone
 from typing import Any, Optional, Tuple, List, Dict
-from uuid import UUID
+from uuid import UUID, uuid4
 from dataclasses import dataclass, field
 from difflib import get_close_matches
 
@@ -28,7 +28,6 @@ logger = logging.getLogger(__name__)
 @dataclass
 class CreateAgentData:
     name: str
-    slug: str
     description: Optional[str] = None
     graph_definition: dict = field(default_factory=dict)
     memory_config: Optional[dict] = None
@@ -101,9 +100,13 @@ class AgentService:
     All business logic lives here, keeping routers as thin dispatch layers.
     """
     
-    def __init__(self, db: AsyncSession, tenant_id: UUID):
+    def __init__(self, db: AsyncSession, organization_id: UUID):
         self.db = db
-        self.tenant_id = tenant_id
+        self.organization_id = organization_id
+
+    @staticmethod
+    def _internal_row_key(prefix: str = "agent") -> str:
+        return f"{prefix}-{uuid4().hex}"
 
     @staticmethod
     def _normalize_graph_errors(raw_errors: List[Any]) -> List[Dict[str, Any]]:
@@ -199,7 +202,7 @@ class AgentService:
             select(ModelRegistry.id).where(
                 ModelRegistry.id == parsed_model_id,
                 ModelRegistry.is_active.is_(True),
-                or_(ModelRegistry.tenant_id == self.tenant_id, ModelRegistry.tenant_id.is_(None)),
+                or_(ModelRegistry.organization_id == self.organization_id, ModelRegistry.organization_id.is_(None)),
             ).limit(1)
         )
         return res.scalar_one_or_none() is not None
@@ -207,16 +210,15 @@ class AgentService:
     async def _tool_exists(self, tool_ref: str) -> bool:
         if not tool_ref:
             return False
-        clause = None
         try:
-            clause = ToolRegistry.id == UUID(str(tool_ref))
+            tool_uuid = UUID(str(tool_ref))
         except Exception:
-            clause = ToolRegistry.slug == str(tool_ref)
+            return False
         res = await self.db.execute(
             select(ToolRegistry.id).where(
-                clause,
+                ToolRegistry.id == tool_uuid,
                 ToolRegistry.is_active.is_(True),
-                or_(ToolRegistry.tenant_id == self.tenant_id, ToolRegistry.tenant_id.is_(None)),
+                or_(ToolRegistry.organization_id == self.organization_id, ToolRegistry.organization_id.is_(None)),
             ).limit(1)
         )
         return res.scalar_one_or_none() is not None
@@ -247,11 +249,11 @@ class AgentService:
                         issues.append(
                             self._build_rich_validation_issue(
                                 code="MODEL_NOT_FOUND",
-                                message=f"Referenced model '{model_ref}' was not found in tenant/global active models",
+                                message=f"Referenced model '{model_ref}' was not found in organization/global active models",
                                 severity="error",
                                 node_id=node_id,
                                 path=f"/nodes/{idx}/config/model_id",
-                                expected="Existing active model id/slug/name in tenant or global scope",
+                                expected="Existing active model id in organization or global scope",
                                 actual=model_ref,
                                 suggestions=None,
                             )
@@ -265,11 +267,11 @@ class AgentService:
                         issues.append(
                             self._build_rich_validation_issue(
                                 code="TOOL_NOT_FOUND",
-                                message=f"Referenced tool '{tool_ref}' was not found in tenant/global active tools",
+                                message=f"Referenced tool '{tool_ref}' was not found in organization/global active tools",
                                 severity="error",
                                 node_id=node_id,
                                 path=f"/nodes/{idx}/config/tool_id",
-                                expected="Existing active tool id/slug in tenant or global scope",
+                                expected="Existing active tool id in organization or global scope",
                                 actual=tool_ref,
                                 suggestions=None,
                             )
@@ -309,7 +311,7 @@ class AgentService:
             ) from exc
 
         try:
-            await PromptReferenceResolver(self.db, self.tenant_id).validate_graph_definition(graph.model_dump())
+            await PromptReferenceResolver(self.db, self.organization_id).validate_graph_definition(graph.model_dump())
         except PromptReferenceError as exc:
             raise AgentGraphValidationError(
                 [
@@ -370,7 +372,7 @@ class AgentService:
             )
             return AgentValidationResult(valid=False, errors=issues, warnings=[])
 
-        compiler = AgentCompiler(db=self.db, tenant_id=self.tenant_id)
+        compiler = AgentCompiler(db=self.db, organization_id=self.organization_id)
         try:
             raw_errors = await compiler.validate(graph, agent_id=agent_id)
         except Exception as exc:
@@ -433,8 +435,8 @@ class AgentService:
         limit: int = 50,
         compact: bool = False,
     ) -> Tuple[List[Agent], int]:
-        """List agents for the tenant with pagination and optional status filter."""
-        filters = [Agent.tenant_id == self.tenant_id]
+        """List agents for the organization with pagination and optional status filter."""
+        filters = [Agent.organization_id == self.organization_id]
         
         if status:
             filters.append(Agent.status == status)
@@ -456,9 +458,8 @@ class AgentService:
             query = query.options(
                 load_only(
                     Agent.id,
-                    Agent.tenant_id,
+                    Agent.organization_id,
                     Agent.name,
-                    Agent.slug,
                     Agent.description,
                     Agent.version,
                     Agent.status,
@@ -479,7 +480,7 @@ class AgentService:
     async def get_agent(self, agent_id: UUID) -> Agent:
         """Fetch a specific agent by ID."""
         query = select(Agent).where(
-            and_(Agent.id == agent_id, Agent.tenant_id == self.tenant_id)
+            and_(Agent.id == agent_id, Agent.organization_id == self.organization_id)
         )
         result = await self.db.execute(query)
         agent = result.scalar_one_or_none()
@@ -492,17 +493,8 @@ class AgentService:
     async def create_agent(self, data: CreateAgentData, user_id: Optional[UUID] = None) -> Agent:
         """Create a new agent."""
         data.name = str(data.name or "").strip()
-        data.slug = str(data.slug or "").strip()
         if not data.name:
             raise AgentInputValidationError("Agent name is required")
-        if not data.slug:
-            raise AgentInputValidationError("Agent slug is required")
-        # Check if slug exists in this tenant
-        existing = await self.db.execute(
-            select(Agent).where(and_(Agent.slug == data.slug, Agent.tenant_id == self.tenant_id))
-        )
-        if existing.scalar_one_or_none():
-            raise AgentSlugExistsError(f"Agent with slug '{data.slug}' already exists in this account")
         if not data.graph_definition:
             raise AgentGraphValidationError(
                 [
@@ -516,11 +508,18 @@ class AgentService:
             )
 
         validated_graph = await self._validate_graph_for_write(data.graph_definition)
+        slug = self._internal_row_key("agent")
+        while (
+            await self.db.execute(
+                select(Agent.id).where(and_(Agent.slug == slug, Agent.organization_id == self.organization_id)).limit(1)
+            )
+        ).scalar_one_or_none() is not None:
+            slug = self._internal_row_key("agent")
 
         agent = Agent(
-            tenant_id=self.tenant_id,
+            organization_id=self.organization_id,
             name=data.name,
-            slug=data.slug,
+            slug=slug,
             description=data.description,
             graph_definition=validated_graph,
             memory_config=data.memory_config or {},
@@ -588,19 +587,19 @@ class AgentService:
         run_ids_subquery = select(AgentRun.id).where(
             and_(
                 AgentRun.agent_id == agent_id,
-                AgentRun.tenant_id == self.tenant_id,
+                AgentRun.organization_id == self.organization_id,
             )
         )
 
         await self.db.execute(delete(AgentVersion).where(AgentVersion.agent_id == agent_id))
         await self.db.execute(delete(AgentTrace).where(AgentTrace.run_id.in_(run_ids_subquery)))
         await self.db.execute(delete(AgentRun).where(AgentRun.id.in_(run_ids_subquery)))
-        await self.db.execute(delete(Agent).where(and_(Agent.id == agent_id, Agent.tenant_id == self.tenant_id)))
+        await self.db.execute(delete(Agent).where(and_(Agent.id == agent_id, Agent.organization_id == self.organization_id)))
         await self.db.commit()
         return True
 
     async def validate_agent(self, agent_id: UUID) -> AgentValidationResult:
-        """Validate persisted agent graph using compiler + tenant resource checks."""
+        """Validate persisted agent graph using compiler + organization resource checks."""
         agent = await self.get_agent(agent_id)
         graph_definition = agent.graph_definition if isinstance(agent.graph_definition, dict) else {}
         return await self._build_validation_result_for_graph(

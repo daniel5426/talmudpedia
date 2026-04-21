@@ -18,11 +18,11 @@ from app.services.rag_executable_state import ensure_executable_pipeline_is_curr
 
 
 class PipelineToolRuntime:
-    """Shared tenant-scoped runtime for tool-bound executable pipelines."""
+    """Shared organization-scoped runtime for tool-bound executable pipelines."""
 
-    def __init__(self, db: AsyncSession, tenant_id: UUID):
+    def __init__(self, db: AsyncSession, organization_id: UUID):
         self._db = db
-        self._tenant_id = tenant_id
+        self._organization_id = organization_id
 
     async def resolve_executable_pipeline(self, *, executable_pipeline_id: UUID | None = None, visual_pipeline_id: UUID | None = None) -> ExecutablePipeline:
         if executable_pipeline_id is not None:
@@ -30,7 +30,7 @@ class PipelineToolRuntime:
                 await self._db.execute(
                     select(ExecutablePipeline).where(
                         ExecutablePipeline.id == executable_pipeline_id,
-                        ExecutablePipeline.tenant_id == self._tenant_id,
+                        ExecutablePipeline.organization_id == self._organization_id,
                     )
                 )
             ).scalar_one_or_none()
@@ -40,7 +40,7 @@ class PipelineToolRuntime:
                 await self._db.execute(
                     select(VisualPipeline).where(
                         VisualPipeline.id == executable.visual_pipeline_id,
-                        VisualPipeline.tenant_id == self._tenant_id,
+                        VisualPipeline.organization_id == self._organization_id,
                     )
                 )
             ).scalar_one_or_none()
@@ -56,7 +56,7 @@ class PipelineToolRuntime:
             await self._db.execute(
                 select(VisualPipeline).where(
                     VisualPipeline.id == visual_pipeline_id,
-                    VisualPipeline.tenant_id == self._tenant_id,
+                    VisualPipeline.organization_id == self._organization_id,
                 )
             )
         ).scalar_one_or_none()
@@ -68,7 +68,7 @@ class PipelineToolRuntime:
                 select(ExecutablePipeline)
                 .where(
                     ExecutablePipeline.visual_pipeline_id == visual.id,
-                    ExecutablePipeline.tenant_id == self._tenant_id,
+                    ExecutablePipeline.organization_id == self._organization_id,
                     ExecutablePipeline.is_valid == True,
                 )
                 .order_by(ExecutablePipeline.version.desc())
@@ -85,7 +85,7 @@ class PipelineToolRuntime:
 
         job = PipelineJob(
             id=uuid.uuid4(),
-            tenant_id=self._tenant_id,
+            organization_id=self._organization_id,
             executable_pipeline_id=executable.id,
             status=PipelineJobStatus.QUEUED,
             input_params=input_params or {},
@@ -110,17 +110,17 @@ class PipelineToolRuntime:
 class RetrievalPipelineRuntime:
     """Shared retrieval-pipeline runtime for RAG nodes and retrieval tools."""
 
-    def __init__(self, db: AsyncSession, tenant_id: UUID):
+    def __init__(self, db: AsyncSession, organization_id: UUID):
         self._db = db
-        self._tenant_id = tenant_id
-        self._runtime = PipelineToolRuntime(db, tenant_id)
+        self._organization_id = organization_id
+        self._runtime = PipelineToolRuntime(db, organization_id)
 
     async def resolve_executable_pipeline(self, pipeline_id: UUID) -> ExecutablePipeline:
         executable = (
             await self._db.execute(
                 select(ExecutablePipeline).where(
                     ExecutablePipeline.id == pipeline_id,
-                    ExecutablePipeline.tenant_id == self._tenant_id,
+                    ExecutablePipeline.organization_id == self._organization_id,
                     ExecutablePipeline.pipeline_type == "retrieval",
                 )
             )
@@ -132,7 +132,7 @@ class RetrievalPipelineRuntime:
             await self._db.execute(
                 select(VisualPipeline).where(
                     VisualPipeline.id == pipeline_id,
-                    VisualPipeline.tenant_id == self._tenant_id,
+                    VisualPipeline.organization_id == self._organization_id,
                     VisualPipeline.pipeline_type == "retrieval",
                 )
             )
@@ -156,7 +156,7 @@ class RetrievalPipelineRuntime:
 
         job = PipelineJob(
             id=uuid.uuid4(),
-            tenant_id=self._tenant_id,
+            organization_id=self._organization_id,
             executable_pipeline_id=executable.id,
             status=PipelineJobStatus.QUEUED,
             input_params={

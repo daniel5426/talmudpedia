@@ -268,7 +268,7 @@ def test_artifacts_create_contract_parity(monkeypatch):
         context={
             "inputs": {
                 "action": "artifacts.create",
-                "tenant_id": "tenant-1",
+                "organization_id": "tenant-1",
                 "token": "token",
                 "payload": {
                     "display_name": "Demo Artifact",
@@ -316,7 +316,7 @@ def test_artifacts_update_contract_parity(monkeypatch):
         context={
             "inputs": {
                 "action": "artifacts.update",
-                "tenant_id": "tenant-1",
+                "organization_id": "tenant-1",
                 "token": "token",
                 "payload": {
                     "artifact_id": "draft-42",
@@ -349,7 +349,7 @@ def test_artifacts_convert_kind_contract_parity(monkeypatch):
         context={
             "inputs": {
                 "action": "artifacts.convert_kind",
-                "tenant_id": "tenant-1",
+                "organization_id": "tenant-1",
                 "token": "token",
                 "payload": {
                     "artifact_id": "artifact-9",
@@ -386,7 +386,7 @@ def test_artifacts_create_test_run_contract_parity(monkeypatch):
         context={
             "inputs": {
                 "action": "artifacts.create_test_run",
-                "tenant_id": "tenant-1",
+                "organization_id": "tenant-1",
                 "token": "token",
                 "payload": {
                     "artifact_id": "artifact-7",
@@ -409,7 +409,7 @@ def test_removed_legacy_artifact_action_fails_explicitly():
     out = handler.execute(
         state={},
         config={},
-        context={"inputs": {"action": "artifacts.create_or_update_draft", "tenant_id": "tenant-1", "token": "t"}},
+        context={"inputs": {"action": "artifacts.create_or_update_draft", "organization_id": "tenant-1", "token": "t"}},
     )
 
     assert out["context"]["action"] == "artifacts.create_or_update_draft"
@@ -428,7 +428,7 @@ def test_tools_create_or_update_contract_parity(monkeypatch):
         context={
             "inputs": {
                 "action": "tools.create_or_update",
-                "tenant_id": "tenant-1",
+                "organization_id": "tenant-1",
                 "token": "token",
                 "payload": {
                     "tool_id": "tool-123",
@@ -457,7 +457,7 @@ def test_agents_execute_contract_parity(monkeypatch):
         context={
             "inputs": {
                 "action": "agents.execute",
-                "tenant_id": "tenant-1",
+                "organization_id": "tenant-1",
                 "token": "token",
                 "payload": {"agent_id": "agent-1", "input": {"text": "hello"}},
             }
@@ -483,7 +483,7 @@ def test_orchestration_spawn_run_contract_parity(monkeypatch):
         context={
             "inputs": {
                 "action": "orchestration.spawn_run",
-                "tenant_id": "tenant-1",
+                "organization_id": "tenant-1",
                 "token": "token",
                 "payload": {
                     "caller_run_id": "run-parent",
@@ -512,7 +512,7 @@ def test_catalog_list_capabilities_uses_catalog_methods(monkeypatch):
     out = handler.execute(
         state={},
         config={},
-        context={"inputs": {"action": "catalog.list_capabilities", "tenant_id": "tenant-1", "token": "token"}},
+        context={"inputs": {"action": "catalog.list_capabilities", "organization_id": "tenant-1", "token": "token"}},
     )
 
     assert out["context"]["errors"] == []
@@ -533,7 +533,7 @@ def test_tools_publish_contract_parity(monkeypatch):
         context={
             "inputs": {
                 "action": "tools.publish",
-                "tenant_id": "tenant-1",
+                "organization_id": "tenant-1",
                 "token": "token",
                 "payload": {"tool_id": "tool-22"},
                 "objective_flags": {"allow_publish": True},
@@ -559,7 +559,7 @@ def test_artifacts_delete_contract_parity(monkeypatch):
         context={
             "inputs": {
                 "action": "artifacts.delete",
-                "tenant_id": "tenant-1",
+                "organization_id": "tenant-1",
                 "token": "token",
                 "payload": {"artifact_id": "artifact-7"},
             }
@@ -584,7 +584,7 @@ def test_agents_start_run_contract_parity(monkeypatch):
         context={
             "inputs": {
                 "action": "agents.start_run",
-                "tenant_id": "tenant-1",
+                "organization_id": "tenant-1",
                 "token": "token",
                 "payload": {"agent_id": "agent-1", "run": {"input": {"text": "hello"}}},
             }
@@ -610,7 +610,7 @@ def test_agents_get_run_tree_contract_parity(monkeypatch):
         context={
             "inputs": {
                 "action": "agents.get_run_tree",
-                "tenant_id": "tenant-1",
+                "organization_id": "tenant-1",
                 "token": "token",
                 "payload": {"run_id": "run-1"},
             }
@@ -635,7 +635,7 @@ def test_rag_create_job_contract_parity(monkeypatch):
         context={
             "inputs": {
                 "action": "rag.create_job",
-                "tenant_id": "tenant-1",
+                "organization_id": "tenant-1",
                 "token": "token",
                 "payload": {
                     "executable_pipeline_id": "exec-1",
@@ -665,7 +665,7 @@ def test_models_update_provider_contract_parity(monkeypatch):
         context={
             "inputs": {
                 "action": "models.update_provider",
-                "tenant_id": "tenant-1",
+                "organization_id": "tenant-1",
                 "token": "token",
                 "payload": {
                     "model_id": "model-1",
@@ -695,7 +695,7 @@ def test_credentials_delete_contract_parity(monkeypatch):
         context={
             "inputs": {
                 "action": "credentials.delete",
-                "tenant_id": "tenant-1",
+                "organization_id": "tenant-1",
                 "token": "token",
                 "payload": {
                     "credential_id": "cred-1",
@@ -723,7 +723,7 @@ def test_knowledge_stores_list_contract_parity(monkeypatch):
         context={
             "inputs": {
                 "action": "knowledge_stores.list",
-                "tenant_id": "tenant-1",
+                "organization_id": "tenant-1",
                 "token": "token",
                 "payload": {
                     "tenant_slug": "tenant-a",

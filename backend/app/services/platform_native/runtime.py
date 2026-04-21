@@ -12,7 +12,7 @@ from starlette.requests import Request
 from app.api.dependencies import get_current_principal
 from app.core.scope_registry import get_required_scopes_for_action
 from app.services.control_plane.context import ControlPlaneContext
-from app.services.control_plane.errors import ControlPlaneError, feature_disabled, policy_denied, scope_denied, tenant_mismatch, validation
+from app.services.control_plane.errors import ControlPlaneError, feature_disabled, policy_denied, scope_denied, organization_mismatch, validation
 from app.services.orchestration_policy_service import ORCHESTRATION_SURFACE_OPTION_B, is_orchestration_surface_enabled
 from app.services.platform_architect_contracts import PLATFORM_ARCHITECT_DOMAIN_TOOLS
 
@@ -46,9 +46,9 @@ def serialize_value(value: Any) -> Any:
 
 
 class NativePlatformToolRuntime:
-    def __init__(self, *, db: AsyncSession, tool_slug: str, inputs: dict[str, Any]):
+    def __init__(self, *, db: AsyncSession, builtin_key: str, inputs: dict[str, Any]):
         self.db = db
-        self.tool_slug = tool_slug
+        self.builtin_key = builtin_key
         self.raw_inputs = dict(inputs or {})
         self.runtime_context = dict(self.raw_inputs.get("__tool_runtime_context__") or {})
         self.inputs = {key: value for key, value in self.raw_inputs.items() if key != "__tool_runtime_context__"}
@@ -75,7 +75,7 @@ class NativePlatformToolRuntime:
                 return principal
             except Exception:
                 pass
-        tenant_id = self.runtime_context.get("tenant_id")
+        organization_id= self.runtime_context.get("organization_id")
         user_id = self.runtime_context.get("user_id") or self.runtime_context.get("initiator_user_id")
         scopes = (
             [str(item) for item in architect_scopes if str(item).strip()]
@@ -84,7 +84,7 @@ class NativePlatformToolRuntime:
         )
         self._principal = {
             "type": "user",
-            "tenant_id": str(tenant_id) if tenant_id is not None else None,
+            "organization_id": str(organization_id) if organization_id is not None else None,
             "user_id": str(user_id) if user_id is not None else None,
             "user": None,
             "scopes": scopes,
@@ -95,11 +95,11 @@ class NativePlatformToolRuntime:
 
     async def build_control_plane_context(self) -> ControlPlaneContext:
         principal = await self.resolve_principal()
-        tenant_id = principal.get("tenant_id")
-        if tenant_id is None:
-            raise validation("Tenant context required", field="tenant_id")
+        organization_id= principal.get("organization_id")
+        if organization_id is None:
+            raise validation("Organization context required", field="organization_id")
         return ControlPlaneContext(
-            tenant_id=UUID(str(tenant_id)),
+            organization_id=UUID(str(organization_id)),
             user=principal.get("user"),
             user_id=parse_uuid(principal.get("user_id") or getattr(principal.get("user"), "id", None)),
             auth_token=principal.get("auth_token"),
@@ -111,7 +111,7 @@ class NativePlatformToolRuntime:
         principal = await self.resolve_principal()
         return {
             "user": principal.get("user"),
-            "tenant_id": principal.get("tenant_id"),
+            "organization_id": principal.get("organization_id"),
             "auth_token": principal.get("auth_token"),
             "initiator_user_id": principal.get("initiator_user_id"),
             "scopes": principal.get("scopes", []),
@@ -120,10 +120,10 @@ class NativePlatformToolRuntime:
 
     async def build_tools_context(self) -> dict[str, Any]:
         principal = await self.resolve_principal()
-        tenant_id = principal.get("tenant_id")
+        organization_id= principal.get("organization_id")
         return {
-            "tenant_id": str(tenant_id) if tenant_id else None,
-            "tenant": SimpleNamespace(id=UUID(str(tenant_id))) if tenant_id else None,
+            "organization_id": str(organization_id) if organization_id else None,
+            "organization": SimpleNamespace(id=UUID(str(organization_id))) if organization_id else None,
             "user": principal.get("user"),
             "is_service": bool(principal.get("type") == "workload"),
         }
@@ -131,20 +131,20 @@ class NativePlatformToolRuntime:
     async def validate(self) -> None:
         if not self.action:
             raise validation("Missing required field: action", field="action")
-        allowed = PLATFORM_ARCHITECT_DOMAIN_TOOLS.get(self.tool_slug, {}).get("actions", {})
+        allowed = PLATFORM_ARCHITECT_DOMAIN_TOOLS.get(self.builtin_key, {}).get("actions", {})
         if self.action not in allowed:
             raise scope_denied(
-                f"Action '{self.action}' is not allowed by tool '{self.tool_slug}'.",
+                f"Action '{self.action}' is not allowed by tool '{self.builtin_key}'.",
                 action=self.action,
-                tool_slug=self.tool_slug,
+                builtin_key=self.builtin_key,
             )
-        explicit_tenant_id = self.payload.get("tenant_id") or self.inputs.get("tenant_id")
-        runtime_tenant_id = self.runtime_context.get("tenant_id")
-        if explicit_tenant_id and runtime_tenant_id and str(explicit_tenant_id) != str(runtime_tenant_id):
-            raise tenant_mismatch(
-                "Tenant override is not allowed; runtime tenant context is authoritative.",
-                runtime_tenant_id=str(runtime_tenant_id),
-                requested_tenant_id=str(explicit_tenant_id),
+        explicit_organization_id = self.payload.get("organization_id") or self.inputs.get("organization_id")
+        runtime_organization_id = self.runtime_context.get("organization_id")
+        if explicit_organization_id and runtime_organization_id and str(explicit_organization_id) != str(runtime_organization_id):
+            raise organization_mismatch(
+                "Organization override is not allowed; runtime organization context is authoritative.",
+                runtime_organization_id=str(runtime_organization_id),
+                requested_organization_id=str(explicit_organization_id),
             )
         principal = await self.resolve_principal()
         required_scopes = sorted(set(get_required_scopes_for_action(self.action)))
@@ -159,12 +159,12 @@ class NativePlatformToolRuntime:
                 f"Action '{self.action}' requires explicit publish intent.",
             )
         if self.action.startswith("orchestration."):
-            tenant_id = principal.get("tenant_id")
-            if not is_orchestration_surface_enabled(surface=ORCHESTRATION_SURFACE_OPTION_B, tenant_id=tenant_id):
-                raise feature_disabled("Runtime orchestration primitives are disabled by feature flag for this tenant")
+            organization_id= principal.get("organization_id")
+            if not is_orchestration_surface_enabled(surface=ORCHESTRATION_SURFACE_OPTION_B, organization_id=organization_id):
+                raise feature_disabled("Runtime orchestration primitives are disabled by feature flag for this organization")
 
 
-def _finalize_success(*, action: str, tool_slug: str, result: Any, inputs: dict[str, Any]) -> dict[str, Any]:
+def _finalize_success(*, action: str, builtin_key: str, result: Any, inputs: dict[str, Any]) -> dict[str, Any]:
     request_metadata = inputs.get("payload", {}).get("request_metadata") if isinstance(inputs.get("payload"), dict) else {}
     return {
         "result": serialize_value(result),
@@ -176,12 +176,12 @@ def _finalize_success(*, action: str, tool_slug: str, result: Any, inputs: dict[
             "request_id": str(request_metadata.get("request_id")) if isinstance(request_metadata, dict) and request_metadata.get("request_id") else None,
             "idempotency_key": str(inputs.get("idempotency_key")) if inputs.get("idempotency_key") else None,
             "idempotency_provided": bool(inputs.get("idempotency_key")),
-            "tool_slug": tool_slug,
+            "builtin_key": builtin_key,
         },
     }
 
 
-def _finalize_error(*, action: str, tool_slug: str, error: ControlPlaneError | HTTPException | Exception, inputs: dict[str, Any]) -> dict[str, Any]:
+def _finalize_error(*, action: str, builtin_key: str, error: ControlPlaneError | HTTPException | Exception, inputs: dict[str, Any]) -> dict[str, Any]:
     if isinstance(error, ControlPlaneError):
         payload = error.to_payload()
     elif isinstance(error, HTTPException):
@@ -206,7 +206,7 @@ def _finalize_error(*, action: str, tool_slug: str, error: ControlPlaneError | H
             "request_id": str(request_metadata.get("request_id")) if isinstance(request_metadata, dict) and request_metadata.get("request_id") else None,
             "idempotency_key": str(inputs.get("idempotency_key")) if inputs.get("idempotency_key") else None,
             "idempotency_provided": bool(inputs.get("idempotency_key")),
-            "tool_slug": tool_slug,
+            "builtin_key": builtin_key,
         },
     }
 
@@ -214,18 +214,18 @@ def _finalize_error(*, action: str, tool_slug: str, error: ControlPlaneError | H
 async def dispatch_native_platform_tool(
     *,
     db: AsyncSession,
-    tool_slug: str,
+    builtin_key: str,
     inputs: dict[str, Any],
     handlers: dict[str, Callable[[NativePlatformToolRuntime], Awaitable[Any]]],
 ) -> dict[str, Any]:
-    runtime = NativePlatformToolRuntime(db=db, tool_slug=tool_slug, inputs=inputs)
+    runtime = NativePlatformToolRuntime(db=db, builtin_key=builtin_key, inputs=inputs)
     try:
         await runtime.validate()
         handler = handlers[runtime.action]
         logger.info(
             "platform_native.dispatch",
             extra={
-                "tool_slug": tool_slug,
+                "builtin_key": builtin_key,
                 "action": runtime.action,
                 "payload_keys": sorted(runtime.payload.keys()),
                 "runtime_context_keys": sorted(runtime.runtime_context.keys()),
@@ -235,17 +235,17 @@ async def dispatch_native_platform_tool(
         result = await handler(runtime)
         logger.info(
             "platform_native.result",
-            extra={"tool_slug": tool_slug, "action": runtime.action, "result_category": "success"},
+            extra={"builtin_key": builtin_key, "action": runtime.action, "result_category": "success"},
         )
-        return _finalize_success(action=runtime.action, tool_slug=tool_slug, result=result, inputs=runtime.inputs)
+        return _finalize_success(action=runtime.action, builtin_key=builtin_key, result=result, inputs=runtime.inputs)
     except Exception as exc:
         logger.info(
             "platform_native.result",
             extra={
-                "tool_slug": tool_slug,
+                "builtin_key": builtin_key,
                 "action": runtime.action,
                 "result_category": "error",
                 "error_type": exc.__class__.__name__,
             },
         )
-        return _finalize_error(action=runtime.action, tool_slug=tool_slug, error=exc, inputs=runtime.inputs)
+        return _finalize_error(action=runtime.action, builtin_key=builtin_key, error=exc, inputs=runtime.inputs)

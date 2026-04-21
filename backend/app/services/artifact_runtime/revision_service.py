@@ -29,12 +29,12 @@ class ArtifactRevisionService:
     async def create_artifact(
         self,
         *,
-        tenant_id: UUID | None,
+        organization_id: UUID | None,
         created_by: UUID | None,
         display_name: str,
         description: str | None,
         kind: str,
-        owner_type: str = "tenant",
+        owner_type: str = "organization",
         system_key: str | None = None,
         source_files: list[dict[str, Any]] | None = None,
         entry_module_path: str | None = None,
@@ -58,20 +58,20 @@ class ArtifactRevisionService:
             rag_contract=rag_contract,
             tool_contract=tool_contract,
         )
-        await self._validate_prompt_refs(tenant_id=tenant_id, tool_contract=tool_contract)
+        await self._validate_prompt_refs(organization_id=organization_id, tool_contract=tool_contract)
         source = normalize_artifact_source(
             source_files=source_files,
             entry_module_path=entry_module_path,
         )
         language_value = self._normalize_language(language)
         credential_refs = await self._validate_credential_refs(
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             language=language_value,
             source_files=source.source_files,
         )
         artifact = Artifact(
             id=artifact_id,
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             display_name=display_name,
             description=description,
             kind=kind_value,
@@ -85,7 +85,7 @@ class ArtifactRevisionService:
         await self._db.flush()
         revision = self._build_revision(
             artifact_id=artifact_id,
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             revision_number=1,
             version_label="draft",
             is_published=False,
@@ -150,9 +150,9 @@ class ArtifactRevisionService:
             rag_contract=rag_contract,
             tool_contract=tool_contract,
         )
-        await self._validate_prompt_refs(tenant_id=artifact.tenant_id, tool_contract=tool_contract)
+        await self._validate_prompt_refs(organization_id=artifact.organization_id, tool_contract=tool_contract)
         credential_refs = await self._validate_credential_refs(
-            tenant_id=artifact.tenant_id,
+            organization_id=artifact.organization_id,
             language=language_value,
             source_files=source.source_files,
         )
@@ -178,7 +178,7 @@ class ArtifactRevisionService:
         artifact.language = language_value
         revision = self._build_revision(
             artifact_id=artifact.id,
-            tenant_id=artifact.tenant_id,
+            organization_id=artifact.organization_id,
             revision_number=await self._next_revision_number(artifact.id),
             version_label="draft",
             is_published=False,
@@ -226,14 +226,14 @@ class ArtifactRevisionService:
             rag_contract=rag_contract,
             tool_contract=tool_contract,
         )
-        await self._validate_prompt_refs(tenant_id=artifact.tenant_id, tool_contract=tool_contract)
+        await self._validate_prompt_refs(organization_id=artifact.organization_id, tool_contract=tool_contract)
         current_revision = artifact.latest_draft_revision or artifact.latest_published_revision
         if current_revision is None:
             raise ValueError("Artifact is missing a current revision")
         artifact.kind = target_kind
         revision = self._build_revision(
             artifact_id=artifact.id,
-            tenant_id=artifact.tenant_id,
+            organization_id=artifact.organization_id,
             revision_number=await self._next_revision_number(artifact.id),
             version_label="draft",
             is_published=False,
@@ -264,7 +264,7 @@ class ArtifactRevisionService:
     async def create_ephemeral_revision(
         self,
         *,
-        tenant_id: UUID | None,
+        organization_id: UUID | None,
         created_by: UUID | None,
         artifact: Artifact | None,
         display_name: str,
@@ -294,16 +294,16 @@ class ArtifactRevisionService:
             rag_contract=rag_contract,
             tool_contract=tool_contract,
         )
-        await self._validate_prompt_refs(tenant_id=tenant_id, tool_contract=tool_contract)
+        await self._validate_prompt_refs(organization_id=organization_id, tool_contract=tool_contract)
         language_value = self._normalize_language(language)
         credential_refs = await self._validate_credential_refs(
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             language=language_value,
             source_files=source.source_files,
         )
         revision = self._build_revision(
             artifact_id=artifact.id if artifact else None,
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             revision_number=await self._next_revision_number(artifact.id) if artifact else 0,
             version_label="draft",
             is_published=False,
@@ -340,7 +340,7 @@ class ArtifactRevisionService:
             entry_module_path=revision.entry_module_path,
         )
         credential_refs = await self._validate_credential_refs(
-            tenant_id=artifact.tenant_id,
+            organization_id=artifact.organization_id,
             language=revision.language,
             source_files=list(revision.source_files or []),
         )
@@ -365,7 +365,7 @@ class ArtifactRevisionService:
         self,
         *,
         artifact_id: UUID | None,
-        tenant_id: UUID | None,
+        organization_id: UUID | None,
         revision_number: int,
         version_label: str,
         is_published: bool,
@@ -395,7 +395,7 @@ class ArtifactRevisionService:
         return ArtifactRevision(
             id=uuid4(),
             artifact_id=artifact_id,
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             revision_number=revision_number,
             version_label=version_label,
             is_published=is_published,
@@ -517,12 +517,12 @@ class ArtifactRevisionService:
     async def _validate_prompt_refs(
         self,
         *,
-        tenant_id: UUID | None,
+        organization_id: UUID | None,
         tool_contract: dict[str, Any] | None,
     ) -> None:
         if not isinstance(tool_contract, dict):
             return
-        resolver = PromptReferenceResolver(self._db, tenant_id)
+        resolver = PromptReferenceResolver(self._db, organization_id)
         try:
             await resolver.validate_schema_descriptions(
                 tool_contract.get("input_schema") if isinstance(tool_contract.get("input_schema"), dict) else {},
@@ -538,14 +538,14 @@ class ArtifactRevisionService:
     async def _validate_credential_refs(
         self,
         *,
-        tenant_id: UUID | None,
+        organization_id: UUID | None,
         language: str | ArtifactLanguage,
         source_files: list[dict[str, Any]] | None,
     ) -> list[str]:
         try:
             return await validate_and_collect_runtime_credential_refs(
                 db=self._db,
-                tenant_id=tenant_id,
+                organization_id=organization_id,
                 language=getattr(language, "value", language),
                 source_files=source_files,
             )

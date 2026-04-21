@@ -84,17 +84,17 @@ def _principal_user_id(principal: dict[str, Any]) -> UUID | None:
 
 
 def _required_context(principal: dict[str, Any]) -> tuple[UUID, UUID]:
-    tenant_id = principal.get("tenant_id")
+    organization_id= principal.get("organization_id")
     project_id = principal.get("project_id")
     try:
-        resolved_tenant_id = UUID(str(tenant_id))
+        resolved_organization_id = UUID(str(organization_id))
     except Exception as exc:
-        raise HTTPException(status_code=400, detail="tenant context is required") from exc
+        raise HTTPException(status_code=400, detail="organization context is required") from exc
     try:
         resolved_project_id = UUID(str(project_id))
     except Exception as exc:
         raise HTTPException(status_code=400, detail="project context is required") from exc
-    return resolved_tenant_id, resolved_project_id
+    return resolved_organization_id, resolved_project_id
 
 
 def _handle_service_error(exc: Exception) -> HTTPException:
@@ -111,8 +111,8 @@ async def list_file_spaces(
     principal: dict[str, Any] = Depends(get_current_principal),
     _: dict[str, Any] = Depends(require_scopes("files.read")),
 ):
-    tenant_id, project_id = _required_context(principal)
-    spaces = await FileSpaceService(db).list_spaces(tenant_id=tenant_id, project_id=project_id)
+    organization_id, project_id = _required_context(principal)
+    spaces = await FileSpaceService(db).list_spaces(organization_id=organization_id, project_id=project_id)
     return {
         "items": [
             FileSpaceService.serialize_space(space, view="full", file_count=file_count, total_bytes=total_bytes)
@@ -128,10 +128,10 @@ async def create_file_space(
     principal: dict[str, Any] = Depends(get_current_principal),
     _: dict[str, Any] = Depends(require_scopes("files.write")),
 ):
-    tenant_id, project_id = _required_context(principal)
+    organization_id, project_id = _required_context(principal)
     try:
         space = await FileSpaceService(db).create_space(
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             project_id=project_id,
             name=request.name,
             description=request.description,
@@ -152,9 +152,9 @@ async def get_file_space(
     principal: dict[str, Any] = Depends(get_current_principal),
     _: dict[str, Any] = Depends(require_scopes("files.read")),
 ):
-    tenant_id, project_id = _required_context(principal)
+    organization_id, project_id = _required_context(principal)
     try:
-        space = await FileSpaceService(db).get_space(tenant_id=tenant_id, project_id=project_id, space_id=space_id)
+        space = await FileSpaceService(db).get_space(organization_id=organization_id, project_id=project_id, space_id=space_id)
         return FileSpaceService.serialize_space(space, view="full")
     except Exception as exc:
         raise _handle_service_error(exc) from exc
@@ -168,10 +168,10 @@ async def update_file_space(
     principal: dict[str, Any] = Depends(get_current_principal),
     _: dict[str, Any] = Depends(require_scopes("files.write")),
 ):
-    tenant_id, project_id = _required_context(principal)
+    organization_id, project_id = _required_context(principal)
     try:
         service = FileSpaceService(db)
-        space = await service.get_space(tenant_id=tenant_id, project_id=project_id, space_id=space_id)
+        space = await service.get_space(organization_id=organization_id, project_id=project_id, space_id=space_id)
         if request.name is not None:
             space.name = service._normalize_name(request.name)
         if request.description is not None:
@@ -191,9 +191,9 @@ async def archive_file_space(
     principal: dict[str, Any] = Depends(get_current_principal),
     _: dict[str, Any] = Depends(require_scopes("files.write")),
 ):
-    tenant_id, project_id = _required_context(principal)
+    organization_id, project_id = _required_context(principal)
     try:
-        await FileSpaceService(db).archive_space(tenant_id=tenant_id, project_id=project_id, space_id=space_id)
+        await FileSpaceService(db).archive_space(organization_id=organization_id, project_id=project_id, space_id=space_id)
         await db.commit()
     except Exception as exc:
         await db.rollback()
@@ -208,9 +208,9 @@ async def list_file_space_tree(
     principal: dict[str, Any] = Depends(get_current_principal),
     _: dict[str, Any] = Depends(require_scopes("files.read")),
 ):
-    tenant_id, project_id = _required_context(principal)
+    organization_id, project_id = _required_context(principal)
     try:
-        entries = await FileSpaceService(db).list_entries(tenant_id=tenant_id, project_id=project_id, space_id=space_id)
+        entries = await FileSpaceService(db).list_entries(organization_id=organization_id, project_id=project_id, space_id=space_id)
         return {"items": [FileSpaceService.serialize_entry(entry) for entry in entries]}
     except Exception as exc:
         raise _handle_service_error(exc) from exc
@@ -224,10 +224,10 @@ async def mkdir_file_space(
     principal: dict[str, Any] = Depends(get_current_principal),
     _: dict[str, Any] = Depends(require_scopes("files.write")),
 ):
-    tenant_id, project_id = _required_context(principal)
+    organization_id, project_id = _required_context(principal)
     try:
         entry = await FileSpaceService(db).mkdir(
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             project_id=project_id,
             space_id=space_id,
             path=request.path,
@@ -249,10 +249,10 @@ async def read_text_entry(
     principal: dict[str, Any] = Depends(get_current_principal),
     _: dict[str, Any] = Depends(require_scopes("files.read")),
 ):
-    tenant_id, project_id = _required_context(principal)
+    organization_id, project_id = _required_context(principal)
     try:
         entry, revision, content = await FileSpaceService(db).read_text_file(
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             project_id=project_id,
             space_id=space_id,
             path=path,
@@ -270,10 +270,10 @@ async def write_text_entry(
     principal: dict[str, Any] = Depends(get_current_principal),
     _: dict[str, Any] = Depends(require_scopes("files.write")),
 ):
-    tenant_id, project_id = _required_context(principal)
+    organization_id, project_id = _required_context(principal)
     try:
         entry, revision = await FileSpaceService(db).write_text_file(
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             project_id=project_id,
             space_id=space_id,
             path=request.path,
@@ -301,10 +301,10 @@ async def patch_text_entry(
     principal: dict[str, Any] = Depends(get_current_principal),
     _: dict[str, Any] = Depends(require_scopes("files.write")),
 ):
-    tenant_id, project_id = _required_context(principal)
+    organization_id, project_id = _required_context(principal)
     try:
         entry, revision = await FileSpaceService(db).patch_text_file(
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             project_id=project_id,
             space_id=space_id,
             path=request.path,
@@ -333,11 +333,11 @@ async def upload_entry(
     principal: dict[str, Any] = Depends(get_current_principal),
     _: dict[str, Any] = Depends(require_scopes("files.write")),
 ):
-    tenant_id, project_id = _required_context(principal)
+    organization_id, project_id = _required_context(principal)
     try:
         payload = await file.read()
         entry, revision = await FileSpaceService(db).upload_file(
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             project_id=project_id,
             space_id=space_id,
             path=path,
@@ -365,10 +365,10 @@ async def download_entry(
     principal: dict[str, Any] = Depends(get_current_principal),
     _: dict[str, Any] = Depends(require_scopes("files.read")),
 ):
-    tenant_id, project_id = _required_context(principal)
+    organization_id, project_id = _required_context(principal)
     try:
         entry, revision, payload = await FileSpaceService(db).read_file_bytes(
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             project_id=project_id,
             space_id=space_id,
             path=path,
@@ -387,10 +387,10 @@ async def move_entry(
     principal: dict[str, Any] = Depends(get_current_principal),
     _: dict[str, Any] = Depends(require_scopes("files.write")),
 ):
-    tenant_id, project_id = _required_context(principal)
+    organization_id, project_id = _required_context(principal)
     try:
         entries = await FileSpaceService(db).move_entry(
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             project_id=project_id,
             space_id=space_id,
             from_path=request.from_path,
@@ -414,10 +414,10 @@ async def delete_entry(
     principal: dict[str, Any] = Depends(get_current_principal),
     _: dict[str, Any] = Depends(require_scopes("files.write")),
 ):
-    tenant_id, project_id = _required_context(principal)
+    organization_id, project_id = _required_context(principal)
     try:
         entries = await FileSpaceService(db).delete_entry(
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             project_id=project_id,
             space_id=space_id,
             path=request.path,
@@ -440,10 +440,10 @@ async def list_entry_revisions(
     principal: dict[str, Any] = Depends(get_current_principal),
     _: dict[str, Any] = Depends(require_scopes("files.read")),
 ):
-    tenant_id, project_id = _required_context(principal)
+    organization_id, project_id = _required_context(principal)
     try:
         revisions = await FileSpaceService(db).list_revisions(
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             project_id=project_id,
             space_id=space_id,
             path=path,
@@ -460,10 +460,10 @@ async def list_workflow_links(
     principal: dict[str, Any] = Depends(get_current_principal),
     _: dict[str, Any] = Depends(require_scopes("files.read")),
 ):
-    tenant_id, project_id = _required_context(principal)
+    organization_id, project_id = _required_context(principal)
     try:
         links = await FileSpaceService(db).list_agent_links(
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             project_id=project_id,
             space_id=space_id,
         )
@@ -480,10 +480,10 @@ async def upsert_workflow_link(
     principal: dict[str, Any] = Depends(get_current_principal),
     _: dict[str, Any] = Depends(require_scopes("files.write")),
 ):
-    tenant_id, project_id = _required_context(principal)
+    organization_id, project_id = _required_context(principal)
     try:
         link = await FileSpaceService(db).upsert_agent_link(
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             project_id=project_id,
             agent_id=request.agent_id,
             space_id=space_id,
@@ -506,10 +506,10 @@ async def delete_workflow_link(
     principal: dict[str, Any] = Depends(get_current_principal),
     _: dict[str, Any] = Depends(require_scopes("files.write")),
 ):
-    tenant_id, project_id = _required_context(principal)
+    organization_id, project_id = _required_context(principal)
     try:
         await FileSpaceService(db).delete_agent_link(
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             project_id=project_id,
             agent_id=agent_id,
             space_id=space_id,

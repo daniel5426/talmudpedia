@@ -173,13 +173,13 @@ jest.mock("@/lib/react-artifacts/parseReactArtifact", () => ({
   parseReactArtifact: () => null,
 }));
 
-jest.mock("@/contexts/TenantContext", () => ({
-  useTenant: () => ({ currentTenant: { slug: "tenant-1" } }),
+jest.mock("@/contexts/OrganizationContext", () => ({
+  useOrganization: () => ({ currentOrganization: { id: "organization-1" } }),
 }));
 
 jest.mock("@/lib/store/useAuthStore", () => ({
   useAuthStore: (selector: (state: any) => any) =>
-    selector({ user: { tenant_id: "tenant-1" } }),
+    selector({ user: { organization_id: "organization-1" } }),
 }));
 
 jest.mock("@/components/agent-builder/ExecutionHistoryDropdown", () => ({
@@ -237,7 +237,7 @@ describe("playground trace sidebar", () => {
       items: [
         {
           id: "agent-1",
-          tenant_id: "tenant-1",
+          organization_id: "organization-1",
           name: "Test agent",
           slug: "test-agent",
           show_in_playground: true,
@@ -255,7 +255,7 @@ describe("playground trace sidebar", () => {
     });
     mockedAgentService.getAgent.mockResolvedValue({
       id: "agent-1",
-      tenant_id: "tenant-1",
+      organization_id: "organization-1",
       name: "Test agent",
       slug: "test-agent",
       show_in_playground: true,
@@ -289,7 +289,7 @@ describe("playground trace sidebar", () => {
       items: [
         {
           id: "agent-hidden",
-          tenant_id: "tenant-1",
+          organization_id: "organization-1",
           name: "Hidden agent",
           slug: "hidden-agent",
           show_in_playground: false,
@@ -300,7 +300,7 @@ describe("playground trace sidebar", () => {
         },
         {
           id: "agent-visible",
-          tenant_id: "tenant-1",
+          organization_id: "organization-1",
           name: "Visible agent",
           slug: "visible-agent",
           show_in_playground: true,
@@ -335,7 +335,7 @@ describe("playground trace sidebar", () => {
       items: [
         {
           id: "agent-hidden",
-          tenant_id: "tenant-1",
+          organization_id: "organization-1",
           name: "Hidden agent",
           slug: "hidden-agent",
           show_in_playground: false,
@@ -346,7 +346,7 @@ describe("playground trace sidebar", () => {
         },
         {
           id: "agent-visible",
-          tenant_id: "tenant-1",
+          organization_id: "organization-1",
           name: "Visible agent",
           slug: "visible-agent",
           show_in_playground: true,
@@ -364,7 +364,7 @@ describe("playground trace sidebar", () => {
     } as any);
     mockedAgentService.getAgent.mockResolvedValue({
       id: "agent-hidden",
-      tenant_id: "tenant-1",
+      organization_id: "organization-1",
       name: "Hidden agent",
       slug: "hidden-agent",
       show_in_playground: false,
@@ -393,7 +393,7 @@ describe("playground trace sidebar", () => {
       items: [
         {
           id: "agent-visible",
-          tenant_id: "tenant-1",
+          organization_id: "organization-1",
           name: "Visible agent",
           slug: "visible-agent",
           show_in_playground: true,

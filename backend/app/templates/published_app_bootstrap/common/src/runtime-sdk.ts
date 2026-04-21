@@ -29,7 +29,7 @@ type QueryRuntimeContext = {
 
 type RuntimeConfig = {
   app_id?: string;
-  app_slug?: string;
+  app_public_id?: string;
   agent_id?: string;
   api_base_url?: string;
   bootstrap_path?: string;
@@ -92,7 +92,7 @@ function buildBootstrapFromBasePath(ctx: QueryRuntimeContext, basePath: string):
     stream_contract_version: "run-stream.v2",
     request_contract_version: "thread.v1",
     app_id: String(config.app_id || ""),
-    slug: String(config.app_slug || ""),
+    app_public_id: String(config.app_public_id || ""),
     mode: ctx.mode || "published-runtime",
     api_base_path: normalizeApiBaseUrl(config.api_base_url),
     api_base_url: normalizeApiBaseUrl(config.api_base_url),
@@ -141,14 +141,14 @@ async function fetchBootstrapFromConfig(ctx: QueryRuntimeContext): Promise<Runti
     return (await response.json()) as RuntimeBootstrap;
   }
 
-  const appSlug = String(config.app_slug || "").trim();
-  if (!appSlug) {
-    throw new Error("Runtime bootstrap is missing app slug config.");
+  const appPublicId = String(config.app_public_id || "").trim();
+  if (!appPublicId) {
+    throw new Error("Runtime bootstrap is missing app public id config.");
   }
 
   return fetchRuntimeBootstrap({
     apiBaseUrl: normalizeApiBaseUrl(config.api_base_url),
-    appSlug,
+    appPublicId,
     previewToken: !isBuilderPreview ? (previewAuthToken || undefined) : undefined,
   });
 }

@@ -60,35 +60,35 @@ class RagAdminService:
     async def list_visual_pipelines(self, *, ctx: ControlPlaneContext, query: ListQuery) -> ListPage:
         stmt = (
             select(VisualPipeline)
-            .where(VisualPipeline.tenant_id == ctx.tenant_id)
+            .where(VisualPipeline.organization_id == ctx.organization_id)
             .order_by(VisualPipeline.updated_at.desc())
             .offset(query.skip)
             .limit(query.limit)
         )
-        total_stmt = select(func.count()).select_from(VisualPipeline).where(VisualPipeline.tenant_id == ctx.tenant_id)
+        total_stmt = select(func.count()).select_from(VisualPipeline).where(VisualPipeline.organization_id == ctx.organization_id)
         rows = (await self.db.execute(stmt)).scalars().all()
         total = int(await self.db.scalar(total_stmt) or 0)
         return ListPage(items=[self.serialize_pipeline(row, view=query.view) for row in rows], total=total, query=query)
 
     async def operators_catalog(self, *, ctx: ControlPlaneContext) -> dict[str, Any]:
-        await sync_custom_operators(self.db, ctx.tenant_id)
+        await sync_custom_operators(self.db, ctx.organization_id)
         operator_map: dict[str, dict[str, Any]] = {}
         operators: list[dict[str, Any]] = []
-        for spec in self.registry.list_all(str(ctx.tenant_id)):
+        for spec in self.registry.list_all(str(ctx.organization_id)):
             payload = spec.model_dump() if hasattr(spec, "model_dump") else self._dump(spec)
             operator_map[str(spec.operator_id)] = payload
             operators.append(payload)
         return {"operators": operators, "operator_map": operator_map}
 
     async def operators_schema(self, *, ctx: ControlPlaneContext, operator_ids: list[str]) -> dict[str, Any]:
-        await sync_custom_operators(self.db, ctx.tenant_id)
+        await sync_custom_operators(self.db, ctx.organization_id)
         normalized = [str(item).strip() for item in operator_ids if str(item).strip()]
         if not normalized:
             raise validation("operator_ids must be a non-empty array", field="operator_ids")
         schemas: dict[str, Any] = {}
         unknown: list[str] = []
         for operator_id in normalized:
-            spec = self.registry.get(operator_id, tenant_id=str(ctx.tenant_id))
+            spec = self.registry.get(operator_id, organization_id=str(ctx.organization_id))
             if spec is None:
                 unknown.append(operator_id)
                 continue
@@ -102,7 +102,7 @@ class RagAdminService:
         if not name:
             raise validation("name is required", field="name")
         pipeline = VisualPipeline(
-            tenant_id=ctx.tenant_id,
+            organization_id=ctx.organization_id,
             org_unit_id=params.org_unit_id,
             name=name,
             description=params.description,
@@ -158,11 +158,11 @@ class RagAdminService:
 
     async def compile_pipeline(self, *, ctx: ControlPlaneContext, pipeline_id: UUID) -> dict[str, Any]:
         pipeline = await self._get_pipeline(ctx, pipeline_id)
-        await sync_custom_operators(self.db, ctx.tenant_id)
+        await sync_custom_operators(self.db, ctx.organization_id)
         compile_result = PipelineCompiler().compile(
             CompilerVisualPipeline(
                 id=pipeline.id,
-                tenant_id=pipeline.tenant_id,
+                organization_id=pipeline.organization_id,
                 org_unit_id=pipeline.org_unit_id,
                 name=pipeline.name,
                 description=pipeline.description,
@@ -173,7 +173,7 @@ class RagAdminService:
                 is_published=pipeline.is_published,
             ),
             compiled_by=str(ctx.user_id) if ctx.user_id else "",
-            tenant_id=str(ctx.tenant_id),
+            organization_id=str(ctx.organization_id),
             require_published_artifacts=True,
         )
         if not getattr(compile_result, "success", False):
@@ -184,7 +184,7 @@ class RagAdminService:
             }
         executable = ExecutablePipeline(
             visual_pipeline_id=pipeline.id,
-            tenant_id=pipeline.tenant_id,
+            organization_id=pipeline.organization_id,
             version=pipeline.version,
             compiled_graph=compile_result.executable_pipeline.model_dump(mode="json") if hasattr(compile_result.executable_pipeline, "model_dump") else {},
             is_valid=True,
@@ -211,8 +211,8 @@ class RagAdminService:
     async def get_executable_input_schema(self, *, ctx: ControlPlaneContext, executable_pipeline_id: UUID) -> dict[str, Any]:
         executable = await self._get_executable_pipeline(ctx, executable_pipeline_id)
         dag = (executable.compiled_graph or {}).get("dag") or []
-        await sync_custom_operators(self.db, ctx.tenant_id)
-        return {"steps": self._build_input_schema_steps(dag=dag, tenant_id=str(ctx.tenant_id))}
+        await sync_custom_operators(self.db, ctx.organization_id)
+        return {"steps": self._build_input_schema_steps(dag=dag, organization_id=str(ctx.organization_id))}
 
     async def create_job(
         self,
@@ -227,16 +227,16 @@ class RagAdminService:
             ensure_executable_pipeline_is_current(pipeline, executable)
         except StaleExecutablePipelineError as exc:
             raise conflict(str(exc), **exc.to_detail()) from exc
-        await sync_custom_operators(self.db, ctx.tenant_id)
+        await sync_custom_operators(self.db, ctx.organization_id)
         normalized, errors = self._validate_input_params(
             dag=(executable.compiled_graph or {}).get("dag") or [],
-            tenant_id=str(ctx.tenant_id),
+            organization_id=str(ctx.organization_id),
             input_params=input_params if isinstance(input_params, dict) else {},
         )
         if errors:
             raise validation("Invalid pipeline input", errors=errors)
         job = PipelineJob(
-            tenant_id=ctx.tenant_id,
+            organization_id=ctx.organization_id,
             executable_pipeline_id=executable_pipeline_id,
             status=PipelineJobStatus.QUEUED,
             input_params=normalized,
@@ -256,7 +256,7 @@ class RagAdminService:
         job = await self.db.scalar(
             select(PipelineJob).where(
                 PipelineJob.id == job_id,
-                PipelineJob.tenant_id == ctx.tenant_id,
+                PipelineJob.organization_id == ctx.organization_id,
             )
         )
         if job is None:
@@ -272,7 +272,7 @@ class RagAdminService:
         pipeline = await self.db.scalar(
             select(VisualPipeline).where(
                 VisualPipeline.id == pipeline_id,
-                VisualPipeline.tenant_id == ctx.tenant_id,
+                VisualPipeline.organization_id == ctx.organization_id,
             )
         )
         if pipeline is None:
@@ -283,7 +283,7 @@ class RagAdminService:
         executable = await self.db.scalar(
             select(ExecutablePipeline).where(
                 ExecutablePipeline.id == executable_pipeline_id,
-                ExecutablePipeline.tenant_id == ctx.tenant_id,
+                ExecutablePipeline.organization_id == ctx.organization_id,
             )
         )
         if executable is None:
@@ -294,7 +294,7 @@ class RagAdminService:
     def serialize_pipeline(pipeline: VisualPipeline, *, view: str = "full") -> dict[str, Any]:
         payload = {
             "id": str(pipeline.id),
-            "tenant_id": str(pipeline.tenant_id),
+            "organization_id": str(pipeline.organization_id),
             "org_unit_id": str(pipeline.org_unit_id) if pipeline.org_unit_id else None,
             "name": pipeline.name,
             "description": pipeline.description,
@@ -319,7 +319,7 @@ class RagAdminService:
         return {
             "id": str(executable.id),
             "visual_pipeline_id": str(executable.visual_pipeline_id),
-            "tenant_id": str(executable.tenant_id),
+            "organization_id": str(executable.organization_id),
             "version": int(executable.version or 0),
             "pipeline_type": getattr(executable.pipeline_type, "value", executable.pipeline_type),
             "compiled_graph": dict(executable.compiled_graph or {}),
@@ -343,7 +343,7 @@ class RagAdminService:
             "completed_at": job.completed_at.isoformat() if job.completed_at else None,
         }
 
-    def _build_input_schema_steps(self, *, dag: list[dict[str, Any]], tenant_id: str) -> list[dict[str, Any]]:
+    def _build_input_schema_steps(self, *, dag: list[dict[str, Any]], organization_id: str) -> list[dict[str, Any]]:
         steps: list[dict[str, Any]] = []
         for step in dag:
             if step.get("depends_on"):
@@ -351,7 +351,7 @@ class RagAdminService:
             operator_id = step.get("operator")
             if not operator_id:
                 continue
-            spec = self.registry.get(operator_id, tenant_id)
+            spec = self.registry.get(operator_id, organization_id)
             if spec is None:
                 continue
             config = step.get("config") if isinstance(step.get("config"), dict) else {}
@@ -395,10 +395,10 @@ class RagAdminService:
         self,
         *,
         dag: list[dict[str, Any]],
-        tenant_id: str,
+        organization_id: str,
         input_params: dict[str, Any],
     ) -> tuple[dict[str, dict[str, Any]], list[dict[str, str]]]:
-        steps = self._build_input_schema_steps(dag=dag, tenant_id=tenant_id)
+        steps = self._build_input_schema_steps(dag=dag, organization_id=organization_id)
         step_ids = [step["step_id"] for step in steps]
         if len(step_ids) == 1 and step_ids[0] not in input_params:
             normalized = {step_ids[0]: dict(input_params)}

@@ -1,6 +1,6 @@
 # Agent Execution Current State
 
-Last Updated: 2026-04-09
+Last Updated: 2026-04-21
 
 This document describes the current agent execution architecture as implemented in the backend.
 
@@ -131,6 +131,17 @@ The current execution core is shared, but the public contracts are intentionally
 - embedded-agent runtime uses `/public/embed/agents/{agent_id}/*` with tenant API keys and `external_user_id` thread ownership
 
 So the runtime engine is unified below the route/auth layer, while product contracts remain surface-specific.
+
+## Runtime Surface Facade
+
+Runtime-surface orchestration is now standardized through a shared internal facade in `backend/app/services/runtime_surface/`.
+
+- `AgentExecutorService` remains the execution engine and still owns run creation, thread resolution, quota checks, and graph execution.
+- The runtime-surface facade now owns shared route-side behavior: start/resume request normalization, prior-thread preload where applicable, persisted stream response assembly, internal run-event fetch, internal cancel handling, and shared public thread-detail serialization helpers.
+- Internal, published, and embedded routes still preserve different auth, ownership, and visibility contracts; they now act as thin adapters over the same lifecycle/query layer.
+- Public-safe historical run events are generated from one shared path instead of separate embed and published implementations.
+- Published host runtime and builder preview thread list/detail flows now call the canonical runtime-surface lifecycle/query service directly rather than routing through serializer compatibility wrappers.
+- The old foreground disconnect cancel helper path is intentionally gone; canonical cancellation is the run-control route plus subtree cancellation in the orchestration kernel.
 
 ## Worker-Owned Generic Runs
 

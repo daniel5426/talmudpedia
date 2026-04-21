@@ -4,23 +4,23 @@ from types import SimpleNamespace
 import pytest
 
 from app.api.dependencies import get_current_principal
-from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Tenant, User
+from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Organization, User
 from main import app
 
 
 async def _seed_tenant_context(db_session):
-    tenant = Tenant(id=uuid.uuid4(), name="Artifact Tenant", slug=f"artifact-tenant-{uuid.uuid4().hex[:8]}")
+    tenant = Organization(id=uuid.uuid4(), name="Artifact Organization", slug=f"artifact-tenant-{uuid.uuid4().hex[:8]}")
     user = User(id=uuid.uuid4(), email=f"artifact-{uuid.uuid4().hex[:6]}@example.com", role="admin")
     org_unit = OrgUnit(
         id=uuid.uuid4(),
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name="Artifact Org",
         slug=f"artifact-org-{uuid.uuid4().hex[:6]}",
         type=OrgUnitType.org,
     )
     membership = OrgMembership(
         id=uuid.uuid4(),
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         org_unit_id=org_unit.id,
         role=OrgRole.owner,
@@ -31,13 +31,13 @@ async def _seed_tenant_context(db_session):
     return tenant, user
 
 
-def _override_principal(tenant_id, user):
+def _override_principal(organization_id, user):
     async def _inner():
         return {
             "type": "user",
             "user": user,
             "user_id": str(user.id),
-            "tenant_id": str(tenant_id),
+            "organization_id": str(organization_id),
             "scopes": ["artifacts.read", "artifacts.write"],
             "auth_token": "test-token",
         }
@@ -50,7 +50,7 @@ async def test_artifact_version_endpoints_list_and_get_saved_revisions(client, d
     tenant, user = await _seed_tenant_context(db_session)
     app.dependency_overrides[get_current_principal] = _override_principal(tenant.id, user)
 
-    async def fake_ensure_deployment(self, *, revision, namespace, tenant_id=None):
+    async def fake_ensure_deployment(self, *, revision, namespace, organization_id=None):
         return SimpleNamespace(
             worker_name="prod-worker",
             deployment_id="dep-1",
@@ -312,7 +312,7 @@ async def test_artifact_export_and_import_round_trip_through_transfer_file(clien
     tenant, user = await _seed_tenant_context(db_session)
     app.dependency_overrides[get_current_principal] = _override_principal(tenant.id, user)
 
-    async def fake_ensure_deployment(self, *, revision, namespace, tenant_id=None):
+    async def fake_ensure_deployment(self, *, revision, namespace, organization_id=None):
         return SimpleNamespace(
             worker_name="prod-worker",
             deployment_id="dep-1",

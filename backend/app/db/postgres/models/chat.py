@@ -18,7 +18,7 @@ class Chat(Base):
     __tablename__ = "chats"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     published_app_id = Column(UUID(as_uuid=True), ForeignKey("published_apps.id", ondelete="SET NULL"), nullable=True, index=True)
     
@@ -33,7 +33,7 @@ class Chat(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
     # Relationships
-    tenant = relationship("Tenant")
+    organization = relationship("Organization")
     user = relationship("User")
     published_app = relationship("PublishedApp")
     messages = relationship("Message", back_populates="chat", cascade="all, delete-orphan", order_by="Message.index")

@@ -7,10 +7,9 @@ import { useAuthStore } from "@/lib/store/useAuthStore"
 import { authService } from "@/services/auth"
 import { HttpRequestError } from "@/services/http"
 
-export interface Tenant {
+export interface Organization {
   id: string
   name: string
-  slug: string
   status: string
   created_at: string
 }
@@ -19,7 +18,6 @@ export interface Project {
   id: string
   organization_id: string
   name: string
-  slug: string
   description?: string | null
   status: string
   is_default: boolean
@@ -27,10 +25,9 @@ export interface Project {
 
 export interface OrgUnit {
   id: string
-  tenant_id: string
+  organization_id: string
   parent_id: string | null
   name: string
-  slug: string
   type: "org" | "dept" | "team"
   created_at: string
 }
@@ -47,30 +44,29 @@ export interface UserPermissions {
   scopes: RoleScope[]
 }
 
-interface TenantContextType {
-  currentTenant: Tenant | null
+interface OrganizationContextType {
+  currentOrganization: Organization | null
   currentProject: Project | null
   currentOrgUnit: OrgUnit | null
-  tenants: Tenant[]
+  organizations: Organization[]
   projects: Project[]
   permissions: UserPermissions | null
   isLoading: boolean
-  setCurrentTenant: (tenant: Tenant | null) => void
+  setCurrentOrganization: (organization: Organization | null) => void
   setCurrentProject: (project: Project | null) => void
   setCurrentOrgUnit: (orgUnit: OrgUnit | null) => void
-  refreshTenants: () => Promise<void>
+  refreshOrganizations: () => Promise<void>
   refreshPermissions: () => Promise<void>
   hasPermission: (resourceType: string, action: string) => boolean
 }
 
-const TenantContext = createContext<TenantContextType | undefined>(undefined)
+const OrganizationContext = createContext<OrganizationContextType | undefined>(undefined)
 
-function toTenant(input: {
+function toOrganization(input: {
   id: string
   name: string
-  slug: string
   status: string
-}): Tenant {
+}): Organization {
   return {
     ...input,
     created_at: "",
@@ -81,7 +77,6 @@ function toProject(input: {
   id: string
   organization_id: string
   name: string
-  slug: string
   description?: string | null
   status: string
   is_default: boolean
@@ -102,7 +97,7 @@ async function refreshSessionState(): Promise<void> {
   }
 }
 
-export function TenantProvider({ children }: { children: React.ReactNode }) {
+export function OrganizationProvider({ children }: { children: React.ReactNode }) {
   const [currentOrgUnit, setCurrentOrgUnit] = useState<OrgUnit | null>(null)
 
   const activeOrganization = useAuthStore((state) => state.activeOrganization)
@@ -113,9 +108,9 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
   const hydrated = useAuthStore((state) => state.hydrated)
   const sessionChecked = useAuthStore((state) => state.sessionChecked)
 
-  const currentTenant = activeOrganization ? toTenant(activeOrganization) : null
+  const currentOrganization = activeOrganization ? toOrganization(activeOrganization) : null
   const currentProject = activeProject ? toProject(activeProject) : null
-  const tenants = organizations.map(toTenant)
+  const organizationsList = organizations.map(toOrganization)
   const projectList = projects.map(toProject)
 
   const permissions = useMemo<UserPermissions | null>(() => {
@@ -128,12 +123,12 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
     }
   }, [effectiveScopes])
 
-  const setCurrentTenant = (tenant: Tenant | null) => {
-    if (!tenant || tenant.slug === currentTenant?.slug) {
+  const setCurrentOrganization = (organization: Organization | null) => {
+    if (!organization || organization.id === currentOrganization?.id) {
       return
     }
     void authService
-      .switchOrganization(tenant.slug, window.location.href)
+      .switchOrganization(organization.id, window.location.href)
       .then((result) => {
         if ("redirect_url" in result) {
           window.location.assign(result.redirect_url)
@@ -148,11 +143,11 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
   }
 
   const setCurrentProject = (project: Project | null) => {
-    if (!project || project.slug === currentProject?.slug) {
+    if (!project || project.id === currentProject?.id) {
       return
     }
     void authService
-      .switchProject(project.slug)
+      .switchProject(project.id)
       .then((session) => {
         applyAuthSession(session)
       })
@@ -161,7 +156,7 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
       })
   }
 
-  const refreshTenants = async () => {
+  const refreshOrganizations = async () => {
     await refreshSessionState()
   }
 
@@ -178,63 +173,36 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <TenantContext.Provider
+    <OrganizationContext.Provider
       value={{
-        currentTenant,
+        currentOrganization,
         currentProject,
         currentOrgUnit,
-        tenants,
+        organizations: organizationsList,
         projects: projectList,
         permissions,
         isLoading: !hydrated || !sessionChecked,
-        setCurrentTenant,
+        setCurrentOrganization,
         setCurrentProject,
         setCurrentOrgUnit,
-        refreshTenants,
+        refreshOrganizations,
         refreshPermissions,
         hasPermission,
       }}
     >
       {children}
-    </TenantContext.Provider>
+    </OrganizationContext.Provider>
   )
 }
 
-export function useTenant() {
-  const context = useContext(TenantContext)
+export function useOrganization() {
+  const context = useContext(OrganizationContext)
   if (context === undefined) {
-    throw new Error("useTenant must be used within a TenantProvider")
+    throw new Error("useOrganization must be used within an OrganizationProvider")
   }
   return context
 }
 
-const LEGACY_PERMISSION_TO_SCOPE: Record<string, string> = {
-  "index.read": "pipelines.catalog.read",
-  "index.write": "pipelines.write",
-  "index.delete": "pipelines.delete",
-  "pipeline.read": "pipelines.read",
-  "pipeline.write": "pipelines.write",
-  "pipeline.delete": "pipelines.delete",
-  "job.read": "pipelines.read",
-  "job.write": "pipelines.write",
-  "job.delete": "pipelines.delete",
-  "tenant.read": "organizations.read",
-  "tenant.write": "organizations.write",
-  "tenant.admin": "organizations.write",
-  "org_unit.read": "organization_units.read",
-  "org_unit.write": "organization_units.write",
-  "org_unit.delete": "organization_units.delete",
-  "role.read": "roles.read",
-  "role.write": "roles.write",
-  "role.delete": "roles.write",
-  "role.admin": "roles.assign",
-  "membership.read": "organization_members.read",
-  "membership.write": "organization_members.write",
-  "membership.delete": "organization_members.delete",
-  "audit.read": "audit.read",
-}
-
 function resolveRequestedScope(resourceType: string, action: string): string {
-  const key = `${resourceType}.${action}`.toLowerCase()
-  return LEGACY_PERMISSION_TO_SCOPE[key] || key
+  return `${resourceType}.${action}`.toLowerCase()
 }

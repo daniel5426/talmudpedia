@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 from sqlalchemy import select
 
-from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Tenant, User
+from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Organization, User
 from app.db.postgres.models.rag import (
     ExecutablePipeline,
     KnowledgeStore,
@@ -24,18 +24,18 @@ from app.rag.pipeline.executor import PipelineExecutor
 
 
 async def _seed_tenant_context(db_session):
-    tenant = Tenant(id=uuid.uuid4(), name="RAG Ingestion Tenant", slug=f"rag-ingest-{uuid.uuid4().hex[:8]}")
+    tenant = Organization(id=uuid.uuid4(), name="RAG Ingestion Organization", slug=f"rag-ingest-{uuid.uuid4().hex[:8]}")
     user = User(id=uuid.uuid4(), email=f"rag-ingest-{uuid.uuid4().hex[:6]}@example.com", role="admin")
     org_unit = OrgUnit(
         id=uuid.uuid4(),
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name="RAG Ingestion Org",
         slug=f"rag-ingest-org-{uuid.uuid4().hex[:6]}",
         type=OrgUnitType.org,
     )
     membership = OrgMembership(
         id=uuid.uuid4(),
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         org_unit_id=org_unit.id,
         role=OrgRole.owner,
@@ -46,10 +46,10 @@ async def _seed_tenant_context(db_session):
     return tenant, user
 
 
-def _build_long_ingestion_pipeline(tenant_id, store_id):
+def _build_long_ingestion_pipeline(organization_id, store_id):
     return VisualPipeline(
         id=uuid.uuid4(),
-        tenant_id=tenant_id,
+        organization_id=organization_id,
         name="Long Ingestion Chain",
         description=None,
         pipeline_type=PipelineType.INGESTION,
@@ -77,7 +77,7 @@ def _build_long_ingestion_pipeline(tenant_id, store_id):
 async def test_long_ingestion_chain_executes_end_to_end_with_patched_dependencies(db_session, monkeypatch):
     tenant, user = await _seed_tenant_context(db_session)
     store = KnowledgeStore(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name="Long Chain Store",
         description="campaign store",
         embedding_model_id="manual-vector-test",
@@ -92,12 +92,12 @@ async def test_long_ingestion_chain_executes_end_to_end_with_patched_dependencie
     await db_session.refresh(store)
 
     pipeline = _build_long_ingestion_pipeline(tenant.id, store.id)
-    compiled = PipelineCompiler().compile(pipeline, compiled_by=str(user.id), tenant_id=str(tenant.id))
+    compiled = PipelineCompiler().compile(pipeline, compiled_by=str(user.id), organization_id=str(tenant.id))
     assert compiled.success is True
 
     visual = VisualPipeline(
         id=pipeline.id,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name=pipeline.name,
         description=pipeline.description,
         nodes=pipeline.nodes,
@@ -110,7 +110,7 @@ async def test_long_ingestion_chain_executes_end_to_end_with_patched_dependencie
     executable = ExecutablePipeline(
         id=uuid.uuid4(),
         visual_pipeline_id=visual.id,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         version=1,
         compiled_graph=compiled.executable_pipeline.model_dump(mode="json"),
         pipeline_type=PipelineType.INGESTION,
@@ -119,7 +119,7 @@ async def test_long_ingestion_chain_executes_end_to_end_with_patched_dependencie
     )
     job = PipelineJob(
         id=uuid.uuid4(),
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         executable_pipeline_id=executable.id,
         status=PipelineJobStatus.QUEUED,
         input_params={"start_urls": ["https://example.com/doc"]},
@@ -153,8 +153,8 @@ async def test_long_ingestion_chain_executes_end_to_end_with_patched_dependencie
             return [FakeEmbeddingResult([float(index + 1), 0.5, 0.25]) for index, _ in enumerate(texts)]
 
     class FakeModelResolver:
-        def __init__(self, db, tenant_id):
-            del db, tenant_id
+        def __init__(self, db, organization_id):
+            del db, organization_id
 
         async def resolve_embedding(self, model_id):
             captured["model_id"] = model_id

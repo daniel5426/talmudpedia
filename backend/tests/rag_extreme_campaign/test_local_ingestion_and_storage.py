@@ -33,7 +33,7 @@ def _vector_search_spec() -> OperatorSpec:
 async def test_local_knowledge_store_sink_and_vector_search_roundtrip(db_session, test_tenant_id, test_user_id, run_prefix):
     collection_name = f"{run_prefix}_ingest_roundtrip"
     store = KnowledgeStore(
-        tenant_id=test_tenant_id,
+        organization_id=test_tenant_id,
         name=f"{run_prefix}-ingest-store",
         description="local ingestion/storage campaign test",
         embedding_model_id="manual-vector-test",
@@ -67,7 +67,7 @@ async def test_local_knowledge_store_sink_and_vector_search_roundtrip(db_session
         sink_result = await sink.execute(
             OperatorInput(data=vectors),
             ExecutionContext(
-                tenant_id=str(test_tenant_id),
+                organization_id=str(test_tenant_id),
                 pipeline_id=str(uuid4()),
                 job_id=str(uuid4()),
                 step_id="sink",
@@ -85,7 +85,7 @@ async def test_local_knowledge_store_sink_and_vector_search_roundtrip(db_session
         search_result = await search.execute(
             OperatorInput(data={"values": [0.91, 0.02, 0.03, 0.04], "filters": {"kind": "alpha"}}),
             ExecutionContext(
-                tenant_id=str(test_tenant_id),
+                organization_id=str(test_tenant_id),
                 pipeline_id=str(uuid4()),
                 job_id=str(uuid4()),
                 step_id="search",
@@ -110,7 +110,7 @@ async def test_local_knowledge_store_sink_and_vector_search_roundtrip(db_session
 @pytest.mark.real_db
 async def test_local_retrieval_service_query_multiple_stores_merges_results(db_session, test_tenant_id, test_user_id, run_prefix, monkeypatch):
     store_a = KnowledgeStore(
-        tenant_id=test_tenant_id,
+        organization_id=test_tenant_id,
         name=f"{run_prefix}-ks-a",
         description="store a",
         embedding_model_id="manual-a",
@@ -121,7 +121,7 @@ async def test_local_retrieval_service_query_multiple_stores_merges_results(db_s
         created_by=test_user_id,
     )
     store_b = KnowledgeStore(
-        tenant_id=test_tenant_id,
+        organization_id=test_tenant_id,
         name=f"{run_prefix}-ks-b",
         description="store b",
         embedding_model_id="manual-b",

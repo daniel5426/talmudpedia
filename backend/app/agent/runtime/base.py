@@ -25,8 +25,8 @@ class RuntimeExecutable:
 class RuntimeAdapter(ABC):
     name: str = "base"
 
-    def __init__(self, tenant_id: Optional[UUID] = None, db: Any = None):
-        self.tenant_id = tenant_id
+    def __init__(self, organization_id: Optional[UUID] = None, db: Any = None):
+        self.organization_id = organization_id
         self.db = db
 
     @abstractmethod

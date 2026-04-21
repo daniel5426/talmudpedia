@@ -13,9 +13,9 @@ async def test_native_adapter_passes_runtime_context_and_hides_debug_meta(monkey
     captured = {}
 
     async def fake_handler(runtime):
-        captured["tool_slug"] = runtime.tool_slug
+        captured["builtin_key"] = runtime.builtin_key
         captured["action"] = runtime.action
-        captured["tenant_id"] = runtime.runtime_context.get("tenant_id")
+        captured["organization_id"] = runtime.runtime_context.get("organization_id")
         return {"status": "ok"}
 
     class _FakeSession:
@@ -31,13 +31,13 @@ async def test_native_adapter_passes_runtime_context_and_hides_debug_meta(monkey
         {
             "action": "agents.list",
             "payload": {"limit": 5},
-            "__tool_runtime_context__": {"tenant_id": "tenant-1", "scopes": ["*"]},
+            "__tool_runtime_context__": {"organization_id": "tenant-1", "scopes": ["*"]},
         }
     )
 
     assert result["errors"] == []
     assert result["result"]["status"] == "ok"
-    assert captured == {"tool_slug": "platform-agents", "action": "agents.list", "tenant_id": "tenant-1"}
+    assert captured == {"builtin_key": "platform-agents", "action": "agents.list", "organization_id": "tenant-1"}
     assert "trace_version" not in result["meta"]
 
 
@@ -55,7 +55,7 @@ async def test_native_adapter_rejects_removed_alias_actions(monkeypatch):
         {
             "action": "create_agent",
             "payload": {},
-            "__tool_runtime_context__": {"tenant_id": "tenant-1", "scopes": ["*"]},
+            "__tool_runtime_context__": {"organization_id": "tenant-1", "scopes": ["*"]},
         }
     )
 
@@ -66,7 +66,7 @@ async def test_native_adapter_rejects_removed_alias_actions(monkeypatch):
 @pytest.mark.asyncio
 async def test_native_rag_create_job_dispatches_background_execution(monkeypatch):
     job_id = uuid4()
-    tenant_id = uuid4()
+    organization_id = uuid4()
     user_id = uuid4()
     captured = {}
     original_create_task = asyncio.create_task
@@ -80,7 +80,7 @@ async def test_native_rag_create_job_dispatches_background_execution(monkeypatch
             return False
 
     async def fake_create_job(self, *, ctx, executable_pipeline_id, input_params):
-        captured["tenant_id"] = str(ctx.tenant_id)
+        captured["organization_id"] = str(ctx.organization_id)
         captured["executable_pipeline_id"] = str(executable_pipeline_id)
         captured["input_params"] = input_params
         return {
@@ -115,7 +115,7 @@ async def test_native_rag_create_job_dispatches_background_execution(monkeypatch
                 "executable_pipeline_id": str(uuid4()),
                 "input_params": {"query_input_1": {"text": "Explain Gemara"}},
             },
-            "__tool_runtime_context__": {"tenant_id": str(tenant_id), "user_id": str(user_id), "scopes": ["*"]},
+            "__tool_runtime_context__": {"organization_id": str(organization_id), "user_id": str(user_id), "scopes": ["*"]},
         }
     )
     if scheduled:
@@ -123,6 +123,6 @@ async def test_native_rag_create_job_dispatches_background_execution(monkeypatch
 
     assert result["errors"] == []
     assert result["result"]["operation"]["id"] == str(job_id)
-    assert captured["tenant_id"] == str(tenant_id)
+    assert captured["organization_id"] == str(organization_id)
     assert captured["artifact_queue_class"] == "artifact_prod_background"
     assert captured["dispatched_job_id"] == str(job_id)

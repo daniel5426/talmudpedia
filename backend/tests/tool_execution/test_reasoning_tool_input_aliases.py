@@ -4,7 +4,7 @@ from app.agent.executors.standard import ReasoningNodeExecutor
 
 
 def _make_executor() -> ReasoningNodeExecutor:
-    return ReasoningNodeExecutor(tenant_id=None, db=None)
+    return ReasoningNodeExecutor(organization_id=None, db=None)
 
 
 def test_coerce_tool_input_maps_path_aliases() -> None:

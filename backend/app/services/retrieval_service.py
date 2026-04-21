@@ -60,7 +60,7 @@ class RetrievalService:
     async def _resolve_backend_config(self, store: KnowledgeStore) -> Dict[str, Any]:
         """Merge backend config with credentials (if provided)."""
         base_config = store.backend_config or {}
-        credentials_service = CredentialsService(self._db, store.tenant_id)
+        credentials_service = CredentialsService(self._db, store.organization_id)
         return await credentials_service.resolve_backend_config(
             base_config,
             store.credentials_ref,
@@ -79,11 +79,11 @@ class RetrievalService:
         self,
         query: str,
         embedding_model_id: str,
-        tenant_id: UUID,
+        organization_id: UUID,
         policy_snapshot: ResourcePolicySnapshot | None = None,
     ) -> List[float]:
         """Embed a query string using the store's configured embedding model."""
-        resolver = ModelResolver(self._db, tenant_id)
+        resolver = ModelResolver(self._db, organization_id)
         embedder = await resolver.resolve_embedding(
             model_id=embedding_model_id,
             policy_snapshot=policy_snapshot,
@@ -129,7 +129,7 @@ class RetrievalService:
         query_vector = await self._embed_query(
             query,
             store.embedding_model_id,
-            store.tenant_id,
+            store.organization_id,
             policy_snapshot=policy_snapshot,
         )
         

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+
 import base64
 from datetime import datetime, timezone
 from pathlib import PurePosixPath
@@ -49,7 +51,7 @@ def _tool_schema(
 
 FILE_SPACE_TOOL_SPECS: list[dict[str, Any]] = [
     {
-        "slug": "files-list",
+        "builtin_key": "files-list",
         "name": "Files List",
         "description": "List the live tree entries in a linked file space.",
         "function_name": "files_list",
@@ -64,7 +66,7 @@ FILE_SPACE_TOOL_SPECS: list[dict[str, Any]] = [
         ),
     },
     {
-        "slug": "files-inspect",
+        "builtin_key": "files-inspect",
         "name": "Files Inspect",
         "description": "Inspect a linked file and return metadata plus supported deterministic representations.",
         "function_name": "files_inspect",
@@ -79,7 +81,7 @@ FILE_SPACE_TOOL_SPECS: list[dict[str, Any]] = [
         ),
     },
     {
-        "slug": "files-read",
+        "builtin_key": "files-read",
         "name": "Files Read",
         "description": "Read one text file from a linked file space. Supports bounded line reads and optional numbered output.",
         "function_name": "files_read",
@@ -97,7 +99,7 @@ FILE_SPACE_TOOL_SPECS: list[dict[str, Any]] = [
         ),
     },
     {
-        "slug": "files-read-representation",
+        "builtin_key": "files-read-representation",
         "name": "Files Read Representation",
         "description": "Read a deterministic structured representation from a linked file.",
         "function_name": "files_read_representation",
@@ -114,7 +116,7 @@ FILE_SPACE_TOOL_SPECS: list[dict[str, Any]] = [
         ),
     },
     {
-        "slug": "files-write",
+        "builtin_key": "files-write",
         "name": "Files Write",
         "description": "Create or replace a text file in a linked file space.",
         "function_name": "files_write",
@@ -131,7 +133,7 @@ FILE_SPACE_TOOL_SPECS: list[dict[str, Any]] = [
         ),
     },
     {
-        "slug": "files-patch-text",
+        "builtin_key": "files-patch-text",
         "name": "Files Patch Text",
         "description": "Replace one exact text segment in a linked text file.",
         "function_name": "files_patch_text",
@@ -150,7 +152,7 @@ FILE_SPACE_TOOL_SPECS: list[dict[str, Any]] = [
         ),
     },
     {
-        "slug": "files-search",
+        "builtin_key": "files-search",
         "name": "Files Search",
         "description": "Search text files in a linked file space and return snippets with surrounding context.",
         "function_name": "files_search",
@@ -169,7 +171,7 @@ FILE_SPACE_TOOL_SPECS: list[dict[str, Any]] = [
         ),
     },
     {
-        "slug": "files-mkdir",
+        "builtin_key": "files-mkdir",
         "name": "Files Mkdir",
         "description": "Create a directory path in a linked file space.",
         "function_name": "files_mkdir",
@@ -181,7 +183,7 @@ FILE_SPACE_TOOL_SPECS: list[dict[str, Any]] = [
         ),
     },
     {
-        "slug": "files-move",
+        "builtin_key": "files-move",
         "name": "Files Move",
         "description": "Rename or move a file or directory in a linked file space.",
         "function_name": "files_move",
@@ -197,7 +199,7 @@ FILE_SPACE_TOOL_SPECS: list[dict[str, Any]] = [
         ),
     },
     {
-        "slug": "files-delete",
+        "builtin_key": "files-delete",
         "name": "Files Delete",
         "description": "Delete a file or directory from a linked file space.",
         "function_name": "files_delete",
@@ -209,7 +211,7 @@ FILE_SPACE_TOOL_SPECS: list[dict[str, Any]] = [
         ),
     },
     {
-        "slug": "files-upload-blob",
+        "builtin_key": "files-upload-blob",
         "name": "Files Upload Blob",
         "description": "Create or replace a binary file in a linked file space from base64 content.",
         "function_name": "files_upload_blob",
@@ -226,7 +228,7 @@ FILE_SPACE_TOOL_SPECS: list[dict[str, Any]] = [
         ),
     },
     {
-        "slug": "files-download-meta",
+        "builtin_key": "files-download-meta",
         "name": "Files Download Meta",
         "description": "Return current metadata for a file, including its revision and download endpoint path.",
         "function_name": "files_download_meta",
@@ -314,13 +316,13 @@ def _slice_text_content(
 async def _list_filtered_entries(
     service: FileSpaceService,
     *,
-    tenant_id: UUID,
+    organization_id: UUID,
     project_id: UUID,
     space_id: UUID,
     path_prefix: str | None,
 ) -> list[Any]:
     entries = await service.list_entries(
-        tenant_id=tenant_id,
+        organization_id=organization_id,
         project_id=project_id,
         space_id=space_id,
     )
@@ -338,7 +340,7 @@ async def files_list(payload: Any) -> dict[str, Any]:
         )
         entries = await _list_filtered_entries(
             kwargs["service"],
-            tenant_id=kwargs["tenant_id"],
+            organization_id=kwargs["organization_id"],
             project_id=kwargs["project_id"],
             space_id=kwargs["space_id"],
             path_prefix=path_prefix,
@@ -408,7 +410,7 @@ async def files_read_representation(payload: Any) -> dict[str, Any]:
 async def files_write(payload: Any) -> dict[str, Any]:
     async def _handler(**kwargs):
         entry, revision = await kwargs["service"].write_text_file(
-            tenant_id=kwargs["tenant_id"],
+            organization_id=kwargs["organization_id"],
             project_id=kwargs["project_id"],
             space_id=kwargs["space_id"],
             path=str(kwargs["tool_payload"].get("path") or ""),
@@ -442,7 +444,7 @@ async def files_patch_text(payload: Any) -> dict[str, Any]:
             raise FileSpaceValidationError("start_line and end_line must be provided together")
 
         _entry, _revision, content = await kwargs["service"].read_text_file(
-            tenant_id=kwargs["tenant_id"],
+            organization_id=kwargs["organization_id"],
             project_id=kwargs["project_id"],
             space_id=kwargs["space_id"],
             path=path,
@@ -477,7 +479,7 @@ async def files_patch_text(payload: Any) -> dict[str, Any]:
             updated_content += "\n"
 
         entry, revision = await kwargs["service"].write_text_file(
-            tenant_id=kwargs["tenant_id"],
+            organization_id=kwargs["organization_id"],
             project_id=kwargs["project_id"],
             space_id=kwargs["space_id"],
             path=path,
@@ -516,7 +518,7 @@ async def files_search(payload: Any) -> dict[str, Any]:
         )
         entries = await _list_filtered_entries(
             kwargs["service"],
-            tenant_id=kwargs["tenant_id"],
+            organization_id=kwargs["organization_id"],
             project_id=kwargs["project_id"],
             space_id=kwargs["space_id"],
             path_prefix=path_prefix,
@@ -526,7 +528,7 @@ async def files_search(payload: Any) -> dict[str, Any]:
             if getattr(entry.entry_type, "value", entry.entry_type) != "file" or not bool(entry.is_text):
                 continue
             _entry, _revision, content = await kwargs["service"].read_text_file(
-                tenant_id=kwargs["tenant_id"],
+                organization_id=kwargs["organization_id"],
                 project_id=kwargs["project_id"],
                 space_id=kwargs["space_id"],
                 path=entry.path,
@@ -560,7 +562,7 @@ async def files_search(payload: Any) -> dict[str, Any]:
 async def files_mkdir(payload: Any) -> dict[str, Any]:
     async def _handler(**kwargs):
         entry = await kwargs["service"].mkdir(
-            tenant_id=kwargs["tenant_id"],
+            organization_id=kwargs["organization_id"],
             project_id=kwargs["project_id"],
             space_id=kwargs["space_id"],
             path=str(kwargs["tool_payload"].get("path") or ""),
@@ -576,7 +578,7 @@ async def files_mkdir(payload: Any) -> dict[str, Any]:
 async def files_move(payload: Any) -> dict[str, Any]:
     async def _handler(**kwargs):
         entries = await kwargs["service"].move_entry(
-            tenant_id=kwargs["tenant_id"],
+            organization_id=kwargs["organization_id"],
             project_id=kwargs["project_id"],
             space_id=kwargs["space_id"],
             from_path=str(kwargs["tool_payload"].get("from_path") or ""),
@@ -594,7 +596,7 @@ async def files_move(payload: Any) -> dict[str, Any]:
 async def files_delete(payload: Any) -> dict[str, Any]:
     async def _handler(**kwargs):
         entries = await kwargs["service"].delete_entry(
-            tenant_id=kwargs["tenant_id"],
+            organization_id=kwargs["organization_id"],
             project_id=kwargs["project_id"],
             space_id=kwargs["space_id"],
             path=str(kwargs["tool_payload"].get("path") or ""),
@@ -616,7 +618,7 @@ async def files_upload_blob(payload: Any) -> dict[str, Any]:
         except Exception as exc:
             raise FileSpaceValidationError("content_base64 must be valid base64") from exc
         entry, revision = await kwargs["service"].upload_file(
-            tenant_id=kwargs["tenant_id"],
+            organization_id=kwargs["organization_id"],
             project_id=kwargs["project_id"],
             space_id=kwargs["space_id"],
             path=str(kwargs["tool_payload"].get("path") or ""),
@@ -639,7 +641,7 @@ async def files_upload_blob(payload: Any) -> dict[str, Any]:
 async def files_download_meta(payload: Any) -> dict[str, Any]:
     async def _handler(**kwargs):
         entry, revision = await kwargs["service"].read_entry(
-            tenant_id=kwargs["tenant_id"],
+            organization_id=kwargs["organization_id"],
             project_id=kwargs["project_id"],
             space_id=kwargs["space_id"],
             path=str(kwargs["tool_payload"].get("path") or ""),
@@ -655,6 +657,11 @@ async def files_download_meta(payload: Any) -> dict[str, Any]:
     return await _with_service(payload, write=False, handler=_handler)
 
 
+def _system_tool_row_key(builtin_key: str) -> str:
+    digest = hashlib.sha1(builtin_key.encode("utf-8")).hexdigest()[:24]
+    return f"sys-tool-{digest}"
+
+
 async def ensure_file_space_tools(db: AsyncSession) -> list[str]:
     tool_ids: list[str] = []
     tool_rows: list[ToolRegistry] = []
@@ -662,8 +669,8 @@ async def ensure_file_space_tools(db: AsyncSession) -> list[str]:
         result = await db.execute(
             select(ToolRegistry).where(
                 and_(
-                    ToolRegistry.tenant_id.is_(None),
-                    ToolRegistry.slug == spec["slug"],
+                    ToolRegistry.organization_id.is_(None),
+                    ToolRegistry.builtin_key == spec["builtin_key"],
                 )
             )
         )
@@ -677,9 +684,9 @@ async def ensure_file_space_tools(db: AsyncSession) -> list[str]:
         }
         if tool is None:
             tool = ToolRegistry(
-                tenant_id=None,
+                organization_id=None,
                 name=spec["name"],
-                slug=spec["slug"],
+                slug=_system_tool_row_key(spec["builtin_key"]),
                 description=spec["description"],
                 scope=ToolDefinitionScope.GLOBAL,
                 schema=spec["schema"],

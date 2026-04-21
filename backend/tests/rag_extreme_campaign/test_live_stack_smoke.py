@@ -83,8 +83,8 @@ def _temporary_html_page(body: str):
         thread.join(timeout=2)
 
 
-async def _embed_text(db_session, tenant_id, model_id: str, text: str) -> list[float]:
-    resolver = ModelResolver(db_session, tenant_id)
+async def _embed_text(db_session, organization_id, model_id: str, text: str) -> list[float]:
+    resolver = ModelResolver(db_session, organization_id)
     embedder = await resolver.resolve_embedding(model_id)
     embedded = await embedder.embed(text)
     return embedded.values
@@ -155,7 +155,7 @@ async def test_pgvector_retrieval_service_roundtrip(db_session, test_tenant_id, 
         )
 
         store = KnowledgeStore(
-            tenant_id=test_tenant_id,
+            organization_id=test_tenant_id,
             name=f"{run_prefix}-rag-extreme-store",
             description="RAG extreme campaign pgvector smoke",
             embedding_model_id=embed_model_id,
@@ -198,7 +198,7 @@ async def test_retrieval_pipeline_job_executes_end_to_end(db_session, test_tenan
         assert executable is not None
 
         job = PipelineJob(
-            tenant_id=test_tenant_id,
+            organization_id=test_tenant_id,
             executable_pipeline_id=executable.id,
             status=PipelineJobStatus.QUEUED,
             input_params={"text": "hello retrieval", "top_k": 3},

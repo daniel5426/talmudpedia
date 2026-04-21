@@ -9,7 +9,6 @@ type LivePreviewState = NonNullable<DraftDevSessionResponse["live_preview"]>;
 
 type UseBuilderLivePreviewStatusOptions = {
   previewBaseUrl: string | null;
-  previewAuthToken: string | null;
   sessionLivePreview: DraftDevSessionResponse["live_preview"] | null | undefined;
   enabled: boolean;
 };
@@ -18,7 +17,6 @@ const ACTIVE_POLL_MS = 1500;
 
 export function useBuilderLivePreviewStatus({
   previewBaseUrl,
-  previewAuthToken,
   sessionLivePreview,
   enabled,
 }: UseBuilderLivePreviewStatusOptions): LivePreviewState | null {
@@ -69,12 +67,10 @@ export function useBuilderLivePreviewStatus({
         currentStatus: currentStateStatus || sessionPreviewStatus,
         currentBuildId,
         currentLastSuccessfulBuildId,
-        previewAuthTokenPresent: Boolean(String(previewAuthToken || "").trim()),
+        previewAuthTokenPresent: false,
       });
       try {
-        const next = await publishedAppsService.getDraftDevPreviewStatus(previewBaseUrl, {
-          previewAuthToken: currentLastSuccessfulBuildId ? null : previewAuthToken,
-        });
+        const next = await publishedAppsService.getDraftDevPreviewStatus(previewBaseUrl);
         if (cancelled) {
           return;
         }
@@ -112,8 +108,7 @@ export function useBuilderLivePreviewStatus({
     };
   }, [
     enabled,
-    previewAuthToken,
-    previewBaseUrl,
+      previewBaseUrl,
     sessionPreviewStatus,
     shouldPoll,
     currentBuildId,

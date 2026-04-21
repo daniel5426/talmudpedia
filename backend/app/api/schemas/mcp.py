@@ -35,7 +35,7 @@ class McpServerUpdateRequest(BaseModel):
 
 class McpServerResponse(BaseModel):
     id: UUID
-    tenant_id: UUID
+    organization_id: UUID
     name: str
     description: str | None
     server_url: str

@@ -1,4 +1,4 @@
-Last Updated: 2026-04-14
+Last Updated: 2026-04-21
 
 ## Scope
 Playground-specific trace inspection behavior for assistant responses, execute-pane seeded-state submission, and persisted trace replay into the execution sidebar across playground state changes.
@@ -101,3 +101,7 @@ Playground-specific trace inspection behavior for assistant responses, execute-p
 ## Known Gaps / Follow-ups
 - Add a direct assertion for keeping live streamed execution steps separate from inspected saved-trace steps during an active run.
 - Add a thread-history hydration integration test once the saved trace path is exercised through real thread data.
+
+- Command: `cd frontend-reshet && npm exec pnpm -- test -- --runTestsByPath src/__tests__/agent_playground/playground_page_trace.test.tsx`
+- Date: 2026-04-21 Asia/Hebron
+- Result: Pass (`1 suite, 8 tests`). Playground context/test scaffolding now uses `OrganizationContext` and the architect runtime path no longer depends on agent slug.

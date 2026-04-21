@@ -4,12 +4,12 @@ export type PublishedRuntimeAuthProvider = "password" | "google";
 
 export interface PublishedRuntimeConfig {
   id: string;
-  tenant_id: string;
+  organization_id: string;
   agent_id: string;
   name: string;
   description?: string | null;
   logo_url?: string | null;
-  slug: string;
+  public_id: string;
   status: "draft" | "published" | "paused" | "archived";
   visibility?: "public" | "private";
   auth_enabled: boolean;
@@ -23,7 +23,7 @@ export interface PublishedRuntimeConfig {
 
 export interface PublishedRuntimeDescriptor {
   app_id: string;
-  slug: string;
+  public_id: string;
   revision_id: string;
   runtime_mode: string;
   published_url?: string | null;
@@ -33,7 +33,7 @@ export interface PublishedRuntimeDescriptor {
 
 export interface PreviewRuntimeDescriptor {
   app_id: string;
-  slug: string;
+  public_id: string;
   revision_id: string;
   runtime_mode: string;
   preview_url: string;
@@ -81,12 +81,8 @@ interface RuntimeRequestOptions {
 
 async function runtimeRequest<T>(path: string, options: RuntimeRequestOptions = {}): Promise<T> {
   const headers: Record<string, string> = {};
-  if (options.body !== undefined) {
-    headers["Content-Type"] = "application/json";
-  }
-  if (options.token) {
-    headers.Authorization = `Bearer ${options.token}`;
-  }
+  if (options.body !== undefined) headers["Content-Type"] = "application/json";
+  if (options.token) headers.Authorization = `Bearer ${options.token}`;
 
   const response = await fetch(`${BASE_URL}${path}`, {
     method: options.method || "GET",
@@ -114,76 +110,75 @@ export const publishedRuntimeService = {
     return runtimeRequest<{ app: PublishedRuntimeConfig }>(`/public/apps/resolve?host=${encodeURIComponent(host)}`);
   },
 
-  async getConfig(appSlug: string): Promise<PublishedRuntimeConfig> {
-    return runtimeRequest<PublishedRuntimeConfig>(`/public/apps/${encodeURIComponent(appSlug)}/config`);
+  async getConfig(appPublicId: string): Promise<PublishedRuntimeConfig> {
+    return runtimeRequest<PublishedRuntimeConfig>(`/public/apps/${encodeURIComponent(appPublicId)}/config`);
   },
 
-  async getRuntime(appSlug: string): Promise<PublishedRuntimeDescriptor> {
-    return runtimeRequest<PublishedRuntimeDescriptor>(`/public/apps/${encodeURIComponent(appSlug)}/runtime`);
+  async getRuntime(appPublicId: string): Promise<PublishedRuntimeDescriptor> {
+    return runtimeRequest<PublishedRuntimeDescriptor>(`/public/apps/${encodeURIComponent(appPublicId)}/runtime`);
   },
 
-  async getPreviewRuntime(revisionId: string, token: string): Promise<PreviewRuntimeDescriptor> {
+  async getPreviewRuntime(revisionId: string): Promise<PreviewRuntimeDescriptor> {
     return runtimeRequest<PreviewRuntimeDescriptor>(
-      `/public/apps/preview/revisions/${encodeURIComponent(revisionId)}/runtime`,
-      { token },
+      `/public/apps/preview/revisions/${encodeURIComponent(revisionId)}/runtime`
     );
   },
 
-  async signup(appSlug: string, payload: { email: string; password: string; full_name?: string }): Promise<PublicAuthResponse> {
-    return runtimeRequest<PublicAuthResponse>(`/public/apps/${encodeURIComponent(appSlug)}/auth/signup`, {
+  async signup(appPublicId: string, payload: { email: string; password: string; full_name?: string }): Promise<PublicAuthResponse> {
+    return runtimeRequest<PublicAuthResponse>(`/public/external/apps/${encodeURIComponent(appPublicId)}/auth/signup`, {
       method: "POST",
       body: payload,
     });
   },
 
-  async login(appSlug: string, payload: { email: string; password: string }): Promise<PublicAuthResponse> {
-    return runtimeRequest<PublicAuthResponse>(`/public/apps/${encodeURIComponent(appSlug)}/auth/login`, {
+  async login(appPublicId: string, payload: { email: string; password: string }): Promise<PublicAuthResponse> {
+    return runtimeRequest<PublicAuthResponse>(`/public/external/apps/${encodeURIComponent(appPublicId)}/auth/login`, {
       method: "POST",
       body: payload,
     });
   },
 
-  getGoogleStartUrl(appSlug: string, returnTo: string): string {
-    return `${BASE_URL}/public/apps/${encodeURIComponent(appSlug)}/auth/google/start?return_to=${encodeURIComponent(returnTo)}`;
+  async exchange(appPublicId: string, payload: { token: string }): Promise<PublicAuthResponse> {
+    return runtimeRequest<PublicAuthResponse>(`/public/external/apps/${encodeURIComponent(appPublicId)}/auth/exchange`, {
+      method: "POST",
+      body: payload,
+    });
   },
 
-  async getMe(appSlug: string, token: string): Promise<PublishedRuntimeUser> {
-    return runtimeRequest<PublishedRuntimeUser>(`/public/apps/${encodeURIComponent(appSlug)}/auth/me`, {
+  async getMe(appPublicId: string, token: string): Promise<PublishedRuntimeUser> {
+    return runtimeRequest<PublishedRuntimeUser>(`/public/external/apps/${encodeURIComponent(appPublicId)}/auth/me`, {
       token,
     });
   },
 
-  async logout(appSlug: string, token: string): Promise<{ status: string }> {
-    return runtimeRequest<{ status: string }>(`/public/apps/${encodeURIComponent(appSlug)}/auth/logout`, {
+  async logout(appPublicId: string, token: string): Promise<{ status: string }> {
+    return runtimeRequest<{ status: string }>(`/public/external/apps/${encodeURIComponent(appPublicId)}/auth/logout`, {
       method: "POST",
       token,
     });
   },
 
-  async listChats(appSlug: string, token: string): Promise<{ items: PublicChatItem[] }> {
-    return runtimeRequest<{ items: PublicChatItem[] }>(`/public/apps/${encodeURIComponent(appSlug)}/chats`, {
+  async listChats(appPublicId: string, token: string): Promise<{ items: PublicChatItem[] }> {
+    return runtimeRequest<{ items: PublicChatItem[] }>(`/public/external/apps/${encodeURIComponent(appPublicId)}/threads`, {
       token,
     });
   },
 
-  async getChat(appSlug: string, chatId: string, token: string): Promise<PublicChatHistory> {
-    return runtimeRequest<PublicChatHistory>(`/public/apps/${encodeURIComponent(appSlug)}/chats/${encodeURIComponent(chatId)}`, {
-      token,
-    });
+  async getChat(appPublicId: string, chatId: string, token: string): Promise<PublicChatHistory> {
+    return runtimeRequest<PublicChatHistory>(
+      `/public/external/apps/${encodeURIComponent(appPublicId)}/threads/${encodeURIComponent(chatId)}`,
+      { token }
+    );
   },
 
   async streamChat(
-    appSlug: string,
+    appPublicId: string,
     payload: { input?: string; messages?: Array<Record<string, unknown>>; thread_id?: string; context?: Record<string, unknown> },
     token?: string,
   ): Promise<Response> {
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-    };
-    if (token) {
-      headers.Authorization = `Bearer ${token}`;
-    }
-    const response = await fetch(`${BASE_URL}/public/apps/${encodeURIComponent(appSlug)}/chat/stream`, {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (token) headers.Authorization = `Bearer ${token}`;
+    const response = await fetch(`${BASE_URL}/public/external/apps/${encodeURIComponent(appPublicId)}/chat/stream`, {
       method: "POST",
       headers,
       body: JSON.stringify(payload),

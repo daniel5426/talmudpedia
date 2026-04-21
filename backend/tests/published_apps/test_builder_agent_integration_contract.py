@@ -21,7 +21,7 @@ async def test_builder_agent_contract_returns_resolved_tools_and_optional_x_ui_h
     headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
 
     tool = ToolRegistry(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name="Stats Tool",
         slug=f"stats-tool-{uuid4().hex[:8]}",
         description="Returns stats payloads",
@@ -121,7 +121,7 @@ async def test_builder_agent_contract_includes_ui_blocks_frontend_requirements(
     headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
 
     tool = ToolRegistry(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name="UI Blocks",
         slug=f"builtin-ui-blocks-{uuid4().hex[:8]}",
         description="Validate UI blocks payloads",

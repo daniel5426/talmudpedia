@@ -45,7 +45,7 @@ class ArtifactLanguage(str, enum.Enum):
 
 
 class ArtifactOwnerType(str, enum.Enum):
-    TENANT = "tenant"
+    TENANT = "organization"
     SYSTEM = "system"
 
 
@@ -75,7 +75,7 @@ class Artifact(Base):
     __tablename__ = "artifacts"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=True, index=True)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=True, index=True)
 
     display_name = Column(String, nullable=False)
     description = Column(String, nullable=True)
@@ -110,7 +110,7 @@ class Artifact(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
-    tenant = relationship("Tenant")
+    organization = relationship("Organization")
     creator = relationship("User", foreign_keys=[created_by])
     revisions = relationship(
         "ArtifactRevision",
@@ -131,7 +131,7 @@ class ArtifactRevision(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     artifact_id = Column(UUID(as_uuid=True), ForeignKey("artifacts.id", ondelete="CASCADE"), nullable=True, index=True)
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=True, index=True)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=True, index=True)
 
     revision_number = Column(Integer, nullable=False, default=1)
     version_label = Column(String, nullable=False, default="draft")
@@ -172,7 +172,7 @@ class ArtifactRevision(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     artifact = relationship("Artifact", back_populates="revisions", foreign_keys=[artifact_id])
-    tenant = relationship("Tenant")
+    organization = relationship("Organization")
     creator = relationship("User", foreign_keys=[created_by])
 
 
@@ -180,7 +180,7 @@ class ArtifactRun(Base):
     __tablename__ = "artifact_runs"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=True, index=True)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=True, index=True)
     artifact_id = Column(UUID(as_uuid=True), ForeignKey("artifacts.id", ondelete="SET NULL"), nullable=True, index=True)
     revision_id = Column(UUID(as_uuid=True), ForeignKey("artifact_revisions.id", ondelete="CASCADE"), nullable=False, index=True)
 
@@ -215,7 +215,7 @@ class ArtifactRun(Base):
     finished_at = Column(DateTime(timezone=True), nullable=True)
     duration_ms = Column(Integer, nullable=True)
 
-    tenant = relationship("Tenant")
+    organization = relationship("Organization")
     artifact = relationship("Artifact")
     revision = relationship("ArtifactRevision")
     events = relationship("ArtifactRunEvent", back_populates="run", cascade="all, delete-orphan")
@@ -248,7 +248,7 @@ class ArtifactDeployment(Base):
     __tablename__ = "artifact_deployments"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
     revision_id = Column(UUID(as_uuid=True), ForeignKey("artifact_revisions.id", ondelete="CASCADE"), nullable=False, index=True)
     namespace = Column(String, nullable=False)
     build_hash = Column(String(64), nullable=False, index=True)
@@ -266,18 +266,18 @@ class ArtifactDeployment(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
-    tenant = relationship("Tenant")
+    organization = relationship("Organization")
     revision = relationship("ArtifactRevision")
 
     __table_args__ = (
-        Index("uq_artifact_deployments_namespace_build_hash", "tenant_id", "namespace", "build_hash", unique=True),
+        Index("uq_artifact_deployments_namespace_build_hash", "organization_id", "namespace", "build_hash", unique=True),
     )
 
 
-class ArtifactTenantRuntimePolicy(Base):
-    __tablename__ = "artifact_tenant_runtime_policies"
+class ArtifactOrganizationRuntimePolicy(Base):
+    __tablename__ = "artifact_organization_runtime_policies"
 
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), primary_key=True)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), primary_key=True)
     interactive_concurrency_limit = Column(Integer, nullable=False, default=5)
     background_concurrency_limit = Column(Integer, nullable=False, default=2)
     test_concurrency_limit = Column(Integer, nullable=False, default=10)
@@ -290,14 +290,14 @@ class ArtifactTenantRuntimePolicy(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
-    tenant = relationship("Tenant")
+    organization = relationship("Organization")
 
 
 class ArtifactCodingSession(Base):
     __tablename__ = "artifact_coding_sessions"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
     artifact_id = Column(UUID(as_uuid=True), ForeignKey("artifacts.id", ondelete="SET NULL"), nullable=True, index=True)
     shared_draft_id = Column(
         UUID(as_uuid=True),
@@ -318,7 +318,7 @@ class ArtifactCodingSession(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
-    tenant = relationship("Tenant")
+    organization = relationship("Organization")
     artifact = relationship("Artifact", foreign_keys=[artifact_id])
     shared_draft = relationship("ArtifactCodingSharedDraft", foreign_keys=[shared_draft_id])
     linked_artifact = relationship("Artifact", foreign_keys=[linked_artifact_id])
@@ -333,7 +333,7 @@ class ArtifactCodingSession(Base):
     )
 
     __table_args__ = (
-        Index("ix_artifact_coding_sessions_scope_activity", "tenant_id", "artifact_id", "draft_key", "last_message_at"),
+        Index("ix_artifact_coding_sessions_scope_activity", "organization_id", "artifact_id", "draft_key", "last_message_at"),
     )
 
 
@@ -341,7 +341,7 @@ class ArtifactCodingSharedDraft(Base):
     __tablename__ = "artifact_coding_shared_drafts"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
     artifact_id = Column(UUID(as_uuid=True), ForeignKey("artifacts.id", ondelete="SET NULL"), nullable=True, index=True)
     draft_key = Column(String(128), nullable=True, index=True)
     linked_artifact_id = Column(UUID(as_uuid=True), ForeignKey("artifacts.id", ondelete="SET NULL"), nullable=True, index=True)
@@ -352,7 +352,7 @@ class ArtifactCodingSharedDraft(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
-    tenant = relationship("Tenant")
+    organization = relationship("Organization")
     artifact = relationship("Artifact", foreign_keys=[artifact_id])
     linked_artifact = relationship("Artifact", foreign_keys=[linked_artifact_id])
     last_test_run = relationship("ArtifactRun", foreign_keys=[last_test_run_id])
@@ -363,7 +363,7 @@ class ArtifactCodingRunSnapshot(Base):
     __tablename__ = "artifact_coding_run_snapshots"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
     shared_draft_id = Column(UUID(as_uuid=True), ForeignKey("artifact_coding_shared_drafts.id", ondelete="CASCADE"), nullable=False, index=True)
     run_id = Column(UUID(as_uuid=True), ForeignKey("agent_runs.id", ondelete="CASCADE"), nullable=False, index=True)
     session_id = Column(UUID(as_uuid=True), ForeignKey("artifact_coding_sessions.id", ondelete="SET NULL"), nullable=True, index=True)
@@ -373,7 +373,7 @@ class ArtifactCodingRunSnapshot(Base):
     draft_snapshot = Column(JSONB, nullable=False, default=dict)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
-    tenant = relationship("Tenant")
+    organization = relationship("Organization")
     shared_draft = relationship("ArtifactCodingSharedDraft", foreign_keys=[shared_draft_id])
     run = relationship("AgentRun", foreign_keys=[run_id])
     session = relationship("ArtifactCodingSession", foreign_keys=[session_id])

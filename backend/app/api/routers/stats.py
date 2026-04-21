@@ -10,9 +10,10 @@ from uuid import UUID
 from sqlalchemy import select, func, desc, and_, case
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.scope_registry import is_platform_admin_role
 from app.db.postgres.session import get_db
 from app.api.routers.auth import get_current_user
-from app.db.postgres.models.identity import User, OrgMembership, OrgRole, Tenant
+from app.db.postgres.models.identity import User, OrgMembership, Organization
 from app.db.postgres.models.agent_threads import AgentThread, AgentThreadTurn
 from app.db.postgres.models.agents import Agent, AgentRun, RunStatus, AgentStatus
 from app.db.postgres.models.rag import (
@@ -42,34 +43,42 @@ from app.api.schemas.stats import (
     TopUserSummary, ModelUsageSummary, PipelineUsageSummary, AgentUsageSummary,
     AgentFailureSummary, ProviderUsageSummary, JobFailureSummary
 )
+from app.services.auth_context_service import resolve_effective_scopes
 
 router = APIRouter(prefix="/stats", tags=["stats"])
 
 
 # --- Dependencies ---
 
-async def get_tenant_context(
+async def get_organization_context(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ) -> Dict[str, Any]:
-    """Get tenant context for the current user."""
-    if current_user.role == "admin":
-        # System admin can see all - but for this endpoint we want their first tenant
+    """Get organization context for the current user."""
+    if is_platform_admin_role(getattr(current_user, "role", None)):
+        # System admin can see all - but for this endpoint we want their first organization
         result = await db.execute(
             select(OrgMembership).where(OrgMembership.user_id == current_user.id).limit(1)
         )
         membership = result.scalar_one_or_none()
-        return {"user": current_user, "tenant_id": membership.tenant_id if membership else None}
+        return {"user": current_user, "organization_id": membership.organization_id if membership else None}
 
-    # Get tenant from org membership
+    # Get organization from org membership
     result = await db.execute(
         select(OrgMembership).where(OrgMembership.user_id == current_user.id).limit(1)
     )
     membership = result.scalar_one_or_none()
-    
-    if membership and membership.role in [OrgRole.owner, OrgRole.admin]:
-        return {"user": current_user, "tenant_id": membership.tenant_id}
-        
+
+    if membership:
+        scopes = await resolve_effective_scopes(
+            db=db,
+            user=current_user,
+            organization_id=membership.organization_id,
+            project_id=None,
+        )
+        if {"audit.read", "stats.read", "organizations.write"}.intersection(scopes):
+            return {"user": current_user, "organization_id": membership.organization_id}
+
     raise HTTPException(status_code=403, detail="Not authorized")
 
 
@@ -166,7 +175,7 @@ def supports_percentile_cont(db: AsyncSession) -> bool:
 async def _load_accounting_aggregates(
     *,
     db: AsyncSession,
-    tenant_id: UUID,
+    organization_id: UUID,
     start: datetime,
     end: datetime,
     agent_id: UUID | None = None,
@@ -184,7 +193,7 @@ async def _load_accounting_aggregates(
         )
         .where(
             and_(
-                AgentRun.tenant_id == tenant_id,
+                AgentRun.organization_id == organization_id,
                 AgentRun.created_at >= start,
                 AgentRun.created_at <= end,
             )
@@ -210,7 +219,7 @@ async def get_daily_data(
     table,
     date_column,
     count_expr,
-    tenant_id: UUID,
+    organization_id: UUID,
     start: datetime,
     end: datetime
 ) -> list[DailyDataPoint]:
@@ -228,8 +237,8 @@ async def get_daily_data(
         .order_by(func.date(date_column))
     )
     
-    if hasattr(table, 'tenant_id') and tenant_id:
-        query = query.where(table.tenant_id == tenant_id)
+    if hasattr(table, 'organization_id') and organization_id:
+        query = query.where(table.organization_id == organization_id)
     
     result = await db.execute(query)
     data_map = {normalize_grouped_date(r.date): float(r.value) for r in result.all()}
@@ -240,12 +249,12 @@ async def get_daily_data(
 
 async def get_overview_stats(
     db: AsyncSession,
-    tenant_id: UUID,
+    organization_id: UUID,
     start: datetime,
     end: datetime
 ) -> OverviewStats:
     """Get overview statistics."""
-    monitoring = AdminMonitoringService(db=db, tenant_id=tenant_id)
+    monitoring = AdminMonitoringService(db=db, organization_id=organization_id)
     actor_aggregates = await monitoring._build_actor_aggregates(month_start=start, month_end=end)
     total_users = len(actor_aggregates)
     active_users = await monitoring.active_actor_count(start=start, end=end)
@@ -256,7 +265,7 @@ async def get_overview_stats(
         .join(AgentThread, AgentThreadTurn.thread_id == AgentThread.id)
         .where(
             and_(
-                AgentThread.tenant_id == tenant_id,
+                AgentThread.organization_id == organization_id,
                 AgentThreadTurn.created_at >= start,
                 AgentThreadTurn.created_at <= end,
             )
@@ -266,7 +275,7 @@ async def get_overview_stats(
 
     accounting = await _load_accounting_aggregates(
         db=db,
-        tenant_id=tenant_id,
+        organization_id=organization_id,
         start=start,
         end=end,
     )
@@ -274,7 +283,7 @@ async def get_overview_stats(
 
     q_runs = select(func.count(AgentRun.id)).where(
         and_(
-            AgentRun.tenant_id == tenant_id,
+            AgentRun.organization_id == organization_id,
             AgentRun.created_at >= start,
             AgentRun.created_at <= end,
         )
@@ -283,7 +292,7 @@ async def get_overview_stats(
 
     q_failed_runs = select(func.count(AgentRun.id)).where(
         and_(
-            AgentRun.tenant_id == tenant_id,
+            AgentRun.organization_id == organization_id,
             AgentRun.status == RunStatus.failed,
             AgentRun.created_at >= start,
             AgentRun.created_at <= end,
@@ -293,7 +302,7 @@ async def get_overview_stats(
 
     q_jobs = select(func.count(PipelineJob.id)).where(
         and_(
-            PipelineJob.tenant_id == tenant_id,
+            PipelineJob.organization_id == organization_id,
             PipelineJob.created_at >= start,
             PipelineJob.created_at <= end,
         )
@@ -302,7 +311,7 @@ async def get_overview_stats(
 
     q_failed_jobs = select(func.count(PipelineJob.id)).where(
         and_(
-            PipelineJob.tenant_id == tenant_id,
+            PipelineJob.organization_id == organization_id,
             PipelineJob.status == PipelineJobStatus.FAILED,
             PipelineJob.created_at >= start,
             PipelineJob.created_at <= end,
@@ -327,7 +336,7 @@ async def get_overview_stats(
         )
         .where(
             and_(
-                AgentRun.tenant_id == tenant_id,
+                AgentRun.organization_id == organization_id,
                 AgentRun.created_at >= start,
                 AgentRun.created_at <= end,
             )
@@ -351,7 +360,7 @@ async def get_overview_stats(
         .join(AgentThread, AgentThreadTurn.thread_id == AgentThread.id)
         .where(
             and_(
-                AgentThread.tenant_id == tenant_id,
+                AgentThread.organization_id == organization_id,
                 AgentThreadTurn.created_at >= start,
                 AgentThreadTurn.created_at <= end,
                 AgentThreadTurn.user_input_text.is_not(None),
@@ -363,7 +372,7 @@ async def get_overview_stats(
         .join(AgentThread, AgentThreadTurn.thread_id == AgentThread.id)
         .where(
             and_(
-                AgentThread.tenant_id == tenant_id,
+                AgentThread.organization_id == organization_id,
                 AgentThreadTurn.created_at >= start,
                 AgentThreadTurn.created_at <= end,
                 AgentThreadTurn.assistant_output_text.is_not(None),
@@ -398,7 +407,7 @@ async def get_overview_stats(
         .outerjoin(ModelRegistry, AgentRun.resolved_model_id == ModelRegistry.id)
         .where(
             and_(
-                AgentRun.tenant_id == tenant_id,
+                AgentRun.organization_id == organization_id,
                 AgentRun.created_at >= start,
                 AgentRun.created_at <= end,
             )
@@ -464,7 +473,7 @@ async def get_overview_stats(
 
 async def get_rag_stats(
     db: AsyncSession,
-    tenant_id: UUID,
+    organization_id: UUID,
     start: datetime,
     end: datetime
 ) -> RAGStats:
@@ -473,7 +482,7 @@ async def get_rag_stats(
     # Knowledge stores
     q_stores = (
         select(KnowledgeStore)
-        .where(KnowledgeStore.tenant_id == tenant_id)
+        .where(KnowledgeStore.organization_id == organization_id)
         .order_by(KnowledgeStore.created_at.desc())
     )
     stores_result = await db.execute(q_stores)
@@ -495,7 +504,7 @@ async def get_rag_stats(
     # Stores by status
     q_store_status = (
         select(KnowledgeStore.status, func.count(KnowledgeStore.id))
-        .where(KnowledgeStore.tenant_id == tenant_id)
+        .where(KnowledgeStore.organization_id == organization_id)
         .group_by(KnowledgeStore.status)
     )
     store_status_result = await db.execute(q_store_status)
@@ -510,7 +519,7 @@ async def get_rag_stats(
     # Pipelines by type
     q_pipeline_types = (
         select(VisualPipeline.pipeline_type, func.count(VisualPipeline.id))
-        .where(VisualPipeline.tenant_id == tenant_id)
+        .where(VisualPipeline.organization_id == organization_id)
         .group_by(VisualPipeline.pipeline_type)
     )
     pipeline_type_result = await db.execute(q_pipeline_types)
@@ -530,7 +539,7 @@ async def get_rag_stats(
         )
         .outerjoin(ExecutablePipeline, VisualPipeline.id == ExecutablePipeline.visual_pipeline_id)
         .outerjoin(PipelineJob, ExecutablePipeline.id == PipelineJob.executable_pipeline_id)
-        .where(VisualPipeline.tenant_id == tenant_id)
+        .where(VisualPipeline.organization_id == organization_id)
         .group_by(VisualPipeline.id, VisualPipeline.name, VisualPipeline.pipeline_type, VisualPipeline.is_published, VisualPipeline.updated_at)
         .order_by(VisualPipeline.updated_at.desc())
     )
@@ -552,7 +561,7 @@ async def get_rag_stats(
         select(PipelineJob, VisualPipeline.name)
         .join(ExecutablePipeline, PipelineJob.executable_pipeline_id == ExecutablePipeline.id)
         .join(VisualPipeline, ExecutablePipeline.visual_pipeline_id == VisualPipeline.id)
-        .where(PipelineJob.tenant_id == tenant_id)
+        .where(PipelineJob.organization_id == organization_id)
         .order_by(PipelineJob.created_at.desc())
         .limit(10)
     )
@@ -575,7 +584,7 @@ async def get_rag_stats(
         .join(ExecutablePipeline, PipelineJob.executable_pipeline_id == ExecutablePipeline.id)
         .join(VisualPipeline, ExecutablePipeline.visual_pipeline_id == VisualPipeline.id)
         .where(and_(
-            PipelineJob.tenant_id == tenant_id,
+            PipelineJob.organization_id == organization_id,
             PipelineJob.status == PipelineJobStatus.FAILED,
             PipelineJob.created_at >= start,
             PipelineJob.created_at <= end
@@ -602,7 +611,7 @@ async def get_rag_stats(
             func.count(PipelineJob.id).label('value')
         )
         .where(and_(
-            PipelineJob.tenant_id == tenant_id,
+            PipelineJob.organization_id == organization_id,
             PipelineJob.created_at >= start,
             PipelineJob.created_at <= end
         ))
@@ -617,7 +626,7 @@ async def get_rag_stats(
     q_status = (
         select(PipelineJob.status, func.count(PipelineJob.id))
         .where(and_(
-            PipelineJob.tenant_id == tenant_id,
+            PipelineJob.organization_id == organization_id,
             PipelineJob.created_at >= start,
             PipelineJob.created_at <= end
         ))
@@ -641,7 +650,7 @@ async def get_rag_stats(
                 func.percentile_cont(0.95).within_group(duration_expr)
             )
             .where(and_(
-                PipelineJob.tenant_id == tenant_id,
+                PipelineJob.organization_id == organization_id,
                 PipelineJob.created_at >= start,
                 PipelineJob.created_at <= end,
                 PipelineJob.started_at.is_not(None),
@@ -654,7 +663,7 @@ async def get_rag_stats(
         q_duration = (
             select(func.avg(duration_expr))
             .where(and_(
-                PipelineJob.tenant_id == tenant_id,
+                PipelineJob.organization_id == organization_id,
                 PipelineJob.created_at >= start,
                 PipelineJob.created_at <= end,
                 PipelineJob.started_at.is_not(None),
@@ -680,7 +689,7 @@ async def get_rag_stats(
         .join(ExecutablePipeline, VisualPipeline.id == ExecutablePipeline.visual_pipeline_id)
         .join(PipelineJob, ExecutablePipeline.id == PipelineJob.executable_pipeline_id)
         .where(and_(
-            VisualPipeline.tenant_id == tenant_id,
+            VisualPipeline.organization_id == organization_id,
             PipelineJob.created_at >= start,
             PipelineJob.created_at <= end
         ))
@@ -723,13 +732,13 @@ async def get_rag_stats(
 
 async def get_agent_stats(
     db: AsyncSession,
-    tenant_id: UUID,
+    organization_id: UUID,
     start: datetime,
     end: datetime,
     agent_id: UUID | None = None,
 ) -> AgentStats:
     """Get agent statistics."""
-    monitoring = AdminMonitoringService(db=db, tenant_id=tenant_id)
+    monitoring = AdminMonitoringService(db=db, organization_id=organization_id)
     thread_contexts = await monitoring._load_thread_contexts(
         month_start=start,
         month_end=end,
@@ -754,7 +763,7 @@ async def get_agent_stats(
             AgentRun.created_at >= start,
             AgentRun.created_at <= end
         ))
-        .where(Agent.tenant_id == tenant_id)
+        .where(Agent.organization_id == organization_id)
         .group_by(Agent.id)
         .order_by(desc('run_count'))
     )
@@ -769,7 +778,7 @@ async def get_agent_stats(
             func.count(AgentThread.id).label("value"),
         )
         .where(and_(
-            AgentThread.tenant_id == tenant_id,
+            AgentThread.organization_id == organization_id,
             AgentThread.created_at >= start,
             AgentThread.created_at <= end,
             AgentThread.agent_id.is_not(None),
@@ -790,7 +799,7 @@ async def get_agent_stats(
         agents.append(AgentSummary(
             id=agent.id,
             name=agent.name,
-            slug=agent.slug,
+            system_key=agent.system_key,
             status=agent.status.value if agent.status else "unknown",
             thread_count=int(thread_count or 0),
             threads_by_day=fill_daily_data(thread_maps_by_agent.get(str(agent.id), {}), start, end),
@@ -806,7 +815,7 @@ async def get_agent_stats(
     failure_rate = (total_failed / total_runs * 100) if total_runs > 0 else 0
     accounting = await _load_accounting_aggregates(
         db=db,
-        tenant_id=tenant_id,
+        organization_id=organization_id,
         start=start,
         end=end,
         agent_id=agent_id,
@@ -819,7 +828,7 @@ async def get_agent_stats(
             func.count(AgentRun.id).label('value')
         )
         .where(and_(
-            AgentRun.tenant_id == tenant_id,
+            AgentRun.organization_id == organization_id,
             AgentRun.created_at >= start,
             AgentRun.created_at <= end
         ))
@@ -836,7 +845,7 @@ async def get_agent_stats(
     q_status = (
         select(AgentRun.status, func.count(AgentRun.id))
         .where(and_(
-            AgentRun.tenant_id == tenant_id,
+            AgentRun.organization_id == organization_id,
             AgentRun.created_at >= start,
             AgentRun.created_at <= end
         ))
@@ -862,7 +871,7 @@ async def get_agent_stats(
                 func.percentile_cont(0.95).within_group(duration_expr)
             )
             .where(and_(
-                AgentRun.tenant_id == tenant_id,
+                AgentRun.organization_id == organization_id,
                 AgentRun.created_at >= start,
                 AgentRun.created_at <= end,
                 AgentRun.started_at.is_not(None),
@@ -877,7 +886,7 @@ async def get_agent_stats(
         q_duration = (
             select(func.avg(duration_expr))
             .where(and_(
-                AgentRun.tenant_id == tenant_id,
+                AgentRun.organization_id == organization_id,
                 AgentRun.created_at >= start,
                 AgentRun.created_at <= end,
                 AgentRun.started_at.is_not(None),
@@ -901,7 +910,7 @@ async def get_agent_stats(
     q_queue = (
         select(func.avg(queue_expr))
         .where(and_(
-            AgentRun.tenant_id == tenant_id,
+            AgentRun.organization_id == organization_id,
             AgentRun.created_at >= start,
             AgentRun.created_at <= end,
             AgentRun.started_at.is_not(None)
@@ -922,7 +931,7 @@ async def get_agent_stats(
             func.coalesce(func.sum(usage_total_expr(AgentRun)), 0).label('value')
         )
         .where(and_(
-            AgentRun.tenant_id == tenant_id,
+            AgentRun.organization_id == organization_id,
             AgentRun.created_at >= start,
             AgentRun.created_at <= end
         ))
@@ -940,13 +949,13 @@ async def get_agent_stats(
         select(
             Agent.id,
             Agent.name,
-            Agent.slug,
+            Agent.system_key,
             func.count(AgentRun.id).label("run_count"),
             func.coalesce(func.sum(usage_total_expr(AgentRun)), 0).label("tokens_used")
         )
         .join(AgentRun, AgentRun.agent_id == Agent.id)
         .where(and_(
-            Agent.tenant_id == tenant_id,
+            Agent.organization_id == organization_id,
             AgentRun.created_at >= start,
             AgentRun.created_at <= end
         ))
@@ -961,11 +970,11 @@ async def get_agent_stats(
         AgentUsageSummary(
             id=agent_id,
             name=agent_name,
-            slug=agent_slug,
+            system_key=agent_system_key,
             run_count=run_count or 0,
             tokens_used=tokens_used or 0
         )
-        for agent_id, agent_name, agent_slug, run_count, tokens_used in top_agents_tokens_result.all()
+        for agent_id, agent_name, agent_system_key, run_count, tokens_used in top_agents_tokens_result.all()
     ]
 
     top_users_by_runs = [
@@ -999,7 +1008,7 @@ async def get_agent_stats(
         .join(Agent, AgentRun.agent_id == Agent.id)
         .outerjoin(User, AgentRun.user_id == User.id)
         .where(and_(
-            AgentRun.tenant_id == tenant_id,
+            AgentRun.organization_id == organization_id,
             AgentRun.status == RunStatus.failed,
             AgentRun.created_at >= start,
             AgentRun.created_at <= end
@@ -1060,7 +1069,7 @@ async def get_agent_stats(
 
 async def get_resource_stats(
     db: AsyncSession,
-    tenant_id: UUID,
+    organization_id: UUID,
     start: datetime,
     end: datetime
 ) -> ResourceStats:
@@ -1069,7 +1078,7 @@ async def get_resource_stats(
     # Tools
     q_tools = (
         select(ToolRegistry)
-        .where(ToolRegistry.tenant_id == tenant_id)
+        .where(ToolRegistry.organization_id == organization_id)
         .order_by(ToolRegistry.created_at.desc())
     )
     tools_result = await db.execute(q_tools)
@@ -1085,7 +1094,7 @@ async def get_resource_stats(
 
     q_tools_status = (
         select(ToolRegistry.status, func.count(ToolRegistry.id))
-        .where(ToolRegistry.tenant_id == tenant_id)
+        .where(ToolRegistry.organization_id == organization_id)
         .group_by(ToolRegistry.status)
     )
     tools_status_result = await db.execute(q_tools_status)
@@ -1096,7 +1105,7 @@ async def get_resource_stats(
 
     q_tools_type = (
         select(ToolRegistry.implementation_type, func.count(ToolRegistry.id))
-        .where(ToolRegistry.tenant_id == tenant_id)
+        .where(ToolRegistry.organization_id == organization_id)
         .group_by(ToolRegistry.implementation_type)
     )
     tools_type_result = await db.execute(q_tools_type)
@@ -1105,7 +1114,7 @@ async def get_resource_stats(
         for impl_type, count in tools_type_result.all()
     }
     
-    # Models (tenant-specific + global)
+    # Models (organization-specific + global)
     q_models = (
         select(
             ModelRegistry,
@@ -1113,7 +1122,7 @@ async def get_resource_stats(
         )
         .outerjoin(ModelProviderBinding)
         .where(
-            (ModelRegistry.tenant_id == tenant_id) | (ModelRegistry.tenant_id.is_(None))
+            (ModelRegistry.organization_id == organization_id) | (ModelRegistry.organization_id.is_(None))
         )
         .group_by(ModelRegistry.id)
         .order_by(ModelRegistry.created_at.desc())
@@ -1133,7 +1142,7 @@ async def get_resource_stats(
     q_models_capability = (
         select(ModelRegistry.capability_type, func.count(ModelRegistry.id))
         .where(
-            (ModelRegistry.tenant_id == tenant_id) | (ModelRegistry.tenant_id.is_(None))
+            (ModelRegistry.organization_id == organization_id) | (ModelRegistry.organization_id.is_(None))
         )
         .group_by(ModelRegistry.capability_type)
     )
@@ -1146,7 +1155,7 @@ async def get_resource_stats(
     q_models_status = (
         select(ModelRegistry.status, func.count(ModelRegistry.id))
         .where(
-            (ModelRegistry.tenant_id == tenant_id) | (ModelRegistry.tenant_id.is_(None))
+            (ModelRegistry.organization_id == organization_id) | (ModelRegistry.organization_id.is_(None))
         )
         .group_by(ModelRegistry.status)
     )
@@ -1159,7 +1168,7 @@ async def get_resource_stats(
     q_provider_bindings = (
         select(ModelProviderBinding.provider, func.count(ModelProviderBinding.id))
         .where(
-            (ModelProviderBinding.tenant_id == tenant_id) | (ModelProviderBinding.tenant_id.is_(None))
+            (ModelProviderBinding.organization_id == organization_id) | (ModelProviderBinding.organization_id.is_(None))
         )
         .group_by(ModelProviderBinding.provider)
         .order_by(desc(func.count(ModelProviderBinding.id)))
@@ -1176,7 +1185,7 @@ async def get_resource_stats(
     # Artifacts (custom operators)
     q_artifacts = (
         select(CustomOperator)
-        .where(CustomOperator.tenant_id == tenant_id)
+        .where(CustomOperator.organization_id == organization_id)
         .order_by(CustomOperator.created_at.desc())
     )
     artifacts_result = await db.execute(q_artifacts)
@@ -1193,7 +1202,7 @@ async def get_resource_stats(
 
     q_artifacts_category = (
         select(CustomOperator.category, func.count(CustomOperator.id))
-        .where(CustomOperator.tenant_id == tenant_id)
+        .where(CustomOperator.organization_id == organization_id)
         .group_by(CustomOperator.category)
     )
     artifacts_category_result = await db.execute(q_artifacts_category)
@@ -1204,7 +1213,7 @@ async def get_resource_stats(
 
     q_artifacts_active = (
         select(CustomOperator.is_active, func.count(CustomOperator.id))
-        .where(CustomOperator.tenant_id == tenant_id)
+        .where(CustomOperator.organization_id == organization_id)
         .group_by(CustomOperator.is_active)
     )
     artifacts_active_result = await db.execute(q_artifacts_active)
@@ -1256,7 +1265,7 @@ async def get_stats_summary(
         default=None,
         description="Optional agent scope for the agents section"
     ),
-    context: Dict[str, Any] = Depends(get_tenant_context),
+    context: Dict[str, Any] = Depends(get_organization_context),
     db: AsyncSession = Depends(get_db)
 ) -> StatsResponse:
     """
@@ -1268,10 +1277,10 @@ async def get_stats_summary(
     - agents: Agent inventory and run statistics
     - resources: Tools, models, and artifacts
     """
-    tenant_id = context["tenant_id"]
+    organization_id= context["organization_id"]
     
-    if not tenant_id:
-        raise HTTPException(status_code=400, detail="No tenant context available")
+    if not organization_id:
+        raise HTTPException(status_code=400, detail="No organization context available")
 
     period_start, period_end = get_period_range(days, start_date, end_date)
     period_days = max(1, (period_end.date() - period_start.date()).days + 1)
@@ -1285,12 +1294,12 @@ async def get_stats_summary(
     )
     
     if section == "overview":
-        response.overview = await get_overview_stats(db, tenant_id, period_start, period_end)
+        response.overview = await get_overview_stats(db, organization_id, period_start, period_end)
     elif section == "rag":
-        response.rag = await get_rag_stats(db, tenant_id, period_start, period_end)
+        response.rag = await get_rag_stats(db, organization_id, period_start, period_end)
     elif section == "agents":
-        response.agents = await get_agent_stats(db, tenant_id, period_start, period_end, agent_id=agent_id)
+        response.agents = await get_agent_stats(db, organization_id, period_start, period_end, agent_id=agent_id)
     elif section == "resources":
-        response.resources = await get_resource_stats(db, tenant_id, period_start, period_end)
+        response.resources = await get_resource_stats(db, organization_id, period_start, period_end)
     
     return response

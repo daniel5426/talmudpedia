@@ -6,7 +6,7 @@ import pytest
 import jwt
 
 from app.core.security import ALGORITHM, SECRET_KEY, create_access_token
-from app.db.postgres.models.identity import Tenant, User
+from app.db.postgres.models.identity import Organization, User
 from app.services.agent_service import (
     AgentGraphValidationError,
     AgentService,
@@ -88,7 +88,7 @@ def _graph_with_agent_model_only_in_data_config() -> dict:
 
 async def _seed_tenant_admin(db_session):
     suffix = uuid4().hex[:8]
-    tenant = Tenant(name=f"Tenant {suffix}", slug=f"tenant-{suffix}")
+    tenant = Organization(name=f"Organization {suffix}", slug=f"tenant-{suffix}")
     user = User(email=f"admin-{suffix}@example.com", role="admin")
     db_session.add_all([tenant, user])
     await db_session.commit()
@@ -97,22 +97,22 @@ async def _seed_tenant_admin(db_session):
     return tenant, user
 
 
-def _headers(user: User, tenant: Tenant) -> dict[str, str]:
+def _headers(user: User, tenant: Organization) -> dict[str, str]:
     base_token = create_access_token(
         subject=str(user.id),
-        tenant_id=str(tenant.id),
+        organization_id=str(tenant.id),
         org_role="owner",
     )
     payload = jwt.decode(base_token, SECRET_KEY, algorithms=[ALGORITHM])
     payload["scope"] = ["agents.read", "agents.write"]
     token = jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
-    return {"Authorization": f"Bearer {token}", "X-Tenant-ID": str(tenant.id)}
+    return {"Authorization": f"Bearer {token}", "X-Organization-ID": str(tenant.id)}
 
 
 @pytest.mark.asyncio
 async def test_service_create_rejects_missing_graph(db_session):
     tenant, user = await _seed_tenant_admin(db_session)
-    service = AgentService(db=db_session, tenant_id=tenant.id)
+    service = AgentService(db=db_session, organization_id=tenant.id)
 
     with pytest.raises(AgentGraphValidationError) as exc_info:
         await service.create_agent(
@@ -129,7 +129,7 @@ async def test_service_create_rejects_missing_graph(db_session):
 @pytest.mark.asyncio
 async def test_service_create_accepts_incomplete_graph(db_session):
     tenant, user = await _seed_tenant_admin(db_session)
-    service = AgentService(db=db_session, tenant_id=tenant.id)
+    service = AgentService(db=db_session, organization_id=tenant.id)
 
     agent = await service.create_agent(
         CreateAgentData(
@@ -147,7 +147,7 @@ async def test_service_create_accepts_incomplete_graph(db_session):
 @pytest.mark.asyncio
 async def test_service_update_without_graph_still_succeeds(db_session):
     tenant, user = await _seed_tenant_admin(db_session)
-    service = AgentService(db=db_session, tenant_id=tenant.id)
+    service = AgentService(db=db_session, organization_id=tenant.id)
     agent = await service.create_agent(
         CreateAgentData(
             name="Update Agent",
@@ -164,7 +164,7 @@ async def test_service_update_without_graph_still_succeeds(db_session):
 @pytest.mark.asyncio
 async def test_service_update_accepts_incomplete_graph(db_session):
     tenant, user = await _seed_tenant_admin(db_session)
-    service = AgentService(db=db_session, tenant_id=tenant.id)
+    service = AgentService(db=db_session, organization_id=tenant.id)
     agent = await service.create_agent(
         CreateAgentData(
             name="Update Invalid",
@@ -187,7 +187,7 @@ async def test_service_update_accepts_incomplete_graph(db_session):
 @pytest.mark.asyncio
 async def test_service_update_graph_accepts_incomplete_graph(db_session):
     tenant, user = await _seed_tenant_admin(db_session)
-    service = AgentService(db=db_session, tenant_id=tenant.id)
+    service = AgentService(db=db_session, organization_id=tenant.id)
     agent = await service.create_agent(
         CreateAgentData(
             name="Graph Update",
@@ -210,7 +210,7 @@ async def test_service_update_graph_accepts_incomplete_graph(db_session):
 @pytest.mark.asyncio
 async def test_service_create_ignores_runtime_config_inside_data_payload(db_session):
     tenant, user = await _seed_tenant_admin(db_session)
-    service = AgentService(db=db_session, tenant_id=tenant.id)
+    service = AgentService(db=db_session, organization_id=tenant.id)
 
     agent = await service.create_agent(
         CreateAgentData(
@@ -250,7 +250,7 @@ async def test_create_endpoint_missing_graph_returns_validation_error(client, db
 @pytest.mark.asyncio
 async def test_update_endpoint_accepts_incomplete_graph(client, db_session):
     tenant, user = await _seed_tenant_admin(db_session)
-    service = AgentService(db=db_session, tenant_id=tenant.id)
+    service = AgentService(db=db_session, organization_id=tenant.id)
     agent = await service.create_agent(
         CreateAgentData(
             name="Patch Agent",
@@ -275,7 +275,7 @@ async def test_update_endpoint_accepts_incomplete_graph(client, db_session):
 @pytest.mark.asyncio
 async def test_update_graph_endpoint_accepts_incomplete_graph(client, db_session):
     tenant, user = await _seed_tenant_admin(db_session)
-    service = AgentService(db=db_session, tenant_id=tenant.id)
+    service = AgentService(db=db_session, organization_id=tenant.id)
     agent = await service.create_agent(
         CreateAgentData(
             name="Graph Endpoint Agent",
@@ -300,7 +300,7 @@ async def test_update_graph_endpoint_accepts_incomplete_graph(client, db_session
 @pytest.mark.asyncio
 async def test_service_validate_graph_reports_runtime_reference_errors(db_session):
     tenant, user = await _seed_tenant_admin(db_session)
-    service = AgentService(db=db_session, tenant_id=tenant.id)
+    service = AgentService(db=db_session, organization_id=tenant.id)
 
     result = await service._build_validation_result_for_graph(
         _graph_with_missing_runtime_refs(),
@@ -316,7 +316,7 @@ async def test_service_validate_graph_reports_runtime_reference_errors(db_sessio
 @pytest.mark.asyncio
 async def test_validate_endpoint_returns_structured_errors_and_warnings(client, db_session):
     tenant, user = await _seed_tenant_admin(db_session)
-    service = AgentService(db=db_session, tenant_id=tenant.id)
+    service = AgentService(db=db_session, organization_id=tenant.id)
     agent = await service.create_agent(
         CreateAgentData(
             name="Validate Endpoint Shape",

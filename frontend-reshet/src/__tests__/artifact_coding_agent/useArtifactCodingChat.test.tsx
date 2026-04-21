@@ -157,8 +157,8 @@ describe("useArtifactCodingChat scope payloads", () => {
 
     const { result } = renderHook(() =>
       useArtifactCodingChat({
-        tenantSlug: "tenant-1",
-        tenantId: "tenant-id-1",
+        tenantSlug: "organization-1",
+        tenantId: "organization-id-1",
         artifactId: null,
         draftKey: "draft-create-1",
         isCreateMode: true,
@@ -183,7 +183,7 @@ describe("useArtifactCodingChat scope payloads", () => {
         draft_key: "draft-create-1",
         draft_snapshot: { display_name: "Draft artifact" },
       }),
-      "tenant-1",
+      "organization-1",
     );
   });
 
@@ -204,8 +204,8 @@ describe("useArtifactCodingChat scope payloads", () => {
 
     const { result } = renderHook(() =>
       useArtifactCodingChat({
-        tenantSlug: "tenant-1",
-        tenantId: "tenant-id-1",
+        tenantSlug: "organization-1",
+        tenantId: "organization-id-1",
         artifactId: "artifact-1",
         draftKey: "draft-create-1",
         isCreateMode: false,
@@ -230,7 +230,7 @@ describe("useArtifactCodingChat scope payloads", () => {
         draft_key: undefined,
         draft_snapshot: { display_name: "Saved artifact" },
       }),
-      "tenant-1",
+      "organization-1",
     );
   });
 
@@ -255,8 +255,8 @@ describe("useArtifactCodingChat scope payloads", () => {
 
     const { result } = renderHook(() =>
       useArtifactCodingChat({
-        tenantSlug: "tenant-1",
-        tenantId: "tenant-id-1",
+        tenantSlug: "organization-1",
+        tenantId: "organization-id-1",
         artifactId: null,
         draftKey: "draft-create-1",
         isCreateMode: true,
@@ -285,7 +285,7 @@ describe("useArtifactCodingChat scope payloads", () => {
 
     expect(mockedArtifactsService.cancelCodingAgentRun).toHaveBeenCalledWith(
       "run-1",
-      "tenant-1",
+      "organization-1",
       { assistant_output_text: "partial reply" },
     );
   });
@@ -321,8 +321,8 @@ describe("useArtifactCodingChat scope payloads", () => {
 
     const { result } = renderHook(() =>
       useArtifactCodingChat({
-        tenantSlug: "tenant-1",
-        tenantId: "tenant-id-1",
+        tenantSlug: "organization-1",
+        tenantId: "organization-id-1",
         artifactId: null,
         draftKey: "draft-create-1",
         isCreateMode: true,
@@ -377,8 +377,8 @@ describe("useArtifactCodingChat scope payloads", () => {
 
     const { result } = renderHook(() =>
       useArtifactCodingChat({
-        tenantSlug: "tenant-1",
-        tenantId: "tenant-id-1",
+        tenantSlug: "organization-1",
+        tenantId: "organization-id-1",
         artifactId: null,
         draftKey: "draft-create-1",
         isCreateMode: true,
@@ -447,8 +447,8 @@ describe("useArtifactCodingChat scope payloads", () => {
 
     const { result } = renderHook(() =>
       useArtifactCodingChat({
-        tenantSlug: "tenant-1",
-        tenantId: "tenant-id-1",
+        tenantSlug: "organization-1",
+        tenantId: "organization-id-1",
         artifactId: null,
         draftKey: "draft-create-1",
         isCreateMode: true,
@@ -500,8 +500,8 @@ describe("useArtifactCodingChat scope payloads", () => {
 
     const { result } = renderHook(() =>
       useArtifactCodingChat({
-        tenantSlug: "tenant-1",
-        tenantId: "tenant-id-1",
+        tenantSlug: "organization-1",
+        tenantId: "organization-id-1",
         artifactId: null,
         draftKey: "draft-create-1",
         isCreateMode: true,
@@ -520,7 +520,7 @@ describe("useArtifactCodingChat scope payloads", () => {
     });
 
     await waitFor(() => {
-      expect(mockedArtifactsService.getCodingAgentChatSessionDraftSnapshot).toHaveBeenCalledWith("session-1", "tenant-1");
+      expect(mockedArtifactsService.getCodingAgentChatSessionDraftSnapshot).toHaveBeenCalledWith("session-1", "organization-1");
       expect(onApplyDraftSnapshot).toHaveBeenCalledWith({ display_name: "Updated draft" });
     });
   });

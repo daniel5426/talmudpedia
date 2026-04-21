@@ -62,7 +62,7 @@ import { Button } from "@/components/ui/button";
 import { ReactArtifactPane } from "@/components/ai-elements/ReactArtifactPane";
 import { useReactArtifactPanel } from "@/lib/react-artifacts/useReactArtifactPanel";
 import { parseReactArtifact } from "@/lib/react-artifacts/parseReactArtifact";
-import { useTenant } from "@/contexts/TenantContext";
+import { useOrganization } from "@/contexts/OrganizationContext";
 import {
   createApprovalRequestBlock,
   sortChatRenderBlocks,
@@ -1047,7 +1047,7 @@ export function ChatPane({ controller, chatId, noHeader = false }: ChatPaneProps
   // Auto (Agent Router) - Get chatId from URL search params if not provided as prop
   const searchParams = useSearchParams();
   const effectiveChatId = chatId || searchParams.get('chatId');
-  const { currentTenant } = useTenant();
+  const { currentOrganization } = useOrganization();
   const authUser = useAuthStore((state) => state.user);
 
   // Auto (Agent Router) - Get layout store for active chat management
@@ -1096,7 +1096,7 @@ export function ChatPane({ controller, chatId, noHeader = false }: ChatPaneProps
 
   const defaultController = useChatController();
   const chatController = controller ?? defaultController;
-  const tenantKey = currentTenant?.slug ?? authUser?.tenant_id ?? "unknown-tenant";
+  const organizationKey = currentOrganization?.id ?? authUser?.organization_id ?? "unknown-organization";
   const {
     artifact,
     openFromMessage,
@@ -1106,7 +1106,7 @@ export function ChatPane({ controller, chatId, noHeader = false }: ChatPaneProps
     closePanel,
   } = useReactArtifactPanel({
     messages: chatController.messages,
-    tenantKey,
+    tenantKey: organizationKey,
     chatId: effectiveChatId ?? undefined,
   });
 

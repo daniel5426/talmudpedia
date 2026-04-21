@@ -19,19 +19,19 @@ def _get_service_secret() -> str:
 
 
 def create_service_token(
-    tenant_id: str,
+    organization_id: str,
     subject: str = SERVICE_TOKEN_ROLE,
     expires_delta: Optional[timedelta] = None,
 ) -> str:
-    if not tenant_id:
-        raise ValueError("tenant_id is required for service tokens")
+    if not organization_id:
+        raise ValueError("organization_id is required for service tokens")
 
     expire = datetime.now(timezone.utc) + (expires_delta or timedelta(minutes=SERVICE_TOKEN_TTL_MINUTES))
     payload: Dict[str, Any] = {
         "exp": expire,
         "sub": str(subject),
         "role": SERVICE_TOKEN_ROLE,
-        "tenant_id": str(tenant_id),
+        "organization_id": str(organization_id),
     }
     return jwt.encode(payload, _get_service_secret(), algorithm=SERVICE_TOKEN_ALGORITHM)
 
@@ -40,6 +40,6 @@ def decode_service_token(token: str) -> Dict[str, Any]:
     payload = jwt.decode(token, _get_service_secret(), algorithms=[SERVICE_TOKEN_ALGORITHM])
     if payload.get("role") != SERVICE_TOKEN_ROLE:
         raise jwt.InvalidTokenError("Invalid service token role")
-    if not payload.get("tenant_id"):
-        raise jwt.InvalidTokenError("Service token missing tenant_id")
+    if not payload.get("organization_id"):
+        raise jwt.InvalidTokenError("Service token missing organization_id")
     return payload

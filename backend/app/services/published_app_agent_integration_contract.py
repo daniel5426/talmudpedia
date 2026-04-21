@@ -185,9 +185,9 @@ def _serialize_tool(
         "reference": reference,
         "references": [reference],
         "name": str(tool.name or ""),
-        "slug": str(tool.slug or ""),
+        "builtin_key": str(tool.builtin_key or "") or None,
         "description": description if description is not None else (str(tool.description or "") or None),
-        "scope": "global" if tool.tenant_id is None else "tenant",
+        "scope": "global" if tool.organization_id is None else "organization",
         "status": status,
         "implementation_type": _enum_text(tool.implementation_type),
         "is_active": bool(tool.is_active),
@@ -211,12 +211,12 @@ async def build_published_app_agent_integration_contract(
     result = await db.execute(
         select(Agent).where(
             Agent.id == app.agent_id,
-            Agent.tenant_id == app.tenant_id,
+            Agent.organization_id == app.organization_id,
         )
     )
     agent = result.scalar_one_or_none()
     if agent is None:
-        raise LookupError("Selected app agent was not found in tenant scope.")
+        raise LookupError("Selected app agent was not found in organization scope.")
 
     references = _collect_tool_references(agent)
     parsed_references: list[tuple[str, UUID]] = []
@@ -240,7 +240,7 @@ async def build_published_app_agent_integration_contract(
         tool_result = await db.execute(
             select(ToolRegistry).where(
                 ToolRegistry.id.in_(unique_ids),
-                or_(ToolRegistry.tenant_id == app.tenant_id, ToolRegistry.tenant_id.is_(None)),
+                or_(ToolRegistry.organization_id == app.organization_id, ToolRegistry.organization_id.is_(None)),
             )
         )
         tool_rows = list(tool_result.scalars().all())
@@ -248,7 +248,7 @@ async def build_published_app_agent_integration_contract(
 
     resolved_tools: list[dict[str, Any]] = []
     resolved_index: dict[str, int] = {}
-    prompt_resolver = PromptReferenceResolver(db, app.tenant_id)
+    prompt_resolver = PromptReferenceResolver(db, app.organization_id)
     for raw_reference, tool_uuid in parsed_references:
         key = str(tool_uuid)
         tool = tools_by_id.get(key)
@@ -257,7 +257,7 @@ async def build_published_app_agent_integration_contract(
                 {
                     "reference": raw_reference,
                     "reason": "tool_not_found_or_not_accessible",
-                    "detail": "Tool is missing or outside tenant/global scope.",
+                    "detail": "Tool is missing or outside organization/global scope.",
                 }
             )
             continue
@@ -296,7 +296,7 @@ async def build_published_app_agent_integration_contract(
         "agent": {
             "id": str(agent.id),
             "name": str(agent.name or ""),
-            "slug": str(agent.slug or ""),
+            "system_key": str(agent.system_key or "") or None,
             "description": str(agent.description or "") or None,
             "status": _enum_text(agent.status),
             "is_active": bool(agent.is_active),

@@ -5,7 +5,7 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import HTTPException
-from sqlalchemy import and_, delete, desc, or_, select, update
+from sqlalchemy import and_, case, delete, desc, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -44,6 +44,15 @@ class ArtifactCodingChatHistoryService:
         if normalized == "orchestrator":
             return "system"
         return None
+
+    @staticmethod
+    def _message_role_order():
+        return case(
+            (ArtifactCodingMessage.role == "user", 0),
+            (ArtifactCodingMessage.role == "assistant", 1),
+            (ArtifactCodingMessage.role == "orchestrator", 2),
+            else_=3,
+        )
 
     @staticmethod
     def _extract_assistant_output_text(run: AgentRun | None) -> str | None:
@@ -88,7 +97,7 @@ class ArtifactCodingChatHistoryService:
     async def get_session_for_user(
         self,
         *,
-        tenant_id: UUID,
+        organization_id: UUID,
         user_id: UUID | None,
         session_id: UUID,
     ) -> ArtifactCodingSession | None:
@@ -98,7 +107,7 @@ class ArtifactCodingChatHistoryService:
             .where(
                 and_(
                     ArtifactCodingSession.id == session_id,
-                    ArtifactCodingSession.tenant_id == tenant_id,
+                    ArtifactCodingSession.organization_id == organization_id,
                     AgentThread.user_id == user_id,
                 )
             )
@@ -109,7 +118,7 @@ class ArtifactCodingChatHistoryService:
     async def create_session(
         self,
         *,
-        tenant_id: UUID,
+        organization_id: UUID,
         artifact_id: UUID | None,
         shared_draft_id: UUID,
         draft_key: str | None,
@@ -117,7 +126,7 @@ class ArtifactCodingChatHistoryService:
         title_prompt: str,
     ) -> ArtifactCodingSession:
         session = ArtifactCodingSession(
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             artifact_id=artifact_id,
             shared_draft_id=shared_draft_id,
             draft_key=draft_key,
@@ -133,7 +142,7 @@ class ArtifactCodingChatHistoryService:
     async def list_sessions(
         self,
         *,
-        tenant_id: UUID,
+        organization_id: UUID,
         user_id: UUID | None,
         artifact_id: UUID | None,
         draft_key: str | None,
@@ -142,7 +151,7 @@ class ArtifactCodingChatHistoryService:
         stmt = (
             select(ArtifactCodingSession)
             .join(AgentThread, ArtifactCodingSession.agent_thread_id == AgentThread.id)
-            .where(ArtifactCodingSession.tenant_id == tenant_id)
+            .where(ArtifactCodingSession.organization_id == organization_id)
         )
         if user_id is not None:
             stmt = stmt.where(AgentThread.user_id == user_id)
@@ -165,7 +174,7 @@ class ArtifactCodingChatHistoryService:
     async def link_sessions_to_artifact(
         self,
         *,
-        tenant_id: UUID,
+        organization_id: UUID,
         draft_key: str,
         artifact_id: UUID,
     ) -> int:
@@ -175,7 +184,7 @@ class ArtifactCodingChatHistoryService:
             update(ArtifactCodingSession)
             .where(
                 and_(
-                    ArtifactCodingSession.tenant_id == tenant_id,
+                    ArtifactCodingSession.organization_id == organization_id,
                     ArtifactCodingSession.draft_key == draft_key,
                 )
             )
@@ -269,7 +278,11 @@ class ArtifactCodingChatHistoryService:
         result = await self.db.execute(
             select(ArtifactCodingMessage)
             .where(ArtifactCodingMessage.session_id == session_id)
-            .order_by(ArtifactCodingMessage.created_at.desc())
+            .order_by(
+                ArtifactCodingMessage.created_at.desc(),
+                self._message_role_order().desc(),
+                ArtifactCodingMessage.id.desc(),
+            )
             .limit(limit)
         )
         messages = list(reversed(list(result.scalars().all())))

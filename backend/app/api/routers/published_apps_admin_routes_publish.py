@@ -13,16 +13,16 @@ from app.db.postgres.models.published_apps import (
     PublishedAppVisibility,
 )
 from app.db.postgres.session import get_db
+from app.services.published_app_draft_dev_runtime import PublishedAppDraftDevRuntimeService
 
 from .published_apps_admin_access import (
     _assert_can_manage_apps,
     _get_app_for_tenant,
     _get_publish_job_for_app,
-    _resolve_tenant_admin_context,
+    _resolve_organization_admin_context,
     _validate_agent,
 )
 from .published_apps_admin_shared import (
-    APP_SLUG_PATTERN,
     PublishJobResponse,
     PublishJobStatusResponse,
     PublishRequest,
@@ -44,14 +44,15 @@ async def update_published_app(
     app_id: UUID,
     payload: UpdatePublishedAppRequest,
     request: Request,
-    _: Dict[str, Any] = Depends(require_scopes("apps.write")),
+    _: Dict[str, Any] = Depends(require_scopes("apps.publish")),
     principal: Dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ):
-    ctx = await _resolve_tenant_admin_context(request, principal, db)
+    ctx = await _resolve_organization_admin_context(request, principal, db)
     _assert_can_manage_apps(ctx)
+    principal_scopes = set(principal.get("scopes") or [])
 
-    app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
+    app = await _get_app_for_tenant(db, ctx["organization_id"], app_id)
 
     if payload.name is not None:
         app.name = payload.name.strip()
@@ -59,29 +60,37 @@ async def update_published_app(
         app.description = payload.description.strip() or None
     if payload.logo_url is not None:
         app.logo_url = payload.logo_url.strip() or None
-    if payload.slug is not None:
-        next_slug = payload.slug.strip().lower()
-        if not APP_SLUG_PATTERN.match(next_slug):
-            raise HTTPException(status_code=400, detail="Slug must be lowercase, 3-64 chars, and contain only letters, numbers, hyphens")
-        app.slug = next_slug
-        if app.status == PublishedAppStatus.published:
-            app.published_url = _build_published_url(next_slug)
     if payload.agent_id is not None:
-        await _validate_agent(db, ctx["tenant_id"], payload.agent_id)
+        await _validate_agent(db, ctx["organization_id"], payload.agent_id)
         app.agent_id = payload.agent_id
     if payload.visibility is not None:
+        if "*" not in principal_scopes and "apps.exposure.write" not in principal_scopes:
+            raise HTTPException(status_code=403, detail="Exposure settings require Project Owner access")
+        _ = require_scopes("apps.exposure.write")
         app.visibility = PublishedAppVisibility(_validate_visibility(payload.visibility))
     if payload.auth_enabled is not None:
+        if "*" not in principal_scopes and "apps.exposure.write" not in principal_scopes:
+            raise HTTPException(status_code=403, detail="Exposure settings require Project Owner access")
         app.auth_enabled = payload.auth_enabled
     if payload.auth_providers is not None:
+        if "*" not in principal_scopes and "apps.exposure.write" not in principal_scopes:
+            raise HTTPException(status_code=403, detail="Exposure settings require Project Owner access")
         app.auth_providers = _validate_providers(payload.auth_providers)
     if payload.auth_template_key is not None:
+        if "*" not in principal_scopes and "apps.exposure.write" not in principal_scopes:
+            raise HTTPException(status_code=403, detail="Exposure settings require Project Owner access")
         app.auth_template_key = _validate_auth_template_key(payload.auth_template_key)
     if payload.allowed_origins is not None:
+        if "*" not in principal_scopes and "apps.exposure.write" not in principal_scopes:
+            raise HTTPException(status_code=403, detail="Exposure settings require Project Owner access")
         app.allowed_origins = _validate_allowed_origins(payload.allowed_origins)
     if payload.external_auth_oidc is not None:
+        if "*" not in principal_scopes and "apps.exposure.write" not in principal_scopes:
+            raise HTTPException(status_code=403, detail="Exposure settings require Project Owner access")
         app.external_auth_oidc = _validate_external_auth_oidc(payload.external_auth_oidc)
     if payload.status is not None:
+        if "*" not in principal_scopes and "apps.exposure.write" not in principal_scopes:
+            raise HTTPException(status_code=403, detail="Exposure settings require Project Owner access")
         try:
             app.status = PublishedAppStatus(payload.status)
         except ValueError:
@@ -91,7 +100,7 @@ async def update_published_app(
         await db.commit()
     except IntegrityError:
         await db.rollback()
-        raise HTTPException(status_code=409, detail="Published app slug or name already exists")
+        raise HTTPException(status_code=409, detail="Published app public id or name already exists")
     await db.refresh(app)
     return _app_to_response(app)
 
@@ -101,7 +110,7 @@ async def publish_published_app(
     app_id: UUID,
     request: Request,
     payload: Optional[PublishRequest] = None,
-    _: Dict[str, Any] = Depends(require_scopes("apps.write")),
+    _: Dict[str, Any] = Depends(require_scopes("apps.publish")),
     principal: Dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ):
@@ -124,9 +133,9 @@ async def get_publish_job_status(
     principal: Dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ):
-    ctx = await _resolve_tenant_admin_context(request, principal, db)
+    ctx = await _resolve_organization_admin_context(request, principal, db)
     _assert_can_manage_apps(ctx)
-    app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
+    app = await _get_app_for_tenant(db, ctx["organization_id"], app_id)
     job = await _get_publish_job_for_app(db, app_id=app.id, job_id=job_id)
     return PublishJobStatusResponse(**_publish_job_to_response(job).model_dump())
 
@@ -139,9 +148,9 @@ async def unpublish_published_app(
     principal: Dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ):
-    ctx = await _resolve_tenant_admin_context(request, principal, db)
+    ctx = await _resolve_organization_admin_context(request, principal, db)
     _assert_can_manage_apps(ctx)
-    app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
+    app = await _get_app_for_tenant(db, ctx["organization_id"], app_id)
     app.status = PublishedAppStatus.draft
     app.published_url = None
     await db.commit()
@@ -157,9 +166,9 @@ async def delete_published_app(
     principal: Dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ):
-    ctx = await _resolve_tenant_admin_context(request, principal, db)
+    ctx = await _resolve_organization_admin_context(request, principal, db)
     _assert_can_manage_apps(ctx)
-    app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
+    app = await _get_app_for_tenant(db, ctx["organization_id"], app_id)
     runtime_service = PublishedAppDraftDevRuntimeService(db)
     await runtime_service.destroy_workspace_for_app(app_id=app.id)
     await db.delete(app)
@@ -175,12 +184,12 @@ async def runtime_preview(
     principal: Dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ):
-    ctx = await _resolve_tenant_admin_context(request, principal, db)
+    ctx = await _resolve_organization_admin_context(request, principal, db)
     _assert_can_manage_apps(ctx)
-    app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
+    app = await _get_app_for_tenant(db, ctx["organization_id"], app_id)
     return {
         "app_id": str(app.id),
-        "slug": app.slug,
+        "public_id": app.public_id,
         "status": app.status.value if hasattr(app.status, "value") else str(app.status),
-        "runtime_url": app.published_url or _build_published_url(app.slug),
+        "runtime_url": app.published_url or _build_published_url(app.public_id),
     }

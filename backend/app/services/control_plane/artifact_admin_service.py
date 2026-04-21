@@ -56,12 +56,12 @@ class ArtifactAdminService:
         self.revisions = ArtifactRevisionService(db)
 
     async def list_artifacts(self, *, ctx: ControlPlaneContext, query: ListQuery) -> ListPage:
-        artifacts = await self.registry.list_accessible_artifacts(tenant_id=ctx.tenant_id)
+        artifacts = await self.registry.list_accessible_artifacts(organization_id=ctx.organization_id)
         items = [self.serialize_artifact(item, view=query.view) for item in artifacts[query.skip: query.skip + query.limit]]
         return ListPage(items=items, total=len(artifacts), query=query)
 
     async def get_artifact(self, *, ctx: ControlPlaneContext, artifact_id: UUID) -> dict[str, Any]:
-        artifact = await self.registry.get_accessible_artifact(artifact_id=artifact_id, tenant_id=ctx.tenant_id)
+        artifact = await self.registry.get_accessible_artifact(artifact_id=artifact_id, organization_id=ctx.organization_id)
         if artifact is None:
             raise not_found("Artifact not found", artifact_id=str(artifact_id))
         return self.serialize_artifact(artifact, include_code=True)
@@ -72,7 +72,7 @@ class ArtifactAdminService:
             raise validation("display_name is required", field="display_name")
         try:
             artifact = await self.revisions.create_artifact(
-                tenant_id=ctx.tenant_id,
+                organization_id=ctx.organization_id,
                 created_by=ctx.user_id,
                 display_name=display_name,
                 description=params.description,
@@ -93,11 +93,11 @@ class ArtifactAdminService:
             await self.db.commit()
         except ValueError as exc:
             raise validation(str(exc)) from exc
-        refreshed = await self.registry.get_tenant_artifact(artifact_id=artifact.id, tenant_id=ctx.tenant_id)
+        refreshed = await self.registry.get_organization_artifact(artifact_id=artifact.id, organization_id=ctx.organization_id)
         return self.serialize_artifact(refreshed, include_code=True)
 
     async def update_artifact(self, *, ctx: ControlPlaneContext, artifact_id: UUID, params: UpdateArtifactInput) -> dict[str, Any]:
-        artifact = await self.registry.get_tenant_artifact(artifact_id=artifact_id, tenant_id=ctx.tenant_id)
+        artifact = await self.registry.get_organization_artifact(artifact_id=artifact_id, organization_id=ctx.organization_id)
         if artifact is None:
             raise not_found("Artifact not found", artifact_id=str(artifact_id))
         current_revision = artifact.latest_draft_revision or artifact.latest_published_revision
@@ -125,7 +125,7 @@ class ArtifactAdminService:
             await self.db.commit()
         except ValueError as exc:
             raise validation(str(exc)) from exc
-        refreshed = await self.registry.get_tenant_artifact(artifact_id=artifact.id, tenant_id=ctx.tenant_id)
+        refreshed = await self.registry.get_organization_artifact(artifact_id=artifact.id, organization_id=ctx.organization_id)
         return self.serialize_artifact(refreshed, include_code=True)
 
     async def convert_kind(
@@ -138,7 +138,7 @@ class ArtifactAdminService:
         rag_contract: dict[str, Any] | None,
         tool_contract: dict[str, Any] | None,
     ) -> dict[str, Any]:
-        artifact = await self.registry.get_tenant_artifact(artifact_id=artifact_id, tenant_id=ctx.tenant_id)
+        artifact = await self.registry.get_organization_artifact(artifact_id=artifact_id, organization_id=ctx.organization_id)
         if artifact is None:
             raise not_found("Artifact not found", artifact_id=str(artifact_id))
         binding_service = ToolBindingService(self.db)
@@ -157,11 +157,11 @@ class ArtifactAdminService:
             await self.db.commit()
         except ValueError as exc:
             raise validation(str(exc)) from exc
-        refreshed = await self.registry.get_tenant_artifact(artifact_id=artifact.id, tenant_id=ctx.tenant_id)
+        refreshed = await self.registry.get_organization_artifact(artifact_id=artifact.id, organization_id=ctx.organization_id)
         return self.serialize_artifact(refreshed, include_code=True)
 
     async def publish_artifact(self, *, ctx: ControlPlaneContext, artifact_id: UUID) -> dict[str, Any]:
-        artifact = await self.registry.get_tenant_artifact(artifact_id=artifact_id, tenant_id=ctx.tenant_id)
+        artifact = await self.registry.get_organization_artifact(artifact_id=artifact_id, organization_id=ctx.organization_id)
         if artifact is None:
             raise not_found("Artifact not found", artifact_id=str(artifact_id))
         try:
@@ -169,7 +169,7 @@ class ArtifactAdminService:
             await ArtifactDeploymentService(self.db).ensure_deployment(
                 revision=revision,
                 namespace="production",
-                tenant_id=ctx.tenant_id,
+                organization_id=ctx.organization_id,
             )
             await ToolBindingService(self.db).publish_artifact_tool_binding(
                 artifact=artifact,
@@ -187,7 +187,7 @@ class ArtifactAdminService:
         }
 
     async def delete_artifact(self, *, ctx: ControlPlaneContext, artifact_id: UUID) -> dict[str, Any]:
-        artifact = await self.registry.get_tenant_artifact(artifact_id=artifact_id, tenant_id=ctx.tenant_id)
+        artifact = await self.registry.get_organization_artifact(artifact_id=artifact_id, organization_id=ctx.organization_id)
         if artifact is None:
             raise not_found("Artifact not found", artifact_id=str(artifact_id))
         await ToolBindingService(self.db).delete_artifact_tool_binding(artifact.id)
@@ -216,7 +216,7 @@ class ArtifactAdminService:
     ) -> dict[str, Any]:
         try:
             run = await ArtifactExecutionService(self.db).start_test_run(
-                tenant_id=ctx.tenant_id,
+                organization_id=ctx.organization_id,
                 created_by=ctx.user_id,
                 artifact_id=artifact_id,
                 source_files=source_files,

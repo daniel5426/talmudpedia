@@ -1,4 +1,4 @@
-Last Updated: 2026-04-18
+Last Updated: 2026-04-21
 
 # Apps Builder Sandbox Runtime Tests
 
@@ -28,6 +28,7 @@ Last Updated: 2026-04-18
 - The builder preview Google OAuth start route sets a CSRF state cookie, and callback rejects missing state cookies.
 - The preview proxy now behaves as a static builder-preview proxy: it injects runtime context plus the session-scoped route bridge into HTML, and passes built assets through without Vite/HMR rewrites.
 - The preview proxy exposes `/_talmudpedia/status` as a direct backend status contract backed by draft-dev heartbeat metadata instead of proxying preview status through the static server.
+- The preview proxy thread list/detail routes now call the canonical runtime-surface lifecycle/query service directly instead of going through host-runtime serializer wrappers.
 - The preview proxy exposes the canonical builder preview base path to the runtime SDK and no longer depends on query-plumbed runtime bootstrap URLs for steady-state builder preview.
 - The preview proxy retries transient `404/5xx/timeout` warmup failures for GET/HEAD preview assets so Sprite wake/service warmup does not immediately white-screen the iframe.
 - For Sprite-backed draft-dev sessions, the preview proxy resolves a local Sprite control-plane tunnel and proxies preview traffic through that tunnel instead of dialing the provider HTTPS hostname directly.
@@ -77,6 +78,9 @@ Last Updated: 2026-04-18
 - Command: `SECRET_KEY=explicit-test-secret-0123456789abcdef TEST_USE_REAL_DB=0 /Users/danielbenassaya/Code/personal/talmudpedia/backend/.venv-codex-tests/bin/python -m pytest -q backend/tests/apps_builder_sandbox_runtime/test_runtime_client_and_preview_proxy.py`
 - Date: 2026-04-19 Asia/Hebron
 - Result: PASS (`12 passed`, `9 warnings`)
+- Command: `SECRET_KEY=test-secret-key PYTHONPATH=backend backend/.venv/bin/pytest -q backend/tests/apps_builder_sandbox_runtime/test_runtime_client_and_preview_proxy.py -k 'builder_preview_thread_list_uses_runtime_surface or builder_preview_thread_detail_uses_runtime_surface'`
+- Date: 2026-04-21 Asia/Hebron
+- Result: PASS (`2 passed`, `12 deselected`)
 - Command: `cd backend && PYTHONPATH=. pytest -x -q tests/apps_builder_sandbox_runtime/test_draft_dev_runtime_lifecycle.py`
 - Date: 2026-03-15
 - Result: PASS (6 passed, 6 warnings)

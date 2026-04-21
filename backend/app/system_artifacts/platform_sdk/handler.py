@@ -87,8 +87,8 @@ def execute(state: Dict[str, Any], config: Dict[str, Any], context: Dict[str, An
         payload["idempotency_key"] = inputs.get("idempotency_key")
     if isinstance(inputs.get("request_metadata"), dict) and not isinstance(payload.get("request_metadata"), dict):
         payload["request_metadata"] = inputs.get("request_metadata")
-    if inputs.get("tenant_id") and not payload.get("tenant_id"):
-        payload["tenant_id"] = inputs.get("tenant_id")
+    if inputs.get("organization_id") and not payload.get("organization_id"):
+        payload["organization_id"] = inputs.get("organization_id")
     tests = inputs.get("tests") if isinstance(inputs.get("tests"), list) else []
     if not tests and isinstance(payload.get("tests"), list):
         tests = payload.get("tests") or []
@@ -96,8 +96,8 @@ def execute(state: Dict[str, Any], config: Dict[str, Any], context: Dict[str, An
     dry_run = bool(inputs.get("dry_run") or payload.get("dry_run", False))
     explicit_action = _extract_explicit_action(inputs)
     action = _resolve_action(explicit_action, inputs, payload, [], tests)
-    tenant_for_flags = _resolve_effective_tenant_id(inputs, payload, state, context)
-    tenant_mismatch_error = _validate_tenant_override(inputs, payload, state, context)
+    organization_for_flags = _resolve_effective_organization_id(inputs, payload, state, context)
+    organization_mismatch_error = _validate_organization_override(inputs, payload, state, context)
 
     if noncanonical_input_error is not None:
         attempted_action = str(noncanonical_input_error.get("attempted_action") or "noop")
@@ -111,7 +111,7 @@ def execute(state: Dict[str, Any], config: Dict[str, Any], context: Dict[str, An
             "action": attempted_action,
             "dry_run": dry_run,
         }
-        return _finalize_output(output, inputs=inputs, payload=payload, tool_slug=None)
+        return _finalize_output(output, inputs=inputs, payload=payload, builtin_key=None)
 
     if action == "noop":
         output = {
@@ -130,20 +130,20 @@ def execute(state: Dict[str, Any], config: Dict[str, Any], context: Dict[str, An
             "action": "noop",
             "dry_run": dry_run,
         }
-        return _finalize_output(output, inputs=inputs, payload=payload, tool_slug=None)
+        return _finalize_output(output, inputs=inputs, payload=payload, builtin_key=None)
 
-    if tenant_mismatch_error is not None:
+    if organization_mismatch_error is not None:
         output = {
             "result": {
                 "status": "validation_error",
-                "reason": "tenant_override_denied",
-                "message": tenant_mismatch_error["message"],
+                "reason": "organization_override_denied",
+                "message": organization_mismatch_error["message"],
             },
-            "errors": [tenant_mismatch_error],
+            "errors": [organization_mismatch_error],
             "action": _canonicalize_action(action),
             "dry_run": dry_run,
         }
-        return _finalize_output(output, inputs=inputs, payload=payload, tool_slug=None)
+        return _finalize_output(output, inputs=inputs, payload=payload, builtin_key=None)
 
     if action in DEPRECATED_ACTIONS:
         output = {
@@ -163,11 +163,11 @@ def execute(state: Dict[str, Any], config: Dict[str, Any], context: Dict[str, An
             "action": action,
             "dry_run": dry_run,
         }
-        return _finalize_output(output, inputs=inputs, payload=payload, tool_slug=None)
+        return _finalize_output(output, inputs=inputs, payload=payload, builtin_key=None)
 
     canonical_action = _canonicalize_action(action)
-    tool_slug = _resolve_tool_slug(inputs=inputs, payload=payload, state=state, context=context, config=config)
-    domain_error = _validate_domain_action_access(canonical_action=canonical_action, tool_slug=tool_slug)
+    builtin_key = _resolve_builtin_key(inputs=inputs, payload=payload, state=state, context=context, config=config)
+    domain_error = _validate_domain_action_access(canonical_action=canonical_action, builtin_key=builtin_key)
     if domain_error is not None:
         output = {
             "result": {
@@ -179,27 +179,27 @@ def execute(state: Dict[str, Any], config: Dict[str, Any], context: Dict[str, An
             "action": canonical_action,
             "dry_run": dry_run,
         }
-        return _finalize_output(output, inputs=inputs, payload=payload, tool_slug=tool_slug)
+        return _finalize_output(output, inputs=inputs, payload=payload, builtin_key=builtin_key)
 
-    if _is_mutating_action(canonical_action) and not tenant_for_flags:
+    if _is_mutating_action(canonical_action) and not organization_for_flags:
         output = {
             "result": {
                 "status": "validation_error",
-                "reason": "missing_tenant_context",
-                "message": f"Action '{canonical_action}' requires explicit tenant_id.",
+                "reason": "missing_organization_context",
+                "message": f"Action '{canonical_action}' requires explicit organization_id.",
             },
             "errors": [{
-                "error": "missing_tenant_context",
-                "code": "TENANT_REQUIRED",
+                "error": "missing_organization_context",
+                "code": "ORGANIZATION_REQUIRED",
                 "action": canonical_action,
-                "message": f"Action '{canonical_action}' requires explicit tenant_id.",
+                "message": f"Action '{canonical_action}' requires explicit organization_id.",
                 "http_status": 422,
                 "retryable": False,
             }],
             "action": canonical_action,
             "dry_run": dry_run,
         }
-        return _finalize_output(output, inputs=inputs, payload=payload, tool_slug=tool_slug)
+        return _finalize_output(output, inputs=inputs, payload=payload, builtin_key=builtin_key)
 
     if canonical_action in PUBLISH_ACTIONS and not _has_explicit_publish_intent(inputs, payload):
         output = {
@@ -223,12 +223,12 @@ def execute(state: Dict[str, Any], config: Dict[str, Any], context: Dict[str, An
             "action": canonical_action,
             "dry_run": dry_run,
         }
-        return _finalize_output(output, inputs=inputs, payload=payload, tool_slug=tool_slug)
+        return _finalize_output(output, inputs=inputs, payload=payload, builtin_key=builtin_key)
 
     gated_actions = {canonical_action} if canonical_action in ORCHESTRATION_PRIMITIVE_ACTIONS else set()
     if gated_actions and not is_orchestration_surface_enabled(
         surface=ORCHESTRATION_SURFACE_OPTION_B,
-        tenant_id=tenant_for_flags,
+        organization_id=organization_for_flags,
     ):
         disabled_actions = sorted(gated_actions)
         output = {
@@ -236,7 +236,7 @@ def execute(state: Dict[str, Any], config: Dict[str, Any], context: Dict[str, An
                 "status": "feature_disabled",
                 "surface": ORCHESTRATION_SURFACE_OPTION_B,
                 "actions": disabled_actions,
-                "tenant_id": tenant_for_flags,
+                "organization_id": organization_for_flags,
             },
             "errors": [{
                 "error": "feature_disabled",
@@ -246,10 +246,10 @@ def execute(state: Dict[str, Any], config: Dict[str, Any], context: Dict[str, An
             "action": action,
             "dry_run": dry_run,
         }
-        return _finalize_output(output, inputs=inputs, payload=payload, tool_slug=tool_slug)
+        return _finalize_output(output, inputs=inputs, payload=payload, builtin_key=builtin_key)
 
     required_scopes = _resolve_required_scopes(action=canonical_action)
-    base_url, api_key, tenant_id, extra_headers = _resolve_auth(
+    base_url, api_key, organization_id, extra_headers = _resolve_auth(
         inputs,
         payload,
         state=state,
@@ -258,7 +258,7 @@ def execute(state: Dict[str, Any], config: Dict[str, Any], context: Dict[str, An
         required_scopes=required_scopes,
     )
 
-    client = Client(base_url=base_url, api_key=api_key, tenant_id=tenant_id, extra_headers=extra_headers)
+    client = Client(base_url=base_url, api_key=api_key, organization_id=organization_id, extra_headers=extra_headers)
     if api_key and not client.headers.get("Authorization"):
         client.headers["Authorization"] = f"Bearer {api_key}"
     if not client.headers.get("X-SDK-Contract"):
@@ -303,7 +303,7 @@ def execute(state: Dict[str, Any], config: Dict[str, Any], context: Dict[str, An
         action=canonical_action,
         required_scopes=required_scopes,
         base_url=base_url,
-        tenant_id=tenant_id,
+        organization_id=organization_id,
         api_key=api_key,
         extra_headers=extra_headers,
     )
@@ -317,7 +317,7 @@ def execute(state: Dict[str, Any], config: Dict[str, Any], context: Dict[str, An
         output,
         inputs=inputs,
         payload=payload,
-        tool_slug=tool_slug,
+        builtin_key=builtin_key,
         auth_context=auth_context,
     )
 
@@ -345,64 +345,64 @@ def _canonicalize_action(action: str) -> str:
     return ACTION_ALIASES.get(action, action)
 
 
-def _resolve_effective_tenant_id(
+def _resolve_effective_organization_id(
     inputs: Dict[str, Any],
     payload: Dict[str, Any],
     state: Optional[Dict[str, Any]],
     context: Optional[Dict[str, Any]],
 ) -> Optional[str]:
-    runtime_tenant_id = _resolve_runtime_tenant_id(state, context)
-    if runtime_tenant_id is not None:
-        return runtime_tenant_id
-    explicit_tenant_id = _resolve_explicit_tenant_id(inputs, payload)
-    if explicit_tenant_id is not None:
-        return explicit_tenant_id
+    runtime_organization_id = _resolve_runtime_organization_id(state, context)
+    if runtime_organization_id is not None:
+        return runtime_organization_id
+    explicit_organization_id = _resolve_explicit_organization_id(inputs, payload)
+    if explicit_organization_id is not None:
+        return explicit_organization_id
     return None
 
 
-def _resolve_runtime_tenant_id(
+def _resolve_runtime_organization_id(
     state: Optional[Dict[str, Any]],
     context: Optional[Dict[str, Any]],
 ) -> Optional[str]:
     state_ctx = state.get("context") if isinstance(state, dict) and isinstance(state.get("context"), dict) else {}
     tool_ctx = context if isinstance(context, dict) else {}
-    tenant_id = state_ctx.get("tenant_id") or tool_ctx.get("tenant_id")
-    if tenant_id is None:
+    organization_id= state_ctx.get("organization_id") or tool_ctx.get("organization_id")
+    if organization_id is None:
         return None
-    return str(tenant_id)
+    return str(organization_id)
 
 
-def _resolve_explicit_tenant_id(inputs: Dict[str, Any], payload: Dict[str, Any]) -> Optional[str]:
-    tenant_id = payload.get("tenant_id") or inputs.get("tenant_id")
-    if tenant_id is None:
+def _resolve_explicit_organization_id(inputs: Dict[str, Any], payload: Dict[str, Any]) -> Optional[str]:
+    organization_id= payload.get("organization_id") or inputs.get("organization_id")
+    if organization_id is None:
         return None
-    return str(tenant_id)
+    return str(organization_id)
 
 
-def _validate_tenant_override(
+def _validate_organization_override(
     inputs: Dict[str, Any],
     payload: Dict[str, Any],
     state: Optional[Dict[str, Any]],
     context: Optional[Dict[str, Any]],
 ) -> Optional[Dict[str, Any]]:
-    runtime_tenant_id = _resolve_runtime_tenant_id(state, context)
-    explicit_tenant_id = _resolve_explicit_tenant_id(inputs, payload)
-    if not runtime_tenant_id or not explicit_tenant_id:
+    runtime_organization_id = _resolve_runtime_organization_id(state, context)
+    explicit_organization_id = _resolve_explicit_organization_id(inputs, payload)
+    if not runtime_organization_id or not explicit_organization_id:
         return None
-    if runtime_tenant_id == explicit_tenant_id:
+    if runtime_organization_id == explicit_organization_id:
         return None
     return {
-        "error": "tenant_override_denied",
-        "code": "TENANT_MISMATCH",
-        "message": "Tenant override is not allowed; runtime tenant context is authoritative.",
+        "error": "organization_override_denied",
+        "code": "ORGANIZATION_MISMATCH",
+        "message": "Organization override is not allowed; runtime organization context is authoritative.",
         "http_status": 403,
         "retryable": False,
-        "runtime_tenant_id": runtime_tenant_id,
-        "requested_tenant_id": explicit_tenant_id,
+        "runtime_organization_id": runtime_organization_id,
+        "requested_organization_id": explicit_organization_id,
     }
 
 
-def _resolve_tool_slug(
+def _resolve_builtin_key(
     *,
     inputs: Dict[str, Any],
     payload: Dict[str, Any],
@@ -411,23 +411,23 @@ def _resolve_tool_slug(
     config: Optional[Dict[str, Any]],
 ) -> Optional[str]:
     candidates = [
-        payload.get("tool_slug"),
-        inputs.get("tool_slug"),
-        (config or {}).get("tool_slug"),
-        (context or {}).get("tool_slug"),
+        payload.get("builtin_key"),
+        inputs.get("builtin_key"),
+        (config or {}).get("builtin_key"),
+        (context or {}).get("builtin_key"),
     ]
     state_ctx = state.get("context") if isinstance(state, dict) and isinstance(state.get("context"), dict) else {}
-    candidates.append(state_ctx.get("tool_slug"))
+    candidates.append(state_ctx.get("builtin_key"))
     for candidate in candidates:
         if isinstance(candidate, str) and candidate.strip():
             return candidate.strip()
     return None
 
 
-def _validate_domain_action_access(canonical_action: str, tool_slug: Optional[str]) -> Optional[Dict[str, Any]]:
-    if not tool_slug:
+def _validate_domain_action_access(canonical_action: str, builtin_key: Optional[str]) -> Optional[Dict[str, Any]]:
+    if not builtin_key:
         return None
-    prefixes = DOMAIN_TOOL_ALLOWED_PREFIXES.get(tool_slug)
+    prefixes = DOMAIN_TOOL_ALLOWED_PREFIXES.get(builtin_key)
     if not prefixes:
         return None
     if any(canonical_action.startswith(prefix) for prefix in prefixes):
@@ -435,9 +435,9 @@ def _validate_domain_action_access(canonical_action: str, tool_slug: Optional[st
     return {
         "error": "tool_action_scope_mismatch",
         "code": "SCOPE_DENIED",
-        "tool_slug": tool_slug,
+        "builtin_key": builtin_key,
         "action": canonical_action,
-        "message": f"Action '{canonical_action}' is not allowed by tool '{tool_slug}'.",
+        "message": f"Action '{canonical_action}' is not allowed by tool '{builtin_key}'.",
         "http_status": 403,
         "retryable": False,
     }
@@ -560,7 +560,7 @@ def _inspect_wrapped_platform_sdk_input(text: str) -> Dict[str, Any]:
     return details
 
 
-def _extract_meta(inputs: Dict[str, Any], payload: Dict[str, Any], tool_slug: Optional[str]) -> Dict[str, Any]:
+def _extract_meta(inputs: Dict[str, Any], payload: Dict[str, Any], builtin_key: Optional[str]) -> Dict[str, Any]:
     request_metadata = payload.get("request_metadata") if isinstance(payload.get("request_metadata"), dict) else {}
     if not request_metadata and isinstance(inputs.get("request_metadata"), dict):
         request_metadata = inputs.get("request_metadata")
@@ -585,7 +585,7 @@ def _extract_meta(inputs: Dict[str, Any], payload: Dict[str, Any], tool_slug: Op
         "request_id": str(request_id) if request_id is not None else None,
         "idempotency_key": str(idempotency_key) if idempotency_key else None,
         "idempotency_provided": bool(idempotency_key),
-        "tool_slug": tool_slug,
+        "builtin_key": builtin_key,
     }
 
 
@@ -598,15 +598,15 @@ def _build_safe_auth_context(
     action: str,
     required_scopes: List[str],
     base_url: str,
-    tenant_id: Optional[str],
+    organization_id: Optional[str],
     api_key: Optional[str],
     extra_headers: Dict[str, str],
 ) -> Dict[str, Any]:
     state_ctx = state.get("context") if isinstance(state, dict) and isinstance(state.get("context"), dict) else {}
     tool_ctx = context if isinstance(context, dict) else {}
     auth_ctx = tool_ctx.get("auth") if isinstance(tool_ctx.get("auth"), dict) else {}
-    explicit_tenant_id = _resolve_explicit_tenant_id(inputs, payload)
-    runtime_tenant_id = _resolve_runtime_tenant_id(state, context)
+    explicit_organization_id = _resolve_explicit_organization_id(inputs, payload)
+    runtime_organization_id = _resolve_runtime_organization_id(state, context)
     token_sources = {
         "payload_token": bool(payload.get("token")),
         "payload_api_key": bool(payload.get("api_key")),
@@ -623,9 +623,9 @@ def _build_safe_auth_context(
     return {
         "action": action,
         "base_url": str(base_url or "").rstrip("/"),
-        "tenant_id": str(tenant_id) if tenant_id else None,
-        "runtime_tenant_id": str(runtime_tenant_id) if runtime_tenant_id else None,
-        "explicit_tenant_id": str(explicit_tenant_id) if explicit_tenant_id else None,
+        "organization_id": str(organization_id) if organization_id else None,
+        "runtime_organization_id": str(runtime_organization_id) if runtime_organization_id else None,
+        "explicit_organization_id": str(explicit_organization_id) if explicit_organization_id else None,
         "required_scopes": list(required_scopes or []),
         "token_present": bool(api_key),
         "token_source_candidates": token_sources,
@@ -641,10 +641,10 @@ def _finalize_output(
     *,
     inputs: Dict[str, Any],
     payload: Dict[str, Any],
-    tool_slug: Optional[str],
+    builtin_key: Optional[str],
     auth_context: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    output["meta"] = _extract_meta(inputs=inputs, payload=payload, tool_slug=tool_slug)
+    output["meta"] = _extract_meta(inputs=inputs, payload=payload, builtin_key=builtin_key)
     if auth_context is not None:
         output["meta"]["auth_context"] = auth_context
     return {"context": output, "tool_outputs": [output]}
@@ -705,7 +705,7 @@ def _resolve_auth(
     if tool_ctx is None:
         tool_ctx = {}
 
-    tenant_id = _resolve_effective_tenant_id(inputs, payload, state, context)
+    organization_id= _resolve_effective_organization_id(inputs, payload, state, context)
 
     token = (
         payload.get("token")
@@ -751,8 +751,8 @@ def _resolve_auth(
     elif not token:
         raise ValueError(f"Action '{action}' requires bearer token; missing caller auth context")
 
-    if not tenant_id:
-        raise ValueError(f"Action '{action}' requires explicit tenant_id.")
+    if not organization_id:
+        raise ValueError(f"Action '{action}' requires explicit organization_id.")
 
     extra_headers: Dict[str, str] = {}
     if isinstance(payload.get("headers"), dict):
@@ -760,7 +760,7 @@ def _resolve_auth(
     if isinstance(inputs.get("headers"), dict):
         extra_headers.update(inputs.get("headers"))
 
-    return base_url, token, tenant_id, extra_headers
+    return base_url, token, organization_id, extra_headers
 
 
 def _run_async(coro):
@@ -944,9 +944,6 @@ def _request_options(
 def _control_client(client: Client) -> ControlPlaneClient:
     return shared_actions.control_client(client)
 
-
-def _resolve_agent_id_by_slug(client: Client, agent_slug: str) -> Optional[str]:
-    return shared_actions.resolve_agent_id_by_slug(client, agent_slug, control_client_factory=_control_client)
 
 
 def _call_agent_execute(client: Client, agent_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:

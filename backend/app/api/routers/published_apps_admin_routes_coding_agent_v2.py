@@ -23,7 +23,7 @@ from .published_apps_admin_access import (
     _assert_can_manage_apps,
     _ensure_current_draft_revision,
     _get_app_for_tenant,
-    _resolve_tenant_admin_context,
+    _resolve_organization_admin_context,
 )
 from .published_apps_admin_shared import router
 
@@ -191,13 +191,13 @@ async def create_coding_agent_chat_session(
     principal: Dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ):
-    ctx = await _resolve_tenant_admin_context(request, principal, db)
+    ctx = await _resolve_organization_admin_context(request, principal, db)
     _assert_can_manage_apps(ctx)
     actor = ctx.get("user")
     actor_id = actor.id if actor else None
     if actor_id is None:
         raise HTTPException(status_code=403, detail="User context is required for coding-agent chat sessions")
-    app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
+    app = await _get_app_for_tenant(db, ctx["organization_id"], app_id)
     service = PublishedAppCodingChatSessionService(db)
     session = await service.create_chat_session(app=app, actor_id=actor_id, title=payload.title)
     return CodingAgentChatSessionResponse(**service.history.serialize_session(session))
@@ -212,13 +212,13 @@ async def list_coding_agent_chat_sessions(
     principal: Dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ):
-    ctx = await _resolve_tenant_admin_context(request, principal, db)
+    ctx = await _resolve_organization_admin_context(request, principal, db)
     _assert_can_manage_apps(ctx)
     actor = ctx.get("user")
     actor_id = actor.id if actor else None
     if actor_id is None:
         return []
-    app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
+    app = await _get_app_for_tenant(db, ctx["organization_id"], app_id)
     history = PublishedAppCodingChatHistoryService(db)
     sessions = await history.list_sessions(app_id=app.id, user_id=actor_id, limit=limit)
     return [CodingAgentChatSessionResponse(**history.serialize_session(session)) for session in sessions]
@@ -237,13 +237,13 @@ async def get_coding_agent_chat_session(
     principal: Dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ):
-    ctx = await _resolve_tenant_admin_context(request, principal, db)
+    ctx = await _resolve_organization_admin_context(request, principal, db)
     _assert_can_manage_apps(ctx)
     actor = ctx.get("user")
     actor_id = actor.id if actor else None
     if actor_id is None:
         raise HTTPException(status_code=403, detail="User context is required for coding-agent chat history")
-    app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
+    app = await _get_app_for_tenant(db, ctx["organization_id"], app_id)
     service = PublishedAppCodingChatSessionService(db)
     session = await service.get_chat_session_for_user(app=app, actor_id=actor_id, session_id=session_id)
     session_payload = CodingAgentChatSessionResponse(**service.history.serialize_session(session))
@@ -268,13 +268,13 @@ async def list_coding_agent_chat_session_messages(
     principal: Dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ):
-    ctx = await _resolve_tenant_admin_context(request, principal, db)
+    ctx = await _resolve_organization_admin_context(request, principal, db)
     _assert_can_manage_apps(ctx)
     actor = ctx.get("user")
     actor_id = actor.id if actor else None
     if actor_id is None:
         raise HTTPException(status_code=403, detail="User context is required for coding-agent chat history")
-    app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
+    app = await _get_app_for_tenant(db, ctx["organization_id"], app_id)
     service = PublishedAppCodingChatSessionService(db)
     session = await service.get_chat_session_for_user(app=app, actor_id=actor_id, session_id=session_id)
     messages = await service.list_remote_messages(chat_session=session, limit=limit)
@@ -294,13 +294,13 @@ async def submit_coding_agent_message(
     principal: Dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ):
-    ctx = await _resolve_tenant_admin_context(request, principal, db)
+    ctx = await _resolve_organization_admin_context(request, principal, db)
     _assert_can_manage_apps(ctx)
     actor = ctx.get("user")
     actor_id = actor.id if actor else None
     if actor_id is None:
         raise HTTPException(status_code=403, detail="User context is required for coding-agent chat")
-    app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
+    app = await _get_app_for_tenant(db, ctx["organization_id"], app_id)
     draft = await _ensure_current_draft_revision(db, app, actor_id)
     service = PublishedAppCodingChatSessionService(db)
     chat_session = await service.get_chat_session_for_user(app=app, actor_id=actor_id, session_id=session_id)
@@ -333,13 +333,13 @@ async def stream_coding_agent_chat_session_events(
     principal: Dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ):
-    ctx = await _resolve_tenant_admin_context(request, principal, db)
+    ctx = await _resolve_organization_admin_context(request, principal, db)
     _assert_can_manage_apps(ctx)
     actor = ctx.get("user")
     actor_id = actor.id if actor else None
     if actor_id is None:
         raise HTTPException(status_code=403, detail="User context is required for coding-agent events")
-    app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
+    app = await _get_app_for_tenant(db, ctx["organization_id"], app_id)
     service = PublishedAppCodingChatSessionService(db)
     chat_session = await service.get_chat_session_for_user(app=app, actor_id=actor_id, session_id=session_id)
     resolved_chat_session_id = chat_session.id
@@ -451,13 +451,13 @@ async def abort_coding_agent_chat_session(
     principal: Dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ):
-    ctx = await _resolve_tenant_admin_context(request, principal, db)
+    ctx = await _resolve_organization_admin_context(request, principal, db)
     _assert_can_manage_apps(ctx)
     actor = ctx.get("user")
     actor_id = actor.id if actor else None
     if actor_id is None:
         raise HTTPException(status_code=403, detail="User context is required for coding-agent chat")
-    app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
+    app = await _get_app_for_tenant(db, ctx["organization_id"], app_id)
     service = PublishedAppCodingChatSessionService(db)
     chat_session = await service.get_chat_session_for_user(app=app, actor_id=actor_id, session_id=session_id)
     ok = await service.abort_chat_session(chat_session=chat_session)
@@ -478,13 +478,13 @@ async def answer_coding_agent_permission(
     principal: Dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ):
-    ctx = await _resolve_tenant_admin_context(request, principal, db)
+    ctx = await _resolve_organization_admin_context(request, principal, db)
     _assert_can_manage_apps(ctx)
     actor = ctx.get("user")
     actor_id = actor.id if actor else None
     if actor_id is None:
         raise HTTPException(status_code=403, detail="User context is required for coding-agent chat")
-    app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
+    app = await _get_app_for_tenant(db, ctx["organization_id"], app_id)
     service = PublishedAppCodingChatSessionService(db)
     chat_session = await service.get_chat_session_for_user(app=app, actor_id=actor_id, session_id=session_id)
     ok = await service.reply_request(

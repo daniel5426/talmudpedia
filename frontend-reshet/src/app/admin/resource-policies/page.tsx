@@ -103,7 +103,7 @@ const RULE_TYPE_LABELS: Record<ResourcePolicyRuleType, string> = {
 }
 
 const PRINCIPAL_TYPE_LABELS: Record<ResourcePolicyPrincipalType, string> = {
-  tenant_user: "Tenant User",
+  organization_user: "Organization User",
   published_app_account: "Published App Account",
   embedded_external_user: "Embedded External User",
 }
@@ -1517,7 +1517,7 @@ function AssignmentsTable({
 
   const resolvePrincipal = (a: ResourcePolicyAssignment): { icon: React.ElementType; label: string; detail: string } => {
     switch (a.principal_type) {
-      case "tenant_user": {
+      case "organization_user": {
         const user = a.user_id ? userMap.get(a.user_id) : null
         return {
           icon: UserCheck,
@@ -1624,7 +1624,7 @@ function AssignmentFormDialog({
   onClose: () => void
   onSaved: () => void
 }) {
-  const [principalType, setPrincipalType] = useState<ResourcePolicyPrincipalType>("tenant_user")
+  const [principalType, setPrincipalType] = useState<ResourcePolicyPrincipalType>("organization_user")
   const [policySetId, setPolicySetId] = useState("")
   const [userId, setUserId] = useState("")
   const [publishedAppAccountId, setPublishedAppAccountId] = useState("")
@@ -1635,7 +1635,7 @@ function AssignmentFormDialog({
 
   useEffect(() => {
     if (open) {
-      setPrincipalType("tenant_user")
+      setPrincipalType("organization_user")
       setPolicySetId("")
       setUserId("")
       setPublishedAppAccountId("")
@@ -1648,7 +1648,7 @@ function AssignmentFormDialog({
   const isValid = () => {
     if (!policySetId) return false
     switch (principalType) {
-      case "tenant_user": return !!userId
+      case "organization_user": return !!userId
       case "published_app_account": return !!publishedAppAccountId
       case "embedded_external_user": return !!embeddedAgentId && !!externalUserId.trim()
     }
@@ -1663,7 +1663,7 @@ function AssignmentFormDialog({
         principal_type: principalType,
         policy_set_id: policySetId,
       }
-      if (principalType === "tenant_user") req.user_id = userId
+      if (principalType === "organization_user") req.user_id = userId
       if (principalType === "published_app_account") req.published_app_account_id = publishedAppAccountId
       if (principalType === "embedded_external_user") {
         req.embedded_agent_id = embeddedAgentId
@@ -1712,8 +1712,8 @@ function AssignmentFormDialog({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="tenant_user">
-                  <span className="flex items-center gap-1.5"><UserCheck className="h-3 w-3" />Tenant User</span>
+                <SelectItem value="organization_user">
+                  <span className="flex items-center gap-1.5"><UserCheck className="h-3 w-3" />Organization User</span>
                 </SelectItem>
                 <SelectItem value="published_app_account">
                   <span className="flex items-center gap-1.5"><Globe className="h-3 w-3" />Published App Account</span>
@@ -1725,7 +1725,7 @@ function AssignmentFormDialog({
             </Select>
           </div>
 
-          {principalType === "tenant_user" && (
+          {principalType === "organization_user" && (
             <div className="space-y-2">
               <Label>User</Label>
               <Select value={userId} onValueChange={setUserId}>

@@ -19,7 +19,7 @@ TOOL_RUNTIME_CONTEXT_KEYS = {
     "tool_call_id",
     "run_id",
     "thread_id",
-    "tenant_id",
+    "organization_id",
     "user_id",
     "initiator_user_id",
     "requested_scopes",
@@ -28,7 +28,7 @@ TOOL_RUNTIME_CONTEXT_KEYS = {
     "parent_node_id",
     "depth",
     "agent_id",
-    "agent_slug",
+    "agent_system_key",
     "mode",
     "surface",
     "orchestration_surface",
@@ -38,9 +38,9 @@ TOOL_RUNTIME_CONTEXT_KEYS = {
     "published_app_account_id",
     "external_user_id",
     "external_session_id",
-    "tenant_api_key_id",
-    "tenant_api_key_name",
-    "tenant_api_key_prefix",
+    "organization_api_key_id",
+    "organization_api_key_name",
+    "organization_api_key_prefix",
     "embed_metadata",
     "embed_client",
     "project_id",
@@ -64,7 +64,7 @@ TOOL_RUNTIME_CONTEXT_KEYS = {
 @dataclass(slots=True)
 class ToolDescriptor:
     tool_id: str
-    tool_slug: str | None
+    builtin_key: str | None
     tool_name: str | None
     implementation_type: str
     input_schema: dict[str, Any]
@@ -99,7 +99,7 @@ class ToolCompileFailure:
     validation_errors: list[dict[str, Any]]
     received_keys: list[str]
     tool_id: str
-    tool_slug: str | None
+    builtin_key: str | None
     implementation_type: str
     validation_mode: str
 
@@ -112,7 +112,7 @@ class ToolCompileFailure:
             "validation_errors": self.validation_errors,
             "received_keys": self.received_keys,
             "tool_id": self.tool_id,
-            "tool_slug": self.tool_slug,
+            "builtin_key": self.builtin_key,
             "implementation_type": self.implementation_type,
             "validation_mode": self.validation_mode,
         }
@@ -170,7 +170,7 @@ def build_tool_invocation_envelope(
     output_schema = schema.get("output") if isinstance(schema, dict) else {}
     descriptor = ToolDescriptor(
         tool_id=str(getattr(tool, "id", "") or ""),
-        tool_slug=str(getattr(tool, "slug", "") or "").strip() or None,
+        builtin_key=str(getattr(tool, "builtin_key", "") or "").strip() or None,
         tool_name=str(getattr(tool, "name", "") or "").strip() or None,
         implementation_type=implementation_type,
         input_schema=input_schema if isinstance(input_schema, dict) else {},
@@ -210,7 +210,7 @@ def compile_tool_arguments(envelope: ToolInvocationEnvelope) -> ToolCompileFailu
     validation_errors = validate_tool_input_against_schema(
         envelope.tool_descriptor.input_schema,
         envelope.model_input_raw,
-        tool_name=envelope.tool_descriptor.tool_slug or envelope.tool_descriptor.tool_name,
+        tool_name=envelope.tool_descriptor.builtin_key or envelope.tool_descriptor.tool_name,
     )
     if validation_errors:
         primary_code = str(validation_errors[0].get("code") or "invalid_tool_input")
@@ -222,7 +222,7 @@ def compile_tool_arguments(envelope: ToolInvocationEnvelope) -> ToolCompileFailu
             validation_errors=validation_errors,
             received_keys=sorted(str(key) for key in envelope.model_input_raw.keys()) if isinstance(envelope.model_input_raw, dict) else [],
             tool_id=envelope.tool_descriptor.tool_id,
-            tool_slug=envelope.tool_descriptor.tool_slug,
+            builtin_key=envelope.tool_descriptor.builtin_key,
             implementation_type=envelope.tool_descriptor.implementation_type,
             validation_mode=envelope.execution_policy.validation_mode,
         )
@@ -246,5 +246,5 @@ def tool_dispatch_target(envelope: ToolInvocationEnvelope) -> str:
     if impl_type == "rag_pipeline":
         return f"rag_pipeline:{implementation.get('pipeline_id') or envelope.tool_descriptor.tool_id}"
     if impl_type == "agent_call":
-        return f"agent_call:{implementation.get('target_agent_slug') or implementation.get('target_agent_id') or 'unknown'}"
+        return f"agent_call:{implementation.get('target_agent_id') or 'unknown'}"
     return impl_type

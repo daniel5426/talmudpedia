@@ -39,7 +39,7 @@ class ModelLimitsService:
     async def resolve_input_limit(
         self,
         *,
-        tenant_id: UUID | None,
+        organization_id: UUID | None,
         model_id: str | None,
         resolved_provider: str | None = None,
         resolved_provider_model_id: str | None = None,
@@ -58,7 +58,7 @@ class ModelLimitsService:
             if provider_limit is not None:
                 return provider_limit, "provider_model_info"
 
-        registry_limit, registry_source = await self._registry_context_window(tenant_id=tenant_id, model_id=model_id)
+        registry_limit, registry_source = await self._registry_context_window(organization_id=organization_id, model_id=model_id)
         if registry_limit is not None:
             return registry_limit, registry_source
 
@@ -74,7 +74,7 @@ class ModelLimitsService:
             return _DEFAULT_OPENCODE_CONTEXT_WINDOW, "provider_fallback"
         return None, "unknown"
 
-    async def _registry_context_window(self, *, tenant_id: UUID | None, model_id: str | None) -> tuple[int | None, str]:
+    async def _registry_context_window(self, *, organization_id: UUID | None, model_id: str | None) -> tuple[int | None, str]:
         normalized = str(model_id or "").strip()
         if not normalized:
             return None, "unknown"
@@ -115,12 +115,12 @@ class ModelLimitsService:
                             ModelProviderBinding.provider_model_id == provider_model_id.strip(),
                             ModelProviderBinding.is_enabled.is_(True),
                             or_(
-                                ModelProviderBinding.tenant_id == tenant_id,
-                                ModelProviderBinding.tenant_id.is_(None),
+                                ModelProviderBinding.organization_id == organization_id,
+                                ModelProviderBinding.organization_id.is_(None),
                             ),
                         )
                     )
-                    .order_by(ModelProviderBinding.tenant_id.is_(None), ModelProviderBinding.priority.asc())
+                    .order_by(ModelProviderBinding.organization_id.is_(None), ModelProviderBinding.priority.asc())
                     .limit(1)
                 )
                 binding_result = await self.db.execute(binding_query)

@@ -1,6 +1,6 @@
 # Platform Architect Runtime Tests
 
-Last Updated: 2026-04-15
+Last Updated: 2026-04-21
 
 ## Scope
 - Platform Architect v1.2 direct domain-tool loop runtime (no `architect.run` path).
@@ -23,7 +23,7 @@ Last Updated: 2026-04-15
 - Approval-sensitive mutation maps to `blocked_approval` with explicit next actions.
 - Domain tool boundaries deny cross-domain action usage with `SCOPE_DENIED`.
 - Missing tenant context for mutations fails with deterministic `TENANT_REQUIRED`.
-- Runtime tenant context is sufficient for mutations even when payload omits `tenant_id`.
+- Runtime tenant context is sufficient for mutations even when payload omits `organization_id`.
 - Explicit payload tenant override is rejected when it conflicts with runtime tenant context.
 - Platform SDK tool output meta now includes redacted auth context for runtime debugging without leaking bearer tokens.
 - Replay path reuses existing resources rather than duplicating them.
@@ -113,7 +113,29 @@ Last Updated: 2026-04-15
 - Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/platform_architect_runtime/test_architect_seeding.py`
 - Date/Time: 2026-04-15 03:00 EEST
 - Result: passed (`4 passed, 6 warnings`)
+- Command: `SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest backend/tests/organization_bootstrap/test_default_agent_profiles.py backend/tests/builtin_tools_registry/test_builtin_registry_api.py backend/tests/platform_architect_runtime/test_architect_seeding.py backend/tests/platform_architect_runtime/test_native_platform_tools.py backend/tests/settings_people_permissions/test_settings_people_permissions_api.py backend/tests/graph_mutation_agents/test_agent_graph_mutation_routes.py backend/tests/rag_extreme_campaign/test_admin_graph_and_jobs_api.py backend/tests/artifact_runtime/test_artifact_versions_api.py`
+- Date/Time: 2026-04-21 Asia/Hebron
+- Result: PASS (`30 passed`). Architect seeding assertions now match the id-only tool contracts and the current prompt language after the slug hard cut.
 
 ## Known gaps or follow-ups
 - Add integration coverage that exercises seeded `platform-architect` graph with real tool resolution in DB-backed test environment.
 - Add deeper live/runtime coverage beyond direct native `platform-assets` action adapter tests for publish and execution-heavy flows.
+
+## Latest Validation
+- Command: `cd backend && SECRET_KEY=explicit-test-secret .venv/bin/python -m pytest tests/platform_architect_runtime/test_native_platform_assets_actions.py tests/platform_architect_runtime/test_native_platform_tools.py tests/platform_native_adapter/test_platform_native_adapter.py tests/organization_bootstrap/test_default_agent_profiles.py`
+- Date/Time: 2026-04-21 Asia/Hebron
+- Result: Pass (`18 passed, 6 warnings`)
+
+## 2026-04-21 validation
+- Command: `SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest backend/tests/platform_architect_runtime/test_native_platform_assets_actions.py backend/tests/platform_architect_runtime/test_native_platform_tools.py backend/tests/platform_native_adapter/test_platform_native_adapter.py`
+- Result: `11 passed`
+
+- Command: `cd backend && SECRET_KEY=explicit-test-secret .venv/bin/python -m pytest tests/graph_mutation_agents/test_agent_graph_mutation_routes.py tests/platform_architect_runtime/test_native_platform_tools.py`
+- Date/Time: 2026-04-21 Asia/Hebron
+- Result: PASS (`4 passed`). Agent response/runtime metadata now expose `system_key`-based architect identification without slug-era frontend contracts.
+
+## 2026-04-21 tenant-to-organization validation
+- Command: `cd backend && SECRET_KEY=explicit-test-secret .venv/bin/python -m pytest tests/platform_architect_runtime/test_native_platform_assets_actions.py tests/platform_architect_runtime/test_native_platform_tools.py tests/platform_native_adapter/test_platform_native_adapter.py tests/organization_bootstrap/test_default_agent_profiles.py`
+- Result: PASS (`18 passed, 6 warnings`)
+- Command: `cd backend && SECRET_KEY=explicit-test-secret .venv/bin/python -m pytest tests/admin_monitoring/test_admin_monitoring_api.py tests/graph_mutation_agents/test_agent_graph_mutation_routes.py tests/platform_architect_runtime/test_native_platform_tools.py tests/organization_bootstrap/test_default_agent_profiles.py tests/settings_api_keys/test_settings_api_keys_api.py tests/workos_native_auth/test_auth_session_effective_scopes.py tests/security_route_enforcement/test_route_scope_enforcement.py tests/published_apps/test_admin_apps_crud.py tests/published_apps/test_public_app_resolve_and_config.py tests/published_apps_host_runtime/test_host_runtime_same_url_auth.py -q`
+- Result: PASS (`52 passed`)

@@ -1,7 +1,7 @@
 "use client"
 
 import { Badge } from "@/components/ui/badge"
-import { TOOL_BUCKETS, getToolBucket, getSubtypeLabel } from "@/lib/tool-types"
+import { TOOL_BUCKETS, getToolBucket, getToolIdentifier, getSubtypeLabel } from "@/lib/tool-types"
 import type { ToolDefinition } from "@/services/agent"
 
 export function ToolDefinitionDetailBody({ tool }: { tool: ToolDefinition }) {
@@ -23,7 +23,7 @@ export function ToolDefinitionDetailBody({ tool }: { tool: ToolDefinition }) {
       </div>
       <div>
         <div className="text-xs font-medium text-muted-foreground mb-1">Identifier</div>
-        <code className="text-xs bg-muted px-2 py-1 rounded font-mono block">{tool.slug}</code>
+        <code className="text-xs bg-muted px-2 py-1 rounded font-mono block">{getToolIdentifier(tool)}</code>
       </div>
       {tool.input_schema && Object.keys(tool.input_schema).length > 0 && (
         <div>

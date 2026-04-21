@@ -54,7 +54,7 @@ class _TemplatePack:
 @dataclass(frozen=True)
 class TemplateRuntimeContext:
     app_id: str = ""
-    app_slug: str = ""
+    app_public_id: str = ""
     agent_id: str = ""
     api_base_url: str = "/api/py"
 
@@ -205,12 +205,15 @@ def _coerce_runtime_context(runtime_context: Optional[TemplateRuntimeContext | D
         return runtime_context
     if isinstance(runtime_context, dict):
         app_id = str(runtime_context.get("app_id") or "").strip()
-        app_slug = str(runtime_context.get("app_slug") or "").strip()
+        app_public_id = str(
+            runtime_context.get("app_public_id")
+            or ""
+        ).strip()
         agent_id = str(runtime_context.get("agent_id") or "").strip()
         api_base_url = str(runtime_context.get("api_base_url") or "/api/py").strip() or "/api/py"
         return TemplateRuntimeContext(
             app_id=app_id,
-            app_slug=app_slug,
+            app_public_id=app_public_id,
             agent_id=agent_id,
             api_base_url=api_base_url,
         )
@@ -219,11 +222,11 @@ def _coerce_runtime_context(runtime_context: Optional[TemplateRuntimeContext | D
 
 def _build_runtime_overlay_files(runtime_context: TemplateRuntimeContext) -> Dict[str, str]:
     bootstrap_path = ""
-    if runtime_context.app_slug:
-        bootstrap_path = f"/public/apps/{runtime_context.app_slug}/runtime/bootstrap"
+    if runtime_context.app_public_id:
+        bootstrap_path = f"/public/apps/{runtime_context.app_public_id}/runtime/bootstrap"
     payload = {
         "app_id": runtime_context.app_id,
-        "app_slug": runtime_context.app_slug,
+        "app_public_id": runtime_context.app_public_id,
         "agent_id": runtime_context.agent_id,
         "api_base_url": runtime_context.api_base_url,
         "bootstrap_path": bootstrap_path,

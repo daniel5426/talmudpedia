@@ -8,7 +8,7 @@ import pytest
 from sqlalchemy import select
 
 from app.core.security import get_password_hash
-from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Tenant, User
+from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Organization, User
 from app.db.postgres.models.rbac import Role, RoleAssignment
 from app.services.security_bootstrap_service import SecurityBootstrapService
 
@@ -18,7 +18,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 
 @pytest.mark.asyncio
 async def test_bootstrap_seeds_default_roles_and_owner_assignment_idempotently(db_session):
-    tenant = Tenant(name=f"Tenant {uuid4().hex[:6]}", slug=f"tenant-{uuid4().hex[:8]}")
+    tenant = Organization(name=f"Organization {uuid4().hex[:6]}", slug=f"tenant-{uuid4().hex[:8]}")
     user = User(
         email=f"owner-{uuid4().hex[:8]}@example.com",
         hashed_password=get_password_hash("secret123"),
@@ -28,7 +28,7 @@ async def test_bootstrap_seeds_default_roles_and_owner_assignment_idempotently(d
     await db_session.flush()
 
     org_unit = OrgUnit(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name="Root",
         slug=f"root-{uuid4().hex[:6]}",
         type=OrgUnitType.org,
@@ -38,7 +38,7 @@ async def test_bootstrap_seeds_default_roles_and_owner_assignment_idempotently(d
 
     db_session.add(
         OrgMembership(
-            tenant_id=tenant.id,
+            organization_id=tenant.id,
             user_id=user.id,
             org_unit_id=org_unit.id,
             role=OrgRole.owner,
@@ -49,14 +49,14 @@ async def test_bootstrap_seeds_default_roles_and_owner_assignment_idempotently(d
 
     service = SecurityBootstrapService(db_session)
     await service.ensure_default_roles(tenant.id)
-    await service.ensure_owner_assignment(tenant_id=tenant.id, user_id=user.id, assigned_by=user.id)
+    await service.ensure_organization_owner_assignment(organization_id=tenant.id, user_id=user.id, assigned_by=user.id)
 
     # second pass should be idempotent
     await service.ensure_default_roles(tenant.id)
-    await service.ensure_owner_assignment(tenant_id=tenant.id, user_id=user.id, assigned_by=user.id)
+    await service.ensure_organization_owner_assignment(organization_id=tenant.id, user_id=user.id, assigned_by=user.id)
     await db_session.commit()
 
-    roles = (await db_session.execute(select(Role).where(Role.tenant_id == tenant.id))).scalars().all()
+    roles = (await db_session.execute(select(Role).where(Role.organization_id == tenant.id))).scalars().all()
     role_names = {role.name for role in roles}
     assert {"Owner", "Reader", "Member", "Viewer"}.issubset(role_names)
     assert all(role.is_system for role in roles)
@@ -64,7 +64,7 @@ async def test_bootstrap_seeds_default_roles_and_owner_assignment_idempotently(d
     assignments = (
         await db_session.execute(
             select(RoleAssignment).where(
-                RoleAssignment.tenant_id == tenant.id,
+                RoleAssignment.organization_id == tenant.id,
                 RoleAssignment.user_id == user.id,
             )
         )

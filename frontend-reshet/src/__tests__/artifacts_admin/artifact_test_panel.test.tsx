@@ -60,7 +60,7 @@ describe("ArtifactTestPanel", () => {
   it("uses the latest edited input when run is triggered in the same interaction", async () => {
     render(
       <ArtifactTestPanel
-        tenantSlug="tenant"
+        organizationId="organization-1"
         artifactId="artifact-1"
         sourceFiles={[{ path: "main.py", content: "async def execute(inputs, config, context):\n    return inputs\n" }]}
         entryModulePath="main.py"
@@ -99,7 +99,7 @@ describe("ArtifactTestPanel", () => {
         expect.objectContaining({
           input_data: { message: "fresh" },
         }),
-        "tenant",
+        "organization-1",
       )
     })
   })

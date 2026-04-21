@@ -37,54 +37,19 @@ def control_client(client: Client) -> ControlPlaneClient:
     if isinstance(auth_header, str) and auth_header.lower().startswith("bearer "):
         token = auth_header.split(" ", 1)[1].strip()
 
-    tenant_id = None
+    organization_id = None
     if isinstance(getattr(client, "headers", None), dict):
-        tenant_id = client.headers.get("X-Tenant-ID")
-    if not tenant_id:
-        tenant_id = getattr(client, "tenant_id", None)
+        organization_id = client.headers.get("X-Organization-ID")
+    if not organization_id:
+        organization_id = getattr(client, "organization_id", None)
 
     return ControlPlaneClient(
         base_url=client.base_url,
         token=token,
-        tenant_id=tenant_id,
+        organization_id=organization_id,
         timeout=60.0,
     )
 
-
-def resolve_agent_id_by_slug(
-    client: Client,
-    agent_slug: str,
-    *,
-    control_client_factory=control_client,
-) -> Optional[str]:
-    if not agent_slug:
-        return None
-
-    page_size = 200
-    sdk_client = control_client_factory(client)
-    for page in range(0, 10):
-        try:
-            response = sdk_client.agents.list(skip=page * page_size, limit=page_size, compact=True)
-            payload = response.get("data")
-            agents: Any
-            if isinstance(payload, dict):
-                agents = payload.get("agents") or payload.get("items") or []
-            else:
-                agents = payload or []
-
-            if not isinstance(agents, list):
-                return None
-
-            for agent in agents:
-                if isinstance(agent, dict) and agent.get("slug") == agent_slug:
-                    return agent.get("id")
-
-            if len(agents) < page_size:
-                return None
-        except Exception:
-            return None
-
-    return None
 
 
 def call_agent_execute(

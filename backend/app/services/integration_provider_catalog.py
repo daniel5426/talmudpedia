@@ -114,7 +114,7 @@ def is_model_provider_supported(
     return capability in entry.supported_capabilities
 
 
-def is_tenant_managed_pricing_provider(
+def is_organization_managed_pricing_provider(
     provider: ModelProviderType | str,
 ) -> bool:
     normalized = provider if isinstance(provider, ModelProviderType) else ModelProviderType(str(provider).strip().lower())

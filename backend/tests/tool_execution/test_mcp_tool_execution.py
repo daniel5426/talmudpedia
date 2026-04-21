@@ -80,7 +80,7 @@ async def test_mcp_tool_execution_jsonrpc_payload(monkeypatch):
     tool = make_tool(tool_id, config_schema)
     db = FakeDB(tool)
 
-    executor = ToolNodeExecutor(tenant_id=None, db=db)
+    executor = ToolNodeExecutor(organization_id=None, db=db)
     async def has_columns(_self):
         return True
 
@@ -116,7 +116,7 @@ async def test_mcp_tool_execution_rejects_private_host_by_default(monkeypatch):
         },
     )
     db = FakeDB(tool)
-    executor = ToolNodeExecutor(tenant_id=None, db=db)
+    executor = ToolNodeExecutor(organization_id=None, db=db)
 
     async def has_columns(_self):
         return True

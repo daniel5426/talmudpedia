@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from uuid import uuid4
 
+import jwt
 import pytest
 from sqlalchemy import select
 
-from app.core.security import create_access_token
-from app.db.postgres.models.identity import Tenant, User
+from app.core.security import ALGORITHM, SECRET_KEY, create_access_token
+from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Organization, User
 from app.db.postgres.models.rag import PipelineType, VisualPipeline
 from app.db.postgres.models.registry import (
     ToolDefinitionScope,
@@ -15,6 +16,7 @@ from app.db.postgres.models.registry import (
     ToolStatus,
     set_tool_management_metadata,
 )
+from app.services.security_bootstrap_service import SecurityBootstrapService
 
 
 @pytest.fixture(autouse=True)
@@ -24,22 +26,66 @@ def _enable_builtin_tools(monkeypatch):
 
 async def _seed_tenant_and_user(db_session):
     suffix = uuid4().hex[:8]
-    tenant = Tenant(name=f"Tenant {suffix}", slug=f"tenant-{suffix}")
+    tenant = Organization(name=f"Organization {suffix}", slug=f"tenant-{suffix}")
     user = User(email=f"owner-{suffix}@example.com", role="admin")
     db_session.add_all([tenant, user])
+    await db_session.flush()
+    org_unit = OrgUnit(
+        organization_id=tenant.id,
+        name="Root",
+        slug=f"root-{suffix}",
+        type=OrgUnitType.org,
+    )
+    db_session.add(org_unit)
+    await db_session.flush()
+    db_session.add(
+        OrgMembership(
+            organization_id=tenant.id,
+            user_id=user.id,
+            org_unit_id=org_unit.id,
+            role=OrgRole.owner,
+            status=MembershipStatus.active,
+        )
+    )
+    service = SecurityBootstrapService(db_session)
+    await service.ensure_default_roles(tenant.id)
+    await service.ensure_organization_owner_assignment(
+        organization_id=tenant.id,
+        user_id=user.id,
+        assigned_by=user.id,
+    )
     await db_session.commit()
     await db_session.refresh(tenant)
     await db_session.refresh(user)
     return tenant, user
 
 
-def _headers(user: User, tenant: Tenant) -> dict[str, str]:
-    token = create_access_token(
-        subject=str(user.id),
-        tenant_id=str(tenant.id),
-        org_role="owner",
+def _headers(user: User, tenant: Organization) -> dict[str, str]:
+    payload = jwt.decode(
+        create_access_token(
+            subject=str(user.id),
+            organization_id=str(tenant.id),
+            org_role="owner",
+        ),
+        SECRET_KEY,
+        algorithms=[ALGORITHM],
     )
-    return {"Authorization": f"Bearer {token}", "X-Tenant-ID": str(tenant.id)}
+    payload["scope"] = ["*"]
+    token = jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+    return {"Authorization": f"Bearer {token}", "X-Organization-ID": str(tenant.id)}
+
+
+def _error_message(response) -> str:
+    body = response.json()
+    if isinstance(body, dict):
+        if isinstance(body.get("message"), str):
+            return body["message"]
+        detail = body.get("detail")
+        if isinstance(detail, dict) and isinstance(detail.get("message"), str):
+            return detail["message"]
+        if isinstance(detail, str):
+            return detail
+    return str(body)
 
 
 async def _ensure_builtin_template(
@@ -53,7 +99,7 @@ async def _ensure_builtin_template(
     existing = (
         await db_session.execute(
             select(ToolRegistry).where(
-                ToolRegistry.tenant_id == None,
+                ToolRegistry.organization_id == None,
                 ToolRegistry.builtin_key == builtin_key,
             )
         )
@@ -63,7 +109,7 @@ async def _ensure_builtin_template(
 
     suffix = uuid4().hex[:8]
     template = ToolRegistry(
-        tenant_id=None,
+        organization_id=None,
         name=f"Template {builtin_key}",
         slug=f"template-{builtin_key}-{suffix}",
         description="unit template",
@@ -88,9 +134,9 @@ async def _ensure_builtin_template(
     return template
 
 
-async def _seed_retrieval_pipeline(db_session, tenant_id) -> VisualPipeline:
+async def _seed_retrieval_pipeline(db_session, organization_id) -> VisualPipeline:
     pipeline = VisualPipeline(
-        tenant_id=tenant_id,
+        organization_id=organization_id,
         name=f"Retrieval {uuid4().hex[:6]}",
         description="retrieval pipeline",
         nodes=[],
@@ -104,13 +150,12 @@ async def _seed_retrieval_pipeline(db_session, tenant_id) -> VisualPipeline:
     return pipeline
 
 
-async def _create_http_tool(client, user: User, tenant: Tenant, slug_suffix: str) -> dict:
+async def _create_http_tool(client, user: User, tenant: Organization, slug_suffix: str) -> dict:
     unique_suffix = f"{slug_suffix}-{uuid4().hex[:8]}"
     response = await client.post(
         "/tools",
         json={
             "name": f"HTTP Tool {unique_suffix}",
-            "slug": f"http-tool-{unique_suffix}",
             "description": "test",
             "input_schema": {"type": "object", "properties": {}},
             "output_schema": {"type": "object", "properties": {}},
@@ -140,7 +185,7 @@ async def test_tool_dto_exposes_derived_config_and_ownership_metadata(client, db
     assert system_response.status_code == 200
     system_payload = system_response.json()
     manual_row = (
-        await db_session.execute(select(ToolRegistry).where(ToolRegistry.slug == manual_payload["slug"]))
+        await db_session.execute(select(ToolRegistry).where(ToolRegistry.id == manual_payload["id"]))
     ).scalar_one()
     await db_session.refresh(system_tool)
 
@@ -188,7 +233,7 @@ async def test_tools_api_exposes_frontend_requirements_for_ui_blocks_builtin(cli
         execution={"validation_mode": "strict"},
     )
 
-    response = await client.get("/tools/builtins/templates", headers=_headers(user, tenant))
+    response = await client.get("/tools/builtins/templates?limit=500", headers=_headers(user, tenant))
     assert response.status_code == 200
 
     ui_blocks_tool = next(item for item in response.json()["tools"] if item["builtin_key"] == "ui_blocks")
@@ -211,8 +256,8 @@ async def test_list_builtin_templates_returns_only_global_templates(client, db_s
     )
 
     instance = ToolRegistry(
-        tenant_id=tenant.id,
-        name="Tenant Builtin Instance",
+        organization_id=tenant.id,
+        name="Organization Builtin Instance",
         slug=f"tenant-builtin-instance-{uuid4().hex[:8]}",
         description="instance",
         scope=ToolDefinitionScope.TENANT,
@@ -230,7 +275,7 @@ async def test_list_builtin_templates_returns_only_global_templates(client, db_s
     db_session.add(instance)
     await db_session.commit()
 
-    response = await client.get("/tools/builtins/templates", headers=_headers(user, tenant))
+    response = await client.get("/tools/builtins/templates?limit=500", headers=_headers(user, tenant))
     assert response.status_code == 200
 
     body = response.json()
@@ -238,7 +283,7 @@ async def test_list_builtin_templates_returns_only_global_templates(client, db_s
     assert str(template.id) in ids
     assert str(instance.id) not in ids
     assert all(item["is_builtin_template"] is False for item in body["tools"])
-    assert all(item["tenant_id"] is None for item in body["tools"])
+    assert all(item["organization_id"] is None for item in body["tools"])
 
 
 @pytest.mark.asyncio
@@ -290,7 +335,7 @@ async def test_generic_tool_management_allows_cleanup_of_legacy_builtin_rows(cli
     )
 
     instance = ToolRegistry(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name="Legacy Built-in Instance",
         slug=f"legacy-builtin-instance-{uuid4().hex[:8]}",
         description="legacy row",
@@ -333,7 +378,6 @@ async def test_rag_pipeline_registry_create_is_rejected_as_domain_owned(client, 
         "/tools",
         json={
             "name": "invalid retrieval",
-            "slug": f"invalid-retrieval-{uuid4().hex[:8]}",
             "description": "invalid",
             "input_schema": {"type": "object", "properties": {"query": {"type": "string"}}},
             "output_schema": {"type": "object", "properties": {"results": {"type": "array"}}},
@@ -342,8 +386,8 @@ async def test_rag_pipeline_registry_create_is_rejected_as_domain_owned(client, 
         },
         headers=_headers(user, tenant),
     )
-    assert response.status_code == 400
-    assert "domain-owned" in response.json()["detail"]
+    assert response.status_code == 422
+    assert "domain-owned" in _error_message(response)
 
 
 @pytest.mark.asyncio
@@ -352,7 +396,7 @@ async def test_pipeline_bound_tool_row_rejects_registry_update(client, db_sessio
     pipeline = await _seed_retrieval_pipeline(db_session, tenant.id)
 
     tool = ToolRegistry(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name=f"pipeline-bound-{uuid4().hex[:6]}",
         slug=f"pipeline-bound-{uuid4().hex[:8]}",
         description="managed row",
@@ -375,8 +419,8 @@ async def test_pipeline_bound_tool_row_rejects_registry_update(client, db_sessio
         json={"description": "should fail"},
         headers=_headers(user, tenant),
     )
-    assert update.status_code == 400
-    assert "managed by its owning domain" in update.json()["detail"]
+    assert update.status_code == 422
+    assert "managed by its owning domain" in _error_message(update)
 
 
 @pytest.mark.asyncio
@@ -385,7 +429,7 @@ async def test_publish_pipeline_bound_tool_from_registry_is_rejected(client, db_
     pipeline = await _seed_retrieval_pipeline(db_session, tenant.id)
 
     tool = ToolRegistry(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name=f"invalid-publish-{uuid4().hex[:6]}",
         slug=f"invalid-publish-{uuid4().hex[:8]}",
         description="invalid publish",
@@ -408,8 +452,8 @@ async def test_publish_pipeline_bound_tool_from_registry_is_rejected(client, db_
         json={},
         headers=_headers(user, tenant),
     )
-    assert publish_response.status_code == 400
-    assert "owning domain" in publish_response.json()["detail"]
+    assert publish_response.status_code == 422
+    assert "owning domain" in _error_message(publish_response)
 
 
 @pytest.mark.asyncio
@@ -418,7 +462,7 @@ async def test_pipeline_bound_tool_row_reports_managed_metadata(client, db_sessi
     pipeline = await _seed_retrieval_pipeline(db_session, tenant.id)
 
     tool = ToolRegistry(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name=f"pipeline-metadata-{uuid4().hex[:6]}",
         slug=f"pipeline-metadata-{uuid4().hex[:8]}",
         description="managed metadata",

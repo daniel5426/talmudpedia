@@ -109,11 +109,11 @@ class PublishedApp(Base):
     __tablename__ = "published_apps"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
     agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id", ondelete="RESTRICT"), nullable=False, index=True)
 
     name = Column(String, nullable=False)
-    slug = Column(String, nullable=False, unique=True, index=True)
+    public_id = Column(String, nullable=False, unique=True, index=True)
     description = Column(Text, nullable=True)
     logo_url = Column(String, nullable=True)
 
@@ -148,7 +148,7 @@ class PublishedApp(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
     published_at = Column(DateTime(timezone=True), nullable=True)
 
-    tenant = relationship("Tenant")
+    organization = relationship("Organization")
     agent = relationship("Agent")
     creator = relationship("User")
     default_policy_set = relationship("ResourcePolicySet", foreign_keys=[default_policy_set_id])
@@ -199,7 +199,8 @@ class PublishedApp(Base):
     )
 
     __table_args__ = (
-        UniqueConstraint("tenant_id", "name", name="uq_published_apps_tenant_name"),
+        UniqueConstraint("organization_id", "name", name="uq_published_apps_organization_name"),
+        UniqueConstraint("organization_id", "public_id", name="uq_published_apps_organization_public_id"),
     )
 
 
@@ -781,9 +782,9 @@ class PublishedAppPublishJob(Base):
         nullable=False,
         index=True,
     )
-    tenant_id = Column(
+    organization_id = Column(
         UUID(as_uuid=True),
-        ForeignKey("tenants.id", ondelete="CASCADE"),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -826,7 +827,7 @@ class PublishedAppPublishJob(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
     published_app = relationship("PublishedApp", back_populates="publish_jobs")
-    tenant = relationship("Tenant")
+    organization = relationship("Organization")
     requester = relationship("User")
     source_revision = relationship("PublishedAppRevision", foreign_keys=[source_revision_id])
     saved_draft_revision = relationship("PublishedAppRevision", foreign_keys=[saved_draft_revision_id])

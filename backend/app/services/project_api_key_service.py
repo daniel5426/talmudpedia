@@ -31,17 +31,17 @@ class ProjectAPIKeyService:
         self.db = db
 
     def create_key_material(self) -> tuple[str, str]:
-        from app.services.tenant_api_key_service import TenantAPIKeyService
+        from app.services.organization_api_key_service import OrganizationAPIKeyService
 
-        key_prefix, token = TenantAPIKeyService(self.db).create_key_material()
-        key_prefix = key_prefix.replace(f"{TenantAPIKeyService.TOKEN_PREFIX}_", f"{self.TOKEN_PREFIX}_", 1)
-        token = token.replace(f"{TenantAPIKeyService.TOKEN_PREFIX}_", f"{self.TOKEN_PREFIX}_", 1)
+        key_prefix, token = OrganizationAPIKeyService(self.db).create_key_material()
+        key_prefix = key_prefix.replace(f"{OrganizationAPIKeyService.TOKEN_PREFIX}_", f"{self.TOKEN_PREFIX}_", 1)
+        token = token.replace(f"{OrganizationAPIKeyService.TOKEN_PREFIX}_", f"{self.TOKEN_PREFIX}_", 1)
         return key_prefix, token
 
     async def create_api_key(
         self,
         *,
-        tenant_id: UUID,
+        organization_id: UUID,
         project_id: UUID,
         name: str,
         scopes: Sequence[str],
@@ -53,7 +53,7 @@ class ProjectAPIKeyService:
 
         key_prefix, token = self.create_key_material()
         api_key = ProjectAPIKey(
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             project_id=project_id,
             name=str(name).strip(),
             key_prefix=key_prefix,
@@ -66,20 +66,20 @@ class ProjectAPIKeyService:
         await self.db.flush()
         return api_key, token
 
-    async def list_api_keys(self, *, tenant_id: UUID, project_id: UUID) -> list[ProjectAPIKey]:
+    async def list_api_keys(self, *, organization_id: UUID, project_id: UUID) -> list[ProjectAPIKey]:
         result = await self.db.execute(
             select(ProjectAPIKey)
             .where(
-                ProjectAPIKey.tenant_id == tenant_id,
+                ProjectAPIKey.organization_id == organization_id,
                 ProjectAPIKey.project_id == project_id,
             )
             .order_by(ProjectAPIKey.created_at.desc(), ProjectAPIKey.id.desc())
         )
         return list(result.scalars().all())
 
-    async def revoke_api_key(self, *, tenant_id: UUID, project_id: UUID, key_id: UUID) -> ProjectAPIKey:
+    async def revoke_api_key(self, *, organization_id: UUID, project_id: UUID, key_id: UUID) -> ProjectAPIKey:
         api_key = await self.db.get(ProjectAPIKey, key_id)
-        if api_key is None or api_key.tenant_id != tenant_id or api_key.project_id != project_id:
+        if api_key is None or api_key.organization_id != organization_id or api_key.project_id != project_id:
             raise ProjectAPIKeyNotFoundError("API key not found")
         if api_key.status != ProjectAPIKeyStatus.REVOKED:
             api_key.status = ProjectAPIKeyStatus.REVOKED
@@ -87,9 +87,9 @@ class ProjectAPIKeyService:
             await self.db.flush()
         return api_key
 
-    async def delete_api_key(self, *, tenant_id: UUID, project_id: UUID, key_id: UUID) -> None:
+    async def delete_api_key(self, *, organization_id: UUID, project_id: UUID, key_id: UUID) -> None:
         api_key = await self.db.get(ProjectAPIKey, key_id)
-        if api_key is None or api_key.tenant_id != tenant_id or api_key.project_id != project_id:
+        if api_key is None or api_key.organization_id != organization_id or api_key.project_id != project_id:
             raise ProjectAPIKeyNotFoundError("API key not found")
         await self.db.delete(api_key)
         await self.db.flush()

@@ -18,7 +18,7 @@ export const TOOL_BUCKETS: ToolBucketMeta[] = [
   { id: "built_in", label: "Built-in", description: "System-provided tools", sort: 1 },
   { id: "mcp", label: "MCP", description: "Remote MCP servers", sort: 2 },
   { id: "artifact", label: "Artifact", description: "Artifact-backed tools", sort: 3 },
-  { id: "custom", label: "Custom", description: "Tenant-defined tools", sort: 4 },
+  { id: "custom", label: "Custom", description: "Organization-defined tools", sort: 4 },
 ]
 
 export const TOOL_SUBTYPES: ToolSubtypeMeta[] = [
@@ -43,6 +43,10 @@ export function getToolBucket(tool: ToolDefinition): ToolTypeBucket {
 
 export function getSubtypeLabel(implementationType: ToolImplementationType): string {
   return TOOL_SUBTYPES.find((t) => t.id === implementationType)?.label || implementationType
+}
+
+export function getToolIdentifier(tool: Pick<ToolDefinition, "id" | "builtin_key">): string {
+  return tool.builtin_key || tool.id
 }
 
 export interface ToolsetGroup {
@@ -113,7 +117,7 @@ export function filterTools(tools: ToolDefinition[], filters: ToolFilterState): 
     if (!query) return true
     return (
       tool.name.toLowerCase().includes(query) ||
-      tool.slug.toLowerCase().includes(query) ||
+      getToolIdentifier(tool).toLowerCase().includes(query) ||
       (tool.description || "").toLowerCase().includes(query)
     )
   })

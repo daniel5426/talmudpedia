@@ -22,10 +22,10 @@ class ArtifactCodingSharedDraftService:
     async def _get_for_artifact(
         self,
         *,
-        tenant_id: UUID,
+        organization_id: UUID,
         artifact_id: UUID,
     ) -> ArtifactCodingSharedDraft | None:
-        stmt = select(ArtifactCodingSharedDraft).where(ArtifactCodingSharedDraft.tenant_id == tenant_id)
+        stmt = select(ArtifactCodingSharedDraft).where(ArtifactCodingSharedDraft.organization_id == organization_id)
         stmt = stmt.where(
             or_(
                 ArtifactCodingSharedDraft.artifact_id == artifact_id,
@@ -38,13 +38,13 @@ class ArtifactCodingSharedDraftService:
     async def _get_for_draft_key(
         self,
         *,
-        tenant_id: UUID,
+        organization_id: UUID,
         draft_key: str,
     ) -> ArtifactCodingSharedDraft | None:
         result = await self.db.execute(
             select(ArtifactCodingSharedDraft)
             .where(
-                ArtifactCodingSharedDraft.tenant_id == tenant_id,
+                ArtifactCodingSharedDraft.organization_id == organization_id,
                 ArtifactCodingSharedDraft.draft_key == draft_key,
             )
             .order_by(desc(ArtifactCodingSharedDraft.updated_at))
@@ -55,30 +55,30 @@ class ArtifactCodingSharedDraftService:
     async def get_for_scope(
         self,
         *,
-        tenant_id: UUID,
+        organization_id: UUID,
         artifact_id: UUID | None,
         draft_key: str | None,
     ) -> ArtifactCodingSharedDraft | None:
         if artifact_id is not None and draft_key:
-            artifact_shared = await self._get_for_artifact(tenant_id=tenant_id, artifact_id=artifact_id)
-            draft_shared = await self._get_for_draft_key(tenant_id=tenant_id, draft_key=draft_key)
+            artifact_shared = await self._get_for_artifact(organization_id=organization_id, artifact_id=artifact_id)
+            draft_shared = await self._get_for_draft_key(organization_id=organization_id, draft_key=draft_key)
             return draft_shared or artifact_shared
         if artifact_id is not None:
-            return await self._get_for_artifact(tenant_id=tenant_id, artifact_id=artifact_id)
+            return await self._get_for_artifact(organization_id=organization_id, artifact_id=artifact_id)
         if draft_key:
-            return await self._get_for_draft_key(tenant_id=tenant_id, draft_key=draft_key)
+            return await self._get_for_draft_key(organization_id=organization_id, draft_key=draft_key)
         return None
 
     async def get_or_create_for_scope(
         self,
         *,
-        tenant_id: UUID,
+        organization_id: UUID,
         artifact_id: UUID | None,
         draft_key: str | None,
         initial_snapshot: dict[str, Any] | None = None,
     ) -> ArtifactCodingSharedDraft:
         shared = await self.get_for_scope(
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             artifact_id=artifact_id,
             draft_key=draft_key,
         )
@@ -86,7 +86,7 @@ class ArtifactCodingSharedDraftService:
             return shared
 
         shared = ArtifactCodingSharedDraft(
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             artifact_id=artifact_id,
             draft_key=draft_key,
             linked_artifact_id=artifact_id,
@@ -104,12 +104,12 @@ class ArtifactCodingSharedDraftService:
     ) -> ArtifactCodingSharedDraft:
         if session.shared_draft_id is not None:
             shared = await self.db.get(ArtifactCodingSharedDraft, session.shared_draft_id)
-            if shared is None or shared.tenant_id != session.tenant_id:
+            if shared is None or shared.organization_id != session.organization_id:
                 raise ValueError("Artifact coding shared draft not found")
             return shared
 
         return await self.get_or_create_for_scope(
-            tenant_id=session.tenant_id,
+            organization_id=session.organization_id,
             artifact_id=session.artifact_id or session.linked_artifact_id,
             draft_key=session.draft_key,
             initial_snapshot=None,
@@ -137,13 +137,13 @@ class ArtifactCodingSharedDraftService:
     async def link_scope_to_artifact(
         self,
         *,
-        tenant_id: UUID,
+        organization_id: UUID,
         draft_key: str,
         artifact_id: UUID,
     ) -> None:
         if not draft_key:
             return
-        shared = await self.get_for_scope(tenant_id=tenant_id, artifact_id=artifact_id, draft_key=draft_key)
+        shared = await self.get_for_scope(organization_id=organization_id, artifact_id=artifact_id, draft_key=draft_key)
         if shared is None:
             return
         shared.artifact_id = artifact_id
@@ -181,7 +181,7 @@ class ArtifactCodingSharedDraftService:
         snapshot_kind: str = "pre_run",
     ) -> ArtifactCodingRunSnapshot:
         snapshot = ArtifactCodingRunSnapshot(
-            tenant_id=shared_draft.tenant_id,
+            organization_id=shared_draft.organization_id,
             shared_draft_id=shared_draft.id,
             run_id=run_id,
             session_id=session_id,
@@ -197,13 +197,13 @@ class ArtifactCodingSharedDraftService:
     async def get_run_snapshot(
         self,
         *,
-        tenant_id: UUID,
+        organization_id: UUID,
         run_id: UUID,
         snapshot_kind: str = "pre_run",
     ) -> ArtifactCodingRunSnapshot | None:
         result = await self.db.execute(
             select(ArtifactCodingRunSnapshot).where(
-                ArtifactCodingRunSnapshot.tenant_id == tenant_id,
+                ArtifactCodingRunSnapshot.organization_id == organization_id,
                 ArtifactCodingRunSnapshot.run_id == run_id,
                 ArtifactCodingRunSnapshot.snapshot_kind == snapshot_kind,
             )
@@ -213,19 +213,19 @@ class ArtifactCodingSharedDraftService:
     async def restore_run_snapshot(
         self,
         *,
-        tenant_id: UUID,
+        organization_id: UUID,
         run_id: UUID,
         snapshot_kind: str = "pre_run",
     ) -> ArtifactCodingSharedDraft:
         snapshot = await self.get_run_snapshot(
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             run_id=run_id,
             snapshot_kind=snapshot_kind,
         )
         if snapshot is None:
             raise ValueError("Artifact coding run snapshot not found")
         shared_draft = await self.db.get(ArtifactCodingSharedDraft, snapshot.shared_draft_id)
-        if shared_draft is None or shared_draft.tenant_id != tenant_id:
+        if shared_draft is None or shared_draft.organization_id != organization_id:
             raise ValueError("Artifact coding shared draft not found")
         shared_draft.working_draft_snapshot = deepcopy(snapshot.draft_snapshot or {})
         shared_draft.updated_at = datetime.now(timezone.utc)

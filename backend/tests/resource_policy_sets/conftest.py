@@ -8,7 +8,7 @@ import pytest_asyncio
 
 from app.core.security import get_password_hash
 from app.db.postgres.models.agents import Agent, AgentRun, RunStatus
-from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Tenant, User
+from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Organization, User
 from app.db.postgres.models.published_apps import PublishedApp, PublishedAppAccount
 from app.db.postgres.models.rag import KnowledgeStore
 from app.db.postgres.models.registry import ModelCapabilityType, ModelRegistry, ToolRegistry
@@ -27,7 +27,7 @@ from app.services.resource_policy_service import ResourcePolicyPrincipalRef, Res
 
 
 async def _seed_tenant_with_user(db_session, *, user_role: str = "admin"):
-    tenant = Tenant(name=f"Tenant {uuid4().hex[:6]}", slug=f"tenant-{uuid4().hex[:8]}")
+    tenant = Organization(name=f"Organization {uuid4().hex[:6]}", slug=f"tenant-{uuid4().hex[:8]}")
     user = User(
         email=f"user-{uuid4().hex[:8]}@example.com",
         hashed_password=get_password_hash("secret123"),
@@ -37,7 +37,7 @@ async def _seed_tenant_with_user(db_session, *, user_role: str = "admin"):
     await db_session.flush()
 
     org_unit = OrgUnit(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name="Root",
         slug=f"root-{uuid4().hex[:6]}",
         type=OrgUnitType.org,
@@ -47,7 +47,7 @@ async def _seed_tenant_with_user(db_session, *, user_role: str = "admin"):
 
     db_session.add(
         OrgMembership(
-            tenant_id=tenant.id,
+            organization_id=tenant.id,
             user_id=user.id,
             org_unit_id=org_unit.id,
             role=OrgRole.owner,
@@ -70,8 +70,8 @@ async def secondary_tenant_context(db_session):
 
 @pytest.fixture
 def principal_override_factory():
-    def _factory(tenant_id, user, scopes: list[str], *, principal_type: str = "user"):
-        tenant_id_text = str(tenant_id)
+    def _factory(organization_id, user, scopes: list[str], *, principal_type: str = "user"):
+        tenant_id_text = str(organization_id)
         user_id_text = str(user.id)
         role_text = str(getattr(user, "role", "admin") or "admin")
 
@@ -79,7 +79,7 @@ def principal_override_factory():
             if principal_type != "user":
                 return {
                     "type": principal_type,
-                    "tenant_id": tenant_id_text,
+                    "organization_id": tenant_id_text,
                     "user_id": user_id_text,
                     "scopes": scopes,
                 }
@@ -87,7 +87,7 @@ def principal_override_factory():
                 "type": "user",
                 "user": user,
                 "user_id": user_id_text,
-                "tenant_id": tenant_id_text,
+                "organization_id": tenant_id_text,
                 "scopes": scopes,
                 "role": role_text,
             }
@@ -129,9 +129,9 @@ def make_snapshot():
 @pytest.fixture
 def resource_factory(db_session):
     class Factory:
-        async def agent(self, *, tenant_id, created_by, **overrides):
+        async def agent(self, *, organization_id, created_by, **overrides):
             agent = Agent(
-                tenant_id=tenant_id,
+                organization_id=organization_id,
                 name=overrides.pop("name", f"Agent {uuid4().hex[:6]}"),
                 slug=overrides.pop("slug", f"agent-{uuid4().hex[:8]}"),
                 graph_definition=overrides.pop("graph_definition", {"nodes": [], "edges": []}),
@@ -142,9 +142,9 @@ def resource_factory(db_session):
             await db_session.flush()
             return agent
 
-        async def published_app(self, *, tenant_id, agent_id, **overrides):
+        async def published_app(self, *, organization_id, agent_id, **overrides):
             published_app = PublishedApp(
-                tenant_id=tenant_id,
+                organization_id=organization_id,
                 agent_id=agent_id,
                 name=overrides.pop("name", f"App {uuid4().hex[:6]}"),
                 slug=overrides.pop("slug", f"app-{uuid4().hex[:8]}"),
@@ -164,9 +164,9 @@ def resource_factory(db_session):
             await db_session.flush()
             return account
 
-        async def model(self, *, tenant_id, capability_type=ModelCapabilityType.CHAT, **overrides):
+        async def model(self, *, organization_id, capability_type=ModelCapabilityType.CHAT, **overrides):
             model = ModelRegistry(
-                tenant_id=tenant_id,
+                organization_id=organization_id,
                 name=overrides.pop("name", f"Model {uuid4().hex[:6]}"),
                 capability_type=capability_type,
                 **overrides,
@@ -175,9 +175,9 @@ def resource_factory(db_session):
             await db_session.flush()
             return model
 
-        async def tool(self, *, tenant_id, **overrides):
+        async def tool(self, *, organization_id, **overrides):
             tool = ToolRegistry(
-                tenant_id=tenant_id,
+                organization_id=organization_id,
                 name=overrides.pop("name", f"Tool {uuid4().hex[:6]}"),
                 slug=overrides.pop("slug", f"tool-{uuid4().hex[:8]}"),
                 description=overrides.pop("description", "Test tool"),
@@ -189,9 +189,9 @@ def resource_factory(db_session):
             await db_session.flush()
             return tool
 
-        async def knowledge_store(self, *, tenant_id, **overrides):
+        async def knowledge_store(self, *, organization_id, **overrides):
             store = KnowledgeStore(
-                tenant_id=tenant_id,
+                organization_id=organization_id,
                 name=overrides.pop("name", f"Store {uuid4().hex[:6]}"),
                 embedding_model_id=overrides.pop("embedding_model_id", str(uuid4())),
                 **overrides,
@@ -200,9 +200,9 @@ def resource_factory(db_session):
             await db_session.flush()
             return store
 
-        async def policy_set(self, *, tenant_id, created_by=None, **overrides):
+        async def policy_set(self, *, organization_id, created_by=None, **overrides):
             policy_set = ResourcePolicySet(
-                tenant_id=tenant_id,
+                organization_id=organization_id,
                 name=overrides.pop("name", f"set-{uuid4().hex[:6]}"),
                 created_by=created_by,
                 **overrides,
@@ -245,9 +245,9 @@ def resource_factory(db_session):
             await db_session.flush()
             return rule
 
-        async def assignment(self, *, tenant_id, policy_set_id, created_by, principal_type, **kwargs):
+        async def assignment(self, *, organization_id, policy_set_id, created_by, principal_type, **kwargs):
             assignment = ResourcePolicyAssignment(
-                tenant_id=tenant_id,
+                organization_id=organization_id,
                 policy_set_id=policy_set_id,
                 created_by=created_by,
                 principal_type=principal_type,
@@ -257,9 +257,9 @@ def resource_factory(db_session):
             await db_session.flush()
             return assignment
 
-        async def run(self, *, tenant_id, agent_id, user_id=None, **overrides):
+        async def run(self, *, organization_id, agent_id, user_id=None, **overrides):
             run = AgentRun(
-                tenant_id=tenant_id,
+                organization_id=organization_id,
                 agent_id=agent_id,
                 user_id=user_id,
                 status=overrides.pop("status", RunStatus.completed),

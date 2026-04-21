@@ -51,7 +51,7 @@ class ResourcePolicyQuotaService:
         self,
         *,
         run_id: UUID,
-        tenant_id: UUID,
+        organization_id: UUID,
         snapshot: ResourcePolicySnapshot | None,
         model_id: UUID | None,
         input_params: dict[str, object],
@@ -65,7 +65,7 @@ class ResourcePolicyQuotaService:
         period_start, period_end = self._month_bounds_utc()
         counter = await self._find_counter(
             principal=snapshot.principal,
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             model_id=model_id,
             period_start=period_start,
         )
@@ -80,7 +80,7 @@ class ResourcePolicyQuotaService:
         if counter is None:
             counter = await self._create_counter(
                 principal=snapshot.principal,
-                tenant_id=tenant_id,
+                organization_id=organization_id,
                 model_id=model_id,
                 period_start=period_start,
                 period_end=period_end,
@@ -89,7 +89,7 @@ class ResourcePolicyQuotaService:
         counter.reserved_tokens = int(counter.reserved_tokens or 0) + requested_reserve
         reservation = ResourcePolicyQuotaReservation(
             run_id=run_id,
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             principal_type=snapshot.principal.principal_type,
             user_id=snapshot.principal.user_id,
             published_app_account_id=snapshot.principal.published_app_account_id,
@@ -118,13 +118,13 @@ class ResourcePolicyQuotaService:
         counter = await self._lock_counter(
             principal=ResourcePolicyPrincipalRef(
                 principal_type=reservation.principal_type,
-                tenant_id=run.tenant_id,
+                organization_id=run.organization_id,
                 user_id=reservation.user_id,
                 published_app_account_id=reservation.published_app_account_id,
                 embedded_agent_id=reservation.embedded_agent_id,
                 external_user_id=reservation.external_user_id,
             ),
-            tenant_id=run.tenant_id,
+            organization_id=run.organization_id,
             model_id=reservation.model_id,
             period_start=reservation.period_start,
             period_end=self._month_bounds_utc(reservation.period_start)[1],
@@ -139,7 +139,7 @@ class ResourcePolicyQuotaService:
         self,
         *,
         principal: ResourcePolicyPrincipalRef,
-        tenant_id: UUID,
+        organization_id: UUID,
         model_id: UUID,
         period_start: datetime,
     ) -> ResourcePolicyQuotaCounter | None:
@@ -148,7 +148,7 @@ class ResourcePolicyQuotaService:
                 if not isinstance(item, ResourcePolicyQuotaCounter):
                     continue
                 if (
-                    item.tenant_id == tenant_id
+                    item.organization_id == organization_id
                     and item.principal_type == principal.principal_type
                     and item.user_id == principal.user_id
                     and item.published_app_account_id == principal.published_app_account_id
@@ -164,7 +164,7 @@ class ResourcePolicyQuotaService:
             select(ResourcePolicyQuotaCounter)
             .where(
                 and_(
-                    ResourcePolicyQuotaCounter.tenant_id == tenant_id,
+                    ResourcePolicyQuotaCounter.organization_id == organization_id,
                     ResourcePolicyQuotaCounter.principal_type == principal.principal_type,
                     ResourcePolicyQuotaCounter.user_id == principal.user_id,
                     ResourcePolicyQuotaCounter.published_app_account_id == principal.published_app_account_id,
@@ -185,13 +185,13 @@ class ResourcePolicyQuotaService:
         self,
         *,
         principal: ResourcePolicyPrincipalRef,
-        tenant_id: UUID,
+        organization_id: UUID,
         model_id: UUID,
         period_start: datetime,
         period_end: datetime,
     ) -> ResourcePolicyQuotaCounter:
         counter = ResourcePolicyQuotaCounter(
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             principal_type=principal.principal_type,
             user_id=principal.user_id,
             published_app_account_id=principal.published_app_account_id,
@@ -212,14 +212,14 @@ class ResourcePolicyQuotaService:
         self,
         *,
         principal: ResourcePolicyPrincipalRef,
-        tenant_id: UUID,
+        organization_id: UUID,
         model_id: UUID,
         period_start: datetime,
         period_end: datetime,
     ) -> ResourcePolicyQuotaCounter:
         counter = await self._find_counter(
             principal=principal,
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             model_id=model_id,
             period_start=period_start,
         )
@@ -227,7 +227,7 @@ class ResourcePolicyQuotaService:
             return counter
         return await self._create_counter(
             principal=principal,
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             model_id=model_id,
             period_start=period_start,
             period_end=period_end,

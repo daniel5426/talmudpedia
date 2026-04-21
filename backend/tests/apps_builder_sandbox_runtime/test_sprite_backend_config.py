@@ -560,7 +560,7 @@ async def test_sprite_start_repairs_dependencies_when_preview_readiness_initiall
     result = await backend.start_session(
         session_id="workspace-1",
         runtime_generation=1,
-        tenant_id="tenant-1",
+        organization_id="tenant-1",
         app_id="app-1",
         user_id="user-1",
         revision_id="revision-1",

@@ -1,14 +1,14 @@
 import pytest
 from uuid import uuid4
 
-from app.db.postgres.models.identity import Tenant
+from app.db.postgres.models.identity import Organization
 from app.db.postgres.models.registry import IntegrationCredential, IntegrationCredentialCategory
 from app.db.postgres.models.rag import KnowledgeStore, StorageBackend, RetrievalPolicy, KnowledgeStoreStatus
 from app.services.retrieval_service import RetrievalService
 
 
-async def _seed_tenant(db_session, tenant_id):
-    tenant = Tenant(id=tenant_id, name=f"Tenant {tenant_id.hex[:8]}", slug=f"tenant-{tenant_id.hex[:8]}")
+async def _seed_tenant(db_session, organization_id):
+    tenant = Organization(id=organization_id, name=f"Organization {organization_id.hex[:8]}", slug=f"tenant-{organization_id.hex[:8]}")
     db_session.add(tenant)
     await db_session.flush()
     return tenant
@@ -16,10 +16,10 @@ async def _seed_tenant(db_session, tenant_id):
 
 @pytest.mark.asyncio
 async def test_vector_store_credentials_merge(db_session):
-    tenant_id = uuid4()
-    await _seed_tenant(db_session, tenant_id)
+    organization_id = uuid4()
+    await _seed_tenant(db_session, organization_id)
     credential = IntegrationCredential(
-        tenant_id=tenant_id,
+        organization_id=organization_id,
         category=IntegrationCredentialCategory.VECTOR_STORE,
         provider_key="pinecone",
         provider_variant=None,
@@ -31,7 +31,7 @@ async def test_vector_store_credentials_merge(db_session):
     await db_session.flush()
 
     store = KnowledgeStore(
-        tenant_id=tenant_id,
+        organization_id=organization_id,
         name="Test Store",
         description="",
         embedding_model_id="test-embed",
@@ -55,10 +55,10 @@ async def test_vector_store_credentials_merge(db_session):
 
 @pytest.mark.asyncio
 async def test_vector_store_credentials_disabled_raises(db_session):
-    tenant_id = uuid4()
-    await _seed_tenant(db_session, tenant_id)
+    organization_id = uuid4()
+    await _seed_tenant(db_session, organization_id)
     credential = IntegrationCredential(
-        tenant_id=tenant_id,
+        organization_id=organization_id,
         category=IntegrationCredentialCategory.VECTOR_STORE,
         provider_key="pinecone",
         provider_variant=None,
@@ -72,7 +72,7 @@ async def test_vector_store_credentials_disabled_raises(db_session):
     service = RetrievalService(db_session)
     with pytest.raises(ValueError):
         store = KnowledgeStore(
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             name="Disabled Store",
             description="",
             embedding_model_id="test-embed",

@@ -14,7 +14,7 @@ from app.db.postgres.models.identity import (
     OrgRole,
     OrgUnit,
     OrgUnitType,
-    Tenant,
+    Organization,
     User,
 )
 from app.services.agent_service import AgentService, CreateAgentData
@@ -30,45 +30,45 @@ def _request_with_headers(headers: dict[str, str]) -> Request:
     return Request(scope)
 
 
-def _auth_headers(user_id: str, tenant_id: str, org_unit_id: str) -> dict[str, str]:
+def _auth_headers(user_id: str, organization_id: str, org_unit_id: str) -> dict[str, str]:
     token = create_access_token(
         subject=user_id,
-        tenant_id=tenant_id,
+        organization_id=organization_id,
         org_unit_id=org_unit_id,
         org_role="member",
     )
     return {
         "Authorization": f"Bearer {token}",
-        "X-Tenant-ID": tenant_id,
+        "X-Organization-ID": organization_id,
     }
 
 
 @pytest_asyncio.fixture
 async def tenant_fixture(db_session):
     suffix = uuid4().hex[:8]
-    tenant_a = Tenant(name="Tenant A", slug=f"tenant-a-{suffix}")
-    tenant_b = Tenant(name="Tenant B", slug=f"tenant-b-{suffix}")
+    tenant_a = Organization(name="Organization A", slug=f"tenant-a-{suffix}")
+    tenant_b = Organization(name="Organization B", slug=f"tenant-b-{suffix}")
     db_session.add_all([tenant_a, tenant_b])
     await db_session.flush()
 
-    user = User(email=f"multi-tenant-user-{suffix}@example.com", full_name="Multi Tenant", role="user")
+    user = User(email=f"multi-tenant-user-{suffix}@example.com", full_name="Multi Organization", role="user")
     db_session.add(user)
     await db_session.flush()
 
-    ou_a = OrgUnit(tenant_id=tenant_a.id, parent_id=None, name="Org A", slug=f"org-a-{suffix}", type=OrgUnitType.org)
-    ou_b = OrgUnit(tenant_id=tenant_b.id, parent_id=None, name="Org B", slug=f"org-b-{suffix}", type=OrgUnitType.org)
+    ou_a = OrgUnit(organization_id=tenant_a.id, parent_id=None, name="Org A", slug=f"org-a-{suffix}", type=OrgUnitType.org)
+    ou_b = OrgUnit(organization_id=tenant_b.id, parent_id=None, name="Org B", slug=f"org-b-{suffix}", type=OrgUnitType.org)
     db_session.add_all([ou_a, ou_b])
     await db_session.flush()
 
     m_a = OrgMembership(
-        tenant_id=tenant_a.id,
+        organization_id=tenant_a.id,
         user_id=user.id,
         org_unit_id=ou_a.id,
         role=OrgRole.member,
         status=MembershipStatus.active,
     )
     m_b = OrgMembership(
-        tenant_id=tenant_b.id,
+        organization_id=tenant_b.id,
         user_id=user.id,
         org_unit_id=ou_b.id,
         role=OrgRole.member,
@@ -88,7 +88,7 @@ async def tenant_fixture(db_session):
 
 @pytest.mark.asyncio
 async def test_get_agent_context_uses_x_tenant_id_when_user_has_multiple_memberships(db_session, tenant_fixture):
-    request = _request_with_headers({"X-Tenant-ID": str(tenant_fixture["tenant_b"].id)})
+    request = _request_with_headers({"X-Organization-ID": str(tenant_fixture["tenant_b"].id)})
     context = {
         "type": "user",
         "user": tenant_fixture["user"],
@@ -98,7 +98,7 @@ async def test_get_agent_context_uses_x_tenant_id_when_user_has_multiple_members
 
     resolved = await get_agent_context(request=request, context=context, db=db_session)
 
-    assert str(resolved["tenant_id"]) == str(tenant_fixture["tenant_b"].id)
+    assert str(resolved["organization_id"]) == str(tenant_fixture["tenant_b"].id)
 
 
 @pytest.mark.asyncio
@@ -114,7 +114,7 @@ async def test_get_agent_context_without_header_requires_explicit_tenant_context
     with pytest.raises(HTTPException) as exc:
         await get_agent_context(request=request, context=context, db=db_session)
     assert exc.value.status_code == 403
-    assert exc.value.detail == "Tenant context required"
+    assert exc.value.detail == "Organization context required"
 
 
 @pytest.mark.asyncio

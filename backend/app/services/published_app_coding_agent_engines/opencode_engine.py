@@ -380,8 +380,8 @@ class OpenCodePublishedAppCodingAgentEngine:
                     f"({', '.join(workspace_violations[:3])})"
                 )
                 logger.error(
-                    "AUDIT_SANDBOX_PATH_VIOLATION tenant_id=%s run_id=%s app_id=%s sandbox_id=%s workspace_root=%s violations=%s",
-                    run.tenant_id,
+                    "AUDIT_SANDBOX_PATH_VIOLATION organization_id=%s run_id=%s app_id=%s sandbox_id=%s workspace_root=%s violations=%s",
+                    run.organization_id,
                     run.id,
                     ctx.app.id,
                     sandbox_id,

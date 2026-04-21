@@ -41,7 +41,7 @@ async def test_stream_fails_closed_when_run_has_no_preview_sandbox_context(clien
     app_id, _ = await _create_app_and_draft_revision(client, headers, str(agent.id))
 
     run = AgentRun(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         agent_id=agent.id,
         user_id=user.id,
         initiator_user_id=user.id,
@@ -92,7 +92,7 @@ async def test_stream_reuses_existing_preview_sandbox_without_stage_bootstrap(cl
     app_id, draft_revision_id = await _create_app_and_draft_revision(client, headers, str(agent.id))
 
     run = AgentRun(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         agent_id=agent.id,
         user_id=user.id,
         initiator_user_id=user.id,
@@ -150,7 +150,7 @@ async def test_completed_run_does_not_emit_checkpoint_events(client, db_session,
     app_id, draft_revision_id = await _create_app_and_draft_revision(client, headers, str(agent.id))
 
     run = AgentRun(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         agent_id=agent.id,
         user_id=user.id,
         initiator_user_id=user.id,

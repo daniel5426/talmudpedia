@@ -14,7 +14,7 @@ from sqlalchemy import select, func
 from pydantic import BaseModel, Field
 
 from app.db.postgres.session import get_db
-from app.api.dependencies import get_current_principal, get_tenant_context, require_scopes
+from app.api.dependencies import get_current_principal, get_organization_context, require_scopes
 from app.db.postgres.models import (
     KnowledgeStore, 
     KnowledgeStoreStatus, 
@@ -22,7 +22,7 @@ from app.db.postgres.models import (
     RetrievalPolicy,
     IntegrationCredential,
     IntegrationCredentialCategory,
-    Tenant,
+    Organization,
 )
 from app.services.credentials_service import CredentialsService
 from app.services.control_plane.context import ControlPlaneContext
@@ -66,7 +66,7 @@ class UpdateKnowledgeStoreRequest(BaseModel):
 
 class KnowledgeStoreResponse(BaseModel):
     id: UUID
-    tenant_id: UUID
+    organization_id: UUID
     name: str
     description: Optional[str]
     embedding_model_id: str
@@ -92,7 +92,7 @@ class KnowledgeStoreResponse(BaseModel):
 def store_to_response(store: KnowledgeStore) -> KnowledgeStoreResponse:
     return KnowledgeStoreResponse(
         id=store.id,
-        tenant_id=store.tenant_id,
+        organization_id=store.organization_id,
         name=store.name,
         description=store.description,
         embedding_model_id=store.embedding_model_id,
@@ -112,42 +112,44 @@ def store_to_response(store: KnowledgeStore) -> KnowledgeStoreResponse:
 async def resolve_request_tenant(
     *,
     db: AsyncSession,
-    tenant_ctx: Dict[str, Any],
-    tenant_slug: Optional[str],
-) -> Tenant:
-    tenant_id = tenant_ctx.get("tenant_id")
-    if not tenant_id:
-        raise HTTPException(status_code=400, detail="Tenant context is required")
-    result = await db.execute(select(Tenant).where(Tenant.id == UUID(str(tenant_id))))
-    tenant = result.scalar_one_or_none()
-    if tenant is None:
-        raise HTTPException(status_code=404, detail="Tenant not found")
-    if tenant_slug and str(tenant.slug) != str(tenant_slug):
-        raise HTTPException(status_code=403, detail="Tenant slug does not match request context")
-    return tenant
+    organization_ctx: Dict[str, Any],
+    organization_id: Optional[str],
+) -> Organization:
+    organization_id= organization_ctx.get("organization_id")
+    if not organization_id:
+        raise HTTPException(status_code=400, detail="Organization context is required")
+    result = await db.execute(select(Organization).where(Organization.id == UUID(str(organization_id))))
+    organization = result.scalar_one_or_none()
+    if organization is None:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    if organization_id and str(organization.id) != str(organization_id):
+        raise HTTPException(status_code=403, detail="Organization does not match request context")
+    return organization
 
 
-def _service_context(*, tenant_ctx: Dict[str, Any], principal: Dict[str, Any], tenant_slug: Optional[str]) -> ControlPlaneContext:
+def _service_context(*, organization_ctx: Dict[str, Any], principal: Dict[str, Any], organization_id: Optional[str]) -> ControlPlaneContext:
     created_by = UUID(str(principal["user_id"])) if principal.get("type") == "user" and principal.get("user_id") else None
-    return ControlPlaneContext.from_tenant_context(
-        tenant_ctx,
+    return ControlPlaneContext.from_organization_context(
+        {
+            "organization_id": organization_ctx.get("organization_id") or organization_ctx.get("organization_id"),
+            "project_id": organization_ctx.get("project_id"),
+        },
         user=principal.get("user"),
         user_id=created_by,
         auth_token=principal.get("auth_token"),
         scopes=principal.get("scopes"),
-        tenant_slug=tenant_slug,
     )
 
 
 async def validate_vector_store_credential(
     db: AsyncSession,
-    tenant_id: UUID,
+    organization_id: UUID,
     backend: StorageBackend,
     credentials_ref: Optional[UUID],
 ) -> Optional[UUID]:
     if not credentials_ref:
         if backend in {StorageBackend.PINECONE, StorageBackend.QDRANT}:
-            has_effective_default = await CredentialsService(db, tenant_id).has_effective_provider_credentials(
+            has_effective_default = await CredentialsService(db, organization_id).has_effective_provider_credentials(
                 category=IntegrationCredentialCategory.VECTOR_STORE,
                 provider_key=backend.value,
             )
@@ -155,14 +157,14 @@ async def validate_vector_store_credential(
                 raise HTTPException(
                     status_code=422,
                     detail=(
-                        f"{backend.value.capitalize()} knowledge stores require a matching tenant credential "
+                        f"{backend.value.capitalize()} knowledge stores require a matching organization credential "
                         "or platform default environment key."
                     ),
                 )
         return None
 
     cred = await db.get(IntegrationCredential, credentials_ref)
-    if not cred or cred.tenant_id != tenant_id:
+    if not cred or cred.organization_id != organization_id:
         raise HTTPException(status_code=404, detail="Credential not found")
     if cred.category != IntegrationCredentialCategory.VECTOR_STORE:
         raise HTTPException(status_code=422, detail="Credential must be in category 'vector_store'")
@@ -183,20 +185,20 @@ async def validate_vector_store_credential(
 
 @router.get("", response_model=Dict[str, Any])
 async def list_knowledge_stores(
-    tenant_slug: Optional[str] = None,
+    organization_id: Optional[str] = None,
     skip: int = 0,
     limit: int = 20,
     view: str = "summary",
     db: AsyncSession = Depends(get_db),
-    tenant_ctx: Dict[str, Any] = Depends(get_tenant_context),
+    organization_ctx: Dict[str, Any] = Depends(get_organization_context),
     _: Dict[str, Any] = Depends(require_scopes("knowledge_stores.read")),
     principal: Dict[str, Any] = Depends(get_current_principal),
 ):
     try:
         query = ListQuery.from_payload({"skip": skip, "limit": limit, "view": view})
         stores = await KnowledgeStoreAdminService(db).list_stores(
-            ctx=_service_context(tenant_ctx=tenant_ctx, principal=principal, tenant_slug=tenant_slug),
-            tenant_slug=tenant_slug,
+            ctx=_service_context(organization_ctx=organization_ctx, principal=principal, organization_id=organization_id),
+            organization_id=organization_id,
         )
         sliced = stores[query.skip: query.skip + query.limit]
         return {
@@ -214,16 +216,16 @@ async def list_knowledge_stores(
 @router.post("", response_model=KnowledgeStoreResponse, status_code=status.HTTP_201_CREATED)
 async def create_knowledge_store(
     request: CreateKnowledgeStoreRequest,
-    tenant_slug: Optional[str] = None,
+    organization_id: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
-    tenant_ctx: Dict[str, Any] = Depends(get_tenant_context),
+    organization_ctx: Dict[str, Any] = Depends(get_organization_context),
     _: Dict[str, Any] = Depends(require_scopes("knowledge_stores.write")),
     principal: Dict[str, Any] = Depends(get_current_principal),
 ):
     try:
         store = await KnowledgeStoreAdminService(db).create_store(
-            ctx=_service_context(tenant_ctx=tenant_ctx, principal=principal, tenant_slug=tenant_slug),
-            tenant_slug=tenant_slug,
+            ctx=_service_context(organization_ctx=organization_ctx, principal=principal, organization_id=organization_id),
+            organization_id=organization_id,
             name=request.name,
             description=request.description,
             embedding_model_id=request.embedding_model_id,
@@ -241,17 +243,17 @@ async def create_knowledge_store(
 @router.get("/{store_id}", response_model=KnowledgeStoreResponse)
 async def get_knowledge_store(
     store_id: UUID,
-    tenant_slug: Optional[str] = None,
+    organization_id: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
-    tenant_ctx: Dict[str, Any] = Depends(get_tenant_context),
+    organization_ctx: Dict[str, Any] = Depends(get_organization_context),
     _: Dict[str, Any] = Depends(require_scopes("knowledge_stores.read")),
     principal: Dict[str, Any] = Depends(get_current_principal),
 ):
     try:
         store = await KnowledgeStoreAdminService(db).get_store(
-            ctx=_service_context(tenant_ctx=tenant_ctx, principal=principal, tenant_slug=tenant_slug),
+            ctx=_service_context(organization_ctx=organization_ctx, principal=principal, organization_id=organization_id),
             store_id=store_id,
-            tenant_slug=tenant_slug,
+            organization_id=organization_id,
         )
         return store_to_response(store)
     except ControlPlaneError as exc:
@@ -262,17 +264,17 @@ async def get_knowledge_store(
 async def update_knowledge_store(
     store_id: UUID,
     request: UpdateKnowledgeStoreRequest,
-    tenant_slug: Optional[str] = None,
+    organization_id: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
-    tenant_ctx: Dict[str, Any] = Depends(get_tenant_context),
+    organization_ctx: Dict[str, Any] = Depends(get_organization_context),
     _: Dict[str, Any] = Depends(require_scopes("knowledge_stores.write")),
     principal: Dict[str, Any] = Depends(get_current_principal),
 ):
     try:
         store = await KnowledgeStoreAdminService(db).update_store(
-            ctx=_service_context(tenant_ctx=tenant_ctx, principal=principal, tenant_slug=tenant_slug),
+            ctx=_service_context(organization_ctx=organization_ctx, principal=principal, organization_id=organization_id),
             store_id=store_id,
-            tenant_slug=tenant_slug,
+            organization_id=organization_id,
             patch=request.model_dump(exclude_unset=True),
         )
         return store_to_response(store)
@@ -283,17 +285,17 @@ async def update_knowledge_store(
 @router.delete("/{store_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_knowledge_store(
     store_id: UUID,
-    tenant_slug: Optional[str] = None,
+    organization_id: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
-    tenant_ctx: Dict[str, Any] = Depends(get_tenant_context),
+    organization_ctx: Dict[str, Any] = Depends(get_organization_context),
     _: Dict[str, Any] = Depends(require_scopes("knowledge_stores.write")),
     principal: Dict[str, Any] = Depends(get_current_principal),
 ):
     try:
         await KnowledgeStoreAdminService(db).delete_store(
-            ctx=_service_context(tenant_ctx=tenant_ctx, principal=principal, tenant_slug=tenant_slug),
+            ctx=_service_context(organization_ctx=organization_ctx, principal=principal, organization_id=organization_id),
             store_id=store_id,
-            tenant_slug=tenant_slug,
+            organization_id=organization_id,
         )
         return None
     except ControlPlaneError as exc:
@@ -303,19 +305,19 @@ async def delete_knowledge_store(
 @router.get("/{store_id}/stats")
 async def get_knowledge_store_stats(
     store_id: UUID,
-    tenant_slug: Optional[str] = None,
+    organization_id: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
-    tenant_ctx: Dict[str, Any] = Depends(get_tenant_context),
+    organization_ctx: Dict[str, Any] = Depends(get_organization_context),
     _: Dict[str, Any] = Depends(require_scopes("knowledge_stores.read")),
     principal: Dict[str, Any] = Depends(get_current_principal),
 ):
     """Get detailed statistics for a knowledge store."""
     del principal
-    tenant = await resolve_request_tenant(db=db, tenant_ctx=tenant_ctx, tenant_slug=tenant_slug)
+    organization = await resolve_request_tenant(db=db, organization_ctx=organization_ctx, organization_id=organization_id)
     store = await db.get(KnowledgeStore, store_id)
     if not store:
         raise HTTPException(status_code=404, detail="Knowledge store not found")
-    if store.tenant_id != tenant.id:
+    if store.organization_id != organization.id:
         raise HTTPException(status_code=404, detail="Knowledge store not found")
     
     return {

@@ -107,10 +107,10 @@ def _apps_url_port() -> str:
     return resolve_apps_url_port()
 
 
-def _build_published_url(slug: str) -> str:
+def _build_published_url(public_id: str) -> str:
     from app.core.runtime_urls import build_published_app_url
 
-    return build_published_app_url(slug)
+    return build_published_app_url(public_id)
 
 
 def _publish_mock_mode_enabled() -> bool:
@@ -470,9 +470,9 @@ def health_check():
 def build_published_app_revision_task(
     self,
     revision_id: str,
-    tenant_id: str,
+    organization_id: str,
     app_id: str,
-    slug: str,
+    public_id: str,
     build_kind: str,
 ):
     async def _run():
@@ -517,7 +517,7 @@ def build_published_app_revision_task(
                 dict(revision.files or {}),
                 runtime_context=TemplateRuntimeContext(
                     app_id=str(app_id),
-                    app_slug=str(slug or ""),
+                    app_public_id=str(public_id or ""),
                 ),
             )
             project_entry_file = revision.entry_file or "src/main.tsx"
@@ -575,7 +575,7 @@ def build_published_app_revision_task(
 
                 storage = PublishedAppBundleStorage.from_env()
                 dist_storage_prefix = PublishedAppBundleStorage.build_revision_dist_prefix(
-                    tenant_id=str(tenant_id),
+                    organization_id=str(organization_id),
                     app_id=str(app_id),
                     revision_id=str(revision_id),
                 )
@@ -636,9 +636,9 @@ def build_published_app_revision_task(
             return {
                 "status": "failed",
                 "revision_id": revision_id,
-                "tenant_id": tenant_id,
+                "organization_id": organization_id,
                 "app_id": app_id,
-                "slug": slug,
+                "app_public_id": public_id,
                 "build_kind": build_kind,
                 "error": failure_message,
             }
@@ -682,9 +682,9 @@ def build_published_app_revision_task(
         return {
             "status": "succeeded",
             "revision_id": revision_id,
-            "tenant_id": tenant_id,
+            "organization_id": organization_id,
             "app_id": app_id,
-            "slug": slug,
+            "app_public_id": public_id,
             "build_kind": build_kind,
             "dist_storage_prefix": dist_storage_prefix,
         }
@@ -876,7 +876,7 @@ def publish_version_pointer_after_build_task(
                     app.current_published_revision_id = source_revision.id
                     app.status = PublishedAppStatus.published
                     app.published_at = now
-                    app.published_url = _build_published_url(app.slug)
+                    app.published_url = _build_published_url(app.public_id)
                     job.status = PublishedAppPublishJobStatus.succeeded
                     job.stage = "completed"
                     job.error = None
@@ -955,7 +955,7 @@ def publish_published_app_task(
         source_files: Dict[str, str] = {}
         source_entry_file = "src/main.tsx"
         app_uuid: Optional[UUID] = None
-        tenant_uuid: Optional[UUID] = None
+        organization_uuid: Optional[UUID] = None
         slug = ""
         source_revision_uuid: Optional[UUID] = None
         published_revision_uuid = uuid4()
@@ -1020,14 +1020,14 @@ def publish_published_app_task(
                 dict(source_revision.files or {}),
                 runtime_context=TemplateRuntimeContext(
                     app_id=str(app.id),
-                    app_slug=str(app.slug or ""),
+                    app_public_id=str(app.public_id or ""),
                     agent_id=str(app.agent_id or ""),
                 ),
             )
             source_entry_file = source_revision.entry_file or "src/main.tsx"
             app_uuid = app.id
-            tenant_uuid = app.tenant_id
-            slug = app.slug
+            organization_uuid = app.organization_id
+            public_id = app.public_id
             source_revision_uuid = source_revision.id
 
         try:
@@ -1037,7 +1037,7 @@ def publish_published_app_task(
 
             if _publish_mock_mode_enabled():
                 dist_storage_prefix = PublishedAppBundleStorage.build_revision_dist_prefix(
-                    tenant_id=str(tenant_uuid),
+                    organization_id=str(organization_uuid),
                     app_id=str(app_uuid),
                     revision_id=str(published_revision_uuid),
                 )
@@ -1086,7 +1086,7 @@ def publish_published_app_task(
 
                     storage = PublishedAppBundleStorage.from_env()
                     dist_storage_prefix = PublishedAppBundleStorage.build_revision_dist_prefix(
-                        tenant_id=str(tenant_uuid),
+                        organization_id=str(organization_uuid),
                         app_id=str(app_uuid),
                         revision_id=str(published_revision_uuid),
                     )
@@ -1201,7 +1201,7 @@ def publish_published_app_task(
             app.current_published_revision_id = published_revision.id
             app.status = PublishedAppStatus.published
             app.published_at = datetime.now(timezone.utc)
-            app.published_url = _build_published_url(app.slug)
+            app.published_url = _build_published_url(app.public_id)
 
             job.status = PublishedAppPublishJobStatus.succeeded
             job.error = None
@@ -1217,7 +1217,7 @@ def publish_published_app_task(
             "source_revision_id": str(source_revision_uuid) if source_revision_uuid else None,
             "published_revision_id": str(published_revision_uuid),
             "dist_storage_prefix": dist_storage_prefix,
-            "slug": slug,
+            "app_public_id": public_id,
         }
 
     return run_async(_run())
@@ -1271,11 +1271,11 @@ def reconcile_usage_quota_counters_task():
             scope_keys: set[tuple[str, str, datetime, datetime]] = set()
             for policy in policies:
                 scope_type = (
-                    UsageQuotaScopeType.tenant
-                    if policy.scope_type == UsageQuotaScopeType.tenant
+                    UsageQuotaScopeType.organization
+                    if policy.scope_type == UsageQuotaScopeType.organization
                     else UsageQuotaScopeType.user
                 )
-                scope_id = policy.tenant_id if scope_type == UsageQuotaScopeType.tenant else policy.user_id
+                scope_id = policy.organization_id if scope_type == UsageQuotaScopeType.organization else policy.user_id
                 if scope_id is None:
                     continue
                 period_start, period_end = service._month_bounds_utc(

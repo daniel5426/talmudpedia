@@ -98,11 +98,11 @@ export function ArtifactListView({
     [filteredArtifacts, selectedIds],
   )
   const publishableSelectedArtifacts = useMemo(
-    () => selectedVisibleArtifacts.filter((artifact) => artifact.type === "draft" && artifact.owner_type === "tenant"),
+    () => selectedVisibleArtifacts.filter((artifact) => artifact.type === "draft" && artifact.owner_type === "organization"),
     [selectedVisibleArtifacts],
   )
   const deletableSelectedArtifacts = useMemo(
-    () => selectedVisibleArtifacts.filter((artifact) => artifact.owner_type === "tenant"),
+    () => selectedVisibleArtifacts.filter((artifact) => artifact.owner_type === "organization"),
     [selectedVisibleArtifacts],
   )
   const allVisibleSelected = filteredArtifacts.length > 0 && selectedVisibleArtifacts.length === filteredArtifacts.length
@@ -376,7 +376,7 @@ export function ArtifactListView({
                             <Download className="mr-2 h-4 w-4" />
                             Download file
                           </DropdownMenuItem>
-                          {artifact.type === "draft" && artifact.owner_type === "tenant" ? (
+                          {artifact.type === "draft" && artifact.owner_type === "organization" ? (
                             <DropdownMenuItem
                               onClick={() => onPublishArtifact(artifact)}
                               disabled={publishingId === artifact.id || isMutating}
@@ -385,7 +385,7 @@ export function ArtifactListView({
                               Publish
                             </DropdownMenuItem>
                           ) : null}
-                          {artifact.owner_type === "tenant" ? (
+                          {artifact.owner_type === "organization" ? (
                             <>
                               <DropdownMenuSeparator />
                               <DropdownMenuItem onClick={() => onDeleteArtifact(artifact)} className="text-destructive">

@@ -20,7 +20,7 @@ const baseArtifact: Artifact = {
   display_name: "Email Validator",
   description: "Validates emails",
   kind: "tool_impl",
-  owner_type: "tenant",
+  owner_type: "organization",
   type: "draft",
   version: "draft",
   config_schema: {},

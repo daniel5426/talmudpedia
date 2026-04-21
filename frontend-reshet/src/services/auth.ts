@@ -72,16 +72,16 @@ class AuthService {
     return httpClient.post<{ status: string; logout_url?: string | null }>("/auth/logout", undefined, AUTH_REQUEST_INIT);
   }
 
-  async switchOrganization(organizationSlug: string, returnTo?: string): Promise<OrganizationSwitchResponse> {
+  async switchOrganization(organizationId: string, returnTo?: string): Promise<OrganizationSwitchResponse> {
     return httpClient.post<OrganizationSwitchResponse>("/auth/context/organization", {
-      organization_slug: organizationSlug,
+      organization_id: organizationId,
       return_to: returnTo ? this.buildReturnTo(returnTo) : undefined,
     }, AUTH_REQUEST_INIT);
   }
 
-  async switchProject(projectSlug: string): Promise<AuthSessionResponse> {
+  async switchProject(projectId: string): Promise<AuthSessionResponse> {
     return httpClient.post<AuthSessionResponse>("/auth/context/project", {
-      project_slug: projectSlug,
+      project_id: projectId,
     }, AUTH_REQUEST_INIT);
   }
 

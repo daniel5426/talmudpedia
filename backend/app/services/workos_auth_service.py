@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import HTTPException, Request, Response, status
 from sqlalchemy import select
@@ -23,12 +23,12 @@ from app.db.postgres.models.identity import (
     MembershipStatus,
     OrgInvite,
     OrgMembership,
-    OrgRole,
     OrgUnit,
     OrgUnitType,
-    Tenant,
+    Organization,
     User,
 )
+from app.db.postgres.models.rbac import Role, RoleAssignment
 from app.db.postgres.models.workspace import Project
 from app.services.auth_context_service import list_organization_projects
 from app.services.organization_bootstrap_service import OrganizationBootstrapService
@@ -49,9 +49,8 @@ class WorkOSAuthError(RuntimeError):
 @dataclass(slots=True)
 class LocalSessionBundle:
     user: User
-    organization: Tenant
+    organization: Organization
     project: Project
-    permissions: list[str]
     workos_auth: Any
 
 
@@ -476,7 +475,7 @@ class WorkOSAuthService:
         *,
         auth_response: Any,
         actor_user_id: UUID | None = None,
-    ) -> Tenant | None:
+    ) -> Organization | None:
         local_user = await self.sync_local_user(auth_response)
         workos_org_id = self.current_organization_id(auth_response)
         if not workos_org_id:
@@ -516,30 +515,13 @@ class WorkOSAuthService:
             raise WorkOSAuthError("Local organization mirror is missing for current WorkOS organization")
 
         project = await self._resolve_active_project(request=request, organization=local_org)
-        permissions = self._extract_permissions(auth_response)
         await self.db.flush()
         return LocalSessionBundle(
             user=local_user,
             organization=local_org,
             project=project,
-            permissions=permissions,
             workos_auth=auth_response,
         )
-
-    def _extract_permissions(self, auth_response: Any) -> list[str]:
-        permissions: list[str] = []
-        for item in _iter_collection(_workos_attr(auth_response, "permissions")):
-            if isinstance(item, str):
-                permissions.append(item)
-                continue
-            slug = _workos_attr(item, "slug", "name", "permission")
-            if slug:
-                permissions.append(str(slug))
-        return sorted({permission for permission in permissions if permission})
-
-    def _workos_role_slug(self) -> str | None:
-        value = str(os.getenv("WORKOS_ORGANIZATION_ROLE_SLUG") or "").strip()
-        return value or None
 
     def _create_workos_membership(self, *, user_id: str, organization_id: str) -> Any:
         existing_memberships = self.client.user_management.list_organization_memberships(
@@ -553,9 +535,6 @@ class WorkOSAuthService:
             "user_id": user_id,
             "organization_id": organization_id,
         }
-        role_slug = self._workos_role_slug()
-        if role_slug:
-            params["role_slug"] = role_slug
         return self.client.user_management.create_organization_membership(**params)
 
     async def _upsert_local_user(self, workos_user: Any) -> User:
@@ -580,36 +559,26 @@ class WorkOSAuthService:
         await self.db.flush()
         return user
 
-    async def _ensure_root_org_unit(self, organization: Tenant) -> OrgUnit:
+    async def _ensure_root_org_unit(self, organization: Organization) -> OrgUnit:
         result = await self.db.execute(
-            select(OrgUnit).where(OrgUnit.tenant_id == organization.id).order_by(OrgUnit.created_at.asc()).limit(1)
+            select(OrgUnit).where(OrgUnit.organization_id == organization.id).order_by(OrgUnit.created_at.asc()).limit(1)
         )
         root = result.scalar_one_or_none()
         if root is not None:
             return root
         root = OrgUnit(
-            tenant_id=organization.id,
+            organization_id=organization.id,
             name=organization.name,
             slug="root",
+            system_key="root",
             type=OrgUnitType.org,
         )
         self.db.add(root)
         await self.db.flush()
         return root
 
-    async def _unique_org_slug(self, desired: str) -> str:
-        base = _slugify(desired, fallback="organization")
-        slug = base
-        suffix = 1
-        while True:
-            existing = (await self.db.execute(select(Tenant.id).where(Tenant.slug == slug))).scalar_one_or_none()
-            if existing is None:
-                return slug
-            suffix += 1
-            slug = f"{base[:42]}-{suffix}"
-
-    async def _read_local_organization(self, workos_organization_id: str) -> Tenant | None:
-        result = await self.db.execute(select(Tenant).where(Tenant.workos_organization_id == workos_organization_id))
+    async def _read_local_organization(self, workos_organization_id: str) -> Organization | None:
+        result = await self.db.execute(select(Organization).where(Organization.workos_organization_id == workos_organization_id))
         return result.scalar_one_or_none()
 
     async def _sync_local_organization_from_workos(
@@ -618,7 +587,7 @@ class WorkOSAuthService:
         *,
         actor_user_id: UUID | None,
         create_if_missing: bool,
-    ) -> Tenant:
+    ) -> Organization:
         organization = await self._read_local_organization(workos_organization_id)
         workos_org = self.client.organizations.get_organization(workos_organization_id)
         name = str(_workos_attr(workos_org, "name") or "Organization").strip() or "Organization"
@@ -631,11 +600,9 @@ class WorkOSAuthService:
             owner = await self.db.get(User, actor_user_id)
             if owner is None:
                 raise WorkOSAuthError("Owner user not found for organization provisioning")
-            slug = await self._unique_org_slug(str(_workos_attr(workos_org, "slug") or name))
             organization, _ = await OrganizationBootstrapService(self.db).create_organization_with_default_project(
                 owner=owner,
                 name=name,
-                slug=slug,
                 workos_organization_id=workos_organization_id,
             )
         else:
@@ -645,19 +612,19 @@ class WorkOSAuthService:
         await self.db.flush()
         return organization
 
-    async def _upsert_local_membership(self, local_user: User, local_org: Tenant, workos_membership: Any) -> OrgMembership:
+    async def _upsert_local_membership(self, local_user: User, local_org: Organization, workos_membership: Any) -> OrgMembership:
         root = await self._ensure_root_org_unit(local_org)
         workos_membership_id = _workos_attr(workos_membership, "id")
         result = await self.db.execute(
             select(OrgMembership).where(
                 (OrgMembership.workos_membership_id == workos_membership_id)
-                | ((OrgMembership.tenant_id == local_org.id) & (OrgMembership.user_id == local_user.id))
+                | ((OrgMembership.organization_id == local_org.id) & (OrgMembership.user_id == local_user.id))
             )
         )
         membership = result.scalar_one_or_none()
         if membership is None:
             membership = OrgMembership(
-                tenant_id=local_org.id,
+                organization_id=local_org.id,
                 user_id=local_user.id,
                 org_unit_id=root.id,
             )
@@ -665,15 +632,21 @@ class WorkOSAuthService:
         membership.org_unit_id = root.id
         membership.workos_membership_id = str(workos_membership_id) if workos_membership_id else membership.workos_membership_id
         membership.status = self._map_membership_status(_workos_attr(workos_membership, "status"))
-        membership.role = self._map_membership_role(_workos_attr(workos_membership, "role_slug", "roleSlug", "role"))
         bootstrap = SecurityBootstrapService(self.db)
-        if membership.role in {OrgRole.owner, OrgRole.admin}:
-            await bootstrap.ensure_organization_owner_assignment(
-                organization_id=local_org.id,
-                user_id=local_user.id,
-                assigned_by=local_user.id,
+        has_org_assignment = (
+            await self.db.execute(
+                select(RoleAssignment.id)
+                .join(Role, Role.id == RoleAssignment.role_id)
+                .where(
+                    RoleAssignment.organization_id == local_org.id,
+                    RoleAssignment.user_id == local_user.id,
+                    RoleAssignment.project_id.is_(None),
+                    Role.family == "organization",
+                )
+                .limit(1)
             )
-        else:
+        ).scalar_one_or_none()
+        if membership.status == MembershipStatus.active and has_org_assignment is None:
             await bootstrap.ensure_organization_reader_assignment(
                 organization_id=local_org.id,
                 user_id=local_user.id,
@@ -682,7 +655,7 @@ class WorkOSAuthService:
         pending_invites = (
             await self.db.execute(
                 select(OrgInvite).where(
-                    OrgInvite.tenant_id == local_org.id,
+                    OrgInvite.organization_id == local_org.id,
                     OrgInvite.email == local_user.email,
                     OrgInvite.accepted_at.is_(None),
                 )
@@ -691,12 +664,21 @@ class WorkOSAuthService:
         for invite in pending_invites:
             for project_id in invite.project_ids or []:
                 try:
-                    await bootstrap.ensure_project_member_assignment(
-                        organization_id=local_org.id,
-                        project_id=UUID(str(project_id)),
-                        user_id=local_user.id,
-                        assigned_by=local_user.id,
-                    )
+                    if invite.project_role_id:
+                        await bootstrap.ensure_project_role_assignment(
+                            organization_id=local_org.id,
+                            project_id=UUID(str(project_id)),
+                            user_id=local_user.id,
+                            role_id=invite.project_role_id,
+                            assigned_by=local_user.id,
+                        )
+                    else:
+                        await bootstrap.ensure_project_member_assignment(
+                            organization_id=local_org.id,
+                            project_id=UUID(str(project_id)),
+                            user_id=local_user.id,
+                            assigned_by=local_user.id,
+                        )
                 except Exception:
                     continue
             invite.accepted_at = datetime.now(timezone.utc)
@@ -710,14 +692,6 @@ class WorkOSAuthService:
         if normalized in {"active", "pending", "invited", "suspended"}:
             return MembershipStatus(normalized)
         return MembershipStatus.active
-
-    def _map_membership_role(self, value: Any) -> OrgRole:
-        normalized = str(value or "member").strip().lower()
-        if "owner" in normalized:
-            return OrgRole.owner
-        if "admin" in normalized:
-            return OrgRole.admin
-        return OrgRole.member
 
     async def _sync_user_memberships(self, local_user: User) -> None:
         if not local_user.workos_user_id:
@@ -767,7 +741,7 @@ class WorkOSAuthService:
         workos_organization_id: str,
         actor_user_id: UUID | None = None,
         create_if_missing: bool = False,
-    ) -> Tenant | None:
+    ) -> Organization | None:
         try:
             return await self._sync_local_organization_from_workos(
                 workos_organization_id,
@@ -779,7 +753,7 @@ class WorkOSAuthService:
                 raise
             return None
 
-    async def _ensure_default_project(self, organization: Tenant, actor_user_id: UUID | None) -> Project:
+    async def _ensure_default_project(self, organization: Organization, actor_user_id: UUID | None) -> Project:
         projects = await list_organization_projects(db=self.db, organization_id=organization.id)
         for project in projects:
             if project.is_default:
@@ -789,12 +763,11 @@ class WorkOSAuthService:
             organization=organization,
             created_by=actor_user_id,
             name="Default Project",
-            slug="default",
             is_default=True,
             owner_user_id=actor_user_id,
         )
 
-    async def _resolve_active_project(self, *, request: Request | None, organization: Tenant) -> Project:
+    async def _resolve_active_project(self, *, request: Request | None, organization: Organization) -> Project:
         requested_project_id = None
         if request is not None:
             requested_project_id = str(request.cookies.get(WORKOS_PROJECT_COOKIE_NAME) or "").strip()
@@ -816,7 +789,6 @@ class WorkOSAuthService:
         *,
         local_user: User,
         name: str,
-        slug: str,
         request: Request,
         response: Response,
         return_to: str | None = None,
@@ -824,7 +796,7 @@ class WorkOSAuthService:
         self._require_enabled()
         if not local_user.workos_user_id:
             raise WorkOSAuthError("Current user is not linked to WorkOS")
-        workos_org = self.client.organizations.create_organization(name=name, external_id=slug)
+        workos_org = self.client.organizations.create_organization(name=name, external_id=f"organization_{uuid4().hex}")
         workos_membership = self._create_workos_membership(
             user_id=local_user.workos_user_id,
             organization_id=str(_workos_attr(workos_org, "id")),
@@ -832,7 +804,6 @@ class WorkOSAuthService:
         organization, project = await OrganizationBootstrapService(self.db).create_organization_with_default_project(
             owner=local_user,
             name=name,
-            slug=slug,
             workos_organization_id=str(_workos_attr(workos_org, "id")),
             workos_membership_id=str(_workos_attr(workos_membership, "id")),
         )
@@ -850,7 +821,6 @@ class WorkOSAuthService:
             user=local_user,
             organization=organization,
             project=project,
-            permissions=self._extract_permissions(switched),
             workos_auth=switched,
         )
 

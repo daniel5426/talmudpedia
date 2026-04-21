@@ -10,8 +10,8 @@ describe("AuthRefresher", () => {
     localStorage.clear()
     useAuthStore.setState({
       user: { id: "user-1", role: "admin" } as any,
-      activeOrganization: { id: "org-1", slug: "org-1", name: "Org 1", status: "active" } as any,
-      activeProject: { id: "project-1", slug: "project-1", name: "Project 1", organization_id: "org-1", status: "active", is_default: true } as any,
+      activeOrganization: { id: "org-1", name: "Org 1", status: "active" } as any,
+      activeProject: { id: "project-1", name: "Project 1", organization_id: "org-1", status: "active", is_default: true } as any,
       organizations: [],
       projects: [],
       effectiveScopes: ["*"],

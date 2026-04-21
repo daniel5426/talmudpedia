@@ -1,12 +1,12 @@
 import asyncio
 from uuid import uuid4
 
+import jwt
 import pytest
 
-from app.api.routers.agents import _cancel_foreground_run_tree
 from app.agent.execution.service import AgentExecutorService
 from app.agent.execution.run_task_registry import cancel_run_tasks, register_run_task, unregister_run_task
-from app.core.security import create_access_token
+from app.core.security import ALGORITHM, SECRET_KEY, create_access_token
 from app.db.postgres.models.agents import Agent, AgentRun, RunStatus
 from app.db.postgres.models.agent_threads import AgentThread, AgentThreadSurface
 from app.db.postgres.models.identity import (
@@ -15,32 +15,38 @@ from app.db.postgres.models.identity import (
     OrgRole,
     OrgUnit,
     OrgUnitType,
-    Tenant,
+    Organization,
     User,
 )
 from app.services.security_bootstrap_service import SecurityBootstrapService
 from app.services.thread_service import ThreadService
 
 
-def _headers(user: User, tenant: Tenant) -> dict[str, str]:
-    token = create_access_token(
-        subject=str(user.id),
-        tenant_id=str(tenant.id),
-        org_role="owner",
+def _headers(user: User, tenant: Organization) -> dict[str, str]:
+    payload = jwt.decode(
+        create_access_token(
+            subject=str(user.id),
+            organization_id=str(tenant.id),
+            org_role="owner",
+        ),
+        SECRET_KEY,
+        algorithms=[ALGORITHM],
     )
-    return {"Authorization": f"Bearer {token}", "X-Tenant-ID": str(tenant.id)}
+    payload["scope"] = ["*"]
+    token = jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+    return {"Authorization": f"Bearer {token}", "X-Organization-ID": str(tenant.id)}
 
 
 async def _seed_tenant_with_users(db_session):
     suffix = uuid4().hex[:8]
-    tenant = Tenant(name=f"Tenant {suffix}", slug=f"tenant-{suffix}")
+    tenant = Organization(name=f"Organization {suffix}", slug=f"tenant-{suffix}")
     owner = User(email=f"owner-{suffix}@example.com", role="user")
     intruder = User(email=f"intruder-{suffix}@example.com", role="user")
     db_session.add_all([tenant, owner, intruder])
     await db_session.flush()
 
     org = OrgUnit(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         parent_id=None,
         name=f"Root {suffix}",
         slug=f"root-{suffix}",
@@ -52,14 +58,14 @@ async def _seed_tenant_with_users(db_session):
     db_session.add_all(
         [
             OrgMembership(
-                tenant_id=tenant.id,
+                organization_id=tenant.id,
                 user_id=owner.id,
                 org_unit_id=org.id,
                 role=OrgRole.owner,
                 status=MembershipStatus.active,
             ),
             OrgMembership(
-                tenant_id=tenant.id,
+                organization_id=tenant.id,
                 user_id=intruder.id,
                 org_unit_id=org.id,
                 role=OrgRole.member,
@@ -69,8 +75,8 @@ async def _seed_tenant_with_users(db_session):
     )
     bootstrap = SecurityBootstrapService(db_session)
     await bootstrap.ensure_default_roles(tenant.id)
-    await bootstrap.ensure_owner_assignment(tenant_id=tenant.id, user_id=owner.id, assigned_by=owner.id)
-    await bootstrap.ensure_member_assignment(tenant_id=tenant.id, user_id=intruder.id, assigned_by=owner.id)
+    await bootstrap.ensure_organization_owner_assignment(organization_id=tenant.id, user_id=owner.id, assigned_by=owner.id)
+    await bootstrap.ensure_organization_reader_assignment(organization_id=tenant.id, user_id=intruder.id, assigned_by=owner.id)
     await db_session.commit()
     await db_session.refresh(tenant)
     await db_session.refresh(owner)
@@ -80,13 +86,13 @@ async def _seed_tenant_with_users(db_session):
 
 async def _seed_second_tenant_user(db_session):
     suffix = uuid4().hex[:8]
-    tenant = Tenant(name=f"Other Tenant {suffix}", slug=f"other-tenant-{suffix}")
+    tenant = Organization(name=f"Other Organization {suffix}", slug=f"other-tenant-{suffix}")
     user = User(email=f"other-owner-{suffix}@example.com", role="user")
     db_session.add_all([tenant, user])
     await db_session.flush()
 
     org = OrgUnit(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         parent_id=None,
         name=f"Other Root {suffix}",
         slug=f"other-root-{suffix}",
@@ -97,7 +103,7 @@ async def _seed_second_tenant_user(db_session):
 
     db_session.add(
         OrgMembership(
-            tenant_id=tenant.id,
+            organization_id=tenant.id,
             user_id=user.id,
             org_unit_id=org.id,
             role=OrgRole.owner,
@@ -106,17 +112,17 @@ async def _seed_second_tenant_user(db_session):
     )
     bootstrap = SecurityBootstrapService(db_session)
     await bootstrap.ensure_default_roles(tenant.id)
-    await bootstrap.ensure_owner_assignment(tenant_id=tenant.id, user_id=user.id, assigned_by=user.id)
+    await bootstrap.ensure_organization_owner_assignment(organization_id=tenant.id, user_id=user.id, assigned_by=user.id)
     await db_session.commit()
     await db_session.refresh(tenant)
     await db_session.refresh(user)
     return tenant, user
 
 
-async def _seed_paused_run(db_session, tenant: Tenant, owner: User) -> AgentRun:
+async def _seed_paused_run(db_session, tenant: Organization, owner: User) -> AgentRun:
     suffix = uuid4().hex[:8]
     agent = Agent(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name=f"Resume Agent {suffix}",
         slug=f"resume-agent-{suffix}",
         description="resume authorization test",
@@ -129,7 +135,7 @@ async def _seed_paused_run(db_session, tenant: Tenant, owner: User) -> AgentRun:
     await db_session.flush()
 
     run = AgentRun(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         agent_id=agent.id,
         user_id=owner.id,
         initiator_user_id=owner.id,
@@ -142,10 +148,10 @@ async def _seed_paused_run(db_session, tenant: Tenant, owner: User) -> AgentRun:
     return run
 
 
-async def _seed_running_run_tree(db_session, tenant: Tenant, owner: User) -> tuple[AgentRun, AgentRun, AgentRun]:
+async def _seed_running_run_tree(db_session, tenant: Organization, owner: User) -> tuple[AgentRun, AgentRun, AgentRun]:
     suffix = uuid4().hex[:8]
     agent = Agent(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name=f"Cancel Agent {suffix}",
         slug=f"cancel-agent-{suffix}",
         description="cancel authorization test",
@@ -158,7 +164,7 @@ async def _seed_running_run_tree(db_session, tenant: Tenant, owner: User) -> tup
     await db_session.flush()
 
     root = AgentRun(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         agent_id=agent.id,
         user_id=owner.id,
         initiator_user_id=owner.id,
@@ -171,7 +177,7 @@ async def _seed_running_run_tree(db_session, tenant: Tenant, owner: User) -> tup
     root.root_run_id = root.id
 
     child = AgentRun(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         agent_id=agent.id,
         user_id=owner.id,
         initiator_user_id=owner.id,
@@ -186,7 +192,7 @@ async def _seed_running_run_tree(db_session, tenant: Tenant, owner: User) -> tup
     await db_session.flush()
 
     grandchild = AgentRun(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         agent_id=agent.id,
         user_id=owner.id,
         initiator_user_id=owner.id,
@@ -306,7 +312,7 @@ async def test_cancel_run_does_not_write_thread_turns_from_cancel_endpoint(clien
     tenant, owner, _intruder = await _seed_tenant_with_users(db_session)
     root, _child, _grandchild = await _seed_running_run_tree(db_session, tenant, owner)
     thread = AgentThread(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=owner.id,
         agent_id=root.agent_id,
         surface=AgentThreadSurface.internal,
@@ -364,7 +370,7 @@ async def test_run_task_registry_cancels_registered_task():
 
 
 @pytest.mark.asyncio
-async def test_cancel_foreground_run_tree_marks_run_cancelled_and_interrupts_live_tasks(db_session):
+async def test_cancel_run_endpoint_interrupts_live_tasks_in_subtree(client, db_session):
     tenant, owner, _intruder = await _seed_tenant_with_users(db_session)
     root, child, grandchild = await _seed_running_run_tree(db_session, tenant, owner)
 
@@ -373,7 +379,12 @@ async def test_cancel_foreground_run_tree_marks_run_cancelled_and_interrupts_liv
     register_run_task(child.id, sleeper)
     try:
         sleeper.add_done_callback(lambda task: cancelled.set() if task.cancelled() else None)
-        await _cancel_foreground_run_tree(root.id, reason="cancelled_by_client_disconnect")
+        response = await client.post(
+            f"/agents/runs/{root.id}/cancel",
+            json={"assistant_output_text": "Stopped"},
+            headers=_headers(owner, tenant),
+        )
+        assert response.status_code == 200
         await asyncio.wait_for(cancelled.wait(), timeout=2.0)
 
         await db_session.refresh(root)
@@ -383,6 +394,6 @@ async def test_cancel_foreground_run_tree_marks_run_cancelled_and_interrupts_liv
         assert root.status == RunStatus.cancelled
         assert child.status == RunStatus.cancelled
         assert grandchild.status == RunStatus.cancelled
-        assert root.error_message == "cancelled_by_client_disconnect"
+        assert root.output_result["final_output"] == "Stopped"
     finally:
         unregister_run_task(child.id, sleeper)

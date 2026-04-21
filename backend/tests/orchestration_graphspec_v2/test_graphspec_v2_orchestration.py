@@ -6,7 +6,7 @@ from app.agent.executors.orchestration import JoinNodeExecutor, ReplanNodeExecut
 from app.agent.graph.compiler import AgentCompiler
 from app.agent.graph.schema import AgentGraph
 from app.db.postgres.models.agents import Agent, AgentStatus
-from app.db.postgres.models.identity import Tenant, User
+from app.db.postgres.models.identity import Organization, User
 from app.db.postgres.models.orchestration import OrchestratorPolicy, OrchestratorTargetAllowlist
 
 
@@ -48,20 +48,20 @@ async def _seed_policy_fixture(
     max_fanout: int = 8,
     max_children_total: int = 32,
 ):
-    tenant = Tenant(name="orch-v2-tenant", slug=f"orch-v2-{uuid4().hex[:8]}")
+    tenant = Organization(name="orch-v2-tenant", slug=f"orch-v2-{uuid4().hex[:8]}")
     user = User(email=f"orch-v2-{uuid4().hex[:8]}@example.com", role="admin")
     db_session.add_all([tenant, user])
     await db_session.flush()
 
     orchestrator = Agent(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name="Orchestrator",
         slug=f"orchestrator-v2-{uuid4().hex[:8]}",
         status=AgentStatus.published,
         graph_definition={"nodes": [], "edges": []},
     )
     target = Agent(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name="Target",
         slug=f"target-v2-{uuid4().hex[:8]}",
         status=target_status,
@@ -71,7 +71,7 @@ async def _seed_policy_fixture(
     await db_session.flush()
 
     policy = OrchestratorPolicy(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         orchestrator_agent_id=orchestrator.id,
         enforce_published_only=True,
         allowed_scope_subset=allowed_scope_subset or ["agents.execute"],
@@ -84,7 +84,7 @@ async def _seed_policy_fixture(
     if include_allowlist:
         db_session.add(
             OrchestratorTargetAllowlist(
-                tenant_id=tenant.id,
+                organization_id=tenant.id,
                 orchestrator_agent_id=orchestrator.id,
                 target_agent_id=target.id,
             )
@@ -118,7 +118,7 @@ async def test_validate_currently_tolerates_unknown_graph_spec_version_strings()
 @pytest.mark.asyncio
 async def test_v2_compile_currently_defers_allowlist_checks_to_runtime(db_session):
     fx = await _seed_policy_fixture(db_session, include_allowlist=False)
-    compiler = AgentCompiler(db=db_session, tenant_id=fx["tenant"].id)
+    compiler = AgentCompiler(db=db_session, organization_id=fx["tenant"].id)
     graph = _graph_v2(
         nodes=[
             _node(
@@ -139,7 +139,7 @@ async def test_v2_compile_currently_defers_allowlist_checks_to_runtime(db_sessio
 @pytest.mark.asyncio
 async def test_v2_compile_currently_defers_published_status_checks_to_runtime(db_session):
     fx = await _seed_policy_fixture(db_session, target_status=AgentStatus.draft, include_allowlist=True)
-    compiler = AgentCompiler(db=db_session, tenant_id=fx["tenant"].id)
+    compiler = AgentCompiler(db=db_session, organization_id=fx["tenant"].id)
     graph = _graph_v2(
         nodes=[
             _node(
@@ -160,7 +160,7 @@ async def test_v2_compile_currently_defers_published_status_checks_to_runtime(db
 @pytest.mark.asyncio
 async def test_v2_compile_currently_defers_scope_subset_policy_checks_to_runtime(db_session):
     fx = await _seed_policy_fixture(db_session, allowed_scope_subset=["agents.execute"])
-    compiler = AgentCompiler(db=db_session, tenant_id=fx["tenant"].id)
+    compiler = AgentCompiler(db=db_session, organization_id=fx["tenant"].id)
     graph = _graph_v2(
         nodes=[
             _node(
@@ -186,7 +186,7 @@ async def test_v2_compile_currently_defers_static_safety_limits_to_runtime(db_se
         max_fanout=2,
         max_children_total=2,
     )
-    compiler = AgentCompiler(db=db_session, tenant_id=fx["tenant"].id)
+    compiler = AgentCompiler(db=db_session, organization_id=fx["tenant"].id)
     group_targets = [
         {"target_agent_id": str(fx["target"].id), "mapped_input_payload": {"n": 1}},
         {"target_agent_id": str(fx["target"].id), "mapped_input_payload": {"n": 2}},
@@ -247,7 +247,7 @@ async def test_spawn_run_executor_calls_kernel(monkeypatch):
         fake_spawn_run,
     )
 
-    executor = SpawnRunNodeExecutor(tenant_id=None, db=object())
+    executor = SpawnRunNodeExecutor(organization_id=None, db=object())
     out = await executor.execute(
         state={},
         config={
@@ -285,7 +285,7 @@ async def test_join_and_replan_executors_route_next(monkeypatch):
         fake_replan,
     )
 
-    join = JoinNodeExecutor(tenant_id=None, db=object())
+    join = JoinNodeExecutor(organization_id=None, db=object())
     join_out = await join.execute(
         state={"_node_outputs": {"spawn_group_1": {"orchestration_group_id": "33333333-3333-3333-3333-333333333333"}}},
         config={},
@@ -293,7 +293,7 @@ async def test_join_and_replan_executors_route_next(monkeypatch):
     )
     assert join_out["next"] == "pending"
 
-    replan = ReplanNodeExecutor(tenant_id=None, db=object())
+    replan = ReplanNodeExecutor(organization_id=None, db=object())
     replan_out = await replan.execute(
         state={"_node_outputs": {"spawn_1": {"spawned_run_ids": ["55555555-5555-5555-5555-555555555555"]}}},
         config={},
@@ -328,7 +328,7 @@ async def test_v2_compile_accepts_fail_fast_and_best_effort_modes():
 @pytest.mark.asyncio
 async def test_v2_compile_rejects_when_option_a_is_disabled(monkeypatch):
     monkeypatch.setenv("ORCHESTRATION_OPTION_A_ENABLED", "0")
-    compiler = AgentCompiler(tenant_id=uuid4())
+    compiler = AgentCompiler(organization_id=uuid4())
     graph = _graph_v2(
         nodes=[
             _node(

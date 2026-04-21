@@ -10,19 +10,19 @@ from app.db.postgres.models.registry import (
     IntegrationCredential,
     IntegrationCredentialCategory,
 )
-from app.db.postgres.models.identity import Tenant, User
+from app.db.postgres.models.identity import Organization, User
 from app.api.dependencies import get_current_principal, get_tenant_context
 
 
 @pytest.mark.asyncio
 async def test_update_provider_binding_endpoint_allows_local_pricing(client, db_session):
-    tenant = Tenant(name="Test Org", slug=f"test-org-{uuid4().hex[:8]}")
+    tenant = Organization(name="Test Org", slug=f"test-org-{uuid4().hex[:8]}")
     user = User(email=f"admin-{uuid4().hex[:8]}@test.org", hashed_password="test", role="admin")
     db_session.add_all([tenant, user])
     await db_session.flush()
 
     model = ModelRegistry(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name="Test Chat",
         capability_type=ModelCapabilityType.CHAT,
         status=ModelStatus.ACTIVE,
@@ -32,7 +32,7 @@ async def test_update_provider_binding_endpoint_allows_local_pricing(client, db_
     await db_session.flush()
 
     credential = IntegrationCredential(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         category=IntegrationCredentialCategory.LLM_PROVIDER,
         provider_key="openai",
         provider_variant=None,
@@ -45,7 +45,7 @@ async def test_update_provider_binding_endpoint_allows_local_pricing(client, db_
 
     binding = ModelProviderBinding(
         model_id=model.id,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         provider=ModelProviderType.LOCAL,
         provider_model_id="local-llm",
         priority=0,
@@ -58,13 +58,13 @@ async def test_update_provider_binding_endpoint_allows_local_pricing(client, db_
     from main import app
 
     async def override_get_tenant_context():
-        return {"tenant_id": str(tenant.id), "tenant": tenant}
+        return {"organization_id": str(tenant.id), "tenant": tenant}
 
     async def override_get_current_principal():
         return {
             "type": "user",
             "user_id": str(user.id),
-            "tenant_id": str(tenant.id),
+            "organization_id": str(tenant.id),
             "scopes": ["*"],
         }
 
@@ -98,13 +98,13 @@ async def test_update_provider_binding_endpoint_allows_local_pricing(client, db_
 
 @pytest.mark.asyncio
 async def test_update_provider_binding_rejects_platform_managed_pricing_override(client, db_session):
-    tenant = Tenant(name="Test Org 2", slug=f"test-org-{uuid4().hex[:8]}")
+    tenant = Organization(name="Test Org 2", slug=f"test-org-{uuid4().hex[:8]}")
     user = User(email=f"admin-{uuid4().hex[:8]}@test.org", hashed_password="test", role="admin")
     db_session.add_all([tenant, user])
     await db_session.flush()
 
     model = ModelRegistry(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name="Test Chat 2",
         capability_type=ModelCapabilityType.CHAT,
         status=ModelStatus.ACTIVE,
@@ -115,7 +115,7 @@ async def test_update_provider_binding_rejects_platform_managed_pricing_override
 
     binding = ModelProviderBinding(
         model_id=model.id,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         provider=ModelProviderType.OPENAI,
         provider_model_id="gpt-5.4",
         priority=0,
@@ -128,13 +128,13 @@ async def test_update_provider_binding_rejects_platform_managed_pricing_override
     from main import app
 
     async def override_get_tenant_context():
-        return {"tenant_id": str(tenant.id), "tenant": tenant}
+        return {"organization_id": str(tenant.id), "tenant": tenant}
 
     async def override_get_current_principal():
         return {
             "type": "user",
             "user_id": str(user.id),
-            "tenant_id": str(tenant.id),
+            "organization_id": str(tenant.id),
             "scopes": ["*"],
         }
 

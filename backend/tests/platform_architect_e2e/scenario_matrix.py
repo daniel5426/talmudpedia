@@ -39,10 +39,10 @@ def _stable_id(action: str) -> str:
 
 
 def _orchestration_expected_block_code() -> str:
-    tenant_id = os.getenv("TEST_TENANT_ID")
+    organization_id = os.getenv("TEST_TENANT_ID")
     enabled = is_orchestration_surface_enabled(
         surface=ORCHESTRATION_SURFACE_OPTION_B,
-        tenant_id=tenant_id,
+        organization_id=organization_id,
     )
     return "missing_fields" if enabled else "feature_disabled"
 

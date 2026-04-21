@@ -47,7 +47,7 @@ class SpeechToTextNodeExecutor(BaseNodeExecutor):
         if len(audio_attachments) != len(attachments):
             raise ValueError("Speech-to-text node only accepts audio attachments")
 
-        stt_service = SpeechToTextService(self.db, self.tenant_id)
+        stt_service = SpeechToTextService(self.db, self.organization_id)
         language_hints = self._normalize_language_hints(config.get("language_hints"))
         prompt = str(config.get("prompt") or "").strip() or None
         model_id = str(config.get("model_id") or "").strip() or None
@@ -148,11 +148,11 @@ class SpeechToTextNodeExecutor(BaseNodeExecutor):
         except Exception:
             surface = AgentThreadSurface.internal
         return RuntimeAttachmentOwner(
-            tenant_id=self.tenant_id,
+            organization_id=self.organization_id,
             surface=surface,
             user_id=self._maybe_uuid(runtime_context.get("user_id")),
             app_account_id=self._maybe_uuid(runtime_context.get("published_app_account_id")),
-            tenant_api_key_id=self._maybe_uuid(runtime_context.get("tenant_api_key_id")),
+            organization_api_key_id=self._maybe_uuid(runtime_context.get("organization_api_key_id")),
             agent_id=self._maybe_uuid(runtime_context.get("agent_id")),
             published_app_id=self._maybe_uuid(runtime_context.get("published_app_id")),
             external_user_id=str(runtime_context.get("external_user_id") or "").strip() or None,

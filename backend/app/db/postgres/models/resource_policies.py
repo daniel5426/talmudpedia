@@ -29,7 +29,7 @@ def _enum_values(enum_cls):
 
 
 class ResourcePolicyPrincipalType(str, enum.Enum):
-    TENANT_USER = "tenant_user"
+    ORGANIZATION_USER = "organization_user"
     PUBLISHED_APP_ACCOUNT = "published_app_account"
     EMBEDDED_EXTERNAL_USER = "embedded_external_user"
 
@@ -58,7 +58,7 @@ class ResourcePolicySet(Base):
     __tablename__ = "resource_policy_sets"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
     name = Column(String, nullable=False)
     description = Column(Text, nullable=True)
     is_active = Column(Boolean, nullable=False, default=True, server_default=text("true"))
@@ -66,12 +66,12 @@ class ResourcePolicySet(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
-    tenant = relationship("Tenant")
+    organization = relationship("Organization")
     creator = relationship("User")
     rules = relationship("ResourcePolicyRule", back_populates="policy_set", cascade="all, delete-orphan")
 
     __table_args__ = (
-        UniqueConstraint("tenant_id", "name", name="uq_resource_policy_sets_tenant_name"),
+        UniqueConstraint("organization_id", "name", name="uq_resource_policy_sets_organization_name"),
     )
 
 
@@ -168,7 +168,7 @@ class ResourcePolicyAssignment(Base):
     __tablename__ = "resource_policy_assignments"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
     principal_type = Column(
         SQLEnum(ResourcePolicyPrincipalType, values_callable=_enum_values),
         nullable=False,
@@ -198,7 +198,7 @@ class ResourcePolicyAssignment(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
-    tenant = relationship("Tenant")
+    organization = relationship("Organization")
     policy_set = relationship("ResourcePolicySet")
     user = relationship("User", foreign_keys=[user_id])
     published_app_account = relationship("PublishedAppAccount")
@@ -207,23 +207,23 @@ class ResourcePolicyAssignment(Base):
 
     __table_args__ = (
         Index(
-            "uq_resource_policy_assignments_tenant_user",
-            "tenant_id",
+            "uq_resource_policy_assignments_organization_user",
+            "organization_id",
             "principal_type",
             "user_id",
             unique=True,
             postgresql_where=and_(
-                principal_type == ResourcePolicyPrincipalType.TENANT_USER,
+                principal_type == ResourcePolicyPrincipalType.ORGANIZATION_USER,
                 user_id != None,
             ),
             sqlite_where=and_(
-                principal_type == ResourcePolicyPrincipalType.TENANT_USER,
+                principal_type == ResourcePolicyPrincipalType.ORGANIZATION_USER,
                 user_id != None,
             ),
         ),
         Index(
             "uq_resource_policy_assignments_app_account",
-            "tenant_id",
+            "organization_id",
             "principal_type",
             "published_app_account_id",
             unique=True,
@@ -238,7 +238,7 @@ class ResourcePolicyAssignment(Base):
         ),
         Index(
             "uq_resource_policy_assignments_embedded_user",
-            "tenant_id",
+            "organization_id",
             "principal_type",
             "embedded_agent_id",
             "external_user_id",
@@ -261,7 +261,7 @@ class ResourcePolicyQuotaCounter(Base):
     __tablename__ = "resource_policy_quota_counters"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
     principal_type = Column(
         SQLEnum(ResourcePolicyPrincipalType, values_callable=_enum_values),
         nullable=False,
@@ -314,7 +314,7 @@ class ResourcePolicyQuotaReservation(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     run_id = Column(UUID(as_uuid=True), nullable=False, unique=True, index=True)
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
     principal_type = Column(
         SQLEnum(ResourcePolicyPrincipalType, values_callable=_enum_values),
         nullable=False,
@@ -345,4 +345,3 @@ class ResourcePolicyQuotaReservation(Base):
     reserved_tokens = Column(Integer, nullable=False, default=0, server_default=text("0"))
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     settled_at = Column(DateTime(timezone=True), nullable=True)
-

@@ -16,7 +16,7 @@ class ArtifactRegistryService:
     async def list_accessible_artifacts(
         self,
         *,
-        tenant_id: UUID | None,
+        organization_id: UUID | None,
         kind: ArtifactKind | str | None = None,
     ) -> list[Artifact]:
         query = (
@@ -27,11 +27,11 @@ class ArtifactRegistryService:
             )
             .order_by(Artifact.updated_at.desc())
         )
-        if tenant_id is not None:
+        if organization_id is not None:
             query = query.where(
                 or_(
                     Artifact.owner_type == ArtifactOwnerType.SYSTEM,
-                    Artifact.tenant_id == tenant_id,
+                    Artifact.organization_id == organization_id,
                 )
             )
         if kind is not None:
@@ -39,10 +39,10 @@ class ArtifactRegistryService:
         result = await self._db.execute(query)
         return list(result.scalars().all())
 
-    async def list_tenant_artifacts(self, *, tenant_id: UUID) -> list[Artifact]:
-        return await self.list_accessible_artifacts(tenant_id=tenant_id)
+    async def list_organization_artifacts(self, *, organization_id: UUID) -> list[Artifact]:
+        return await self.list_accessible_artifacts(organization_id=organization_id)
 
-    async def get_accessible_artifact(self, *, artifact_id: UUID, tenant_id: UUID | None) -> Artifact | None:
+    async def get_accessible_artifact(self, *, artifact_id: UUID, organization_id: UUID | None) -> Artifact | None:
         query = (
             select(Artifact)
             .where(Artifact.id == artifact_id)
@@ -52,21 +52,21 @@ class ArtifactRegistryService:
                 selectinload(Artifact.revisions),
             )
         )
-        if tenant_id is not None:
+        if organization_id is not None:
             query = query.where(
                 or_(
                     Artifact.owner_type == ArtifactOwnerType.SYSTEM,
-                    Artifact.tenant_id == tenant_id,
+                    Artifact.organization_id == organization_id,
                 )
             )
         return await self._db.scalar(query)
 
-    async def get_tenant_artifact(self, *, artifact_id: UUID, tenant_id: UUID) -> Artifact | None:
+    async def get_organization_artifact(self, *, artifact_id: UUID, organization_id: UUID) -> Artifact | None:
         return await self._db.scalar(
             select(Artifact)
             .where(
                 Artifact.id == artifact_id,
-                Artifact.tenant_id == tenant_id,
+                Artifact.organization_id == organization_id,
                 Artifact.owner_type == ArtifactOwnerType.TENANT,
             )
             .options(
@@ -90,17 +90,17 @@ class ArtifactRegistryService:
             )
         )
 
-    async def get_revision(self, *, revision_id: UUID, tenant_id: UUID | None) -> ArtifactRevision | None:
+    async def get_revision(self, *, revision_id: UUID, organization_id: UUID | None) -> ArtifactRevision | None:
         query = (
             select(ArtifactRevision)
             .where(ArtifactRevision.id == revision_id)
             .options(selectinload(ArtifactRevision.artifact))
         )
-        if tenant_id is not None:
+        if organization_id is not None:
             query = query.join(Artifact, Artifact.id == ArtifactRevision.artifact_id, isouter=True).where(
                 or_(
                     Artifact.owner_type == ArtifactOwnerType.SYSTEM,
-                    Artifact.tenant_id == tenant_id,
+                    Artifact.organization_id == organization_id,
                 )
             )
         return await self._db.scalar(query)
@@ -108,13 +108,13 @@ class ArtifactRegistryService:
     async def get_artifact_for_custom_operator(
         self,
         *,
-        tenant_id: UUID,
+        organization_id: UUID,
         custom_operator_id: UUID,
     ) -> Artifact | None:
         return await self._db.scalar(
             select(Artifact)
             .where(
-                Artifact.tenant_id == tenant_id,
+                Artifact.organization_id == organization_id,
                 Artifact.legacy_custom_operator_id == custom_operator_id,
                 Artifact.kind == ArtifactKind.RAG_OPERATOR,
             )

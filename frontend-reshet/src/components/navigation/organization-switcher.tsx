@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import { ChevronsUpDown, Building2, FolderKanban, Landmark } from "lucide-react"
-import { useTenant } from "@/contexts/TenantContext"
+import { useOrganization } from "@/contexts/OrganizationContext"
 
 import {
   DropdownMenu,
@@ -20,17 +20,17 @@ import {
 } from "@/components/ui/sidebar"
 import { Skeleton } from "@/components/ui/skeleton"
 
-export function TenantSwitcher() {
+export function OrganizationSwitcher() {
   const { isMobile } = useSidebar()
   const {
-    currentTenant,
+    currentOrganization,
     currentProject,
-    tenants,
+    organizations,
     projects,
     isLoading,
-    setCurrentTenant,
+    setCurrentOrganization,
     setCurrentProject,
-  } = useTenant()
+  } = useOrganization()
 
   if (isLoading) {
     return (
@@ -40,7 +40,7 @@ export function TenantSwitcher() {
     )
   }
 
-  if (tenants.length === 0) return null
+  if (organizations.length === 0) return null
 
   const currentProjectLabel = currentProject?.name || "No project selected"
 
@@ -58,7 +58,7 @@ export function TenantSwitcher() {
               </div>
               <div className="grid flex-1 text-left text-sm leading-tight">
                 <span className="truncate font-semibold">
-                  {currentTenant?.name || "Select Organization"}
+                  {currentOrganization?.name || "Select Organization"}
                 </span>
                 <span className="truncate text-xs text-muted-foreground">
                   {currentProjectLabel}
@@ -76,17 +76,17 @@ export function TenantSwitcher() {
             <DropdownMenuLabel className="text-xs text-muted-foreground">
               Organizations
             </DropdownMenuLabel>
-            {tenants.map((tenant) => (
+            {organizations.map((organization) => (
               <DropdownMenuItem
-                key={tenant.id}
-                onClick={() => setCurrentTenant(tenant)}
+                key={organization.id}
+                onClick={() => setCurrentOrganization(organization)}
                 className="gap-2 p-2 cursor-pointer"
               >
                 <div className="flex size-6 items-center justify-center rounded-sm border">
                   <Building2 className="size-4 shrink-0" />
                 </div>
-                <span className="flex-1">{tenant.name}</span>
-                {tenant.slug === currentTenant?.slug ? (
+                <span className="flex-1">{organization.name}</span>
+                {organization.id === currentOrganization?.id ? (
                   <span className="text-[10px] uppercase opacity-60">Active</span>
                 ) : null}
               </DropdownMenuItem>
@@ -108,7 +108,7 @@ export function TenantSwitcher() {
                     {project.is_default ? <Landmark className="size-4 shrink-0" /> : <FolderKanban className="size-4 shrink-0" />}
                   </div>
                   <span className="flex-1">{project.name}</span>
-                  {project.slug === currentProject?.slug ? (
+                  {project.id === currentProject?.id ? (
                     <span className="text-[10px] uppercase opacity-60">Active</span>
                   ) : null}
                 </DropdownMenuItem>

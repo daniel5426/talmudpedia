@@ -17,7 +17,7 @@ import { Loader2 } from "lucide-react"
 
 interface ArtifactConfigPanelProps {
   formData: ArtifactFormData;
-  tenantSlug?: string;
+  organizationId?: string;
   selectedArtifact: Artifact | null;
   viewMode: "list" | "create" | "edit";
   convertTargetKind: ArtifactKind;
@@ -35,7 +35,7 @@ interface ArtifactConfigPanelProps {
 
 export function ArtifactConfigPanel({
   formData,
-  tenantSlug,
+  organizationId,
   selectedArtifact,
   viewMode,
   convertTargetKind,
@@ -145,7 +145,7 @@ export function ArtifactConfigPanel({
                   </Select>
                 </div>
 
-                {viewMode === "edit" && selectedArtifact?.type === "draft" && selectedArtifact.owner_type === "tenant" && (
+                {viewMode === "edit" && selectedArtifact?.type === "draft" && selectedArtifact.owner_type === "organization" && (
                   <div className="mt-8 pt-4">
                     <Label className="mb-2 block text-xs font-medium text-destructive/80 transition-colors group-hover:text-destructive">Danger Zone</Label>
                     <div className="flex items-center gap-3 rounded-md border border-border/40 p-1">
@@ -176,7 +176,7 @@ export function ArtifactConfigPanel({
               language={formData.language}
               sourceFiles={formData.source_files}
               dependencies={formData.dependencies}
-              tenantSlug={tenantSlug}
+              organizationId={organizationId}
               onChangeDependencies={(value) => onUpdateFormData("dependencies", value)}
             />
           </TabsContent>

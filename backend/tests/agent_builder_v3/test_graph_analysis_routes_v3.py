@@ -55,7 +55,7 @@ async def test_analyze_agent_graph_returns_analysis_payload(monkeypatch):
         agent_id,
         payload,
         {},
-        {"tenant_id": uuid4(), "user": None},
+        {"organization_id": uuid4(), "user": None},
         None,
     )
 
@@ -75,7 +75,7 @@ async def test_analyze_agent_graph_returns_structured_validation_error(monkeypat
             uuid4(),
             router.GraphAnalysisRequest(graph_definition={"spec_version": "4.0", "nodes": [], "edges": []}),
             {},
-            {"tenant_id": uuid4(), "user": None},
+            {"organization_id": uuid4(), "user": None},
             None,
         )
 

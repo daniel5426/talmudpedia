@@ -1,6 +1,6 @@
 # Published Apps Backend Tests
 
-Last Updated: 2026-04-16
+Last Updated: 2026-04-21
 
 ## Scope of the feature
 - Admin CRUD for published apps and builder state primitives.
@@ -19,7 +19,7 @@ Last Updated: 2026-04-16
 - `backend/tests/published_apps/test_public_chat_scope_and_persistence.py`
 
 ## Key scenarios covered
-- Tenant admin can create/list/update/delete apps.
+- Organization admin can create/list/update/delete apps.
 - Apps admin page fetch contract is probe-covered for `/admin/apps`, `/admin/apps/stats`, `/agents?limit=500&view=summary`, `/admin/apps/templates`, and `/admin/apps/auth/templates`.
 - Published-app analytics coverage verifies bootstrap view capture, 30-minute visit dedupe, authenticated bootstrap attribution, and `/admin/apps/stats` aggregation.
 - App creation provisions the shared draft workspace, materializes the first durable `app_init` draft revision, and fails when initial watcher-owned materialization fails.
@@ -33,6 +33,9 @@ Last Updated: 2026-04-16
 - Public preview stream uses token auth and persists run-native thread records.
 - Public preview stream now attaches to persisted worker-owned run events instead of executing in the request path.
 - Runtime bootstrap contract includes `request_contract_version=thread.v1`.
+- Preview proxy cookie contract now uses `published_app_public_preview_token`.
+- Preview HTML asset rewrites now canonicalize to absolute preview asset paths under `/public/apps/preview/revisions/{revision_id}/assets/...`.
+- App-create test setup uses the shared create/materialize stub instead of booting a real draft-dev sandbox.
 - Agent integration contract payload is exposed and validated.
 - Agent integration contract exposes `frontend_requirements` for frontend-dependent tools such as the new built-in `UI Blocks` tool, including installer command metadata.
 - Legacy publish helper now routes publish through selected version flow.
@@ -65,8 +68,21 @@ Last Updated: 2026-04-16
 - Command: `TEST_USE_REAL_DB=0 PYTHONPATH=backend python3 -m pytest -q backend/tests/embedded_agent_runtime/test_embedded_agent_runtime_api.py backend/tests/published_apps/test_public_chat_scope_and_persistence.py backend/tests/published_apps_external_runtime/test_external_runtime_api.py backend/tests/published_apps_host_runtime/test_host_runtime_same_url_auth.py`
 - Date: 2026-04-09
 - Result: PASS (`26 passed`, detached stream regression suite)
+- Command: `SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest backend/tests/published_apps/test_admin_apps_crud.py backend/tests/published_apps/test_public_app_resolve_and_config.py backend/tests/published_apps_external_runtime/test_external_runtime_api.py backend/tests/published_apps_host_runtime/test_host_runtime_same_url_auth.py backend/tests/workos_native_auth/test_auth_session_effective_scopes.py backend/tests/settings_api_keys/test_settings_api_keys_api.py`
+- Date: 2026-04-20 23:17 EEST
+- Result: PASS (`41 passed`)
+
+- Command: `cd backend && SECRET_KEY=explicit-test-secret .venv/bin/python -m pytest tests/published_apps/test_public_app_resolve_and_config.py tests/published_apps_host_runtime/test_host_runtime_same_url_auth.py tests/published_apps/test_admin_apps_crud.py`
+- Date: 2026-04-21 Asia/Hebron
+- Result: PASS (`30 passed`). Published-app host/runtime/export contracts now use `public_id` instead of slug-era identity throughout the touched paths.
 
 ## Known gaps or follow-ups
 - Add explicit regression tests for removed `/admin/apps/{app_id}/publish` route in this folder (currently covered under `backend/tests/app_versions/`).
 - Add expanded negative tests for cross-app preview token replay and long-lived preview auth refresh behavior.
 - Run the new `real_db` apps-page fetch probe regularly against the local tenant to catch latency regressions on real data volume.
+
+## 2026-04-21 tenant-to-organization validation
+- Command: `cd backend && SECRET_KEY=explicit-test-secret .venv/bin/python -m pytest tests/published_apps/test_admin_apps_crud.py tests/published_apps/test_public_app_resolve_and_config.py tests/published_apps_host_runtime/test_host_runtime_same_url_auth.py -q`
+- Result: PASS (`34 passed`)
+- Command: `cd backend && SECRET_KEY=explicit-test-secret .venv/bin/python -m pytest tests/admin_monitoring/test_admin_monitoring_api.py tests/graph_mutation_agents/test_agent_graph_mutation_routes.py tests/platform_architect_runtime/test_native_platform_tools.py tests/organization_bootstrap/test_default_agent_profiles.py tests/settings_api_keys/test_settings_api_keys_api.py tests/workos_native_auth/test_auth_session_effective_scopes.py tests/security_route_enforcement/test_route_scope_enforcement.py tests/published_apps/test_admin_apps_crud.py tests/published_apps/test_public_app_resolve_and_config.py tests/published_apps_host_runtime/test_host_runtime_same_url_auth.py -q`
+- Result: PASS (`52 passed`)

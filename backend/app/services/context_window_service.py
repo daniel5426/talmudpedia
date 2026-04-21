@@ -130,7 +130,7 @@ class ContextWindowService:
     async def build_pre_run_window(
         self,
         *,
-        tenant_id: UUID | None,
+        organization_id: UUID | None,
         model_id: str | None,
         resolved_provider: str | None = None,
         resolved_provider_model_id: str | None = None,
@@ -143,7 +143,7 @@ class ContextWindowService:
             runtime_context=runtime_context,
         )
         max_tokens, max_tokens_source = await ModelLimitsService(self.db).resolve_input_limit(
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             model_id=model_id,
             resolved_provider=resolved_provider,
             resolved_provider_model_id=resolved_provider_model_id,

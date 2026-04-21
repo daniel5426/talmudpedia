@@ -18,7 +18,6 @@ import {
 type UseBuilderPreviewTransportOptions = {
   sessionId: string | null;
   previewBaseUrl: string | null;
-  previewAuthToken: string | null;
   previewRoute: string;
   previewTransportGeneration: number | null;
   livePreviewStatus: "booting" | "building" | "ready" | "failed_keep_last_good" | "failed_no_build" | "recovering" | null;
@@ -52,7 +51,6 @@ type DocumentAction = {
   type: "sync";
   transportKey: string | null;
   baseDocumentUrl: string | null;
-  previewAuthToken: string | null;
   hasUsableFrame: boolean;
 };
 
@@ -73,7 +71,7 @@ function documentStateReducer(state: DocumentState, action: DocumentAction): Doc
   if (action.type !== "sync") {
     return state;
   }
-  const { transportKey, baseDocumentUrl, previewAuthToken, hasUsableFrame } = action;
+  const { transportKey, baseDocumentUrl, hasUsableFrame } = action;
   if (!transportKey || !baseDocumentUrl) {
     if (!state.transportKey && !state.documentUrl) {
       return state;
@@ -85,7 +83,7 @@ function documentStateReducer(state: DocumentState, action: DocumentAction): Doc
   }
   const nextDocumentUrl = hasUsableFrame
     ? baseDocumentUrl
-    : appendPreviewRuntimeToken(baseDocumentUrl, previewAuthToken);
+    : baseDocumentUrl;
   if (state.transportKey !== transportKey) {
     return {
       transportKey,
@@ -108,7 +106,6 @@ function documentStateReducer(state: DocumentState, action: DocumentAction): Doc
 export function useBuilderPreviewTransport({
   sessionId,
   previewBaseUrl,
-  previewAuthToken,
   previewRoute,
   previewTransportGeneration,
   livePreviewStatus,
@@ -161,10 +158,9 @@ export function useBuilderPreviewTransport({
       type: "sync",
       transportKey,
       baseDocumentUrl,
-      previewAuthToken: previewAuthToken || null,
       hasUsableFrame,
     });
-  }, [baseDocumentUrl, hasUsableFrame, previewAuthToken, transportKey]);
+  }, [baseDocumentUrl, hasUsableFrame, transportKey]);
 
   const documentUrl = documentState.documentUrl;
 
@@ -248,7 +244,7 @@ export function useBuilderPreviewTransport({
       lifecyclePhase,
       status,
       hasUsableFrame,
-      previewAuthTokenPresent: Boolean(String(previewAuthToken || "").trim()),
+      previewAuthTokenPresent: false,
       lastError: lastError || null,
     };
     const serialized = JSON.stringify(snapshot);
@@ -267,8 +263,7 @@ export function useBuilderPreviewTransport({
     livePreviewError,
     livePreviewLastSuccessfulBuildId,
     livePreviewStatus,
-    previewAuthToken,
-    previewBaseUrl,
+      previewBaseUrl,
     previewRoute,
     sessionId,
     status,

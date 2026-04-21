@@ -30,7 +30,7 @@ export const DEFAULT_PYTHON_CODE = `async def execute(inputs, config, context):
     return {
         "items": items,
         "config": config,
-        "tenant_id": context.get("tenant_id"),
+        "organization_id": context.get("organization_id"),
     }
 `;
 
@@ -39,7 +39,7 @@ export const DEFAULT_JAVASCRIPT_CODE = `export async function execute(inputs, co
   return {
     items,
     config,
-    tenant_id: context?.tenant_id ?? null,
+    organization_id: context?.organization_id ?? null,
   };
 }
 `;

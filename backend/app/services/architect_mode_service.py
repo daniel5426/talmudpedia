@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.scope_registry import ALL_SCOPES, is_platform_admin_role, legacy_permission_to_scope
-from app.db.postgres.models.identity import OrgMembership, OrgRole, User
+from app.db.postgres.models.identity import User
 from app.db.postgres.models.rbac import RoleAssignment, RolePermission
 
 
@@ -67,24 +67,24 @@ class ArchitectModeService:
     async def resolve_effective_mode(
         self,
         *,
-        tenant_id: UUID,
+        organization_id: UUID,
         user_id: UUID | None,
         requested_mode: str | None,
     ) -> ArchitectMode:
         requested = self.parse_mode(requested_mode)
-        max_mode = await self.resolve_user_max_mode(tenant_id=tenant_id, user_id=user_id)
+        max_mode = await self.resolve_user_max_mode(organization_id=organization_id, user_id=user_id)
         return requested if _MODE_ORDER[requested] <= _MODE_ORDER[max_mode] else max_mode
 
     async def resolve_user_max_mode(
         self,
         *,
-        tenant_id: UUID,
+        organization_id: UUID,
         user_id: UUID | None,
     ) -> ArchitectMode:
         if user_id is None:
             raise ArchitectModeError("platform-architect requires an initiating user")
 
-        scopes = await self._resolve_user_scopes(tenant_id=tenant_id, user_id=user_id)
+        scopes = await self._resolve_user_scopes(organization_id=organization_id, user_id=user_id)
         if "*" in scopes:
             return ArchitectMode.FULL_ACCESS
         if scopes.intersection({"roles.write", "roles.assign", "tenants.write", "api_keys.write", "credentials.write"}):
@@ -106,7 +106,7 @@ class ArchitectModeService:
     def parse_mode(raw_mode: str | None) -> ArchitectMode:
         raw = str(raw_mode or "").strip().lower()
         if not raw:
-            raise ArchitectModeError("platform-architect requires context.architect_mode")
+            return ArchitectMode.DEFAULT
         try:
             return ArchitectMode(raw)
         except ValueError as exc:
@@ -120,7 +120,7 @@ class ArchitectModeService:
             return list(DEFAULT_ARCHITECT_SCOPES)
         return list(FULL_ACCESS_ARCHITECT_SCOPES)
 
-    async def _resolve_user_scopes(self, *, tenant_id: UUID, user_id: UUID) -> set[str]:
+    async def _resolve_user_scopes(self, *, organization_id: UUID, user_id: UUID) -> set[str]:
         user = await self.db.get(User, user_id)
         if user is None:
             return set()
@@ -129,7 +129,7 @@ class ArchitectModeService:
 
         assignment_res = await self.db.execute(
             select(RoleAssignment).where(
-                RoleAssignment.tenant_id == tenant_id,
+                RoleAssignment.organization_id == organization_id,
                 RoleAssignment.user_id == user_id,
             )
         )
@@ -151,20 +151,4 @@ class ArchitectModeService:
                 )
                 if mapped:
                     scopes.add(mapped)
-        if scopes:
-            return scopes
-
-        membership_res = await self.db.execute(
-            select(OrgMembership).where(
-                OrgMembership.tenant_id == tenant_id,
-                OrgMembership.user_id == user_id,
-            )
-        )
-        membership = membership_res.scalar_one_or_none()
-        if membership is None:
-            return set()
-        role_value = membership.role.value if hasattr(membership.role, "value") else str(membership.role)
-        role_value = role_value.lower()
-        if role_value in {OrgRole.owner.value, OrgRole.admin.value}:
-            return set(DEFAULT_ARCHITECT_SCOPES)
-        return set(READ_ONLY_ARCHITECT_SCOPES)
+        return scopes

@@ -11,13 +11,13 @@ class PipelineInputStorage:
     def __init__(self, base_path: Optional[str] = None):
         self._base_path = Path(base_path or "/tmp/talmudpedia/pipeline_inputs").resolve()
 
-    def _ensure_tenant_dir(self, tenant_id: UUID) -> Path:
-        tenant_dir = self._base_path / str(tenant_id)
-        tenant_dir.mkdir(parents=True, exist_ok=True)
-        return tenant_dir
+    def _ensure_organization_dir(self, organization_id: UUID) -> Path:
+        organization_dir = self._base_path / str(organization_id)
+        organization_dir.mkdir(parents=True, exist_ok=True)
+        return organization_dir
 
-    def _metadata_path(self, tenant_dir: Path, upload_id: str) -> Path:
-        return tenant_dir / f"{upload_id}.json"
+    def _metadata_path(self, organization_dir: Path, upload_id: str) -> Path:
+        return organization_dir / f"{upload_id}.json"
 
     def is_managed_path(self, path: str) -> bool:
         resolved = Path(path).resolve()
@@ -30,23 +30,23 @@ class PipelineInputStorage:
     def path_exists(self, path: str) -> bool:
         return Path(path).exists()
 
-    async def save_upload(self, tenant_id: UUID, file: UploadFile) -> Dict[str, Any]:
-        tenant_dir = self._ensure_tenant_dir(tenant_id)
+    async def save_upload(self, organization_id: UUID, file: UploadFile) -> Dict[str, Any]:
+        organization_dir = self._ensure_organization_dir(organization_id)
         filename = file.filename or "upload"
         extension = Path(filename).suffix
         upload_id = uuid4().hex
-        output_path = tenant_dir / f"{upload_id}{extension}"
+        output_path = organization_dir / f"{upload_id}{extension}"
         content = await file.read()
         output_path.write_bytes(content)
         metadata = {
             "upload_id": upload_id,
-            "tenant_id": str(tenant_id),
+            "organization_id": str(organization_id),
             "filename": filename,
             "path": str(output_path),
             "created_at": datetime.now(timezone.utc).isoformat(),
             "job_id": None,
         }
-        self._metadata_path(tenant_dir, upload_id).write_text(json.dumps(metadata))
+        self._metadata_path(organization_dir, upload_id).write_text(json.dumps(metadata))
         return metadata
 
     def cleanup_expired(self, ttl_seconds: int) -> int:
@@ -76,9 +76,9 @@ class PipelineInputStorage:
                 continue
         return removed
 
-    def assign_job(self, tenant_id: UUID, upload_id: str, job_id: UUID) -> bool:
-        tenant_dir = self._base_path / str(tenant_id)
-        metadata_path = self._metadata_path(tenant_dir, upload_id)
+    def assign_job(self, organization_id: UUID, upload_id: str, job_id: UUID) -> bool:
+        organization_dir = self._base_path / str(organization_id)
+        metadata_path = self._metadata_path(organization_dir, upload_id)
         if not metadata_path.exists():
             return False
         try:

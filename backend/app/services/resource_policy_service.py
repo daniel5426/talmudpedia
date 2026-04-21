@@ -36,7 +36,7 @@ class ResourcePolicyAccessDenied(PermissionError):
 @dataclass
 class ResourcePolicyPrincipalRef:
     principal_type: ResourcePolicyPrincipalType
-    tenant_id: UUID
+    organization_id: UUID
     user_id: UUID | None = None
     published_app_account_id: UUID | None = None
     embedded_agent_id: UUID | None = None
@@ -45,7 +45,7 @@ class ResourcePolicyPrincipalRef:
     def to_payload(self) -> dict[str, Any]:
         return {
             "principal_type": self.principal_type.value,
-            "tenant_id": str(self.tenant_id),
+            "organization_id": str(self.organization_id),
             "user_id": str(self.user_id) if self.user_id else None,
             "published_app_account_id": str(self.published_app_account_id) if self.published_app_account_id else None,
             "embedded_agent_id": str(self.embedded_agent_id) if self.embedded_agent_id else None,
@@ -57,12 +57,12 @@ class ResourcePolicyPrincipalRef:
         if not isinstance(payload, dict):
             return None
         principal_type = payload.get("principal_type")
-        tenant_id = payload.get("tenant_id")
-        if not principal_type or not tenant_id:
+        organization_id= payload.get("organization_id")
+        if not principal_type or not organization_id:
             return None
         return cls(
             principal_type=ResourcePolicyPrincipalType(str(principal_type)),
-            tenant_id=UUID(str(tenant_id)),
+            organization_id=UUID(str(organization_id)),
             user_id=UUID(str(payload["user_id"])) if payload.get("user_id") else None,
             published_app_account_id=UUID(str(payload["published_app_account_id"]))
             if payload.get("published_app_account_id")
@@ -167,7 +167,7 @@ class ResourcePolicyService:
     async def resolve_execution_snapshot(
         self,
         *,
-        tenant_id: UUID,
+        organization_id: UUID,
         agent_id: UUID,
         user_id: UUID | None = None,
         published_app_id: UUID | None = None,
@@ -175,7 +175,7 @@ class ResourcePolicyService:
         external_user_id: str | None = None,
     ) -> ResourcePolicySnapshot | None:
         principal = await self._resolve_principal(
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             agent_id=agent_id,
             user_id=user_id,
             published_app_account_id=published_app_account_id,
@@ -206,8 +206,8 @@ class ResourcePolicyService:
         if not snapshot.can_use(ResourcePolicyResourceType.AGENT, agent_id):
             raise ResourcePolicyAccessDenied(resource_type=ResourcePolicyResourceType.AGENT.value, resource_id=str(agent_id))
 
-    async def validate_policy_set_graph(self, *, tenant_id: UUID, policy_set_id: UUID) -> None:
-        await self._expand_policy_sets(tenant_id=tenant_id, direct_policy_set_id=policy_set_id)
+    async def validate_policy_set_graph(self, *, organization_id: UUID, policy_set_id: UUID) -> None:
+        await self._expand_policy_sets(organization_id=organization_id, direct_policy_set_id=policy_set_id)
 
     async def validate_policy_rule(
         self,
@@ -232,7 +232,7 @@ class ResourcePolicyService:
     async def _resolve_principal(
         self,
         *,
-        tenant_id: UUID,
+        organization_id: UUID,
         agent_id: UUID,
         user_id: UUID | None,
         published_app_account_id: UUID | None,
@@ -241,30 +241,30 @@ class ResourcePolicyService:
         if published_app_account_id is not None:
             return ResourcePolicyPrincipalRef(
                 principal_type=ResourcePolicyPrincipalType.PUBLISHED_APP_ACCOUNT,
-                tenant_id=tenant_id,
+                organization_id=organization_id,
                 published_app_account_id=published_app_account_id,
             )
         if external_user_id:
             return ResourcePolicyPrincipalRef(
                 principal_type=ResourcePolicyPrincipalType.EMBEDDED_EXTERNAL_USER,
-                tenant_id=tenant_id,
+                organization_id=organization_id,
                 embedded_agent_id=agent_id,
                 external_user_id=str(external_user_id),
             )
         if user_id is not None:
             return ResourcePolicyPrincipalRef(
-                principal_type=ResourcePolicyPrincipalType.TENANT_USER,
-                tenant_id=tenant_id,
+                principal_type=ResourcePolicyPrincipalType.ORGANIZATION_USER,
+                organization_id=organization_id,
                 user_id=user_id,
             )
         return None
 
     async def _resolve_direct_policy_set_id(self, *, principal: ResourcePolicyPrincipalRef) -> UUID | None:
         stmt = select(ResourcePolicyAssignment).where(
-            ResourcePolicyAssignment.tenant_id == principal.tenant_id,
+            ResourcePolicyAssignment.organization_id == principal.organization_id,
             ResourcePolicyAssignment.principal_type == principal.principal_type,
         )
-        if principal.principal_type == ResourcePolicyPrincipalType.TENANT_USER:
+        if principal.principal_type == ResourcePolicyPrincipalType.ORGANIZATION_USER:
             stmt = stmt.where(ResourcePolicyAssignment.user_id == principal.user_id)
         elif principal.principal_type == ResourcePolicyPrincipalType.PUBLISHED_APP_ACCOUNT:
             stmt = stmt.where(ResourcePolicyAssignment.published_app_account_id == principal.published_app_account_id)
@@ -300,7 +300,7 @@ class ResourcePolicyService:
         principal: ResourcePolicyPrincipalRef,
         direct_policy_set_id: UUID,
     ) -> ResourcePolicySnapshot:
-        policy_sets = await self._expand_policy_sets(tenant_id=principal.tenant_id, direct_policy_set_id=direct_policy_set_id)
+        policy_sets = await self._expand_policy_sets(organization_id=principal.organization_id, direct_policy_set_id=direct_policy_set_id)
         policy_set_ids = [str(item.id) for item in policy_sets]
         rules_result = await self.db.execute(
             select(ResourcePolicyRule).where(ResourcePolicyRule.policy_set_id.in_([item.id for item in policy_sets]))
@@ -344,7 +344,7 @@ class ResourcePolicyService:
     async def _expand_policy_sets(
         self,
         *,
-        tenant_id: UUID,
+        organization_id: UUID,
         direct_policy_set_id: UUID,
     ) -> list[ResourcePolicySet]:
         visited: set[UUID] = set()
@@ -359,7 +359,7 @@ class ResourcePolicyService:
 
             path.add(current_id)
             current = await self.db.get(ResourcePolicySet, current_id)
-            if current is None or current.tenant_id != tenant_id:
+            if current is None or current.organization_id != organization_id:
                 raise ResourcePolicyError("Resource policy set not found")
             ordered.append(current)
 

@@ -69,7 +69,7 @@ class PlatformArchitectWorkerRuntimeService:
             except Exception as exc:
                 raise ValueError(f"Invalid runtime context '{key}'") from exc
 
-        tenant_id = _required_uuid("tenant_id")
+        organization_id= _required_uuid("organization_id")
         user_id = _required_uuid("user_id")
         caller_run_id = _required_uuid("run_id")
 
@@ -78,7 +78,7 @@ class PlatformArchitectWorkerRuntimeService:
         if isinstance(requested_scopes, list):
             scope_subset = [str(item) for item in requested_scopes if isinstance(item, str) and item.strip()]
         return {
-            "tenant_id": tenant_id,
+            "organization_id": organization_id,
             "user_id": user_id,
             "caller_run_id": caller_run_id,
             "requested_scopes": scope_subset,
@@ -130,7 +130,7 @@ class PlatformArchitectWorkerRuntimeService:
     def _stable_idempotency_key(
         *,
         caller_run_id: UUID,
-        worker_agent_slug: str,
+        worker_agent_id: str,
         task: dict[str, Any],
         binding_ref: WorkerBindingRef | None,
         explicit_key: str | None,
@@ -141,7 +141,7 @@ class PlatformArchitectWorkerRuntimeService:
             return cleaned
         payload = {
             "caller_run_id": str(caller_run_id),
-            "worker_agent_slug": worker_agent_slug,
+            "worker_agent_id": worker_agent_id,
             "objective": str(task.get("objective") or ""),
             "binding_ref": binding_ref.as_dict() if binding_ref else None,
             "suffix": suffix,
@@ -205,12 +205,12 @@ class PlatformArchitectWorkerRuntimeService:
     async def _resolve_child_run(
         self,
         *,
-        tenant_id: UUID,
+        organization_id: UUID,
         caller_run_id: UUID,
         run_id: UUID,
     ) -> AgentRun:
         run = await self.db.get(AgentRun, run_id)
-        if run is None or run.tenant_id != tenant_id:
+        if run is None or run.organization_id != organization_id:
             raise ValueError("Run not found")
         if hasattr(self.db, "refresh"):
             await self.db.refresh(run)
@@ -292,7 +292,7 @@ class PlatformArchitectWorkerRuntimeService:
 
         task = input_context.get("architect_worker_task") if isinstance(input_context.get("architect_worker_task"), dict) else None
         prepared = await adapter.build_spawn_payload(
-            tenant_id=runtime_context["tenant_id"],
+            organization_id=runtime_context["organization_id"],
             user_id=runtime_context["user_id"],
             binding_ref=binding_ref,
             prompt=response.strip(),
@@ -302,15 +302,14 @@ class PlatformArchitectWorkerRuntimeService:
         continued_result = await self.kernel.spawn_run(
             caller_run_id=runtime_context["caller_run_id"],
             parent_node_id="architect_worker_respond",
-            target_agent_id=None,
-            target_agent_slug=str(prepared.get("worker_agent_slug") or "").strip() or None,
+            target_agent_id=UUID(str(prepared["worker_agent_id"])) if prepared.get("worker_agent_id") else None,
             mapped_input_payload=prepared.get("mapped_input_payload") if isinstance(prepared.get("mapped_input_payload"), dict) else {},
             failure_policy=None,
             timeout_s=None,
             scope_subset=self._default_scope_subset(runtime_context, None),
             idempotency_key=self._stable_idempotency_key(
                 caller_run_id=runtime_context["caller_run_id"],
-                worker_agent_slug=str(prepared.get("worker_agent_slug") or "").strip() or "artifact-coding-agent",
+                worker_agent_id=str(prepared.get("worker_agent_id") or "").strip() or "unknown-worker-agent",
                 task={"objective": response.strip()},
                 binding_ref=binding_ref,
                 explicit_key=None,
@@ -323,7 +322,7 @@ class PlatformArchitectWorkerRuntimeService:
         if continued_run is None:
             raise RuntimeError("Continued worker run was not created")
         await adapter.register_spawned_run(
-            tenant_id=runtime_context["tenant_id"],
+            organization_id=runtime_context["organization_id"],
             user_id=runtime_context["user_id"],
             binding_ref=binding_ref,
             run_id=continued_run.id,
@@ -375,7 +374,7 @@ class PlatformArchitectWorkerRuntimeService:
         replace_snapshot = bool(payload.get("replace_snapshot"))
         adapter = self.bindings.adapter_for_type(binding_type)
         return await adapter.prepare(
-            tenant_id=runtime_context["tenant_id"],
+            organization_id=runtime_context["organization_id"],
             user_id=runtime_context["user_id"],
             binding_payload=binding_payload,
             replace_snapshot=replace_snapshot,
@@ -388,7 +387,7 @@ class PlatformArchitectWorkerRuntimeService:
         reconcile_run_id = UUID(str(run_id_raw)) if run_id_raw else None
         adapter = self.bindings.adapter_for_ref(binding_ref)
         return await adapter.get_state(
-            tenant_id=runtime_context["tenant_id"],
+            organization_id=runtime_context["organization_id"],
             user_id=runtime_context["user_id"],
             binding_ref=binding_ref,
             reconcile_run_id=reconcile_run_id,
@@ -400,7 +399,7 @@ class PlatformArchitectWorkerRuntimeService:
         mode = str(payload.get("mode") or "auto").strip() or "auto"
         adapter = self.bindings.adapter_for_ref(binding_ref)
         return await adapter.persist_artifact(
-            tenant_id=runtime_context["tenant_id"],
+            organization_id=runtime_context["organization_id"],
             user_id=runtime_context["user_id"],
             binding_ref=binding_ref,
             mode=mode,
@@ -417,26 +416,25 @@ class PlatformArchitectWorkerRuntimeService:
         prompt = self._task_prompt(task)
         binding_ref = parse_binding_ref(payload.get("binding_ref")) if payload.get("binding_ref") is not None else None
 
-        worker_agent_slug = str(payload.get("worker_agent_slug") or "").strip()
+        worker_agent_id = str(payload.get("worker_agent_id") or "").strip()
         binding_context: dict[str, Any] = {}
         if binding_ref is not None:
             adapter = self.bindings.adapter_for_ref(binding_ref)
             binding_context = await adapter.build_spawn_payload(
-                tenant_id=runtime_context["tenant_id"],
+                organization_id=runtime_context["organization_id"],
                 user_id=runtime_context["user_id"],
                 binding_ref=binding_ref,
                 prompt=prompt,
                 prompt_role="user",
                 task=task,
             )
-            worker_agent_slug = worker_agent_slug or str(binding_context.get("worker_agent_slug") or "").strip()
-        if not worker_agent_slug:
-            raise ValueError("worker_agent_slug is required")
+            worker_agent_id = worker_agent_id or str(binding_context.get("worker_agent_id") or "").strip()
+        if not worker_agent_id:
+            raise ValueError("worker_agent_id is required")
         result = await self.kernel.spawn_run(
             caller_run_id=runtime_context["caller_run_id"],
             parent_node_id="architect_worker_spawn",
-            target_agent_id=None,
-            target_agent_slug=worker_agent_slug,
+            target_agent_id=UUID(worker_agent_id),
             mapped_input_payload=(
                 binding_context.get("mapped_input_payload")
                 if isinstance(binding_context.get("mapped_input_payload"), dict)
@@ -451,7 +449,7 @@ class PlatformArchitectWorkerRuntimeService:
             scope_subset=self._default_scope_subset(runtime_context, payload.get("scope_subset")),
             idempotency_key=self._stable_idempotency_key(
                 caller_run_id=runtime_context["caller_run_id"],
-                worker_agent_slug=worker_agent_slug,
+                worker_agent_id=worker_agent_id,
                 task=task,
                 binding_ref=binding_ref,
                 explicit_key=str(payload.get("idempotency_key") or "").strip() or None,
@@ -463,7 +461,7 @@ class PlatformArchitectWorkerRuntimeService:
         if binding_ref is not None:
             adapter = self.bindings.adapter_for_ref(binding_ref)
             await adapter.register_spawned_run(
-                tenant_id=runtime_context["tenant_id"],
+                organization_id=runtime_context["organization_id"],
                 user_id=runtime_context["user_id"],
                 binding_ref=binding_ref,
                 run_id=run_id,
@@ -474,7 +472,7 @@ class PlatformArchitectWorkerRuntimeService:
             "mode": "async",
             "run_id": str(run_id),
             "status": "queued",
-            "worker_agent_slug": worker_agent_slug,
+            "worker_agent_id": worker_agent_id,
             "binding_ref": binding_ref.as_dict() if binding_ref else None,
             "lineage": result.get("lineage"),
             "effective_scope_subset": result.get("effective_scope_subset"),
@@ -499,7 +497,7 @@ class PlatformArchitectWorkerRuntimeService:
             }
             prompt = self._task_prompt(task)
             binding_ref = parse_binding_ref(raw_target.get("binding_ref")) if raw_target.get("binding_ref") is not None else None
-            worker_agent_slug = str(raw_target.get("worker_agent_slug") or "").strip()
+            worker_agent_id = str(raw_target.get("worker_agent_id") or "").strip()
             binding_context: dict[str, Any] = {}
             if binding_ref is not None:
                 key = (binding_ref.binding_type, binding_ref.binding_id)
@@ -508,19 +506,19 @@ class PlatformArchitectWorkerRuntimeService:
                 seen_binding_refs.add(key)
                 adapter = self.bindings.adapter_for_ref(binding_ref)
                 binding_context = await adapter.build_spawn_payload(
-                    tenant_id=runtime_context["tenant_id"],
+                    organization_id=runtime_context["organization_id"],
                     user_id=runtime_context["user_id"],
                     binding_ref=binding_ref,
                     prompt=prompt,
                     prompt_role="user",
                     task=task,
                 )
-                worker_agent_slug = worker_agent_slug or str(binding_context.get("worker_agent_slug") or "").strip()
-            if not worker_agent_slug:
-                raise ValueError(f"targets[{index}].worker_agent_slug is required")
+                worker_agent_id = worker_agent_id or str(binding_context.get("worker_agent_id") or "").strip()
+            if not worker_agent_id:
+                raise ValueError(f"targets[{index}].worker_agent_id is required")
             prepared_targets.append(
                 {
-                    "worker_agent_slug": worker_agent_slug,
+                    "worker_agent_id": worker_agent_id,
                     "binding_ref": binding_ref,
                     "prompt": prompt,
                     "task": task,
@@ -542,7 +540,7 @@ class PlatformArchitectWorkerRuntimeService:
             parent_node_id="architect_worker_spawn_group",
             targets=[
                 {
-                    "target_agent_slug": target["worker_agent_slug"],
+                    "target_agent_id": target["worker_agent_id"],
                     "mapped_input_payload": target["mapped_input_payload"],
                     "thread_id": target.get("thread_id"),
                 }
@@ -556,7 +554,7 @@ class PlatformArchitectWorkerRuntimeService:
             idempotency_key_prefix=str(payload.get("idempotency_key_prefix") or "").strip()
             or self._stable_idempotency_key(
                 caller_run_id=runtime_context["caller_run_id"],
-                worker_agent_slug="group",
+                worker_agent_id="group",
                 task={"objective": "group"},
                 binding_ref=None,
                 explicit_key=None,
@@ -568,7 +566,7 @@ class PlatformArchitectWorkerRuntimeService:
                 continue
             adapter = self.bindings.adapter_for_ref(target["binding_ref"])
             await adapter.register_spawned_run(
-                tenant_id=runtime_context["tenant_id"],
+                organization_id=runtime_context["organization_id"],
                 user_id=runtime_context["user_id"],
                 binding_ref=target["binding_ref"],
                 run_id=UUID(str(run_id_raw)),
@@ -590,7 +588,7 @@ class PlatformArchitectWorkerRuntimeService:
         if run_id_raw in (None, ""):
             raise ValueError("run_id is required")
         run = await self._resolve_child_run(
-            tenant_id=runtime_context["tenant_id"],
+            organization_id=runtime_context["organization_id"],
             caller_run_id=runtime_context["caller_run_id"],
             run_id=UUID(str(run_id_raw)),
         )
@@ -609,7 +607,7 @@ class PlatformArchitectWorkerRuntimeService:
 
         while True:
             run = await self._resolve_child_run(
-                tenant_id=runtime_context["tenant_id"],
+                organization_id=runtime_context["organization_id"],
                 caller_run_id=runtime_context["caller_run_id"],
                 run_id=UUID(str(run_id_raw)),
             )
@@ -632,7 +630,7 @@ class PlatformArchitectWorkerRuntimeService:
             raise ValueError("response is required")
 
         run = await self._resolve_child_run(
-            tenant_id=runtime_context["tenant_id"],
+            organization_id=runtime_context["organization_id"],
             caller_run_id=runtime_context["caller_run_id"],
             run_id=UUID(str(run_id_raw)),
         )

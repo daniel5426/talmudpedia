@@ -42,7 +42,7 @@ async def _create_builder_app(client, headers: dict[str, str], agent_id: str, *,
     return str(create_resp.json()["id"])
 
 
-async def _seed_second_owner(db_session, *, tenant_id, org_unit_id) -> User:
+async def _seed_second_owner(db_session, *, organization_id, org_unit_id) -> User:
     user = User(
         email=f"sprite-owner-{uuid4().hex[:8]}@example.com",
         hashed_password=get_password_hash("secret123"),
@@ -52,7 +52,7 @@ async def _seed_second_owner(db_session, *, tenant_id, org_unit_id) -> User:
     await db_session.flush()
     db_session.add(
         OrgMembership(
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             user_id=user.id,
             org_unit_id=org_unit_id,
             role=OrgRole.owner,
@@ -98,7 +98,7 @@ async def test_sprite_live_builder_preview_and_recovery(client, db_session, monk
     _sprite_api_token()
 
     tenant, user_a, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
-    user_b = await _seed_second_owner(db_session, tenant_id=tenant.id, org_unit_id=org_unit.id)
+    user_b = await _seed_second_owner(db_session, organization_id=tenant.id, org_unit_id=org_unit.id)
     headers_a = admin_headers(str(user_a.id), str(tenant.id), str(org_unit.id))
     headers_b = admin_headers(str(user_b.id), str(tenant.id), str(org_unit.id))
 

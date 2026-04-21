@@ -152,7 +152,7 @@ export function AgentCard({ agent, metrics, onOpen, onRun, onDelete, onPlaygroun
                     {agent.name}
                 </h3>
                 <p className="text-xs text-muted-foreground font-mono mt-0.5 truncate bg-muted/50 inline-block px-1.5 py-0.5 rounded">
-                    {agent.slug}
+                    {agent.id.slice(0, 8)}
                 </p>
                 <p className="text-sm text-muted-foreground mt-3 line-clamp-2 leading-relaxed">
                     {agent.description || "No description provided."}

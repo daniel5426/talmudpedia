@@ -83,10 +83,10 @@ describe("Apps admin page", () => {
     (publishedAppsService.list as jest.Mock).mockResolvedValue([
       {
         id: "app-1",
-        tenant_id: "tenant-1",
+        organization_id: "organization-1",
         agent_id: "agent-1",
         name: "Support",
-        slug: "support",
+        public_id: "support-public",
         status: "draft",
         visibility: "public",
         auth_enabled: true,
@@ -98,12 +98,11 @@ describe("Apps admin page", () => {
       },
     ]);
     (agentService.listAgents as jest.Mock).mockResolvedValue({
-      agents: [
+      items: [
         {
           id: "agent-1",
-          tenant_id: "tenant-1",
+          organization_id: "organization-1",
           name: "Published Agent",
-          slug: "published-agent",
           status: "published",
           version: 1,
           created_at: new Date().toISOString(),
@@ -111,6 +110,10 @@ describe("Apps admin page", () => {
         },
       ],
       total: 1,
+      has_more: false,
+      skip: 0,
+      limit: 100,
+      view: "summary",
     });
     (publishedAppsService.listTemplates as jest.Mock).mockResolvedValue([
       {
@@ -161,10 +164,10 @@ describe("Apps admin page", () => {
     ]);
     (publishedAppsService.create as jest.Mock).mockResolvedValue({
       id: "app-new",
-      tenant_id: "tenant-1",
+      organization_id: "organization-1",
       agent_id: "agent-1",
       name: "New App",
-      slug: "new-app",
+      public_id: "public-new-app",
       status: "draft",
       visibility: "public",
       template_key: "chat-neon",
@@ -226,7 +229,14 @@ describe("Apps admin page", () => {
   });
 
   it("renders the apps list before create resources finish loading", async () => {
-    const agentsDeferred = deferred<{ agents: Array<Record<string, unknown>>; total: number }>();
+    const agentsDeferred = deferred<{
+      items: Array<Record<string, unknown>>;
+      total: number;
+      has_more: boolean;
+      skip: number;
+      limit: number;
+      view: string;
+    }>();
     const templatesDeferred = deferred<
       Array<{
         key: string;
@@ -262,12 +272,11 @@ describe("Apps admin page", () => {
     expect(screen.getByRole("button", { name: "Create App" })).toBeDisabled();
 
     agentsDeferred.resolve({
-      agents: [
+      items: [
         {
           id: "agent-1",
-          tenant_id: "tenant-1",
+          organization_id: "organization-1",
           name: "Published Agent",
-          slug: "published-agent",
           status: "published",
           version: 1,
           created_at: new Date().toISOString(),
@@ -275,6 +284,10 @@ describe("Apps admin page", () => {
         },
       ],
       total: 1,
+      has_more: false,
+      skip: 0,
+      limit: 100,
+      view: "summary",
     });
     templatesDeferred.resolve([
       {
@@ -336,7 +349,9 @@ describe("Apps admin page", () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText("no stats yet")).toBeInTheDocument();
+      expect(screen.queryByText("visits")).not.toBeInTheDocument();
+      expect(screen.queryByText("runs")).not.toBeInTheDocument();
+      expect(screen.queryByText("tok")).not.toBeInTheDocument();
     });
   });
 
@@ -348,7 +363,9 @@ describe("Apps admin page", () => {
     expect(await screen.findByText("Support")).toBeInTheDocument();
 
     await waitFor(() => {
-      expect(screen.getByText("no stats yet")).toBeInTheDocument();
+      expect(screen.queryByText("visits")).not.toBeInTheDocument();
+      expect(screen.queryByText("runs")).not.toBeInTheDocument();
+      expect(screen.queryByText("tok")).not.toBeInTheDocument();
     });
   });
 

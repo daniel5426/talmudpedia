@@ -27,7 +27,7 @@ class LangGraphAdapter(RuntimeAdapter):
         workflow = StateGraph(AgentState)
 
         for node in graph_ir.nodes:
-            node_fn = build_node_fn(node, tenant_id=self.tenant_id, db=self.db)
+            node_fn = build_node_fn(node, organization_id=self.organization_id, db=self.db)
             workflow.add_node(node.id, node_fn)
 
         conditional_nodes = set(graph_ir.routing_maps.keys())
@@ -159,7 +159,7 @@ class LangGraphAdapter(RuntimeAdapter):
             "spawn_key": config.get("spawn_key"),
             "orchestration_group_id": config.get("orchestration_group_id"),
             "initiator_user_id": config.get("initiator_user_id"),
-            "tenant_id": config.get("tenant_id"),
+            "organization_id": config.get("organization_id"),
             "user_id": config.get("user_id"),
             "auth_token": config.get("auth_token"),
             "architect_mode": config.get("architect_mode"),

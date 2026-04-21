@@ -10,8 +10,8 @@ from .shared import control_client, request_options
 
 _CONTROL_PLANE_META_KEYS = {
     "action",
-    "tool_slug",
-    "tenant_id",
+    "builtin_key",
+    "organization_id",
     "idempotency_key",
     "request_metadata",
     "validate_only",
@@ -118,7 +118,7 @@ def operators_catalog(
 ) -> Tuple[Optional[Any], List[Dict[str, Any]]]:
     try:
         sdk_client = control_client_factory(client)
-        response = sdk_client.rag.get_operator_catalog(tenant_slug=payload.get("tenant_slug"))
+        response = sdk_client.rag.get_operator_catalog(organization_id=payload.get("organization_id"))
         data = response.get("data")
         operators: list[dict[str, Any]] = []
         if isinstance(data, dict):
@@ -159,7 +159,7 @@ def operators_schema(
         sdk_client = control_client_factory(client)
         response = sdk_client.rag.get_operator_schemas(
             operator_ids,
-            tenant_slug=payload.get("tenant_slug"),
+            organization_id=payload.get("organization_id"),
         )
         return response.get("data"), []
     except ControlPlaneSDKError as exc:
@@ -177,7 +177,7 @@ def list_pipelines(
     try:
         sdk_client = control_client_factory(client)
         response = sdk_client.rag.list_visual_pipelines(
-            tenant_slug=payload.get("tenant_slug"),
+            organization_id=payload.get("organization_id"),
             skip=int(payload.get("skip", 0) or 0),
             limit=int(payload.get("limit", 20) or 20),
             view=str(payload.get("view") or "summary"),
@@ -198,7 +198,7 @@ def create_or_update_pipeline(
     request_options_builder=request_options,
 ) -> Tuple[Optional[Any], List[Dict[str, Any]]]:
     pipeline_id = payload.get("pipeline_id") or payload.get("id")
-    tenant_slug = payload.get("tenant_slug")
+    organization_id = payload.get("organization_id")
 
     if dry_run:
         skipped: Dict[str, Any] = {"status": "skipped", "dry_run": True}
@@ -216,14 +216,14 @@ def create_or_update_pipeline(
             response = sdk_client.rag.update_visual_pipeline(
                 str(pipeline_id),
                 patch_payload,
-                tenant_slug=tenant_slug,
+                organization_id=organization_id,
                 options=request_options_builder(payload=payload, dry_run=False),
             )
         else:
             request_payload = _normalize_visual_pipeline_payload(payload)
             response = sdk_client.rag.create_visual_pipeline(
                 request_payload,
-                tenant_slug=tenant_slug,
+                organization_id=organization_id,
                 options=request_options_builder(payload=payload, dry_run=False),
             )
         return response.get("data"), []
@@ -242,14 +242,14 @@ def create_visual_pipeline(
     request_options_builder=request_options,
 ) -> Tuple[Optional[Any], List[Dict[str, Any]]]:
     if dry_run:
-        return {"status": "skipped", "dry_run": True, "slug": payload.get("slug")}, []
+        return {"status": "skipped", "dry_run": True, "name": payload.get("name")}, []
 
     try:
         request_payload = _normalize_visual_pipeline_payload(payload)
         sdk_client = control_client_factory(client)
         response = sdk_client.rag.create_visual_pipeline(
             request_payload,
-            tenant_slug=payload.get("tenant_slug"),
+            organization_id=payload.get("organization_id"),
             options=request_options_builder(payload=payload, dry_run=False),
         )
         return response.get("data"), []
@@ -287,7 +287,7 @@ def create_pipeline_shell(
     description = payload.get("description")
     if isinstance(description, str) and description.strip():
         request_payload["description"] = description.strip()
-    tenant_slug = payload.get("tenant_slug")
+    organization_id = payload.get("organization_id")
 
     if dry_run:
         return {"status": "skipped", "dry_run": True, "name": name, "pipeline_type": pipeline_type}, []
@@ -296,7 +296,7 @@ def create_pipeline_shell(
         sdk_client = control_client_factory(client)
         response = sdk_client.rag.create_visual_pipeline(
             request_payload,
-            tenant_slug=tenant_slug,
+            organization_id=organization_id,
             options=request_options_builder(payload=payload, dry_run=False),
         )
         return response.get("data"), []
@@ -330,7 +330,7 @@ def update_visual_pipeline(
         response = sdk_client.rag.update_visual_pipeline(
             str(pipeline_id),
             patch_payload,
-            tenant_slug=payload.get("tenant_slug"),
+            organization_id=payload.get("organization_id"),
             options=request_options_builder(payload=payload, dry_run=False),
         )
         return response.get("data"), []
@@ -351,7 +351,7 @@ def graph_get(
         return None, [{"error": "missing_fields", "fields": ["pipeline_id"]}]
     try:
         sdk_client = control_client_factory(client)
-        response = sdk_client.rag.get_pipeline_graph(str(pipeline_id), tenant_slug=payload.get("tenant_slug"))
+        response = sdk_client.rag.get_pipeline_graph(str(pipeline_id), organization_id=payload.get("organization_id"))
         return response.get("data"), []
     except ControlPlaneSDKError as exc:
         return None, [_sdk_error_payload("get_pipeline_graph_failed", exc, pipeline_id=pipeline_id)]
@@ -374,7 +374,7 @@ def graph_validate_patch(
         response = sdk_client.rag.validate_graph_patch(
             str(pipeline_id),
             operations,
-            tenant_slug=payload.get("tenant_slug"),
+            organization_id=payload.get("organization_id"),
         )
         return response.get("data"), []
     except ControlPlaneSDKError as exc:
@@ -402,7 +402,7 @@ def graph_apply_patch(
         response = sdk_client.rag.apply_graph_patch(
             str(pipeline_id),
             operations,
-            tenant_slug=payload.get("tenant_slug"),
+            organization_id=payload.get("organization_id"),
             options=request_options_builder(payload=payload, dry_run=False),
         )
         return response.get("data"), []
@@ -448,7 +448,7 @@ def graph_attach_knowledge_store_to_node(
             str(pipeline_id),
             node_id=str(node_id),
             knowledge_store_id=str(knowledge_store_id),
-            tenant_slug=payload.get("tenant_slug"),
+            organization_id=payload.get("organization_id"),
             options=request_options_builder(payload=payload, dry_run=False),
         )
         return response.get("data"), []
@@ -489,7 +489,7 @@ def graph_set_pipeline_node_config(
             node_id=str(node_id),
             path=str(path),
             value=payload.get("value"),
-            tenant_slug=payload.get("tenant_slug"),
+            organization_id=payload.get("organization_id"),
             options=request_options_builder(payload=payload, dry_run=False),
         )
         return response.get("data"), []
@@ -518,7 +518,7 @@ def compile_pipeline(
         sdk_client = control_client_factory(client)
         response = sdk_client.rag.compile_visual_pipeline(
             str(pipeline_id),
-            tenant_slug=payload.get("tenant_slug"),
+            organization_id=payload.get("organization_id"),
             options=request_options_builder(payload=payload, dry_run=False),
         )
         return response.get("data"), []
@@ -554,14 +554,14 @@ def create_job(
     request_options_builder=request_options,
 ) -> Tuple[Optional[Any], List[Dict[str, Any]]]:
     executable_pipeline_id = payload.get("executable_pipeline_id")
-    tenant_slug = payload.get("tenant_slug")
+    organization_id = payload.get("organization_id")
     input_params = payload.get("input_params") if isinstance(payload.get("input_params"), dict) else {}
 
     missing: List[str] = []
     if not executable_pipeline_id:
         missing.append("executable_pipeline_id")
-    if not tenant_slug:
-        missing.append("tenant_slug")
+    if not organization_id:
+        missing.append("organization_id")
     if missing:
         return None, [{"error": "missing_fields", "fields": missing}]
 
@@ -578,7 +578,7 @@ def create_job(
         response = sdk_client.rag.create_job(
             str(executable_pipeline_id),
             input_params,
-            tenant_slug=str(tenant_slug),
+            organization_id=str(organization_id),
             options=request_options_builder(payload=payload, dry_run=False),
         )
         return response.get("data"), []
@@ -600,7 +600,7 @@ def get_job(
 
     try:
         sdk_client = control_client_factory(client)
-        response = sdk_client.rag.get_job(str(job_id), tenant_slug=payload.get("tenant_slug"))
+        response = sdk_client.rag.get_job(str(job_id), organization_id=payload.get("organization_id"))
         return response.get("data"), []
     except ControlPlaneSDKError as exc:
         return None, [{"error": "get_job_failed", "detail": str(exc), "code": exc.code, "http_status": exc.http_status}]
@@ -619,7 +619,7 @@ def get_executable_pipeline(
         return None, [{"error": "missing_fields", "fields": ["exec_id"]}]
     try:
         sdk_client = control_client_factory(client)
-        response = sdk_client.rag.get_executable_pipeline(str(exec_id), tenant_slug=payload.get("tenant_slug"))
+        response = sdk_client.rag.get_executable_pipeline(str(exec_id), organization_id=payload.get("organization_id"))
         return response.get("data"), []
     except ControlPlaneSDKError as exc:
         return None, [{"error": "get_executable_pipeline_failed", "detail": str(exc), "code": exc.code, "http_status": exc.http_status}]
@@ -638,7 +638,7 @@ def get_executable_input_schema(
         return None, [{"error": "missing_fields", "fields": ["exec_id"]}]
     try:
         sdk_client = control_client_factory(client)
-        response = sdk_client.rag.get_executable_input_schema(str(exec_id), tenant_slug=payload.get("tenant_slug"))
+        response = sdk_client.rag.get_executable_input_schema(str(exec_id), organization_id=payload.get("organization_id"))
         return response.get("data"), []
     except ControlPlaneSDKError as exc:
         return None, [{"error": "get_executable_input_schema_failed", "detail": str(exc), "code": exc.code, "http_status": exc.http_status}]
@@ -674,7 +674,7 @@ def get_step_data(
             str(data_type),
             page=int(payload.get("page", 1) or 1),
             limit=int(payload.get("limit", 20) or 20),
-            tenant_slug=payload.get("tenant_slug"),
+            organization_id=payload.get("organization_id"),
         )
         return response.get("data"), []
     except ControlPlaneSDKError as exc:

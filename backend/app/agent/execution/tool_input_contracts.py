@@ -427,5 +427,5 @@ def validate_tool_input_schema(tool: Any, input_data: Any) -> list[dict[str, str
     return validate_tool_input_against_schema(
         get_tool_input_schema(tool),
         input_data,
-        tool_name=getattr(tool, "slug", None) or getattr(tool, "name", None),
+        tool_name=getattr(tool, "builtin_key", None) or getattr(tool, "name", None) or getattr(tool, "id", None),
     )

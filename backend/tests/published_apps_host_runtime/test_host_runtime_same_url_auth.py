@@ -45,7 +45,7 @@ async def test_host_root_renders_same_url_auth_shell(client, db_session):
         auth_template_key="auth-split",
     )
 
-    resp = await client.get("/", headers=_host_headers(app.slug))
+    resp = await client.get("/", headers=_host_headers(app.public_id))
     assert resp.status_code == 200
     assert app.name in resp.text
     assert "Sign in to use this app" in resp.text
@@ -67,18 +67,18 @@ async def test_host_signup_sets_cookie_and_auth_state(client, db_session):
 
     signup_resp = await client.post(
         "/_talmudpedia/auth/signup",
-        headers=_host_headers(app.slug),
+        headers=_host_headers(app.public_id),
         json={"email": "same-url-user@example.com", "password": "secret123"},
     )
     assert signup_resp.status_code == 200
     assert signup_resp.json()["status"] == "ok"
     assert "published_app_session=" in signup_resp.headers.get("set-cookie", "")
 
-    state_resp = await client.get("/_talmudpedia/auth/state", headers=_host_headers(app.slug))
+    state_resp = await client.get("/_talmudpedia/auth/state", headers=_host_headers(app.public_id))
     assert state_resp.status_code == 200
     payload = state_resp.json()
     assert payload["authenticated"] is True
-    assert payload["app"]["slug"] == app.slug
+    assert payload["app"]["public_id"] == app.public_id
     assert payload["user"]["email"] == "same-url-user@example.com"
 
 
@@ -107,23 +107,28 @@ async def test_host_same_email_across_apps_creates_distinct_app_accounts(client,
     email = "shared-human@example.com"
     resp_a = await client.post(
         "/_talmudpedia/auth/signup",
-        headers=_host_headers(app_a.slug),
+        headers=_host_headers(app_a.public_id),
         json={"email": email, "password": "secret123"},
     )
     assert resp_a.status_code == 200
 
-    await client.post("/_talmudpedia/auth/logout", headers=_host_headers(app_a.slug))
+    await client.post("/_talmudpedia/auth/logout", headers=_host_headers(app_a.public_id))
 
     resp_b = await client.post(
         "/_talmudpedia/auth/signup",
-        headers=_host_headers(app_b.slug),
+        headers=_host_headers(app_b.public_id),
         json={"email": email, "password": "secret123"},
     )
     assert resp_b.status_code == 200
 
     accounts = (
         await db_session.execute(
-            select(PublishedAppAccount).where(PublishedAppAccount.email == email).order_by(PublishedAppAccount.published_app_id)
+            select(PublishedAppAccount)
+            .where(
+                PublishedAppAccount.email == email,
+                PublishedAppAccount.published_app_id.in_([app_a.id, app_b.id]),
+            )
+            .order_by(PublishedAppAccount.published_app_id)
         )
     ).scalars().all()
     assert len(accounts) == 2
@@ -148,7 +153,7 @@ async def test_host_chat_stream_requires_cookie_when_auth_enabled(client, db_ses
 
     resp = await client.post(
         "/_talmudpedia/chat/stream",
-        headers=_host_headers(app.slug),
+        headers=_host_headers(app.public_id),
         json={"input": "hello"},
     )
     assert resp.status_code == 401
@@ -170,7 +175,7 @@ async def test_host_chat_stream_uses_cookie_auth_and_persists(client, db_session
 
     signup_resp = await client.post(
         "/_talmudpedia/auth/signup",
-        headers=_host_headers(app.slug),
+        headers=_host_headers(app.public_id),
         json={"email": "chat-cookie-user@example.com", "password": "secret123"},
     )
     assert signup_resp.status_code == 200
@@ -181,8 +186,8 @@ async def test_host_chat_stream_uses_cookie_auth_and_persists(client, db_session
     ).scalar_one()
     bootstrap = SecurityBootstrapService(db_session)
     await bootstrap.ensure_default_roles(tenant.id)
-    await bootstrap.ensure_member_assignment(
-        tenant_id=tenant.id,
+    await bootstrap.ensure_organization_reader_assignment(
+        organization_id=tenant.id,
         user_id=signup_user.id,
         assigned_by=owner.id,
     )
@@ -192,7 +197,7 @@ async def test_host_chat_stream_uses_cookie_auth_and_persists(client, db_session
 
     stream_resp = await client.post(
         "/_talmudpedia/chat/stream",
-        headers=_host_headers(app.slug),
+        headers=_host_headers(app.public_id),
         json={"input": "Hi there"},
     )
     assert stream_resp.status_code == 200, stream_resp.text
@@ -220,7 +225,7 @@ async def test_host_thread_detail_is_scoped_to_app_account(client, db_session, m
 
     signup_resp = await client.post(
         "/_talmudpedia/auth/signup",
-        headers=_host_headers(app.slug),
+        headers=_host_headers(app.public_id),
         json={"email": "owner-one@example.com", "password": "secret123"},
     )
     assert signup_resp.status_code == 200
@@ -231,8 +236,8 @@ async def test_host_thread_detail_is_scoped_to_app_account(client, db_session, m
     ).scalar_one()
     bootstrap = SecurityBootstrapService(db_session)
     await bootstrap.ensure_default_roles(tenant.id)
-    await bootstrap.ensure_member_assignment(
-        tenant_id=tenant.id,
+    await bootstrap.ensure_organization_reader_assignment(
+        organization_id=tenant.id,
         user_id=signup_user.id,
         assigned_by=owner.id,
     )
@@ -242,25 +247,25 @@ async def test_host_thread_detail_is_scoped_to_app_account(client, db_session, m
 
     stream_resp = await client.post(
         "/_talmudpedia/chat/stream",
-        headers=_host_headers(app.slug),
+        headers=_host_headers(app.public_id),
         json={"input": "private thread"},
     )
     assert stream_resp.status_code == 200
     thread_id = stream_resp.headers.get("X-Thread-ID")
     assert thread_id
 
-    await client.post("/_talmudpedia/auth/logout", headers=_host_headers(app.slug))
+    await client.post("/_talmudpedia/auth/logout", headers=_host_headers(app.public_id))
 
     second_signup = await client.post(
         "/_talmudpedia/auth/signup",
-        headers=_host_headers(app.slug),
+        headers=_host_headers(app.public_id),
         json={"email": "owner-two@example.com", "password": "secret123"},
     )
     assert second_signup.status_code == 200
 
     thread_resp = await client.get(
         f"/_talmudpedia/threads/{thread_id}",
-        headers=_host_headers(app.slug),
+        headers=_host_headers(app.public_id),
     )
     assert thread_resp.status_code == 404
 
@@ -289,14 +294,14 @@ async def test_host_runtime_rejects_cross_app_cookie_replay(client, db_session):
 
     signup_resp = await client.post(
         "/_talmudpedia/auth/signup",
-        headers=_host_headers(app_a.slug),
+        headers=_host_headers(app_a.public_id),
         json={"email": "host-replay@example.com", "password": "secret123"},
     )
     token = signup_resp.headers["set-cookie"].split("published_app_session=", 1)[1].split(";", 1)[0]
 
     replay_resp = await client.post(
         "/_talmudpedia/chat/stream",
-        headers=_host_headers_with_cookie(app_b.slug, token),
+        headers=_host_headers_with_cookie(app_b.public_id, token),
         json={"input": "hello"},
     )
     assert replay_resp.status_code == 401
@@ -318,14 +323,14 @@ async def test_host_runtime_enforces_published_app_scopes(client, db_session):
 
     signup_resp = await client.post(
         "/_talmudpedia/auth/signup",
-        headers=_host_headers(app.slug),
+        headers=_host_headers(app.public_id),
         json={"email": "host-scoped@example.com", "password": "secret123"},
     )
     token = signup_resp.headers["set-cookie"].split("published_app_session=", 1)[1].split(";", 1)[0]
 
     chat_resp = await client.post(
         "/_talmudpedia/chat/stream",
-        headers=_host_headers_with_cookie(app.slug, _token_with_scopes(token, ["public.auth", "public.chats.read"])),
+        headers=_host_headers_with_cookie(app.public_id, _token_with_scopes(token, ["public.auth", "public.chats.read"])),
         json={"input": "hello"},
     )
     assert chat_resp.status_code == 403
@@ -333,7 +338,7 @@ async def test_host_runtime_enforces_published_app_scopes(client, db_session):
 
     threads_resp = await client.get(
         "/_talmudpedia/threads",
-        headers=_host_headers_with_cookie(app.slug, _token_with_scopes(token, ["public.auth", "public.chat"])),
+        headers=_host_headers_with_cookie(app.public_id, _token_with_scopes(token, ["public.auth", "public.chat"])),
     )
     assert threads_resp.status_code == 403
     assert threads_resp.json()["detail"] == "Missing required scopes: public.chats.read"
@@ -354,7 +359,7 @@ async def test_host_thread_detail_includes_public_run_events(client, db_session,
 
     signup_resp = await client.post(
         "/_talmudpedia/auth/signup",
-        headers=_host_headers(app.slug),
+        headers=_host_headers(app.public_id),
         json={"email": "history-events@example.com", "password": "secret123"},
     )
     assert signup_resp.status_code == 200
@@ -363,14 +368,15 @@ async def test_host_thread_detail_includes_public_run_events(client, db_session,
     ).scalar_one()
     bootstrap = SecurityBootstrapService(db_session)
     await bootstrap.ensure_default_roles(tenant.id)
-    await bootstrap.ensure_member_assignment(
-        tenant_id=tenant.id,
+    await bootstrap.ensure_organization_reader_assignment(
+        organization_id=tenant.id,
         user_id=signup_user.id,
         assigned_by=owner.id,
     )
     await db_session.commit()
 
-    async def fake_list_public_run_events(*, db, run_id):
+    async def fake_list_public_run_events(*, db, run_id, view, after_sequence=None, limit=None):
+        _ = db, view, after_sequence, limit
         return [
             {
                 "version": "run-stream.v2",
@@ -385,7 +391,7 @@ async def test_host_thread_detail_includes_public_run_events(client, db_session,
         ]
 
     monkeypatch.setattr(
-        "app.api.routers.published_apps_host_runtime.list_public_run_events",
+        "app.services.runtime_surface.service.list_run_events",
         fake_list_public_run_events,
     )
 
@@ -400,7 +406,7 @@ async def test_host_thread_detail_includes_public_run_events(client, db_session,
 
     thread_service = ThreadService(db_session)
     resolved = await thread_service.resolve_or_create_thread(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=None,
         app_account_id=app_account.id,
         agent_id=agent.id,
@@ -410,7 +416,7 @@ async def test_host_thread_detail_includes_public_run_events(client, db_session,
         input_text="hydrate this thread",
     )
     run = AgentRun(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         agent_id=agent.id,
         initiator_user_id=owner.id,
         thread_id=resolved.thread.id,
@@ -447,7 +453,7 @@ async def test_host_thread_detail_includes_public_run_events(client, db_session,
 
     thread_resp = await client.get(
         f"/_talmudpedia/threads/{resolved.thread.id}",
-        headers=_host_headers(app.slug),
+        headers=_host_headers(app.public_id),
     )
     assert thread_resp.status_code == 200
     payload = thread_resp.json()
@@ -482,7 +488,7 @@ async def test_host_thread_detail_returns_subthread_tree_when_requested(client, 
 
     signup_resp = await client.post(
         "/_talmudpedia/auth/signup",
-        headers=_host_headers(app.slug),
+        headers=_host_headers(app.public_id),
         json={"email": "subthreads-host@example.com", "password": "secret123"},
     )
     assert signup_resp.status_code == 200
@@ -491,8 +497,8 @@ async def test_host_thread_detail_returns_subthread_tree_when_requested(client, 
     ).scalar_one()
     bootstrap = SecurityBootstrapService(db_session)
     await bootstrap.ensure_default_roles(tenant.id)
-    await bootstrap.ensure_member_assignment(
-        tenant_id=tenant.id,
+    await bootstrap.ensure_organization_reader_assignment(
+        organization_id=tenant.id,
         user_id=signup_user.id,
         assigned_by=owner.id,
     )
@@ -509,7 +515,7 @@ async def test_host_thread_detail_returns_subthread_tree_when_requested(client, 
 
     thread_service = ThreadService(db_session)
     resolved = await thread_service.resolve_or_create_thread(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=None,
         app_account_id=app_account.id,
         agent_id=agent.id,
@@ -519,7 +525,7 @@ async def test_host_thread_detail_returns_subthread_tree_when_requested(client, 
         input_text="root thread",
     )
     run = AgentRun(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         agent_id=agent.id,
         initiator_user_id=owner.id,
         published_app_id=app.id,
@@ -536,7 +542,7 @@ async def test_host_thread_detail_returns_subthread_tree_when_requested(client, 
     )
 
     child_thread = AgentThread(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         app_account_id=app_account.id,
         agent_id=agent.id,
         published_app_id=app.id,
@@ -551,7 +557,7 @@ async def test_host_thread_detail_returns_subthread_tree_when_requested(client, 
     db_session.add(child_thread)
     await db_session.flush()
     child_run = AgentRun(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         agent_id=agent.id,
         initiator_user_id=owner.id,
         published_app_id=app.id,
@@ -579,7 +585,7 @@ async def test_host_thread_detail_returns_subthread_tree_when_requested(client, 
 
     thread_resp = await client.get(
         f"/_talmudpedia/threads/{resolved.thread.id}?include_subthreads=true",
-        headers=_host_headers(app.slug),
+        headers=_host_headers(app.public_id),
     )
     assert thread_resp.status_code == 200
     payload = thread_resp.json()
@@ -600,17 +606,17 @@ async def test_legacy_public_published_path_endpoints_return_410(client, db_sess
         auth_providers=["password"],
     )
 
-    runtime_resp = await client.get(f"/public/apps/{app.slug}/runtime")
+    runtime_resp = await client.get(f"/public/apps/{app.public_id}/runtime")
     assert runtime_resp.status_code == 410
 
     signup_resp = await client.post(
-        f"/public/apps/{app.slug}/auth/signup",
+        f"/public/apps/{app.public_id}/auth/signup",
         json={"email": "legacy@example.com", "password": "secret123"},
     )
     assert signup_resp.status_code == 410
 
     chat_resp = await client.post(
-        f"/public/apps/{app.slug}/chat/stream",
+        f"/public/apps/{app.public_id}/chat/stream",
         json={"input": "hello"},
     )
     assert chat_resp.status_code == 410
@@ -655,7 +661,7 @@ async def test_host_assets_serve_dist_asset_with_assets_prefix(client, db_sessio
         staticmethod(lambda: _Storage()),
     )
 
-    resp = await client.get("/assets/index-abc123.js", headers=_host_headers(app.slug))
+    resp = await client.get("/assets/index-abc123.js", headers=_host_headers(app.public_id))
     assert resp.status_code == 200
     assert "console.log('ok')" in resp.text
 
@@ -701,12 +707,12 @@ async def test_host_assets_are_private_cache_when_auth_enabled(client, db_sessio
 
     signup_resp = await client.post(
         "/_talmudpedia/auth/signup",
-        headers=_host_headers(app.slug),
+        headers=_host_headers(app.public_id),
         json={"email": "asset-user@example.com", "password": "secret123"},
     )
     assert signup_resp.status_code == 200
 
-    resp = await client.get("/assets/index-auth.js", headers=_host_headers(app.slug))
+    resp = await client.get("/assets/index-auth.js", headers=_host_headers(app.public_id))
     assert resp.status_code == 200
     assert resp.headers["Cache-Control"] == "private, max-age=60"
 
@@ -726,7 +732,7 @@ async def test_host_login_rate_limits_repeated_failed_password_attempts(client, 
 
     signup_resp = await client.post(
         "/_talmudpedia/auth/signup",
-        headers=_host_headers(app.slug),
+        headers=_host_headers(app.public_id),
         json={"email": "throttle-user@example.com", "password": "secret123"},
     )
     assert signup_resp.status_code == 200
@@ -734,14 +740,14 @@ async def test_host_login_rate_limits_repeated_failed_password_attempts(client, 
     for _ in range(4):
         resp = await client.post(
             "/_talmudpedia/auth/login",
-            headers=_host_headers(app.slug),
+            headers=_host_headers(app.public_id),
             json={"email": "throttle-user@example.com", "password": "wrong-password"},
         )
         assert resp.status_code == 400
 
     locked_resp = await client.post(
         "/_talmudpedia/auth/login",
-        headers=_host_headers(app.slug),
+        headers=_host_headers(app.public_id),
         json={"email": "throttle-user@example.com", "password": "wrong-password"},
     )
     assert locked_resp.status_code == 429
@@ -761,15 +767,15 @@ async def test_host_google_start_sets_csrf_state_cookie(client, db_session, monk
         auth_providers=["google"],
     )
 
-    async def _fake_get_google_credential(self, tenant_id):
-        assert str(tenant_id) == str(app.tenant_id)
+    async def _fake_get_google_credential(self, organization_id):
+        assert str(organization_id) == str(app.organization_id)
         return SimpleNamespace(credentials={"client_id": "google-client", "redirect_uri": "https://accounts.example/callback"})
 
     monkeypatch.setattr("app.services.published_app_auth_service.PublishedAppAuthService.get_google_credential", _fake_get_google_credential)
 
     response = await client.get(
         "/_talmudpedia/auth/google/start?return_to=/dashboard",
-        headers=_host_headers(app.slug),
+        headers=_host_headers(app.public_id),
         follow_redirects=False,
     )
 
@@ -792,8 +798,8 @@ async def test_host_google_callback_rejects_missing_csrf_state_cookie(client, db
         auth_providers=["google"],
     )
 
-    async def _fake_get_google_credential(self, tenant_id):
-        assert str(tenant_id) == str(app.tenant_id)
+    async def _fake_get_google_credential(self, organization_id):
+        assert str(organization_id) == str(app.organization_id)
         return SimpleNamespace(
             credentials={
                 "client_id": "google-client",
@@ -806,7 +812,7 @@ async def test_host_google_callback_rejects_missing_csrf_state_cookie(client, db
 
     start_response = await client.get(
         "/_talmudpedia/auth/google/start?return_to=/dashboard",
-        headers=_host_headers(app.slug),
+        headers=_host_headers(app.public_id),
         follow_redirects=False,
     )
     state = parse_qs(urlparse(start_response.headers["location"]).query)["state"][0]
@@ -814,7 +820,7 @@ async def test_host_google_callback_rejects_missing_csrf_state_cookie(client, db
 
     callback_resp = await client.get(
         f"/_talmudpedia/auth/google/callback?code=fake-code&state={state}",
-        headers=_host_headers(app.slug),
+        headers=_host_headers(app.public_id),
         follow_redirects=False,
     )
 

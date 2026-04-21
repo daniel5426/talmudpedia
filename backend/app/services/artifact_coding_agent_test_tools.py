@@ -143,7 +143,7 @@ async def artifact_coding_run_test(payload: Any) -> dict[str, Any]:
     config = tool_payload.get("config") if isinstance(tool_payload.get("config"), dict) else {}
     async with get_session() as db:
         session, shared_draft, run, artifact = await _resolve_session_context(db, tool_payload)
-        await ArtifactRuntimePolicyService(db).reconcile_stale_test_runs(tenant_id=session.tenant_id)
+        await ArtifactRuntimePolicyService(db).reconcile_stale_test_runs(organization_id=session.organization_id)
         await db.flush()
         if shared_draft.last_test_run_id is not None:
             active_test_run = await db.get(ArtifactRun, shared_draft.last_test_run_id)
@@ -162,7 +162,7 @@ async def artifact_coding_run_test(payload: Any) -> dict[str, Any]:
             config=config,
         )
         test_run = await execution_service.start_test_run(
-            tenant_id=session.tenant_id,
+            organization_id=session.organization_id,
             created_by=run.initiator_user_id or run.user_id,
             artifact_id=test_payload["artifact_id"],
             source_files=test_payload["source_files"],

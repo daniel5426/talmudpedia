@@ -108,10 +108,10 @@ class PublishedAppAuthService:
         key = self._password_login_throttle_key(app=app, email=email, client_ip=client_ip)
         _PASSWORD_LOGIN_THROTTLES.pop(key, None)
 
-    async def get_google_credential(self, tenant_id: UUID) -> Optional[IntegrationCredential]:
+    async def get_google_credential(self, organization_id: UUID) -> Optional[IntegrationCredential]:
         result = await self.db.execute(
             select(IntegrationCredential).where(
-                IntegrationCredential.tenant_id == tenant_id,
+                IntegrationCredential.organization_id == organization_id,
                 IntegrationCredential.category == IntegrationCredentialCategory.CUSTOM,
                 IntegrationCredential.provider_key == "google_oauth",
                 IntegrationCredential.is_enabled == True,
@@ -258,7 +258,7 @@ class PublishedAppAuthService:
         session = await self.create_session(app, account, provider, metadata=metadata)
         token = create_published_app_session_token(
             subject=str(account.id),
-            tenant_id=str(app.tenant_id),
+            organization_id=str(app.organization_id),
             app_id=str(app.id),
             app_account_id=str(account.id),
             session_id=str(session.id),
@@ -530,12 +530,12 @@ class PublishedAppAuthService:
         *,
         client_id: str,
         redirect_uri: str,
-        app_slug: str,
+        app_public_id: str,
         return_to: str,
         nonce: str,
     ) -> str:
         state_payload = {
-            "app_slug": app_slug,
+            "app_public_id": app_public_id,
             "return_to": return_to,
             "nonce": nonce,
             "token_use": GOOGLE_OAUTH_STATE_TOKEN_USE,
@@ -563,7 +563,7 @@ class PublishedAppAuthService:
                 raise ValueError("State payload must be an object")
             if payload.get("token_use") != GOOGLE_OAUTH_STATE_TOKEN_USE:
                 raise ValueError("State token_use is invalid")
-            if not payload.get("app_slug") or not payload.get("return_to"):
+            if not payload.get("app_public_id") or not payload.get("return_to"):
                 raise ValueError("State payload is missing required fields")
             if not expected_nonce:
                 raise ValueError("State cookie is missing")

@@ -10,9 +10,9 @@ async def test_native_platform_dispatch_passes_runtime_context(monkeypatch):
     captured = {}
 
     async def fake_handler(runtime):
-        captured["tool_slug"] = runtime.tool_slug
+        captured["builtin_key"] = runtime.builtin_key
         captured["action"] = runtime.action
-        captured["tenant_id"] = runtime.runtime_context.get("tenant_id")
+        captured["organization_id"] = runtime.runtime_context.get("organization_id")
         captured["token"] = runtime.runtime_context.get("token")
         return {"status": "ok"}
 
@@ -32,7 +32,7 @@ async def test_native_platform_dispatch_passes_runtime_context(monkeypatch):
             "action": "agents.list",
             "payload": {"limit": 5},
             "__tool_runtime_context__": {
-                "tenant_id": "tenant-1",
+                "organization_id": "tenant-1",
                 "user_id": "user-1",
                 "token": "bearer-123",
             },
@@ -40,9 +40,9 @@ async def test_native_platform_dispatch_passes_runtime_context(monkeypatch):
     )
 
     assert result["result"]["status"] == "ok"
-    assert captured["tool_slug"] == "platform-agents"
+    assert captured["builtin_key"] == "platform-agents"
     assert captured["action"] == "agents.list"
-    assert captured["tenant_id"] == "tenant-1"
+    assert captured["organization_id"] == "tenant-1"
     assert captured["token"] == "bearer-123"
 
 
@@ -62,7 +62,7 @@ async def test_native_platform_dispatch_rejects_tool_action_mismatch(monkeypatch
         {
             "action": "artifacts.list",
             "payload": {},
-            "__tool_runtime_context__": {"tenant_id": "tenant-1", "requested_scopes": ["*"]},
+            "__tool_runtime_context__": {"organization_id": "tenant-1", "requested_scopes": ["*"]},
         }
     )
 

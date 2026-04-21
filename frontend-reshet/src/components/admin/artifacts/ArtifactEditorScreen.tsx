@@ -4,7 +4,7 @@ import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } fro
 import { useRouter } from "next/navigation"
 import { Loader2 } from "lucide-react"
 
-import { useTenant } from "@/contexts/TenantContext"
+import { useOrganization } from "@/contexts/OrganizationContext"
 import { useSidebar } from "@/components/ui/sidebar"
 import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -96,7 +96,7 @@ export function ArtifactEditorScreen({
   initialLanguage = "python",
   initialDraftKey,
 }: ArtifactEditorScreenProps) {
-  const { currentTenant } = useTenant()
+  const { currentOrganization } = useOrganization()
   const { setOpen: setAppSidebarOpen, setOpenMobile: setAppSidebarOpenMobile, isMobile } = useSidebar()
   const router = useRouter()
 
@@ -144,10 +144,10 @@ export function ArtifactEditorScreen({
   }, [])
 
   const loadArtifactEditorState = useCallback(async (nextArtifactId: string) => {
-    const fullArtifact = await artifactsService.get(nextArtifactId, currentTenant?.slug)
+    const fullArtifact = await artifactsService.get(nextArtifactId, currentOrganization?.id)
     let nextFormData = formDataFromArtifact(fullArtifact)
     try {
-      const workingDraft = await artifactsService.getWorkingDraft(nextArtifactId, currentTenant?.slug)
+      const workingDraft = await artifactsService.getWorkingDraft(nextArtifactId, currentOrganization?.id)
       if (workingDraft?.draft_snapshot && Object.keys(workingDraft.draft_snapshot).length > 0) {
         nextFormData = formDataFromDraftSnapshot(fullArtifact, workingDraft.draft_snapshot)
       }
@@ -159,7 +159,7 @@ export function ArtifactEditorScreen({
     setActiveFilePath(getDefaultActiveFilePath(nextFormData))
     lastWorkingDraftSignatureRef.current = serializeArtifactFormData(nextFormData)
     return fullArtifact
-  }, [currentTenant?.slug, syncSelectedArtifact])
+  }, [currentOrganization?.id, syncSelectedArtifact])
 
   const fetchAvailableCredentials = useCallback(async () => {
     try {
@@ -233,7 +233,7 @@ export function ArtifactEditorScreen({
     if (!selectedArtifact?.id) return
     setLoadingVersions(true)
     try {
-      const versions = await artifactsService.listVersions(selectedArtifact.id, currentTenant?.slug)
+      const versions = await artifactsService.listVersions(selectedArtifact.id, currentOrganization?.id)
       setArtifactVersions(versions)
     } catch (error) {
       console.error("Failed to load artifact versions", error)
@@ -241,7 +241,7 @@ export function ArtifactEditorScreen({
     } finally {
       setLoadingVersions(false)
     }
-  }, [currentTenant?.slug, selectedArtifact?.id])
+  }, [currentOrganization?.id, selectedArtifact?.id])
 
   useEffect(() => {
     if (!versionsOpen || !selectedArtifact?.id) return
@@ -252,7 +252,7 @@ export function ArtifactEditorScreen({
     if (!selectedArtifact?.id) return
     setApplyingRevisionId(revisionId)
     try {
-      const version = await artifactsService.getVersion(selectedArtifact.id, revisionId, currentTenant?.slug)
+      const version = await artifactsService.getVersion(selectedArtifact.id, revisionId, currentOrganization?.id)
       const nextFormData = formDataFromArtifactVersion(version)
       setFormData(nextFormData)
       setActiveFilePath(getDefaultActiveFilePath(nextFormData))
@@ -263,7 +263,7 @@ export function ArtifactEditorScreen({
     } finally {
       setApplyingRevisionId(null)
     }
-  }, [currentTenant?.slug, selectedArtifact?.id])
+  }, [currentOrganization?.id, selectedArtifact?.id])
 
   const persistWorkingDraft = useCallback(async (nextArtifactId: string, snapshot = workingDraftSnapshot, signature = currentFormSignature) => {
     if (workingDraftSaveTimeoutRef.current) {
@@ -276,10 +276,10 @@ export function ArtifactEditorScreen({
         artifact_id: nextArtifactId,
         draft_snapshot: snapshot,
       },
-      currentTenant?.slug,
+      currentOrganization?.id,
     )
     lastWorkingDraftSignatureRef.current = signature
-  }, [currentFormSignature, currentTenant?.slug, workingDraftSnapshot])
+  }, [currentFormSignature, currentOrganization?.id, workingDraftSnapshot])
 
   useEffect(() => {
     if (workingDraftSaveTimeoutRef.current) {
@@ -368,7 +368,7 @@ export function ArtifactEditorScreen({
       if (mode === "create") {
         const created = await artifactsService.create(
           buildArtifactPayload(formData, artifactChatDraftKey),
-          currentTenant?.slug,
+          currentOrganization?.id,
         )
         await loadArtifactEditorState(created.id)
         router.replace(buildArtifactDetailHref(created.id), { scroll: false })
@@ -378,7 +378,7 @@ export function ArtifactEditorScreen({
         const updatedArtifact = await artifactsService.update(
           selectedArtifact.id,
           buildArtifactUpdatePayload(formData, artifactChatDraftKey),
-          currentTenant?.slug,
+          currentOrganization?.id,
         )
         syncSelectedArtifact(updatedArtifact)
         await persistWorkingDraft(updatedArtifact.id)
@@ -401,8 +401,8 @@ export function ArtifactEditorScreen({
     if (!confirm(`Publish "${artifact.display_name}"?`)) return
     setPublishingId(artifact.id)
     try {
-      await artifactsService.publish(artifact.id, currentTenant?.slug)
-      const refreshed = await artifactsService.get(artifact.id, currentTenant?.slug)
+      await artifactsService.publish(artifact.id, currentOrganization?.id)
+      const refreshed = await artifactsService.get(artifact.id, currentOrganization?.id)
       syncSelectedArtifact(refreshed)
       await persistWorkingDraft(refreshed.id)
       if (versionsOpen) {
@@ -414,7 +414,7 @@ export function ArtifactEditorScreen({
     } finally {
       setPublishingId(null)
     }
-  }, [currentTenant?.slug, loadArtifactVersions, persistWorkingDraft, syncSelectedArtifact, versionsOpen])
+  }, [currentOrganization?.id, loadArtifactVersions, persistWorkingDraft, syncSelectedArtifact, versionsOpen])
 
   const handlePublishFromEditorIgnoringWarnings = useCallback(async () => {
     if (!selectedArtifact) return
@@ -439,13 +439,13 @@ export function ArtifactEditorScreen({
   const handleDownload = useCallback(async () => {
     if (!selectedArtifact?.id) return
     try {
-      const transfer = await artifactsService.exportArtifact(selectedArtifact.id, currentTenant?.slug)
+      const transfer = await artifactsService.exportArtifact(selectedArtifact.id, currentOrganization?.id)
       downloadArtifactTransferFile(artifactTransferFilename(selectedArtifact.display_name), transfer)
     } catch (error) {
       console.error("Failed to export artifact", error)
       alert(error instanceof Error ? error.message : "Failed to export artifact")
     }
-  }, [currentTenant?.slug, selectedArtifact])
+  }, [currentOrganization?.id, selectedArtifact])
 
   const handleConvertKind = useCallback(async () => {
     if (!selectedArtifact) return
@@ -458,7 +458,7 @@ export function ArtifactEditorScreen({
       const converted = await artifactsService.convertKind(
         selectedArtifact.id,
         buildConvertPayload(convertTargetKind, formData),
-        currentTenant?.slug,
+        currentOrganization?.id,
       )
       syncSelectedArtifact(converted)
       setFormData(formDataFromArtifact(converted))
@@ -469,7 +469,7 @@ export function ArtifactEditorScreen({
     } finally {
       setConverting(false)
     }
-  }, [convertTargetKind, currentTenant?.slug, formData, selectedArtifact, syncSelectedArtifact])
+  }, [convertTargetKind, currentOrganization?.id, formData, selectedArtifact, syncSelectedArtifact])
 
   const currentContractValue = useMemo(() => {
     if (formData.kind === "agent_node") return formData.agent_contract
@@ -581,8 +581,7 @@ export function ArtifactEditorScreen({
   }, [handleConfigShortcuts])
 
   const artifactCodingChat = useArtifactCodingChat({
-    tenantSlug: currentTenant?.slug,
-    tenantId: currentTenant?.id || null,
+    organizationId: currentOrganization?.id || null,
     artifactId: selectedArtifact?.id || null,
     draftKey: artifactChatDraftKey,
     isCreateMode: mode === "create" || !selectedArtifact?.id,
@@ -596,7 +595,7 @@ export function ArtifactEditorScreen({
     <div className="relative w-full min-w-0 flex-1 overflow-hidden">
       <ArtifactWorkspaceEditor
         language={formData.language}
-        tenantSlug={currentTenant?.slug}
+        organizationId={currentOrganization?.id}
         dependencies={formData.dependencies}
         loading={loading}
         sourceFiles={formData.source_files}
@@ -610,7 +609,7 @@ export function ArtifactEditorScreen({
         configContent={
           <ArtifactConfigPanel
             formData={formData}
-            tenantSlug={currentTenant?.slug}
+            organizationId={currentOrganization?.id}
             selectedArtifact={selectedArtifact}
             viewMode={viewMode}
             convertTargetKind={convertTargetKind}
@@ -668,11 +667,11 @@ export function ArtifactEditorScreen({
         sidebarOpen={sidebarOpen}
         isAgentPanelOpen={artifactCodingChat.isAgentPanelOpen}
         isPublishing={publishingId === selectedArtifact?.id}
-        isPublished={Boolean(mode === "edit" && selectedArtifact?.type === "published" && selectedArtifact.owner_type === "tenant")}
+        isPublished={Boolean(mode === "edit" && selectedArtifact?.type === "published" && selectedArtifact.owner_type === "organization")}
         isSaving={saving}
         disableSave={false}
         showDownload={Boolean(mode === "edit" && selectedArtifact?.id)}
-        showPublish={Boolean(mode === "edit" && selectedArtifact?.type === "draft" && selectedArtifact.owner_type === "tenant")}
+        showPublish={Boolean(mode === "edit" && selectedArtifact?.type === "draft" && selectedArtifact.owner_type === "organization")}
         showVersions={Boolean(mode === "edit" && selectedArtifact?.id)}
         versionsOpen={versionsOpen}
         artifactVersions={artifactVersions}
@@ -712,7 +711,7 @@ export function ArtifactEditorScreen({
               {renderEditor()}
             </div>
             <ArtifactTestPanel
-              tenantSlug={currentTenant?.slug}
+              organizationId={currentOrganization?.id}
               artifactId={selectedArtifact?.id}
               controlsDisabled={loading}
               sourceFiles={formData.source_files}

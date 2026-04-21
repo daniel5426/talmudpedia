@@ -4,7 +4,7 @@ import pytest
 
 from app.api.dependencies import get_tenant_context
 from app.api.routers.auth import get_current_user
-from app.db.postgres.models.identity import Tenant, User
+from app.db.postgres.models.identity import Organization, User
 from app.db.postgres.models.registry import (
     IntegrationCredential,
     IntegrationCredentialCategory,
@@ -21,14 +21,17 @@ from app.services.credentials_service import CredentialsService
 
 @pytest.mark.asyncio
 async def test_default_resolution_prefers_tenant_default_over_env(db_session, monkeypatch):
-    tenant_id = uuid4()
+    tenant = Organization(name="Default Resolution Organization", slug=f"default-resolution-{uuid4().hex[:8]}")
+    db_session.add(tenant)
+    await db_session.flush()
+    organization_id = tenant.id
     monkeypatch.setenv("OPENAI_API_KEY", "platform-key")
     tenant_default = IntegrationCredential(
-        tenant_id=tenant_id,
+        organization_id=organization_id,
         category=IntegrationCredentialCategory.LLM_PROVIDER,
         provider_key="openai",
         provider_variant=None,
-        display_name="Tenant OpenAI",
+        display_name="Organization OpenAI",
         credentials={"api_key": "tenant-key"},
         is_enabled=True,
         is_default=True,
@@ -36,7 +39,7 @@ async def test_default_resolution_prefers_tenant_default_over_env(db_session, mo
     db_session.add(tenant_default)
     await db_session.commit()
 
-    resolved = await CredentialsService(db_session, tenant_id).get_default_provider_credential(
+    resolved = await CredentialsService(db_session, organization_id).get_default_provider_credential(
         category=IntegrationCredentialCategory.LLM_PROVIDER,
         provider_key="openai",
     )
@@ -45,7 +48,7 @@ async def test_default_resolution_prefers_tenant_default_over_env(db_session, mo
     assert resolved.id == tenant_default.id
     assert resolved.credentials.get("api_key") == "tenant-key"
 
-    merged = await CredentialsService(db_session, tenant_id).resolve_backend_config(
+    merged = await CredentialsService(db_session, organization_id).resolve_backend_config(
         {},
         None,
         category=IntegrationCredentialCategory.LLM_PROVIDER,
@@ -56,7 +59,7 @@ async def test_default_resolution_prefers_tenant_default_over_env(db_session, mo
 
 @pytest.mark.asyncio
 async def test_create_credentials_switches_default_for_same_provider(client, db_session):
-    tenant = Tenant(name="Credentials Tenant", slug=f"creds-{uuid4().hex[:8]}")
+    tenant = Organization(name="Credentials Organization", slug=f"creds-{uuid4().hex[:8]}")
     user = User(email=f"owner-{uuid4().hex[:8]}@example.com", hashed_password="test", role="admin")
     db_session.add_all([tenant, user])
     await db_session.commit()
@@ -67,7 +70,7 @@ async def test_create_credentials_switches_default_for_same_provider(client, db_
         return user
 
     async def override_get_tenant_context():
-        return {"tenant_id": str(tenant.id), "tenant": tenant}
+        return {"organization_id": str(tenant.id), "tenant": tenant}
 
     app.dependency_overrides[get_current_user] = override_get_current_user
     app.dependency_overrides[get_tenant_context] = override_get_tenant_context
@@ -100,7 +103,7 @@ async def test_create_credentials_switches_default_for_same_provider(client, db_
 
         listed = await client.get("/admin/settings/credentials", params={"category": "llm_provider"})
         assert listed.status_code == 200
-        rows = [row for row in listed.json() if row["provider_key"] == "openai"]
+        rows = [row for row in listed.json()["items"] if row["provider_key"] == "openai"]
         assert len(rows) == 2
 
         defaults = [row for row in rows if row["is_default"]]
@@ -112,7 +115,7 @@ async def test_create_credentials_switches_default_for_same_provider(client, db_
 
 @pytest.mark.asyncio
 async def test_provider_key_validation_enforced_for_tool_provider_but_not_custom(client, db_session):
-    tenant = Tenant(name="Validation Tenant", slug=f"validation-{uuid4().hex[:8]}")
+    tenant = Organization(name="Validation Organization", slug=f"validation-{uuid4().hex[:8]}")
     user = User(email=f"validator-{uuid4().hex[:8]}@example.com", hashed_password="test", role="admin")
     db_session.add_all([tenant, user])
     await db_session.commit()
@@ -123,7 +126,7 @@ async def test_provider_key_validation_enforced_for_tool_provider_but_not_custom
         return user
 
     async def override_get_tenant_context():
-        return {"tenant_id": str(tenant.id), "tenant": tenant}
+        return {"organization_id": str(tenant.id), "tenant": tenant}
 
     app.dependency_overrides[get_current_user] = override_get_current_user
     app.dependency_overrides[get_tenant_context] = override_get_tenant_context
@@ -157,10 +160,10 @@ async def test_provider_key_validation_enforced_for_tool_provider_but_not_custom
 
 @pytest.mark.asyncio
 async def test_resolve_backend_config_falls_back_to_env_when_no_tenant_default(db_session, monkeypatch):
-    tenant_id = uuid4()
+    organization_id = uuid4()
     monkeypatch.setenv("PINECONE_API_KEY", "pinecone-env-key")
 
-    merged = await CredentialsService(db_session, tenant_id).resolve_backend_config(
+    merged = await CredentialsService(db_session, organization_id).resolve_backend_config(
         {"index_name": "idx"},
         None,
         category=IntegrationCredentialCategory.VECTOR_STORE,
@@ -173,13 +176,13 @@ async def test_resolve_backend_config_falls_back_to_env_when_no_tenant_default(d
 
 @pytest.mark.asyncio
 async def test_delete_credential_with_usage_requires_force_then_disconnects(client, db_session):
-    tenant = Tenant(name="Disconnect Tenant", slug=f"disconnect-{uuid4().hex[:8]}")
+    tenant = Organization(name="Disconnect Organization", slug=f"disconnect-{uuid4().hex[:8]}")
     user = User(email=f"disconnect-{uuid4().hex[:8]}@example.com", hashed_password="test", role="admin")
     db_session.add_all([tenant, user])
     await db_session.flush()
 
     credential = IntegrationCredential(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         category=IntegrationCredentialCategory.LLM_PROVIDER,
         provider_key="openai",
         provider_variant=None,
@@ -192,7 +195,7 @@ async def test_delete_credential_with_usage_requires_force_then_disconnects(clie
     await db_session.flush()
 
     model = ModelRegistry(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name="Linked Model",
         capability_type=ModelCapabilityType.CHAT,
         metadata_={},
@@ -202,7 +205,7 @@ async def test_delete_credential_with_usage_requires_force_then_disconnects(clie
 
     binding = ModelProviderBinding(
         model_id=model.id,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         provider=ModelProviderType.OPENAI,
         provider_model_id="gpt-4o-mini",
         credentials_ref=credential.id,
@@ -213,7 +216,7 @@ async def test_delete_credential_with_usage_requires_force_then_disconnects(clie
     db_session.add(binding)
 
     store = KnowledgeStore(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name="Linked Store",
         embedding_model_id="text-embedding-3-small",
         backend=StorageBackend.PINECONE,
@@ -223,7 +226,7 @@ async def test_delete_credential_with_usage_requires_force_then_disconnects(clie
     db_session.add(store)
 
     tool = ToolRegistry(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name="Linked Tool",
         slug=f"linked-tool-{uuid4().hex[:8]}",
         scope=ToolDefinitionScope.TENANT,
@@ -239,7 +242,7 @@ async def test_delete_credential_with_usage_requires_force_then_disconnects(clie
         return user
 
     async def override_get_tenant_context():
-        return {"tenant_id": str(tenant.id), "tenant": tenant}
+        return {"organization_id": str(tenant.id), "tenant": tenant}
 
     app.dependency_overrides[get_current_user] = override_get_current_user
     app.dependency_overrides[get_tenant_context] = override_get_tenant_context

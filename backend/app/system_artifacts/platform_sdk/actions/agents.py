@@ -11,7 +11,6 @@ from .shared import (
     control_client,
     evaluate_assertions,
     request_options,
-    resolve_agent_id_by_slug,
 )
 
 
@@ -179,18 +178,11 @@ def create_shell(
     request_options_builder=request_options,
 ) -> Tuple[Optional[Any], List[Dict[str, Any]]]:
     name = str(payload.get("name") or "").strip()
-    slug = str(payload.get("slug") or "").strip()
-    if not name or not slug:
-        missing = []
-        if not name:
-            missing.append("name")
-        if not slug:
-            missing.append("slug")
-        return None, [{"error": "missing_fields", "fields": missing}]
+    if not name:
+        return None, [{"error": "missing_fields", "fields": ["name"]}]
 
     shell_payload: Dict[str, Any] = {
         "name": name,
-        "slug": slug,
         "graph_definition": _agent_shell_graph_definition(),
     }
     description = payload.get("description")
@@ -529,19 +521,11 @@ def execute(
     payload: Dict[str, Any],
     dry_run: bool,
     *,
-    control_client_factory=control_client,
-    resolve_agent_id_by_slug_fn=resolve_agent_id_by_slug,
+    control_client_factory=control_client
 ) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]]]:
     agent_id = payload.get("agent_id") or payload.get("id")
-    agent_slug = payload.get("agent_slug") or payload.get("slug")
-    if not agent_id and agent_slug:
-        agent_id = resolve_agent_id_by_slug_fn(
-            client,
-            str(agent_slug),
-            control_client_factory=control_client_factory,
-        )
     if not agent_id:
-        return None, [{"error": "missing_fields", "fields": ["agent_id or agent_slug"]}]
+        return None, [{"error": "missing_fields", "fields": ["agent_id"]}]
 
     if dry_run:
         return {"status": "skipped", "dry_run": True, "agent_id": agent_id}, []
@@ -679,7 +663,6 @@ def run_tests(
     tests: List[Dict[str, Any]],
     dry_run: bool,
     *,
-    resolve_agent_id_by_slug_fn=resolve_agent_id_by_slug,
     call_agent_execute_fn=call_agent_execute,
     augment_agent_response_fn=augment_agent_response,
     evaluate_assertions_fn=evaluate_assertions,
@@ -706,9 +689,6 @@ def run_tests(
         name = test.get("name") or f"test_{idx + 1}"
         target = test.get("agent_target") if isinstance(test.get("agent_target"), dict) else {}
         agent_id = target.get("agent_id") or test.get("agent_id") or target.get("id")
-        agent_slug = target.get("agent_slug") or test.get("agent_slug") or target.get("slug")
-        if not agent_id and agent_slug:
-            agent_id = resolve_agent_id_by_slug_fn(client, str(agent_slug))
 
         if not agent_id:
             errors.append({"test": name, "error": "missing_agent_target"})

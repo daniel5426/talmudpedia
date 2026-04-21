@@ -80,12 +80,12 @@ export default function AgentsPage() {
 
     const filteredAgents = useMemo(() => {
         const q = searchQuery.toLowerCase().trim()
-        if (!q) return agents
-        return agents.filter(agent =>
+    if (!q) return agents
+    return agents.filter(agent =>
             agent.name.toLowerCase().includes(q) ||
-            agent.slug?.toLowerCase().includes(q)
+            agent.id.toLowerCase().includes(q)
         )
-    }, [agents, searchQuery])
+  }, [agents, searchQuery])
 
     const handleDelete = async (agent: Agent) => {
         if (!window.confirm(`Delete agent "${agent.name}"? This cannot be undone.`)) return

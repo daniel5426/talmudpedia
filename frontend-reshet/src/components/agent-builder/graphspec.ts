@@ -172,7 +172,7 @@ function normalizeOrchestrationConfig(node: Node<AgentNodeData>): Record<string,
     if (nodeType === "spawn_run") {
         const explicitKey = typeof config.idempotency_key === "string" ? config.idempotency_key.trim() : ""
         if (!explicitKey) {
-            const target = String(config.target_agent_slug || config.target_agent_id || "unknown")
+            const target = String(config.target_agent_id || "unknown")
             const scope = JSON.stringify(config.scope_subset || [])
             config.idempotency_key = `${node.id}:${stableHash(`${target}:${scope}`)}`
         }
@@ -184,7 +184,7 @@ function normalizeOrchestrationConfig(node: Node<AgentNodeData>): Record<string,
             const targetsRaw = Array.isArray(config.targets) ? config.targets : []
             const targetFingerprints = targetsRaw
                 .filter((item): item is Record<string, unknown> => !!item && typeof item === "object")
-                .map((item) => String(item.target_agent_slug || item.target_agent_id || "unknown"))
+                .map((item) => String(item.target_agent_id || "unknown"))
                 .join("|")
             const scope = JSON.stringify(config.scope_subset || [])
             config.idempotency_key_prefix = `${node.id}:${stableHash(`${targetFingerprints}:${scope}`)}`

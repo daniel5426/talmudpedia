@@ -16,7 +16,7 @@ class GraphDefinitionSchema(BaseModel):
 
 class CreateAgentRequest(BaseModel):
     name: str
-    slug: str
+    system_key: Optional[str] = None
     description: Optional[str] = None
     graph_definition: Optional[GraphDefinitionSchema] = Field(
         default=None,
@@ -38,9 +38,8 @@ class UpdateAgentRequest(BaseModel):
 
 class AgentResponse(BaseModel):
     id: UUID
-    tenant_id: UUID
+    organization_id: UUID
     name: str
-    slug: str
     description: Optional[str] = None
     graph_definition: GraphDefinitionSchema
     memory_config: dict[str, Any]

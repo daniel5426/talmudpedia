@@ -1,10 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import {
-  AlertCircle,
-  Loader2,
-} from "lucide-react"
+import { AlertCircle, Loader2 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -37,7 +34,7 @@ function ErrorBanner({ message }: { message: string | null }) {
 export function LimitsSection() {
   const [orgLimit, setOrgLimit] = useState<SettingsLimit | null>(null)
   const [projects, setProjects] = useState<SettingsProject[]>([])
-  const [projectSlug, setProjectSlug] = useState("")
+  const [projectId, setProjectId] = useState("")
   const [projectLimit, setProjectLimit] = useState<SettingsLimit | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -50,28 +47,29 @@ export function LimitsSection() {
       .then(([limit, projectData]) => {
         setOrgLimit(limit)
         setProjects(projectData)
-        if (projectData[0]) setProjectSlug(projectData[0].slug)
+        if (projectData[0]) setProjectId(projectData[0].id)
       })
       .catch((error) => setError(formatHttpErrorMessage(error, "Failed to load limits.")))
       .finally(() => setLoading(false))
   }, [])
 
   useEffect(() => {
-    if (!projectSlug) return
+    if (!projectId) return
     void settingsLimitsService
-      .getProjectLimits(projectSlug)
+      .getProjectLimits(projectId)
       .then(setProjectLimit)
       .catch((error) => setError(formatHttpErrorMessage(error, "Failed to load project limits.")))
-  }, [projectSlug])
+  }, [projectId])
 
   const saveOrgLimit = async () => {
     setOrgSaving(true)
     setError(null)
     try {
-      const updated = await settingsLimitsService.updateOrganizationLimits({
-        monthly_token_limit: orgLimit?.monthly_token_limit ?? null,
-      })
-      setOrgLimit(updated)
+      setOrgLimit(
+        await settingsLimitsService.updateOrganizationLimits({
+          monthly_token_limit: orgLimit?.monthly_token_limit ?? null,
+        })
+      )
     } catch (error) {
       setError(formatHttpErrorMessage(error, "Failed to save organization limits."))
     } finally {
@@ -80,14 +78,15 @@ export function LimitsSection() {
   }
 
   const saveProjectLimit = async () => {
-    if (!projectSlug) return
+    if (!projectId) return
     setProjectSaving(true)
     setError(null)
     try {
-      const updated = await settingsLimitsService.updateProjectLimits(projectSlug, {
-        monthly_token_limit: projectLimit?.monthly_token_limit ?? null,
-      })
-      setProjectLimit(updated)
+      setProjectLimit(
+        await settingsLimitsService.updateProjectLimits(projectId, {
+          monthly_token_limit: projectLimit?.monthly_token_limit ?? null,
+        })
+      )
     } catch (error) {
       setError(formatHttpErrorMessage(error, "Failed to save project limits."))
     } finally {
@@ -97,10 +96,9 @@ export function LimitsSection() {
 
   return (
     <div className="space-y-6">
-      {/* ── Header ── */}
       <div>
         <h2 className="text-sm font-medium text-foreground">Limits</h2>
-        <p className="text-xs text-muted-foreground/70 mt-0.5">
+        <p className="mt-0.5 text-xs text-muted-foreground/70">
           Set monthly token limits at organization and project level.
         </p>
       </div>
@@ -108,14 +106,13 @@ export function LimitsSection() {
       <ErrorBanner message={error} />
 
       {loading ? (
-        <p className="text-xs text-muted-foreground py-8 text-center">Loading…</p>
+        <p className="py-8 text-center text-xs text-muted-foreground">Loading…</p>
       ) : (
         <div className="grid grid-cols-1 gap-8 md:grid-cols-2">
-          {/* ── Organization Limits ── */}
           <div className="space-y-4">
             <div className="border-b border-border/40 pb-2">
               <h3 className="text-sm font-semibold text-foreground">Organization</h3>
-              <p className="text-xs text-muted-foreground/60 mt-0.5">
+              <p className="mt-0.5 text-xs text-muted-foreground/60">
                 Default monthly token limit for the organization.
               </p>
             </div>
@@ -128,7 +125,10 @@ export function LimitsSection() {
                   onChange={(event) =>
                     setOrgLimit((current) =>
                       current
-                        ? { ...current, monthly_token_limit: event.target.value ? Number(event.target.value) : null }
+                        ? {
+                            ...current,
+                            monthly_token_limit: event.target.value ? Number(event.target.value) : null,
+                          }
                         : current
                     )
                   }
@@ -137,17 +137,16 @@ export function LimitsSection() {
                 />
               </div>
               <Button size="sm" onClick={saveOrgLimit} disabled={orgSaving}>
-                {orgSaving && <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />}
+                {orgSaving && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
                 Save
               </Button>
             </div>
           </div>
 
-          {/* ── Project Limits ── */}
           <div className="space-y-4">
             <div className="border-b border-border/40 pb-2">
               <h3 className="text-sm font-semibold text-foreground">Project Override</h3>
-              <p className="text-xs text-muted-foreground/60 mt-0.5">
+              <p className="mt-0.5 text-xs text-muted-foreground/60">
                 Override the organization default for a specific project.
               </p>
             </div>
@@ -155,8 +154,8 @@ export function LimitsSection() {
               <div className="space-y-1.5">
                 <Label className="text-xs font-medium text-muted-foreground">Project</Label>
                 <Select
-                  value={projectSlug || "__none__"}
-                  onValueChange={(value) => setProjectSlug(value === "__none__" ? "" : value)}
+                  value={projectId || "__none__"}
+                  onValueChange={(value) => setProjectId(value === "__none__" ? "" : value)}
                 >
                   <SelectTrigger className="h-9 max-w-xs">
                     <SelectValue placeholder="Project" />
@@ -164,7 +163,7 @@ export function LimitsSection() {
                   <SelectContent>
                     <SelectItem value="__none__">Select project</SelectItem>
                     {projects.map((project) => (
-                      <SelectItem key={project.id} value={project.slug}>
+                      <SelectItem key={project.id} value={project.id}>
                         {project.name}
                       </SelectItem>
                     ))}
@@ -179,7 +178,10 @@ export function LimitsSection() {
                   onChange={(event) =>
                     setProjectLimit((current) =>
                       current
-                        ? { ...current, monthly_token_limit: event.target.value ? Number(event.target.value) : null }
+                        ? {
+                            ...current,
+                            monthly_token_limit: event.target.value ? Number(event.target.value) : null,
+                          }
                         : current
                     )
                   }
@@ -190,8 +192,8 @@ export function LimitsSection() {
                   Effective limit: {projectLimit?.effective_monthly_token_limit ?? "Inherited / none"}
                 </p>
               </div>
-              <Button size="sm" onClick={saveProjectLimit} disabled={projectSaving || !projectSlug}>
-                {projectSaving && <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />}
+              <Button size="sm" onClick={saveProjectLimit} disabled={projectSaving || !projectId}>
+                {projectSaving && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
                 Save Override
               </Button>
             </div>

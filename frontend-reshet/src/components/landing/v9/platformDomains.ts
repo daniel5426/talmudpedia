@@ -47,8 +47,8 @@ export const PLATFORM_DOMAINS = [
   {
     title: "Monitoring",
     eyebrow: "Operations",
-    heading: "Monitor tenant activity, token accounting, and resource health from one operator-facing stats surface.",
-    body: "Track users, agent runs, spend coverage, queue behavior, and resource inventory through a tenant-scoped monitoring layer built for operational clarity.",
+    heading: "Monitor organization activity, token accounting, and resource health from one operator-facing stats surface.",
+    body: "Track users, agent runs, spend coverage, queue behavior, and resource inventory through a organization-scoped monitoring layer built for operational clarity.",
     points: ["Usage coverage", "Agent trends", "Resource inventory", "Operator drilldowns"],
     statLabel: "Tracked metrics",
     statValue: "4 sections",

@@ -13,7 +13,7 @@ from app.db.postgres.models import (
     KnowledgeStoreStatus,
     RetrievalPolicy,
     StorageBackend,
-    Tenant,
+    Organization,
 )
 from app.services.control_plane.context import ControlPlaneContext
 from app.services.control_plane.errors import forbidden, not_found, validation
@@ -44,36 +44,36 @@ async def resolve_request_tenant(
     *,
     db: AsyncSession,
     ctx: ControlPlaneContext,
-    tenant_slug: str | None,
-) -> Tenant:
-    tenant = (await db.execute(select(Tenant).where(Tenant.id == ctx.tenant_id))).scalar_one_or_none()
-    if tenant is None:
-        raise not_found("Tenant not found")
-    if tenant_slug and str(tenant.slug) != str(tenant_slug):
-        raise forbidden("Tenant slug does not match request context")
-    return tenant
+    organization_id: str | None,
+) -> Organization:
+    organization = (await db.execute(select(Organization).where(Organization.id == ctx.organization_id))).scalar_one_or_none()
+    if organization is None:
+        raise not_found("Organization not found")
+    if organization_id and str(organization.id) != str(organization_id):
+        raise forbidden("Organization does not match request context")
+    return organization
 
 
 async def validate_vector_store_credential(
     *,
     db: AsyncSession,
-    tenant_id: UUID,
+    organization_id: UUID,
     backend: StorageBackend,
     credentials_ref: UUID | None,
 ) -> UUID | None:
     if not credentials_ref:
         if backend in {StorageBackend.PINECONE, StorageBackend.QDRANT}:
-            has_default = await CredentialsService(db, tenant_id).has_effective_provider_credentials(
+            has_default = await CredentialsService(db, organization_id).has_effective_provider_credentials(
                 category=IntegrationCredentialCategory.VECTOR_STORE,
                 provider_key=backend.value,
             )
             if not has_default:
                 raise validation(
-                    f"{backend.value.capitalize()} knowledge stores require a matching tenant credential or platform default environment key."
+                    f"{backend.value.capitalize()} knowledge stores require a matching organization credential or platform default environment key."
                 )
         return None
     cred = await db.get(IntegrationCredential, credentials_ref)
-    if not cred or cred.tenant_id != tenant_id:
+    if not cred or cred.organization_id != organization_id:
         raise not_found("Credential not found")
     if cred.category != IntegrationCredentialCategory.VECTOR_STORE:
         raise validation("Credential must be in category 'vector_store'")
@@ -90,7 +90,7 @@ async def validate_vector_store_credential(
 def serialize_store(store: KnowledgeStore, *, view: str = "full") -> dict[str, Any]:
     payload = {
         "id": str(store.id),
-        "tenant_id": str(store.tenant_id),
+        "organization_id": str(store.organization_id),
         "name": store.name,
         "description": store.description,
         "embedding_model_id": store.embedding_model_id,
@@ -119,20 +119,20 @@ class KnowledgeStoreAdminService:
     def __init__(self, db: AsyncSession):
         self.db = db
 
-    async def list_stores(self, *, ctx: ControlPlaneContext, tenant_slug: str | None = None) -> list[KnowledgeStore]:
-        tenant = await resolve_request_tenant(db=self.db, ctx=ctx, tenant_slug=tenant_slug)
+    async def list_stores(self, *, ctx: ControlPlaneContext, organization_id: str | None = None) -> list[KnowledgeStore]:
+        organization = await resolve_request_tenant(db=self.db, ctx=ctx, organization_id=organization_id)
         stmt = (
             select(KnowledgeStore)
-            .where(KnowledgeStore.tenant_id == tenant.id)
+            .where(KnowledgeStore.organization_id == organization.id)
             .where(KnowledgeStore.status != KnowledgeStoreStatus.ARCHIVED)
             .order_by(KnowledgeStore.created_at.desc())
         )
         return list((await self.db.execute(stmt)).scalars().all())
 
-    async def get_store(self, *, ctx: ControlPlaneContext, store_id: UUID, tenant_slug: str | None = None) -> KnowledgeStore:
-        tenant = await resolve_request_tenant(db=self.db, ctx=ctx, tenant_slug=tenant_slug)
+    async def get_store(self, *, ctx: ControlPlaneContext, store_id: UUID, organization_id: str | None = None) -> KnowledgeStore:
+        organization = await resolve_request_tenant(db=self.db, ctx=ctx, organization_id=organization_id)
         store = await self.db.get(KnowledgeStore, store_id)
-        if not store or store.tenant_id != tenant.id:
+        if not store or store.organization_id != organization.id:
             raise not_found("Knowledge store not found")
         return store
 
@@ -140,7 +140,7 @@ class KnowledgeStoreAdminService:
         self,
         *,
         ctx: ControlPlaneContext,
-        tenant_slug: str | None,
+        organization_id: str | None,
         name: str,
         description: str | None,
         embedding_model_id: str,
@@ -150,7 +150,7 @@ class KnowledgeStoreAdminService:
         backend_config: dict[str, Any],
         credentials_ref: UUID | None,
     ) -> KnowledgeStore:
-        tenant = await resolve_request_tenant(db=self.db, ctx=ctx, tenant_slug=tenant_slug)
+        organization = await resolve_request_tenant(db=self.db, ctx=ctx, organization_id=organization_id)
         normalized_name = str(name or "").strip()
         if not normalized_name:
             raise validation("name is required", field="name")
@@ -161,7 +161,7 @@ class KnowledgeStoreAdminService:
         normalized_backend = _normalize_storage_backend(backend)
         validated_credential_ref = await validate_vector_store_credential(
             db=self.db,
-            tenant_id=tenant.id,
+            organization_id=organization.id,
             backend=normalized_backend,
             credentials_ref=credentials_ref,
         )
@@ -170,11 +170,11 @@ class KnowledgeStoreAdminService:
         if not effective_backend_config:
             safe_name = normalized_name.lower().replace(" ", "_").replace("-", "_")[:32]
             effective_backend_config = {
-                "index_name": f"ks_{safe_name}_{str(tenant.id)[:8]}",
+                "index_name": f"ks_{safe_name}_{str(organization.id)[:8]}",
                 "namespace": "default",
             }
         store = KnowledgeStore(
-            tenant_id=tenant.id,
+            organization_id=organization.id,
             name=normalized_name,
             description=description,
             embedding_model_id=normalized_embedding_model_id,
@@ -196,10 +196,10 @@ class KnowledgeStoreAdminService:
         *,
         ctx: ControlPlaneContext,
         store_id: UUID,
-        tenant_slug: str | None,
+        organization_id: str | None,
         patch: dict[str, Any],
     ) -> KnowledgeStore:
-        store = await self.get_store(ctx=ctx, store_id=store_id, tenant_slug=tenant_slug)
+        store = await self.get_store(ctx=ctx, store_id=store_id, organization_id=organization_id)
         if patch.get("name") is not None:
             store.name = patch["name"]
         if patch.get("description") is not None:
@@ -209,7 +209,7 @@ class KnowledgeStoreAdminService:
         if "credentials_ref" in patch:
             store.credentials_ref = await validate_vector_store_credential(
                 db=self.db,
-                tenant_id=store.tenant_id,
+                organization_id=store.organization_id,
                 backend=store.backend,
                 credentials_ref=patch.get("credentials_ref"),
             )
@@ -217,7 +217,7 @@ class KnowledgeStoreAdminService:
         await self.db.refresh(store)
         return store
 
-    async def delete_store(self, *, ctx: ControlPlaneContext, store_id: UUID, tenant_slug: str | None = None) -> None:
-        store = await self.get_store(ctx=ctx, store_id=store_id, tenant_slug=tenant_slug)
+    async def delete_store(self, *, ctx: ControlPlaneContext, store_id: UUID, organization_id: str | None = None) -> None:
+        store = await self.get_store(ctx=ctx, store_id=store_id, organization_id=organization_id)
         store.status = KnowledgeStoreStatus.ARCHIVED
         await self.db.commit()

@@ -23,7 +23,7 @@ class ArtifactLanguage(str, Enum):
 
 
 class ArtifactOwnerType(str, Enum):
-    TENANT = "tenant"
+    TENANT = "organization"
     SYSTEM = "system"
 
 

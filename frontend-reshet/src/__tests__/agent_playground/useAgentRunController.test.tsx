@@ -25,7 +25,7 @@ jest.mock("@/services/agent", () => ({
 
 jest.mock("@/lib/store/useAuthStore", () => ({
   useAuthStore: (selector: (state: any) => any) =>
-    selector({ user: { id: "user-1", tenant_id: "tenant-1" } }),
+    selector({ user: { id: "user-1", organization_id: "organization-1" } }),
 }));
 
 jest.mock("@/hooks/useAgentThreadHistory", () => ({

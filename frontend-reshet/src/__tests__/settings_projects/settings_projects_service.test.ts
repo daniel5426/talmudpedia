@@ -15,18 +15,18 @@ describe("settings projects service", () => {
     jest.clearAllMocks()
   })
 
-  it("lists and updates projects", async () => {
+  it("lists and updates projects by id", async () => {
     getMock.mockResolvedValue([])
-    patchMock.mockResolvedValue({ id: "p1", slug: "alpha" })
+    patchMock.mockResolvedValue({ id: "p1" })
 
     await settingsProjectsService.listProjects()
-    await settingsProjectsService.getProject("alpha")
-    await settingsProjectsService.listProjectMembers("alpha")
-    await settingsProjectsService.updateProject("alpha", { name: "Alpha 2" })
+    await settingsProjectsService.getProject("p1")
+    await settingsProjectsService.listProjectMembers("p1")
+    await settingsProjectsService.updateProject("p1", { name: "Alpha 2" })
 
     expect(getMock).toHaveBeenNthCalledWith(1, "/api/settings/projects")
-    expect(getMock).toHaveBeenNthCalledWith(2, "/api/settings/projects/alpha")
-    expect(getMock).toHaveBeenNthCalledWith(3, "/api/settings/projects/alpha/members")
-    expect(patchMock).toHaveBeenCalledWith("/api/settings/projects/alpha", { name: "Alpha 2" })
+    expect(getMock).toHaveBeenNthCalledWith(2, "/api/settings/projects/p1")
+    expect(getMock).toHaveBeenNthCalledWith(3, "/api/settings/projects/p1/members")
+    expect(patchMock).toHaveBeenCalledWith("/api/settings/projects/p1", { name: "Alpha 2" })
   })
 })

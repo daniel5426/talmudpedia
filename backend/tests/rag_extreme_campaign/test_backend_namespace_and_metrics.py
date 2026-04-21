@@ -28,7 +28,7 @@ async def test_knowledge_store_sink_uses_store_namespace_when_runtime_namespace_
     db_session, test_tenant_id, test_user_id, run_prefix, monkeypatch
 ):
     store = KnowledgeStore(
-        tenant_id=test_tenant_id,
+        organization_id=test_tenant_id,
         name=f"{run_prefix}-namespace-store",
         description="namespace fallback",
         embedding_model_id="manual-vector-test",
@@ -79,7 +79,7 @@ async def test_knowledge_store_sink_runtime_namespace_overrides_store_namespace(
     db_session, test_tenant_id, test_user_id, run_prefix, monkeypatch
 ):
     store = KnowledgeStore(
-        tenant_id=test_tenant_id,
+        organization_id=test_tenant_id,
         name=f"{run_prefix}-namespace-override-store",
         description="namespace override",
         embedding_model_id="manual-vector-test",
@@ -122,7 +122,7 @@ async def test_vector_search_prefers_runtime_top_k_and_namespace_override(
     db_session, test_tenant_id, test_user_id, run_prefix, monkeypatch
 ):
     store = KnowledgeStore(
-        tenant_id=test_tenant_id,
+        organization_id=test_tenant_id,
         name=f"{run_prefix}-search-store",
         description="search override",
         embedding_model_id="manual-vector-test",

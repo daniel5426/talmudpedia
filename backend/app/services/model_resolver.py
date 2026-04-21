@@ -72,14 +72,14 @@ class ModelResolver:
     Resolves logical model IDs to concrete capability runtime instances.
 
     Resolution is policy-driven, supporting:
-    - strict tenant/global scope precedence
+    - strict organization/global scope precedence
     - deterministic binding selection
     - centralized provider configuration
     """
 
-    def __init__(self, db: AsyncSession, tenant_id: UUID | None):
+    def __init__(self, db: AsyncSession, organization_id: UUID | None):
         self.db = db
-        self.tenant_id = tenant_id
+        self.organization_id = organization_id
         register_default_model_runtime_adapters()
 
     async def resolve(
@@ -125,7 +125,7 @@ class ModelResolver:
         return ResolvedModelBindingReceipt(
             logical_model=binding_ctx.model,
             binding=binding_ctx.binding,
-            binding_scope="tenant" if binding_ctx.binding.tenant_id is not None else "global",
+            binding_scope="organization" if binding_ctx.binding.organization_id is not None else "global",
             merged_config=merged_config,
             credentials_payload=credentials_payload,
             pricing_snapshot=binding_pricing_snapshot(binding_ctx.binding),
@@ -259,7 +259,7 @@ class ModelResolver:
             logical_model=binding_ctx.model,
             binding=binding_ctx.binding,
             runtime_instance=runtime_instance,
-            binding_scope="tenant" if binding_ctx.binding.tenant_id is not None else "global",
+            binding_scope="organization" if binding_ctx.binding.organization_id is not None else "global",
             merged_config=merged_config,
             credentials_payload=credentials_payload,
             pricing_snapshot=binding_pricing_snapshot(binding_ctx.binding),
@@ -277,9 +277,9 @@ class ModelResolver:
         allow_default: bool,
     ) -> _ResolvedBindingContext:
         logger.debug(
-            "Resolving model capability %s for tenant %s model_id=%s",
+            "Resolving model capability %s for organization %s model_id=%s",
             required_capability.value,
-            self.tenant_id,
+            self.organization_id,
             model_id,
         )
         model = await self._resolve_model_record(
@@ -347,15 +347,15 @@ class ModelResolver:
         model: ModelRegistry,
         policy: Optional[ModelResolutionPolicy] = None,
     ) -> Optional[ModelProviderBinding]:
-        tenant_bindings: list[ModelProviderBinding] = []
+        organization_bindings: list[ModelProviderBinding] = []
         global_bindings: list[ModelProviderBinding] = []
 
         for binding in model.providers:
             if not binding.is_enabled:
                 continue
-            if self.tenant_id is not None and binding.tenant_id == self.tenant_id:
-                tenant_bindings.append(binding)
-            elif binding.tenant_id is None:
+            if self.organization_id is not None and binding.organization_id == self.organization_id:
+                organization_bindings.append(binding)
+            elif binding.organization_id is None:
                 global_bindings.append(binding)
 
         def _sort_key(binding: ModelProviderBinding) -> tuple[int, int]:
@@ -364,9 +364,9 @@ class ModelResolver:
             provider_rank = priority_order.index(provider_key) if provider_key in priority_order else len(priority_order)
             return (provider_rank, binding.priority)
 
-        if tenant_bindings:
-            tenant_bindings.sort(key=_sort_key if policy and policy.priority else lambda item: item.priority)
-            return tenant_bindings[0]
+        if organization_bindings:
+            organization_bindings.sort(key=_sort_key if policy and policy.priority else lambda item: item.priority)
+            return organization_bindings[0]
         if global_bindings:
             global_bindings.sort(key=_sort_key if policy and policy.priority else lambda item: item.priority)
             return global_bindings[0]
@@ -424,7 +424,7 @@ class ModelResolver:
         category: IntegrationCredentialCategory,
     ) -> tuple[dict[str, Any], Optional[str], Optional[str]]:
         provider_variant = (binding.config or {}).get("provider_variant")
-        credentials_service = CredentialsService(self.db, self.tenant_id)
+        credentials_service = CredentialsService(self.db, self.organization_id)
         credentials_payload = await credentials_service.resolve_backend_config(
             base_config={},
             credentials_ref=binding.credentials_ref,
@@ -441,9 +441,9 @@ class ModelResolver:
         except Exception:
             return None
         scope_clause = (
-            or_(ModelRegistry.tenant_id == self.tenant_id, ModelRegistry.tenant_id.is_(None))
-            if self.tenant_id is not None
-            else ModelRegistry.tenant_id.is_(None)
+            or_(ModelRegistry.organization_id == self.organization_id, ModelRegistry.organization_id.is_(None))
+            if self.organization_id is not None
+            else ModelRegistry.organization_id.is_(None)
         )
         stmt = (
             select(ModelRegistry)
@@ -471,22 +471,22 @@ class ModelResolver:
             )
             .options(selectinload(ModelRegistry.providers))
         )
-        if self.tenant_id is not None:
-            tenant_default_stmt = base_stmt.where(
-                ModelRegistry.tenant_id == self.tenant_id,
+        if self.organization_id is not None:
+            organization_default_stmt = base_stmt.where(
+                ModelRegistry.organization_id == self.organization_id,
                 ModelRegistry.is_default == True,
             )
             global_default_stmt = base_stmt.where(
-                ModelRegistry.tenant_id.is_(None),
+                ModelRegistry.organization_id.is_(None),
                 ModelRegistry.is_default == True,
             )
-            tenant_fallback_stmt = base_stmt.where(ModelRegistry.tenant_id == self.tenant_id)
-            global_fallback_stmt = base_stmt.where(ModelRegistry.tenant_id.is_(None))
-            ordered_stmts = [tenant_default_stmt, global_default_stmt, tenant_fallback_stmt, global_fallback_stmt]
+            organization_fallback_stmt = base_stmt.where(ModelRegistry.organization_id == self.organization_id)
+            global_fallback_stmt = base_stmt.where(ModelRegistry.organization_id.is_(None))
+            ordered_stmts = [organization_default_stmt, global_default_stmt, organization_fallback_stmt, global_fallback_stmt]
         else:
             ordered_stmts = [
-                base_stmt.where(ModelRegistry.tenant_id.is_(None), ModelRegistry.is_default == True),
-                base_stmt.where(ModelRegistry.tenant_id.is_(None)),
+                base_stmt.where(ModelRegistry.organization_id.is_(None), ModelRegistry.is_default == True),
+                base_stmt.where(ModelRegistry.organization_id.is_(None)),
             ]
 
         for stmt in ordered_stmts:
@@ -500,9 +500,9 @@ class ModelResolver:
 
     async def _get_fallback_model(self, failed_model: ModelRegistry) -> Optional[ModelRegistry]:
         scope_clause = (
-            or_(ModelRegistry.tenant_id == self.tenant_id, ModelRegistry.tenant_id.is_(None))
-            if self.tenant_id is not None
-            else ModelRegistry.tenant_id.is_(None)
+            or_(ModelRegistry.organization_id == self.organization_id, ModelRegistry.organization_id.is_(None))
+            if self.organization_id is not None
+            else ModelRegistry.organization_id.is_(None)
         )
         query = (
             select(ModelRegistry)

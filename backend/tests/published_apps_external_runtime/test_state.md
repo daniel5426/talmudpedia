@@ -1,6 +1,6 @@
 # Test State: Published Apps External Runtime
 
-Last Updated: 2026-04-19
+Last Updated: 2026-04-20
 
 ## Scope
 - Host-anywhere published-app runtime surface under `/public/external/apps/*`.
@@ -28,6 +28,9 @@ Last Updated: 2026-04-19
 - Command: `TEST_USE_REAL_DB=0 /Users/danielbenassaya/Code/personal/talmudpedia/backend/.venv-codex-tests/bin/python -m pytest -q backend/tests/published_apps_external_runtime/test_external_runtime_api.py backend/tests/published_apps_host_runtime/test_host_runtime_same_url_auth.py`
 - Date/Time: 2026-04-19 Asia/Hebron
 - Result: PASS (`22 passed`)
+- Command: `SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest backend/tests/published_apps/test_admin_apps_crud.py backend/tests/published_apps/test_public_app_resolve_and_config.py backend/tests/published_apps_external_runtime/test_external_runtime_api.py backend/tests/published_apps_host_runtime/test_host_runtime_same_url_auth.py backend/tests/workos_native_auth/test_auth_session_effective_scopes.py backend/tests/settings_api_keys/test_settings_api_keys_api.py`
+- Date/Time: 2026-04-20 23:17 EEST
+- Result: PASS (`41 passed`, includes external runtime coverage)
 - Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/published_apps_external_runtime/test_external_runtime_api.py backend/tests/published_apps_host_runtime/test_host_runtime_same_url_auth.py`
 - Date/Time: 2026-04-05 Asia/Hebron
 - Result: PASS (`17 passed`)

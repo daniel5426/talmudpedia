@@ -398,7 +398,7 @@ export function LandingV7() {
                    <div className="text-[#3fdca3] font-medium text-right">Completed</div>
                    
                    <div className="text-white/60">10:18</div>
-                   <div className="text-white">Cross-tenant request (Crescent → Silvergate)</div>
+                   <div className="text-white">Cross-organization request (Crescent → Silvergate)</div>
                    <div className="text-white/40 font-medium text-right">Denied</div>
                    
                    <div className="text-white/60">10:22</div>

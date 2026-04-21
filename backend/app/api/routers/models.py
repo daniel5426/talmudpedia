@@ -11,7 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.api.dependencies import get_current_principal, get_tenant_context, require_scopes
+from app.api.dependencies import get_current_principal, get_organization_context, require_scopes
 from app.db.postgres.models.registry import (
     ModelCapabilityType,
     ModelProviderBinding,
@@ -22,7 +22,7 @@ from app.db.postgres.models.registry import (
 from app.db.postgres.session import get_db
 from app.services.integration_provider_catalog import (
     is_model_provider_supported,
-    is_tenant_managed_pricing_provider,
+    is_organization_managed_pricing_provider,
 )
 from app.services.control_plane.context import ControlPlaneContext
 from app.services.control_plane.errors import ControlPlaneError
@@ -111,7 +111,7 @@ class UpdateModelRequest(BaseModel):
 
 class ModelResponse(BaseModel):
     id: uuid.UUID
-    tenant_id: uuid.UUID | None
+    organization_id: uuid.UUID | None
     name: str
     description: str | None
     capability_type: ModelCapabilityType
@@ -142,7 +142,7 @@ def _serialize_provider(binding: ModelProviderBinding) -> ModelProviderSummary:
 def _serialize_model(model: ModelRegistry) -> ModelResponse:
     return ModelResponse(
         id=model.id,
-        tenant_id=model.tenant_id,
+        organization_id=model.organization_id,
         name=model.name,
         description=model.description,
         capability_type=model.capability_type,
@@ -158,9 +158,12 @@ def _serialize_model(model: ModelRegistry) -> ModelResponse:
     )
 
 
-def _service_context(*, tenant_ctx: dict[str, Any], principal: dict[str, Any]) -> ControlPlaneContext:
-    return ControlPlaneContext.from_tenant_context(
-        tenant_ctx,
+def _service_context(*, organization_ctx: dict[str, Any], principal: dict[str, Any]) -> ControlPlaneContext:
+    return ControlPlaneContext.from_organization_context(
+        {
+            "organization_id": organization_ctx.get("organization_id") or organization_ctx.get("organization_id"),
+            "project_id": organization_ctx.get("project_id"),
+        },
         user=principal.get("user"),
         user_id=uuid.UUID(str(principal["user_id"])) if principal.get("user_id") else None,
         auth_token=principal.get("auth_token"),
@@ -171,12 +174,12 @@ def _service_context(*, tenant_ctx: dict[str, Any], principal: dict[str, Any]) -
 
 def _model_filters(
     *,
-    tenant_id: uuid.UUID,
+    organization_id: uuid.UUID,
     capability_type: ModelCapabilityType | None,
     status: ModelStatus | None,
     is_active: bool | None,
 ):
-    filters: list[Any] = [model_scope_clause(tenant_id)]
+    filters: list[Any] = [model_scope_clause(organization_id)]
     if capability_type is not None:
         filters.append(_enum_filter(ModelRegistry.capability_type, capability_type))
     if status is not None:
@@ -186,15 +189,15 @@ def _model_filters(
     return filters
 
 
-async def _get_tenant_owned_model(
+async def _get_organization_owned_model(
     *,
     db: AsyncSession,
     model_id: uuid.UUID,
-    tenant_id: uuid.UUID,
+    organization_id: uuid.UUID,
 ) -> ModelRegistry | None:
     result = await db.execute(
         select(ModelRegistry)
-        .where(and_(ModelRegistry.id == model_id, ModelRegistry.tenant_id == tenant_id))
+        .where(and_(ModelRegistry.id == model_id, ModelRegistry.organization_id == organization_id))
         .options(selectinload(ModelRegistry.providers))
     )
     return result.scalar_one_or_none()
@@ -282,14 +285,14 @@ async def list_models(
     limit: int = 20,
     view: str = "summary",
     db: AsyncSession = Depends(get_db),
-    tenant_ctx=Depends(get_tenant_context),
+    organization_ctx=Depends(get_organization_context),
     _: dict[str, Any] = Depends(require_scopes("models.read")),
     principal: dict[str, Any] = Depends(get_current_principal),
 ):
     try:
         query = ListQuery.from_payload({"skip": skip, "limit": limit, "view": view})
         models, total = await ModelRegistryService(db).list_models(
-            ctx=_service_context(tenant_ctx=tenant_ctx, principal=principal),
+            ctx=_service_context(organization_ctx=organization_ctx, principal=principal),
             params=ListModelsInput(
                 capability_type=capability_type,
                 status=status,
@@ -314,13 +317,13 @@ async def list_models(
 async def create_model(
     request: CreateModelRequest,
     db: AsyncSession = Depends(get_db),
-    tenant_ctx=Depends(get_tenant_context),
+    organization_ctx=Depends(get_organization_context),
     _: dict[str, Any] = Depends(require_scopes("models.write")),
     principal: dict[str, Any] = Depends(get_current_principal),
 ):
     try:
         model = await ModelRegistryService(db).create_model(
-            ctx=_service_context(tenant_ctx=tenant_ctx, principal=principal),
+            ctx=_service_context(organization_ctx=organization_ctx, principal=principal),
             params=CreateModelInput(
                 name=request.name,
                 description=request.description,
@@ -341,11 +344,11 @@ async def _get_model_response_record(
     *,
     db: AsyncSession,
     model_id: uuid.UUID,
-    tenant_id: uuid.UUID,
+    organization_id: uuid.UUID,
 ) -> ModelRegistry:
     result = await db.execute(
         select(ModelRegistry)
-        .where(and_(ModelRegistry.id == model_id, _model_scope_clause(tenant_id)))
+        .where(and_(ModelRegistry.id == model_id, _model_scope_clause(organization_id)))
         .options(selectinload(ModelRegistry.providers))
     )
     model = result.scalar_one_or_none()
@@ -358,13 +361,13 @@ async def _get_model_response_record(
 async def get_model(
     model_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    tenant_ctx=Depends(get_tenant_context),
+    organization_ctx=Depends(get_organization_context),
     _: dict[str, Any] = Depends(require_scopes("models.read")),
     principal: dict[str, Any] = Depends(get_current_principal),
 ):
     try:
         model = await ModelRegistryService(db).get_model(
-            ctx=_service_context(tenant_ctx=tenant_ctx, principal=principal),
+            ctx=_service_context(organization_ctx=organization_ctx, principal=principal),
             model_id=model_id,
         )
         return _serialize_model(model)
@@ -377,13 +380,13 @@ async def update_model(
     model_id: uuid.UUID,
     request: UpdateModelRequest,
     db: AsyncSession = Depends(get_db),
-    tenant_ctx=Depends(get_tenant_context),
+    organization_ctx=Depends(get_organization_context),
     _: dict[str, Any] = Depends(require_scopes("models.write")),
     principal: dict[str, Any] = Depends(get_current_principal),
 ):
     try:
         model = await ModelRegistryService(db).update_model(
-            ctx=_service_context(tenant_ctx=tenant_ctx, principal=principal),
+            ctx=_service_context(organization_ctx=organization_ctx, principal=principal),
             model_id=model_id,
             params=UpdateModelInput(
                 name=request.name,
@@ -404,13 +407,13 @@ async def update_model(
 async def delete_model(
     model_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    tenant_ctx=Depends(get_tenant_context),
+    organization_ctx=Depends(get_organization_context),
     _: dict[str, Any] = Depends(require_scopes("models.write")),
     principal: dict[str, Any] = Depends(get_current_principal),
 ):
     del principal
-    tenant_id = uuid.UUID(tenant_ctx["tenant_id"])
-    model = await _get_tenant_owned_model(db=db, model_id=model_id, tenant_id=tenant_id)
+    organization_id= uuid.UUID(organization_ctx["organization_id"])
+    model = await _get_organization_owned_model(db=db, model_id=model_id, organization_id=organization_id)
     if model is None:
         raise HTTPException(status_code=404, detail="Model not found or permission denied")
 
@@ -424,13 +427,13 @@ async def add_provider_binding(
     model_id: uuid.UUID,
     request: CreateProviderRequest,
     db: AsyncSession = Depends(get_db),
-    tenant_ctx=Depends(get_tenant_context),
+    organization_ctx=Depends(get_organization_context),
     _: dict[str, Any] = Depends(require_scopes("models.write")),
     principal: dict[str, Any] = Depends(get_current_principal),
 ):
     del principal
-    tenant_id = uuid.UUID(tenant_ctx["tenant_id"])
-    model = await _get_tenant_owned_model(db=db, model_id=model_id, tenant_id=tenant_id)
+    organization_id= uuid.UUID(organization_ctx["organization_id"])
+    model = await _get_organization_owned_model(db=db, model_id=model_id, organization_id=organization_id)
     if model is None:
         raise HTTPException(status_code=404, detail="Model not found")
 
@@ -441,7 +444,7 @@ async def add_provider_binding(
 
     binding = ModelProviderBinding(
         model_id=model_id,
-        tenant_id=tenant_id,
+        organization_id=organization_id,
         provider=request.provider,
         provider_model_id=request.provider_model_id.strip(),
         priority=request.priority,
@@ -470,14 +473,14 @@ async def update_provider_binding(
     provider_id: uuid.UUID,
     request: UpdateProviderRequest,
     db: AsyncSession = Depends(get_db),
-    tenant_ctx=Depends(get_tenant_context),
+    organization_ctx=Depends(get_organization_context),
     _: dict[str, Any] = Depends(require_scopes("models.write")),
     principal: dict[str, Any] = Depends(get_current_principal),
 ):
     del principal
-    tenant_id = uuid.UUID(tenant_ctx["tenant_id"])
+    organization_id= uuid.UUID(organization_ctx["organization_id"])
 
-    model = await _get_tenant_owned_model(db=db, model_id=model_id, tenant_id=tenant_id)
+    model = await _get_organization_owned_model(db=db, model_id=model_id, organization_id=organization_id)
     if model is None:
         raise HTTPException(status_code=404, detail="Model not found")
 
@@ -486,7 +489,7 @@ async def update_provider_binding(
             and_(
                 ModelProviderBinding.id == provider_id,
                 ModelProviderBinding.model_id == model_id,
-                ModelProviderBinding.tenant_id == tenant_id,
+                ModelProviderBinding.organization_id == organization_id,
             )
         )
     )
@@ -530,19 +533,19 @@ async def remove_provider_binding(
     model_id: uuid.UUID,
     provider_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    tenant_ctx=Depends(get_tenant_context),
+    organization_ctx=Depends(get_organization_context),
     _: dict[str, Any] = Depends(require_scopes("models.write")),
     principal: dict[str, Any] = Depends(get_current_principal),
 ):
     del principal
-    tenant_id = uuid.UUID(tenant_ctx["tenant_id"])
+    organization_id= uuid.UUID(organization_ctx["organization_id"])
 
     result = await db.execute(
         select(ModelProviderBinding).where(
             and_(
                 ModelProviderBinding.id == provider_id,
                 ModelProviderBinding.model_id == model_id,
-                ModelProviderBinding.tenant_id == tenant_id,
+                ModelProviderBinding.organization_id == organization_id,
             )
         )
     )

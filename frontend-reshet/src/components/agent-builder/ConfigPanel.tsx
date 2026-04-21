@@ -59,7 +59,7 @@ import {
 import { modelsService, toolsService, ragAdminService, agentService, AgentOperatorSpec, LogicalModel, ToolDefinition } from "@/services"
 import type { AgentGraphAnalysis, AgentGraphDefinition, ModelCapabilityType } from "@/services/agent"
 import { ToolPicker } from "./ToolPicker"
-import { useTenant } from "@/contexts/TenantContext"
+import { useOrganization } from "@/contexts/OrganizationContext"
 import { KnowledgeStoreSelect } from "../shared/KnowledgeStoreSelect"
 import { RetrievalPipelineSelect } from "../shared/RetrievalPipelineSelect"
 import { SearchableResourceInput } from "../shared/SearchableResourceInput"
@@ -122,7 +122,6 @@ interface ResourceOption {
     value: string
     label: string
     providerInfo?: string
-    slug?: string
 }
 
 type ValidationIssue = {
@@ -153,9 +152,9 @@ function validateOrchestrationNodeConfig(nodeType: string, config: Record<string
     }
 
     if (nodeType === "spawn_run") {
-        const hasTarget = Boolean(String(config.target_agent_slug || "").trim()) || Boolean(String(config.target_agent_id || "").trim())
+        const hasTarget = Boolean(String(config.target_agent_id || "").trim())
         if (!hasTarget) {
-            issues.push({ field: "target_agent_slug", message: "Spawn Run requires a target agent (slug or ID)." })
+            issues.push({ field: "target_agent_id", message: "Spawn Run requires a target agent ID." })
         }
         if (toStringList(config.scope_subset).length === 0) {
             issues.push({ field: "scope_subset", message: "Scope subset is required for orchestration spawn nodes." })
@@ -172,11 +171,11 @@ function validateOrchestrationNodeConfig(nodeType: string, config: Record<string
         } else {
             targets.forEach((target, idx) => {
                 const item = target && typeof target === "object" ? target as Record<string, unknown> : {}
-                const hasTarget = Boolean(String(item.target_agent_slug || "").trim()) || Boolean(String(item.target_agent_id || "").trim())
+                const hasTarget = Boolean(String(item.target_agent_id || "").trim())
                 if (!hasTarget) {
                     issues.push({
                         field: "targets",
-                        message: `Target #${idx + 1} requires target agent slug or ID.`,
+                        message: `Target #${idx + 1} requires target agent ID.`,
                     })
                 }
             })
@@ -1036,7 +1035,6 @@ function ScopeSubsetField({
 }
 
 type SpawnTargetRow = {
-    target_agent_slug?: string
     target_agent_id?: string
     mapped_input_payload?: Record<string, unknown>
 }
@@ -1064,7 +1062,7 @@ function SpawnTargetsField({
         })
     }, [targets])
 
-    const addRow = () => onChange([...(targets || []), { target_agent_slug: "", mapped_input_payload: {} }])
+    const addRow = () => onChange([...(targets || []), { target_agent_id: "", mapped_input_payload: {} }])
     const removeRow = (idx: number) => onChange(targets.filter((_, i) => i !== idx))
     const updateRow = (idx: number, patch: Partial<SpawnTargetRow>) => {
         const next = [...targets]
@@ -1103,14 +1101,14 @@ function SpawnTargetsField({
                         </div>
                     </div>
                     <SearchableResourceInput
-                        value={target.target_agent_slug || ""}
-                        onChange={(val) => updateRow(idx, { target_agent_slug: val, target_agent_id: "" })}
-                        placeholder="Target agent slug..."
+                        value={target.target_agent_id || ""}
+                        onChange={(val) => updateRow(idx, { target_agent_id: val })}
+                        placeholder="Target agent ID..."
                         className="h-8 px-2 text-[11px] bg-background/50"
                         resources={agents.map((agent) => ({
-                            value: agent.slug || agent.value,
+                            value: agent.value,
                             label: agent.label,
-                            info: agent.slug || agent.value,
+                            info: agent.value,
                         }))}
                     />
                     <SmartInput
@@ -1363,9 +1361,9 @@ function ConfigField({
                     placeholder={preferId ? "Select target agent (ID)..." : "Select target agent..."}
                     className="h-9 px-3 bg-muted/40 border-none rounded-lg text-[13px] focus-visible:ring-1 focus-visible:ring-offset-0 placeholder:text-muted-foreground/40"
                     resources={agentOptions.map((agent) => ({
-                        value: preferId ? agent.value : (agent.slug || agent.value),
+                        value: agent.value,
                         label: agent.label,
-                        info: `${agent.slug || agent.value}`,
+                        info: `${agent.value}`,
                     }))}
                 />
             )
@@ -1788,7 +1786,7 @@ export function ConfigPanel({
     const promptMentionModal = usePromptMentionModal<{ fieldName: string; mentionIndex: number }>()
     const resolvedGraphDefinition = graphDefinition || { spec_version: "4.0", nodes: [], edges: [] }
 
-    const { currentTenant } = useTenant()
+    const { currentOrganization } = useOrganization()
 
     useEffect(() => {
         const initialConfig = normalizeNodeContractConfig(data.nodeType, data.config || {})
@@ -1818,7 +1816,7 @@ export function ConfigPanel({
                 const [modelsRes, toolsRes, pipelinesRes, agentsRes] = await Promise.all([
                     modelsService.listModels(modelCapability, "active", 0, 100, "full"),
                     toolsService.listTools(undefined, "published", undefined, 0, 100, "summary"),
-                    ragAdminService.listVisualPipelines(currentTenant?.slug, { skip: 0, limit: 100, view: "summary" }),
+                    ragAdminService.listVisualPipelines(currentOrganization?.id, { skip: 0, limit: 100, view: "summary" }),
                     agentService.listAgents({ skip: 0, limit: 100, view: "summary" }),
                 ])
                 setModels(modelsRes.items.map(m => ({
@@ -1836,12 +1834,11 @@ export function ConfigPanel({
                     .filter(p => p.pipeline_type === "retrieval")
                     .map(p => ({
                         value: p.id,
-                        label: p.name || (p as any).slug || "Unnamed Pipeline"
+                        label: p.name || "Unnamed Pipeline"
                     })))
                 setAgentOptions((agentsRes.items || []).map((agent) => ({
                     value: agent.id,
                     label: agent.name,
-                    slug: agent.slug,
                 })))
             } catch (error) {
                 console.error("Failed to load resources:", error)
@@ -1850,7 +1847,7 @@ export function ConfigPanel({
             }
         }
         loadResources()
-    }, [currentTenant?.slug, data.nodeType])
+    }, [currentOrganization?.id, data.nodeType])
 
     useEffect(() => {
         agentService.listOperators()

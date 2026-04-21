@@ -1,6 +1,6 @@
 # Published Apps Frontend Tests
 
-Last Updated: 2026-04-19
+Last Updated: 2026-04-21
 
 ## Scope
 Frontend coverage for published-apps admin and public runtime surfaces outside the new versions module.
@@ -75,8 +75,15 @@ Frontend coverage for published-apps admin and public runtime surfaces outside t
 - Command: `cd frontend-reshet && npm test -- --runInBand src/__tests__/published_apps/apps_admin_page.test.tsx --watch=false`
 - Date: 2026-03-22
 - Result: PASS (7 passed — 3 existing + 4 new stats tests)
+- Command: `cd /Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet && npm exec pnpm -- test -- --runTestsByPath src/__tests__/published_apps/apps_admin_page.test.tsx src/__tests__/published_apps/published_runtime_service.test.ts src/__tests__/published_apps/preview_canvas_auth_channel.test.tsx src/__tests__/auth_session_bootstrap/auth_service.test.ts src/__tests__/auth_session_bootstrap/admin_layout_auth_gate.test.tsx src/__tests__/auth_session_bootstrap/auth_refresher.test.tsx src/__tests__/settings_api_keys/settings_api_keys_service.test.ts src/__tests__/settings_projects/settings_projects_service.test.ts src/__tests__/settings_people_permissions/settings_people_permissions_service.test.ts src/__tests__/settings_people_permissions/settings_people_permissions_dialogs.test.tsx src/__tests__/settings_shell/settings_shell.test.tsx`
+- Date: 2026-04-20 23:17 EEST
+- Result: PASS (`11 suites, 31 tests`)
 
 ## Known Gaps / Follow-ups
 - Workspace versions-first flows moved to `frontend-reshet/src/__tests__/apps_builder_versions/`.
 - No focused hook-level test covers the full `useAppsBuilderChat` session lifecycle yet; current frontend coverage is still stream/history focused.
 - Add explicit tests for versions panel integration inside `AppsBuilderWorkspace`.
+
+## 2026-04-21 tenant-to-organization validation
+- Command: `cd frontend-reshet && npm exec pnpm -- test -- --runTestsByPath src/__tests__/published_apps/preview_canvas_auth_channel.test.tsx src/__tests__/auth_session_bootstrap/auth_service.test.ts src/__tests__/settings_api_keys/settings_api_keys_service.test.ts src/__tests__/admin_threads/threads_table.test.ts src/__tests__/admin_threads/admin_thread_page.test.tsx src/__tests__/admin_monitoring/users_table_monitoring.test.tsx src/__tests__/artifacts_admin/artifact_test_panel.test.tsx src/__tests__/pipeline_builder/pipeline_run_stale_executable.test.tsx src/__tests__/agent_builder_v3/config_panel_value_ref_contracts.test.tsx src/__tests__/agent_builder_v3/config_panel_artifact_contracts.test.tsx src/__tests__/pipeline_tool_bindings/pipeline_tool_settings_page.test.tsx`
+- Result: PASS (`11 suites passed, 25 tests passed`)

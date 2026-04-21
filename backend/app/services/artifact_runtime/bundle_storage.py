@@ -46,20 +46,20 @@ class ArtifactBundleStorage:
         return cls(storage)
 
     @classmethod
-    def build_bundle_prefix(cls, *, tenant_id: str, artifact_id: str | None, revision_id: str) -> str:
+    def build_bundle_prefix(cls, *, organization_id: str, artifact_id: str | None, revision_id: str) -> str:
         artifact_segment = artifact_id or "ephemeral"
-        return f"{cls.BUNDLE_PREFIX}/{tenant_id}/{artifact_segment}/{revision_id}"
+        return f"{cls.BUNDLE_PREFIX}/{organization_id}/{artifact_segment}/{revision_id}"
 
     def write_bundle(
         self,
         *,
-        tenant_id: str,
+        organization_id: str,
         artifact_id: str | None,
         revision_id: str,
         bundle_hash: str,
         payload: bytes,
     ) -> ArtifactBundleStorageLocation:
-        prefix = self.build_bundle_prefix(tenant_id=tenant_id, artifact_id=artifact_id, revision_id=revision_id)
+        prefix = self.build_bundle_prefix(organization_id=organization_id, artifact_id=artifact_id, revision_id=revision_id)
         storage_key = self._storage.write_asset_bytes(
             dist_storage_prefix=prefix,
             asset_path="bundle.zip",

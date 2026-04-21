@@ -55,7 +55,7 @@ class ArtifactExecutionService:
     async def start_test_run(
         self,
         *,
-        tenant_id: UUID,
+        organization_id: UUID,
         created_by: UUID | None,
         artifact_id: UUID | None,
         source_files: list[dict[str, Any]] | None = None,
@@ -76,7 +76,7 @@ class ArtifactExecutionService:
         artifact: Artifact | None = None
         revision = None
         if artifact_id is not None:
-            artifact = await self._registry.get_tenant_artifact(artifact_id=artifact_id, tenant_id=tenant_id)
+            artifact = await self._registry.get_organization_artifact(artifact_id=artifact_id, organization_id=organization_id)
             if artifact is None:
                 raise ValueError("Artifact not found")
             revision = artifact.latest_draft_revision or artifact.latest_published_revision
@@ -100,7 +100,7 @@ class ArtifactExecutionService:
             )
         if should_materialize:
             revision = await self._revisions.create_ephemeral_revision(
-                tenant_id=tenant_id,
+                organization_id=organization_id,
                 created_by=created_by,
                 artifact=artifact,
                 display_name=artifact.display_name if artifact else "Unsaved Artifact",
@@ -127,13 +127,13 @@ class ArtifactExecutionService:
         )
 
         run = await self._runs.create_test_run(
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             artifact=artifact,
             revision=revision,
             input_payload=input_data,
             config_payload=dict(config or {}),
             context_payload={
-                "tenant_id": str(tenant_id),
+                "organization_id": str(organization_id),
                 "artifact_id": str(artifact.id) if artifact else None,
                 "revision_id": str(revision.id),
                 "domain": "test",
@@ -199,7 +199,7 @@ class ArtifactExecutionService:
     async def execute_live_run(
         self,
         *,
-        tenant_id: UUID,
+        organization_id: UUID,
         created_by: UUID | None,
         revision_id: UUID,
         domain: ArtifactRunDomain | str,
@@ -213,15 +213,15 @@ class ArtifactExecutionService:
         normalized_domain = self._normalize_domain(domain)
         revision = await self._resolve_revision_for_execution(
             revision_id=revision_id,
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             require_published=require_published and normalized_domain != ArtifactRunDomain.TEST,
         )
         artifact = None
         if revision.artifact_id is not None:
-            artifact = await self._registry.get_accessible_artifact(artifact_id=revision.artifact_id, tenant_id=tenant_id)
+            artifact = await self._registry.get_accessible_artifact(artifact_id=revision.artifact_id, organization_id=organization_id)
 
         run = await self._runs.create_run(
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             artifact=artifact,
             revision=revision,
             domain=normalized_domain,
@@ -229,7 +229,7 @@ class ArtifactExecutionService:
             config_payload=config_payload,
             context_payload={
                 **dict(context_payload or {}),
-                "tenant_id": str(tenant_id),
+                "organization_id": str(organization_id),
                 "artifact_id": str(revision.artifact_id) if revision.artifact_id else None,
                 "revision_id": str(revision.id),
                 "domain": normalized_domain.value,
@@ -311,12 +311,12 @@ class ArtifactExecutionService:
             await self._db.commit()
             return
 
-        policy = await self._policies.assert_capacity(tenant_id=run.tenant_id, queue_class=run.queue_class)
+        policy = await self._policies.assert_capacity(organization_id=run.organization_id, queue_class=run.queue_class)
         namespace = "staging" if run.queue_class == "artifact_test" else "production"
         deployment = await self._deployments.ensure_deployment(
             revision=run.revision,
             namespace=namespace,
-            tenant_id=run.tenant_id,
+            organization_id=run.organization_id,
         )
 
         run.runtime_metadata = {
@@ -364,7 +364,7 @@ class ArtifactExecutionService:
             revision=run.revision,
         )
         request_payload = {
-            "tenant_id": str(run.tenant_id),
+            "organization_id": str(run.organization_id),
             "run_id": str(run.id),
             "artifact_id": str(run.artifact_id) if run.artifact_id else None,
             "revision_id": str(run.revision_id),
@@ -385,7 +385,7 @@ class ArtifactExecutionService:
         try:
             resolved_credentials = await resolve_runtime_credentials(
                 db=self._db,
-                tenant_id=run.tenant_id,
+                organization_id=run.organization_id,
                 revision=run.revision,
             )
             request_payload["context"] = {
@@ -499,9 +499,9 @@ class ArtifactExecutionService:
                 return run
             await asyncio.sleep(0.2)
 
-    async def cancel_run(self, *, run_id: UUID, tenant_id: UUID):
+    async def cancel_run(self, *, run_id: UUID, organization_id: UUID):
         run = await self._runs.get_run(run_id=run_id)
-        if run is None or str(run.tenant_id) != str(tenant_id):
+        if run is None or str(run.organization_id) != str(organization_id):
             raise ValueError("Artifact run not found")
         await self._runs.mark_cancel_requested(run)
         if run.sandbox_session_id and run.status == ArtifactRunStatus.CANCEL_REQUESTED:
@@ -530,10 +530,10 @@ class ArtifactExecutionService:
         self,
         *,
         revision_id: UUID,
-        tenant_id: UUID,
+        organization_id: UUID,
         require_published: bool,
     ):
-        revision = await self._registry.get_revision(revision_id=revision_id, tenant_id=tenant_id)
+        revision = await self._registry.get_revision(revision_id=revision_id, organization_id=organization_id)
         if revision is None:
             raise ValueError("Artifact revision not found")
         if require_published and (not revision.is_published or revision.is_ephemeral):

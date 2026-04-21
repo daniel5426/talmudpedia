@@ -36,9 +36,9 @@ def test_non_opencode_runs_keep_model_registry_resolution_enabled():
     )
 
 
-async def _create_app_and_draft_revision(db_session, *, tenant_id: UUID, user_id: UUID, agent_id: UUID) -> str:
+async def _create_app_and_draft_revision(db_session, *, organization_id: UUID, user_id: UUID, agent_id: UUID) -> str:
     app = PublishedApp(
-        tenant_id=tenant_id,
+        organization_id=organization_id,
         agent_id=agent_id,
         name=f"Coding Agent V2 App {uuid4().hex[:6]}",
         slug=f"coding-agent-v2-{uuid4().hex[:10]}",
@@ -99,7 +99,7 @@ async def test_v2_chat_session_create_and_list_routes(client, db_session):
     headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
     app_id = await _create_app_and_draft_revision(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         agent_id=agent.id,
     )
@@ -135,7 +135,7 @@ async def test_v2_chat_session_submit_message_and_list_history(client, db_sessio
     headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
     app_id = await _create_app_and_draft_revision(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         agent_id=agent.id,
     )
@@ -205,7 +205,7 @@ async def test_v2_chat_session_history_route_survives_expired_updated_at(client,
     headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
     app_id = await _create_app_and_draft_revision(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         agent_id=agent.id,
     )
@@ -241,7 +241,7 @@ async def test_remote_session_catchup_skips_previous_assistant_when_new_user_tur
     tenant, user, _org_unit, agent = await seed_admin_tenant_and_agent(db_session)
     app_id = await _create_app_and_draft_revision(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         agent_id=agent.id,
     )
@@ -287,7 +287,7 @@ async def test_chat_session_lookup_reloads_remote_session_updates(db_session):
     tenant, user, _org_unit, agent = await seed_admin_tenant_and_agent(db_session)
     app_id = await _create_app_and_draft_revision(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         agent_id=agent.id,
     )
@@ -335,7 +335,7 @@ async def test_v2_chat_session_events_abort_and_permission_routes(client, db_ses
     headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
     app_id = await _create_app_and_draft_revision(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         agent_id=agent.id,
     )
@@ -406,7 +406,7 @@ async def test_v2_chat_session_events_do_not_emit_heartbeat_catchup_during_live_
     headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
     app_id = await _create_app_and_draft_revision(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         agent_id=agent.id,
     )

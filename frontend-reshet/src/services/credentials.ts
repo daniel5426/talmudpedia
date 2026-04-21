@@ -5,7 +5,7 @@ export type IntegrationCredentialCategory = "llm_provider" | "vector_store" | "t
 
 export interface IntegrationCredential {
   id: string;
-  tenant_id?: string | null;
+  organization_id?: string | null;
   category: IntegrationCredentialCategory;
   provider_key: string;
   provider_variant?: string | null;
@@ -64,7 +64,7 @@ export interface CredentialUsageKnowledgeStore {
 export interface CredentialUsageTool {
   tool_id: string;
   tool_name: string;
-  tool_slug: string;
+  builtin_key?: string | null;
   implementation_type?: string | null;
 }
 

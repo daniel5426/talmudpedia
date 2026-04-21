@@ -8,9 +8,9 @@ import type { FileUIPart } from "ai";
 
 export interface Agent {
   id: string;
-  tenant_id: string;
+  organization_id: string;
   name: string;
-  slug: string;
+  system_key?: string | null;
   description?: string;
   status: 'draft' | 'published' | 'deprecated' | 'archived';
   version: number;
@@ -116,7 +116,7 @@ export interface LogicalModel {
   status: ModelStatus;
   is_active?: boolean;
   is_default?: boolean;
-  tenant_id: string | null;
+  organization_id: string | null;
   created_at: string;
   updated_at: string;
   providers: ModelProviderSummary[];
@@ -204,7 +204,6 @@ export interface ToolsetDefinition {
 export interface ToolDefinition {
   id: string;
   name: string;
-  slug: string;
   description?: string | null;
   input_schema: Record<string, unknown>;
   output_schema: Record<string, unknown>;
@@ -222,7 +221,7 @@ export interface ToolDefinition {
   can_edit_in_registry: boolean;
   can_publish_in_registry: boolean;
   can_delete_in_registry: boolean;
-  tenant_id: string | null;
+  organization_id: string | null;
   created_at: string;
   updated_at: string;
   published_at: string | null;
@@ -248,7 +247,6 @@ export interface ToolDefinition {
 
 export interface CreateToolRequest {
   name: string;
-  slug: string;
   description: string;
   input_schema: Record<string, unknown>;
   output_schema: Record<string, unknown>;
@@ -286,7 +284,7 @@ export interface ExportAgentToolRequest {
 
 export interface ExportAgentToolResponse {
   tool_id: string;
-  tool_slug: string;
+  builtin_key?: string | null;
   tool_name: string;
   status: string;
 }

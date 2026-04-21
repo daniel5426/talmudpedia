@@ -18,7 +18,7 @@ from app.db.postgres.models.agents import AgentRun, RunStatus
 logger = logging.getLogger(__name__)
 
 
-def build_node_fn(node: GraphIRNode, tenant_id: Optional[UUID], db: Any):
+def build_node_fn(node: GraphIRNode, organization_id: Optional[UUID], db: Any):
     executor_cls = AgentExecutorRegistry.get_executor_cls(node.type)
     if not executor_cls:
         logger.error(f"No executor registered for node type: {node.type}")
@@ -28,7 +28,7 @@ def build_node_fn(node: GraphIRNode, tenant_id: Optional[UUID], db: Any):
 
         return error_node
 
-    executor = executor_cls(tenant_id, db)
+    executor = executor_cls(organization_id, db)
     operator_spec = AgentOperatorRegistry.get(node.type)
     node_display_name = resolve_node_display_name(node, operator_spec=operator_spec, node_type=node.type)
 
@@ -61,10 +61,10 @@ def build_node_fn(node: GraphIRNode, tenant_id: Optional[UUID], db: Any):
             "spawn_key": configurable.get("spawn_key") or state_context.get("spawn_key"),
             "orchestration_group_id": configurable.get("orchestration_group_id") or state_context.get("orchestration_group_id"),
             "initiator_user_id": configurable.get("initiator_user_id") or state_context.get("initiator_user_id"),
-            "tenant_id": configurable.get("tenant_id") or state_context.get("tenant_id"),
+            "organization_id": configurable.get("organization_id") or state_context.get("organization_id"),
             "user_id": configurable.get("user_id") or state_context.get("user_id"),
             "agent_id": configurable.get("agent_id") or state_context.get("agent_id"),
-            "agent_slug": configurable.get("agent_slug") or state_context.get("agent_slug"),
+            "agent_system_key": configurable.get("agent_system_key") or state_context.get("agent_system_key"),
             "architect_mode": configurable.get("architect_mode") or state_context.get("architect_mode"),
             "architect_effective_scopes": configurable.get("architect_effective_scopes") or state_context.get("architect_effective_scopes"),
             "token": configurable.get("auth_token") or state_context.get("token"),

@@ -53,7 +53,7 @@ class PipelineExecutor:
                  raise ValueError(f"Executable pipeline {job.executable_pipeline_id} not found")
             
             # 3. Sync Custom Operators
-            await sync_custom_operators(self.db, job.tenant_id)
+            await sync_custom_operators(self.db, job.organization_id)
             
             # 4. Initialize Execution Steps
             dag_steps = exec_pipeline.compiled_graph.get("dag", [])
@@ -65,7 +65,7 @@ class PipelineExecutor:
                 
                 step_exec = PipelineStepExecution(
                     job_id=job.id,
-                    tenant_id=job.tenant_id,
+                    organization_id=job.organization_id,
                     step_id=step_id,
                     operator_id=op_id,
                     status=PipelineStepStatus.PENDING,
@@ -133,11 +133,11 @@ class PipelineExecutor:
                         await self.db.commit()
 
                     # Create Executor
-                    # Ensure we check for tenant-specific custom operators
-                    spec = self.registry.get(op_id, str(job.tenant_id))
+                    # Ensure we check for organization-specific custom operators
+                    spec = self.registry.get(op_id, str(job.organization_id))
                     
                     if not spec:
-                         # Fallback: try to find it in general registry if not found with tenant
+                         # Fallback: try to find it in general registry if not found with organization
                          spec = self.registry.get(op_id)
                     
                     if not spec:
@@ -154,7 +154,7 @@ class PipelineExecutor:
                     executor = ExecutorRegistry.create_executor(spec, spec.python_code)
                     
                     context = ExecutionContext(
-                        tenant_id=str(job.tenant_id),
+                        organization_id=str(job.organization_id),
                         pipeline_id=str(job.executable_pipeline_id),
                         job_id=str(job.id),
                         step_id=step_id,

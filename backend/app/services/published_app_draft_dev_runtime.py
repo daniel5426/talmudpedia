@@ -733,11 +733,11 @@ class PublishedAppDraftDevRuntimeService:
             started = await self.client.start_session(
                 session_id=str(workspace.id),
                 runtime_generation=workspace.runtime_generation,
-                tenant_id=str(app.tenant_id),
+                organization_id=str(app.organization_id),
                 app_id=str(app.id),
                 user_id=str(user_id),
                 revision_id=str(revision.id),
-                app_slug=str(app.slug or ""),
+                app_public_id=str(app.public_id or ""),
                 agent_id=str(app.agent_id or ""),
                 entry_file=entry_value,
                 files=files_payload,
@@ -745,7 +745,7 @@ class PublishedAppDraftDevRuntimeService:
                 dependency_hash=dependency_hash,
                 draft_dev_token=create_published_app_draft_dev_token(
                     subject=str(user_id),
-                    tenant_id=str(app.tenant_id),
+                    organization_id=str(app.organization_id),
                     app_id=str(app.id),
                     user_id=str(user_id),
                     session_id=str(workspace.id),
@@ -773,7 +773,7 @@ class PublishedAppDraftDevRuntimeService:
         sync_result = await self.client.sync_session(
             sandbox_id=str(workspace.sandbox_id),
             app_id=str(app.id),
-            app_slug=str(app.slug or ""),
+            app_public_id=str(app.public_id or ""),
             agent_id=str(app.agent_id or ""),
             entry_file=entry_value,
             files=files_payload,
@@ -813,7 +813,7 @@ class PublishedAppDraftDevRuntimeService:
 
         runtime_context = TemplateRuntimeContext(
             app_id=str(app.id),
-            app_slug=str(app.slug or ""),
+            app_public_id=str(app.public_id or ""),
             agent_id=str(app.agent_id or ""),
         )
         normalized_files = filter_and_validate_builder_snapshot_files(files or {})
@@ -869,11 +869,11 @@ class PublishedAppDraftDevRuntimeService:
             started = await self.client.start_session(
                 session_id=str(workspace.id),
                 runtime_generation=workspace.runtime_generation,
-                tenant_id=str(app.tenant_id),
+                organization_id=str(app.organization_id),
                 app_id=str(app.id),
                 user_id=str(user_id),
                 revision_id="",
-                app_slug=str(app.slug or ""),
+                app_public_id=str(app.public_id or ""),
                 agent_id=str(app.agent_id or ""),
                 entry_file=normalized_entry_file,
                 files=files_payload,
@@ -881,7 +881,7 @@ class PublishedAppDraftDevRuntimeService:
                 dependency_hash=dependency_hash,
                 draft_dev_token=create_published_app_draft_dev_token(
                     subject=str(user_id),
-                    tenant_id=str(app.tenant_id),
+                    organization_id=str(app.organization_id),
                     app_id=str(app.id),
                     user_id=str(user_id),
                     session_id=str(workspace.id),
@@ -909,7 +909,7 @@ class PublishedAppDraftDevRuntimeService:
         sync_result = await self.client.sync_session(
             sandbox_id=str(workspace.sandbox_id),
             app_id=str(app.id),
-            app_slug=str(app.slug or ""),
+            app_public_id=str(app.public_id or ""),
             agent_id=str(app.agent_id or ""),
             entry_file=normalized_entry_file,
             files=files_payload,
@@ -950,7 +950,7 @@ class PublishedAppDraftDevRuntimeService:
 
         runtime_context = TemplateRuntimeContext(
             app_id=str(app.id),
-            app_slug=str(app.slug or ""),
+            app_public_id=str(app.public_id or ""),
             agent_id=str(app.agent_id or ""),
         )
         workspace = await self._get_or_create_workspace(app=app)

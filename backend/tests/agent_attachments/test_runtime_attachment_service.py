@@ -9,7 +9,7 @@ from sqlalchemy import select
 from starlette.datastructures import UploadFile
 
 from app.db.postgres.models.agent_threads import AgentThreadSurface
-from app.db.postgres.models.identity import Tenant, User
+from app.db.postgres.models.identity import Organization, User
 from app.db.postgres.models.registry import (
     ModelCapabilityType,
     ModelProviderBinding,
@@ -29,14 +29,14 @@ def _make_upload(filename: str, payload: bytes, content_type: str) -> UploadFile
 
 async def _seed_owner(db_session) -> RuntimeAttachmentOwner:
     suffix = uuid4().hex[:8]
-    tenant = Tenant(name=f"Tenant {suffix}", slug=f"tenant-{suffix}")
+    tenant = Organization(name=f"Organization {suffix}", slug=f"tenant-{suffix}")
     user = User(email=f"user-{suffix}@example.com", role="admin")
     db_session.add_all([tenant, user])
     await db_session.commit()
     await db_session.refresh(tenant)
     await db_session.refresh(user)
     return RuntimeAttachmentOwner(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         surface=AgentThreadSurface.internal,
         user_id=user.id,
     )
@@ -51,7 +51,7 @@ async def _seed_model(
     provider_model_id: str | None = None,
 ) -> ModelRegistry:
     model = ModelRegistry(
-        tenant_id=owner.tenant_id,
+        organization_id=owner.organization_id,
         name=f"Model {uuid4().hex[:6]}",
         capability_type=capability_type,
         metadata_=dict(metadata or {}),
@@ -63,7 +63,7 @@ async def _seed_model(
         db_session.add(
             ModelProviderBinding(
                 model_id=model.id,
-                tenant_id=owner.tenant_id,
+                organization_id=owner.organization_id,
                 provider=ModelProviderType.OPENAI,
                 provider_model_id=provider_model_id,
                 is_enabled=True,

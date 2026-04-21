@@ -59,7 +59,7 @@ async def test_100_node_compile(db_session, test_tenant_id):
     edges.append(edge_def("e-last", prev_id, "end"))
 
     graph = AgentGraph(**graph_def(nodes, edges))
-    compiler = AgentCompiler(db=db_session, tenant_id=test_tenant_id)
+    compiler = AgentCompiler(db=db_session, organization_id=test_tenant_id)
     errors = await compiler.validate(graph)
     critical = [e for e in errors if e.severity == "error"]
     assert not critical
@@ -84,7 +84,7 @@ async def test_dense_graph_compile(db_session, test_tenant_id):
             edges.append(edge_def(f"e-d-{i}-{j}", f"n{i}", f"n{j}"))
 
     graph = AgentGraph(**graph_def(nodes, edges))
-    compiler = AgentCompiler(db=db_session, tenant_id=test_tenant_id)
+    compiler = AgentCompiler(db=db_session, organization_id=test_tenant_id)
     errors = await compiler.validate(graph)
     critical = [e for e in errors if e.severity == "error"]
     assert not critical
@@ -146,7 +146,7 @@ async def test_fuzzed_graph_compile(db_session, test_tenant_id):
         return minimal_config_for(node_type)
 
     graph = fuzzer.build_agent_graph(200, config_factory=config_factory)
-    compiler = AgentCompiler(db=db_session, tenant_id=test_tenant_id)
+    compiler = AgentCompiler(db=db_session, organization_id=test_tenant_id)
     errors = await compiler.validate(AgentGraph(**graph))
     critical = [e for e in errors if e.severity == "error"]
     assert not critical

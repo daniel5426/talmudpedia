@@ -3,9 +3,9 @@ import type { ReactArtifact } from "./types";
 const STORAGE_PREFIX = "react-artifact:v1";
 
 export const getStorageKey = (tenantSlugOrId?: string | null, chatId?: string | null) => {
-  const tenant = tenantSlugOrId || "unknown-tenant";
+  const organization = tenantSlugOrId || "unknown-organization";
   const chat = chatId || "draft-chat";
-  return `${STORAGE_PREFIX}:${tenant}:${chat}`;
+  return `${STORAGE_PREFIX}:${organization}:${chat}`;
 };
 
 export const loadArtifact = (storageKey: string): ReactArtifact | null => {

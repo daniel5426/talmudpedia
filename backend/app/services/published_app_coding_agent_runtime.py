@@ -26,7 +26,7 @@ from app.db.postgres.models.published_apps import (
     PublishedAppRevisionKind,
 )
 from app.services.published_app_coding_agent_profile import (
-    CODING_AGENT_PROFILE_SLUG,
+    CODING_AGENT_PROFILE_SYSTEM_KEY,
     ensure_coding_agent_profile,
 )
 from app.services.published_app_coding_agent_engines.base import PublishedAppCodingAgentEngine
@@ -80,7 +80,7 @@ class PublishedAppCodingAgentRuntimeService(
     PublishedAppCodingAgentRuntimeSandboxMixin,
     PublishedAppCodingAgentRuntimeStreamingMixin,
 ):
-    _profile_cache_by_tenant: dict[str, tuple[str, float]] = {}
+    _profile_cache_by_organization: dict[str, tuple[str, float]] = {}
 
     def __init__(self, db: AsyncSession):
         self.db = db
@@ -243,13 +243,13 @@ class PublishedAppCodingAgentRuntimeService(
     async def _resolve_cached_coding_agent_profile(
         self,
         *,
-        tenant_id: UUID,
+        organization_id: UUID,
         actor_user_id: UUID | None,
     ) -> tuple[Agent, bool]:
         cache_ttl = self._profile_cache_ttl_seconds()
-        tenant_key = str(tenant_id)
+        organization_key = str(organization_id)
         if cache_ttl > 0:
-            cache_entry = self._profile_cache_by_tenant.get(tenant_key)
+            cache_entry = self._profile_cache_by_organization.get(organization_key)
             if cache_entry:
                 profile_id_raw, expires_at = cache_entry
                 if time.monotonic() <= float(expires_at):
@@ -261,20 +261,20 @@ class PublishedAppCodingAgentRuntimeService(
                         cached_profile = await self.db.get(Agent, profile_id)
                         if (
                             cached_profile is not None
-                            and str(cached_profile.tenant_id) == tenant_key
-                            and str(cached_profile.slug or "") == CODING_AGENT_PROFILE_SLUG
+                            and str(cached_profile.organization_id) == organization_key
+                            and str(cached_profile.system_key or "") == CODING_AGENT_PROFILE_SYSTEM_KEY
                             and bool(cached_profile.is_active)
                         ):
                             return cached_profile, True
-                self._profile_cache_by_tenant.pop(tenant_key, None)
+                self._profile_cache_by_organization.pop(organization_key, None)
 
         profile = await ensure_coding_agent_profile(
             self.db,
-            tenant_id,
+            organization_id,
             actor_user_id=actor_user_id,
         )
         if cache_ttl > 0 and profile is not None and profile.id is not None:
-            self._profile_cache_by_tenant[tenant_key] = (
+            self._profile_cache_by_organization[organization_key] = (
                 str(profile.id),
                 time.monotonic() + cache_ttl,
             )
@@ -458,7 +458,7 @@ class PublishedAppCodingAgentRuntimeService(
         create_run_phase_metrics["create_run_opencode_model_resolve"] = create_run_phase_metrics["create_run_model_resolve"]
         ensure_profile_started_at = time.monotonic()
         profile, profile_cache_hit = await self._resolve_cached_coding_agent_profile(
-            tenant_id=app.tenant_id,
+            organization_id=app.organization_id,
             actor_user_id=actor_id,
         )
         _record_create_run_phase_metric("create_run_profile_resolve", ensure_profile_started_at)

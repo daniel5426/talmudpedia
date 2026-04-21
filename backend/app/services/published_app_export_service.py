@@ -59,7 +59,7 @@ class PublishedAppExportService:
     def build_options(self, *, app: PublishedApp, has_source: bool, source_kind: str | None) -> PublishedAppExportOptions:
         template_key = str(app.template_key or "").strip()
         supported = template_key in SUPPORTED_EXPORT_TEMPLATE_KEYS
-        archive_name = f"{str(app.slug or 'app').strip() or 'app'}-standalone-export.zip"
+        archive_name = f"{str(app.public_id or 'app').strip() or 'app'}-standalone-export.zip"
         if not supported:
             return PublishedAppExportOptions(
                 supported=False,
@@ -105,7 +105,7 @@ class PublishedAppExportService:
                 "message": "This export is generated from the current draft source and includes a standalone Vite + /api scaffold.",
             }
         ]
-        archive_name = f"{str(app.slug or 'app').strip() or 'app'}-standalone-export.zip"
+        archive_name = f"{str(app.public_id or 'app').strip() or 'app'}-standalone-export.zip"
         return PublishedAppExportArchive(
             filename=archive_name,
             source_kind=source_kind,

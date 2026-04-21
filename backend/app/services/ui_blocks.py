@@ -8,7 +8,7 @@ UI_BLOCKS_BUILTIN_KEY = "ui_blocks"
 UI_BLOCKS_RENDERER_KIND = "ui_blocks"
 UI_BLOCKS_OUTPUT_KIND = "ui_blocks_bundle"
 UI_BLOCKS_CONTRACT_VERSION = "v1"
-UI_BLOCKS_TOOL_SLUG = "builtin-ui-blocks"
+UI_BLOCKS_TOOL_SLUG = "builtin-ui-blocks"  # Legacy internal row key only; canonical identity is builtin_key.
 UI_BLOCKS_PACKAGE_NAME = "@agents24/ui-blocks-react"
 UI_BLOCKS_CONTRACT_PACKAGE_NAME = "@agents24/ui-blocks-contract"
 UI_BLOCKS_INSTALL_COMMAND = "npx @agents24/ui-blocks-react init"
@@ -27,8 +27,7 @@ class UIBlocksValidationError(ValueError):
 
 def frontend_requirements_for_tool(tool: Any) -> dict[str, Any] | None:
     builtin_key = str(getattr(tool, "builtin_key", "") or "").strip().lower()
-    slug = str(getattr(tool, "slug", "") or "").strip().lower()
-    if builtin_key != UI_BLOCKS_BUILTIN_KEY and slug != UI_BLOCKS_TOOL_SLUG:
+    if builtin_key != UI_BLOCKS_BUILTIN_KEY:
         return None
     return frontend_requirements_payload()
 

@@ -66,6 +66,14 @@ from app.services.control_plane.agents_admin_service import (
 from app.services.control_plane.context import ControlPlaneContext
 from app.services.control_plane.contracts import ListQuery
 from app.services.control_plane.errors import ControlPlaneError
+from app.services.runtime_surface import (
+    RuntimeChatRequest,
+    RuntimeEventView,
+    RuntimeRunControlContext,
+    RuntimeStreamOptions,
+    RuntimeSurfaceContext,
+    RuntimeSurfaceService,
+)
 router = APIRouter(prefix="/agents", tags=["agents"])
 
 
@@ -93,7 +101,7 @@ def _serialize_run_usage(run: AgentRun) -> dict[str, Any]:
 
 def _control_plane_ctx_from_agent_context(context: Dict[str, Any]) -> ControlPlaneContext:
     return ControlPlaneContext(
-        tenant_id=UUID(str(context["tenant_id"])),
+        organization_id=UUID(str(context["organization_id"])),
         project_id=_optional_uuid(context.get("project_id")),
         user=context.get("user"),
         user_id=getattr(context.get("user"), "id", None),
@@ -113,7 +121,7 @@ async def get_agent_context(
     db: AsyncSession = Depends(get_db)
 ) -> Dict[str, Any]:
     """
-    Returns a context dict with 'user' and 'tenant_id'.
+    Returns a context dict with 'user' and 'organization_id'.
     Users can manage agents if they are System Admins OR have an Org role.
     """
     token = context.get("auth_token")
@@ -121,37 +129,37 @@ async def get_agent_context(
     if current_user is None:
         raise HTTPException(status_code=403, detail="Not authorized to manage agents")
 
-    # Prefer explicit tenant header so multi-tenant users can target the selected tenant.
-    header_tenant = request.headers.get("X-Tenant-ID")
-    resolved_tenant: UUID | None = None
-    if header_tenant:
+    # Prefer explicit organization header so multi-organization users can target the selected organization.
+    header_organization = request.headers.get("X-Organization-ID")
+    resolved_organization: UUID | None = None
+    if header_organization:
         try:
-            header_tenant_uuid = UUID(str(header_tenant))
+            header_organization_uuid = UUID(str(header_organization))
         except Exception:
-            raise HTTPException(status_code=400, detail="Invalid X-Tenant-ID header")
-        resolved_tenant = header_tenant_uuid
+            raise HTTPException(status_code=400, detail="Invalid X-Organization-ID header")
+        resolved_organization = header_organization_uuid
     else:
-        tenant_id = context.get("tenant_id")
-        if tenant_id is None:
-            raise HTTPException(status_code=403, detail="Tenant context required")
+        organization_id = context.get("organization_id")
+        if organization_id is None:
+            raise HTTPException(status_code=403, detail="Organization context required")
         try:
-            resolved_tenant = UUID(str(tenant_id))
+            resolved_organization = UUID(str(organization_id))
         except Exception:
-            raise HTTPException(status_code=400, detail="Invalid tenant context")
+            raise HTTPException(status_code=400, detail="Invalid organization context")
 
     membership_res = await db.execute(
         select(OrgMembership).where(
             OrgMembership.user_id == current_user.id,
-            OrgMembership.tenant_id == resolved_tenant,
+            OrgMembership.organization_id == resolved_organization,
         ).limit(1)
     )
     membership = membership_res.scalar_one_or_none()
     if membership is None and not is_platform_admin_role(getattr(current_user, "role", None)):
-        raise HTTPException(status_code=403, detail="Not a member of the requested tenant")
+        raise HTTPException(status_code=403, detail="Not a member of the requested organization")
 
     return {
         "user": current_user,
-        "tenant_id": resolved_tenant,
+        "organization_id": resolved_organization,
         "project_id": _optional_uuid(context.get("project_id")),
         "auth_token": token,
         "is_service": False,
@@ -163,9 +171,9 @@ def agent_to_response(agent, compact: bool = False, *, tool_binding: ToolRegistr
     """Convert Agent model to response."""
     return AgentResponse(
         id=agent.id,
-        tenant_id=agent.tenant_id,
+        organization_id=agent.organization_id,
         name=agent.name,
-        slug=agent.slug,
+        system_key=getattr(agent, "system_key", None),
         description=agent.description,
         graph_definition={"nodes": [], "edges": []} if compact else (agent.graph_definition or {"nodes": [], "edges": []}),
         memory_config={} if compact else (agent.memory_config or {}),
@@ -284,12 +292,12 @@ def _artifact_input_specs(input_schema: dict[str, Any], node_ui: dict[str, Any])
     return specs
 
 
-async def _tenant_artifact_operator_specs(*, db: AsyncSession, tenant_id: UUID) -> list[dict[str, Any]]:
+async def _organization_artifact_operator_specs(*, db: AsyncSession, organization_id: UUID) -> list[dict[str, Any]]:
     from app.db.postgres.models.artifact_runtime import ArtifactKind
     from app.services.artifact_runtime.registry_service import ArtifactRegistryService
 
     artifacts = await ArtifactRegistryService(db).list_accessible_artifacts(
-        tenant_id=tenant_id,
+        organization_id=organization_id,
         kind=ArtifactKind.AGENT_NODE,
     )
     specs: list[dict[str, Any]] = []
@@ -346,7 +354,7 @@ async def list_operators(
     
     operators = AgentOperatorRegistry.list_operators()
     payload = [op.model_dump() for op in operators]
-    payload.extend(await _tenant_artifact_operator_specs(db=db, tenant_id=context["tenant_id"]))
+    payload.extend(await _organization_artifact_operator_specs(db=db, organization_id=context["organization_id"]))
     return payload
 
 
@@ -410,16 +418,16 @@ async def list_agents(
     db: AsyncSession = Depends(get_db),
 ):
     """List all agents."""
-    tenant_id = context["tenant_id"]
+    organization_id= context["organization_id"]
     project_id = context.get("project_id")
     bootstrap = OrganizationBootstrapService(db)
     did_backfill = await bootstrap.ensure_organization_default_agents_if_missing(
-        organization_id=tenant_id,
+        organization_id=organization_id,
         actor_user_id=getattr(context.get("user"), "id", None),
     )
     if project_id is not None:
         did_backfill = await bootstrap.ensure_project_default_agents_if_missing(
-            organization_id=tenant_id,
+            organization_id=organization_id,
             project_id=project_id,
             actor_user_id=getattr(context.get("user"), "id", None),
         ) or did_backfill
@@ -450,7 +458,6 @@ async def create_agent(
             ctx=_control_plane_ctx_from_agent_context(context),
             params=ControlPlaneCreateAgentInput(
                 name=request.name,
-                slug=request.slug,
                 description=request.description,
                 graph_definition=request.graph_definition.model_dump() if request.graph_definition else {},
                 memory_config=request.memory_config,
@@ -510,8 +517,8 @@ async def update_graph(
     db: AsyncSession = Depends(get_db),
 ):
     """Update agent graph."""
-    tenant_id = context["tenant_id"]
-    service = AgentService(db=db, tenant_id=tenant_id)
+    organization_id= context["organization_id"]
+    service = AgentService(db=db, organization_id=organization_id)
     
     try:
         agent = await service.update_graph(agent_id, request.model_dump())
@@ -529,12 +536,12 @@ async def delete_agent(
     db: AsyncSession = Depends(get_db)
 ):
     """Delete or archive an agent."""
-    tenant_id = context["tenant_id"]
-    service = AgentService(db=db, tenant_id=tenant_id)
+    organization_id= context["organization_id"]
+    service = AgentService(db=db, organization_id=organization_id)
 
     await ensure_sensitive_action_approved(
         principal=principal,
-        tenant_id=tenant_id,
+        organization_id=organization_id,
         subject_type="agent",
         subject_id=str(agent_id),
         action_scope="agents.delete",
@@ -574,11 +581,11 @@ async def publish_agent(
     db: AsyncSession = Depends(get_db)
 ):
     """Publish an agent."""
-    tenant_id = context["tenant_id"]
+    organization_id= context["organization_id"]
 
     await ensure_sensitive_action_approved(
         principal=principal,
-        tenant_id=tenant_id,
+        organization_id=organization_id,
         subject_type="agent",
         subject_id=str(agent_id),
         action_scope="agents.publish",
@@ -603,8 +610,8 @@ async def list_versions(
     db: AsyncSession = Depends(get_db)
 ):
     """List agent versions."""
-    tenant_id = context["tenant_id"]
-    service = AgentService(db=db, tenant_id=tenant_id)
+    organization_id= context["organization_id"]
+    service = AgentService(db=db, organization_id=organization_id)
     
     try:
         versions = await service.list_versions(agent_id)
@@ -621,8 +628,8 @@ async def get_version(
     db: AsyncSession = Depends(get_db)
 ):
     """Get specific version."""
-    tenant_id = context["tenant_id"]
-    service = AgentService(db=db, tenant_id=tenant_id)
+    organization_id= context["organization_id"]
+    service = AgentService(db=db, organization_id=organization_id)
     
     try:
         return await service.get_version(agent_id, version)
@@ -643,12 +650,12 @@ async def execute_agent(
     db: AsyncSession = Depends(get_db),
 ):
     """Execute a published agent."""
-    tenant_id = context["tenant_id"]
-    service = AgentService(db=db, tenant_id=tenant_id)
+    organization_id= context["organization_id"]
+    service = AgentService(db=db, organization_id=organization_id)
     
     try:
         request_context = dict(request.context or {}) if isinstance(request.context, dict) else {}
-        request_context.setdefault("tenant_id", str(tenant_id) if tenant_id is not None else None)
+        request_context.setdefault("organization_id", str(organization_id) if organization_id is not None else None)
         request_context.setdefault("user_id", str(context["user"].id) if context.get("user") else context.get("initiator_user_id"))
         if context.get("initiator_user_id"):
             request_context.setdefault("initiator_user_id", context.get("initiator_user_id"))
@@ -699,7 +706,7 @@ async def stream_agent(
     """
     from app.agent.execution.service import AgentExecutorService
     from app.agent.execution.types import ExecutionMode
-    
+
     # 1. Determine Mode
     # Default to PRODUCTION for safety
     execution_mode = ExecutionMode.PRODUCTION
@@ -712,86 +719,44 @@ async def stream_agent(
     if mode and mode.lower() == "debug":
         execution_mode = ExecutionMode.DEBUG
 
-    executor = AgentExecutorService(db=db)
-    
-    # 2. Identify or Create/Attach Run
-    run_id = request.run_id
-    resume_payload = None
+    organization_id= context.get("organization_id")
+    request_context = dict(request.context or {}) if isinstance(request.context, dict) else {}
+    request_context.setdefault("token", context.get("auth_token"))
+    request_context.setdefault("organization_id", str(organization_id) if organization_id is not None else None)
+    request_context.setdefault("project_id", str(context.get("project_id")) if context.get("project_id") else None)
+    request_context.setdefault("user_id", str(context["user"].id) if context.get("user") else context.get("initiator_user_id"))
+    request_context.setdefault("initiator_user_id", context.get("initiator_user_id"))
 
-    if run_id:
-        existing_run = await db.get(AgentRun, run_id)
-        if existing_run is None:
-            raise HTTPException(status_code=404, detail="Run not found")
-        try:
-            status = str(getattr(existing_run.status, "value", existing_run.status) or "").strip().lower()
-            if status == RunStatus.paused.value:
-                if request.context:
-                    resume_payload = dict(request.context)
-                elif request.input:
-                    resume_payload = {"input": request.input}
-                else:
-                    resume_payload = {}
-                await executor.resume_run(run_id, resume_payload, background=True)
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=f"Cannot resume run {run_id}: {e}")
-    else:
-        # Start new run
-        current_messages = [msg.model_dump() if hasattr(msg, "model_dump") else msg for msg in request.messages]
-
-        tenant_id = context.get("tenant_id")
-        request_context = dict(request.context or {}) if isinstance(request.context, dict) else {}
-        request_context.setdefault("token", context.get("auth_token"))
-        request_context.setdefault("tenant_id", str(tenant_id) if tenant_id is not None else None)
-        request_context.setdefault("project_id", str(context.get("project_id")) if context.get("project_id") else None)
-        request_context.setdefault("user_id", str(context["user"].id) if context.get("user") else context.get("initiator_user_id"))
-        # Do not inject caller scope inventory by default.
-        # Delegation grants should request either explicit caller-provided scopes
-        # or workload-context scopes in delegated chains.
-        request_context.setdefault("initiator_user_id", context.get("initiator_user_id"))
-        input_params = {
-            "messages": current_messages,
-            "input": request.input,
-            "attachment_ids": [str(item) for item in request.attachment_ids],
-            "state": dict(request.state or {}) if isinstance(request.state, dict) else {},
-            "thread_id": str(request.thread_id) if request.thread_id else None,
-            "context": request_context,
-        }
-        # Start run with explicit mode metadata
-        initiating_user_id = context["user"].id if context.get("user") else None
-        try:
-            run_id = await executor.start_run(
-                agent_id,
-                input_params,
-                user_id=initiating_user_id,
-                background=True,
-                mode=execution_mode,
+    try:
+        return await RuntimeSurfaceService(db=db, executor_cls=AgentExecutorService).stream_chat(
+            agent_id=agent_id,
+            surface_context=RuntimeSurfaceContext(
+                organization_id=organization_id,
+                surface=AgentThreadSurface.internal,
+                event_view=RuntimeEventView.internal_full,
+                user_id=context["user"].id if context.get("user") else None,
+                context_defaults=request_context,
+            ),
+            request=RuntimeChatRequest(
+                input=request.input,
+                messages=[msg.model_dump() if hasattr(msg, "model_dump") else msg for msg in request.messages],
+                attachment_ids=[str(item) for item in request.attachment_ids],
+                state=dict(request.state or {}) if isinstance(request.state, dict) else {},
+                context=dict(request.context or {}) if isinstance(request.context, dict) else {},
+                client=dict(request.client or {}) if isinstance(request.client, dict) else {},
                 thread_id=request.thread_id,
-            )
-        except (QuotaExceededError, ResourcePolicyQuotaExceeded) as exc:
-            return JSONResponse(status_code=429, content=exc.to_payload())
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc))
-
-    run_row = await db.get(AgentRun, run_id)
-    thread_id_value = str(run_row.thread_id) if run_row and run_row.thread_id else None
-
-    return StreamingResponse(
-        stream_persisted_run_events(
-            run_id=run_id,
-            mode=execution_mode,
-            stream_v2_enforced=_stream_v2_enforced(),
-            thread_id_value=thread_id_value,
-        ),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",  # Disable nginx buffering
-            "Content-Encoding": "identity", # Disable compression
-            "X-Run-ID": str(run_id),
-            "X-Thread-ID": thread_id_value or "",
-        }
-    )
+                run_id=request.run_id,
+            ),
+            options=RuntimeStreamOptions(
+                execution_mode=execution_mode,
+                preload_thread_messages=False,
+                stream_v2_enforced=_stream_v2_enforced(),
+                include_content_encoding_identity=True,
+                include_run_id_header=True,
+            ),
+        )
+    except (QuotaExceededError, ResourcePolicyQuotaExceeded) as exc:
+        return JSONResponse(status_code=429, content=exc.to_payload())
     
 @router.post("/{agent_id}/run", response_model=Dict[str, Any])
 async def start_run_v2(
@@ -833,12 +798,12 @@ async def upload_agent_attachments(
     context: Dict[str, Any] = Depends(get_agent_context),
     db: AsyncSession = Depends(get_db),
 ):
-    tenant_id = context["tenant_id"]
-    service = AgentService(db=db, tenant_id=tenant_id)
+    organization_id= context["organization_id"]
+    service = AgentService(db=db, organization_id=organization_id)
     agent = await service.get_agent(agent_id)
 
     owner = RuntimeAttachmentOwner(
-        tenant_id=agent.tenant_id,
+        organization_id=agent.organization_id,
         surface=AgentThreadSurface.internal,
         user_id=(
             context["user"].id
@@ -882,8 +847,8 @@ async def resume_run_v2(
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
 
-    if str(run.tenant_id) != str(context.get("tenant_id")):
-        raise HTTPException(status_code=403, detail="Tenant mismatch")
+    if str(run.organization_id) != str(context.get("organization_id")):
+        raise HTTPException(status_code=403, detail="Organization mismatch")
 
     user = context.get("user")
     if user is not None and not is_platform_admin_role(getattr(user, "role", None)):
@@ -907,62 +872,16 @@ async def cancel_run_v2(
     context: Dict[str, Any] = Depends(get_agent_context),
     db: AsyncSession = Depends(get_db),
 ):
-    run_result = await db.execute(select(AgentRun).where(AgentRun.id == run_id))
-    run = run_result.scalars().first()
-    if not run:
-        raise HTTPException(status_code=404, detail="Run not found")
-
-    if str(run.tenant_id) != str(context.get("tenant_id")):
-        raise HTTPException(status_code=403, detail="Tenant mismatch")
-
-    if not context.get("is_service"):
-        user = context.get("user")
-        if user is not None and not is_platform_admin_role(getattr(user, "role", None)):
-            allowed_user_ids = {
-                str(uid)
-                for uid in (run.user_id, run.initiator_user_id)
-                if uid is not None
-            }
-            if allowed_user_ids and str(user.id) not in allowed_user_ids:
-                raise HTTPException(status_code=403, detail="Run ownership mismatch")
-
-    status = str(getattr(run.status, "value", run.status))
-    if status in {RunStatus.completed.value, RunStatus.failed.value, RunStatus.cancelled.value}:
-        return {
-            "run_id": str(run.id),
-            "status": status,
-            "thread_id": str(run.thread_id) if run.thread_id else None,
-        }
-
-    partial_text = str(request.assistant_output_text or "").strip()
-    await OrchestrationKernelService(db).cancel_subtree(
-        caller_run_id=run.id,
-        run_id=run.id,
-        include_root=True,
-        reason="cancelled_by_user",
+    return await RuntimeSurfaceService(db).cancel_run(
+        run_id=run_id,
+        control=RuntimeRunControlContext(
+            organization_id=context["organization_id"],
+            user_id=getattr(context.get("user"), "id", None),
+            is_service=bool(context.get("is_service")),
+            is_platform_admin=RuntimeSurfaceService.is_platform_admin(context.get("user")),
+        ),
+        assistant_output_text=request.assistant_output_text,
     )
-
-    await db.refresh(run)
-    run.status = RunStatus.cancelled
-    run.completed_at = datetime.now(timezone.utc)
-    run.error_message = None
-
-    output_result = dict(run.output_result or {}) if isinstance(run.output_result, dict) else {}
-    messages = output_result.get("messages")
-    if not isinstance(messages, list):
-        messages = []
-    if partial_text:
-        messages.append({"role": "assistant", "content": partial_text})
-        output_result["final_output"] = partial_text
-    output_result["messages"] = messages
-    run.output_result = output_result
-
-    await db.commit()
-    return {
-        "run_id": str(run.id),
-        "status": RunStatus.cancelled.value,
-        "thread_id": str(run.thread_id) if run.thread_id else None,
-    }
 
 
 @router.get("/runs/{run_id}", response_model=Dict[str, Any])
@@ -1002,7 +921,7 @@ async def get_run_status(
         next_ids = checkpoint.get("next")
         if agent is not None and next_ids:
             graph_payload = agent.graph_definition if isinstance(agent.graph_definition, dict) else {}
-            graph_payload = await PromptReferenceResolver(db, agent.tenant_id).resolve_graph_definition(graph_payload)
+            graph_payload = await PromptReferenceResolver(db, agent.organization_id).resolve_graph_definition(graph_payload)
             nodes = graph_payload.get("nodes") if isinstance(graph_payload.get("nodes"), list) else []
             node_index = {str(node.get("id") or ""): node for node in nodes if isinstance(node, dict)}
             resolved_next = []
@@ -1036,6 +955,6 @@ async def get_run_tree(
     run = await db.scalar(select(AgentRun).where(AgentRun.id == run_id))
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found")
-    if str(run.tenant_id) != str(context.get("tenant_id")):
-        raise HTTPException(status_code=403, detail="Tenant mismatch")
+    if str(run.organization_id) != str(context.get("organization_id")):
+        raise HTTPException(status_code=403, detail="Organization mismatch")
     return await OrchestrationKernelService(db).query_tree(run_id=run_id)

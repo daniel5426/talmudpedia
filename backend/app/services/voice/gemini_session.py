@@ -75,8 +75,8 @@ class GeminiVoiceSession(BaseVoiceSession):
     Adapted from gemini_live.py to fit the provider-agnostic architecture.
     """
     
-    def __init__(self, chat_id: Optional[str] = None, tenant_id: Optional[UUID] = None, user_id: Optional[UUID] = None, knowledge_store_id: Optional[UUID] = None):
-        super().__init__(chat_id=chat_id, tenant_id=tenant_id, user_id=user_id)
+    def __init__(self, chat_id: Optional[str] = None, organization_id: Optional[UUID] = None, user_id: Optional[UUID] = None, knowledge_store_id: Optional[UUID] = None):
+        super().__init__(chat_id=chat_id, organization_id=organization_id, user_id=user_id)
         self.ws = None
         self.knowledge_store_id = knowledge_store_id
         self.current_ai_text = ""
@@ -273,7 +273,7 @@ class GeminiVoiceSession(BaseVoiceSession):
                 store_id = self.knowledge_store_id
                 if not store_id:
                      from app.db.postgres.models import KnowledgeStore
-                     stmt = select(KnowledgeStore).where(KnowledgeStore.tenant_id == self.tenant_id).limit(1)
+                     stmt = select(KnowledgeStore).where(KnowledgeStore.organization_id == self.organization_id).limit(1)
                      res = await db.execute(stmt)
                      ks = res.scalar_one_or_none()
                      if ks: store_id = ks.id

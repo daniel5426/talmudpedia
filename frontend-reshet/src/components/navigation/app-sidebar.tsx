@@ -32,7 +32,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { ThemeCustomizer } from "../theme-customizer";
 import { useDirection } from "@/components/direction-provider";
-import { TenantSwitcher } from "./tenant-switcher";
+import { OrganizationSwitcher } from "./organization-switcher";
 import { useAuthStore } from "@/lib/store/useAuthStore";
 import { usePathname, useRouter } from "next/navigation";
 
@@ -319,7 +319,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
         <div dir={direction} className={`flex items-center gap-1 p-2 ${(isSidebarOpen || openMobile) ? "justify-between" : "justify-center"}`}>
           {(isSidebarOpen || openMobile) && user && (user.role === "admin" || isAdminPath) && (
             <div className="flex-1 overflow-hidden">
-              <TenantSwitcher />
+              <OrganizationSwitcher />
             </div>
           )}
           <SidebarTrigger

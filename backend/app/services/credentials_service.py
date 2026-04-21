@@ -1,5 +1,5 @@
 """
-Credentials Service - Tenant-scoped integration credentials.
+Credentials Service - Organization-scoped integration credentials.
 
 Provides lookup helpers for integration credentials used by model resolution
 and vector store adapters.
@@ -51,9 +51,9 @@ def _env_var_for_provider(
 
 
 class CredentialsService:
-    def __init__(self, db: AsyncSession, tenant_id: Optional[UUID]):
+    def __init__(self, db: AsyncSession, organization_id: Optional[UUID]):
         self._db = db
-        self._tenant_id = tenant_id
+        self._organization_id = organization_id
         self._cache: Dict[Tuple, Optional[IntegrationCredential]] = {}
 
     async def get_by_id(self, credential_id: Optional[UUID]) -> Optional[IntegrationCredential]:
@@ -64,9 +64,9 @@ class CredentialsService:
             return self._cache[cache_key]
 
         scope_filter = (
-            IntegrationCredential.tenant_id == self._tenant_id
-            if self._tenant_id is not None
-            else IntegrationCredential.tenant_id == None
+            IntegrationCredential.organization_id == self._organization_id
+            if self._organization_id is not None
+            else IntegrationCredential.organization_id == None
         )
         stmt = select(IntegrationCredential).where(IntegrationCredential.id == credential_id, scope_filter)
         res = await self._db.execute(stmt)
@@ -84,13 +84,13 @@ class CredentialsService:
         if cache_key in self._cache:
             return self._cache[cache_key]
 
-        tenant_filter = (
-            IntegrationCredential.tenant_id == self._tenant_id
-            if self._tenant_id is not None
-            else IntegrationCredential.tenant_id == None
+        organization_filter = (
+            IntegrationCredential.organization_id == self._organization_id
+            if self._organization_id is not None
+            else IntegrationCredential.organization_id == None
         )
         stmt = select(IntegrationCredential).where(
-            tenant_filter,
+            organization_filter,
             IntegrationCredential.category == category,
             IntegrationCredential.provider_key == provider_key,
             IntegrationCredential.provider_variant == provider_variant,
@@ -112,9 +112,9 @@ class CredentialsService:
             return self._cache[cache_key]
 
         scope_filter = (
-            IntegrationCredential.tenant_id == self._tenant_id
-            if self._tenant_id is not None
-            else IntegrationCredential.tenant_id == None
+            IntegrationCredential.organization_id == self._organization_id
+            if self._organization_id is not None
+            else IntegrationCredential.organization_id == None
         )
         default_stmt = (
             select(IntegrationCredential)
@@ -195,9 +195,9 @@ class CredentialsService:
                 IntegrationCredential.provider_key == credential.provider_key,
                 IntegrationCredential.provider_variant == credential.provider_variant,
                 (
-                    IntegrationCredential.tenant_id == credential.tenant_id
-                    if credential.tenant_id is not None
-                    else IntegrationCredential.tenant_id == None
+                    IntegrationCredential.organization_id == credential.organization_id
+                    if credential.organization_id is not None
+                    else IntegrationCredential.organization_id == None
                 ),
             )
             .values(is_default=False)

@@ -4,7 +4,7 @@ import json
 from copy import deepcopy
 from datetime import datetime, timezone
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import HTTPException
 from sqlalchemy import and_, select, text
@@ -71,7 +71,7 @@ DEFAULT_SOURCE = """async def execute(inputs, config, context):
     return {
         "items": items,
         "config": config,
-        "tenant_id": context.get("tenant_id"),
+        "organization_id": context.get("organization_id"),
     }
 """
 
@@ -80,11 +80,11 @@ DEFAULT_JS_SOURCE = """export async function execute(inputs, config, context) {
   return {
     items,
     config,
-    tenant_id: context?.tenant_id ?? null,
+    organization_id: context?.organization_id ?? null,
   };
 }
 """
-ARTIFACT_CODING_MUTATION_TOOL_SLUGS = frozenset(
+ARTIFACT_CODING_MUTATION_TOOL_BUILTIN_KEYS = frozenset(
     {
         "artifact-coding-replace-file",
         "artifact-coding-replace-text-in-file",
@@ -104,8 +104,8 @@ ARTIFACT_CODING_MUTATION_TOOL_SLUGS = frozenset(
 )
 
 
-def is_artifact_coding_mutation_tool_slug(slug: Any) -> bool:
-    return str(slug or "").strip() in ARTIFACT_CODING_MUTATION_TOOL_SLUGS
+def is_artifact_coding_mutation_builtin_key(builtin_key: Any) -> bool:
+    return str(builtin_key or "").strip() in ARTIFACT_CODING_MUTATION_TOOL_BUILTIN_KEYS
 
 
 def _normalize_language(language: str | None) -> str:
@@ -113,6 +113,10 @@ def _normalize_language(language: str | None) -> str:
     if raw not in {"python", "javascript"}:
         raise ValueError("Unsupported artifact language")
     return raw
+
+
+def _system_tool_row_key(prefix: str = "system-tool") -> str:
+    return f"{prefix}-{uuid4().hex[:20]}"
 
 
 def _default_entry_module_for_language(language: str) -> str:
@@ -317,8 +321,8 @@ async def _resolve_session_context(
     session = await db.get(ArtifactCodingSession, session_id)
     if session is None:
         raise ValueError("Artifact coding session not found")
-    if session.tenant_id != run.tenant_id:
-        raise PermissionError("Artifact coding session tenant mismatch")
+    if session.organization_id != run.organization_id:
+        raise PermissionError("Artifact coding session organization mismatch")
     shared_draft_service = ArtifactCodingSharedDraftService(db)
     run_bound_shared_draft: ArtifactCodingSharedDraft | None = None
     shared_draft_id_raw = input_context.get("artifact_coding_shared_draft_id")
@@ -327,15 +331,15 @@ async def _resolve_session_context(
         run_bound_shared_draft = await db.get(ArtifactCodingSharedDraft, shared_draft_id)
         if run_bound_shared_draft is None:
             run_snapshot = await shared_draft_service.get_run_snapshot(
-                tenant_id=run.tenant_id,
+                organization_id=run.organization_id,
                 run_id=run.id,
             )
             if run_snapshot is not None:
                 run_bound_shared_draft = await db.get(ArtifactCodingSharedDraft, run_snapshot.shared_draft_id)
         if run_bound_shared_draft is None:
             raise ValueError("Artifact coding shared draft not found")
-        if run_bound_shared_draft.tenant_id != run.tenant_id:
-            raise PermissionError("Artifact coding shared draft tenant mismatch")
+        if run_bound_shared_draft.organization_id != run.organization_id:
+            raise PermissionError("Artifact coding shared draft organization mismatch")
 
     shared_draft = run_bound_shared_draft or await shared_draft_service.resolve_for_session(session=session)
 
@@ -347,9 +351,9 @@ async def _resolve_session_context(
         or session.linked_artifact_id
     )
     if resolved_artifact_id is not None:
-        artifact = await ArtifactRegistryService(db).get_tenant_artifact(
+        artifact = await ArtifactRegistryService(db).get_organization_artifact(
             artifact_id=resolved_artifact_id,
-            tenant_id=session.tenant_id,
+            organization_id=session.organization_id,
         )
     return session, shared_draft, run, artifact
 
@@ -415,7 +419,7 @@ async def artifact_coding_list_credentials(payload: Any) -> dict[str, Any]:
         stmt = (
             select(IntegrationCredential)
             .where(
-                IntegrationCredential.tenant_id == run.tenant_id,
+                IntegrationCredential.organization_id == run.organization_id,
                 IntegrationCredential.is_enabled == True,
                 IntegrationCredential.category.in_(
                     [
@@ -954,30 +958,30 @@ async def _set_contract_payload(
 
 
 ARTIFACT_CODING_TOOL_SPECS: list[dict[str, Any]] = [
-    {"slug": "artifact-coding-get-context", "name": "Artifact Coding Get Context", "description": "Get a compact summary of the current artifact coding session and draft.", "function_name": "artifact_coding_get_context", "timeout_s": 30, "is_pure": True, "schema": _tool_schema(properties={})},
-    {"slug": "artifact-coding-get-form-state", "name": "Artifact Coding Get Form State", "description": "Read the full artifact draft form state.", "function_name": "artifact_coding_get_form_state", "timeout_s": 30, "is_pure": True, "schema": _tool_schema(properties={})},
-    {"slug": "artifact-coding-list-files", "name": "Artifact Coding List Files", "description": "List files in the current artifact draft.", "function_name": "artifact_coding_list_files", "timeout_s": 30, "is_pure": True, "schema": _tool_schema(properties={})},
-    {"slug": "artifact-coding-read-file", "name": "Artifact Coding Read File", "description": "Read one artifact draft file. You may pass both line bounds for an exact inclusive range, only start_line for a forward window, only end_line for a backward window, or neither for a full/safely capped read.", "function_name": "artifact_coding_read_file", "timeout_s": 30, "is_pure": True, "schema": _tool_schema(properties={"path": {"type": "string"}, "start_line": {"type": "integer"}, "end_line": {"type": "integer"}, "include_line_numbers": {"type": "boolean"}}, required=["path"])},
-    {"slug": "artifact-coding-search-in-files", "name": "Artifact Coding Search In Files", "description": "Search text across artifact draft files and return optional surrounding context.", "function_name": "artifact_coding_search_in_files", "timeout_s": 30, "is_pure": True, "schema": _tool_schema(properties={"query": {"type": "string"}, "max_results": {"type": "integer"}, "context_before": {"type": "integer"}, "context_after": {"type": "integer"}}, required=["query"])},
-    {"slug": "artifact-coding-replace-file", "name": "Artifact Coding Replace File", "description": "Replace the full content of a draft file.", "function_name": "artifact_coding_replace_file", "timeout_s": 60, "is_pure": False, "schema": _tool_schema(properties={"path": {"type": "string"}, "content": {"type": "string"}}, required=["path", "content"])},
-    {"slug": "artifact-coding-replace-text-in-file", "name": "Artifact Coding Replace Text In File", "description": "Replace exact old_text with new_text in a draft file, optionally within a bounded line range.", "function_name": "artifact_coding_replace_text_in_file", "timeout_s": 60, "is_pure": False, "schema": _tool_schema(properties={"path": {"type": "string"}, "old_text": {"type": "string"}, "new_text": {"type": "string"}, "start_line": {"type": "integer"}, "end_line": {"type": "integer"}}, required=["path", "old_text", "new_text"])},
-    {"slug": "artifact-coding-create-file", "name": "Artifact Coding Create File", "description": "Create a new draft file.", "function_name": "artifact_coding_create_file", "timeout_s": 60, "is_pure": False, "schema": _tool_schema(properties={"path": {"type": "string"}, "content": {"type": "string"}}, required=["path", "content"])},
-    {"slug": "artifact-coding-delete-file", "name": "Artifact Coding Delete File", "description": "Delete a draft file.", "function_name": "artifact_coding_delete_file", "timeout_s": 60, "is_pure": False, "schema": _tool_schema(properties={"path": {"type": "string"}}, required=["path"])},
-    {"slug": "artifact-coding-rename-file", "name": "Artifact Coding Rename File", "description": "Rename a draft file.", "function_name": "artifact_coding_rename_file", "timeout_s": 60, "is_pure": False, "schema": _tool_schema(properties={"from_path": {"type": "string"}, "to_path": {"type": "string"}}, required=["from_path", "to_path"])},
-    {"slug": "artifact-coding-set-entry-module", "name": "Artifact Coding Set Entry Module", "description": "Set the entry module path.", "function_name": "artifact_coding_set_entry_module", "timeout_s": 30, "is_pure": False, "schema": _tool_schema(properties={"path": {"type": "string"}}, required=["path"])},
-    {"slug": "artifact-coding-list-credentials", "name": "Artifact Coding List Credentials", "description": "List available credential references for the current tenant scope using safe metadata only.", "function_name": "artifact_coding_list_credentials", "timeout_s": 30, "is_pure": True, "schema": _tool_schema(properties={})},
-    {"slug": "artifact-coding-set-dependencies", "name": "Artifact Coding Set Dependencies", "description": "Set artifact dependencies for the draft.", "function_name": "artifact_coding_set_dependencies", "timeout_s": 30, "is_pure": False, "schema": _tool_schema(properties={"dependencies": {"anyOf": [{"type": "array", "items": {"type": "string"}}, {"type": "string"}]}})},
-    {"slug": "artifact-coding-set-metadata", "name": "Artifact Coding Set Metadata", "description": "Update artifact metadata fields.", "function_name": "artifact_coding_set_metadata", "timeout_s": 30, "is_pure": False, "schema": _tool_schema(properties={"display_name": {"type": "string"}, "description": {"type": "string"}})},
-    {"slug": "artifact-coding-set-kind", "name": "Artifact Coding Set Kind", "description": "Change the artifact kind and reset the draft to the matching default contract shape.", "function_name": "artifact_coding_set_kind", "timeout_s": 30, "is_pure": False, "schema": _tool_schema(properties={"kind": {"type": "string", "enum": [item.value for item in ArtifactKind]}}, required=["kind"])},
-    {"slug": "artifact-coding-set-config-schema", "name": "Artifact Coding Set Config Schema", "description": "Update the artifact config schema JSON.", "function_name": "artifact_coding_set_config_schema", "timeout_s": 30, "is_pure": False, "schema": _tool_schema(properties={"config_schema": {"type": "object"}}, required=["config_schema"])},
-    {"slug": "artifact-coding-set-capabilities", "name": "Artifact Coding Set Capabilities", "description": "Update the artifact capabilities JSON.", "function_name": "artifact_coding_set_capabilities", "timeout_s": 30, "is_pure": False, "schema": _tool_schema(properties={"capabilities": {"type": "object"}}, required=["capabilities"])},
-    {"slug": "artifact-coding-set-agent-contract", "name": "Artifact Coding Set Agent Contract", "description": "Update the agent_contract JSON using the raw inner contract object only.", "function_name": "artifact_coding_set_agent_contract", "timeout_s": 30, "is_pure": False, "schema": _contract_setter_tool_schema(field_name="agent_contract", contract_schema=_AGENT_CONTRACT_SCHEMA)},
-    {"slug": "artifact-coding-set-rag-contract", "name": "Artifact Coding Set RAG Contract", "description": "Update the rag_contract JSON using the raw inner contract object only.", "function_name": "artifact_coding_set_rag_contract", "timeout_s": 30, "is_pure": False, "schema": _contract_setter_tool_schema(field_name="rag_contract", contract_schema=_RAG_CONTRACT_SCHEMA)},
-    {"slug": "artifact-coding-set-tool-contract", "name": "Artifact Coding Set Tool Contract", "description": "Update the tool_contract JSON using the raw inner contract object only.", "function_name": "artifact_coding_set_tool_contract", "timeout_s": 30, "is_pure": False, "schema": _contract_setter_tool_schema(field_name="tool_contract", contract_schema=_TOOL_CONTRACT_SCHEMA)},
-    {"slug": "artifact-coding-validate-runtime-contract", "name": "Artifact Coding Validate Runtime Contract", "description": "Validate that the current entry module exposes the required execute(inputs, config, context) handler.", "function_name": "artifact_coding_validate_runtime_contract", "timeout_s": 30, "is_pure": True, "schema": _tool_schema(properties={})},
-    {"slug": "artifact-coding-run-test", "name": "Artifact Coding Run Test", "description": "Run the artifact through the canonical artifact test runtime.", "function_name": "artifact_coding_run_test", "timeout_s": 60, "is_pure": False, "schema": _tool_schema(properties={"input_data": {}, "config": {"type": "object"}}, required=[])},
-    {"slug": "artifact-coding-await-last-test-result", "name": "Artifact Coding Await Last Test Result", "description": "Wait server-side for the latest artifact test run to reach a terminal state.", "function_name": "artifact_coding_await_last_test_result", "timeout_s": 150, "is_pure": True, "schema": _tool_schema(properties={"timeout_seconds": {"type": "number"}}, required=[])},
-    {"slug": "artifact-coding-get-last-test-result", "name": "Artifact Coding Get Last Test Result", "description": "Get the latest artifact test result for this session.", "function_name": "artifact_coding_get_last_test_result", "timeout_s": 30, "is_pure": True, "schema": _tool_schema(properties={})},
+    {"builtin_key": "artifact-coding-get-context", "name": "Artifact Coding Get Context", "description": "Get a compact summary of the current artifact coding session and draft.", "function_name": "artifact_coding_get_context", "timeout_s": 30, "is_pure": True, "schema": _tool_schema(properties={})},
+    {"builtin_key": "artifact-coding-get-form-state", "name": "Artifact Coding Get Form State", "description": "Read the full artifact draft form state.", "function_name": "artifact_coding_get_form_state", "timeout_s": 30, "is_pure": True, "schema": _tool_schema(properties={})},
+    {"builtin_key": "artifact-coding-list-files", "name": "Artifact Coding List Files", "description": "List files in the current artifact draft.", "function_name": "artifact_coding_list_files", "timeout_s": 30, "is_pure": True, "schema": _tool_schema(properties={})},
+    {"builtin_key": "artifact-coding-read-file", "name": "Artifact Coding Read File", "description": "Read one artifact draft file. You may pass both line bounds for an exact inclusive range, only start_line for a forward window, only end_line for a backward window, or neither for a full/safely capped read.", "function_name": "artifact_coding_read_file", "timeout_s": 30, "is_pure": True, "schema": _tool_schema(properties={"path": {"type": "string"}, "start_line": {"type": "integer"}, "end_line": {"type": "integer"}, "include_line_numbers": {"type": "boolean"}}, required=["path"])},
+    {"builtin_key": "artifact-coding-search-in-files", "name": "Artifact Coding Search In Files", "description": "Search text across artifact draft files and return optional surrounding context.", "function_name": "artifact_coding_search_in_files", "timeout_s": 30, "is_pure": True, "schema": _tool_schema(properties={"query": {"type": "string"}, "max_results": {"type": "integer"}, "context_before": {"type": "integer"}, "context_after": {"type": "integer"}}, required=["query"])},
+    {"builtin_key": "artifact-coding-replace-file", "name": "Artifact Coding Replace File", "description": "Replace the full content of a draft file.", "function_name": "artifact_coding_replace_file", "timeout_s": 60, "is_pure": False, "schema": _tool_schema(properties={"path": {"type": "string"}, "content": {"type": "string"}}, required=["path", "content"])},
+    {"builtin_key": "artifact-coding-replace-text-in-file", "name": "Artifact Coding Replace Text In File", "description": "Replace exact old_text with new_text in a draft file, optionally within a bounded line range.", "function_name": "artifact_coding_replace_text_in_file", "timeout_s": 60, "is_pure": False, "schema": _tool_schema(properties={"path": {"type": "string"}, "old_text": {"type": "string"}, "new_text": {"type": "string"}, "start_line": {"type": "integer"}, "end_line": {"type": "integer"}}, required=["path", "old_text", "new_text"])},
+    {"builtin_key": "artifact-coding-create-file", "name": "Artifact Coding Create File", "description": "Create a new draft file.", "function_name": "artifact_coding_create_file", "timeout_s": 60, "is_pure": False, "schema": _tool_schema(properties={"path": {"type": "string"}, "content": {"type": "string"}}, required=["path", "content"])},
+    {"builtin_key": "artifact-coding-delete-file", "name": "Artifact Coding Delete File", "description": "Delete a draft file.", "function_name": "artifact_coding_delete_file", "timeout_s": 60, "is_pure": False, "schema": _tool_schema(properties={"path": {"type": "string"}}, required=["path"])},
+    {"builtin_key": "artifact-coding-rename-file", "name": "Artifact Coding Rename File", "description": "Rename a draft file.", "function_name": "artifact_coding_rename_file", "timeout_s": 60, "is_pure": False, "schema": _tool_schema(properties={"from_path": {"type": "string"}, "to_path": {"type": "string"}}, required=["from_path", "to_path"])},
+    {"builtin_key": "artifact-coding-set-entry-module", "name": "Artifact Coding Set Entry Module", "description": "Set the entry module path.", "function_name": "artifact_coding_set_entry_module", "timeout_s": 30, "is_pure": False, "schema": _tool_schema(properties={"path": {"type": "string"}}, required=["path"])},
+    {"builtin_key": "artifact-coding-list-credentials", "name": "Artifact Coding List Credentials", "description": "List available credential references for the current organization scope using safe metadata only.", "function_name": "artifact_coding_list_credentials", "timeout_s": 30, "is_pure": True, "schema": _tool_schema(properties={})},
+    {"builtin_key": "artifact-coding-set-dependencies", "name": "Artifact Coding Set Dependencies", "description": "Set artifact dependencies for the draft.", "function_name": "artifact_coding_set_dependencies", "timeout_s": 30, "is_pure": False, "schema": _tool_schema(properties={"dependencies": {"anyOf": [{"type": "array", "items": {"type": "string"}}, {"type": "string"}]}})},
+    {"builtin_key": "artifact-coding-set-metadata", "name": "Artifact Coding Set Metadata", "description": "Update artifact metadata fields.", "function_name": "artifact_coding_set_metadata", "timeout_s": 30, "is_pure": False, "schema": _tool_schema(properties={"display_name": {"type": "string"}, "description": {"type": "string"}})},
+    {"builtin_key": "artifact-coding-set-kind", "name": "Artifact Coding Set Kind", "description": "Change the artifact kind and reset the draft to the matching default contract shape.", "function_name": "artifact_coding_set_kind", "timeout_s": 30, "is_pure": False, "schema": _tool_schema(properties={"kind": {"type": "string", "enum": [item.value for item in ArtifactKind]}}, required=["kind"])},
+    {"builtin_key": "artifact-coding-set-config-schema", "name": "Artifact Coding Set Config Schema", "description": "Update the artifact config schema JSON.", "function_name": "artifact_coding_set_config_schema", "timeout_s": 30, "is_pure": False, "schema": _tool_schema(properties={"config_schema": {"type": "object"}}, required=["config_schema"])},
+    {"builtin_key": "artifact-coding-set-capabilities", "name": "Artifact Coding Set Capabilities", "description": "Update the artifact capabilities JSON.", "function_name": "artifact_coding_set_capabilities", "timeout_s": 30, "is_pure": False, "schema": _tool_schema(properties={"capabilities": {"type": "object"}}, required=["capabilities"])},
+    {"builtin_key": "artifact-coding-set-agent-contract", "name": "Artifact Coding Set Agent Contract", "description": "Update the agent_contract JSON using the raw inner contract object only.", "function_name": "artifact_coding_set_agent_contract", "timeout_s": 30, "is_pure": False, "schema": _contract_setter_tool_schema(field_name="agent_contract", contract_schema=_AGENT_CONTRACT_SCHEMA)},
+    {"builtin_key": "artifact-coding-set-rag-contract", "name": "Artifact Coding Set RAG Contract", "description": "Update the rag_contract JSON using the raw inner contract object only.", "function_name": "artifact_coding_set_rag_contract", "timeout_s": 30, "is_pure": False, "schema": _contract_setter_tool_schema(field_name="rag_contract", contract_schema=_RAG_CONTRACT_SCHEMA)},
+    {"builtin_key": "artifact-coding-set-tool-contract", "name": "Artifact Coding Set Tool Contract", "description": "Update the tool_contract JSON using the raw inner contract object only.", "function_name": "artifact_coding_set_tool_contract", "timeout_s": 30, "is_pure": False, "schema": _contract_setter_tool_schema(field_name="tool_contract", contract_schema=_TOOL_CONTRACT_SCHEMA)},
+    {"builtin_key": "artifact-coding-validate-runtime-contract", "name": "Artifact Coding Validate Runtime Contract", "description": "Validate that the current entry module exposes the required execute(inputs, config, context) handler.", "function_name": "artifact_coding_validate_runtime_contract", "timeout_s": 30, "is_pure": True, "schema": _tool_schema(properties={})},
+    {"builtin_key": "artifact-coding-run-test", "name": "Artifact Coding Run Test", "description": "Run the artifact through the canonical artifact test runtime.", "function_name": "artifact_coding_run_test", "timeout_s": 60, "is_pure": False, "schema": _tool_schema(properties={"input_data": {}, "config": {"type": "object"}}, required=[])},
+    {"builtin_key": "artifact-coding-await-last-test-result", "name": "Artifact Coding Await Last Test Result", "description": "Wait server-side for the latest artifact test run to reach a terminal state.", "function_name": "artifact_coding_await_last_test_result", "timeout_s": 150, "is_pure": True, "schema": _tool_schema(properties={"timeout_seconds": {"type": "number"}}, required=[])},
+    {"builtin_key": "artifact-coding-get-last-test-result", "name": "Artifact Coding Get Last Test Result", "description": "Get the latest artifact test result for this session.", "function_name": "artifact_coding_get_last_test_result", "timeout_s": 30, "is_pure": True, "schema": _tool_schema(properties={})},
 ]
 async def ensure_artifact_coding_tools(db: AsyncSession) -> list[str]:
     async def _has_modern_tool_registry_columns() -> bool:
@@ -1013,8 +1017,8 @@ async def ensure_artifact_coding_tools(db: AsyncSession) -> list[str]:
         result = await db.execute(
             select(ToolRegistry).where(
                 and_(
-                    ToolRegistry.tenant_id.is_(None),
-                    ToolRegistry.slug == spec["slug"],
+                    ToolRegistry.organization_id.is_(None),
+                    ToolRegistry.builtin_key == spec["builtin_key"],
                 )
             )
         )
@@ -1030,9 +1034,9 @@ async def ensure_artifact_coding_tools(db: AsyncSession) -> list[str]:
         }
         if tool is None:
             tool = ToolRegistry(
-                tenant_id=None,
+                organization_id=None,
                 name=spec["name"],
-                slug=spec["slug"],
+                slug=_system_tool_row_key(),
                 description=spec["description"],
                 scope=ToolDefinitionScope.GLOBAL,
                 schema=spec["schema"],
@@ -1042,7 +1046,7 @@ async def ensure_artifact_coding_tools(db: AsyncSession) -> list[str]:
                 implementation_type=ToolImplementationType.FUNCTION,
                 artifact_id=None,
                 artifact_version=None,
-                builtin_key=None,
+                builtin_key=spec["builtin_key"],
                 builtin_template_id=None,
                 is_builtin_template=False,
                 is_active=True,
@@ -1061,6 +1065,7 @@ async def ensure_artifact_coding_tools(db: AsyncSession) -> list[str]:
             tool.status = ToolStatus.PUBLISHED
             tool.version = "1.0.0"
             tool.implementation_type = ToolImplementationType.FUNCTION
+            tool.builtin_key = spec["builtin_key"]
             tool.is_active = True
             tool.is_system = True
             tool.published_at = tool.published_at or datetime.now(timezone.utc)

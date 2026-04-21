@@ -117,7 +117,7 @@ async def test_disconnected_graph_fails(db_session, test_tenant_id):
         ],
     )
 
-    compiler = AgentCompiler(db=db_session, tenant_id=test_tenant_id)
+    compiler = AgentCompiler(db=db_session, organization_id=test_tenant_id)
     errors = await compiler.validate(AgentGraph(**graph))
     critical = [e for e in errors if e.severity == "error"]
     assert critical

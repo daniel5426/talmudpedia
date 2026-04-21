@@ -28,30 +28,30 @@ class _BaseOrchestrationExecutor(BaseNodeExecutor):
     def _node_id(self, context: Optional[Dict[str, Any]], fallback: str) -> str:
         return self._as_text((context or {}).get("node_id")) or fallback
 
-    def _effective_tenant_id(self, state: Dict[str, Any], context: Optional[Dict[str, Any]]) -> Optional[str]:
-        from_context = self._as_text((context or {}).get("tenant_id"))
+    def _effective_organization_id(self, state: Dict[str, Any], context: Optional[Dict[str, Any]]) -> Optional[str]:
+        from_context = self._as_text((context or {}).get("organization_id"))
         if from_context:
             return from_context
         if isinstance((context or {}).get("state_context"), dict):
-            from_state_ctx = self._as_text((context or {}).get("state_context", {}).get("tenant_id"))
+            from_state_ctx = self._as_text((context or {}).get("state_context", {}).get("organization_id"))
             if from_state_ctx:
                 return from_state_ctx
         if isinstance(state.get("context"), dict):
-            from_state = self._as_text(state.get("context", {}).get("tenant_id"))
+            from_state = self._as_text(state.get("context", {}).get("organization_id"))
             if from_state:
                 return from_state
-        if self.tenant_id:
-            return str(self.tenant_id)
+        if self.organization_id:
+            return str(self.organization_id)
         return None
 
     def _assert_option_a_enabled(self, state: Dict[str, Any], context: Optional[Dict[str, Any]]) -> None:
-        tenant_id = self._effective_tenant_id(state, context)
+        organization_id= self._effective_organization_id(state, context)
         if is_orchestration_surface_enabled(
             surface=ORCHESTRATION_SURFACE_OPTION_A,
-            tenant_id=tenant_id,
+            organization_id=organization_id,
         ):
             return
-        raise PermissionError("GraphSpec v2 orchestration is disabled by feature flag for this tenant")
+        raise PermissionError("GraphSpec v2 orchestration is disabled by feature flag for this organization")
 
     def _event_emitter(self, context: Optional[Dict[str, Any]]):
         emitter = (context or {}).get("emitter")
@@ -83,7 +83,6 @@ class _BaseOrchestrationExecutor(BaseNodeExecutor):
         context: Optional[Dict[str, Any]],
         node_id: str,
         target_agent_id: Optional[str],
-        target_agent_slug: Optional[str],
         result: Dict[str, Any],
     ) -> None:
         emitter = self._event_emitter(context)
@@ -93,7 +92,6 @@ class _BaseOrchestrationExecutor(BaseNodeExecutor):
         emitter.emit_orchestration_spawn_decision(
             node_id=node_id,
             target_agent_id=target_agent_id,
-            target_agent_slug=target_agent_slug,
             spawned_run_ids=spawned_ids,
             idempotent=bool(result.get("idempotent")),
         )
@@ -274,20 +272,17 @@ class SpawnRunNodeExecutor(_BaseOrchestrationExecutor):
             node_id=node_id,
             salt={
                 "target_agent_id": self._as_text(config.get("target_agent_id")),
-                "target_agent_slug": self._as_text(config.get("target_agent_slug")),
                 "mapped_input_payload": mapped_input_payload,
                 "scope_subset": scope_subset,
             },
         )
 
         target_agent_id = self._as_uuid(config.get("target_agent_id"))
-        target_agent_slug = self._as_text(config.get("target_agent_slug"))
         try:
             result = await kernel.spawn_run(
                 caller_run_id=caller_run_id,
                 parent_node_id=self._as_text((context or {}).get("node_id")),
                 target_agent_id=target_agent_id,
-                target_agent_slug=target_agent_slug,
                 mapped_input_payload=mapped_input_payload,
                 failure_policy=self._as_text(config.get("failure_policy")),
                 timeout_s=config.get("timeout_s"),
@@ -312,7 +307,6 @@ class SpawnRunNodeExecutor(_BaseOrchestrationExecutor):
             context=context,
             node_id=node_id,
             target_agent_id=str(target_agent_id) if target_agent_id else None,
-            target_agent_slug=target_agent_slug,
             result=result,
         )
         return result
@@ -381,7 +375,6 @@ class SpawnGroupNodeExecutor(_BaseOrchestrationExecutor):
             context=context,
             node_id=node_id,
             target_agent_id=None,
-            target_agent_slug=None,
             result=result,
         )
         return result

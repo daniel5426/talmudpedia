@@ -27,7 +27,7 @@ def test_live_harness_config_reads_new_env_names(monkeypatch):
     config = ArchitectLiveHarnessConfig.from_env()
     assert config.base_url == "http://localhost:9999"
     assert config.api_key == "token-123"
-    assert config.tenant_id == "tenant-123"
+    assert config.organization_id == "tenant-123"
     assert config.architect_agent_id == "agent-123"
     assert config.timeout_s == 123
 
@@ -146,7 +146,7 @@ def test_start_run_defaults_architect_mode_and_execution_mode():
         ArchitectLiveHarnessConfig(
             base_url="http://localhost:8026",
             api_key="token-123",
-            tenant_id="tenant-123",
+            organization_id="tenant-123",
         )
     )
     assert harness.start_run(prompt="hello") == "run-123"

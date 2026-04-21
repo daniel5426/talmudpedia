@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react"
 import { useDirection } from "@/components/direction-provider"
-import { useTenant } from "@/contexts/TenantContext"
+import { useOrganization } from "@/contexts/OrganizationContext"
 import {
     knowledgeStoresService,
     KnowledgeStore,
@@ -73,7 +73,7 @@ function CreateKnowledgeStoreDialog({
     embeddingModels: LogicalModel[]
     vectorStoreCredentials: IntegrationCredential[]
 }) {
-    const { currentTenant } = useTenant()
+    const { currentOrganization } = useOrganization()
     const { direction } = useDirection()
     const isRTL = direction === "rtl"
     const [open, setOpen] = useState(false)
@@ -112,7 +112,7 @@ function CreateKnowledgeStoreDialog({
                     chunk_overlap: chunkOverlap,
                 }
             }
-            await knowledgeStoresService.create(data, currentTenant?.slug)
+            await knowledgeStoresService.create(data, currentOrganization?.id)
             setOpen(false)
             resetForm()
             onCreated()
@@ -254,7 +254,7 @@ function CreateKnowledgeStoreDialog({
                         </Select>
                         {(backend === "pinecone" || backend === "qdrant") && compatibleCredentials.length === 0 && (
                             <p className="text-xs text-muted-foreground">
-                                No tenant {backend} credential found. Platform Default (ENV) will be used if configured.
+                                No organization {backend} credential found. Platform Default (ENV) will be used if configured.
                             </p>
                         )}
                     </div>
@@ -330,7 +330,7 @@ function EditKnowledgeStoreDialog({
     onOpenChange: (open: boolean) => void
     onUpdated: () => void
 }) {
-    const { currentTenant } = useTenant()
+    const { currentOrganization } = useOrganization()
     const { direction } = useDirection()
     const isRTL = direction === "rtl"
     const [loading, setLoading] = useState(false)
@@ -355,7 +355,7 @@ function EditKnowledgeStoreDialog({
                 name,
                 description: description || undefined,
                 retrieval_policy: retrievalPolicy
-            }, currentTenant?.slug)
+            }, currentOrganization?.id)
             onOpenChange(false)
             onUpdated()
         } catch (error) {
@@ -463,7 +463,7 @@ function DeleteKnowledgeStoreDialog({
     onOpenChange: (open: boolean) => void
     onDeleted: () => void
 }) {
-    const { currentTenant } = useTenant()
+    const { currentOrganization } = useOrganization()
     const { direction } = useDirection()
     const isRTL = direction === "rtl"
     const [loading, setLoading] = useState(false)
@@ -472,7 +472,7 @@ function DeleteKnowledgeStoreDialog({
         if (!store) return
         setLoading(true)
         try {
-            await knowledgeStoresService.delete(store.id, currentTenant?.slug)
+            await knowledgeStoresService.delete(store.id, currentOrganization?.id)
             onOpenChange(false)
             onDeleted()
         } catch (error) {
@@ -512,7 +512,7 @@ function DeleteKnowledgeStoreDialog({
 }
 
 export default function KnowledgeStoresPage() {
-    const { currentTenant } = useTenant()
+    const { currentOrganization } = useOrganization()
     const { direction } = useDirection()
     const isRTL = direction === "rtl"
 
@@ -525,11 +525,11 @@ export default function KnowledgeStoresPage() {
     const [deletingStore, setDeletingStore] = useState<KnowledgeStore | null>(null)
 
     const fetchData = useCallback(async () => {
-        if (!currentTenant?.slug) return
+        if (!currentOrganization?.id) return
         setLoading(true)
         try {
             const [storesData, modelsData, credentialsData] = await Promise.all([
-                knowledgeStoresService.list(currentTenant.slug, { limit: 100, view: "summary" }),
+                knowledgeStoresService.list(currentOrganization.id, { limit: 100, view: "summary" }),
                 modelsService.listModels("embedding", undefined, 0, 100, "summary"),
                 credentialsService.listCredentials("vector_store", { limit: 100, view: "summary" }),
             ])
@@ -541,7 +541,7 @@ export default function KnowledgeStoresPage() {
         } finally {
             setLoading(false)
         }
-    }, [currentTenant])
+    }, [currentOrganization])
 
     useEffect(() => {
         fetchData()

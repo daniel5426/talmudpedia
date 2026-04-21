@@ -37,7 +37,7 @@ async def test_execute_agent_facade_runs_and_persists(db_session, test_tenant_id
         ],
     }
 
-    service = AgentService(db=db_session, tenant_id=test_tenant_id)
+    service = AgentService(db=db_session, organization_id=test_tenant_id)
     agent = await service.create_agent(
         CreateAgentData(
             name=f"{run_prefix}-execute",

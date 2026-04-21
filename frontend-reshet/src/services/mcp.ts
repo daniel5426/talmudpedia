@@ -5,7 +5,7 @@ export type McpApprovalPolicy = "ask" | "always_allow";
 
 export interface McpServer {
   id: string;
-  tenant_id: string;
+  organization_id: string;
   name: string;
   description?: string | null;
   server_url: string;

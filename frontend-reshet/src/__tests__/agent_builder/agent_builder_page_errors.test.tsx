@@ -38,7 +38,7 @@ describe("agent builder page errors", () => {
     jest.clearAllMocks()
     getAgentMock.mockResolvedValue({
       id: "agent-123",
-      tenant_id: "tenant-1",
+      organization_id: "organization-1",
       name: "Draft Agent",
       slug: "draft-agent",
       status: "draft",

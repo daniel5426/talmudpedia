@@ -49,8 +49,8 @@ jest.mock("@/services", () => ({
   isTenantManagedPricingProvider: jest.fn((provider: string) => provider === "local" || provider === "custom"),
 }))
 
-jest.mock("@/contexts/TenantContext", () => ({
-  useTenant: () => ({ currentTenant: { id: "tenant-1", slug: "tenant-1" } }),
+jest.mock("@/contexts/OrganizationContext", () => ({
+  useOrganization: () => ({ currentOrganization: { id: "organization-1" } }),
 }))
 
 jest.mock("@/components/direction-provider", () => ({
@@ -67,7 +67,7 @@ const mockModels = [
     default_resolution_policy: {},
     version: 1,
     status: "active",
-    tenant_id: "tenant-1",
+    organization_id: "organization-1",
     created_at: "",
     updated_at: "",
     providers: [
@@ -90,13 +90,13 @@ const mockModels = [
   {
     id: "model-2",
     name: "Custom Model",
-    description: "Tenant priced",
+    description: "Organization priced",
     capability_type: "chat",
     metadata: {},
     default_resolution_policy: {},
     version: 1,
     status: "active",
-    tenant_id: "tenant-1",
+    organization_id: "organization-1",
     created_at: "",
     updated_at: "",
     providers: [
@@ -125,7 +125,7 @@ const mockModels = [
     default_resolution_policy: {},
     version: 1,
     status: "active",
-    tenant_id: null,
+    organization_id: null,
     created_at: "",
     updated_at: "",
     providers: [
@@ -149,24 +149,26 @@ const mockModels = [
 describe("Models Registry", () => {
   beforeEach(() => {
     ;(modelsService.listModels as jest.Mock).mockResolvedValue({
-      models: mockModels,
+      items: mockModels,
       total: mockModels.length,
     })
-    ;(credentialsService.listCredentials as jest.Mock).mockResolvedValue([
-      {
+    ;(credentialsService.listCredentials as jest.Mock).mockResolvedValue({
+      items: [
+        {
         id: "cred-1",
-        tenant_id: "tenant-1",
+        organization_id: "organization-1",
         category: "llm_provider",
         provider_key: "openai",
         provider_variant: null,
-        display_name: "OpenAI Tenant",
+        display_name: "OpenAI Organization",
         credential_keys: ["api_key"],
         is_enabled: true,
         is_default: true,
         created_at: "",
         updated_at: "",
-      },
-    ])
+      }],
+      total: 1,
+    })
   })
 
   afterEach(() => {

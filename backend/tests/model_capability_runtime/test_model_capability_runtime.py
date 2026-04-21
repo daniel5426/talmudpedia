@@ -7,7 +7,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from app.db.postgres.models.identity import Tenant
+from app.db.postgres.models.identity import Organization
 from app.db.postgres.models.registry import (
     ModelCapabilityType,
     ModelProviderBinding,
@@ -61,12 +61,12 @@ async def test_global_seed_includes_default_google_speech_to_text_model(db_sessi
 
 @pytest.mark.asyncio
 async def test_speech_to_text_default_resolution_returns_typed_execution_receipt(db_session, monkeypatch):
-    tenant = Tenant(name=f"Tenant {uuid4().hex[:8]}", slug=f"tenant-{uuid4().hex[:8]}")
+    tenant = Organization(name=f"Organization {uuid4().hex[:8]}", slug=f"tenant-{uuid4().hex[:8]}")
     db_session.add(tenant)
     await db_session.flush()
 
     model = ModelRegistry(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name="Default STT",
         capability_type=ModelCapabilityType.SPEECH_TO_TEXT,
         status=ModelStatus.ACTIVE,
@@ -79,7 +79,7 @@ async def test_speech_to_text_default_resolution_returns_typed_execution_receipt
 
     binding = ModelProviderBinding(
         model_id=model.id,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         provider=ModelProviderType.GOOGLE,
         provider_model_id="chirp_3",
         priority=0,
@@ -124,12 +124,12 @@ async def test_speech_to_text_default_resolution_returns_typed_execution_receipt
 
 @pytest.mark.asyncio
 async def test_chat_receipt_resolution_does_not_instantiate_runtime(db_session, monkeypatch):
-    tenant = Tenant(name=f"Tenant {uuid4().hex[:8]}", slug=f"tenant-{uuid4().hex[:8]}")
+    tenant = Organization(name=f"Organization {uuid4().hex[:8]}", slug=f"tenant-{uuid4().hex[:8]}")
     db_session.add(tenant)
     await db_session.flush()
 
     model = ModelRegistry(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name="Loop Safe Chat",
         capability_type=ModelCapabilityType.CHAT,
         status=ModelStatus.ACTIVE,
@@ -141,7 +141,7 @@ async def test_chat_receipt_resolution_does_not_instantiate_runtime(db_session, 
 
     binding = ModelProviderBinding(
         model_id=model.id,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         provider=ModelProviderType.ANTHROPIC,
         provider_model_id="claude-sonnet",
         priority=0,
@@ -176,12 +176,12 @@ async def test_chat_receipt_resolution_does_not_instantiate_runtime(db_session, 
 
 @pytest.mark.asyncio
 async def test_speech_to_text_resolution_rejects_runtime_unsupported_provider(db_session):
-    tenant = Tenant(name=f"Tenant {uuid4().hex[:8]}", slug=f"tenant-{uuid4().hex[:8]}")
+    tenant = Organization(name=f"Organization {uuid4().hex[:8]}", slug=f"tenant-{uuid4().hex[:8]}")
     db_session.add(tenant)
     await db_session.flush()
 
     model = ModelRegistry(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name="Broken STT",
         capability_type=ModelCapabilityType.SPEECH_TO_TEXT,
         status=ModelStatus.ACTIVE,
@@ -194,7 +194,7 @@ async def test_speech_to_text_resolution_rejects_runtime_unsupported_provider(db
     db_session.add(
         ModelProviderBinding(
             model_id=model.id,
-            tenant_id=tenant.id,
+            organization_id=tenant.id,
             provider=ModelProviderType.OPENAI,
             provider_model_id="gpt-4o-mini-transcribe",
             priority=0,

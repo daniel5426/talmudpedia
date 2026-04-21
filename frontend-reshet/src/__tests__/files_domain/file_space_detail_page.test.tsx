@@ -43,7 +43,7 @@ describe("file space detail page", () => {
 
     getMock.mockResolvedValue({
       id: "space-1",
-      tenant_id: "tenant-1",
+      organization_id: "organization-1",
       project_id: "project-1",
       name: "Workspace",
       description: null,

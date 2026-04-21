@@ -24,11 +24,10 @@ jest.mock("@/components/direction-provider", () => ({
 
 const baseTool = {
   id: "tool-1",
-  tenant_id: "tenant-1",
+  organization_id: "organization-1",
   name: "HTTP Tool",
-  slug: "http-tool",
   description: "http",
-  scope: "tenant",
+  scope: "organization",
   input_schema: { type: "object", properties: {} },
   output_schema: { type: "object", properties: {} },
   config_schema: { implementation: { type: "http", method: "GET", url: "https://example.com" } },
@@ -54,9 +53,8 @@ const baseTool = {
 
 const retrievalBuiltin = {
   id: "template-retrieval",
-  tenant_id: null,
+  organization_id: null,
   name: "Retrieval Pipeline",
-  slug: "builtin-retrieval-pipeline",
   description: "retrieve",
   scope: "global",
   input_schema: { type: "object", properties: {} },
@@ -90,7 +88,6 @@ const artifactTool = {
   ...baseTool,
   id: "artifact-tool-1",
   name: "Artifact Owned Tool",
-  slug: "artifact-owned-tool",
   implementation_type: "artifact",
   artifact_id: "artifact-123",
   ownership: "artifact_bound",
@@ -106,7 +103,6 @@ const pipelineTool = {
   ...baseTool,
   id: "pipeline-tool-1",
   name: "Pipeline Owned Tool",
-  slug: "pipeline-owned-tool",
   implementation_type: "rag_pipeline",
   visual_pipeline_id: "pipeline-123",
   ownership: "pipeline_bound",
@@ -122,7 +118,6 @@ const agentTool = {
   ...baseTool,
   id: "agent-tool-1",
   name: "Agent Owned Tool",
-  slug: "agent-tool-1",
   implementation_type: "agent_call",
   ownership: "agent_bound",
   managed_by: "agents",
@@ -136,7 +131,14 @@ const agentTool = {
 describe("Tools built-in UI", () => {
   beforeEach(() => {
     push.mockReset()
-    ;(toolsService.listTools as jest.Mock).mockResolvedValue({ tools: [baseTool, retrievalBuiltin, artifactTool, pipelineTool, agentTool], total: 5 })
+    ;(toolsService.listTools as jest.Mock).mockResolvedValue({
+      items: [baseTool, retrievalBuiltin, artifactTool, pipelineTool, agentTool],
+      total: 5,
+      has_more: false,
+      skip: 0,
+      limit: 20,
+      view: "summary",
+    })
     ;(toolsService.createTool as jest.Mock).mockResolvedValue({ ...baseTool, id: "tool-created-1" })
   })
 
@@ -162,7 +164,7 @@ describe("Tools built-in UI", () => {
     render(<ToolsPage />)
 
     await waitFor(() => expect(toolsService.listTools).toHaveBeenCalled())
-    fireEvent.click(screen.getByRole("button", { name: "Create Tool" }))
+    fireEvent.click(screen.getAllByRole("button", { name: "Create Tool" })[0])
     fireEvent.click(screen.getByRole("button", { name: /Integration \/ Manual Tool/i }))
 
     expect(await screen.findByText("Implementation Type")).toBeInTheDocument()
@@ -172,7 +174,7 @@ describe("Tools built-in UI", () => {
     render(<ToolsPage />)
 
     await waitFor(() => expect(toolsService.listTools).toHaveBeenCalled())
-    fireEvent.click(screen.getByRole("button", { name: "Create Tool" }))
+    fireEvent.click(screen.getAllByRole("button", { name: "Create Tool" })[0])
     fireEvent.click(screen.getByRole("button", { name: /Artifact Tool/i }))
 
     expect(push).toHaveBeenCalledWith("/admin/artifacts/new?kind=tool_impl")
@@ -182,7 +184,7 @@ describe("Tools built-in UI", () => {
     render(<ToolsPage />)
 
     await waitFor(() => expect(toolsService.listTools).toHaveBeenCalled())
-    fireEvent.click(screen.getByRole("button", { name: "Create Tool" }))
+    fireEvent.click(screen.getAllByRole("button", { name: "Create Tool" })[0])
     fireEvent.click(screen.getByRole("button", { name: /Pipeline Tool/i }))
 
     expect(push).toHaveBeenCalledWith("/admin/pipelines")
@@ -192,7 +194,7 @@ describe("Tools built-in UI", () => {
     render(<ToolsPage />)
 
     await waitFor(() => expect(toolsService.listTools).toHaveBeenCalled())
-    fireEvent.click(screen.getByRole("button", { name: "Create Tool" }))
+    fireEvent.click(screen.getAllByRole("button", { name: "Create Tool" })[0])
     fireEvent.click(screen.getByRole("button", { name: /Agent \/ Workflow Tool/i }))
 
     expect(push).toHaveBeenCalledWith("/admin/agents")

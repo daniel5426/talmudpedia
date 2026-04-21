@@ -6,17 +6,17 @@ import pytest
 
 from app.api.dependencies import get_current_principal
 from app.db.postgres.models.agents import Agent
-from app.db.postgres.models.identity import Tenant, User
+from app.db.postgres.models.identity import Organization, User
 from app.db.postgres.models.workspace import Project, ProjectStatus
 
 
-def _principal_override(*, tenant: Tenant, project: Project, user: User, scopes: list[str] | None = None):
+def _principal_override(*, tenant: Organization, project: Project, user: User, scopes: list[str] | None = None):
     async def _override():
         return {
             "type": "user",
             "user": user,
             "user_id": str(user.id),
-            "tenant_id": str(tenant.id),
+            "organization_id": str(tenant.id),
             "project_id": str(project.id),
             "scopes": scopes or ["files.read", "files.write", "agents.read", "agents.write", "agents.execute"],
             "auth_token": "test-token",
@@ -26,7 +26,7 @@ def _principal_override(*, tenant: Tenant, project: Project, user: User, scopes:
 
 
 async def _seed_workspace(db_session):
-    tenant = Tenant(name="Files Tenant", slug=f"files-tenant-{uuid4().hex[:8]}")
+    tenant = Organization(name="Files Organization", slug=f"files-tenant-{uuid4().hex[:8]}")
     user = User(email=f"files-{uuid4().hex[:8]}@example.com", hashed_password="x", role="admin")
     db_session.add_all([tenant, user])
     await db_session.flush()
@@ -39,7 +39,7 @@ async def _seed_workspace(db_session):
         created_by=None,
     )
     agent = Agent(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name="Files Workflow",
         slug=f"files-workflow-{uuid4().hex[:8]}",
         graph_definition={"nodes": [], "edges": []},

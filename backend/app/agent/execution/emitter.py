@@ -212,7 +212,6 @@ class EventEmitter:
         *,
         node_id: str,
         target_agent_id: Optional[str],
-        target_agent_slug: Optional[str],
         spawned_run_ids: list[str],
         idempotent: bool,
     ) -> None:
@@ -220,7 +219,6 @@ class EventEmitter:
             event="orchestration.spawn_decision",
             data={
                 "target_agent_id": target_agent_id,
-                "target_agent_slug": target_agent_slug,
                 "spawned_run_ids": list(spawned_run_ids),
                 "idempotent": bool(idempotent),
             },

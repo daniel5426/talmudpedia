@@ -6,7 +6,7 @@ from sqlalchemy import select
 
 from app.api.dependencies import get_current_principal
 from app.agent.executors.tool import ToolNodeExecutor
-from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Tenant, User
+from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Organization, User
 from app.db.postgres.models.registry import ToolRegistry
 from app.services.control_plane.artifact_admin_service import (
     ArtifactAdminService,
@@ -19,18 +19,18 @@ from main import app
 
 
 async def _seed_tenant_context(db_session):
-    tenant = Tenant(id=uuid.uuid4(), name="Tool Tenant", slug=f"tool-{uuid.uuid4().hex[:8]}")
+    tenant = Organization(id=uuid.uuid4(), name="Tool Organization", slug=f"tool-{uuid.uuid4().hex[:8]}")
     user = User(id=uuid.uuid4(), email=f"tool-{uuid.uuid4().hex[:6]}@example.com", role="admin")
     org_unit = OrgUnit(
         id=uuid.uuid4(),
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name="Tool Org",
         slug=f"tool-org-{uuid.uuid4().hex[:6]}",
         type=OrgUnitType.org,
     )
     membership = OrgMembership(
         id=uuid.uuid4(),
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         org_unit_id=org_unit.id,
         role=OrgRole.owner,
@@ -41,23 +41,23 @@ async def _seed_tenant_context(db_session):
     return tenant, user
 
 
-def _override_principal(tenant_id, user):
+def _override_principal(organization_id, user):
     async def _inner():
         return {
             "type": "user",
             "user": user,
             "user_id": str(user.id),
-            "tenant_id": str(tenant_id),
+            "organization_id": str(organization_id),
             "scopes": ["tools.write"],
         }
 
     return _inner
 
 
-async def _create_published_artifact(db_session, tenant_id, created_by):
+async def _create_published_artifact(db_session, organization_id, created_by):
     revisions = ArtifactRevisionService(db_session)
     artifact = await revisions.create_artifact(
-        tenant_id=tenant_id,
+        organization_id=organization_id,
         created_by=created_by,
         display_name="Tool Artifact",
         description=None,
@@ -94,13 +94,13 @@ async def test_tool_publish_pins_artifact_revision_id(db_session):
     tenant, user = await _seed_tenant_context(db_session)
     admin = ArtifactAdminService(db_session)
     ctx = ControlPlaneContext(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user=user,
         user_id=user.id,
         scopes=("artifacts.write",),
     )
 
-    async def fake_ensure_deployment(self, *, revision, namespace, tenant_id=None):
+    async def fake_ensure_deployment(self, *, revision, namespace, organization_id=None):
         return SimpleNamespace(
             worker_name="prod-worker",
             deployment_id="dep-1",
@@ -155,7 +155,7 @@ async def test_tool_publish_pins_artifact_revision_id(db_session):
 
 @pytest.mark.asyncio
 async def test_tool_executor_routes_tenant_artifact_tools_through_shared_runtime(monkeypatch):
-    tenant_id = uuid.uuid4()
+    organization_id = uuid.uuid4()
     revision_id = uuid.uuid4()
     tool_id = uuid.uuid4()
     captured = {}
@@ -185,7 +185,7 @@ async def test_tool_executor_routes_tenant_artifact_tools_through_shared_runtime
         fake_execute_live_run,
     )
 
-    executor = ToolNodeExecutor(tenant_id=tenant_id, db=None)
+    executor = ToolNodeExecutor(organization_id=organization_id, db=None)
     result = await executor.execute(
         {},
         {"tool_id": str(tool_id), "input": {"question": "life"}},
@@ -219,6 +219,6 @@ async def test_tool_executor_rejects_non_uuid_artifact_bindings(monkeypatch):
 
     monkeypatch.setattr(ToolNodeExecutor, "_load_tool", fake_load_tool)
 
-    executor = ToolNodeExecutor(tenant_id=uuid.uuid4(), db=None)
+    executor = ToolNodeExecutor(organization_id=uuid.uuid4(), db=None)
     with pytest.raises(ValueError, match="UUID artifact id"):
         await executor.execute({}, {"tool_id": str(tool_id), "input": {"x": 1}}, {"mode": "production"})

@@ -9,7 +9,7 @@ Credential default selection, env fallback behavior, and provider validation acr
 - `backend/tests/credentials_management/test_integration_credentials_defaults.py`
 
 ## Key Scenarios Covered
-- Tenant default credentials override env fallback for the same provider.
+- Organization default credentials override env fallback for the same provider.
 - Creating a new default credential for a provider unsets the previous default in that scope.
 - Provider key validation is strict for `tool_provider` and permissive for `custom`.
 - Vector-store backend config falls back to env keys when no tenant default is set.

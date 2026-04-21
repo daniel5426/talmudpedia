@@ -46,9 +46,9 @@ def get_rag_operator_catalog(
     control_client_factory=control_client,
 ) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
     try:
-        tenant_slug = payload.get("tenant_slug")
+        organization_id = payload.get("organization_id")
         sdk_client = control_client_factory(client)
-        response = sdk_client.catalog.get_rag_operator_catalog(tenant_slug=tenant_slug)
+        response = sdk_client.catalog.get_rag_operator_catalog(organization_id=organization_id)
         data = response.get("data")
         if isinstance(data, dict):
             return data, []
@@ -71,9 +71,9 @@ def list_rag_operators(
     control_client_factory=control_client,
 ) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]]]:
     try:
-        tenant_slug = payload.get("tenant_slug")
+        organization_id = payload.get("organization_id")
         sdk_client = control_client_factory(client)
-        response = sdk_client.catalog.list_rag_operators(tenant_slug=tenant_slug)
+        response = sdk_client.catalog.list_rag_operators(organization_id=organization_id)
         return response.get("data"), []
     except ControlPlaneSDKError as exc:
         return None, [{
@@ -97,9 +97,9 @@ def get_rag_operator(
         return None, [{"error": "missing_fields", "fields": ["operator_id"]}]
 
     try:
-        tenant_slug = payload.get("tenant_slug")
+        organization_id = payload.get("organization_id")
         sdk_client = control_client_factory(client)
-        response = sdk_client.catalog.get_rag_operator(str(operator_id), tenant_slug=tenant_slug)
+        response = sdk_client.catalog.get_rag_operator(str(operator_id), organization_id=organization_id)
         return response.get("data"), []
     except ControlPlaneSDKError as exc:
         return None, [{

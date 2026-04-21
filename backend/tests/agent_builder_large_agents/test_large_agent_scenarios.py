@@ -36,10 +36,10 @@ def should_keep_agents() -> bool:
     return os.getenv("TEST_KEEP_AGENTS", "").strip().lower() in {"1", "true", "yes", "y"}
 
 
-async def purge_tenant_agents(db_session, tenant_id):
+async def purge_tenant_agents(db_session, organization_id):
     if should_keep_agents():
         return
-    agent_ids = select(Agent.id).where(Agent.tenant_id == tenant_id)
+    agent_ids = select(Agent.id).where(Agent.organization_id == organization_id)
     run_ids = select(AgentRun.id).where(AgentRun.agent_id.in_(agent_ids))
 
     await db_session.execute(delete(AgentTrace).where(AgentTrace.run_id.in_(run_ids)))
@@ -49,9 +49,9 @@ async def purge_tenant_agents(db_session, tenant_id):
     await db_session.commit()
 
 
-async def get_openai_model_slug(db_session, tenant_id, capability: ModelCapabilityType) -> str | None:
-    tenant_priority = case((ModelRegistry.tenant_id == tenant_id, 1), else_=0).desc()
-    provider_priority = case((ModelProviderBinding.tenant_id == tenant_id, 1), else_=0).desc()
+async def get_openai_model_slug(db_session, organization_id, capability: ModelCapabilityType) -> str | None:
+    tenant_priority = case((ModelRegistry.organization_id == organization_id, 1), else_=0).desc()
+    provider_priority = case((ModelProviderBinding.organization_id == organization_id, 1), else_=0).desc()
 
     stmt = (
         select(ModelRegistry.id)
@@ -62,8 +62,8 @@ async def get_openai_model_slug(db_session, tenant_id, capability: ModelCapabili
             ModelRegistry.capability_type == capability,
             ModelProviderBinding.provider == ModelProviderType.OPENAI,
             ModelProviderBinding.is_enabled == True,
-            or_(ModelRegistry.tenant_id == tenant_id, ModelRegistry.tenant_id.is_(None)),
-            or_(ModelProviderBinding.tenant_id == tenant_id, ModelProviderBinding.tenant_id.is_(None)),
+            or_(ModelRegistry.organization_id == organization_id, ModelRegistry.organization_id.is_(None)),
+            or_(ModelProviderBinding.organization_id == organization_id, ModelProviderBinding.organization_id.is_(None)),
         )
         .order_by(tenant_priority, provider_priority, ModelRegistry.updated_at.desc())
         .limit(1)
@@ -77,19 +77,19 @@ async def get_openai_model_slug(db_session, tenant_id, capability: ModelCapabili
 async def get_platform_sdk_tool_id(db_session) -> str:
     from app.db.postgres.models.registry import ToolRegistry
 
-    stmt = select(ToolRegistry.id).where(ToolRegistry.slug == "platform-sdk", ToolRegistry.tenant_id.is_(None))
+    stmt = select(ToolRegistry.id).where(ToolRegistry.slug == "platform-sdk", ToolRegistry.organization_id.is_(None))
     row = (await db_session.execute(stmt)).first()
     if not row:
         pytest.skip("Platform SDK tool missing; seed required.")
     return str(row[0])
 
 
-async def pick_retrieval_assets(db_session, tenant_id):
+async def pick_retrieval_assets(db_session, organization_id):
     exec_stmt = (
         select(ExecutablePipeline, VisualPipeline)
         .join(VisualPipeline, ExecutablePipeline.visual_pipeline_id == VisualPipeline.id)
         .where(
-            VisualPipeline.tenant_id == tenant_id,
+            VisualPipeline.organization_id == organization_id,
             VisualPipeline.pipeline_type == PipelineType.RETRIEVAL,
             VisualPipeline.is_published == True,
             ExecutablePipeline.is_valid == True,
@@ -105,7 +105,7 @@ async def pick_retrieval_assets(db_session, tenant_id):
     store_stmt = (
         select(KnowledgeStore)
         .where(
-            KnowledgeStore.tenant_id == tenant_id,
+            KnowledgeStore.organization_id == organization_id,
             KnowledgeStore.status == KnowledgeStoreStatus.ACTIVE,
             KnowledgeStore.backend == StorageBackend.PINECONE,
         )
@@ -126,8 +126,8 @@ async def pick_retrieval_assets(db_session, tenant_id):
     return str(pipeline.id), str(store.id)
 
 
-async def assert_no_compile_errors(db_session, tenant_id, graph):
-    compiler = AgentCompiler(db=db_session, tenant_id=tenant_id)
+async def assert_no_compile_errors(db_session, organization_id, graph):
+    compiler = AgentCompiler(db=db_session, organization_id=organization_id)
     errors = await compiler.validate(AgentGraph(**graph))
     critical = [e for e in errors if e.severity == "error"]
     assert not critical

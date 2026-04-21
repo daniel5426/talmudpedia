@@ -97,7 +97,7 @@ async def test_apps_page_fetch_probe_smoke(db_session):
     db_session.add_all(
         [
             Agent(
-                tenant_id=tenant.id,
+                organization_id=tenant.id,
                 name=f"Draft Agent {index}",
                 slug=f"draft-agent-{index}",
                 status=AgentStatus.draft,
@@ -115,7 +115,6 @@ async def test_apps_page_fetch_probe_smoke(db_session):
             headers=headers,
             json={
                 "name": "Probe App",
-                "slug": "probe-app",
                 "agent_id": str(agent.id),
                 "template_key": "classic-chat",
                 "auth_enabled": True,
@@ -150,7 +149,7 @@ async def test_apps_page_fetch_probe_real_db(
     membership = await db_session.scalar(
         select(OrgMembership).where(
             OrgMembership.user_id == test_user_id,
-            OrgMembership.tenant_id == test_tenant_id,
+            OrgMembership.organization_id == test_tenant_id,
             OrgMembership.status == MembershipStatus.active,
         )
     )

@@ -44,7 +44,7 @@ import {
 interface ArtifactWorkspaceEditorProps {
   sourceFiles: ArtifactSourceFile[]
   language: ArtifactLanguage
-  tenantSlug?: string
+  organizationId?: string
   dependencies?: string
   loading?: boolean
   activeFilePath: string
@@ -69,7 +69,7 @@ const TREE_MENU_DOUBLE_CLICK_MS = 180
 export function ArtifactWorkspaceEditor({
   sourceFiles,
   language,
-  tenantSlug,
+  organizationId,
   dependencies,
   loading = false,
   activeFilePath,
@@ -777,7 +777,7 @@ export function ArtifactWorkspaceEditor({
               editorLanguage={editorLanguageForPath(activeFile?.path ?? activeFilePath)}
               sourceFiles={sourceFiles}
               activeFilePath={activeFile?.path ?? activeFilePath}
-              tenantSlug={tenantSlug}
+              organizationId={organizationId}
               dependencies={dependencies}
               value={normalizeCredentialMentionLabels(activeFile?.content ?? "", availableCredentials)}
               onChange={updateActiveContent}

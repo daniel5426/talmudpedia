@@ -29,7 +29,7 @@ async def test_vector_search_fails_when_query_has_neither_values_nor_text(
     db_session, test_tenant_id, test_user_id, run_prefix
 ):
     store = KnowledgeStore(
-        tenant_id=test_tenant_id,
+        organization_id=test_tenant_id,
         name=f"{run_prefix}-missing-query-store",
         description="missing vector failure",
         embedding_model_id="manual-vector-test",
@@ -61,7 +61,7 @@ async def test_knowledge_store_sink_raises_when_backend_reports_zero_upserts(
     db_session, test_tenant_id, test_user_id, run_prefix, monkeypatch
 ):
     store = KnowledgeStore(
-        tenant_id=test_tenant_id,
+        organization_id=test_tenant_id,
         name=f"{run_prefix}-zero-upsert-store",
         description="zero upsert failure",
         embedding_model_id="manual-vector-test",
@@ -100,7 +100,7 @@ async def test_vector_search_applies_similarity_threshold_after_backend_results(
     db_session, test_tenant_id, test_user_id, run_prefix, monkeypatch
 ):
     store = KnowledgeStore(
-        tenant_id=test_tenant_id,
+        organization_id=test_tenant_id,
         name=f"{run_prefix}-threshold-store",
         description="threshold filtering",
         embedding_model_id="manual-vector-test",

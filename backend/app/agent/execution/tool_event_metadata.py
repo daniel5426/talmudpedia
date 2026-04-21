@@ -5,21 +5,21 @@ from typing import Any
 from app.services.platform_architect_contracts import PLATFORM_ARCHITECT_DOMAIN_TOOLS
 from app.services.ui_blocks import (
     UI_BLOCKS_RENDERER_KIND,
-    UI_BLOCKS_TOOL_SLUG,
+    UI_BLOCKS_BUILTIN_KEY,
 )
 
 
 def resolve_tool_event_metadata(
     *,
-    tool_slug: str | None,
+    builtin_key: str | None,
     tool_name: str,
     input_data: Any = None,
 ) -> dict[str, Any]:
     metadata: dict[str, Any] = {}
-    normalized_tool_slug = str(tool_slug or "").strip()
-    if normalized_tool_slug:
-        metadata["tool_slug"] = normalized_tool_slug
-        if normalized_tool_slug == UI_BLOCKS_TOOL_SLUG:
+    normalized_builtin_key = str(builtin_key or "").strip()
+    if normalized_builtin_key:
+        metadata["builtin_key"] = normalized_builtin_key
+        if normalized_builtin_key == UI_BLOCKS_BUILTIN_KEY:
             metadata["renderer_kind"] = UI_BLOCKS_RENDERER_KIND
 
     action = None
@@ -31,7 +31,7 @@ def resolve_tool_event_metadata(
         metadata["action"] = action
 
     contract = (
-        PLATFORM_ARCHITECT_DOMAIN_TOOLS.get(normalized_tool_slug, {})
+        PLATFORM_ARCHITECT_DOMAIN_TOOLS.get(normalized_builtin_key, {})
         .get("actions", {})
         .get(action or "", {})
         .get("contract", {})
@@ -42,6 +42,6 @@ def resolve_tool_event_metadata(
         metadata["display_name"] = summary
 
     if not metadata.get("display_name"):
-        metadata["display_name"] = str(tool_name or normalized_tool_slug or "Tool").strip()
+        metadata["display_name"] = str(tool_name or normalized_builtin_key or "Tool").strip()
 
     return metadata

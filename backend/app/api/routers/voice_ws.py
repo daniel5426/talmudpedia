@@ -8,7 +8,7 @@ from sqlalchemy import select
 
 from app.db.postgres.session import sessionmaker
 from app.db.postgres.models.chat import Chat
-from app.db.postgres.models.identity import OrgMembership, Tenant
+from app.db.postgres.models.identity import OrgMembership, Organization
 from app.core.security import SECRET_KEY, ALGORITHM
 from app.services.voice import get_voice_session
 
@@ -16,10 +16,10 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 async def resolve_auth_context(db, user_id: str):
-    """Resolve tenant_id for a user."""
+    """Resolve organization_id for a user."""
     if not user_id:
-        # Fallback for dev: first tenant
-        res = await db.execute(select(Tenant).limit(1))
+        # Fallback for dev: first organization
+        res = await db.execute(select(Organization).limit(1))
         t = res.scalar_one_or_none()
         return t.id if t else None
     
@@ -29,10 +29,10 @@ async def resolve_auth_context(db, user_id: str):
     res = await db.execute(stmt)
     membership = res.scalar_one_or_none()
     if membership:
-        return membership.tenant_id
+        return membership.organization_id
         
-    # Fallback to first tenant
-    res = await db.execute(select(Tenant).limit(1))
+    # Fallback to first organization
+    res = await db.execute(select(Organization).limit(1))
     t = res.scalar_one_or_none()
     return t.id if t else None
 
@@ -56,22 +56,22 @@ async def websocket_voice_session(websocket: WebSocket):
         except Exception:
             user_id = None
     
-    tenant_id = None
+    organization_id= None
     async with sessionmaker() as db:
-        tenant_id = await resolve_auth_context(db, user_id)
+        organization_id= await resolve_auth_context(db, user_id)
         
         # Create new chat if not provided
         if not chat_id or chat_id == "null" or chat_id == "undefined":
             new_chat = Chat(
                 title="Voice Conversation",
                 user_id=UUID(user_id) if user_id else None,
-                tenant_id=tenant_id
+                organization_id=organization_id
             )
             db.add(new_chat)
             await db.commit()
             await db.refresh(new_chat)
             chat_id = str(new_chat.id)
-            logger.info(f"Created new voice chat: {chat_id} for tenant: {tenant_id}")
+            logger.info(f"Created new voice chat: {chat_id} for organization: {organization_id}")
         else:
             # Validate chat access
             try:
@@ -83,9 +83,9 @@ async def websocket_voice_session(websocket: WebSocket):
                     if existing.user_id and user_id and existing.user_id != UUID(user_id):
                         await websocket.close(code=1008, reason="forbidden")
                         return
-                    # Ensure tenant_id is set if it was missing (for migration)
-                    if not existing.tenant_id and tenant_id:
-                        existing.tenant_id = tenant_id
+                    # Ensure organization_id is set if it was missing (for migration)
+                    if not existing.organization_id and organization_id:
+                        existing.organization_id = organization_id
                         await db.commit()
                 else:
                     await websocket.close(code=1008, reason="invalid chat_id")
@@ -99,7 +99,7 @@ async def websocket_voice_session(websocket: WebSocket):
         voice_session = get_voice_session(
             provider, 
             chat_id=chat_id, 
-            tenant_id=tenant_id, 
+            organization_id=organization_id, 
             user_id=UUID(user_id) if user_id else None
         )
     except Exception as e:

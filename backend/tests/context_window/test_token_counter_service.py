@@ -124,7 +124,7 @@ async def test_model_limits_service_prefers_provider_model_info(monkeypatch):
     monkeypatch.setattr("app.services.model_limits_service.genai.Client", _FakeClient)
 
     limit, source = await ModelLimitsService(db=None).resolve_input_limit(
-        tenant_id=None,
+        organization_id=None,
         model_id="google/gemini-3-flash-preview",
         resolved_provider="google",
         resolved_provider_model_id="gemini-3-flash-preview",
@@ -147,7 +147,7 @@ async def test_context_window_pre_run_uses_token_counter_and_model_limits(monkey
     monkeypatch.setattr(ModelLimitsService, "resolve_input_limit", _fake_resolve_input_limit)
 
     window = await ContextWindowService(db=None).build_pre_run_window(
-        tenant_id=None,
+        organization_id=None,
         model_id="some-model",
         resolved_provider="google",
         resolved_provider_model_id="gemini-3-flash-preview",

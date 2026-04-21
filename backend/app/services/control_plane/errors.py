@@ -53,8 +53,8 @@ def scope_denied(message: str, **details: Any) -> ControlPlaneError:
     return ControlPlaneError(code="SCOPE_DENIED", message=message, http_status=403, details=details)
 
 
-def tenant_mismatch(message: str, **details: Any) -> ControlPlaneError:
-    return ControlPlaneError(code="TENANT_MISMATCH", message=message, http_status=403, details=details)
+def organization_mismatch(message: str, **details: Any) -> ControlPlaneError:
+    return ControlPlaneError(code="ORGANIZATION_MISMATCH", message=message, http_status=403, details=details)
 
 
 def feature_disabled(message: str, **details: Any) -> ControlPlaneError:

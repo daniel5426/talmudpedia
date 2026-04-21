@@ -150,7 +150,7 @@ async def get_agent_graph(
     context: Dict[str, Any] = Depends(get_agent_context),
     db: AsyncSession = Depends(get_db),
 ):
-    service = AgentGraphMutationService(db=db, tenant_id=context["tenant_id"])
+    service = AgentGraphMutationService(db=db, organization_id=context["organization_id"])
     try:
         return await service.get_graph(agent_id)
     except Exception as exc:
@@ -166,7 +166,7 @@ async def validate_agent_graph_patch(
     context: Dict[str, Any] = Depends(get_agent_context),
     db: AsyncSession = Depends(get_db),
 ):
-    service = AgentGraphMutationService(db=db, tenant_id=context["tenant_id"])
+    service = AgentGraphMutationService(db=db, organization_id=context["organization_id"])
     try:
         return await service.validate_patch(agent_id, payload.operations)
     except Exception as exc:
@@ -187,7 +187,7 @@ async def analyze_agent_graph(
     context: Dict[str, Any] = Depends(get_agent_context),
     db: AsyncSession = Depends(get_db),
 ):
-    service = AgentGraphMutationService(db=db, tenant_id=context["tenant_id"])
+    service = AgentGraphMutationService(db=db, organization_id=context["organization_id"])
     try:
         return await service.analyze_graph(agent_id, graph_definition=payload.graph_definition)
     except Exception as exc:
@@ -208,7 +208,7 @@ async def apply_agent_graph_patch(
     context: Dict[str, Any] = Depends(get_agent_context),
     db: AsyncSession = Depends(get_db),
 ):
-    service = AgentGraphMutationService(db=db, tenant_id=context["tenant_id"])
+    service = AgentGraphMutationService(db=db, organization_id=context["organization_id"])
     try:
         return await service.apply_patch(
             agent_id,
@@ -233,7 +233,7 @@ async def add_tool_to_agent_node(
     context: Dict[str, Any] = Depends(get_agent_context),
     db: AsyncSession = Depends(get_db),
 ):
-    service = AgentGraphMutationService(db=db, tenant_id=context["tenant_id"])
+    service = AgentGraphMutationService(db=db, organization_id=context["organization_id"])
     try:
         return await service.add_tool_to_agent_node(
             agent_id,
@@ -259,7 +259,7 @@ async def remove_tool_from_agent_node(
     context: Dict[str, Any] = Depends(get_agent_context),
     db: AsyncSession = Depends(get_db),
 ):
-    service = AgentGraphMutationService(db=db, tenant_id=context["tenant_id"])
+    service = AgentGraphMutationService(db=db, organization_id=context["organization_id"])
     try:
         return await service.remove_tool_from_agent_node(
             agent_id,
@@ -285,7 +285,7 @@ async def set_agent_model(
     context: Dict[str, Any] = Depends(get_agent_context),
     db: AsyncSession = Depends(get_db),
 ):
-    service = AgentGraphMutationService(db=db, tenant_id=context["tenant_id"])
+    service = AgentGraphMutationService(db=db, organization_id=context["organization_id"])
     try:
         return await service.set_agent_model(
             agent_id,
@@ -311,7 +311,7 @@ async def set_agent_instructions(
     context: Dict[str, Any] = Depends(get_agent_context),
     db: AsyncSession = Depends(get_db),
 ):
-    service = AgentGraphMutationService(db=db, tenant_id=context["tenant_id"])
+    service = AgentGraphMutationService(db=db, organization_id=context["organization_id"])
     try:
         return await service.set_agent_instructions(
             agent_id,

@@ -1,6 +1,6 @@
 # Published Apps Spec
 
-Last Updated: 2026-04-18
+Last Updated: 2026-04-20
 
 This document is the canonical product/specification overview for published apps.
 
@@ -69,12 +69,12 @@ Builder-specific current admin/runtime behavior also includes:
 - for the active builder chat tab, live SSE owns the visible in-flight conversation state; history endpoints are used for reopen/history pagination rather than post-turn timeline replacement
 
 Notable current public/runtime routes include:
-- `/public/apps/{app_slug}/config`
-- `/public/external/apps/{app_slug}/runtime/bootstrap`
-- `/public/external/apps/{app_slug}/attachments/upload`
-- `/public/external/apps/{app_slug}/chat/stream`
-- `/public/external/apps/{app_slug}/auth/*`
-- `/public/external/apps/{app_slug}/threads`
+- `/public/apps/{app_public_id}/config`
+- `/public/external/apps/{app_public_id}/runtime/bootstrap`
+- `/public/external/apps/{app_public_id}/attachments/upload`
+- `/public/external/apps/{app_public_id}/chat/stream`
+- `/public/external/apps/{app_public_id}/auth/*`
+- `/public/external/apps/{app_public_id}/threads`
 - `/public/apps/preview/revisions/{revision_id}/runtime`
 - `/public/apps/preview/revisions/{revision_id}/runtime/bootstrap`
 - `/public/apps/preview/revisions/{revision_id}/attachments/upload`
@@ -85,7 +85,7 @@ Important current behavior verified in code:
 - source-UI mode has been removed
 - `/public/apps/{slug}/ui` returns `410 UI_SOURCE_MODE_REMOVED`
 - legacy path-mode published runtime/auth/chat endpoints under `/public/apps/{slug}/*` remain hard-cut and return `410`
-- externally hosted clients should use the dedicated `/public/external/apps/{slug}/*` runtime/auth/history surface
+- externally hosted clients should use the dedicated `/public/external/apps/{public_id}/*` runtime/auth/history surface
 - preview source-UI mode is also removed in favor of runtime/bootstrap flows
 - runtime attachments are upload-first and chat requests reference `attachment_ids`
 - thread detail payloads include attachment descriptors so replay preserves file context

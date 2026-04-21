@@ -63,7 +63,6 @@ describe("settings shell", () => {
     ;(settingsOrgService.getOrganization as jest.Mock).mockResolvedValue({
       id: "org-1",
       name: "Acme",
-      slug: "acme",
       status: "active",
       default_chat_model_id: null,
       default_embedding_model_id: null,

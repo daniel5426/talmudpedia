@@ -49,7 +49,7 @@ async def test_event_emitter_enqueues_events():
 @pytest.mark.real_db
 async def test_trace_persistence_persists_point_events_in_sequence(db_session, test_tenant_id, test_user_id, run_prefix):
     agent = Agent(
-        tenant_id=test_tenant_id,
+        organization_id=test_tenant_id,
         name=f"{run_prefix}-trace",
         slug=f"{run_prefix}-trace",
         graph_definition=_graph_definition(),
@@ -60,7 +60,7 @@ async def test_trace_persistence_persists_point_events_in_sequence(db_session, t
     await db_session.refresh(agent)
 
     run = AgentRun(
-        tenant_id=test_tenant_id,
+        organization_id=test_tenant_id,
         agent_id=agent.id,
         user_id=test_user_id,
         status=RunStatus.queued,
@@ -115,7 +115,7 @@ async def test_trace_persistence_persists_point_events_in_sequence(db_session, t
 @pytest.mark.real_db
 async def test_trace_persistence_lists_events_in_order(db_session, test_tenant_id, test_user_id, run_prefix):
     agent = Agent(
-        tenant_id=test_tenant_id,
+        organization_id=test_tenant_id,
         name=f"{run_prefix}-trace-end",
         slug=f"{run_prefix}-trace-end",
         graph_definition=_graph_definition(),
@@ -126,7 +126,7 @@ async def test_trace_persistence_lists_events_in_order(db_session, test_tenant_i
     await db_session.refresh(agent)
 
     run = AgentRun(
-        tenant_id=test_tenant_id,
+        organization_id=test_tenant_id,
         agent_id=agent.id,
         user_id=test_user_id,
         status=RunStatus.queued,
@@ -178,7 +178,7 @@ async def test_scheduled_trace_persistence_preserves_sequence_order_in_listed_st
     run_prefix,
 ):
     agent = Agent(
-        tenant_id=test_tenant_id,
+        organization_id=test_tenant_id,
         name=f"{run_prefix}-trace-ordered-queue",
         slug=f"{run_prefix}-trace-ordered-queue",
         graph_definition=_graph_definition(),
@@ -189,7 +189,7 @@ async def test_scheduled_trace_persistence_preserves_sequence_order_in_listed_st
     await db_session.refresh(agent)
 
     run = AgentRun(
-        tenant_id=test_tenant_id,
+        organization_id=test_tenant_id,
         agent_id=agent.id,
         user_id=test_user_id,
         status=RunStatus.running,

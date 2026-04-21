@@ -46,7 +46,7 @@ class RetrievalNodeExecutor(BaseNodeExecutor):
 
         try:
             pipeline_id = UUID(pipeline_id_str)
-            runtime = RetrievalPipelineRuntime(self.db, self.tenant_id)
+            runtime = RetrievalPipelineRuntime(self.db, self.organization_id)
             results, _job = await runtime.run_query(
                 pipeline_id=pipeline_id,
                 query=query,

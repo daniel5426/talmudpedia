@@ -13,7 +13,7 @@ interface ArtifactDependencyTabProps {
   language: ArtifactLanguage
   sourceFiles: ArtifactSourceFile[]
   dependencies: string
-  tenantSlug?: string
+  organizationId?: string
   onChangeDependencies: (nextValue: string) => void
 }
 
@@ -48,7 +48,7 @@ export function ArtifactDependencyTab({
   language,
   sourceFiles,
   dependencies,
-  tenantSlug,
+  organizationId,
   onChangeDependencies,
 }: ArtifactDependencyTabProps) {
   const [rows, setRows] = useState<ArtifactDependencyRow[]>([])
@@ -69,7 +69,7 @@ export function ArtifactDependencyTab({
           source_files: sourceFiles,
           dependencies: declaredDependencies,
         },
-        tenantSlug,
+        organizationId,
       )
       if (seq !== requestSeqRef.current) return
       setRows(result.rows || [])
@@ -82,7 +82,7 @@ export function ArtifactDependencyTab({
         setLoading(false)
       }
     }
-  }, [declaredDependencies, language, sourceFiles, tenantSlug])
+  }, [declaredDependencies, language, sourceFiles, organizationId])
 
   useEffect(() => {
     void refreshRows()
@@ -109,7 +109,7 @@ export function ArtifactDependencyTab({
     setError(null)
     try {
       if (language === "python") {
-        const verification = await artifactsService.verifyPythonPackage({ package_name: trimmed }, tenantSlug)
+        const verification = await artifactsService.verifyPythonPackage({ package_name: trimmed }, organizationId)
         if (!verification.exists) {
           setError(verification.error_message || (verification.status === "not_found" ? "PyPI package not found." : "Dependency verification failed."))
           return
@@ -124,7 +124,7 @@ export function ArtifactDependencyTab({
     } finally {
       setSubmitting(false)
     }
-  }, [language, query, tenantSlug, upsertDeclaredDependency])
+  }, [language, query, organizationId, upsertDeclaredDependency])
 
   const handleRemove = useCallback((row: ArtifactDependencyRow) => {
     const next = declaredDependencies.filter((item) => item.toLowerCase() !== String(row.declared_spec || row.normalized_name).toLowerCase())

@@ -137,7 +137,7 @@ async def test_start_session_uses_dedicated_start_timeout(monkeypatch: pytest.Mo
     result = await client.start_session(
         session_id="session-1",
         runtime_generation=1,
-        tenant_id="tenant-1",
+        organization_id="tenant-1",
         app_id="app-1",
         user_id="user-1",
         revision_id="revision-1",

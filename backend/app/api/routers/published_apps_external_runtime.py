@@ -13,11 +13,7 @@ from app.api.dependencies import (
     get_current_published_app_principal,
     get_optional_published_app_principal,
 )
-from app.api.routers.published_apps_host_runtime import (
-    _serialize_thread_detail,
-    _serialize_thread_summary,
-    _user_payload,
-)
+from app.api.routers.published_apps_host_runtime import _user_payload
 from app.api.routers.published_apps_public import (
     PublicAuthExchangeRequest,
     PublicAuthRequest,
@@ -35,7 +31,13 @@ from app.db.postgres.session import get_db
 from app.services.published_app_analytics_service import PublishedAppAnalyticsService
 from app.services.published_app_auth_service import PublishedAppAuthError, PublishedAppAuthService
 from app.services.runtime_attachment_service import RuntimeAttachmentOwner
-from app.services.thread_service import ThreadService
+from app.services.runtime_surface import (
+    RuntimeEventView,
+    RuntimeSurfaceContext,
+    RuntimeSurfaceService,
+    RuntimeThreadOptions,
+)
+from app.services.thread_detail_service import serialize_thread_summary
 
 
 router = APIRouter(prefix="/public/external/apps", tags=["published-apps-external-runtime"])
@@ -45,11 +47,11 @@ def _build_external_runtime_bootstrap(*, request: Request, app: Any, revision: A
     runtime_api_base = _resolve_runtime_api_base_url(request)
     runtime_api_parsed = urlparse(runtime_api_base)
     api_base_path = runtime_api_parsed.path or ""
-    stream_suffix = f"/public/external/apps/{app.slug}/chat/stream"
+    stream_suffix = f"/public/external/apps/{app.public_id}/chat/stream"
     stream_path = f"{api_base_path}{stream_suffix}" if api_base_path else stream_suffix
     return RuntimeBootstrapResponse(
         app_id=str(app.id),
-        slug=app.slug,
+        public_id=app.public_id,
         revision_id=str(revision.id),
         mode="published-runtime",
         api_base_path=api_base_path or "/",
@@ -79,14 +81,14 @@ def _published_app_principal(
     )
 
 
-@router.get("/{app_slug}/runtime/bootstrap", response_model=RuntimeBootstrapResponse)
+@router.get("/{app_public_id}/runtime/bootstrap", response_model=RuntimeBootstrapResponse)
 async def get_external_runtime_bootstrap(
-    app_slug: str,
+    app_public_id: str,
     request: Request,
     db: AsyncSession = Depends(get_db),
     principal: Optional[Dict[str, Any]] = Depends(get_optional_published_app_principal),
 ):
-    app = await _assert_published(db, app_slug)
+    app = await _assert_published(db, app_public_id)
     matched_principal = _published_app_principal(app, principal, require_authenticated=False)
     revision = await _get_published_ui_revision(db, app)
     response = JSONResponse(_build_external_runtime_bootstrap(request=request, app=app, revision=revision).model_dump())
@@ -101,13 +103,13 @@ async def get_external_runtime_bootstrap(
     return response
 
 
-@router.post("/{app_slug}/auth/signup")
+@router.post("/{app_public_id}/auth/signup")
 async def external_signup(
-    app_slug: str,
+    app_public_id: str,
     payload: PublicAuthRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    app = await _assert_published(db, app_slug)
+    app = await _assert_published(db, app_public_id)
     if not app.auth_enabled:
         raise HTTPException(status_code=400, detail="Auth is disabled for this app")
     if "password" not in set(app.auth_providers or []):
@@ -125,13 +127,13 @@ async def external_signup(
     return {"token": result.token, "token_type": "bearer", "user": _user_payload(result.account)}
 
 
-@router.post("/{app_slug}/auth/login")
+@router.post("/{app_public_id}/auth/login")
 async def external_login(
-    app_slug: str,
+    app_public_id: str,
     payload: PublicAuthRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    app = await _assert_published(db, app_slug)
+    app = await _assert_published(db, app_public_id)
     if not app.auth_enabled:
         raise HTTPException(status_code=400, detail="Auth is disabled for this app")
     if "password" not in set(app.auth_providers or []):
@@ -148,13 +150,13 @@ async def external_login(
     return {"token": result.token, "token_type": "bearer", "user": _user_payload(result.account)}
 
 
-@router.post("/{app_slug}/auth/exchange")
+@router.post("/{app_public_id}/auth/exchange")
 async def external_exchange(
-    app_slug: str,
+    app_public_id: str,
     payload: PublicAuthExchangeRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    app = await _assert_published(db, app_slug)
+    app = await _assert_published(db, app_public_id)
     if not app.auth_enabled:
         raise HTTPException(status_code=400, detail="Auth is disabled for this app")
     auth_service = PublishedAppAuthService(db)
@@ -165,24 +167,24 @@ async def external_exchange(
     return {"token": result.token, "token_type": "bearer", "user": _user_payload(result.account)}
 
 
-@router.get("/{app_slug}/auth/me")
+@router.get("/{app_public_id}/auth/me")
 async def external_auth_me(
-    app_slug: str,
+    app_public_id: str,
     db: AsyncSession = Depends(get_db),
     principal: Dict[str, Any] = Depends(get_current_published_app_principal),
 ):
-    app = await _assert_published(db, app_slug)
+    app = await _assert_published(db, app_public_id)
     _published_app_principal(app, principal, required_scopes=("public.auth",), require_authenticated=True)
     return _user_payload(principal["user"])
 
 
-@router.post("/{app_slug}/auth/logout")
+@router.post("/{app_public_id}/auth/logout")
 async def external_auth_logout(
-    app_slug: str,
+    app_public_id: str,
     db: AsyncSession = Depends(get_db),
     principal: Dict[str, Any] = Depends(get_current_published_app_principal),
 ):
-    app = await _assert_published(db, app_slug)
+    app = await _assert_published(db, app_public_id)
     _published_app_principal(app, principal, required_scopes=("public.auth",), require_authenticated=True)
     service = PublishedAppAuthService(db)
     await service.revoke_session(
@@ -193,14 +195,14 @@ async def external_auth_logout(
     return {"status": "logged_out"}
 
 
-@router.post("/{app_slug}/chat/stream")
+@router.post("/{app_public_id}/chat/stream")
 async def external_chat_stream(
-    app_slug: str,
+    app_public_id: str,
     payload: PublicChatStreamRequest,
     db: AsyncSession = Depends(get_db),
     principal: Optional[Dict[str, Any]] = Depends(get_optional_published_app_principal),
 ):
-    app = await _assert_published(db, app_slug)
+    app = await _assert_published(db, app_public_id)
     matched_principal = _published_app_principal(
         app,
         principal,
@@ -219,15 +221,15 @@ async def external_chat_stream(
     )
 
 
-@router.post("/{app_slug}/attachments/upload")
+@router.post("/{app_public_id}/attachments/upload")
 async def external_upload_attachments(
-    app_slug: str,
+    app_public_id: str,
     files: list[UploadFile] = File(...),
     thread_id: UUID | None = Form(default=None),
     db: AsyncSession = Depends(get_db),
     principal: Optional[Dict[str, Any]] = Depends(get_optional_published_app_principal),
 ):
-    app = await _assert_published(db, app_slug)
+    app = await _assert_published(db, app_public_id)
     matched_principal = _published_app_principal(
         app,
         principal,
@@ -237,7 +239,7 @@ async def external_upload_attachments(
     if app.auth_enabled and matched_principal is None:
         raise HTTPException(status_code=401, detail="Authentication required")
     owner = RuntimeAttachmentOwner(
-        tenant_id=app.tenant_id,
+        organization_id=app.organization_id,
         surface=AgentThreadSurface.published_host_runtime,
         app_account_id=UUID(str(matched_principal["app_account_id"])) if matched_principal else None,
         published_app_id=app.id,
@@ -246,35 +248,38 @@ async def external_upload_attachments(
     return await _upload_published_app_attachments(app=app, owner=owner, files=files, db=db)
 
 
-@router.get("/{app_slug}/threads")
+@router.get("/{app_public_id}/threads")
 async def external_list_threads(
-    app_slug: str,
+    app_public_id: str,
     skip: int = 0,
     limit: int = 20,
     db: AsyncSession = Depends(get_db),
     principal: Dict[str, Any] = Depends(get_current_published_app_principal),
 ):
-    app = await _assert_published(db, app_slug)
+    app = await _assert_published(db, app_public_id)
     _published_app_principal(app, principal, required_scopes=("public.chats.read",), require_authenticated=True)
-    service = ThreadService(db)
-    threads, total = await service.list_threads(
-        tenant_id=app.tenant_id,
-        app_account_id=UUID(principal["app_account_id"]),
-        published_app_id=app.id,
+    threads, total = await RuntimeSurfaceService(db).list_threads(
+        scope=RuntimeSurfaceContext(
+            organization_id=app.organization_id,
+            surface=AgentThreadSurface.published_host_runtime,
+            event_view=RuntimeEventView.public_safe,
+            app_account_id=UUID(principal["app_account_id"]),
+            published_app_id=app.id,
+        ).thread_scope(),
         skip=skip,
         limit=limit,
     )
     return {
-        "items": [_serialize_thread_summary(thread) for thread in threads],
+        "items": [serialize_thread_summary(thread) for thread in threads],
         "total": int(total),
         "page": (skip // limit) + 1 if limit > 0 else 1,
         "pages": ((total + limit - 1) // limit) if limit > 0 else 1,
     }
 
 
-@router.get("/{app_slug}/threads/{thread_id}")
+@router.get("/{app_public_id}/threads/{thread_id}")
 async def external_get_thread(
-    app_slug: str,
+    app_public_id: str,
     thread_id: UUID,
     before_turn_index: int | None = Query(default=None, ge=0),
     limit: int = Query(default=20, ge=1, le=100),
@@ -285,36 +290,26 @@ async def external_get_thread(
     db: AsyncSession = Depends(get_db),
     principal: Dict[str, Any] = Depends(get_current_published_app_principal),
 ):
-    app = await _assert_published(db, app_slug)
+    app = await _assert_published(db, app_public_id)
     _published_app_principal(app, principal, required_scopes=("public.chats.read",), require_authenticated=True)
-    service = ThreadService(db)
-    repaired = await service.repair_thread_turn_indices(thread_id=thread_id)
-    if repaired:
-        await db.commit()
-    page_result = await service.get_thread_turn_page(
-        tenant_id=app.tenant_id,
+    return await RuntimeSurfaceService(db).get_thread_detail(
+        scope=RuntimeSurfaceContext(
+            organization_id=app.organization_id,
+            surface=AgentThreadSurface.published_host_runtime,
+            event_view=RuntimeEventView.public_safe,
+            app_account_id=UUID(principal["app_account_id"]),
+            published_app_id=app.id,
+        ).thread_scope(),
         thread_id=thread_id,
-        app_account_id=UUID(principal["app_account_id"]),
-        published_app_id=app.id,
-        before_turn_index=before_turn_index,
-        limit=limit,
-    )
-    if page_result is None:
-        raise HTTPException(status_code=404, detail="Thread not found")
-    subtree = None
-    if include_subthreads:
-        subtree = await service.build_subthread_tree(
-            root_thread=page_result.thread,
-            root_page=page_result.page,
-            depth=subthread_depth,
-            turn_limit=subthread_turn_limit or limit,
-            child_limit=subthread_child_limit,
-        )
-    return await _serialize_thread_detail(
-        db=db,
-        thread=page_result.thread,
-        page=page_result.page,
-        subthread_tree=subtree,
+        options=RuntimeThreadOptions(
+            before_turn_index=before_turn_index,
+            limit=limit,
+            include_subthreads=include_subthreads,
+            subthread_depth=subthread_depth,
+            subthread_turn_limit=subthread_turn_limit,
+            subthread_child_limit=subthread_child_limit,
+        ),
+        event_view=RuntimeEventView.public_safe,
     )
 
 

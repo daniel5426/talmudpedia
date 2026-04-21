@@ -3,12 +3,28 @@ from sqlalchemy import select
 from urllib.parse import parse_qs, urlparse
 from uuid import UUID
 
-from ._helpers import admin_headers, seed_admin_tenant_and_agent, seed_published_app, start_publish_and_wait
+from app.core.security import create_published_app_preview_token
+from ._helpers import (
+    admin_headers,
+    install_app_create_stub,
+    seed_admin_tenant_and_agent,
+    seed_published_app,
+    start_publish_and_wait,
+)
 from app.db.postgres.models.published_apps import (
     PublishedApp,
     PublishedAppRevision,
     PublishedAppVisibility,
 )
+
+
+def _preview_token(*, organization_id: UUID, app_id: UUID, revision_id: UUID) -> str:
+    return create_published_app_preview_token(
+        subject=str(app_id),
+        organization_id=str(organization_id),
+        app_id=str(app_id),
+        revision_id=str(revision_id),
+    )
 
 
 @pytest.mark.asyncio
@@ -29,9 +45,9 @@ async def test_public_resolve_and_config(client, db_session):
 
     resolve_resp = await client.get("/public/apps/resolve?host=resolver-app.apps.localhost")
     assert resolve_resp.status_code == 200
-    assert resolve_resp.json()["app"]["slug"] == "resolver-app"
+    assert resolve_resp.json()["app"]["public_id"] == "resolver-app"
 
-    config_resp = await client.get(f"/public/apps/{app.slug}/config")
+    config_resp = await client.get(f"/public/apps/{app.public_id}/config")
     assert config_resp.status_code == 200
     payload = config_resp.json()
     assert payload["id"] == str(app.id)
@@ -66,7 +82,7 @@ async def test_private_published_app_is_hidden_from_public_endpoints(client, db_
     resolve_resp = await client.get("/public/apps/resolve?host=private-resolver-app.apps.localhost")
     assert resolve_resp.status_code == 404
 
-    config_resp = await client.get(f"/public/apps/{app.slug}/config")
+    config_resp = await client.get(f"/public/apps/{app.public_id}/config")
     assert config_resp.status_code == 404
 
 @pytest.mark.asyncio
@@ -79,6 +95,7 @@ async def test_public_ui_source_removed_endpoint_still_returns_410(client):
 
 @pytest.mark.asyncio
 async def test_preview_asset_proxy_streams_dist_asset(client, db_session, monkeypatch):
+    install_app_create_stub(monkeypatch)
     tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
     headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
 
@@ -87,7 +104,6 @@ async def test_preview_asset_proxy_streams_dist_asset(client, db_session, monkey
         headers=headers,
         json={
             "name": "Preview Asset App",
-            "slug": "preview-asset-app",
             "agent_id": str(agent.id),
             "template_key": "classic-chat",
             "auth_enabled": True,
@@ -101,13 +117,16 @@ async def test_preview_asset_proxy_streams_dist_asset(client, db_session, monkey
     assert state_resp.status_code == 200
     state_payload = state_resp.json()
     draft_revision_id = state_payload["current_draft_revision"]["id"]
-    preview_token = state_payload["preview_token"]
-    assert preview_token
 
     app_row = await db_session.scalar(select(PublishedApp).where(PublishedApp.id == UUID(app_id)))
     assert app_row is not None
     revision_row = await db_session.get(PublishedAppRevision, app_row.current_draft_revision_id)
     assert revision_row is not None
+    preview_token = _preview_token(
+        organization_id=tenant.id,
+        app_id=app_row.id,
+        revision_id=revision_row.id,
+    )
     revision_row.dist_storage_prefix = "apps/t/a/revisions/r1/dist"
     revision_row.dist_manifest = {"entry_html": "index.html"}
     await db_session.commit()
@@ -132,7 +151,7 @@ async def test_preview_asset_proxy_streams_dist_asset(client, db_session, monkey
     assert asset_resp.headers["content-type"].startswith("application/javascript")
     assert "console.log('ok');" in asset_resp.text
     set_cookie_header = asset_resp.headers.get("set-cookie") or ""
-    assert "published_app_preview_token=" in set_cookie_header
+    assert "published_app_public_preview_token=" in set_cookie_header
     assert f"Path=/public/apps/preview/revisions/{draft_revision_id}" in set_cookie_header
 
     cookie_asset_resp = await client.get(asset_path)
@@ -153,7 +172,8 @@ async def test_preview_asset_proxy_streams_dist_asset(client, db_session, monkey
 
 
 @pytest.mark.asyncio
-async def test_preview_runtime_rejects_query_token_fallback_when_auth_header_is_invalid(client, db_session):
+async def test_preview_runtime_rejects_query_token_fallback_when_auth_header_is_invalid(client, db_session, monkeypatch):
+    install_app_create_stub(monkeypatch)
     tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
     headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
 
@@ -162,7 +182,6 @@ async def test_preview_runtime_rejects_query_token_fallback_when_auth_header_is_
         headers=headers,
         json={
             "name": "Preview Runtime Token Fallback App",
-            "slug": "preview-runtime-token-fallback-app",
             "agent_id": str(agent.id),
             "template_key": "classic-chat",
             "auth_enabled": True,
@@ -176,8 +195,11 @@ async def test_preview_runtime_rejects_query_token_fallback_when_auth_header_is_
     assert state_resp.status_code == 200
     state_payload = state_resp.json()
     draft_revision_id = state_payload["current_draft_revision"]["id"]
-    preview_token = state_payload["preview_token"]
-    assert preview_token
+    preview_token = _preview_token(
+        organization_id=tenant.id,
+        app_id=UUID(app_id),
+        revision_id=UUID(draft_revision_id),
+    )
 
     runtime_resp = await client.get(
         f"/public/apps/preview/revisions/{draft_revision_id}/runtime?preview_token={preview_token}",
@@ -188,6 +210,7 @@ async def test_preview_runtime_rejects_query_token_fallback_when_auth_header_is_
 
 @pytest.mark.asyncio
 async def test_preview_asset_html_keeps_relative_assets_tokenless(client, db_session, monkeypatch):
+    install_app_create_stub(monkeypatch)
     tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
     headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
 
@@ -196,7 +219,6 @@ async def test_preview_asset_html_keeps_relative_assets_tokenless(client, db_ses
         headers=headers,
         json={
             "name": "Preview HTML Rewrite App",
-            "slug": "preview-html-rewrite-app",
             "agent_id": str(agent.id),
             "template_key": "classic-chat",
             "auth_enabled": True,
@@ -210,13 +232,16 @@ async def test_preview_asset_html_keeps_relative_assets_tokenless(client, db_ses
     assert state_resp.status_code == 200
     state_payload = state_resp.json()
     draft_revision_id = state_payload["current_draft_revision"]["id"]
-    preview_token = state_payload["preview_token"]
-    assert preview_token
 
     app_row = await db_session.scalar(select(PublishedApp).where(PublishedApp.id == UUID(app_id)))
     assert app_row is not None
     revision_row = await db_session.get(PublishedAppRevision, app_row.current_draft_revision_id)
     assert revision_row is not None
+    preview_token = _preview_token(
+        organization_id=tenant.id,
+        app_id=app_row.id,
+        revision_id=revision_row.id,
+    )
     revision_row.dist_storage_prefix = "apps/t/a/revisions/rewrite/dist"
     revision_row.dist_manifest = {"entry_html": "index.html"}
     await db_session.commit()
@@ -245,8 +270,8 @@ async def test_preview_asset_html_keeps_relative_assets_tokenless(client, db_ses
     )
     assert resp.status_code == 200
     text = resp.text
-    assert "./assets/main.css" in text
-    assert "./assets/main.js" in text
+    assert f"/public/apps/preview/revisions/{draft_revision_id}/assets/assets/main.css" in text
+    assert f"/public/apps/preview/revisions/{draft_revision_id}/assets/assets/main.js" in text
     assert "preview_token=" not in text
     assert "window.__APP_RUNTIME_CONTEXT=" in text
     assert "\"mode\":\"builder-preview\"" in text
@@ -254,7 +279,8 @@ async def test_preview_asset_html_keeps_relative_assets_tokenless(client, db_ses
 
 
 @pytest.mark.asyncio
-async def test_preview_runtime_bootstrap_contract(client, db_session):
+async def test_preview_runtime_bootstrap_contract(client, db_session, monkeypatch):
+    install_app_create_stub(monkeypatch)
     tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
     headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
 
@@ -263,7 +289,6 @@ async def test_preview_runtime_bootstrap_contract(client, db_session):
         headers=headers,
         json={
             "name": "Preview Bootstrap App",
-            "slug": "preview-bootstrap-app",
             "agent_id": str(agent.id),
             "template_key": "classic-chat",
             "auth_enabled": True,
@@ -277,8 +302,11 @@ async def test_preview_runtime_bootstrap_contract(client, db_session):
     assert state_resp.status_code == 200
     state_payload = state_resp.json()
     draft_revision_id = state_payload["current_draft_revision"]["id"]
-    preview_token = state_payload["preview_token"]
-    assert preview_token
+    preview_token = _preview_token(
+        organization_id=tenant.id,
+        app_id=UUID(app_id),
+        revision_id=UUID(draft_revision_id),
+    )
 
     bootstrap_resp = await client.get(
         f"/public/apps/preview/revisions/{draft_revision_id}/runtime/bootstrap",

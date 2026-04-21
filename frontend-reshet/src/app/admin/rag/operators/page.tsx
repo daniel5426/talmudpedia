@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
-import { useTenant } from "@/contexts/TenantContext"
+import { useOrganization } from "@/contexts/OrganizationContext"
 import { ragAdminService, CustomOperator } from "@/services"
 import { CustomBreadcrumb } from "@/components/ui/custom-breadcrumb"
 import { AdminPageHeader } from "@/components/admin/AdminPageHeader"
@@ -126,7 +126,7 @@ const initialFormData: OperatorFormData = {
 }
 
 export default function OperatorsPage() {
-    const { currentTenant } = useTenant()
+    const { currentOrganization } = useOrganization()
     const router = useRouter()
     const searchParams = useSearchParams()
     const modeParam = searchParams.get("mode") as ViewMode | null
@@ -171,14 +171,14 @@ export default function OperatorsPage() {
     const fetchOperators = useCallback(async () => {
         setLoading(true)
         try {
-            const data = await ragAdminService.listCustomOperators(currentTenant?.slug)
+            const data = await ragAdminService.listCustomOperators(currentOrganization?.id)
             setOperators(data)
         } catch (error) {
             console.error("Failed to fetch operators", error)
         } finally {
             setLoading(false)
         }
-    }, [currentTenant?.slug])
+    }, [currentOrganization?.id])
 
     useEffect(() => {
         fetchOperators()
@@ -276,12 +276,12 @@ export default function OperatorsPage() {
             }
 
             if (viewMode === "create") {
-                await ragAdminService.createCustomOperator(payload, currentTenant?.slug)
+                await ragAdminService.createCustomOperator(payload, currentOrganization?.id)
             } else if (selectedOperator) {
                 await ragAdminService.updateCustomOperator(
                     selectedOperator.id,
                     payload,
-                    currentTenant?.slug
+                    currentOrganization?.id
                 )
             }
 
@@ -324,7 +324,7 @@ export default function OperatorsPage() {
                 config: config,
                 input_type: formData.input_type,
                 output_type: formData.output_type,
-            }, currentTenant?.slug)
+            }, currentOrganization?.id)
 
             setTestResult(response)
         } catch (error) {
@@ -343,7 +343,7 @@ export default function OperatorsPage() {
     const handleDelete = async (operator: CustomOperator) => {
         if (!confirm(`Are you sure you want to delete "${operator.display_name}"?`)) return
         try {
-            await ragAdminService.deleteCustomOperator(operator.id, currentTenant?.slug)
+            await ragAdminService.deleteCustomOperator(operator.id, currentOrganization?.id)
             fetchOperators()
         } catch (error) {
             console.error("Failed to delete operator", error)
@@ -355,7 +355,7 @@ export default function OperatorsPage() {
 
         setPromotingId(operator.id)
         try {
-            const result = await ragAdminService.promoteCustomOperator(operator.id, "custom", currentTenant?.slug)
+            const result = await ragAdminService.promoteCustomOperator(operator.id, "custom", currentOrganization?.id)
             alert(`Successfully promoted to artifact: ${result.artifact_id}\nPath: ${result.path}`)
             fetchOperators()
         } catch (error) {

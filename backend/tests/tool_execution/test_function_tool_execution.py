@@ -80,7 +80,7 @@ async def test_function_tool_execution(monkeypatch):
     tool = make_tool(tool_id, config_schema)
     db = FakeDB(tool)
 
-    executor = ToolNodeExecutor(tenant_id=None, db=db)
+    executor = ToolNodeExecutor(organization_id=None, db=db)
 
     async def has_columns(_self):
         return True
@@ -124,7 +124,7 @@ async def test_function_tool_missing_name(monkeypatch):
     tool = make_tool(tool_id, config_schema)
     db = FakeDB(tool)
 
-    executor = ToolNodeExecutor(tenant_id=None, db=db)
+    executor = ToolNodeExecutor(organization_id=None, db=db)
 
     async def has_columns(_self):
         return True
@@ -153,7 +153,7 @@ async def test_function_tool_separates_runtime_context_from_canonical_input(monk
     tool = make_tool(tool_id, config_schema)
     db = FakeDB(tool)
 
-    executor = ToolNodeExecutor(tenant_id=None, db=db)
+    executor = ToolNodeExecutor(organization_id=None, db=db)
 
     async def has_columns(_self):
         return True
@@ -204,7 +204,7 @@ async def test_function_tool_rejects_wrapper_payloads_under_strict_default(monke
     )
     db = FakeDB(tool)
 
-    executor = ToolNodeExecutor(tenant_id=None, db=db)
+    executor = ToolNodeExecutor(organization_id=None, db=db)
 
     async def has_columns(_self):
         return True
@@ -240,7 +240,7 @@ async def test_function_tool_propagates_architect_context(monkeypatch):
     tool = make_tool(tool_id, config_schema)
     db = FakeDB(tool)
 
-    executor = ToolNodeExecutor(tenant_id=None, db=db)
+    executor = ToolNodeExecutor(organization_id=None, db=db)
 
     async def has_columns(_self):
         return True
@@ -252,17 +252,17 @@ async def test_function_tool_propagates_architect_context(monkeypatch):
         {"tool_id": str(tool_id)},
         {
             "node_id": "tool-node",
-            "tenant_id": "tenant-123",
+            "organization_id": "tenant-123",
             "requested_scopes": ["agents.read"],
-            "agent_slug": "platform-architect",
+            "agent_system_key": "platform-architect",
             "mode": "debug",
             "architect_mode": "default",
             "architect_effective_scopes": ["agents.read", "tools.write"],
         },
     )
 
-    assert captured["context"]["tenant_id"] == "tenant-123"
-    assert captured["context"]["agent_slug"] == "platform-architect"
+    assert captured["context"]["organization_id"] == "tenant-123"
+    assert captured["context"]["agent_system_key"] == "platform-architect"
     assert captured["context"]["mode"] == "debug"
     assert captured["context"]["architect_mode"] == "default"
     assert captured["context"]["architect_effective_scopes"] == ["agents.read", "tools.write"]
@@ -284,7 +284,7 @@ async def test_coding_agent_function_tool_missing_required_fields_returns_valida
         },
     )
     db = FakeDB(tool)
-    executor = ToolNodeExecutor(tenant_id=None, db=db)
+    executor = ToolNodeExecutor(organization_id=None, db=db)
 
     async def has_columns(_self):
         return True
@@ -318,7 +318,7 @@ async def test_coding_agent_function_tool_policy_error_is_normalized(monkeypatch
         },
     )
     db = FakeDB(tool)
-    executor = ToolNodeExecutor(tenant_id=None, db=db)
+    executor = ToolNodeExecutor(organization_id=None, db=db)
 
     async def has_columns(_self):
         return True
@@ -366,7 +366,7 @@ async def test_strict_function_tool_rejects_missing_required_field_before_dispat
         },
     )
     db = FakeDB(tool)
-    executor = ToolNodeExecutor(tenant_id=None, db=db)
+    executor = ToolNodeExecutor(organization_id=None, db=db)
 
     async def has_columns(_self):
         return True
@@ -412,7 +412,7 @@ async def test_strict_function_tool_rejects_unknown_fields_before_dispatch(monke
         },
     )
     db = FakeDB(tool)
-    executor = ToolNodeExecutor(tenant_id=None, db=db)
+    executor = ToolNodeExecutor(organization_id=None, db=db)
 
     async def has_columns(_self):
         return True
@@ -457,7 +457,7 @@ async def test_strict_function_tool_rejects_wrong_type_with_explicit_message(mon
         },
     )
     db = FakeDB(tool)
-    executor = ToolNodeExecutor(tenant_id=None, db=db)
+    executor = ToolNodeExecutor(organization_id=None, db=db)
 
     async def has_columns(_self):
         return True
@@ -502,7 +502,7 @@ async def test_strict_function_tool_ignores_executor_runtime_metadata_before_dis
         },
     )
     db = FakeDB(tool)
-    executor = ToolNodeExecutor(tenant_id=None, db=db)
+    executor = ToolNodeExecutor(organization_id=None, db=db)
 
     async def has_columns(_self):
         return True
@@ -514,7 +514,7 @@ async def test_strict_function_tool_ignores_executor_runtime_metadata_before_dis
             "context": {
                 "objective": "valid objective",
                 "run_id": "run-1",
-                "tenant_id": "tenant-1",
+                "organization_id": "tenant-1",
                 "agent_id": "agent-1",
                 "thread_id": "thread-1",
             }
@@ -527,7 +527,7 @@ async def test_strict_function_tool_ignores_executor_runtime_metadata_before_dis
     assert captured["payload"] is not None
     assert captured["payload"]["objective"] == "valid objective"
     assert "agent_id" not in captured["payload"]
-    assert "tenant_id" not in captured["payload"]
+    assert "organization_id" not in captured["payload"]
 
 
 @pytest.mark.asyncio
@@ -551,7 +551,7 @@ async def test_strict_platform_tool_forwards_internal_auth_context_to_local_sdk(
     tool_id = uuid4()
     tool = make_platform_tool(tool_id, "platform-assets", "platform_native_platform_assets")
     db = FakeDB(tool)
-    executor = ToolNodeExecutor(tenant_id=None, db=db)
+    executor = ToolNodeExecutor(organization_id=None, db=db)
 
     async def has_columns(_self):
         return True
@@ -563,14 +563,14 @@ async def test_strict_platform_tool_forwards_internal_auth_context_to_local_sdk(
         {"tool_id": str(tool_id)},
         {
             "node_id": "tool-node",
-            "tenant_id": "tenant-1",
+            "organization_id": "tenant-1",
             "user_id": "user-1",
             "token": "bearer-123",
         },
     )
 
     assert result["context"]["result"]["status"] == "ok"
-    assert captured["runtime_context"]["tenant_id"] == "tenant-1"
+    assert captured["runtime_context"]["organization_id"] == "tenant-1"
     assert captured["runtime_context"]["user_id"] == "user-1"
     assert captured["runtime_context"]["token"] == "bearer-123"
 
@@ -595,7 +595,7 @@ async def test_strict_platform_tools_reject_wrapped_input_with_compile_error(
     tool_id = uuid4()
     tool = make_platform_tool(tool_id, tool_slug, function_name)
     db = FakeDB(tool)
-    executor = ToolNodeExecutor(tenant_id=None, db=db)
+    executor = ToolNodeExecutor(organization_id=None, db=db)
 
     async def has_columns(_self):
         return True
@@ -618,7 +618,7 @@ async def test_strict_platform_tool_rejects_raw_scalar_args_with_compile_error(m
     tool_id = uuid4()
     tool = make_platform_tool(tool_id, "platform-assets", "platform_native_platform_assets")
     db = FakeDB(tool)
-    executor = ToolNodeExecutor(tenant_id=None, db=db)
+    executor = ToolNodeExecutor(organization_id=None, db=db)
 
     async def has_columns(_self):
         return True

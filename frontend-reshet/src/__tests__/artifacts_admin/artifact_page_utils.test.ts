@@ -75,7 +75,7 @@ describe("artifactPageUtils and credential mentions", () => {
       display_name: "Mention Artifact",
       description: "",
       kind: "tool_impl",
-      owner_type: "tenant",
+      owner_type: "organization",
       type: "draft",
       version: "draft",
       config_schema: {},

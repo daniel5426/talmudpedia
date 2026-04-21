@@ -1,6 +1,6 @@
 # RAG Extreme Campaign Tests
 
-Last Updated: 2026-03-31
+Last Updated: 2026-04-21
 
 ## Scope
 
@@ -126,6 +126,9 @@ Initial live-stack campaign coverage for RAG production-readiness:
 - Command: `cd backend && PYTHONPATH=backend python3 -m pytest -q -rsxX backend/tests/rag_extreme_campaign`
 - Date: 2026-03-31 Asia/Hebron
 - Result: Pass (`47 passed, 6 skipped`). The final 19-node RAG catalog is now asserted explicitly, replacement-node coverage is in place, and the default campaign loop is green after the catalog refactor.
+- Command: `SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest backend/tests/rag_extreme_campaign/test_admin_graph_and_jobs_api.py`
+- Date: 2026-04-21 Asia/Hebron
+- Result: Pass (`2 passed`). Admin RAG graph/job routes now use `organization_id` instead of `tenant_slug`.
 
 ## Known Gaps / Follow-ups
 

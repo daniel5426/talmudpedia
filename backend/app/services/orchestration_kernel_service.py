@@ -39,7 +39,6 @@ class OrchestrationKernelService:
         caller_run_id: UUID,
         parent_node_id: str | None,
         target_agent_id: UUID | None,
-        target_agent_slug: str | None,
         mapped_input_payload: dict[str, Any] | None,
         failure_policy: str | None,
         timeout_s: int | None,
@@ -60,14 +59,13 @@ class OrchestrationKernelService:
         if caller_status == RunStatus.cancelled.value:
             raise RuntimeError(f"Caller run {caller_run_id} is cancelled")
         target = await self._resolve_target(
-            tenant_id=caller_run.tenant_id,
+            organization_id=caller_run.organization_id,
             target_agent_id=target_agent_id,
-            target_agent_slug=target_agent_slug,
         )
-        policy = await self.policy.get_policy(caller_run.tenant_id, caller_run.agent_id)
+        policy = await self.policy.get_policy(caller_run.organization_id, caller_run.agent_id)
 
         await self.policy.assert_target_allowed(
-            tenant_id=caller_run.tenant_id,
+            organization_id=caller_run.organization_id,
             orchestrator_agent_id=caller_run.agent_id,
             target=target,
             policy=policy,
@@ -165,7 +163,7 @@ class OrchestrationKernelService:
             parent_run_id=caller_run.parent_run_id,
         ):
             raise RuntimeError(f"Caller run {caller_run_id} is cancelled")
-        policy = await self.policy.get_policy(caller_run.tenant_id, caller_run.agent_id)
+        policy = await self.policy.get_policy(caller_run.organization_id, caller_run.agent_id)
 
         if not targets:
             raise ValueError("targets is required")
@@ -192,7 +190,7 @@ class OrchestrationKernelService:
         )
 
         group = OrchestrationGroup(
-            tenant_id=caller_run.tenant_id,
+            organization_id=caller_run.organization_id,
             orchestrator_run_id=caller_run.id,
             parent_node_id=parent_node_id,
             failure_policy=failure_policy or policy.default_failure_policy,
@@ -212,7 +210,6 @@ class OrchestrationKernelService:
                 caller_run_id=caller_run_id,
                 parent_node_id=parent_node_id,
                 target_agent_id=self._as_uuid(target.get("target_agent_id")),
-                target_agent_slug=target.get("target_agent_slug"),
                 mapped_input_payload=target.get("mapped_input_payload") if isinstance(target.get("mapped_input_payload"), dict) else {},
                 failure_policy=failure_policy,
                 timeout_s=timeout_s,
@@ -503,28 +500,16 @@ class OrchestrationKernelService:
     async def _resolve_target(
         self,
         *,
-        tenant_id: UUID,
+        organization_id: UUID,
         target_agent_id: UUID | None,
-        target_agent_slug: str | None,
     ) -> Agent:
         if target_agent_id is not None:
             target = await self.db.get(Agent, target_agent_id)
-            if target is None or target.tenant_id != tenant_id:
+            if target is None or target.organization_id != organization_id:
                 raise ValueError("Target agent not found")
             return target
 
-        if target_agent_slug:
-            res = await self.db.execute(
-                select(Agent).where(
-                    Agent.tenant_id == tenant_id,
-                    Agent.slug == target_agent_slug,
-                )
-            )
-            target = res.scalar_one_or_none()
-            if target is not None:
-                return target
-
-        raise ValueError("target_agent_id or target_agent_slug is required")
+        raise ValueError("target_agent_id is required")
 
     @staticmethod
     def _caller_effective_scopes(run: AgentRun) -> list[str]:
@@ -554,7 +539,7 @@ class OrchestrationKernelService:
         caller_input = caller_run.input_params if isinstance(caller_run.input_params, dict) else {}
         caller_context = caller_input.get("context") if isinstance(caller_input.get("context"), dict) else {}
 
-        context["tenant_id"] = str(caller_run.tenant_id)
+        context["organization_id"] = str(caller_run.organization_id)
         context["user_id"] = str(caller_run.initiator_user_id or caller_run.user_id) if (caller_run.initiator_user_id or caller_run.user_id) else None
         context["initiator_user_id"] = str(caller_run.initiator_user_id) if caller_run.initiator_user_id else None
         if caller_context.get("token") is not None:

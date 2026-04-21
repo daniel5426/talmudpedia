@@ -45,7 +45,7 @@ def serialize_credential(credential: IntegrationCredential, *, view: str = "full
         return payload
     payload.update(
         {
-            "tenant_id": str(credential.tenant_id) if credential.tenant_id else None,
+            "organization_id": str(credential.organization_id) if credential.organization_id else None,
             "credential_keys": list((credential.credentials or {}).keys()),
         }
     )
@@ -62,7 +62,7 @@ class CredentialsAdminService:
         ctx: ControlPlaneContext,
         category: IntegrationCredentialCategory | None = None,
     ) -> list[IntegrationCredential]:
-        stmt = select(IntegrationCredential).where(IntegrationCredential.tenant_id == ctx.tenant_id)
+        stmt = select(IntegrationCredential).where(IntegrationCredential.organization_id == ctx.organization_id)
         if category is not None:
             stmt = stmt.where(IntegrationCredential.category == category)
         stmt = stmt.order_by(IntegrationCredential.provider_key.asc(), IntegrationCredential.display_name.asc())
@@ -81,7 +81,7 @@ class CredentialsAdminService:
         is_default: bool,
     ) -> IntegrationCredential:
         credential = IntegrationCredential(
-            tenant_id=ctx.tenant_id,
+            organization_id=ctx.organization_id,
             category=category,
             provider_key=normalize_provider_key(category, provider_key),
             provider_variant=provider_variant,
@@ -92,7 +92,7 @@ class CredentialsAdminService:
         )
         self.db.add(credential)
         with self.db.no_autoflush:
-            await CredentialsService(self.db, ctx.tenant_id).enforce_single_default(credential)
+            await CredentialsService(self.db, ctx.organization_id).enforce_single_default(credential)
         await self.db.commit()
         await self.db.refresh(credential)
         return credential
@@ -105,7 +105,7 @@ class CredentialsAdminService:
         patch: dict[str, Any],
     ) -> IntegrationCredential:
         stmt = select(IntegrationCredential).where(
-            and_(IntegrationCredential.id == credential_id, IntegrationCredential.tenant_id == ctx.tenant_id)
+            and_(IntegrationCredential.id == credential_id, IntegrationCredential.organization_id == ctx.organization_id)
         )
         credential = (await self.db.execute(stmt)).scalar_one_or_none()
         if credential is None:
@@ -128,7 +128,7 @@ class CredentialsAdminService:
         if patch.get("is_default") is not None:
             credential.is_default = patch["is_default"]
         with self.db.no_autoflush:
-            await CredentialsService(self.db, ctx.tenant_id).enforce_single_default(credential)
+            await CredentialsService(self.db, ctx.organization_id).enforce_single_default(credential)
         await self.db.commit()
         await self.db.refresh(credential)
         return credential
@@ -145,7 +145,7 @@ class CredentialsAdminService:
                 )
                 .join(ModelRegistry, ModelRegistry.id == ModelProviderBinding.model_id)
                 .where(
-                    ModelProviderBinding.tenant_id == ctx.tenant_id,
+                    ModelProviderBinding.organization_id == ctx.organization_id,
                     ModelProviderBinding.credentials_ref == credential_id,
                 )
                 .order_by(ModelRegistry.name.asc(), ModelProviderBinding.provider_model_id.asc())
@@ -154,20 +154,20 @@ class CredentialsAdminService:
         store_rows = (
             await self.db.execute(
                 select(KnowledgeStore.id, KnowledgeStore.name, KnowledgeStore.backend)
-                .where(KnowledgeStore.tenant_id == ctx.tenant_id, KnowledgeStore.credentials_ref == credential_id)
+                .where(KnowledgeStore.organization_id == ctx.organization_id, KnowledgeStore.credentials_ref == credential_id)
                 .order_by(KnowledgeStore.name.asc())
             )
         ).all()
         tool_rows = (
             await self.db.execute(
-                select(ToolRegistry.id, ToolRegistry.name, ToolRegistry.slug, ToolRegistry.implementation_type, ToolRegistry.config_schema)
-                .where(ToolRegistry.tenant_id == ctx.tenant_id)
+                select(ToolRegistry.id, ToolRegistry.name, ToolRegistry.builtin_key, ToolRegistry.implementation_type, ToolRegistry.config_schema)
+                .where(ToolRegistry.organization_id == ctx.organization_id)
                 .order_by(ToolRegistry.name.asc())
             )
         ).all()
         credential_id_str = str(credential_id)
         tools: list[dict[str, Any]] = []
-        for tool_id, tool_name, tool_slug, implementation_type, config_schema in tool_rows:
+        for tool_id, tool_name, builtin_key, implementation_type, config_schema in tool_rows:
             impl = (config_schema or {}).get("implementation") if isinstance(config_schema, dict) else {}
             if str((impl or {}).get("credentials_ref") or "") != credential_id_str:
                 continue
@@ -175,7 +175,7 @@ class CredentialsAdminService:
                 {
                     "tool_id": tool_id,
                     "tool_name": tool_name,
-                    "tool_slug": tool_slug,
+                    "builtin_key": builtin_key,
                     "implementation_type": str(getattr(implementation_type, "value", implementation_type)) if implementation_type else None,
                 }
             )
@@ -204,7 +204,7 @@ class CredentialsAdminService:
 
     async def delete_credential(self, *, ctx: ControlPlaneContext, credential_id: UUID, force_disconnect: bool) -> None:
         stmt = select(IntegrationCredential).where(
-            and_(IntegrationCredential.id == credential_id, IntegrationCredential.tenant_id == ctx.tenant_id)
+            and_(IntegrationCredential.id == credential_id, IntegrationCredential.organization_id == ctx.organization_id)
         )
         credential = (await self.db.execute(stmt)).scalar_one_or_none()
         if credential is None:
@@ -221,18 +221,18 @@ class CredentialsAdminService:
             await self.db.execute(
                 update(ModelProviderBinding)
                 .where(
-                    ModelProviderBinding.tenant_id == ctx.tenant_id,
+                    ModelProviderBinding.organization_id == ctx.organization_id,
                     ModelProviderBinding.credentials_ref == credential_id,
                 )
                 .values(credentials_ref=None)
             )
             await self.db.execute(
                 update(KnowledgeStore)
-                .where(KnowledgeStore.tenant_id == ctx.tenant_id, KnowledgeStore.credentials_ref == credential_id)
+                .where(KnowledgeStore.organization_id == ctx.organization_id, KnowledgeStore.credentials_ref == credential_id)
                 .values(credentials_ref=None)
             )
             tools = (
-                await self.db.execute(select(ToolRegistry).where(ToolRegistry.tenant_id == ctx.tenant_id))
+                await self.db.execute(select(ToolRegistry).where(ToolRegistry.organization_id == ctx.organization_id))
             ).scalars().all()
             for tool in tools:
                 config_schema = dict(tool.config_schema or {})

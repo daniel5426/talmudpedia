@@ -27,7 +27,7 @@ class PublishedAppAnalyticsEvent(Base):
     __tablename__ = "published_app_analytics_events"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
     published_app_id = Column(UUID(as_uuid=True), ForeignKey("published_apps.id", ondelete="CASCADE"), nullable=False, index=True)
     app_account_id = Column(UUID(as_uuid=True), ForeignKey("published_app_accounts.id", ondelete="SET NULL"), nullable=True, index=True)
     session_id = Column(UUID(as_uuid=True), ForeignKey("published_app_sessions.id", ondelete="SET NULL"), nullable=True, index=True)
@@ -59,8 +59,8 @@ class PublishedAppAnalyticsEvent(Base):
             "occurred_at",
         ),
         Index(
-            "ix_published_app_analytics_tenant_app_occurred",
-            "tenant_id",
+            "ix_published_app_analytics_organization_app_occurred",
+            "organization_id",
             "published_app_id",
             "occurred_at",
         ),

@@ -26,7 +26,6 @@ def test_platform_architect_graph_is_single_agent_topology():
     assert "architect-worker-await" in instructions
     assert "architect-worker-respond" in instructions
     assert "platform-governance does not expose raw orchestration.spawn_* actions" in instructions
-    assert "platform domain tool slugs are containers" in instructions
     assert "answer with canonical action ids under each domain" in instructions
     assert "must not end the run after spawn/join alone" in instructions
     assert "Do not treat successful worker completion as task completion by itself" in instructions
@@ -39,14 +38,12 @@ def test_platform_architect_graph_is_single_agent_topology():
     assert "prefer canonical shell/create_or_update actions over invented *.create aliases" in instructions
     assert "default the resource label field to payload.name" in instructions
     assert "Do not default to display_name" in instructions
-    assert "payload.slug is required alongside payload.name" in instructions
     assert "use payload.name and optional payload.pipeline_type=retrieval only" in instructions
     assert "do not send kind, template, display_name, nodes, edges, or graph_definition on the shell action" in instructions
     assert "payload.name and payload.embedding_model_id are required" in instructions
     assert "choose an active embedding-capable model" in instructions
     assert "create_new_draft requires title_prompt plus draft_seed" in instructions
     assert "return canonical action ids grouped under each platform domain" in instructions
-    assert "Do not answer with only domain slugs" in instructions
     assert "Do not invent help/list-schema actions against platform domains" in instructions
     assert "draft_seed.kind" in instructions
     assert "draft_seed.language" in instructions
@@ -78,7 +75,7 @@ def test_platform_architect_graph_is_single_agent_topology():
     assert "rag.operators.catalog" in instructions
     assert "rag.operators.schema" in instructions
     assert "Draft-first is mandatory" in instructions
-    assert "Never ask the user for tenant_id" in instructions
+    assert "Never ask the user for organization_id" in instructions
     assert "machine-readable JSON report" not in instructions
     assert "output_format" not in runtime_node["config"]
     assert "output_schema" not in runtime_node["config"]
@@ -124,7 +121,7 @@ def test_platform_domain_schema_is_action_specific_one_of():
     assert "x-action-contract" in by_action["agents.create"]
     assert "idempotency_key" not in by_action["agents.create"]["required"]
     assert "request_metadata" not in by_action["agents.create"]["required"]
-    assert "tenant_id" not in by_action["agents.create"]["required"]
+    assert "organization_id" not in by_action["agents.create"]["required"]
     assert "node_types" in by_action["agents.nodes.schema"]["properties"]["payload"]["required"]
     assert "idempotency_key" not in by_action["agents.nodes.catalog"]["required"]
     assert "idempotency_key" not in by_action["agents.get"]["required"]
@@ -151,13 +148,12 @@ def test_platform_domain_schema_is_action_specific_one_of():
 
     tools_list_payload = assets_by_action["tools.list"]["properties"]["payload"]
     assert tools_list_payload["properties"]["view"]["enum"] == ["summary", "full"]
-    assert tools_list_payload["properties"]["slug"]["type"] == "string"
     assert tools_list_payload["properties"]["name"]["type"] == "string"
     assert "status" in tools_list_payload["properties"]
     assert "implementation_type" in tools_list_payload["properties"]
 
     tools_get_payload = assets_by_action["tools.get"]["properties"]["payload"]
-    assert "slug" in tools_get_payload["properties"]
+    assert set(tools_get_payload["properties"].keys()) == {"id", "tool_id"}
 
     rag_create_job_payload = registry_seeding.PLATFORM_ARCHITECT_DOMAIN_TOOLS["platform-rag"]["actions"]["rag.create_job"]["payload_schema"]
     assert rag_create_job_payload["required"] == ["executable_pipeline_id"]
@@ -165,5 +161,5 @@ def test_platform_domain_schema_is_action_specific_one_of():
     assert rag_create_job_payload["properties"]["input_params"]["type"] == "object"
 
     knowledge_stores_list_payload = assets_by_action["knowledge_stores.list"]["properties"]["payload"]
-    assert knowledge_stores_list_payload["required"] == ["tenant_slug"]
+    assert knowledge_stores_list_payload["required"] == ["organization_id"]
     assert knowledge_stores_list_payload["properties"]["view"]["enum"] == ["summary", "full"]

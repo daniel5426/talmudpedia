@@ -11,7 +11,7 @@ from app.rag.pipeline.compiler import PipelineCompiler
 def _pipeline(*, pipeline_type: PipelineType, nodes: list[dict], edges: list[dict]) -> VisualPipeline:
     return VisualPipeline(
         id=uuid.uuid4(),
-        tenant_id=uuid.uuid4(),
+        organization_id=uuid.uuid4(),
         name="Invalid Topology",
         description=None,
         pipeline_type=pipeline_type,

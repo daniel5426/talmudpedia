@@ -28,8 +28,7 @@ router = APIRouter(prefix="/internal/orchestration", tags=["internal-orchestrati
 class SpawnRunRequest(BaseModel):
     caller_run_id: UUID
     parent_node_id: Optional[str] = None
-    target_agent_id: Optional[UUID] = None
-    target_agent_slug: Optional[str] = None
+    target_agent_id: UUID
     mapped_input_payload: dict[str, Any] = Field(default_factory=dict)
     failure_policy: Optional[str] = None
     timeout_s: Optional[int] = None
@@ -39,8 +38,7 @@ class SpawnRunRequest(BaseModel):
 
 
 class SpawnGroupTarget(BaseModel):
-    target_agent_id: Optional[UUID] = None
-    target_agent_slug: Optional[str] = None
+    target_agent_id: UUID
     mapped_input_payload: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -77,31 +75,31 @@ class EvaluateAndReplanRequest(BaseModel):
     run_id: UUID
 
 
-def _assert_tenant(principal: dict[str, Any], tenant_id: UUID | str) -> None:
-    principal_tenant = principal.get("tenant_id")
+def _assert_tenant(principal: dict[str, Any], organization_id: UUID | str) -> None:
+    principal_tenant = principal.get("organization_id")
     principal_scopes = set(principal.get("scopes") or [])
     if "*" in principal_scopes:
         return
-    if str(principal_tenant) != str(tenant_id):
-        raise HTTPException(status_code=403, detail="Tenant mismatch")
+    if str(principal_tenant) != str(organization_id):
+        raise HTTPException(status_code=403, detail="Organization mismatch")
 
 
-def _assert_option_b_enabled(tenant_id: UUID | str) -> None:
+def _assert_option_b_enabled(organization_id: UUID | str) -> None:
     if is_orchestration_surface_enabled(
         surface=ORCHESTRATION_SURFACE_OPTION_B,
-        tenant_id=tenant_id,
+        organization_id=organization_id,
     ):
         return
     raise HTTPException(
         status_code=403,
-        detail="Runtime orchestration primitives are disabled by feature flag for this tenant",
+        detail="Runtime orchestration primitives are disabled by feature flag for this organization",
     )
 
 
-def _control_plane_ctx(principal: dict[str, Any], tenant_id: UUID | str) -> ControlPlaneContext:
+def _control_plane_ctx(principal: dict[str, Any], organization_id: UUID | str) -> ControlPlaneContext:
     user = principal.get("user")
     return ControlPlaneContext(
-        tenant_id=UUID(str(tenant_id)),
+        organization_id=UUID(str(organization_id)),
         user=user,
         user_id=getattr(user, "id", None),
         auth_token=principal.get("auth_token"),
@@ -120,14 +118,13 @@ async def spawn_run(
     kernel = OrchestrationKernelService(db)
     try:
         caller = await kernel._require_run(request.caller_run_id)
-        _assert_tenant(principal, caller.tenant_id)
-        _assert_option_b_enabled(caller.tenant_id)
+        _assert_tenant(principal, caller.organization_id)
+        _assert_option_b_enabled(caller.organization_id)
 
         return await OrchestrationAdminService(db).spawn_run(
             caller_run_id=request.caller_run_id,
             parent_node_id=request.parent_node_id,
             target_agent_id=request.target_agent_id,
-            target_agent_slug=request.target_agent_slug,
             mapped_input_payload=request.mapped_input_payload,
             failure_policy=request.failure_policy,
             timeout_s=request.timeout_s,
@@ -153,8 +150,8 @@ async def spawn_group(
     kernel = OrchestrationKernelService(db)
     try:
         caller = await kernel._require_run(request.caller_run_id)
-        _assert_tenant(principal, caller.tenant_id)
-        _assert_option_b_enabled(caller.tenant_id)
+        _assert_tenant(principal, caller.organization_id)
+        _assert_option_b_enabled(caller.organization_id)
 
         return await OrchestrationAdminService(db).spawn_group(
             caller_run_id=request.caller_run_id,
@@ -186,8 +183,8 @@ async def join(
     kernel = OrchestrationKernelService(db)
     try:
         caller = await kernel._require_run(request.caller_run_id)
-        _assert_tenant(principal, caller.tenant_id)
-        _assert_option_b_enabled(caller.tenant_id)
+        _assert_tenant(principal, caller.organization_id)
+        _assert_option_b_enabled(caller.organization_id)
 
         operation = await OrchestrationAdminService(db).join(
             caller_run_id=request.caller_run_id,
@@ -215,8 +212,8 @@ async def cancel_subtree(
     kernel = OrchestrationKernelService(db)
     try:
         caller = await kernel._require_run(request.caller_run_id)
-        _assert_tenant(principal, caller.tenant_id)
-        _assert_option_b_enabled(caller.tenant_id)
+        _assert_tenant(principal, caller.organization_id)
+        _assert_option_b_enabled(caller.organization_id)
 
         operation = await OrchestrationAdminService(db).cancel_subtree(
             caller_run_id=request.caller_run_id,
@@ -243,8 +240,8 @@ async def evaluate_and_replan(
     kernel = OrchestrationKernelService(db)
     try:
         caller = await kernel._require_run(request.caller_run_id)
-        _assert_tenant(principal, caller.tenant_id)
-        _assert_option_b_enabled(caller.tenant_id)
+        _assert_tenant(principal, caller.organization_id)
+        _assert_option_b_enabled(caller.organization_id)
 
         operation = await OrchestrationAdminService(db).evaluate_and_replan(
             caller_run_id=request.caller_run_id,
@@ -269,8 +266,8 @@ async def query_tree(
     try:
         kernel = OrchestrationKernelService(db)
         run = await kernel._require_run(run_id)
-        _assert_tenant(principal, run.tenant_id)
-        _assert_option_b_enabled(run.tenant_id)
+        _assert_tenant(principal, run.organization_id)
+        _assert_option_b_enabled(run.organization_id)
         return await OrchestrationAdminService(db).query_tree(run_id=run_id)
     except ControlPlaneError as exc:
         raise exc.to_http_exception() from exc

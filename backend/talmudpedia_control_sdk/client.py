@@ -11,7 +11,7 @@ from .errors import ControlPlaneSDKError
 from .types import RequestOptions, ResponseEnvelope
 
 TokenProvider = Callable[[], Optional[str]]
-TenantResolver = Callable[[], Optional[str]]
+OrganizationResolver = Callable[[], Optional[str]]
 
 
 class ControlPlaneClient:
@@ -21,8 +21,8 @@ class ControlPlaneClient:
         base_url: str,
         token_provider: Optional[TokenProvider] = None,
         token: Optional[str] = None,
-        tenant_id: Optional[str] = None,
-        tenant_resolver: Optional[TenantResolver] = None,
+        organization_id: Optional[str] = None,
+        organization_resolver: Optional[OrganizationResolver] = None,
         timeout: float = 30.0,
         user_agent: str = "talmudpedia-control-sdk-python/1",
         default_request_metadata: Optional[Mapping[str, Any]] = None,
@@ -30,12 +30,12 @@ class ControlPlaneClient:
     ) -> None:
         if token_provider is not None and token is not None:
             raise ValueError("Provide either token_provider or token, not both.")
-        if tenant_resolver is not None and tenant_id is not None:
-            raise ValueError("Provide either tenant_resolver or tenant_id, not both.")
+        if organization_resolver is not None and organization_id is not None:
+            raise ValueError("Provide either organization_resolver or organization_id, not both.")
         self.base_url = base_url.rstrip("/")
         self._token_provider = token_provider or (lambda: token)
-        self.tenant_id = str(tenant_id) if tenant_id is not None else None
-        self._tenant_resolver = tenant_resolver
+        self.organization_id = str(organization_id) if organization_id is not None else None
+        self._organization_resolver = organization_resolver
         self.timeout = timeout
         self.user_agent = user_agent
         self.default_request_metadata = dict(default_request_metadata or {})
@@ -69,7 +69,7 @@ class ControlPlaneClient:
         *,
         base_url_env: str = "TEST_BASE_URL",
         token_env: str = "TEST_API_KEY",
-        tenant_env: str = "TEST_TENANT_ID",
+        organization_env: str = "TEST_ORGANIZATION_ID",
         timeout: float = 30.0,
         user_agent: str = "talmudpedia-control-sdk-python/1",
         default_request_metadata: Optional[Mapping[str, Any]] = None,
@@ -82,11 +82,11 @@ class ControlPlaneClient:
             or f"http://127.0.0.1:{os.getenv('BACKEND_PORT') or os.getenv('PORT') or '8000'}"
         )
         token = os.getenv(token_env)
-        tenant_id = os.getenv(tenant_env)
+        organization_id = os.getenv(organization_env)
         return cls(
             base_url=base_url,
             token=token,
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             timeout=timeout,
             user_agent=user_agent,
             default_request_metadata=default_request_metadata,
@@ -170,9 +170,9 @@ class ControlPlaneClient:
             "User-Agent": self.user_agent,
             "X-Request-ID": request_id,
         }
-        tenant_id = self._resolve_tenant_id()
-        if tenant_id:
-            base_headers["X-Tenant-ID"] = tenant_id
+        organization_id = self._resolve_organization_id()
+        if organization_id:
+            base_headers["X-Organization-ID"] = organization_id
         token = self._resolve_token()
         if token:
             base_headers["Authorization"] = f"Bearer {token}"
@@ -221,25 +221,25 @@ class ControlPlaneClient:
         token_text = str(token).strip()
         return token_text or None
 
-    def _resolve_tenant_id(self) -> Optional[str]:
-        if self._tenant_resolver is not None:
+    def _resolve_organization_id(self) -> Optional[str]:
+        if self._organization_resolver is not None:
             try:
-                tenant_id = self._tenant_resolver()
+                organization_id = self._organization_resolver()
             except Exception as exc:
                 raise ControlPlaneSDKError(
                     code="TENANT_RESOLVER_ERROR",
-                    message=f"Tenant resolver failed: {exc}",
+                    message=f"Organization resolver failed: {exc}",
                     retryable=False,
                 ) from exc
-            if tenant_id is None:
+            if organization_id is None:
                 return None
-            tenant_text = str(tenant_id).strip()
-            return tenant_text or None
+            organization_text = str(organization_id).strip()
+            return organization_text or None
 
-        if self.tenant_id is None:
+        if self.organization_id is None:
             return None
-        tenant_text = str(self.tenant_id).strip()
-        return tenant_text or None
+        organization_text = str(self.organization_id).strip()
+        return organization_text or None
 
     def _normalize_response(self, response: requests.Response) -> ResponseEnvelope:
         payload: Any

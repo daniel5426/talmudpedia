@@ -25,7 +25,7 @@ class ArtifactRunService:
     async def create_run(
         self,
         *,
-        tenant_id: UUID,
+        organization_id: UUID,
         artifact: Artifact | None,
         revision: ArtifactRevision,
         domain: ArtifactRunDomain | str,
@@ -36,7 +36,7 @@ class ArtifactRunService:
     ) -> ArtifactRun:
         normalized_domain = self._normalize_domain(domain)
         run = ArtifactRun(
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             artifact_id=artifact.id if artifact else revision.artifact_id,
             revision_id=revision.id,
             domain=normalized_domain,
@@ -72,7 +72,7 @@ class ArtifactRunService:
     async def create_test_run(
         self,
         *,
-        tenant_id: UUID,
+        organization_id: UUID,
         artifact: Artifact | None,
         revision: ArtifactRevision,
         input_payload: Any,
@@ -81,7 +81,7 @@ class ArtifactRunService:
         queue_class: str = "artifact_test",
     ) -> ArtifactRun:
         return await self.create_run(
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             artifact=artifact,
             revision=revision,
             domain=ArtifactRunDomain.TEST,

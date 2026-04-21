@@ -10,7 +10,7 @@ const listOperatorSpecsMock = jest.fn()
 const getPipelineToolBindingMock = jest.fn()
 const listPipelineVersionsMock = jest.fn()
 
-const tenantContext = { currentTenant: { slug: "tenant-1" } }
+const organizationContext = { currentOrganization: { id: "organization-1" } }
 const routerMock = { push: pushMock, replace: replaceMock }
 const searchParamsMock = { get: () => null }
 
@@ -20,8 +20,8 @@ jest.mock("next/navigation", () => ({
   useSearchParams: () => searchParamsMock,
 }))
 
-jest.mock("@/contexts/TenantContext", () => ({
-  useTenant: () => tenantContext,
+jest.mock("@/contexts/OrganizationContext", () => ({
+  useOrganization: () => organizationContext,
 }))
 
 jest.mock("@/components/direction-provider", () => ({
@@ -91,10 +91,10 @@ describe("pipeline builder stale executable feedback", () => {
     getOperatorCatalogMock.mockResolvedValue({})
     listOperatorSpecsMock.mockResolvedValue({})
     listVisualPipelinesMock.mockResolvedValue({
-      pipelines: [
+      items: [
         {
           id: "pipeline-123",
-          tenant_id: "tenant-1",
+          organization_id: "organization-1",
           name: "Retrieval Pipeline",
           description: "Pipeline description",
           pipeline_type: "retrieval",

@@ -38,7 +38,7 @@ def test_execute_requires_explicit_action():
         "inputs": {
             "user_id": "u1",
             "grant_id": "g1",
-            "tenant_id": "t1",
+            "organization_id": "t1",
             "principal_id": "p1",
             "requested_scopes": ["*"],
             "initiator_user_id": "u1",
@@ -62,7 +62,7 @@ def test_execute_rejects_wrapped_json_action_from_value_wrapper():
             "inputs": {
                 "user_id": "u1",
                 "grant_id": "g1",
-                "tenant_id": "tenant-1",
+                "organization_id": "tenant-1",
                 "principal_id": "p1",
                 "initiator_user_id": "u1",
                 "run_id": "r1",
@@ -87,7 +87,7 @@ def test_execute_rejects_noncanonical_wrapped_text_input():
         config={},
         context={
             "inputs": {
-                "tenant_id": "tenant-1",
+                "organization_id": "tenant-1",
                 "text": '{"action":"agents.get","payload":{"agent_id":"agent-1"}}',
             }
         },
@@ -112,7 +112,7 @@ def test_execute_reports_noncanonical_wrapped_json_as_contract_error():
         config={},
         context={
             "inputs": {
-                "tenant_id": "tenant-1",
+                "organization_id": "tenant-1",
                 "value": malformed,
                 "query": malformed,
             }
@@ -133,7 +133,7 @@ def test_execute_rejects_deprecated_plan_actions():
     out = handler.execute(
         state={},
         config={},
-        context={"inputs": {"action": "validate_plan", "tenant_id": "tenant-1", "token": "t"}},
+        context={"inputs": {"action": "validate_plan", "organization_id": "tenant-1", "token": "t"}},
     )
 
     assert out["context"]["action"] == "validate_plan"
@@ -145,7 +145,7 @@ def test_execute_reports_unknown_rag_action_explicitly():
     out = handler.execute(
         state={},
         config={},
-        context={"inputs": {"action": "rag.nodes.catalog", "tenant_id": "tenant-1", "token": "t"}},
+        context={"inputs": {"action": "rag.nodes.catalog", "organization_id": "tenant-1", "token": "t"}},
     )
 
     assert out["context"]["action"] == "rag.nodes.catalog"
@@ -169,7 +169,7 @@ def test_execute_maps_legacy_alias_to_canonical_action(monkeypatch):
     out = handler.execute(
         state={},
         config={},
-        context={"inputs": {"action": "fetch_catalog", "tenant_id": "tenant-1", "token": "t"}},
+        context={"inputs": {"action": "fetch_catalog", "organization_id": "tenant-1", "token": "t"}},
     )
 
     assert out["context"]["action"] == "catalog.list_capabilities"
@@ -199,7 +199,7 @@ def test_execute_maps_create_agent_alias_to_agents_create(monkeypatch):
         context={
             "inputs": {
                 "action": "create_agent",
-                "tenant_id": "tenant-1",
+                "organization_id": "tenant-1",
                 "payload": {"name": "Support Bot", "slug": "support-bot", "graph_definition": {"nodes": [], "edges": []}},
             }
         },

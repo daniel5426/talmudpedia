@@ -49,9 +49,9 @@ async def _cleanup_monitor_tasks():
             pass
 
 
-async def _create_app_and_draft_revision(db_session, *, tenant_id: UUID, user_id: UUID, agent_id: UUID) -> tuple[str, str]:
+async def _create_app_and_draft_revision(db_session, *, organization_id: UUID, user_id: UUID, agent_id: UUID) -> tuple[str, str]:
     app = PublishedApp(
-        tenant_id=tenant_id,
+        organization_id=organization_id,
         agent_id=agent_id,
         name=f"Coding Agent V2 App {uuid4().hex[:6]}",
         slug=f"coding-agent-v2-{uuid4().hex[:10]}",
@@ -125,7 +125,7 @@ def _install_fake_create_run(monkeypatch):
     ):
         _ = messages, requested_scopes, requested_model_id, execution_engine
         run = AgentRun(
-            tenant_id=app.tenant_id,
+            organization_id=app.organization_id,
             agent_id=app.agent_id,
             user_id=actor_id,
             initiator_user_id=actor_id,
@@ -166,7 +166,7 @@ async def test_v2_submit_prompt_started_then_run_active(client, db_session, monk
     headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
     app_id, _ = await _create_app_and_draft_revision(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         agent_id=agent.id,
     )
@@ -206,7 +206,7 @@ async def test_create_run_persists_opencode_session_on_first_chat_turn(client, d
     headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
     app_id, draft_revision_id = await _create_app_and_draft_revision(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         agent_id=agent.id,
     )
@@ -226,7 +226,7 @@ async def test_create_run_persists_opencode_session_on_first_chat_turn(client, d
     async def _fake_start_run(profile_id, input_params, user_id=None, background=False, mode=None, requested_scopes=None):
         _ = profile_id, background, mode, requested_scopes
         run = AgentRun(
-            tenant_id=tenant.id,
+            organization_id=tenant.id,
             agent_id=agent.id,
             user_id=user_id,
             initiator_user_id=user_id,
@@ -238,8 +238,8 @@ async def test_create_run_persists_opencode_session_on_first_chat_turn(client, d
         await db_session.refresh(run)
         return run.id
 
-    async def _fake_profile(*, tenant_id, actor_user_id):
-        _ = tenant_id, actor_user_id
+    async def _fake_profile(*, organization_id, actor_user_id):
+        _ = organization_id, actor_user_id
         return SimpleNamespace(id=agent.id), True
 
     async def _fake_sandbox_context(*, run, app, base_revision, actor_id):
@@ -291,7 +291,7 @@ async def test_create_run_reuses_persisted_opencode_session_for_followup_turn(cl
     headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
     app_id, draft_revision_id = await _create_app_and_draft_revision(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         agent_id=agent.id,
     )
@@ -315,7 +315,7 @@ async def test_create_run_reuses_persisted_opencode_session_for_followup_turn(cl
     async def _fake_start_run(profile_id, input_params, user_id=None, background=False, mode=None, requested_scopes=None):
         _ = profile_id, background, mode, requested_scopes
         run = AgentRun(
-            tenant_id=tenant.id,
+            organization_id=tenant.id,
             agent_id=agent.id,
             user_id=user_id,
             initiator_user_id=user_id,
@@ -327,8 +327,8 @@ async def test_create_run_reuses_persisted_opencode_session_for_followup_turn(cl
         await db_session.refresh(run)
         return run.id
 
-    async def _fake_profile(*, tenant_id, actor_user_id):
-        _ = tenant_id, actor_user_id
+    async def _fake_profile(*, organization_id, actor_user_id):
+        _ = organization_id, actor_user_id
         return SimpleNamespace(id=agent.id), True
 
     async def _fake_sandbox_context(*, run, app, base_revision, actor_id):
@@ -398,7 +398,7 @@ async def test_v2_stream_emits_assistant_delta_per_chunk_and_old_route_is_404(cl
     headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
     app_id, draft_revision_id = await _create_app_and_draft_revision(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         agent_id=agent.id,
     )
@@ -409,7 +409,7 @@ async def test_v2_stream_emits_assistant_delta_per_chunk_and_old_route_is_404(cl
         title="Streaming Test",
     )
     run = AgentRun(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         agent_id=agent.id,
         user_id=user.id,
         initiator_user_id=user.id,
@@ -505,7 +505,7 @@ async def test_v2_stream_emits_live_context_status_after_tool_events(db_session,
     tenant, user, _org_unit, agent = await seed_admin_tenant_and_agent(db_session)
     app_id, draft_revision_id = await _create_app_and_draft_revision(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         agent_id=agent.id,
     )
@@ -515,9 +515,9 @@ async def test_v2_stream_emits_live_context_status_after_tool_events(db_session,
         user_id=user.id,
         title="Context Window Test",
     )
-    app = SimpleNamespace(id=UUID(app_id), tenant_id=tenant.id, agent_id=agent.id)
+    app = SimpleNamespace(id=UUID(app_id), organization_id=tenant.id, agent_id=agent.id)
     run = AgentRun(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         agent_id=agent.id,
         user_id=user.id,
         initiator_user_id=user.id,
@@ -578,7 +578,7 @@ async def test_v2_stream_missing_terminal_does_not_force_fail_by_default(db_sess
     _ = org_unit
     app_id, draft_revision_id = await _create_app_and_draft_revision(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         agent_id=agent.id,
     )
@@ -588,9 +588,9 @@ async def test_v2_stream_missing_terminal_does_not_force_fail_by_default(db_sess
         user_id=user.id,
         title="Missing Terminal Test",
     )
-    app = SimpleNamespace(id=UUID(app_id), tenant_id=tenant.id)
+    app = SimpleNamespace(id=UUID(app_id), organization_id=tenant.id)
     run = AgentRun(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         agent_id=agent.id,
         user_id=user.id,
         initiator_user_id=user.id,
@@ -630,7 +630,7 @@ async def test_v2_tool_event_history_append_preserves_external_updates(db_sessio
     _ = org_unit
     app_id, draft_revision_id = await _create_app_and_draft_revision(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         agent_id=agent.id,
     )
@@ -642,7 +642,7 @@ async def test_v2_tool_event_history_append_preserves_external_updates(db_sessio
     )
 
     run = AgentRun(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         agent_id=agent.id,
         user_id=user.id,
         initiator_user_id=user.id,
@@ -725,13 +725,13 @@ async def test_v2_answer_question_endpoint(client, db_session, monkeypatch):
     headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
     app_id, draft_revision_id = await _create_app_and_draft_revision(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         agent_id=agent.id,
     )
 
     run = AgentRun(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         agent_id=agent.id,
         user_id=user.id,
         initiator_user_id=user.id,
@@ -812,7 +812,7 @@ async def test_v2_cancel_marks_cancelled(client, db_session, monkeypatch):
     headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
     app_id, _ = await _create_app_and_draft_revision(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         agent_id=agent.id,
     )
@@ -866,7 +866,7 @@ async def test_v2_cancel_closes_stream_when_runtime_keeps_non_terminal_events(cl
     headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
     app_id, _ = await _create_app_and_draft_revision(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         agent_id=agent.id,
     )

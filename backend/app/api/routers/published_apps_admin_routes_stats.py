@@ -13,7 +13,7 @@ from app.services.published_app_analytics_service import PublishedAppAnalyticsSe
 from .published_apps_admin_access import (
     _assert_can_manage_apps,
     _get_app_for_tenant,
-    _resolve_tenant_admin_context,
+    _resolve_organization_admin_context,
 )
 from .published_apps_admin_shared import router
 
@@ -117,12 +117,12 @@ async def list_published_app_stats(
     principal: Dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ):
-    ctx = await _resolve_tenant_admin_context(request, principal, db)
+    ctx = await _resolve_organization_admin_context(request, principal, db)
     _assert_can_manage_apps(ctx)
     start, end = _resolve_period(days, start_date, end_date)
     service = PublishedAppAnalyticsService(db)
     items = await service.build_stats_for_tenant(
-        tenant_id=ctx["tenant_id"],
+        organization_id=ctx["organization_id"],
         start=start,
         end=end,
     )
@@ -144,13 +144,13 @@ async def get_published_app_stats(
     principal: Dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ):
-    ctx = await _resolve_tenant_admin_context(request, principal, db)
+    ctx = await _resolve_organization_admin_context(request, principal, db)
     _assert_can_manage_apps(ctx)
-    await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
+    await _get_app_for_tenant(db, ctx["organization_id"], app_id)
     start, end = _resolve_period(days, start_date, end_date)
     service = PublishedAppAnalyticsService(db)
     items = await service.build_stats_for_tenant(
-        tenant_id=ctx["tenant_id"],
+        organization_id=ctx["organization_id"],
         start=start,
         end=end,
         app_id=app_id,

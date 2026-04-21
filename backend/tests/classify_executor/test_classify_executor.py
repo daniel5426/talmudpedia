@@ -37,7 +37,7 @@ def _patch_resolver(monkeypatch, response_text: str):
 
 @pytest.mark.asyncio
 async def test_classify_executor_validates_config():
-    executor = ClassifyNodeExecutor(tenant_id=None, db=None)
+    executor = ClassifyNodeExecutor(organization_id=None, db=None)
 
     result = await executor.validate_config({})
     assert result.valid is False
@@ -50,7 +50,7 @@ async def test_classify_executor_validates_config():
 async def test_classify_executor_case_insensitive_match(monkeypatch):
     _patch_resolver(monkeypatch, "alpha")
 
-    executor = ClassifyNodeExecutor(tenant_id=None, db=None)
+    executor = ClassifyNodeExecutor(organization_id=None, db=None)
     token = active_emitter.set(FakeEmitter())
     try:
         result = await executor.execute(
@@ -72,7 +72,7 @@ async def test_classify_executor_case_insensitive_match(monkeypatch):
 async def test_classify_executor_defaults_to_else(monkeypatch):
     _patch_resolver(monkeypatch, "Unknown")
 
-    executor = ClassifyNodeExecutor(tenant_id=None, db=None)
+    executor = ClassifyNodeExecutor(organization_id=None, db=None)
     result = await executor.execute(
         {"messages": [{"role": "user", "content": "hi"}]},
         {
@@ -90,7 +90,7 @@ async def test_classify_executor_defaults_to_else(monkeypatch):
 async def test_classify_emits_start_and_end(monkeypatch):
     _patch_resolver(monkeypatch, "Alpha")
 
-    executor = ClassifyNodeExecutor(tenant_id=None, db=None)
+    executor = ClassifyNodeExecutor(organization_id=None, db=None)
     fake_emitter = FakeEmitter()
     token = active_emitter.set(fake_emitter)
     try:
@@ -126,7 +126,7 @@ async def test_classify_executor_accepts_content_block_response(monkeypatch):
 
     monkeypatch.setattr(ModelResolver, "resolve", fake_resolve)
 
-    executor = ClassifyNodeExecutor(tenant_id=None, db=None)
+    executor = ClassifyNodeExecutor(organization_id=None, db=None)
     result = await executor.execute(
         {"messages": [{"role": "user", "content": "hi"}]},
         {
@@ -156,7 +156,7 @@ async def test_classify_executor_prefers_workflow_input_text(monkeypatch):
 
     monkeypatch.setattr(ModelResolver, "resolve", fake_resolve)
 
-    executor = ClassifyNodeExecutor(tenant_id=None, db=None)
+    executor = ClassifyNodeExecutor(organization_id=None, db=None)
     await executor.execute(
         {
             "workflow_input": {"text": "route this payment request"},
@@ -178,7 +178,7 @@ async def test_classify_executor_prefers_workflow_input_text(monkeypatch):
 async def test_classify_executor_routes_with_stable_category_id(monkeypatch):
     _patch_resolver(monkeypatch, "Support")
 
-    executor = ClassifyNodeExecutor(tenant_id=None, db=None)
+    executor = ClassifyNodeExecutor(organization_id=None, db=None)
     result = await executor.execute(
         {"messages": [{"role": "user", "content": "hi"}]},
         {

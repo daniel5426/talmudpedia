@@ -10,7 +10,7 @@ import { Separator } from "@/components/ui/separator"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, SheetFooter } from "@/components/ui/sheet"
 import { Search, X, ArrowLeft, Check, Wrench, Globe, Box, Code2, ChevronRight } from "lucide-react"
-import { TOOL_BUCKETS, buildToolsets, getToolBucket, getSubtypeLabel, getToolsetSelectionState, ToolsetGroup } from "@/lib/tool-types"
+import { TOOL_BUCKETS, buildToolsets, getToolBucket, getToolIdentifier, getSubtypeLabel, getToolsetSelectionState, ToolsetGroup } from "@/lib/tool-types"
 import { cn } from "@/lib/utils"
 import { ToolDefinitionDetailBody } from "./tool-definition-detail-body"
 
@@ -75,7 +75,7 @@ export function ToolPicker({ tools, value, onChange, open, onOpenChange }: ToolP
         if (!normalizedQuery) return true
         return (
             matchesQuery(tool.name) ||
-            matchesQuery(tool.slug) ||
+            matchesQuery(getToolIdentifier(tool)) ||
             matchesQuery(tool.description)
         )
     }

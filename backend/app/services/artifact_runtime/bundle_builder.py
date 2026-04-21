@@ -24,7 +24,7 @@ class ArtifactBundleBuilder:
         manifest = {
             "artifact_id": str(revision.artifact_id) if revision.artifact_id else None,
             "revision_id": str(revision.id),
-            "tenant_id": str(revision.tenant_id),
+            "organization_id": str(revision.organization_id),
             "display_name": revision.display_name,
             "description": revision.description,
             "kind": getattr(revision.kind, "value", revision.kind),

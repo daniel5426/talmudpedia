@@ -6,11 +6,11 @@ import { httpClient } from "./http";
 
 export interface PromptRecord {
   id: string;
-  tenant_id: string | null;
+  organization_id: string | null;
   name: string;
   description: string | null;
   content: string;
-  scope: "tenant" | "global";
+  scope: "organization" | "global";
   status: "active" | "archived";
   ownership: "manual" | "system";
   managed_by: string | null;
@@ -45,7 +45,7 @@ export interface PromptUsageRecord {
   resource_name: string;
   surface: string;
   location_pointer: string;
-  tenant_id: string | null;
+  organization_id: string | null;
   node_id: string | null;
 }
 
@@ -54,7 +54,7 @@ export interface PromptMentionRecord {
   name: string;
   description: string | null;
   scope: string;
-  tenant_id: string | null;
+  organization_id: string | null;
   updated_at: string;
 }
 
@@ -62,7 +62,7 @@ export interface CreatePromptRequest {
   name: string;
   description?: string | null;
   content?: string;
-  scope?: "tenant" | "global";
+  scope?: "organization" | "global";
   allowed_surfaces?: string[];
   tags?: string[];
 }

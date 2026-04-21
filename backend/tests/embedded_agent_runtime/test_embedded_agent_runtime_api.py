@@ -16,7 +16,7 @@ from app.db.postgres.models.runtime_attachments import (
     RuntimeAttachment,
     RuntimeAttachmentStatus,
 )
-from app.services.tenant_api_key_service import TenantAPIKeyService
+from app.services.organization_api_key_service import OrganizationAPIKeyService
 from tests.published_apps._helpers import install_stub_agent_worker, seed_admin_tenant_and_agent
 
 
@@ -24,9 +24,9 @@ def _embed_headers(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
-async def _create_embed_key(db_session, *, tenant_id, created_by, scopes=None):
-    api_key, token = await TenantAPIKeyService(db_session).create_api_key(
-        tenant_id=tenant_id,
+async def _create_embed_key(db_session, *, organization_id, created_by, scopes=None):
+    api_key, token = await OrganizationAPIKeyService(db_session).create_api_key(
+        organization_id=organization_id,
         name="Embed Runtime",
         scopes=scopes or ["agents.embed"],
         created_by=created_by,
@@ -48,7 +48,7 @@ def _extract_stream_events(stream_text: str) -> list[dict]:
 @pytest.mark.asyncio
 async def test_embedded_agent_stream_persists_and_scopes_threads(client, db_session, monkeypatch):
     tenant, owner, _, agent = await seed_admin_tenant_and_agent(db_session)
-    api_key, token = await _create_embed_key(db_session, tenant_id=tenant.id, created_by=owner.id)
+    api_key, token = await _create_embed_key(db_session, organization_id=tenant.id, created_by=owner.id)
     install_stub_agent_worker(monkeypatch, content="hello from embed")
 
     stream_resp = await client.post(
@@ -101,7 +101,7 @@ async def test_embedded_agent_stream_persists_and_scopes_threads(client, db_sess
 @pytest.mark.asyncio
 async def test_embedded_agent_thread_detail_includes_run_events_and_delete_route(client, db_session, monkeypatch):
     tenant, owner, _, agent = await seed_admin_tenant_and_agent(db_session)
-    _, token = await _create_embed_key(db_session, tenant_id=tenant.id, created_by=owner.id)
+    _, token = await _create_embed_key(db_session, organization_id=tenant.id, created_by=owner.id)
     install_stub_agent_worker(monkeypatch, content="hello from embed")
 
     stream_resp = await client.post(
@@ -224,7 +224,7 @@ async def test_embedded_agent_thread_detail_includes_run_events_and_delete_route
 @pytest.mark.asyncio
 async def test_embedded_agent_thread_detail_returns_subthread_tree_when_requested(client, db_session, monkeypatch):
     tenant, owner, _, agent = await seed_admin_tenant_and_agent(db_session)
-    _, token = await _create_embed_key(db_session, tenant_id=tenant.id, created_by=owner.id)
+    _, token = await _create_embed_key(db_session, organization_id=tenant.id, created_by=owner.id)
     install_stub_agent_worker(monkeypatch, content="hello from embed")
 
     stream_resp = await client.post(
@@ -251,7 +251,7 @@ async def test_embedded_agent_thread_detail_returns_subthread_tree_when_requeste
         await db_session.flush()
 
     child_thread = AgentThread(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         agent_id=agent.id,
         external_user_id="customer-user-1",
         surface=root_thread.surface,
@@ -265,7 +265,7 @@ async def test_embedded_agent_thread_detail_returns_subthread_tree_when_requeste
     db_session.add(child_thread)
     await db_session.flush()
     child_run = AgentRun(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         agent_id=agent.id,
         initiator_user_id=owner.id,
         thread_id=child_thread.id,
@@ -304,20 +304,20 @@ async def test_embedded_agent_thread_detail_returns_subthread_tree_when_requeste
 @pytest.mark.asyncio
 async def test_embedded_agent_routes_reject_wrong_scope_revoked_keys_and_cross_user_access(client, db_session, monkeypatch):
     tenant, owner, _, agent = await seed_admin_tenant_and_agent(db_session)
-    _, token = await _create_embed_key(db_session, tenant_id=tenant.id, created_by=owner.id)
+    _, token = await _create_embed_key(db_session, organization_id=tenant.id, created_by=owner.id)
     _, wrong_scope_token = await _create_embed_key(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         created_by=owner.id,
         scopes=["agents.read"],
     )
     revoked_key, revoked_token = await _create_embed_key(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         created_by=owner.id,
         scopes=["agents.embed"],
     )
-    await TenantAPIKeyService(db_session).revoke_api_key(tenant_id=tenant.id, key_id=revoked_key.id)
+    await OrganizationAPIKeyService(db_session).revoke_api_key(organization_id=tenant.id, key_id=revoked_key.id)
     await db_session.commit()
 
     install_stub_agent_worker(monkeypatch, content="ok")
@@ -361,10 +361,10 @@ async def test_embedded_agent_routes_reject_wrong_scope_revoked_keys_and_cross_u
 @pytest.mark.asyncio
 async def test_embedded_agent_runtime_rejects_draft_agents(client, db_session):
     tenant, owner, _, _ = await seed_admin_tenant_and_agent(db_session)
-    _, token = await _create_embed_key(db_session, tenant_id=tenant.id, created_by=owner.id)
+    _, token = await _create_embed_key(db_session, organization_id=tenant.id, created_by=owner.id)
 
     draft_agent = Agent(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name="Draft Agent",
         slug="draft-agent-embed",
         status=AgentStatus.draft,
@@ -391,7 +391,7 @@ async def test_embedded_agent_attachment_upload_processing_and_delete_cleanup(
 ):
     monkeypatch.setenv("RUNTIME_ATTACHMENT_STORAGE_DIR", str(tmp_path))
     tenant, owner, _, agent = await seed_admin_tenant_and_agent(db_session)
-    _, token = await _create_embed_key(db_session, tenant_id=tenant.id, created_by=owner.id)
+    _, token = await _create_embed_key(db_session, organization_id=tenant.id, created_by=owner.id)
 
     install_stub_agent_worker(monkeypatch, content="processed attachment")
 

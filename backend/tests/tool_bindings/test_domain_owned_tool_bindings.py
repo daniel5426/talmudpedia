@@ -9,25 +9,25 @@ from sqlalchemy import select
 
 from app.api.dependencies import get_current_principal
 from app.db.postgres.models.artifact_runtime import Artifact
-from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Tenant, User
+from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Organization, User
 from app.db.postgres.models.rag import VisualPipeline
 from app.db.postgres.models.registry import ToolImplementationType, ToolRegistry, ToolStatus
 from main import app
 
 
 async def _seed_tenant_context(db_session):
-    tenant = Tenant(id=uuid.uuid4(), name="Bindings Tenant", slug=f"bindings-{uuid.uuid4().hex[:8]}")
+    tenant = Organization(id=uuid.uuid4(), name="Bindings Organization", slug=f"bindings-{uuid.uuid4().hex[:8]}")
     user = User(id=uuid.uuid4(), email=f"bindings-{uuid.uuid4().hex[:6]}@example.com", role="admin")
     org_unit = OrgUnit(
         id=uuid.uuid4(),
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name="Bindings Org",
         slug=f"bindings-org-{uuid.uuid4().hex[:6]}",
         type=OrgUnitType.org,
     )
     membership = OrgMembership(
         id=uuid.uuid4(),
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         org_unit_id=org_unit.id,
         role=OrgRole.owner,
@@ -38,13 +38,13 @@ async def _seed_tenant_context(db_session):
     return tenant, user
 
 
-def _override_principal(tenant_id, user, scopes: list[str]):
+def _override_principal(organization_id, user, scopes: list[str]):
     async def _inner():
         return {
             "type": "user",
             "user": user,
             "user_id": str(user.id),
-            "tenant_id": str(tenant_id),
+            "organization_id": str(organization_id),
             "scopes": scopes,
         }
 
@@ -174,7 +174,7 @@ async def test_tool_impl_artifact_routes_own_bound_tool_lifecycle(client, db_ses
         ["artifacts.read", "artifacts.write"],
     )
 
-    async def fake_ensure_deployment(self, *, revision, namespace, tenant_id=None):
+    async def fake_ensure_deployment(self, *, revision, namespace, organization_id=None):
         return SimpleNamespace(
             worker_name="prod-worker",
             deployment_id="dep-1",
@@ -317,7 +317,7 @@ async def test_publishing_agent_node_artifact_does_not_create_bound_tool(client,
         ["artifacts.read", "artifacts.write"],
     )
 
-    async def fake_ensure_deployment(self, *, revision, namespace, tenant_id=None):
+    async def fake_ensure_deployment(self, *, revision, namespace, organization_id=None):
         return SimpleNamespace(
             worker_name="prod-worker",
             deployment_id="dep-agent-1",

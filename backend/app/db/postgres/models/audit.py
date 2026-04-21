@@ -21,7 +21,7 @@ class AuditLog(Base):
     __tablename__ = "audit_logs"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False, index=True)
     org_unit_id = Column(UUID(as_uuid=True), ForeignKey("org_units.id"), nullable=True, index=True)
 
     actor_id = Column(UUID(as_uuid=True), nullable=False, index=True)
@@ -50,5 +50,5 @@ class AuditLog(Base):
     duration_ms = Column(Integer, nullable=True)
 
     # Relationships
-    tenant = relationship("Tenant")
+    organization = relationship("Organization")
     org_unit = relationship("OrgUnit")

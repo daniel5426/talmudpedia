@@ -156,7 +156,7 @@ async def test_langgraph_adapter_cancels_graph_task_when_consumer_is_cancelled()
 
 @pytest.mark.asyncio
 async def test_node_factory_missing_executor_returns_state():
-    node_fn = build_node_fn(GraphIRNode(id="missing", type="not_registered"), tenant_id=None, db=None)
+    node_fn = build_node_fn(GraphIRNode(id="missing", type="not_registered"), organization_id=None, db=None)
     result = await node_fn({"ok": True})
     assert result == {"ok": True}
 

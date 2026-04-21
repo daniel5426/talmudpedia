@@ -5,7 +5,7 @@ export type FileEntryType = "file" | "directory"
 
 export interface FileSpace {
   id: string
-  tenant_id: string
+  organization_id: string
   project_id: string
   name: string
   description: string | null
@@ -49,7 +49,7 @@ export interface FileEntryRevision {
 
 export interface AgentFileSpaceLink {
   id: string
-  tenant_id: string
+  organization_id: string
   project_id: string
   agent_id: string
   file_space_id: string

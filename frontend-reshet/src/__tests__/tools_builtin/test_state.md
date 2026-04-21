@@ -1,6 +1,6 @@
 # Tools Built-in Frontend Tests
 
-Last Updated: 2026-03-31
+Last Updated: 2026-04-21
 
 ## Scope
 Covers built-in tools UX under the single-list architecture, plus bucket/subtype classification behavior.
@@ -41,6 +41,13 @@ Covers built-in tools UX under the single-list architecture, plus bucket/subtype
 - Command: `npm test -- --runInBand src/__tests__/tools_builtin/tools_builtin_page.test.tsx`
 - Date/Time: 2026-02-15 (local)
 - Result: pass (`1 suite, 2 passed, 2 skipped`)
+- Command: `cd frontend-reshet && npm exec pnpm -- test -- --runTestsByPath src/__tests__/tools_builtin/tool_bucket_filtering.test.ts src/__tests__/tools_builtin/tools_builtin_page.test.tsx`
+- Date/Time: 2026-04-21 Asia/Hebron
+- Result: pass (`2 suites, 11 tests`)
+
+- Command: `cd frontend-reshet && npm exec pnpm -- test -- --runTestsByPath src/__tests__/agent_playground/playground_page_trace.test.tsx src/__tests__/tools_builtin/tools_builtin_page.test.tsx`
+- Date/Time: 2026-04-21 Asia/Hebron
+- Result: pass (`2 suites, 17 tests`). Touched frontend identity surfaces are green after the slug hard cut.
 
 ## Known gaps or follow-ups
 - Add a focused tools-page test for the agent-bound "Open Editor" route.

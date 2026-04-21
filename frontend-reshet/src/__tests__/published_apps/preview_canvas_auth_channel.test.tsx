@@ -3,11 +3,10 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { PreviewCanvas } from "@/features/apps-builder/preview/PreviewCanvas";
 
 describe("PreviewCanvas transport behavior", () => {
-  it("posts preview auth token on load and token refresh", async () => {
+  it("posts proxy-only preview auth bridge messages on load and route changes", async () => {
     const { rerender } = render(
       <PreviewCanvas
         previewUrl="https://preview.local/sandbox/session-1/"
-        previewAuthToken="preview-auth-token-1"
         transportKey="session-1:1"
         transportStatus="ready"
       />,
@@ -26,7 +25,7 @@ describe("PreviewCanvas transport behavior", () => {
       expect(postMessage).toHaveBeenCalledWith(
         expect.objectContaining({
           type: "talmudpedia.preview-auth.v1",
-          token: "preview-auth-token-1",
+          token: null,
         }),
         "https://preview.local",
       );
@@ -34,8 +33,7 @@ describe("PreviewCanvas transport behavior", () => {
 
     rerender(
       <PreviewCanvas
-        previewUrl="https://preview.local/sandbox/session-1/"
-        previewAuthToken="preview-auth-token-2"
+        previewUrl="https://preview.local/sandbox/session-1/?preview_route=%2Fchat"
         transportKey="session-1:1"
         transportStatus="ready"
       />,
@@ -45,18 +43,17 @@ describe("PreviewCanvas transport behavior", () => {
       expect(postMessage).toHaveBeenCalledWith(
         expect.objectContaining({
           type: "talmudpedia.preview-auth.v1",
-          token: "preview-auth-token-2",
+          token: null,
         }),
         "https://preview.local",
       );
     });
   });
 
-  it("keeps iframe src stable when only the preview auth token rotates", async () => {
+  it("keeps iframe src stable when only the same-session preview route changes", async () => {
     const { rerender } = render(
       <PreviewCanvas
-        previewUrl="https://preview.local/sandbox/session-1/?runtime_token=preview-auth-token-1"
-        previewAuthToken="preview-auth-token-1"
+        previewUrl="https://preview.local/sandbox/session-1/?preview_route=%2F"
         transportKey="session-1:1"
         transportStatus="ready"
       />,
@@ -64,12 +61,11 @@ describe("PreviewCanvas transport behavior", () => {
 
     const frame = await screen.findByTestId("preview-iframe");
     const initialSrc = frame.getAttribute("src");
-    expect(initialSrc).toContain("runtime_token=preview-auth-token-1");
+    expect(initialSrc).toContain("preview_route=%2F");
 
     rerender(
       <PreviewCanvas
-        previewUrl="https://preview.local/sandbox/session-1/?runtime_token=preview-auth-token-2"
-        previewAuthToken="preview-auth-token-2"
+        previewUrl="https://preview.local/sandbox/session-1/?preview_route=%2Fchat"
         transportKey="session-1:1"
         transportStatus="ready"
       />,
@@ -82,7 +78,6 @@ describe("PreviewCanvas transport behavior", () => {
     const { container, rerender } = render(
       <PreviewCanvas
         previewUrl="https://preview.local/sandbox/session-1/?preview_route=%2F"
-        previewAuthToken="preview-auth-token-1"
         transportKey="session-1:1"
         transportStatus="ready"
       />,
@@ -94,7 +89,6 @@ describe("PreviewCanvas transport behavior", () => {
     rerender(
       <PreviewCanvas
         previewUrl="https://preview.local/sandbox/session-1/?preview_route=%2Fchat"
-        previewAuthToken="preview-auth-token-1"
         transportKey="session-1:1"
         transportStatus="ready"
       />,
@@ -116,7 +110,6 @@ describe("PreviewCanvas transport behavior", () => {
     const { rerender } = render(
       <PreviewCanvas
         previewUrl="https://preview.local/sandbox/session-1/"
-        previewAuthToken="preview-auth-token-1"
         transportKey="session-1:1"
         transportStatus="ready"
       />,
@@ -128,7 +121,6 @@ describe("PreviewCanvas transport behavior", () => {
     rerender(
       <PreviewCanvas
         previewUrl="https://preview.local/sandbox/session-1/"
-        previewAuthToken="preview-auth-token-1"
         transportKey="session-1:1"
         transportStatus="reconnecting"
         hasUsableFrame={true}
@@ -169,7 +161,6 @@ describe("PreviewCanvas transport behavior", () => {
     render(
       <PreviewCanvas
         previewUrl="https://preview.local/sandbox/session-1/"
-        previewAuthToken="preview-auth-token-1"
         transportKey="session-1:1"
         transportStatus="booting"
         hasUsableFrame={false}

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 
 from sqlalchemy import select
@@ -8,9 +9,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.postgres.models.agents import Agent, AgentStatus
 from app.services.published_app_coding_agent_tools import ensure_coding_agent_tools
 
-CODING_AGENT_PROFILE_SLUG = "published-app-coding-agent"
+CODING_AGENT_PROFILE_SYSTEM_KEY = "published_app_coding_agent"
 CODING_AGENT_PROFILE_NAME = "Published App Coding Agent"
 DEFAULT_CODING_AGENT_OPENCODE_MODEL_ID = "opencode/big-pickle"
+
+
+def _system_agent_row_key(system_key: str) -> str:
+    digest = hashlib.sha1(system_key.encode("utf-8")).hexdigest()[:24]
+    return f"sys-agent-{digest}"
 
 
 def _normalize_opencode_model_id(raw_model_id: str | None) -> str:
@@ -96,18 +102,18 @@ def _build_coding_agent_graph(model_id: str, tool_ids: list[str]) -> dict:
     }
 
 
-async def resolve_coding_agent_chat_model_id(db: AsyncSession, tenant_id) -> str:
-    _ = db, tenant_id
+async def resolve_coding_agent_chat_model_id(db: AsyncSession, organization_id) -> str:
+    _ = db, organization_id
     return resolve_coding_agent_profile_model_id()
 
 
-async def ensure_coding_agent_profile(db: AsyncSession, tenant_id, *, actor_user_id=None) -> Agent:
+async def ensure_coding_agent_profile(db: AsyncSession, organization_id, *, actor_user_id=None) -> Agent:
     tool_ids = await ensure_coding_agent_tools(db)
 
     result = await db.execute(
         select(Agent).where(
-            Agent.slug == CODING_AGENT_PROFILE_SLUG,
-            Agent.tenant_id == tenant_id,
+            Agent.system_key == CODING_AGENT_PROFILE_SYSTEM_KEY,
+            Agent.organization_id == organization_id,
         )
     )
     agent = result.scalar_one_or_none()
@@ -116,9 +122,10 @@ async def ensure_coding_agent_profile(db: AsyncSession, tenant_id, *, actor_user
     if agent is None:
         graph_definition = _build_coding_agent_graph(model_id, tool_ids)
         agent = Agent(
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             name=CODING_AGENT_PROFILE_NAME,
-            slug=CODING_AGENT_PROFILE_SLUG,
+            system_key=CODING_AGENT_PROFILE_SYSTEM_KEY,
+            slug=_system_agent_row_key(CODING_AGENT_PROFILE_SYSTEM_KEY),
             description="System coding-agent profile for published app runtime editing.",
             graph_definition=graph_definition,
             tools=tool_ids,
@@ -134,6 +141,8 @@ async def ensure_coding_agent_profile(db: AsyncSession, tenant_id, *, actor_user
     graph_definition = _build_coding_agent_graph(model_id, tool_ids)
 
     agent.name = CODING_AGENT_PROFILE_NAME
+    agent.system_key = CODING_AGENT_PROFILE_SYSTEM_KEY
+    agent.slug = _system_agent_row_key(CODING_AGENT_PROFILE_SYSTEM_KEY)
     agent.description = "System coding-agent profile for published app runtime editing."
     agent.graph_definition = graph_definition
     agent.tools = tool_ids

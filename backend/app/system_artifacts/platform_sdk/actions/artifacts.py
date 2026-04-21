@@ -15,10 +15,10 @@ def list_artifacts(
     control_client_factory=control_client,
 ) -> Tuple[Optional[Any], List[Dict[str, Any]]]:
     try:
-        tenant_slug = payload.get("tenant_slug")
+        organization_id = payload.get("organization_id")
         sdk_client = control_client_factory(client)
         response = sdk_client.artifacts.list(
-            tenant_slug=tenant_slug,
+            organization_id=organization_id,
             skip=int(payload.get("skip", 0) or 0),
             limit=int(payload.get("limit", 20) or 20),
             view=str(payload.get("view") or "summary"),
@@ -46,9 +46,9 @@ def get_artifact(
         return None, [{"error": "missing_fields", "fields": ["artifact_id"]}]
 
     try:
-        tenant_slug = payload.get("tenant_slug")
+        organization_id = payload.get("organization_id")
         sdk_client = control_client_factory(client)
-        response = sdk_client.artifacts.get(str(artifact_id), tenant_slug=tenant_slug)
+        response = sdk_client.artifacts.get(str(artifact_id), organization_id=organization_id)
         return response.get("data"), []
     except ControlPlaneSDKError as exc:
         return None, [{
@@ -83,10 +83,10 @@ def create(
     try:
         sdk_client = control_client_factory(client)
         request_payload = dict(payload)
-        tenant_slug = request_payload.pop("tenant_slug", None)
+        organization_id = request_payload.pop("organization_id", None)
         response = sdk_client.artifacts.create(
             request_payload,
-            tenant_slug=tenant_slug,
+            organization_id=organization_id,
             options=request_options_builder(payload=payload, dry_run=False),
         )
         return response.get("data"), []
@@ -129,7 +129,7 @@ def update(
         response = sdk_client.artifacts.update(
             str(artifact_id),
             patch_payload,
-            tenant_slug=payload.get("tenant_slug"),
+            organization_id=payload.get("organization_id"),
             options=request_options_builder(payload=payload, dry_run=False),
         )
         return response.get("data"), []
@@ -176,7 +176,7 @@ def convert_kind(
         response = sdk_client.artifacts.convert_kind(
             str(artifact_id),
             request_payload,
-            tenant_slug=payload.get("tenant_slug"),
+            organization_id=payload.get("organization_id"),
             options=request_options_builder(payload=payload, dry_run=False),
         )
         return response.get("data"), []
@@ -211,7 +211,7 @@ def publish(
         sdk_client = control_client_factory(client)
         response = sdk_client.artifacts.publish(
             str(artifact_id),
-            tenant_slug=payload.get("tenant_slug"),
+            organization_id=payload.get("organization_id"),
             options=request_options_builder(payload=payload, dry_run=False),
         )
         return response.get("data"), []
@@ -246,7 +246,7 @@ def delete(
         sdk_client = control_client_factory(client)
         response = sdk_client.artifacts.delete(
             str(artifact_id),
-            tenant_slug=payload.get("tenant_slug"),
+            organization_id=payload.get("organization_id"),
             options=request_options_builder(payload=payload, dry_run=False),
         )
         return response.get("data") or {"deleted": True, "artifact_id": str(artifact_id)}, []
@@ -269,13 +269,13 @@ def create_test_run(
     control_client_factory=control_client,
 ) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]]]:
     request_payload = dict(payload)
-    request_payload.pop("tenant_slug", None)
+    request_payload.pop("organization_id", None)
     if not request_payload:
         return None, [{"error": "missing_fields", "fields": ["input_data"]}]
 
     try:
         sdk_client = control_client_factory(client)
-        response = sdk_client.artifacts.create_test_run(request_payload, tenant_slug=payload.get("tenant_slug"))
+        response = sdk_client.artifacts.create_test_run(request_payload, organization_id=payload.get("organization_id"))
         return response.get("data"), []
     except ControlPlaneSDKError as exc:
         return None, [{

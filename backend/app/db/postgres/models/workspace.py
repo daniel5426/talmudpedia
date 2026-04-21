@@ -23,7 +23,7 @@ class Project(Base):
     __tablename__ = "projects"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    organization_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
     name = Column(String, nullable=False)
     slug = Column(String, nullable=False, index=True)
     description = Column(Text, nullable=True)
@@ -34,7 +34,7 @@ class Project(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
-    organization = relationship("Tenant")
+    organization = relationship("Organization")
     creator = relationship("User")
 
 
@@ -43,7 +43,7 @@ class BrowserSession(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
-    organization_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
     project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
     token_hash = Column(String, nullable=False, unique=True, index=True)
     status = Column(SQLEnum(BrowserSessionStatus), default=BrowserSessionStatus.active, nullable=False)
@@ -53,5 +53,5 @@ class BrowserSession(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     user = relationship("User")
-    organization = relationship("Tenant")
+    organization = relationship("Organization")
     project = relationship("Project")

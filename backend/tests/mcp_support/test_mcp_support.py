@@ -11,7 +11,7 @@ from app.db.postgres.base import Base
 from app.api.dependencies import get_current_principal
 from app.core.runtime_urls import resolve_local_backend_origin
 from app.db.postgres.models.agents import Agent
-from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Tenant, User
+from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Organization, User
 from app.db.postgres.models.mcp import (
     McpAgentMount,
     McpApprovalPolicy,
@@ -50,18 +50,18 @@ async def ensure_mcp_tables(db_session):
 @pytest_asyncio.fixture
 async def mcp_fixture(db_session):
     suffix = uuid4().hex[:8]
-    tenant = Tenant(name=f"Tenant {suffix}", slug=f"tenant-{suffix}")
+    tenant = Organization(name=f"Organization {suffix}", slug=f"tenant-{suffix}")
     user = User(email=f"user-{suffix}@example.com", role="admin")
     db_session.add_all([tenant, user])
     await db_session.flush()
 
-    org = OrgUnit(tenant_id=tenant.id, name="Root", slug=f"root-{suffix}", type=OrgUnitType.org)
+    org = OrgUnit(organization_id=tenant.id, name="Root", slug=f"root-{suffix}", type=OrgUnitType.org)
     db_session.add(org)
     await db_session.flush()
 
     db_session.add(
         OrgMembership(
-            tenant_id=tenant.id,
+            organization_id=tenant.id,
             user_id=user.id,
             org_unit_id=org.id,
             role=OrgRole.owner,
@@ -69,7 +69,7 @@ async def mcp_fixture(db_session):
         )
     )
     agent = Agent(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         created_by=user.id,
         name=f"Agent {suffix}",
         slug=f"agent-{suffix}",
@@ -84,11 +84,11 @@ async def mcp_fixture(db_session):
 def principal_override():
     from main import app
 
-    def _install(*, tenant_id, user, scopes: list[str]):
+    def _install(*, organization_id, user, scopes: list[str]):
         async def _principal():
             return {
                 "type": "user",
-                "tenant_id": str(tenant_id),
+                "organization_id": str(organization_id),
                 "user_id": str(user.id),
                 "user": user,
                 "scopes": scopes,
@@ -106,7 +106,7 @@ async def test_mcp_runtime_lists_virtual_tools_for_applied_snapshot(db_session, 
     agent = mcp_fixture["agent"]
 
     server = McpServer(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name="Notion",
         server_url="https://mcp.notion.com/mcp",
         auth_mode=McpAuthMode.NONE.value,
@@ -118,7 +118,7 @@ async def test_mcp_runtime_lists_virtual_tools_for_applied_snapshot(db_session, 
     db_session.add_all(
         [
             McpDiscoveredTool(
-                tenant_id=tenant.id,
+                organization_id=tenant.id,
                 server_id=server.id,
                 snapshot_version=2,
                 name="search_pages",
@@ -127,7 +127,7 @@ async def test_mcp_runtime_lists_virtual_tools_for_applied_snapshot(db_session, 
                 input_schema={"type": "object", "properties": {"query": {"type": "string"}}},
             ),
             McpAgentMount(
-                tenant_id=tenant.id,
+                organization_id=tenant.id,
                 agent_id=agent.id,
                 server_id=server.id,
                 applied_snapshot_version=2,
@@ -152,7 +152,7 @@ async def test_mcp_runtime_requires_user_account_for_oauth_mount(db_session, mcp
     agent = mcp_fixture["agent"]
 
     server = McpServer(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name="Slack",
         server_url="https://mcp.slack.com/mcp",
         auth_mode=McpAuthMode.OAUTH_USER_ACCOUNT.value,
@@ -168,14 +168,14 @@ async def test_mcp_runtime_requires_user_account_for_oauth_mount(db_session, mcp
     await db_session.flush()
 
     tool = McpDiscoveredTool(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         server_id=server.id,
         snapshot_version=1,
         name="post_message",
         input_schema={"type": "object"},
     )
     mount = McpAgentMount(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         agent_id=agent.id,
         server_id=server.id,
         applied_snapshot_version=1,
@@ -199,7 +199,7 @@ async def test_mcp_runtime_requires_approval_when_mount_policy_is_ask(db_session
     agent = mcp_fixture["agent"]
 
     server = McpServer(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name="Notion",
         server_url="https://mcp.notion.com/mcp",
         auth_mode=McpAuthMode.NONE.value,
@@ -209,14 +209,14 @@ async def test_mcp_runtime_requires_approval_when_mount_policy_is_ask(db_session
     await db_session.flush()
 
     tool = McpDiscoveredTool(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         server_id=server.id,
         snapshot_version=1,
         name="create_page",
         input_schema={"type": "object"},
     )
     mount = McpAgentMount(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         agent_id=agent.id,
         server_id=server.id,
         applied_snapshot_version=1,
@@ -240,7 +240,7 @@ async def test_mcp_oauth_start_creates_state_and_uses_client_metadata_document(d
     user = mcp_fixture["user"]
 
     server = McpServer(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name="Slack",
         server_url="https://mcp.slack.com/mcp",
         auth_mode=McpAuthMode.OAUTH_USER_ACCOUNT.value,
@@ -281,7 +281,7 @@ async def test_mcp_routes_create_server_and_list_mounts(client, db_session, mcp_
     user = mcp_fixture["user"]
     agent = mcp_fixture["agent"]
     principal_override(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user=user,
         scopes=["tools.read", "tools.write", "agents.read", "agents.write"],
     )
@@ -301,7 +301,7 @@ async def test_mcp_routes_create_server_and_list_mounts(client, db_session, mcp_
     server.tool_snapshot_version = 1
     db_session.add(
         McpDiscoveredTool(
-            tenant_id=tenant.id,
+            organization_id=tenant.id,
             server_id=server.id,
             snapshot_version=1,
             name="search_docs",

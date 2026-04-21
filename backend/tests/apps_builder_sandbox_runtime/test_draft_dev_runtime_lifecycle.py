@@ -60,35 +60,37 @@ async def _noop_scope_lock(self, *, app_id, user_id):
     return None
 
 
-async def _create_builder_app(client, headers: dict[str, str], agent_id: str, *, name: str) -> str:
-    create_resp = await client.post(
-        "/admin/apps",
-        headers=headers,
-        json={
-            "name": name,
-            "agent_id": agent_id,
-            "template_key": "classic-chat",
-            "auth_enabled": True,
-            "auth_providers": ["password"],
-        },
+async def _create_builder_app(
+    db_session,
+    *,
+    organization_id,
+    user_id,
+    agent_id,
+    name: str,
+) -> str:
+    app, _revision = await _seed_builder_app_and_revision(
+        db_session,
+        organization_id=organization_id,
+        agent_id=UUID(str(agent_id)),
+        user_id=user_id,
+        name=name,
     )
-    assert create_resp.status_code == 200
-    return str(create_resp.json()["id"])
+    return str(app.id)
 
 
 async def _seed_builder_app_and_revision(
     db_session,
     *,
-    tenant_id,
+    organization_id,
     agent_id,
     user_id,
     name: str,
 ):
     app = PublishedApp(
-        tenant_id=tenant_id,
+        organization_id=organization_id,
         agent_id=agent_id,
         name=name,
-        slug=f"builder-{uuid4().hex[:10]}",
+        public_id=f"app-{uuid4().hex[:10]}",
         template_key="classic-chat",
         auth_enabled=True,
         auth_providers=["password"],
@@ -120,7 +122,7 @@ async def _seed_builder_app_and_revision(
     return app, revision
 
 
-async def _seed_second_owner(db_session, *, tenant_id, org_unit_id) -> User:
+async def _seed_second_owner(db_session, *, organization_id, org_unit_id) -> User:
     user = User(
         email=f"owner-{uuid4().hex[:8]}@example.com",
         hashed_password=get_password_hash("secret123"),
@@ -130,7 +132,7 @@ async def _seed_second_owner(db_session, *, tenant_id, org_unit_id) -> User:
     await db_session.flush()
     db_session.add(
         OrgMembership(
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             user_id=user.id,
             org_unit_id=org_unit_id,
             role=OrgRole.owner,
@@ -256,7 +258,7 @@ class _FakeSpriteRuntimeClient:
 @pytest.mark.asyncio
 async def test_shared_workspace_is_reused_across_users(client, db_session, monkeypatch: pytest.MonkeyPatch):
     tenant, user_a, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
-    user_b = await _seed_second_owner(db_session, tenant_id=tenant.id, org_unit_id=org_unit.id)
+    user_b = await _seed_second_owner(db_session, organization_id=tenant.id, org_unit_id=org_unit.id)
     headers_a = admin_headers(str(user_a.id), str(tenant.id), str(org_unit.id))
     headers_b = admin_headers(str(user_b.id), str(tenant.id), str(org_unit.id))
     fake_client = _FakeSpriteRuntimeClient()
@@ -268,7 +270,13 @@ async def test_shared_workspace_is_reused_across_users(client, db_session, monke
         classmethod(lambda cls: fake_client),
     )
 
-    app_id = await _create_builder_app(client, headers_a, str(agent.id), name="Shared Sprite App")
+    app_id = await _create_builder_app(
+        db_session,
+        organization_id=tenant.id,
+        user_id=user_a.id,
+        agent_id=agent.id,
+        name="Shared Sprite App",
+    )
 
     first_resp = await client.post(f"/admin/apps/{app_id}/builder/draft-dev/session/ensure", headers=headers_a)
     second_resp = await client.post(f"/admin/apps/{app_id}/builder/draft-dev/session/ensure", headers=headers_b)
@@ -312,7 +320,7 @@ async def test_heartbeat_refreshes_workspace_preview_metadata(client, db_session
 
     app, revision = await _seed_builder_app_and_revision(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         agent_id=agent.id,
         user_id=user.id,
         name="Heartbeat Refresh App",
@@ -342,10 +350,10 @@ async def test_heartbeat_refreshes_workspace_preview_metadata(client, db_session
 
     async def _fake_resolve_ctx(request, principal, db):
         _ = request, principal, db
-        return {"tenant_id": tenant.id, "user": user}
+        return {"organization_id": tenant.id, "user": user}
 
-    async def _fake_get_app_for_tenant(db, tenant_id, app_id):
-        _ = db, tenant_id, app_id
+    async def _fake_get_app_for_tenant(db, organization_id, app_id):
+        _ = db, organization_id, app_id
         return app
 
     async def _fake_get_session_for_scope(db, app_id, user_id):
@@ -402,7 +410,7 @@ async def test_builder_state_heartbeats_stale_degraded_session_before_serializin
 
     app, revision = await _seed_builder_app_and_revision(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         agent_id=agent.id,
         user_id=user.id,
         name="Builder State Heartbeat App",
@@ -430,10 +438,10 @@ async def test_builder_state_heartbeats_stale_degraded_session_before_serializin
 
     async def _fake_resolve_ctx(request, principal, db):
         _ = request, principal, db
-        return {"tenant_id": tenant.id, "user": user}
+        return {"organization_id": tenant.id, "user": user}
 
-    async def _fake_get_app_for_tenant(db, tenant_id, app_id):
-        _ = db, tenant_id, app_id
+    async def _fake_get_app_for_tenant(db, organization_id, app_id):
+        _ = db, organization_id, app_id
         return app
 
     async def _fake_get_revision(db, revision_id):
@@ -490,7 +498,13 @@ async def test_prefer_live_workspace_reuses_healthy_session_across_revision_mism
         classmethod(lambda cls: fake_client),
     )
 
-    app_id = await _create_builder_app(client, headers, str(agent.id), name="Prefer Live Workspace App")
+    app_id = await _create_builder_app(
+        db_session,
+        organization_id=tenant.id,
+        user_id=user.id,
+        agent_id=agent.id,
+        name="Prefer Live Workspace App",
+    )
     ensure_resp = await client.post(f"/admin/apps/{app_id}/builder/draft-dev/session/ensure", headers=headers)
     assert ensure_resp.status_code == 200
 
@@ -610,7 +624,7 @@ async def test_heartbeat_reattaches_detached_session_to_existing_workspace():
 
 @pytest.mark.asyncio
 async def test_ensure_session_failure_keeps_session_attached_to_workspace():
-    app = SimpleNamespace(id=uuid4(), tenant_id=uuid4(), slug="app", agent_id=uuid4())
+    app = SimpleNamespace(id=uuid4(), organization_id=uuid4(), public_id="app", agent_id=uuid4())
     revision = SimpleNamespace(id=uuid4(), files={"src/App.tsx": "export default 1;"}, entry_file="src/App.tsx")
     workspace = SimpleNamespace(
         id=uuid4(),
@@ -670,13 +684,13 @@ async def test_ensure_session_failure_keeps_session_attached_to_workspace():
 async def test_ensure_endpoint_reuses_live_session_without_calling_legacy_ensure_session(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    tenant_id = uuid4()
+    organization_id = uuid4()
     user_id = uuid4()
     app_id = uuid4()
     revision_id = uuid4()
     session_id = uuid4()
-    ctx = {"tenant_id": tenant_id, "user": SimpleNamespace(id=user_id)}
-    app = SimpleNamespace(id=app_id, tenant_id=tenant_id, slug="delete-sync-app", agent_id=uuid4())
+    ctx = {"organization_id": organization_id, "user": SimpleNamespace(id=user_id)}
+    app = SimpleNamespace(id=app_id, organization_id=organization_id, public_id="delete-sync-app", agent_id=uuid4())
     revision = SimpleNamespace(id=revision_id)
     session = SimpleNamespace(id=session_id)
     db = AsyncMock()
@@ -752,14 +766,14 @@ async def test_ensure_endpoint_reuses_live_session_without_calling_legacy_ensure
 async def test_sync_route_batches_operations_into_single_workspace_sync(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    tenant_id = uuid4()
+    organization_id = uuid4()
     user_id = uuid4()
     app_id = uuid4()
     revision_id = uuid4()
     session_id = uuid4()
     sandbox_id = "sprite-sandbox-1"
-    ctx = {"tenant_id": tenant_id, "user": SimpleNamespace(id=user_id)}
-    app = SimpleNamespace(id=app_id, tenant_id=tenant_id, slug="delete-sync-app", agent_id=uuid4())
+    ctx = {"organization_id": organization_id, "user": SimpleNamespace(id=user_id)}
+    app = SimpleNamespace(id=app_id, organization_id=organization_id, public_id="delete-sync-app", agent_id=uuid4())
     revision = SimpleNamespace(
         id=revision_id,
         files={
@@ -849,14 +863,14 @@ async def test_sync_route_batches_operations_into_single_workspace_sync(
 async def test_sync_route_validates_operations_before_mutating_runtime(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    tenant_id = uuid4()
+    organization_id = uuid4()
     user_id = uuid4()
     app_id = uuid4()
     revision_id = uuid4()
     session_id = uuid4()
     sandbox_id = "sprite-sandbox-1"
-    ctx = {"tenant_id": tenant_id, "user": SimpleNamespace(id=user_id)}
-    app = SimpleNamespace(id=app_id, tenant_id=tenant_id, slug="validate-sync-app", agent_id=uuid4())
+    ctx = {"organization_id": organization_id, "user": SimpleNamespace(id=user_id)}
+    app = SimpleNamespace(id=app_id, organization_id=organization_id, public_id="validate-sync-app", agent_id=uuid4())
     revision = SimpleNamespace(
         id=revision_id,
         files={
@@ -922,14 +936,14 @@ async def test_sync_route_validates_operations_before_mutating_runtime(
 async def test_sync_route_records_saved_workspace_fingerprint_and_pending_materialization(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    tenant_id = uuid4()
+    organization_id = uuid4()
     user_id = uuid4()
     app_id = uuid4()
     agent_id = uuid4()
     revision_id = uuid4()
     session_id = uuid4()
-    ctx = {"tenant_id": tenant_id, "user": SimpleNamespace(id=user_id)}
-    app = SimpleNamespace(id=app_id, tenant_id=tenant_id, slug="saved-workspace-app", agent_id=agent_id)
+    ctx = {"organization_id": organization_id, "user": SimpleNamespace(id=user_id)}
+    app = SimpleNamespace(id=app_id, organization_id=organization_id, public_id="saved-workspace-app", agent_id=agent_id)
     revision = SimpleNamespace(
         id=revision_id,
         files={
@@ -959,7 +973,7 @@ async def test_sync_route_records_saved_workspace_fingerprint_and_pending_materi
         files=synced_files,
         runtime_context=TemplateRuntimeContext(
             app_id=str(app_id),
-            app_slug="saved-workspace-app",
+            app_public_id="saved-workspace-app",
             agent_id=str(agent_id),
         ),
     )
@@ -1053,7 +1067,13 @@ async def test_heartbeat_preserves_existing_preview_base_path_when_refresh_retur
         classmethod(lambda cls: fake_client),
     )
 
-    app_id = await _create_builder_app(client, headers, str(agent.id), name="Heartbeat Base Path Preserve App")
+    app_id = await _create_builder_app(
+        db_session,
+        organization_id=tenant.id,
+        user_id=user.id,
+        agent_id=agent.id,
+        name="Heartbeat Base Path Preserve App",
+    )
 
     ensure_resp = await client.post(f"/admin/apps/{app_id}/builder/draft-dev/session/ensure", headers=headers)
     assert ensure_resp.status_code == 200
@@ -1089,7 +1109,13 @@ async def test_heartbeat_preserves_live_workspace_snapshot_metadata(
         classmethod(lambda cls: fake_client),
     )
 
-    app_id = await _create_builder_app(client, headers, str(agent.id), name="Heartbeat Snapshot Preserve App")
+    app_id = await _create_builder_app(
+        db_session,
+        organization_id=tenant.id,
+        user_id=user.id,
+        agent_id=agent.id,
+        name="Heartbeat Snapshot Preserve App",
+    )
 
     ensure_resp = await client.post(f"/admin/apps/{app_id}/builder/draft-dev/session/ensure", headers=headers)
     assert ensure_resp.status_code == 200
@@ -1138,7 +1164,7 @@ async def test_heartbeat_materializes_saved_workspace_when_live_preview_ready(
 
     app, current_revision = await _seed_builder_app_and_revision(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         agent_id=agent.id,
         user_id=user.id,
         name="Heartbeat Materialize App",
@@ -1163,7 +1189,7 @@ async def test_heartbeat_materializes_saved_workspace_when_live_preview_ready(
         files=saved_files,
         runtime_context=TemplateRuntimeContext(
             app_id=str(app.id),
-            app_slug=str(app.slug or ""),
+            app_public_id=str(app.public_id or ""),
             agent_id=str(app.agent_id or ""),
         ),
     )
@@ -1262,7 +1288,7 @@ async def test_heartbeat_materializes_live_preview_without_explicit_request(
 
     app, current_revision = await _seed_builder_app_and_revision(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         agent_id=agent.id,
         user_id=user.id,
         name="Heartbeat Auto Materialize App",
@@ -1287,7 +1313,7 @@ async def test_heartbeat_materializes_live_preview_without_explicit_request(
         files=edited_files,
         runtime_context=TemplateRuntimeContext(
             app_id=str(app.id),
-            app_slug=str(app.slug or ""),
+            app_public_id=str(app.public_id or ""),
             agent_id=str(app.agent_id or ""),
         ),
     )
@@ -1370,7 +1396,7 @@ async def test_materializer_reuses_current_revision_when_workspace_build_is_unch
     tenant, user, _org_unit, agent = await seed_admin_tenant_and_agent(db_session)
     app, _ = await _seed_builder_app_and_revision(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         agent_id=agent.id,
         user_id=user.id,
         name="Materializer Reuse App",
@@ -1478,7 +1504,7 @@ async def test_heartbeat_restores_missing_live_workspace_snapshot_from_runtime(
     )
     app, current_revision = await _seed_builder_app_and_revision(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         agent_id=agent.id,
         user_id=user.id,
         name="Heartbeat Snapshot Restore App",
@@ -1559,7 +1585,7 @@ async def test_heartbeat_refreshes_stale_live_workspace_snapshot_when_preview_di
     )
     app, current_revision = await _seed_builder_app_and_revision(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         agent_id=agent.id,
         user_id=user.id,
         name="Heartbeat Snapshot Refresh App",
@@ -1636,7 +1662,13 @@ async def test_heartbeat_restores_live_snapshot_with_shared_builder_file_policy(
         classmethod(lambda cls: fake_client),
     )
 
-    app_id = await _create_builder_app(client, headers, str(agent.id), name="Heartbeat Snapshot Policy App")
+    app_id = await _create_builder_app(
+        db_session,
+        organization_id=tenant.id,
+        user_id=user.id,
+        agent_id=agent.id,
+        name="Heartbeat Snapshot Policy App",
+    )
 
     ensure_resp = await client.post(f"/admin/apps/{app_id}/builder/draft-dev/session/ensure", headers=headers)
     assert ensure_resp.status_code == 200
@@ -1673,7 +1705,7 @@ async def test_heartbeat_restores_live_snapshot_with_shared_builder_file_policy(
 @pytest.mark.asyncio
 async def test_stop_detaches_sessions_and_sweeper_destroys_dormant_workspace(client, db_session, monkeypatch: pytest.MonkeyPatch):
     tenant, user_a, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
-    user_b = await _seed_second_owner(db_session, tenant_id=tenant.id, org_unit_id=org_unit.id)
+    user_b = await _seed_second_owner(db_session, organization_id=tenant.id, org_unit_id=org_unit.id)
     headers_a = admin_headers(str(user_a.id), str(tenant.id), str(org_unit.id))
     headers_b = admin_headers(str(user_b.id), str(tenant.id), str(org_unit.id))
     fake_client = _FakeSpriteRuntimeClient()
@@ -1685,7 +1717,13 @@ async def test_stop_detaches_sessions_and_sweeper_destroys_dormant_workspace(cli
         classmethod(lambda cls: fake_client),
     )
 
-    app_id = await _create_builder_app(client, headers_a, str(agent.id), name="Dormant Sprite App")
+    app_id = await _create_builder_app(
+        db_session,
+        organization_id=tenant.id,
+        user_id=user_a.id,
+        agent_id=agent.id,
+        name="Dormant Sprite App",
+    )
 
     first_resp = await client.post(f"/admin/apps/{app_id}/builder/draft-dev/session/ensure", headers=headers_a)
     second_resp = await client.post(f"/admin/apps/{app_id}/builder/draft-dev/session/ensure", headers=headers_b)
@@ -1737,7 +1775,13 @@ async def test_deleted_sprite_is_resynced_on_next_ensure(client, db_session, mon
         classmethod(lambda cls: fake_client),
     )
 
-    app_id = await _create_builder_app(client, headers, str(agent.id), name="Restart Sprite App")
+    app_id = await _create_builder_app(
+        db_session,
+        organization_id=tenant.id,
+        user_id=user.id,
+        agent_id=agent.id,
+        name="Restart Sprite App",
+    )
 
     first_resp = await client.post(f"/admin/apps/{app_id}/builder/draft-dev/session/ensure", headers=headers)
     assert first_resp.status_code == 200
@@ -1770,7 +1814,13 @@ async def test_app_delete_destroys_shared_workspace(client, db_session, monkeypa
         classmethod(lambda cls: fake_client),
     )
 
-    app_id = await _create_builder_app(client, headers, str(agent.id), name="Delete Sprite App")
+    app_id = await _create_builder_app(
+        db_session,
+        organization_id=tenant.id,
+        user_id=user.id,
+        agent_id=agent.id,
+        name="Delete Sprite App",
+    )
 
     ensure_resp = await client.post(f"/admin/apps/{app_id}/builder/draft-dev/session/ensure", headers=headers)
     assert ensure_resp.status_code == 200

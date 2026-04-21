@@ -27,7 +27,7 @@ export const useReactArtifactPanel = ({
 
   const storageKey = useMemo(() => {
     if (!tenantKey && !chatId) return null;
-    return getStorageKey(tenantKey ?? "unknown-tenant", chatId ?? "unknown-chat");
+    return getStorageKey(tenantKey ?? "unknown-organization", chatId ?? "unknown-chat");
   }, [tenantKey, chatId]);
 
   useEffect(() => {

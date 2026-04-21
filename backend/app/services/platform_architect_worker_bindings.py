@@ -10,10 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.postgres.models.agent_threads import AgentThread
 from app.db.postgres.models.agents import AgentRun, RunStatus
 from app.db.postgres.models.artifact_runtime import ArtifactCodingSession, ArtifactRun
-from app.services.artifact_coding_agent_profile import (
-    ARTIFACT_CODING_AGENT_PROFILE_SLUG,
-    ensure_artifact_coding_agent_profile,
-)
+from app.services.artifact_coding_agent_profile import ensure_artifact_coding_agent_profile
 from app.services.artifact_coding_runtime_service import ArtifactCodingRuntimeService
 from app.services.artifact_runtime.revision_service import ArtifactRevisionService
 
@@ -45,7 +42,7 @@ class WorkerBindingAdapter(Protocol):
     async def prepare(
         self,
         *,
-        tenant_id: UUID,
+        organization_id: UUID,
         user_id: UUID,
         binding_payload: dict[str, Any],
         replace_snapshot: bool,
@@ -55,7 +52,7 @@ class WorkerBindingAdapter(Protocol):
     async def get_state(
         self,
         *,
-        tenant_id: UUID,
+        organization_id: UUID,
         user_id: UUID,
         binding_ref: WorkerBindingRef,
         reconcile_run_id: UUID | None,
@@ -65,7 +62,7 @@ class WorkerBindingAdapter(Protocol):
     async def build_spawn_payload(
         self,
         *,
-        tenant_id: UUID,
+        organization_id: UUID,
         user_id: UUID,
         binding_ref: WorkerBindingRef,
         prompt: str,
@@ -77,7 +74,7 @@ class WorkerBindingAdapter(Protocol):
     async def register_spawned_run(
         self,
         *,
-        tenant_id: UUID,
+        organization_id: UUID,
         user_id: UUID,
         binding_ref: WorkerBindingRef,
         run_id: UUID,
@@ -89,7 +86,7 @@ class WorkerBindingAdapter(Protocol):
     async def persist_artifact(
         self,
         *,
-        tenant_id: UUID,
+        organization_id: UUID,
         user_id: UUID,
         binding_ref: WorkerBindingRef,
         mode: str,
@@ -118,7 +115,7 @@ class ArtifactSharedDraftBindingAdapter:
     async def _resolve_binding_session(
         self,
         *,
-        tenant_id: UUID,
+        organization_id: UUID,
         user_id: UUID,
         binding_id: str,
     ) -> ArtifactCodingSession:
@@ -127,7 +124,7 @@ class ArtifactSharedDraftBindingAdapter:
         except Exception as exc:
             raise ValueError("Invalid binding_ref.binding_id") from exc
         session = await self.runtime.history.get_session_for_user(
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             user_id=user_id,
             session_id=session_id,
         )
@@ -138,7 +135,7 @@ class ArtifactSharedDraftBindingAdapter:
     async def _latest_session_for_scope(
         self,
         *,
-        tenant_id: UUID,
+        organization_id: UUID,
         user_id: UUID,
         artifact_id: UUID | None,
         draft_key: str | None,
@@ -148,7 +145,7 @@ class ArtifactSharedDraftBindingAdapter:
             .join(AgentThread, ArtifactCodingSession.agent_thread_id == AgentThread.id)
             .where(
                 and_(
-                    ArtifactCodingSession.tenant_id == tenant_id,
+                    ArtifactCodingSession.organization_id == organization_id,
                     AgentThread.user_id == user_id,
                 )
             )
@@ -169,7 +166,7 @@ class ArtifactSharedDraftBindingAdapter:
     async def prepare(
         self,
         *,
-        tenant_id: UUID,
+        organization_id: UUID,
         user_id: UUID,
         binding_payload: dict[str, Any],
         replace_snapshot: bool,
@@ -218,19 +215,19 @@ class ArtifactSharedDraftBindingAdapter:
         else:
             raise ValueError("Unsupported prepare_mode")
 
-        artifact_agent = await ensure_artifact_coding_agent_profile(self.db, tenant_id, actor_user_id=user_id)
+        artifact_agent = await ensure_artifact_coding_agent_profile(self.db, organization_id, actor_user_id=user_id)
 
         session_id: UUID | None = None
         if explicit_binding_id:
             session = await self._resolve_binding_session(
-                tenant_id=tenant_id,
+                organization_id=organization_id,
                 user_id=user_id,
                 binding_id=explicit_binding_id,
             )
             session_id = session.id
         else:
             latest = await self._latest_session_for_scope(
-                tenant_id=tenant_id,
+                organization_id=organization_id,
                 user_id=user_id,
                 artifact_id=artifact_id,
                 draft_key=draft_key,
@@ -238,7 +235,7 @@ class ArtifactSharedDraftBindingAdapter:
             session_id = latest.id if latest is not None else None
 
         prepared = await self.runtime.prepare_session(
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             user_id=user_id,
             agent_id=artifact_agent.id,
             title_prompt=title_prompt or "Platform Architect artifact work binding",
@@ -258,9 +255,9 @@ class ArtifactSharedDraftBindingAdapter:
             or prepared.session.linked_artifact_id
         )
         if artifact_id_for_load is not None:
-            artifact = await self.runtime.registry.get_tenant_artifact(
+            artifact = await self.runtime.registry.get_organization_artifact(
                 artifact_id=artifact_id_for_load,
-                tenant_id=tenant_id,
+                organization_id=organization_id,
             )
         last_test_run = await self.db.get(ArtifactRun, prepared.shared_draft.last_test_run_id) if prepared.shared_draft.last_test_run_id else None
         runtime_state = self.runtime.serialize_runtime_state(
@@ -273,7 +270,7 @@ class ArtifactSharedDraftBindingAdapter:
         return {
             "binding_ref": WorkerBindingRef(self.binding_type, str(prepared.session.id)).as_dict(),
             "binding_type": self.binding_type,
-            "worker_agent_slug": ARTIFACT_CODING_AGENT_PROFILE_SLUG,
+            "worker_agent_id": str(artifact_agent.id),
             "binding_state": runtime_state,
             "active_run_id": str(active_run.id) if active_run else None,
             "active_run_status": str(getattr(active_run.status, "value", active_run.status)) if active_run else None,
@@ -286,18 +283,18 @@ class ArtifactSharedDraftBindingAdapter:
     async def get_state(
         self,
         *,
-        tenant_id: UUID,
+        organization_id: UUID,
         user_id: UUID,
         binding_ref: WorkerBindingRef,
         reconcile_run_id: UUID | None,
     ) -> dict[str, Any]:
         session = await self._resolve_binding_session(
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             user_id=user_id,
             binding_id=binding_ref.binding_id,
         )
         session, shared_draft, artifact, run, last_test_run = await self.runtime.get_session_state_for_user(
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             user_id=user_id,
             session_id=session.id,
             reconcile_run_id=reconcile_run_id,
@@ -310,10 +307,11 @@ class ArtifactSharedDraftBindingAdapter:
             run=run,
             last_test_run=last_test_run,
         )
+        artifact_agent = await ensure_artifact_coding_agent_profile(self.db, organization_id, actor_user_id=user_id)
         return {
             "binding_ref": binding_ref.as_dict(),
             "binding_type": self.binding_type,
-            "worker_agent_slug": ARTIFACT_CODING_AGENT_PROFILE_SLUG,
+            "worker_agent_id": str(artifact_agent.id),
             "binding_state": runtime_state,
             "active_run_id": str(active_run.id) if active_run else None,
             "active_run_status": str(getattr(active_run.status, "value", active_run.status)) if active_run else None,
@@ -326,7 +324,7 @@ class ArtifactSharedDraftBindingAdapter:
     async def build_spawn_payload(
         self,
         *,
-        tenant_id: UUID,
+        organization_id: UUID,
         user_id: UUID,
         binding_ref: WorkerBindingRef,
         prompt: str,
@@ -334,7 +332,7 @@ class ArtifactSharedDraftBindingAdapter:
         task: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         session = await self._resolve_binding_session(
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             user_id=user_id,
             binding_id=binding_ref.binding_id,
         )
@@ -345,7 +343,7 @@ class ArtifactSharedDraftBindingAdapter:
             if last_status not in TERMINAL_RUN_STATUSES:
                 raise RuntimeError("BINDING_RUN_ACTIVE")
         prepared = await self.runtime.prepare_session_run_input(
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             user_id=user_id,
             session=session,
             shared_draft=shared_draft,
@@ -357,8 +355,9 @@ class ArtifactSharedDraftBindingAdapter:
                 "architect_worker_task": task or None,
             },
         )
+        artifact_agent = await ensure_artifact_coding_agent_profile(self.db, organization_id, actor_user_id=user_id)
         return {
-            "worker_agent_slug": ARTIFACT_CODING_AGENT_PROFILE_SLUG,
+            "worker_agent_id": str(artifact_agent.id),
             "thread_id": prepared["thread_id"],
             "mapped_input_payload": prepared["input_params"],
         }
@@ -366,7 +365,7 @@ class ArtifactSharedDraftBindingAdapter:
     async def register_spawned_run(
         self,
         *,
-        tenant_id: UUID,
+        organization_id: UUID,
         user_id: UUID,
         binding_ref: WorkerBindingRef,
         run_id: UUID,
@@ -374,13 +373,13 @@ class ArtifactSharedDraftBindingAdapter:
         prompt_role: str,
     ) -> dict[str, Any]:
         session = await self._resolve_binding_session(
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             user_id=user_id,
             binding_id=binding_ref.binding_id,
         )
         shared_draft = await self.runtime.shared_drafts.resolve_for_session(session=session)
         run = await self.db.get(AgentRun, run_id)
-        if run is None or run.tenant_id != tenant_id:
+        if run is None or run.organization_id != organization_id:
             raise ValueError("Spawned run not found")
         await self.runtime.register_spawned_run(
             session=session,
@@ -389,10 +388,11 @@ class ArtifactSharedDraftBindingAdapter:
             prompt=prompt,
             prompt_role=prompt_role,
         )
+        artifact_agent = await ensure_artifact_coding_agent_profile(self.db, organization_id, actor_user_id=user_id)
         return {
             "binding_ref": binding_ref.as_dict(),
             "binding_type": self.binding_type,
-            "worker_agent_slug": ARTIFACT_CODING_AGENT_PROFILE_SLUG,
+            "worker_agent_id": str(artifact_agent.id),
             "run_id": str(run.id),
             "status": str(getattr(run.status, "value", run.status)),
         }
@@ -400,7 +400,7 @@ class ArtifactSharedDraftBindingAdapter:
     async def persist_artifact(
         self,
         *,
-        tenant_id: UUID,
+        organization_id: UUID,
         user_id: UUID,
         binding_ref: WorkerBindingRef,
         mode: str,
@@ -410,12 +410,12 @@ class ArtifactSharedDraftBindingAdapter:
             raise ValueError("mode must be one of auto, create, update")
 
         session = await self._resolve_binding_session(
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             user_id=user_id,
             binding_id=binding_ref.binding_id,
         )
         session, shared_draft, artifact, run, last_test_run = await self.runtime.get_session_state_for_user(
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             user_id=user_id,
             session_id=session.id,
         )
@@ -469,7 +469,7 @@ class ArtifactSharedDraftBindingAdapter:
             if not isinstance(runtime_payload, dict):
                 raise ValueError("Binding create runtime payload is invalid")
             artifact = await revision_service.create_artifact(
-                tenant_id=tenant_id,
+                organization_id=organization_id,
                 created_by=user_id,
                 display_name=str(artifact_payload.get("display_name") or "").strip(),
                 description=artifact_payload.get("description"),
@@ -487,12 +487,12 @@ class ArtifactSharedDraftBindingAdapter:
             )
             if session.draft_key:
                 await self.runtime.history.link_sessions_to_artifact(
-                    tenant_id=tenant_id,
+                    organization_id=organization_id,
                     draft_key=session.draft_key,
                     artifact_id=artifact.id,
                 )
                 await self.runtime.shared_drafts.link_scope_to_artifact(
-                    tenant_id=tenant_id,
+                    organization_id=organization_id,
                     draft_key=session.draft_key,
                     artifact_id=artifact.id,
                 )
@@ -525,9 +525,9 @@ class ArtifactSharedDraftBindingAdapter:
                 artifact_id_raw = update_payload.get("artifact_id")
                 if artifact_id_raw in (None, ""):
                     raise ValueError("Binding update is missing artifact_id")
-                artifact = await self.runtime.registry.get_tenant_artifact(
+                artifact = await self.runtime.registry.get_organization_artifact(
                     artifact_id=UUID(str(artifact_id_raw)),
-                    tenant_id=tenant_id,
+                    organization_id=organization_id,
                 )
             if artifact is None:
                 raise ValueError("Linked artifact not found")
@@ -549,7 +549,7 @@ class ArtifactSharedDraftBindingAdapter:
             )
 
         session, shared_draft, artifact, run, last_test_run = await self.runtime.get_session_state_for_user(
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             user_id=user_id,
             session_id=session.id,
         )

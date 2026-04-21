@@ -17,12 +17,12 @@ class SettingsLimitsService {
     return httpClient.patch("/api/settings/limits/organization", input)
   }
 
-  async getProjectLimits(projectSlug: string): Promise<SettingsLimit> {
-    return httpClient.get(`/api/settings/limits/projects/${projectSlug}`)
+  async getProjectLimits(projectId: string): Promise<SettingsLimit> {
+    return httpClient.get(`/api/settings/limits/projects/${projectId}`)
   }
 
-  async updateProjectLimits(projectSlug: string, input: { monthly_token_limit: number | null }): Promise<SettingsLimit> {
-    return httpClient.patch(`/api/settings/limits/projects/${projectSlug}`, input)
+  async updateProjectLimits(projectId: string, input: { monthly_token_limit: number | null }): Promise<SettingsLimit> {
+    return httpClient.patch(`/api/settings/limits/projects/${projectId}`, input)
   }
 }
 

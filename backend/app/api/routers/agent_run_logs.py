@@ -4,14 +4,12 @@ from typing import Any, Dict
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import require_scopes
 from app.api.routers.agents import get_agent_context
-from app.agent.execution.trace_recorder import ExecutionTraceRecorder
-from app.db.postgres.models.agents import AgentRun
 from app.db.postgres.session import get_db
+from app.services.runtime_surface import RuntimeRunControlContext, RuntimeSurfaceService
 
 router = APIRouter(prefix="/agents", tags=["agents"])
 
@@ -25,16 +23,9 @@ async def get_run_events(
     context: Dict[str, Any] = Depends(get_agent_context),
     db: AsyncSession = Depends(get_db),
 ):
-    run = await db.scalar(select(AgentRun).where(AgentRun.id == run_id))
-    if run is None:
-        raise HTTPException(status_code=404, detail="Run not found")
-    if str(run.tenant_id) != str(context.get("tenant_id")):
-        raise HTTPException(status_code=403, detail="Tenant mismatch")
-
-    recorder = ExecutionTraceRecorder(serializer=lambda value: value)
-    events = await recorder.list_events(db, run_id, after_sequence=after_sequence, limit=limit)
-    return {
-        "run_id": str(run_id),
-        "event_count": len(events),
-        "events": events,
-    }
+    return await RuntimeSurfaceService(db).get_run_events(
+        run_id=run_id,
+        control=RuntimeRunControlContext(organization_id=context["organization_id"]),
+        after_sequence=after_sequence,
+        limit=limit,
+    )

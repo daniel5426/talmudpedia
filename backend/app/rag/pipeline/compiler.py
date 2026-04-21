@@ -51,7 +51,7 @@ class PipelineEdge(BaseModel):
 class VisualPipeline(BaseModel):
     """Pydantic model for visual pipeline (used in compilation)."""
     id: Optional[UUID] = None
-    tenant_id: Optional[UUID] = None
+    organization_id: Optional[UUID] = None
     org_unit_id: Optional[UUID] = None
     name: str
     description: Optional[str] = None
@@ -87,7 +87,7 @@ class ExecutablePipeline(BaseModel):
     - A hash for integrity verification
     """
     visual_pipeline_id: Optional[UUID] = None
-    tenant_id: Optional[UUID] = None
+    organization_id: Optional[UUID] = None
     pipeline_type: PipelineType = PipelineType.INGESTION
     dag: List[ExecutableStep] = []
     config_snapshot: Dict[str, Any] = {}
@@ -147,7 +147,7 @@ class PipelineCompiler:
         self,
         visual_pipeline: Any,
         compiled_by: Optional[str] = None,
-        tenant_id: Optional[str] = None,
+        organization_id: Optional[str] = None,
         require_published_artifacts: bool = False,
     ) -> CompilationResult:
         """
@@ -176,7 +176,7 @@ class PipelineCompiler:
             return CompilationResult(success=False, errors=errors)
 
         # Semantic validation
-        semantic_result = self._validate_semantics(pipeline, tenant_id)
+        semantic_result = self._validate_semantics(pipeline, organization_id)
         errors.extend(semantic_result["errors"])
         warnings.extend(semantic_result["warnings"])
 
@@ -184,7 +184,7 @@ class PipelineCompiler:
             return CompilationResult(success=False, errors=errors, warnings=warnings)
 
         # Compatibility validation
-        compatibility_errors = self._validate_compatibility(pipeline, tenant_id)
+        compatibility_errors = self._validate_compatibility(pipeline, organization_id)
         errors.extend(compatibility_errors)
 
         if errors:
@@ -203,7 +203,7 @@ class PipelineCompiler:
         dag, locked_versions = self._build_dag(
             pipeline,
             ordered_steps,
-            tenant_id,
+            organization_id,
             require_published_artifacts=require_published_artifacts,
         )
 
@@ -214,7 +214,7 @@ class PipelineCompiler:
         executable = ExecutablePipeline(
             visual_pipeline_id=pipeline.id,
             version=pipeline.version,
-            tenant_id=pipeline.tenant_id,
+            organization_id=pipeline.organization_id,
             pipeline_type=pipeline.pipeline_type,
             dag=dag,
             config_snapshot=config_snapshot,
@@ -239,14 +239,14 @@ class PipelineCompiler:
         visual_pipeline: Any,
         model_resolver: Any,
         compiled_by: Optional[str] = None,
-        tenant_id: Optional[str] = None,
+        organization_id: Optional[str] = None,
         require_published_artifacts: bool = False,
     ) -> CompilationResult:
         """
         Async compilation with model validation.
         
         Validates operators with required_capability against the ModelRegistry:
-        - Model exists and is accessible to tenant
+        - Model exists and is accessible to organization
         - Model has correct capability type
         - Model is not disabled
         - Resolves dimension from model metadata
@@ -255,7 +255,7 @@ class PipelineCompiler:
         result = self.compile(
             visual_pipeline,
             compiled_by,
-            tenant_id,
+            organization_id,
             require_published_artifacts=require_published_artifacts,
         )
         if not result.success:
@@ -270,7 +270,7 @@ class PipelineCompiler:
         resolved_dimensions: Dict[str, int] = {}
         
         for node in pipeline.nodes:
-            spec = self.registry.get(node.operator, tenant_id)
+            spec = self.registry.get(node.operator, organization_id)
             if not spec or not spec.required_capability:
                 continue
             
@@ -372,7 +372,7 @@ class PipelineCompiler:
 
         return VisualPipeline(
             id=getattr(visual_pipeline, 'id', None),
-            tenant_id=getattr(visual_pipeline, 'tenant_id', None),
+            organization_id=getattr(visual_pipeline, 'organization_id', None),
             org_unit_id=getattr(visual_pipeline, 'org_unit_id', None),
             name=getattr(visual_pipeline, 'name', ''),
             description=getattr(visual_pipeline, 'description', None),
@@ -530,14 +530,14 @@ class PipelineCompiler:
     def _validate_semantics(
         self, 
         pipeline: VisualPipeline,
-        tenant_id: Optional[str] = None
+        organization_id: Optional[str] = None
     ) -> Dict[str, List[CompilationError]]:
         """Validate operator configurations."""
         errors = []
         warnings = []
 
         for node in pipeline.nodes:
-            spec = self.registry.get(node.operator, tenant_id)
+            spec = self.registry.get(node.operator, organization_id)
             if not spec:
                 errors.append(CompilationError(
                     code="UNKNOWN_OPERATOR",
@@ -569,7 +569,7 @@ class PipelineCompiler:
     def _validate_compatibility(
         self, 
         pipeline: VisualPipeline,
-        tenant_id: Optional[str] = None
+        organization_id: Optional[str] = None
     ) -> List[CompilationError]:
         """Validate type compatibility between connected operators."""
         errors = []
@@ -586,7 +586,7 @@ class PipelineCompiler:
             compatible, reason = self.registry.check_compatibility(
                 source_node.operator,
                 target_node.operator,
-                tenant_id
+                organization_id
             )
 
             if not compatible:
@@ -628,7 +628,7 @@ class PipelineCompiler:
         self,
         pipeline: VisualPipeline,
         ordered_node_ids: List[str],
-        tenant_id: Optional[str] = None,
+        organization_id: Optional[str] = None,
         require_published_artifacts: bool = False,
     ) -> tuple[List[ExecutableStep], Dict[str, str]]:
         """Build the executable DAG with locked operator versions."""
@@ -644,7 +644,7 @@ class PipelineCompiler:
             node = node_map[node_id]
             
             # Get operator version
-            spec = self.registry.get(node.operator, tenant_id)
+            spec = self.registry.get(node.operator, organization_id)
             version = spec.version if spec else "1.0.0"
             locked_versions[node.operator] = version
             artifact_id = getattr(spec, "artifact_id", None) if spec else None

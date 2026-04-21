@@ -69,7 +69,7 @@ class OrchestrationLineageService:
                 select(Agent).where(Agent.id.in_(agent_ids))
             )
             for agent in agents_res.scalars().all():
-                agent_name_by_id[agent.id] = str(agent.name or agent.slug or "")
+                agent_name_by_id[agent.id] = str(agent.name or agent.system_key or agent.id or "")
         child_map: dict[UUID, list[UUID]] = {}
         for item in runs:
             if item.parent_run_id is not None:

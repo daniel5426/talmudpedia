@@ -11,9 +11,9 @@ from app.services.resource_policy_service import ResourcePolicySnapshot
 
 
 class SpeechToTextService:
-    def __init__(self, db: AsyncSession, tenant_id: UUID | None):
+    def __init__(self, db: AsyncSession, organization_id: UUID | None):
         self._db = db
-        self._tenant_id = tenant_id
+        self._organization_id = organization_id
 
     async def transcribe_bytes(
         self,
@@ -27,7 +27,7 @@ class SpeechToTextService:
         attachment_id: str | None = None,
         policy_snapshot: ResourcePolicySnapshot | None = None,
     ) -> tuple[SpeechToTextResult, Any]:
-        execution = await ModelResolver(self._db, self._tenant_id).resolve_speech_to_text_execution(
+        execution = await ModelResolver(self._db, self._organization_id).resolve_speech_to_text_execution(
             model_id=model_id,
             policy_snapshot=policy_snapshot,
         )

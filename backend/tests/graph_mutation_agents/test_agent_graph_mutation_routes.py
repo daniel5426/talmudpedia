@@ -40,7 +40,7 @@ async def test_apply_agent_graph_patch_returns_structured_internal_error(monkeyp
             uuid4(),
             router.GraphPatchRequest(operations=[]),
             {},
-            {"tenant_id": uuid4(), "user": SimpleNamespace(id=uuid4())},
+            {"organization_id": uuid4(), "user": SimpleNamespace(id=uuid4())},
             None,
         )
 
@@ -64,7 +64,7 @@ async def test_validate_agent_graph_patch_returns_structured_validation_error(mo
             uuid4(),
             router.GraphPatchRequest(operations=[{"op": "set_node_config_value"}]),
             {},
-            {"tenant_id": uuid4(), "user": None},
+            {"organization_id": uuid4(), "user": None},
             None,
         )
 

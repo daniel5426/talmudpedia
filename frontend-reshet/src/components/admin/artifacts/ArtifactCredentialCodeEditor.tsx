@@ -23,7 +23,7 @@ interface ArtifactCredentialCodeEditorProps {
   editorLanguage: ArtifactEditorLanguage
   sourceFiles?: ArtifactSourceFile[]
   activeFilePath?: string
-  tenantSlug?: string
+  organizationId?: string
   dependencies?: string
   credentials: IntegrationCredential[]
   height?: string | number
@@ -48,7 +48,7 @@ export function ArtifactCredentialCodeEditor({
   editorLanguage,
   sourceFiles = [],
   activeFilePath,
-  tenantSlug,
+  organizationId,
   dependencies = "",
   credentials,
   height = "100%",
@@ -161,7 +161,7 @@ export function ArtifactCredentialCodeEditor({
             .map((item) => item.trim())
             .filter(Boolean),
         },
-        tenantSlug,
+        organizationId,
       )
       if (seq !== pythonValidationSeqRef.current) return
       const fileDiagnostics = (result.diagnostics || []).filter((item) => item.path === filePath)
@@ -192,7 +192,7 @@ export function ArtifactCredentialCodeEditor({
     } catch {
       if (seq !== pythonValidationSeqRef.current) return
     }
-  }, [activeFilePath, dependencies, editorLanguage, sourceFiles, tenantSlug])
+  }, [activeFilePath, dependencies, editorLanguage, sourceFiles, organizationId])
 
   const applyJsSyntaxMarkers = useCallback(() => {
     const monaco = monacoRef.current
@@ -254,7 +254,7 @@ export function ArtifactCredentialCodeEditor({
     if (editorLanguage !== "python") {
       applyJsSyntaxMarkers()
     }
-  }, [applyBackendValidationMarkers, applyJsSyntaxMarkers, configureJsRuntime, editorLanguage, sourceFiles, tenantSlug])
+  }, [applyBackendValidationMarkers, applyJsSyntaxMarkers, configureJsRuntime, editorLanguage, sourceFiles, organizationId])
 
   return (
     <div className={cn("relative overflow-hidden rounded-md", className)}>

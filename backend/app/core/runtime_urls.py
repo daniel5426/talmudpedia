@@ -84,9 +84,9 @@ def resolve_apps_url_port() -> str:
     return f":{port}"
 
 
-def build_published_app_url(slug: str) -> str:
+def build_published_app_url(public_id: str) -> str:
     base_domain = os.getenv("APPS_BASE_DOMAIN", "apps.localhost")
-    return f"{resolve_apps_url_scheme()}://{slug}.{base_domain}{resolve_apps_url_port()}"
+    return f"{resolve_apps_url_scheme()}://{public_id}.{base_domain}{resolve_apps_url_port()}"
 
 
 def resolve_sandbox_controller_url() -> str | None:

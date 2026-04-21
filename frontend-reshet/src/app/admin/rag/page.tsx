@@ -2,9 +2,9 @@
 
 import { useEffect, useState, useCallback } from "react"
 import { useDirection } from "@/components/direction-provider"
-import { useTenant } from "@/contexts/TenantContext"
+import { useOrganization } from "@/contexts/OrganizationContext"
 import { usePermissions } from "@/hooks/usePermission"
-import { orgUnitsService, OrgUnit } from "@/services/org-units"
+import { organizationUnitsService, OrgUnit } from "@/services/org-units"
 import {
   ragAdminService,
   RAGStats,
@@ -91,7 +91,7 @@ function StatCard({
 
 
 
-function CreateIndexDialog({ onCreated, tenantSlug, orgUnits }: { onCreated: () => void, tenantSlug?: string, orgUnits: OrgUnit[] }) {
+function CreateIndexDialog({ onCreated, organizationId, orgUnits }: { onCreated: () => void, organizationId?: string, orgUnits: OrgUnit[] }) {
   const { direction } = useDirection()
   const isRTL = direction === "rtl"
   const [open, setOpen] = useState(false)
@@ -108,7 +108,7 @@ function CreateIndexDialog({ onCreated, tenantSlug, orgUnits }: { onCreated: () 
         name,
         display_name: displayName || name,
         owner_id: ownerId || undefined
-      }, tenantSlug)
+      }, organizationId)
       setOpen(false)
       setName("")
       setDisplayName("")
@@ -292,7 +292,7 @@ function ChunkPreviewDialog() {
 }
 
 export default function RAGAdminPage() {
-  const { currentTenant } = useTenant()
+  const { currentOrganization } = useOrganization()
   const { direction } = useDirection()
   const isRTL = direction === "rtl"
   const { canDelete } = usePermissions()
@@ -311,11 +311,11 @@ export default function RAGAdminPage() {
   const fetchData = useCallback(async () => {
     try {
       const [statsData, indicesData, unitsData, pipelinesData, pipelineJobsData, catalogData] = await Promise.all([
-        ragAdminService.getStats(currentTenant?.slug),
-        ragAdminService.listIndices(currentTenant?.slug),
-        currentTenant ? orgUnitsService.listOrgUnits(currentTenant.slug) : Promise.resolve([]),
-        ragAdminService.listVisualPipelines(currentTenant?.slug, { view: "summary", limit: 100 }),
-        ragAdminService.listPipelineJobs(undefined, currentTenant?.slug),
+        ragAdminService.getStats(currentOrganization?.id),
+        ragAdminService.listIndices(currentOrganization?.id),
+        currentOrganization ? organizationUnitsService.listOrgUnits(currentOrganization.id) : Promise.resolve([]),
+        ragAdminService.listVisualPipelines(currentOrganization?.id, { view: "summary", limit: 100 }),
+        ragAdminService.listPipelineJobs(undefined, currentOrganization?.id),
         ragAdminService.getOperatorCatalog()
       ])
       setStats(statsData)
@@ -330,7 +330,7 @@ export default function RAGAdminPage() {
     } finally {
       setLoading(false)
     }
-  }, [currentTenant])
+  }, [currentOrganization])
 
   useEffect(() => {
     fetchData()
@@ -339,7 +339,7 @@ export default function RAGAdminPage() {
   const handleDeleteIndex = async (name: string) => {
     if (!confirm(`Are you sure you want to delete index "${name}"? This cannot be undone.`)) return
     try {
-      await ragAdminService.deleteIndex(name, currentTenant?.slug)
+      await ragAdminService.deleteIndex(name, currentOrganization?.id)
       fetchData()
     } catch (error) {
       console.error("Failed to delete index", error)
@@ -354,7 +354,7 @@ export default function RAGAdminPage() {
       const res = await ragAdminService.listPipelineJobs({
         visual_pipeline_id: pipeline.id,
         limit: 50
-      }, currentTenant?.slug)
+      }, currentOrganization?.id)
       setPipelineHistoryJobs(res.jobs)
     } catch (error) {
       console.error("Failed to fetch history", error)
@@ -411,7 +411,7 @@ export default function RAGAdminPage() {
                 title="Vector Indices"
                 value={stats?.live_indices || 0}
                 icon={Database}
-                description={currentTenant ? `Indices in ${currentTenant.name}` : "Active vector indices"}
+                description={currentOrganization ? `Indices in ${currentOrganization.name}` : "Active vector indices"}
               />
               <StatCard
                 title="Total Chunks"
@@ -456,7 +456,7 @@ export default function RAGAdminPage() {
                       <RefreshCw className={cn("h-4 w-4", isRTL ? "ml-2" : "mr-2")} />
                       Refresh
                     </Button>
-                    <CreateIndexDialog onCreated={fetchData} tenantSlug={currentTenant?.slug} orgUnits={orgUnits} />
+                    <CreateIndexDialog onCreated={fetchData} organizationId={currentOrganization?.id} orgUnits={orgUnits} />
                   </div>
                 </div>
                 <Card>
@@ -490,7 +490,7 @@ export default function RAGAdminPage() {
                                   {orgUnits.find(u => u.id === index.owner_id)?.name || "Default"}
                                 </span>
                                 <span className="text-[10px] opacity-50 uppercase">
-                                  {orgUnits.find(u => u.id === index.owner_id)?.type || "Tenant"}
+                                  {orgUnits.find(u => u.id === index.owner_id)?.type || "Organization"}
                                 </span>
                               </div>
                             </TableCell>
@@ -504,7 +504,7 @@ export default function RAGAdminPage() {
                                 variant="ghost"
                                 size="icon"
                                 onClick={() => handleDeleteIndex(index.name)}
-                                disabled={!canDelete("index")}
+                                disabled={!canDelete("pipelines")}
                               >
                                 <Trash2 className="h-4 w-4 text-destructive" />
                               </Button>

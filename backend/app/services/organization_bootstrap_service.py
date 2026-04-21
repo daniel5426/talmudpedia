@@ -1,69 +1,76 @@
 from __future__ import annotations
 
 from uuid import UUID
+from uuid import uuid4
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.postgres.models.agents import Agent
-from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Tenant, User
+from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgUnit, OrgUnitType, Organization, User
 from app.db.postgres.models.workspace import Project
 from app.services.security_bootstrap_service import SecurityBootstrapService
 
 
 class OrganizationBootstrapService:
-    _ORG_DEFAULT_AGENT_SLUGS = ("platform-architect",)
-    _PROJECT_DEFAULT_AGENT_SLUGS = ("artifact-coding-agent", "published-app-coding-agent")
+    _ORG_DEFAULT_AGENT_SYSTEM_KEYS = ("platform_architect",)
+    _PROJECT_DEFAULT_AGENT_SYSTEM_KEYS = ("artifact_coding_agent", "published_app_coding_agent")
 
     def __init__(self, db: AsyncSession):
         self.db = db
         self.security = SecurityBootstrapService(db)
 
-    async def _missing_agent_slugs(
+    @staticmethod
+    def _internal_row_key(prefix: str) -> str:
+        return f"{prefix}-{uuid4().hex[:20]}"
+
+    async def _missing_agent_system_keys(
         self,
         *,
         organization_id: UUID,
-        expected_slugs: tuple[str, ...],
+        expected_system_keys: tuple[str, ...],
     ) -> set[str]:
         rows = await self.db.execute(
-            select(Agent.slug).where(
-                Agent.tenant_id == organization_id,
-                Agent.slug.in_(expected_slugs),
+            select(Agent.system_key).where(
+                Agent.organization_id == organization_id,
+                Agent.system_key.in_(expected_system_keys),
             )
         )
-        existing = {str(slug) for slug in rows.scalars().all()}
-        return {slug for slug in expected_slugs if slug not in existing}
+        existing = {str(system_key) for system_key in rows.scalars().all() if system_key}
+        return {system_key for system_key in expected_system_keys if system_key not in existing}
 
     async def create_organization_with_default_project(
         self,
         *,
         owner: User,
         name: str,
-        slug: str,
         project_name: str = "Default Project",
-        project_slug: str = "default",
         workos_organization_id: str | None = None,
         workos_membership_id: str | None = None,
-    ) -> tuple[Tenant, Project]:
-        organization = Tenant(name=name, slug=slug, workos_organization_id=workos_organization_id)
+    ) -> tuple[Organization, Project]:
+        organization = Organization(
+            name=name,
+            slug=self._internal_row_key("organization"),
+            workos_organization_id=workos_organization_id,
+        )
         self.db.add(organization)
         await self.db.flush()
 
         root_unit = OrgUnit(
-            tenant_id=organization.id,
+            organization_id=organization.id,
             name=name,
             slug="root",
+            system_key="root",
             type=OrgUnitType.org,
         )
         self.db.add(root_unit)
         await self.db.flush()
 
         membership = OrgMembership(
-            tenant_id=organization.id,
+            organization_id=organization.id,
             user_id=owner.id,
             org_unit_id=root_unit.id,
             workos_membership_id=workos_membership_id,
-            role=OrgRole.owner,
             status=MembershipStatus.active,
         )
         self.db.add(membership)
@@ -78,7 +85,6 @@ class OrganizationBootstrapService:
             organization=organization,
             created_by=owner.id,
             name=project_name,
-            slug=project_slug,
             is_default=True,
             owner_user_id=owner.id,
         )
@@ -92,10 +98,9 @@ class OrganizationBootstrapService:
     async def create_project(
         self,
         *,
-        organization: Tenant,
+        organization: Organization,
         created_by: UUID | None,
         name: str,
-        slug: str,
         description: str | None = None,
         is_default: bool = False,
         owner_user_id: UUID | None = None,
@@ -103,7 +108,7 @@ class OrganizationBootstrapService:
         project = Project(
             organization_id=organization.id,
             name=name,
-            slug=slug,
+            slug=self._internal_row_key("project"),
             description=description,
             is_default=is_default,
             created_by=created_by,
@@ -146,9 +151,9 @@ class OrganizationBootstrapService:
         organization_id: UUID,
         actor_user_id: UUID | None = None,
     ) -> bool:
-        missing = await self._missing_agent_slugs(
+        missing = await self._missing_agent_system_keys(
             organization_id=organization_id,
-            expected_slugs=self._ORG_DEFAULT_AGENT_SLUGS,
+            expected_system_keys=self._ORG_DEFAULT_AGENT_SYSTEM_KEYS,
         )
         if not missing:
             return False
@@ -188,9 +193,9 @@ class OrganizationBootstrapService:
         actor_user_id: UUID | None = None,
     ) -> bool:
         _ = project_id
-        missing = await self._missing_agent_slugs(
+        missing = await self._missing_agent_system_keys(
             organization_id=organization_id,
-            expected_slugs=self._PROJECT_DEFAULT_AGENT_SLUGS,
+            expected_system_keys=self._PROJECT_DEFAULT_AGENT_SYSTEM_KEYS,
         )
         if not missing:
             return False

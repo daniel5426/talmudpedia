@@ -16,7 +16,7 @@ from app.db.postgres.models.agents import AgentStatus
 from app.db.postgres.models.agent_threads import AgentThread
 from app.db.postgres.models.agents import Agent, AgentRun, RunStatus
 from app.db.postgres.models.artifact_runtime import Artifact, ArtifactCodingSession, ArtifactCodingSharedDraft, ArtifactRun
-from app.db.postgres.models.identity import Tenant, User
+from app.db.postgres.models.identity import Organization, User
 from app.db.postgres.models.registry import ModelCapabilityType, ModelRegistry, ModelStatus
 from app.services import registry_seeding
 from app.services.architect_mode_service import ArchitectMode
@@ -51,7 +51,7 @@ async def _seed_tenant_user_and_model(db_session):
     existing_defaults = (
         await db_session.execute(
             select(ModelRegistry).where(
-                ModelRegistry.tenant_id.is_(None),
+                ModelRegistry.organization_id.is_(None),
                 ModelRegistry.capability_type == ModelCapabilityType.CHAT,
                 ModelRegistry.is_default.is_(True),
             )
@@ -59,12 +59,12 @@ async def _seed_tenant_user_and_model(db_session):
     ).scalars().all()
     for item in existing_defaults:
         item.is_default = False
-    tenant = Tenant(name=f"Architect Worker E2E {suffix}", slug=f"architect-worker-e2e-{suffix}")
+    tenant = Organization(name=f"Architect Worker E2E {suffix}", slug=f"architect-worker-e2e-{suffix}")
     user = User(email=f"architect-worker-e2e-{suffix}@example.com", role="admin")
     db_session.add_all([tenant, user])
     await db_session.flush()
     model = ModelRegistry(
-        tenant_id=None,
+        organization_id=None,
         name="Unit Chat Model",
         capability_type=ModelCapabilityType.CHAT,
         status=ModelStatus.ACTIVE,
@@ -78,9 +78,9 @@ async def _seed_tenant_user_and_model(db_session):
     return tenant, user, model
 
 
-async def _seed_worker_agent(db_session, *, tenant_id):
+async def _seed_worker_agent(db_session, *, organization_id):
     agent = Agent(
-        tenant_id=tenant_id,
+        organization_id=organization_id,
         name="Artifact Worker",
         slug=f"artifact-worker-{uuid4().hex[:8]}",
         status=AgentStatus.published,
@@ -96,15 +96,15 @@ async def test_seeded_architect_run_spawns_artifact_worker_and_persists_artifact
     tenant, user, _model = await _seed_tenant_user_and_model(db_session)
     architect = await registry_seeding.seed_platform_architect_agent(db_session)
     assert architect is not None
-    tenant_id = architect.tenant_id
-    worker_agent = await _seed_worker_agent(db_session, tenant_id=tenant_id)
+    organization_id = architect.organization_id
+    worker_agent = await _seed_worker_agent(db_session, organization_id=organization_id)
 
     shared: dict[str, object] = {}
     draft_key = f"architect-worker-{uuid4().hex[:8]}"
     seeded_binding = await PlatformArchitectWorkerRuntimeService(db_session).prepare_binding(
         {
             "__tool_runtime_context__": {
-                "tenant_id": str(tenant_id),
+                "organization_id": str(organization_id),
                 "user_id": str(user.id),
                 "run_id": str(uuid4()),
             },
@@ -134,13 +134,13 @@ async def test_seeded_architect_run_spawns_artifact_worker_and_persists_artifact
         parent_run_id = UUID(str(payload["__tool_runtime_context__"]["run_id"]))
         runtime = ArtifactCodingRuntimeService(self.db)
         session, shared_draft, _artifact, _run, _last_test_run = await runtime.get_session_state_for_user(
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             user_id=user.id,
             session_id=UUID(str(seeded_binding["binding_ref"]["binding_id"])),
         )
         child_run = AgentRun(
             id=child_run_id,
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             agent_id=worker_agent.id,
             user_id=user.id,
             initiator_user_id=user.id,
@@ -289,7 +289,7 @@ async def test_seeded_architect_run_spawns_artifact_worker_and_persists_artifact
             select(Artifact)
             .options(selectinload(Artifact.latest_draft_revision))
             .where(
-                Artifact.tenant_id == tenant_id,
+                Artifact.organization_id == organization_id,
                 Artifact.display_name == "Greeting Tool",
             )
         )
@@ -315,14 +315,14 @@ async def test_seeded_architect_run_rejects_second_mutating_spawn_for_active_bin
     tenant, user, _model = await _seed_tenant_user_and_model(db_session)
     architect = await registry_seeding.seed_platform_architect_agent(db_session)
     assert architect is not None
-    worker_agent = await _seed_worker_agent(db_session, tenant_id=architect.tenant_id)
+    worker_agent = await _seed_worker_agent(db_session, organization_id=architect.organization_id)
 
     shared: dict[str, object] = {}
     draft_key = f"architect-worker-blocked-{uuid4().hex[:8]}"
     seeded_binding = await PlatformArchitectWorkerRuntimeService(db_session).prepare_binding(
         {
             "__tool_runtime_context__": {
-                "tenant_id": str(architect.tenant_id),
+                "organization_id": str(architect.organization_id),
                 "user_id": str(user.id),
                 "run_id": str(uuid4()),
             },
@@ -370,7 +370,7 @@ async def test_seeded_architect_run_rejects_second_mutating_spawn_for_active_bin
     first = await service.spawn_worker(
         {
             "__tool_runtime_context__": {
-                "tenant_id": str(architect.tenant_id),
+                "organization_id": str(architect.organization_id),
                 "user_id": str(user.id),
                 "run_id": str(uuid4()),
             },
@@ -386,7 +386,7 @@ async def test_seeded_architect_run_rejects_second_mutating_spawn_for_active_bin
         await service.spawn_worker(
             {
                 "__tool_runtime_context__": {
-                    "tenant_id": str(architect.tenant_id),
+                    "organization_id": str(architect.organization_id),
                     "user_id": str(user.id),
                     "run_id": str(uuid4()),
                 },

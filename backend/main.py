@@ -946,7 +946,6 @@ from app.api.routers.agents import router as agents_router
 from app.api.routers import agent_run_logs as agent_run_logs_router
 from app.api.routers import agent_graph_mutations as agent_graph_mutations_router
 from app.api.routers import org_units as org_units_router
-from app.api.routers import rbac as rbac_router
 from app.api.routers import audit as audit_router
 from app.api.routers import rag_pipelines as rag_pipelines_router
 from app.api.routers import rag_graph_mutations as rag_graph_mutations_router
@@ -965,7 +964,7 @@ from app.api.routers import stats as stats_router
 from app.api.routers import settings as settings_router
 from app.api.routers import settings_governance as settings_governance_router
 from app.api.routers import orchestration_internal as orchestration_internal_router
-from app.api.routers import tenant_api_keys as tenant_api_keys_router
+from app.api.routers import organization_api_keys as organization_api_keys_router
 from app.api.routers import published_apps_admin as published_apps_admin_router
 from app.api.routers import published_apps_external_runtime as published_apps_external_runtime_router
 from app.api.routers import embedded_agents_public as embedded_agents_public_router
@@ -994,7 +993,7 @@ app.include_router(stats_router.router, prefix="/admin", tags=["stats"])
 app.include_router(settings_router.router, prefix="/admin/settings", tags=["settings"])
 app.include_router(settings_governance_router.router)
 app.include_router(resource_policies_router.router)
-app.include_router(tenant_api_keys_router.router)
+app.include_router(organization_api_keys_router.router)
 app.include_router(orchestration_internal_router.router)
 app.include_router(published_apps_admin_router.router)
 app.include_router(published_apps_external_runtime_router.router)
@@ -1013,7 +1012,6 @@ app.include_router(tools_router.router, tags=["tools"])
 app.include_router(mcp_router.router)
 app.include_router(organizations_router.router)
 app.include_router(org_units_router.router, prefix="/api", tags=["org-units"])
-app.include_router(rbac_router.router, prefix="/api", tags=["rbac"])
 app.include_router(audit_router.router, prefix="/api", tags=["audit"])
 app.include_router(library.router, prefix="/api/library", tags=["library"])
 app.include_router(general.router, tags=["general"])

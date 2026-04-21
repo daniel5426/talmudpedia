@@ -11,7 +11,6 @@ from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agent.execution.persisted_stream import stream_persisted_run_events
 from app.agent.execution.service import AgentExecutorService
 from app.agent.execution.types import ExecutionMode
 from app.api.dependencies import (
@@ -32,8 +31,14 @@ from app.db.postgres.models.published_apps import (
     PublishedAppVisibility,
 )
 from app.db.postgres.session import get_db
-from app.services.thread_service import ThreadService
 from app.services.runtime_attachment_service import RuntimeAttachmentOwner, RuntimeAttachmentService
+from app.services.runtime_surface import (
+    RuntimeChatRequest,
+    RuntimeEventView,
+    RuntimeStreamOptions,
+    RuntimeSurfaceContext,
+    RuntimeSurfaceService,
+)
 from app.services.published_app_bundle_storage import (
     PublishedAppBundleAssetNotFound,
     PublishedAppBundleStorage,
@@ -57,12 +62,12 @@ _PREVIEW_REWRITABLE_TEXT_PREFIXES = ("text/html", "application/javascript", "tex
 
 class PublicAppConfigResponse(BaseModel):
     id: str
-    tenant_id: str
+    organization_id: str
     agent_id: str
     name: str
     description: Optional[str] = None
     logo_url: Optional[str] = None
-    slug: str
+    public_id: str
     status: str
     visibility: str
     auth_enabled: bool
@@ -76,7 +81,7 @@ class PublicAppConfigResponse(BaseModel):
 
 class PublicAppRuntimeResponse(BaseModel):
     app_id: str
-    slug: str
+    public_id: str
     revision_id: str
     runtime_mode: str
     published_url: Optional[str] = None
@@ -86,7 +91,7 @@ class PublicAppRuntimeResponse(BaseModel):
 
 class PreviewAppRuntimeResponse(BaseModel):
     app_id: str
-    slug: str
+    public_id: str
     revision_id: str
     runtime_mode: str
     preview_url: str
@@ -105,7 +110,7 @@ class RuntimeBootstrapResponse(BaseModel):
     stream_contract_version: str = "run-stream.v2"
     request_contract_version: str = "thread.v1"
     app_id: str
-    slug: str
+    public_id: str
     revision_id: Optional[str] = None
     mode: str
     api_base_path: str
@@ -157,25 +162,25 @@ def _apps_base_domain() -> str:
     return os.getenv("APPS_BASE_DOMAIN", "apps.localhost")
 
 
-def _build_published_url(slug: str) -> str:
-    return build_published_app_url(slug)
+def _build_published_url(public_id: str) -> str:
+    return build_published_app_url(public_id)
 
 
 def _to_public_config(app: PublishedApp) -> PublicAppConfigResponse:
     return PublicAppConfigResponse(
         id=str(app.id),
-        tenant_id=str(app.tenant_id),
+        organization_id=str(app.organization_id),
         agent_id=str(app.agent_id),
         name=app.name,
         description=app.description,
         logo_url=app.logo_url,
-        slug=app.slug,
+        public_id=app.public_id,
         status=app.status.value if hasattr(app.status, "value") else str(app.status),
         visibility=app.visibility.value if hasattr(app.visibility, "value") else str(app.visibility or "public"),
         auth_enabled=bool(app.auth_enabled),
         auth_providers=list(app.auth_providers or []),
         auth_template_key=(app.auth_template_key or "auth-classic"),
-        published_url=_build_published_url(app.slug) if app.status == PublishedAppStatus.published else None,
+        published_url=_build_published_url(app.public_id) if app.status == PublishedAppStatus.published else None,
         has_custom_ui=bool(app.current_published_revision_id),
         published_revision_id=str(app.current_published_revision_id) if app.current_published_revision_id else None,
         ui_runtime_mode="custom_bundle" if app.current_published_revision_id else "legacy_template",
@@ -188,16 +193,16 @@ def _assert_public_visibility(app: PublishedApp) -> None:
         raise HTTPException(status_code=404, detail="Published app is unavailable")
 
 
-async def _get_app_by_slug(db: AsyncSession, app_slug: str) -> PublishedApp:
-    result = await db.execute(select(PublishedApp).where(PublishedApp.slug == app_slug).limit(1))
+async def _get_app_by_public_id(db: AsyncSession, app_public_id: str) -> PublishedApp:
+    result = await db.execute(select(PublishedApp).where(PublishedApp.public_id == app_public_id).limit(1))
     app = result.scalar_one_or_none()
     if app is None:
         raise HTTPException(status_code=404, detail="Published app not found")
     return app
 
 
-async def _assert_published(db: AsyncSession, app_slug: str) -> PublishedApp:
-    app = await _get_app_by_slug(db, app_slug)
+async def _assert_published(db: AsyncSession, app_public_id: str) -> PublishedApp:
+    app = await _get_app_by_public_id(db, app_public_id)
     if app.status != PublishedAppStatus.published:
         raise HTTPException(status_code=404, detail="Published app is unavailable")
     _assert_public_visibility(app)
@@ -257,14 +262,14 @@ async def _get_preview_revision_for_principal(
     return app, revision
 
 
-def _normalize_return_to(request: Request, value: Optional[str], app_slug: str) -> str:
+def _normalize_return_to(request: Request, value: Optional[str], app_public_id: str) -> str:
     if value:
         if value.startswith("/"):
             base = str(request.base_url).rstrip("/")
             return f"{base}{value}"
         return value
     base = str(request.base_url).rstrip("/")
-    return f"{base}/published/{app_slug}/auth/callback"
+    return f"{base}/published/{app_public_id}/auth/callback"
 
 
 def _append_query(url: str, params: dict[str, str]) -> str:
@@ -284,12 +289,12 @@ def _build_published_bootstrap(
     runtime_api_base = _resolve_runtime_api_base_url(request)
     runtime_api_parsed = urlparse(runtime_api_base)
     api_base_path = runtime_api_parsed.path or ""
-    stream_suffix = f"/public/apps/{app.slug}/chat/stream"
+    stream_suffix = f"/public/apps/{app.public_id}/chat/stream"
     stream_path = f"{api_base_path}{stream_suffix}" if api_base_path else stream_suffix
     stream_url = f"{runtime_api_base}{stream_suffix}"
     return RuntimeBootstrapResponse(
         app_id=str(app.id),
-        slug=app.slug,
+        public_id=app.public_id,
         revision_id=str(revision.id),
         mode="published-runtime",
         api_base_path=api_base_path or "/",
@@ -318,7 +323,7 @@ def _build_preview_bootstrap(
     stream_url = f"{runtime_api_base}{stream_suffix}"
     return RuntimeBootstrapResponse(
         app_id=str(app.id),
-        slug=app.slug,
+        public_id=app.public_id,
         revision_id=str(revision.id),
         mode="builder-preview",
         api_base_path=api_base_path or "/",
@@ -426,16 +431,6 @@ def _normalize_optional_user_id(raw_value: Any) -> Optional[str]:
     return text
 
 
-def _turns_to_messages(turns: list[AgentThreadTurn]) -> list[dict[str, Any]]:
-    messages: list[dict[str, Any]] = []
-    for turn in sorted(turns, key=lambda item: int(item.turn_index or 0)):
-        if turn.user_input_text:
-            messages.append({"role": "user", "content": turn.user_input_text})
-        if turn.assistant_output_text:
-            messages.append({"role": "assistant", "content": turn.assistant_output_text})
-    return messages
-
-
 async def _stream_chat_for_app(
     *,
     app: PublishedApp,
@@ -454,9 +449,7 @@ async def _stream_chat_for_app(
         if principal is not None and principal["app_id"] != str(app.id):
             raise HTTPException(status_code=403, detail="Token does not belong to this app")
 
-    user_uuid: Optional[UUID] = None
     app_account_uuid: Optional[UUID] = None
-    run_messages: List[dict[str, Any]] = []
     can_persist_thread = (
         allow_chat_persistence
         and app.auth_enabled
@@ -465,99 +458,51 @@ async def _stream_chat_for_app(
     )
     if can_persist_thread:
         app_account_uuid = UUID(str(principal["app_account_id"]))
-
-    if payload.thread_id:
-        thread_service = ThreadService(db)
-        existing_thread = await thread_service.get_thread_with_turns(
-            tenant_id=app.tenant_id,
-            thread_id=payload.thread_id,
-            app_account_id=app_account_uuid,
-            published_app_id=app.id,
-        )
-        if existing_thread is None:
-            raise HTTPException(status_code=404, detail="Thread not found")
-        run_messages.extend(_turns_to_messages(list(existing_thread.turns or [])))
-
-    run_messages.extend(payload.messages or [])
-
-    executor = AgentExecutorService(db=db)
     request_context = dict(payload.context or {})
-    request_context.setdefault("tenant_id", str(app.tenant_id))
-    request_context.setdefault(
-        "user_id",
-        str(user_uuid) if user_uuid else (None if principal is not None else _normalize_optional_user_id(request_user_id)),
-    )
-    request_context.setdefault("published_app_account_id", str(app_account_uuid) if app_account_uuid else None)
-    request_context.setdefault("published_app_id", str(app.id))
-    request_context.setdefault("published_app_slug", app.slug)
-    request_context.setdefault("thread_id", str(payload.thread_id) if payload.thread_id else None)
     if extra_context:
         for key, value in extra_context.items():
             request_context.setdefault(key, value)
-
-    run_id = payload.run_id
-    resume_payload: Optional[dict[str, Any]] = None
-    if run_id:
-        run_row = await db.get(AgentRun, run_id)
-        if run_row is None:
-            raise HTTPException(status_code=404, detail="Run not found")
-        status = str(getattr(run_row.status, "value", run_row.status) or "").strip().lower()
-        if status == "paused":
-            resume_payload = dict(payload.context or {})
-            if payload.input and "input" not in resume_payload:
-                resume_payload["input"] = payload.input
-            try:
-                await executor.resume_run(run_id, resume_payload, background=True)
-            except Exception as exc:
-                raise HTTPException(status_code=400, detail=f"Cannot resume run {run_id}: {exc}")
-    else:
-        try:
-            run_id = await executor.start_run(
-                app.agent_id,
-                {
-                    "messages": run_messages,
-                    "input": payload.input,
-                    "attachment_ids": [str(item) for item in payload.attachment_ids],
-                    "thread_id": str(payload.thread_id) if payload.thread_id else None,
-                    "context": request_context,
+    try:
+        return await RuntimeSurfaceService(db=db, executor_cls=AgentExecutorService).stream_chat(
+            agent_id=app.agent_id,
+            surface_context=RuntimeSurfaceContext(
+                organization_id=app.organization_id,
+                surface=(
+                    AgentThreadSurface.preview_runtime
+                    if bool(request_context.get("published_app_preview"))
+                    else AgentThreadSurface.published_host_runtime
+                ),
+                event_view=RuntimeEventView.public_safe,
+                app_account_id=app_account_uuid,
+                published_app_id=app.id,
+                request_user_id=None if principal is not None else _normalize_optional_user_id(request_user_id),
+                context_defaults={
+                    "published_app_account_id": str(app_account_uuid) if app_account_uuid else None,
+                    "published_app_id": str(app.id),
+                    "published_app_public_id": app.public_id,
+                    **request_context,
                 },
-                user_id=user_uuid,
-                background=True,
-                mode=ExecutionMode.PRODUCTION,
+            ),
+            request=RuntimeChatRequest(
+                input=payload.input,
+                messages=list(payload.messages or []),
+                attachment_ids=[str(item) for item in payload.attachment_ids],
+                context=dict(payload.context or {}),
+                client=dict(payload.client or {}),
                 thread_id=payload.thread_id,
-            )
-        except (QuotaExceededError, ResourcePolicyQuotaExceeded) as exc:
-            return JSONResponse(status_code=429, content=exc.to_payload())
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc))
-
-    run_row = await db.get(AgentRun, run_id)
-    thread_id_value = str(run_row.thread_id) if run_row and run_row.thread_id else None
-    cleanup_thread_ids: list[UUID] = []
-    if cleanup_transient_thread and run_row and run_row.thread_id:
-        cleanup_thread_ids.append(run_row.thread_id)
-
-    async def event_generator():
-        try:
-            async for chunk in stream_persisted_run_events(
-                run_id=run_id,
-                mode=ExecutionMode.PRODUCTION,
+                run_id=payload.run_id,
+            ),
+            options=RuntimeStreamOptions(
+                execution_mode=ExecutionMode.PRODUCTION,
+                preload_thread_messages=True,
+                cleanup_transient_thread=cleanup_transient_thread,
                 stream_v2_enforced=_stream_v2_enforced(),
-                thread_id_value=thread_id_value,
                 padding_bytes=2048,
-            ):
-                yield chunk
-        finally:
-            if cleanup_thread_ids:
-                await ThreadService(db).delete_threads(
-                    tenant_id=app.tenant_id,
-                    thread_ids=cleanup_thread_ids,
-                )
-
-    headers = {"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"}
-    if thread_id_value and not cleanup_transient_thread:
-        headers["X-Thread-ID"] = thread_id_value
-    return StreamingResponse(event_generator(), media_type="text/event-stream", headers=headers)
+                include_thread_header=not cleanup_transient_thread,
+            ),
+        )
+    except (QuotaExceededError, ResourcePolicyQuotaExceeded) as exc:
+        return JSONResponse(status_code=429, content=exc.to_payload())
 
 
 def _optional_uuid(value: Any) -> UUID | None:
@@ -601,65 +546,65 @@ async def resolve_app_by_host(
     if not host_value.endswith(f".{base_domain}"):
         raise HTTPException(status_code=404, detail="Host is not mapped to published apps")
 
-    slug = host_value[: -(len(base_domain) + 1)]
-    if not slug:
-        raise HTTPException(status_code=404, detail="Could not resolve app slug")
+    public_id = host_value[: -(len(base_domain) + 1)]
+    if not public_id:
+        raise HTTPException(status_code=404, detail="Could not resolve app public id")
 
-    app = await _assert_published(db, slug)
+    app = await _assert_published(db, public_id)
     return {"app": _to_public_config(app)}
 
 
-@router.get("/{app_slug}/config", response_model=PublicAppConfigResponse)
+@router.get("/{app_public_id}/config", response_model=PublicAppConfigResponse)
 async def get_app_config(
-    app_slug: str,
+    app_public_id: str,
     db: AsyncSession = Depends(get_db),
 ):
-    app = await _get_app_by_slug(db, app_slug)
+    app = await _get_app_by_public_id(db, app_public_id)
     if app.status == PublishedAppStatus.published:
         _assert_public_visibility(app)
     return _to_public_config(app)
 
 
-@router.get("/{app_slug}/runtime", response_model=PublicAppRuntimeResponse)
+@router.get("/{app_public_id}/runtime", response_model=PublicAppRuntimeResponse)
 async def get_published_runtime(
-    app_slug: str,
+    app_public_id: str,
     db: AsyncSession = Depends(get_db),
 ):
-    _ = (app_slug, db)
+    _ = (app_public_id, db)
     raise _published_host_runtime_only_error()
 
 
-@router.get("/{app_slug}/runtime/bootstrap", response_model=RuntimeBootstrapResponse)
+@router.get("/{app_public_id}/runtime/bootstrap", response_model=RuntimeBootstrapResponse)
 async def get_published_runtime_bootstrap(
-    app_slug: str,
+    app_public_id: str,
     request: Request,
     db: AsyncSession = Depends(get_db),
 ):
-    _ = (app_slug, request, db)
+    _ = (app_public_id, request, db)
     raise _published_host_runtime_only_error()
 
 
-@router.get("/{app_slug}/assets/{asset_path:path}")
+@router.get("/{app_public_id}/assets/{asset_path:path}")
 async def get_published_asset(
     request: Request,
-    app_slug: str,
+    app_public_id: str,
     asset_path: str,
     db: AsyncSession = Depends(get_db),
 ):
-    _ = (request, app_slug, asset_path, db)
+    _ = (request, app_public_id, asset_path, db)
     raise _published_host_runtime_only_error()
 
 
-@router.get("/{app_slug}/ui")
+@router.get("/{app_public_id}/ui")
 async def get_published_ui(
-    app_slug: str,
+    app_public_id: str,
 ):
-    _ = app_slug
+    _ = app_public_id
     raise HTTPException(
         status_code=410,
         detail={
             "code": "UI_SOURCE_MODE_REMOVED",
-            "message": "UI source mode is removed; use /public/apps/{slug}/runtime instead",
+            "message": "UI source mode is removed; use /public/apps/{public_id}/runtime instead",
         },
     )
 
@@ -781,7 +726,7 @@ async def get_preview_runtime(
     )
     return PreviewAppRuntimeResponse(
         app_id=str(app.id),
-        slug=app.slug,
+        public_id=app.public_id,
         revision_id=str(revision.id),
         runtime_mode=revision.template_runtime or "vite_static",
         preview_url=preview_url,
@@ -860,7 +805,7 @@ async def upload_preview_attachments(
         principal=principal,
     )
     owner = RuntimeAttachmentOwner(
-        tenant_id=app.tenant_id,
+        organization_id=app.organization_id,
         surface=AgentThreadSurface.published_host_runtime,
         user_id=_optional_uuid(principal.get("user_id")),
         published_app_id=app.id,
@@ -869,104 +814,104 @@ async def upload_preview_attachments(
     return await _upload_published_app_attachments(app=app, owner=owner, files=files, db=db)
 
 
-@router.post("/{app_slug}/auth/signup")
+@router.post("/{app_public_id}/auth/signup")
 async def signup(
-    app_slug: str,
+    app_public_id: str,
     payload: PublicAuthRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    _ = (app_slug, payload, db)
+    _ = (app_public_id, payload, db)
     raise _published_host_runtime_only_error()
 
 
-@router.post("/{app_slug}/auth/login")
+@router.post("/{app_public_id}/auth/login")
 async def login(
-    app_slug: str,
+    app_public_id: str,
     payload: PublicAuthRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    _ = (app_slug, payload, db)
+    _ = (app_public_id, payload, db)
     raise _published_host_runtime_only_error()
 
 
-@router.post("/{app_slug}/auth/exchange")
+@router.post("/{app_public_id}/auth/exchange")
 async def exchange_auth_token(
-    app_slug: str,
+    app_public_id: str,
     payload: PublicAuthExchangeRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    _ = (app_slug, payload, db)
+    _ = (app_public_id, payload, db)
     raise _published_host_runtime_only_error()
 
 
-@router.get("/{app_slug}/auth/google/start")
+@router.get("/{app_public_id}/auth/google/start")
 async def google_start(
-    app_slug: str,
+    app_public_id: str,
     request: Request,
     return_to: Optional[str] = Query(default=None),
     db: AsyncSession = Depends(get_db),
 ):
-    _ = (app_slug, request, return_to, db)
+    _ = (app_public_id, request, return_to, db)
     raise _published_host_runtime_only_error()
 
 
-@router.get("/{app_slug}/auth/google/callback")
+@router.get("/{app_public_id}/auth/google/callback")
 async def google_callback(
-    app_slug: str,
+    app_public_id: str,
     code: str = Query(...),
     state: str = Query(...),
     db: AsyncSession = Depends(get_db),
 ):
-    _ = (app_slug, code, state, db)
+    _ = (app_public_id, code, state, db)
     raise _published_host_runtime_only_error()
 
 
-@router.get("/{app_slug}/auth/me")
+@router.get("/{app_public_id}/auth/me")
 async def auth_me(
-    app_slug: str,
+    app_public_id: str,
     principal: Dict[str, Any] = Depends(get_current_published_app_principal),
 ):
-    _ = (app_slug, principal)
+    _ = (app_public_id, principal)
     raise _published_host_runtime_only_error()
 
 
-@router.post("/{app_slug}/auth/logout")
+@router.post("/{app_public_id}/auth/logout")
 async def auth_logout(
-    app_slug: str,
+    app_public_id: str,
     principal: Dict[str, Any] = Depends(get_current_published_app_principal),
     db: AsyncSession = Depends(get_db),
 ):
-    _ = (app_slug, principal, db)
+    _ = (app_public_id, principal, db)
     raise _published_host_runtime_only_error()
 
 
-@router.get("/{app_slug}/chats")
+@router.get("/{app_public_id}/chats")
 async def list_chats(
-    app_slug: str,
+    app_public_id: str,
     principal: Dict[str, Any] = Depends(get_current_published_app_principal),
     db: AsyncSession = Depends(get_db),
 ):
-    _ = (app_slug, principal, db)
+    _ = (app_public_id, principal, db)
     raise _published_host_runtime_only_error()
 
 
-@router.get("/{app_slug}/chats/{chat_id}")
+@router.get("/{app_public_id}/chats/{chat_id}")
 async def get_chat(
-    app_slug: str,
+    app_public_id: str,
     chat_id: UUID,
     principal: Dict[str, Any] = Depends(get_current_published_app_principal),
     db: AsyncSession = Depends(get_db),
 ):
-    _ = (app_slug, chat_id, principal, db)
+    _ = (app_public_id, chat_id, principal, db)
     raise _published_host_runtime_only_error()
 
 
-@router.post("/{app_slug}/chat/stream")
+@router.post("/{app_public_id}/chat/stream")
 async def chat_stream(
-    app_slug: str,
+    app_public_id: str,
     payload: PublicChatStreamRequest,
     principal: Optional[Dict[str, Any]] = Depends(get_optional_published_app_principal),
     db: AsyncSession = Depends(get_db),
 ):
-    _ = (app_slug, payload, principal, db)
+    _ = (app_public_id, payload, principal, db)
     raise _published_host_runtime_only_error()

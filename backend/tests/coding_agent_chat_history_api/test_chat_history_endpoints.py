@@ -38,7 +38,7 @@ async def _create_app_and_draft_revision(client, headers: dict[str, str], agent_
 async def _insert_run(
     db_session,
     *,
-    tenant_id,
+    organization_id,
     agent_id,
     user_id,
     app_id: str,
@@ -46,7 +46,7 @@ async def _insert_run(
     output_result: dict | None = None,
 ) -> AgentRun:
     run = AgentRun(
-        tenant_id=tenant_id,
+        organization_id=organization_id,
         agent_id=agent_id,
         user_id=user_id,
         initiator_user_id=user_id,
@@ -75,7 +75,7 @@ async def test_chat_history_list_scopes_to_current_user(client, db_session):
     await db_session.flush()
     db_session.add(
         OrgMembership(
-            tenant_id=tenant.id,
+            organization_id=tenant.id,
             user_id=other_user.id,
             org_unit_id=org_unit.id,
             role=OrgRole.owner,
@@ -86,7 +86,7 @@ async def test_chat_history_list_scopes_to_current_user(client, db_session):
 
     owner_run = await _insert_run(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         agent_id=agent.id,
         user_id=owner.id,
         app_id=app_id,
@@ -94,7 +94,7 @@ async def test_chat_history_list_scopes_to_current_user(client, db_session):
     )
     other_run = await _insert_run(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         agent_id=agent.id,
         user_id=other_user.id,
         app_id=app_id,
@@ -150,7 +150,7 @@ async def test_chat_history_detail_returns_ordered_turns(client, db_session):
 
     first_run = await _insert_run(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         agent_id=agent.id,
         user_id=owner.id,
         app_id=app_id,
@@ -158,7 +158,7 @@ async def test_chat_history_detail_returns_ordered_turns(client, db_session):
     )
     second_run = await _insert_run(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         agent_id=agent.id,
         user_id=owner.id,
         app_id=app_id,
@@ -248,7 +248,7 @@ async def test_chat_history_detail_blocks_cross_user_session_access(client, db_s
     await db_session.flush()
     db_session.add(
         OrgMembership(
-            tenant_id=tenant.id,
+            organization_id=tenant.id,
             user_id=other_user.id,
             org_unit_id=org_unit.id,
             role=OrgRole.owner,
@@ -314,7 +314,7 @@ async def test_chat_history_detail_paginates_from_latest_with_cursor(client, db_
             }
         run = await _insert_run(
             db_session,
-            tenant_id=tenant.id,
+            organization_id=tenant.id,
             agent_id=agent.id,
             user_id=owner.id,
             app_id=app_id,
@@ -383,7 +383,7 @@ async def test_chat_history_detail_rejects_invalid_or_foreign_cursor(client, db_
 
     run = await _insert_run(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         agent_id=agent.id,
         user_id=owner.id,
         app_id=app_id,
@@ -435,7 +435,7 @@ async def test_chat_history_detail_pagination_tie_order_is_stable(client, db_ses
     for idx in range(4):
         run = await _insert_run(
             db_session,
-            tenant_id=tenant.id,
+            organization_id=tenant.id,
             agent_id=agent.id,
             user_id=owner.id,
             app_id=app_id,

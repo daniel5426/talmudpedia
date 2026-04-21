@@ -16,6 +16,7 @@ export interface SettingsInvitation {
   id: string
   email: string | null
   project_ids: string[]
+  project_role_id: string | null
   organization_role: string
   project_role: string | null
   accepted_at: string | null
@@ -25,10 +26,9 @@ export interface SettingsInvitation {
 
 export interface SettingsGroup {
   id: string
-  tenant_id: string
+  organization_id: string
   parent_id: string | null
   name: string
-  slug: string
   type: string
   created_at: string
 }
@@ -51,8 +51,8 @@ export interface SettingsRoleAssignment {
   role_id: string
   role_family: "organization" | "project"
   role_name: string
-  scope_id: string
-  scope_type: string
+  assignment_kind: "organization" | "project"
+  project_id: string | null
   assigned_at: string
 }
 
@@ -69,10 +69,11 @@ class SettingsPeoplePermissionsService {
     return httpClient.get("/api/settings/people/invitations")
   }
 
-  async createInvitation(input: { email: string; project_ids?: string[] }): Promise<SettingsInvitation> {
+  async createInvitation(input: { email: string; project_ids?: string[]; project_role_id?: string | null }): Promise<SettingsInvitation> {
     return httpClient.post("/api/settings/people/invitations", {
       email: input.email,
       project_ids: input.project_ids ?? [],
+      project_role_id: input.project_role_id ?? null,
     })
   }
 
@@ -84,11 +85,11 @@ class SettingsPeoplePermissionsService {
     return httpClient.get("/api/settings/people/groups")
   }
 
-  async createGroup(input: { name: string; slug: string; type: "org" | "dept" | "team"; parent_id?: string | null }): Promise<SettingsGroup> {
+  async createGroup(input: { name: string; type: "org" | "dept" | "team"; parent_id?: string | null }): Promise<SettingsGroup> {
     return httpClient.post("/api/settings/people/groups", input)
   }
 
-  async updateGroup(groupId: string, input: { name?: string; slug?: string; parent_id?: string | null }): Promise<SettingsGroup> {
+  async updateGroup(groupId: string, input: { name?: string; parent_id?: string | null }): Promise<SettingsGroup> {
     return httpClient.patch(`/api/settings/people/groups/${groupId}`, input)
   }
 
@@ -125,15 +126,20 @@ class SettingsPeoplePermissionsService {
     return httpClient.delete(`/api/settings/people/roles/${roleId}`)
   }
 
-  async listRoleAssignments(filters?: { scope_type?: string; scope_id?: string }): Promise<SettingsRoleAssignment[]> {
+  async listRoleAssignments(filters?: { assignment_kind?: "organization" | "project"; project_id?: string }): Promise<SettingsRoleAssignment[]> {
     const params = new URLSearchParams()
-    if (filters?.scope_type) params.set("scope_type", filters.scope_type)
-    if (filters?.scope_id) params.set("scope_id", filters.scope_id)
+    if (filters?.assignment_kind) params.set("assignment_kind", filters.assignment_kind)
+    if (filters?.project_id) params.set("project_id", filters.project_id)
     const query = params.toString() ? `?${params.toString()}` : ""
     return httpClient.get(`/api/settings/people/role-assignments${query}`)
   }
 
-  async createRoleAssignment(input: { user_id: string; role_id: string; scope_id: string; scope_type: string }): Promise<SettingsRoleAssignment> {
+  async createRoleAssignment(input: {
+    user_id: string
+    role_id: string
+    assignment_kind: "organization" | "project"
+    project_id?: string | null
+  }): Promise<SettingsRoleAssignment> {
     return httpClient.post("/api/settings/people/role-assignments", input)
   }
 

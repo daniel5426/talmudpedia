@@ -50,12 +50,12 @@ def _token_with_scopes(token: str, scopes: list[str]) -> str:
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
 
-async def _grant_member_role(db_session, *, tenant_id, owner_id, email: str):
+async def _grant_member_role(db_session, *, organization_id, owner_id, email: str):
     user = (await db_session.execute(select(User).where(User.email == email))).scalar_one()
     bootstrap = SecurityBootstrapService(db_session)
-    await bootstrap.ensure_default_roles(tenant_id)
-    await bootstrap.ensure_member_assignment(
-        tenant_id=tenant_id,
+    await bootstrap.ensure_default_roles(organization_id)
+    await bootstrap.ensure_organization_reader_assignment(
+        organization_id=organization_id,
         user_id=user.id,
         assigned_by=owner_id,
     )
@@ -76,14 +76,14 @@ async def test_external_runtime_bootstrap_returns_external_stream_contract(clien
     revision = await _attach_published_revision(db_session, app, created_by=owner.id)
 
     resp = await client.get(
-        f"/public/external/apps/{app.slug}/runtime/bootstrap",
+        f"/public/external/apps/{app.public_id}/runtime/bootstrap",
         headers=_external_headers(),
     )
     assert resp.status_code == 200
     assert resp.headers["Access-Control-Allow-Origin"] == ALLOWED_ORIGIN
     payload = resp.json()
     assert payload["revision_id"] == str(revision.id)
-    assert payload["chat_stream_url"].endswith(f"/public/external/apps/{app.slug}/chat/stream")
+    assert payload["chat_stream_url"].endswith(f"/public/external/apps/{app.public_id}/chat/stream")
     assert payload["auth"]["enabled"] is True
 
 
@@ -100,7 +100,7 @@ async def test_external_password_auth_flow_uses_bearer_tokens(client, db_session
     )
 
     signup_resp = await client.post(
-        f"/public/external/apps/{app.slug}/auth/signup",
+        f"/public/external/apps/{app.public_id}/auth/signup",
         headers=_external_headers(),
         json={"email": "external-user@example.com", "password": "secret123"},
     )
@@ -110,27 +110,27 @@ async def test_external_password_auth_flow_uses_bearer_tokens(client, db_session
 
     await _grant_member_role(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         owner_id=owner.id,
         email="external-user@example.com",
     )
 
     me_resp = await client.get(
-        f"/public/external/apps/{app.slug}/auth/me",
+        f"/public/external/apps/{app.public_id}/auth/me",
         headers=_external_headers(token),
     )
     assert me_resp.status_code == 200
     assert me_resp.json()["email"] == "external-user@example.com"
 
     logout_resp = await client.post(
-        f"/public/external/apps/{app.slug}/auth/logout",
+        f"/public/external/apps/{app.public_id}/auth/logout",
         headers=_external_headers(token),
     )
     assert logout_resp.status_code == 200
     assert logout_resp.json()["status"] == "logged_out"
 
     me_after_logout = await client.get(
-        f"/public/external/apps/{app.slug}/auth/me",
+        f"/public/external/apps/{app.public_id}/auth/me",
         headers=_external_headers(token),
     )
     assert me_after_logout.status_code == 401
@@ -157,14 +157,14 @@ async def test_external_runtime_rejects_cross_app_bearer_replay(client, db_sessi
     )
 
     signup_resp = await client.post(
-        f"/public/external/apps/{app_a.slug}/auth/signup",
+        f"/public/external/apps/{app_a.public_id}/auth/signup",
         headers=_external_headers(),
         json={"email": "replay-user@example.com", "password": "secret123"},
     )
     token = signup_resp.json()["token"]
 
     replay_resp = await client.get(
-        f"/public/external/apps/{app_b.slug}/auth/me",
+        f"/public/external/apps/{app_b.public_id}/auth/me",
         headers=_external_headers(token),
     )
     assert replay_resp.status_code == 403
@@ -184,21 +184,21 @@ async def test_external_runtime_enforces_published_app_scopes(client, db_session
     )
 
     signup_resp = await client.post(
-        f"/public/external/apps/{app.slug}/auth/signup",
+        f"/public/external/apps/{app.public_id}/auth/signup",
         headers=_external_headers(),
         json={"email": "scoped-user@example.com", "password": "secret123"},
     )
     token = signup_resp.json()["token"]
 
     me_resp = await client.get(
-        f"/public/external/apps/{app.slug}/auth/me",
+        f"/public/external/apps/{app.public_id}/auth/me",
         headers=_external_headers(_token_with_scopes(token, ["public.chat", "public.chats.read"])),
     )
     assert me_resp.status_code == 403
     assert me_resp.json()["detail"] == "Missing required scopes: public.auth"
 
     chat_resp = await client.post(
-        f"/public/external/apps/{app.slug}/chat/stream",
+        f"/public/external/apps/{app.public_id}/chat/stream",
         headers=_external_headers(_token_with_scopes(token, ["public.auth", "public.chats.read"])),
         json={"input": "hello"},
     )
@@ -206,7 +206,7 @@ async def test_external_runtime_enforces_published_app_scopes(client, db_session
     assert chat_resp.json()["detail"] == "Missing required scopes: public.chat"
 
     threads_resp = await client.get(
-        f"/public/external/apps/{app.slug}/threads",
+        f"/public/external/apps/{app.public_id}/threads",
         headers=_external_headers(_token_with_scopes(token, ["public.auth", "public.chat"])),
     )
     assert threads_resp.status_code == 403
@@ -246,7 +246,7 @@ async def test_external_auth_exchange_returns_bearer_session(client, db_session,
     )
 
     resp = await client.post(
-        f"/public/external/apps/{app.slug}/auth/exchange",
+        f"/public/external/apps/{app.public_id}/auth/exchange",
         headers=_external_headers(),
         json={"token": "oidc-token"},
     )
@@ -268,14 +268,14 @@ async def test_external_stream_persists_thread_and_history_is_scoped(client, db_
     )
 
     signup_resp = await client.post(
-        f"/public/external/apps/{app.slug}/auth/signup",
+        f"/public/external/apps/{app.public_id}/auth/signup",
         headers=_external_headers(),
         json={"email": "thread-user-one@example.com", "password": "secret123"},
     )
     token_one = signup_resp.json()["token"]
     await _grant_member_role(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         owner_id=owner.id,
         email="thread-user-one@example.com",
     )
@@ -283,7 +283,7 @@ async def test_external_stream_persists_thread_and_history_is_scoped(client, db_
     install_stub_agent_worker(monkeypatch, content="Hello from external runtime")
 
     stream_resp = await client.post(
-        f"/public/external/apps/{app.slug}/chat/stream",
+        f"/public/external/apps/{app.public_id}/chat/stream",
         headers=_external_headers(token_one),
         json={"input": "hello"},
     )
@@ -299,7 +299,7 @@ async def test_external_stream_persists_thread_and_history_is_scoped(client, db_
     assert thread_count == 1
 
     list_resp = await client.get(
-        f"/public/external/apps/{app.slug}/threads",
+        f"/public/external/apps/{app.public_id}/threads",
         headers=_external_headers(token_one),
     )
     assert list_resp.status_code == 200
@@ -307,33 +307,33 @@ async def test_external_stream_persists_thread_and_history_is_scoped(client, db_
     assert list_resp.json()["items"][0]["id"] == thread_id
 
     detail_resp = await client.get(
-        f"/public/external/apps/{app.slug}/threads/{thread_id}",
+        f"/public/external/apps/{app.public_id}/threads/{thread_id}",
         headers=_external_headers(token_one),
     )
     assert detail_resp.status_code == 200
     assert detail_resp.json()["id"] == thread_id
 
     logout_one = await client.post(
-        f"/public/external/apps/{app.slug}/auth/logout",
+        f"/public/external/apps/{app.public_id}/auth/logout",
         headers=_external_headers(token_one),
     )
     assert logout_one.status_code == 200
 
     signup_two = await client.post(
-        f"/public/external/apps/{app.slug}/auth/signup",
+        f"/public/external/apps/{app.public_id}/auth/signup",
         headers=_external_headers(),
         json={"email": "thread-user-two@example.com", "password": "secret123"},
     )
     token_two = signup_two.json()["token"]
     await _grant_member_role(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         owner_id=owner.id,
         email="thread-user-two@example.com",
     )
 
     other_detail = await client.get(
-        f"/public/external/apps/{app.slug}/threads/{thread_id}",
+        f"/public/external/apps/{app.public_id}/threads/{thread_id}",
         headers=_external_headers(token_two),
     )
     assert other_detail.status_code == 404
@@ -352,14 +352,14 @@ async def test_external_thread_detail_returns_subthread_tree_when_requested(clie
     )
 
     signup_resp = await client.post(
-        f"/public/external/apps/{app.slug}/auth/signup",
+        f"/public/external/apps/{app.public_id}/auth/signup",
         headers=_external_headers(),
         json={"email": "subthreads@example.com", "password": "secret123"},
     )
     token = signup_resp.json()["token"]
     await _grant_member_role(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         owner_id=owner.id,
         email="subthreads@example.com",
     )
@@ -367,7 +367,7 @@ async def test_external_thread_detail_returns_subthread_tree_when_requested(clie
     install_stub_agent_worker(monkeypatch, content="Hello from external runtime")
 
     stream_resp = await client.post(
-        f"/public/external/apps/{app.slug}/chat/stream",
+        f"/public/external/apps/{app.public_id}/chat/stream",
         headers=_external_headers(token),
         json={"input": "hello"},
     )
@@ -389,7 +389,7 @@ async def test_external_thread_detail_returns_subthread_tree_when_requested(clie
         await db_session.flush()
 
     child_thread = AgentThread(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         app_account_id=root_thread.app_account_id,
         agent_id=agent.id,
         published_app_id=app.id,
@@ -404,7 +404,7 @@ async def test_external_thread_detail_returns_subthread_tree_when_requested(clie
     db_session.add(child_thread)
     await db_session.flush()
     child_run = AgentRun(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         agent_id=agent.id,
         initiator_user_id=owner.id,
         published_app_id=app.id,
@@ -429,7 +429,7 @@ async def test_external_thread_detail_returns_subthread_tree_when_requested(clie
     await db_session.commit()
 
     detail_resp = await client.get(
-        f"/public/external/apps/{app.slug}/threads/{thread_id}",
+        f"/public/external/apps/{app.public_id}/threads/{thread_id}",
         headers=_external_headers(token),
         params={"include_subthreads": "true"},
     )
@@ -456,7 +456,7 @@ async def test_external_stream_is_ephemeral_when_app_auth_disabled(client, db_se
     install_stub_agent_worker(monkeypatch, content="Public response")
 
     resp = await client.post(
-        f"/public/external/apps/{app.slug}/chat/stream",
+        f"/public/external/apps/{app.public_id}/chat/stream",
         headers=_external_headers(),
         json={"input": "public prompt"},
     )
@@ -483,7 +483,7 @@ async def test_external_runtime_rejects_blocked_origin(client, db_session):
     )
 
     blocked_resp = await client.get(
-        f"/public/external/apps/{app.slug}/runtime/bootstrap",
+        f"/public/external/apps/{app.public_id}/runtime/bootstrap",
         headers=_external_headers(origin="https://blocked.example.com"),
     )
     assert blocked_resp.status_code == 403

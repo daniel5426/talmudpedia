@@ -1,15 +1,28 @@
 import pytest
 from uuid import uuid4
 
+from app.api.dependencies import get_current_principal
 from app.api.routers.auth import get_current_user
-from app.db.postgres.models.identity import OrgMembership, OrgRole, Tenant, User, MembershipStatus, OrgUnit, OrgUnitType
-from app.db.postgres.models.registry import ModelRegistry, ModelCapabilityType, ModelStatus
+from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Organization, User
+from app.db.postgres.models.registry import ModelCapabilityType, ModelRegistry, ModelStatus
+
+
+def _override_principal(tenant: Organization, user: User, scopes: list[str]):
+    async def _inner():
+        return {
+            "sub": str(user.id),
+            "user_id": str(user.id),
+            "organization_id": str(tenant.id),
+            "scopes": scopes,
+        }
+
+    return _inner
 
 
 @pytest.mark.asyncio
 async def test_get_tenant_settings_returns_normalized_defaults(client, db_session, run_prefix):
-    tenant = Tenant(
-        name="Tenant Settings",
+    tenant = Organization(
+        name="Organization Settings",
         slug=f"tenant-settings-{run_prefix}",
         settings={
             "default_chat_model_id": "chat-123",
@@ -21,12 +34,12 @@ async def test_get_tenant_settings_returns_normalized_defaults(client, db_sessio
     db_session.add_all([tenant, user])
     await db_session.flush()
 
-    root = OrgUnit(tenant_id=tenant.id, parent_id=None, name="Root", slug=f"root-settings-{run_prefix}", type=OrgUnitType.org)
+    root = OrgUnit(organization_id=tenant.id, parent_id=None, name="Root", slug=f"root-settings-{run_prefix}", type=OrgUnitType.org)
     db_session.add(root)
     await db_session.flush()
 
     membership = OrgMembership(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         org_unit_id=root.id,
         role=OrgRole.owner,
@@ -41,7 +54,8 @@ async def test_get_tenant_settings_returns_normalized_defaults(client, db_sessio
         return user
 
     app.dependency_overrides[get_current_user] = override_current_user
-    response = await client.get(f"/api/tenants/{tenant.slug}/settings")
+    app.dependency_overrides[get_current_principal] = _override_principal(tenant, user, ["*"])
+    response = await client.get(f"/api/tenants/{tenant.id}/settings")
     app.dependency_overrides.clear()
 
     assert response.status_code == 200
@@ -53,17 +67,17 @@ async def test_get_tenant_settings_returns_normalized_defaults(client, db_sessio
 
 @pytest.mark.asyncio
 async def test_patch_tenant_settings_accepts_valid_defaults(client, db_session, run_prefix):
-    tenant = Tenant(name="Tenant Defaults", slug=f"tenant-defaults-{run_prefix}")
+    tenant = Organization(name="Organization Defaults", slug=f"tenant-defaults-{run_prefix}")
     user = User(email=f"owner-{run_prefix}@tenant-defaults.com", hashed_password="x", role="user")
     db_session.add_all([tenant, user])
     await db_session.flush()
 
-    root = OrgUnit(tenant_id=tenant.id, parent_id=None, name="Root", slug=f"root-defaults-{run_prefix}", type=OrgUnitType.org)
+    root = OrgUnit(organization_id=tenant.id, parent_id=None, name="Root", slug=f"root-defaults-{run_prefix}", type=OrgUnitType.org)
     db_session.add(root)
     await db_session.flush()
 
     membership = OrgMembership(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         org_unit_id=root.id,
         role=OrgRole.owner,
@@ -72,14 +86,14 @@ async def test_patch_tenant_settings_accepts_valid_defaults(client, db_session, 
     db_session.add(membership)
 
     chat_model = ModelRegistry(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name="Chat Model",
         capability_type=ModelCapabilityType.CHAT,
         status=ModelStatus.ACTIVE,
         metadata_={},
     )
     embedding_model = ModelRegistry(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name="Embedding Model",
         capability_type=ModelCapabilityType.EMBEDDING,
         status=ModelStatus.ACTIVE,
@@ -94,8 +108,9 @@ async def test_patch_tenant_settings_accepts_valid_defaults(client, db_session, 
         return user
 
     app.dependency_overrides[get_current_user] = override_current_user
+    app.dependency_overrides[get_current_principal] = _override_principal(tenant, user, ["*"])
     response = await client.patch(
-        f"/api/tenants/{tenant.slug}/settings",
+        f"/api/tenants/{tenant.id}/settings",
         json={
             "default_chat_model_id": str(chat_model.id),
             "default_embedding_model_id": str(embedding_model.id),
@@ -113,17 +128,17 @@ async def test_patch_tenant_settings_accepts_valid_defaults(client, db_session, 
 
 @pytest.mark.asyncio
 async def test_patch_tenant_settings_rejects_invalid_capability(client, db_session, run_prefix):
-    tenant = Tenant(name="Tenant Invalid", slug=f"tenant-invalid-cap-{run_prefix}")
+    tenant = Organization(name="Organization Invalid", slug=f"tenant-invalid-cap-{run_prefix}")
     user = User(email=f"owner-{run_prefix}@tenant-invalid.com", hashed_password="x", role="user")
     db_session.add_all([tenant, user])
     await db_session.flush()
 
-    root = OrgUnit(tenant_id=tenant.id, parent_id=None, name="Root", slug=f"root-invalid-{run_prefix}", type=OrgUnitType.org)
+    root = OrgUnit(organization_id=tenant.id, parent_id=None, name="Root", slug=f"root-invalid-{run_prefix}", type=OrgUnitType.org)
     db_session.add(root)
     await db_session.flush()
 
     membership = OrgMembership(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         org_unit_id=root.id,
         role=OrgRole.owner,
@@ -132,7 +147,7 @@ async def test_patch_tenant_settings_rejects_invalid_capability(client, db_sessi
     db_session.add(membership)
 
     wrong_model = ModelRegistry(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name="Rerank Model",
         capability_type=ModelCapabilityType.RERANK,
         status=ModelStatus.ACTIVE,
@@ -147,8 +162,9 @@ async def test_patch_tenant_settings_rejects_invalid_capability(client, db_sessi
         return user
 
     app.dependency_overrides[get_current_user] = override_current_user
+    app.dependency_overrides[get_current_principal] = _override_principal(tenant, user, ["*"])
     response = await client.patch(
-        f"/api/tenants/{tenant.slug}/settings",
+        f"/api/tenants/{tenant.id}/settings",
         json={"default_chat_model_id": str(wrong_model.id)},
     )
     app.dependency_overrides.clear()
@@ -159,17 +175,17 @@ async def test_patch_tenant_settings_rejects_invalid_capability(client, db_sessi
 
 @pytest.mark.asyncio
 async def test_patch_tenant_settings_rejects_unknown_model(client, db_session, run_prefix):
-    tenant = Tenant(name="Tenant Unknown", slug=f"tenant-unknown-model-{run_prefix}")
+    tenant = Organization(name="Organization Unknown", slug=f"tenant-unknown-model-{run_prefix}")
     user = User(email=f"owner-{run_prefix}@tenant-unknown.com", hashed_password="x", role="user")
     db_session.add_all([tenant, user])
     await db_session.flush()
 
-    root = OrgUnit(tenant_id=tenant.id, parent_id=None, name="Root", slug=f"root-unknown-{run_prefix}", type=OrgUnitType.org)
+    root = OrgUnit(organization_id=tenant.id, parent_id=None, name="Root", slug=f"root-unknown-{run_prefix}", type=OrgUnitType.org)
     db_session.add(root)
     await db_session.flush()
 
     membership = OrgMembership(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         org_unit_id=root.id,
         role=OrgRole.owner,
@@ -184,8 +200,9 @@ async def test_patch_tenant_settings_rejects_unknown_model(client, db_session, r
         return user
 
     app.dependency_overrides[get_current_user] = override_current_user
+    app.dependency_overrides[get_current_principal] = _override_principal(tenant, user, ["*"])
     response = await client.patch(
-        f"/api/tenants/{tenant.slug}/settings",
+        f"/api/tenants/{tenant.id}/settings",
         json={"default_embedding_model_id": str(uuid4())},
     )
     app.dependency_overrides.clear()

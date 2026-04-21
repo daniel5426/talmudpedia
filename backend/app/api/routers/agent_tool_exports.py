@@ -23,7 +23,7 @@ class ExportAgentToolRequest(BaseModel):
 
 class ExportAgentToolResponse(BaseModel):
     tool_id: UUID
-    tool_slug: str
+    builtin_key: str | None = None
     tool_name: str
     status: str
 
@@ -36,9 +36,9 @@ async def export_agent_tool(
     agent_ctx: dict = Depends(get_agent_context),
     db: AsyncSession = Depends(get_db),
 ):
-    tenant_id = UUID(str(agent_ctx["tenant_id"]))
+    organization_id= UUID(str(agent_ctx["organization_id"]))
     actor = agent_ctx.get("user")
-    agent = await AgentService(db=db, tenant_id=tenant_id).get_agent(agent_id)
+    agent = await AgentService(db=db, organization_id=organization_id).get_agent(agent_id)
     tool = await ToolBindingService(db).export_agent_tool_binding(
         agent=agent,
         name=request.name,
@@ -49,7 +49,7 @@ async def export_agent_tool(
     await db.refresh(tool)
     return ExportAgentToolResponse(
         tool_id=tool.id,
-        tool_slug=tool.slug,
+        builtin_key=tool.builtin_key,
         tool_name=tool.name,
         status=str(getattr(getattr(tool, "status", None), "value", getattr(tool, "status", ""))),
     )

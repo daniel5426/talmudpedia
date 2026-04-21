@@ -56,7 +56,7 @@ describe("agents page tool binding flow", () => {
       items: [
         {
           id: "agent-1",
-          tenant_id: "tenant-1",
+          organization_id: "organization-1",
           name: "Export Candidate",
           slug: "export-candidate",
           description: "agent description",
@@ -107,7 +107,7 @@ describe("agents page tool binding flow", () => {
       items: [
         {
           id: "agent-1",
-          tenant_id: "tenant-1",
+          organization_id: "organization-1",
           name: "Bound Agent",
           slug: "bound-agent",
           description: "agent description",

@@ -1,6 +1,6 @@
 # Security Admin User Management Test State
 
-Last Updated: 2026-03-05
+Last Updated: 2026-04-20
 
 ## Scope
 Validate admin user APIs enforce scopes and role edits are removed from update flow.
@@ -14,7 +14,7 @@ Validate admin user APIs enforce scopes and role edits are removed from update f
 - `users.read` scope required for `/admin/users`
 
 ## Last Run
-- Command: `pytest -q backend/tests/security_scope_registry backend/tests/security_rbac_scope_model backend/tests/security_bootstrap_defaults backend/tests/security_workload_provisioning backend/tests/security_route_enforcement backend/tests/security_admin_user_management`
+- Command: `pytest -q backend/tests/security_scope_registry backend/tests/role_assignments_model backend/tests/security_bootstrap_defaults backend/tests/security_workload_provisioning backend/tests/security_route_enforcement backend/tests/security_admin_user_management`
 - Date/Time: 2026-03-05
 - Result: pass
 

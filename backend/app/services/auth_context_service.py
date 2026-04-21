@@ -14,22 +14,22 @@ from app.core.scope_registry import (
     ROLE_FAMILY_PROJECT,
     is_platform_admin_role,
 )
-from app.db.postgres.models.identity import OrgMembership, Tenant, User
+from app.db.postgres.models.identity import OrgMembership, Organization, User
 from app.db.postgres.models.rbac import Role, RoleAssignment, RolePermission
 from app.db.postgres.models.workspace import Project, ProjectStatus
 
 
-async def list_user_organizations(*, db: AsyncSession, user_id: UUID) -> list[Tenant]:
+async def list_user_organizations(*, db: AsyncSession, user_id: UUID) -> list[Organization]:
     result = await db.execute(
-        select(Tenant)
-        .join(OrgMembership, OrgMembership.tenant_id == Tenant.id)
+        select(Organization)
+        .join(OrgMembership, OrgMembership.organization_id == Organization.id)
         .where(
             OrgMembership.user_id == user_id,
-            Tenant.workos_organization_id.is_not(None),
+            Organization.workos_organization_id.is_not(None),
         )
-        .order_by(Tenant.created_at.asc())
+        .order_by(Organization.created_at.asc())
     )
-    organizations: list[Tenant] = []
+    organizations: list[Organization] = []
     seen: set[UUID] = set()
     for organization in result.scalars().all():
         if organization.id in seen:
@@ -59,12 +59,9 @@ async def resolve_effective_scopes(
     user: User,
     organization_id: UUID,
     project_id: UUID | None,
-    organization_permissions: list[str] | None = None,
 ) -> list[str]:
     if is_platform_admin_role(getattr(user, "role", None)):
         return ["*"]
-
-    _ = organization_permissions
     resolved_scopes: set[str] = set()
 
     assignments = (
@@ -73,7 +70,7 @@ async def resolve_effective_scopes(
             .join(Role, Role.id == RoleAssignment.role_id)
             .where(
                 and_(
-                    RoleAssignment.tenant_id == organization_id,
+                    RoleAssignment.organization_id == organization_id,
                     RoleAssignment.user_id == user.id,
                 )
             )
@@ -83,11 +80,11 @@ async def resolve_effective_scopes(
     allowed_role_ids: set[UUID] = set()
     has_org_owner = False
     for assignment, role in assignments:
-        if assignment.scope_type == ROLE_FAMILY_ORGANIZATION and assignment.scope_id == organization_id:
+        if assignment.project_id is None:
             allowed_role_ids.add(assignment.role_id)
             if role.family == ROLE_FAMILY_ORGANIZATION and role.name == ORGANIZATION_OWNER_ROLE:
                 has_org_owner = True
-        if project_id is not None and assignment.scope_type == ROLE_FAMILY_PROJECT and assignment.scope_id == project_id:
+        if project_id is not None and assignment.project_id == project_id:
             allowed_role_ids.add(assignment.role_id)
 
     if allowed_role_ids:
@@ -110,11 +107,10 @@ def serialize_user_summary(user: User) -> dict[str, Any]:
     }
 
 
-def serialize_organization_summary(organization: Tenant) -> dict[str, Any]:
+def serialize_organization_summary(organization: Organization) -> dict[str, Any]:
     return {
         "id": str(organization.id),
         "name": organization.name,
-        "slug": organization.slug,
         "status": organization.status.value if hasattr(organization.status, "value") else str(organization.status),
     }
 
@@ -124,7 +120,6 @@ def serialize_project_summary(project: Project) -> dict[str, Any]:
         "id": str(project.id),
         "organization_id": str(project.organization_id),
         "name": project.name,
-        "slug": project.slug,
         "description": project.description,
         "status": project.status.value if hasattr(project.status, "value") else str(project.status),
         "is_default": bool(project.is_default),

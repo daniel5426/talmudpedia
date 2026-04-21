@@ -40,7 +40,7 @@ async def test_pipeline_input_schema_builder_exposes_only_source_step_fields():
     schema = PipelineInputSchemaBuilder(
         _retrieval_dag(),
         OperatorRegistry.get_instance(),
-        tenant_id=None,
+        organization_id=None,
     ).build()
 
     assert [step.step_id for step in schema.steps] == ["input"]
@@ -55,7 +55,7 @@ async def test_pipeline_input_validator_accepts_query_top_k_runtime_field():
     validator = PipelineInputValidator(
         _retrieval_dag(),
         OperatorRegistry.get_instance(),
-        tenant_id=None,
+        organization_id=None,
         storage=PipelineInputStorage(),
     )
 

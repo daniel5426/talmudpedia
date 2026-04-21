@@ -28,7 +28,6 @@ async def test_admin_export_options_and_archive_use_draft_revision_source(client
         headers=headers,
         json={
             "name": "Exportable App",
-            "slug": "exportable-app",
             "agent_id": str(agent.id),
             "template_key": "classic-chat",
             "auth_enabled": True,
@@ -77,7 +76,6 @@ async def test_admin_export_archive_prefers_live_workspace_snapshot(client, db_s
         headers=headers,
         json={
             "name": "Live Snapshot App",
-            "slug": "live-snapshot-app",
             "agent_id": str(agent.id),
             "template_key": "classic-chat",
             "auth_enabled": True,

@@ -26,7 +26,7 @@ router = APIRouter(prefix="/prompts", tags=["prompts"])
 
 class PromptRecord(BaseModel):
     id: UUID
-    tenant_id: Optional[UUID] = None
+    organization_id: Optional[UUID] = None
     name: str
     description: Optional[str] = None
     content: str
@@ -65,7 +65,7 @@ class PromptUsageRecord(BaseModel):
     resource_name: str
     surface: str
     location_pointer: str
-    tenant_id: Optional[str] = None
+    organization_id: Optional[str] = None
     node_id: Optional[str] = None
 
 
@@ -95,7 +95,7 @@ class PromptMentionRecord(BaseModel):
     name: str
     description: Optional[str] = None
     scope: str
-    tenant_id: Optional[UUID] = None
+    organization_id: Optional[UUID] = None
     updated_at: datetime
 
 
@@ -113,7 +113,7 @@ class PromptResolvePreviewResponse(BaseModel):
 def _serialize_prompt(prompt: PromptLibrary) -> PromptRecord:
     return PromptRecord(
         id=prompt.id,
-        tenant_id=prompt.tenant_id,
+        organization_id=prompt.organization_id,
         name=str(prompt.name or ""),
         description=prompt.description,
         content=str(prompt.content or ""),
@@ -153,7 +153,7 @@ def _service_from_context(
     actor_role = principal.get("role")
     return PromptLibraryService(
         db,
-        tenant_id=(UUID(str(principal["tenant_id"])) if principal.get("tenant_id") else None),
+        organization_id=(UUID(str(principal["organization_id"])) if principal.get("organization_id") else None),
         actor_user_id=(UUID(str(actor_user_id)) if actor_user_id else None),
         actor_role=(str(actor_role) if actor_role is not None else None),
         is_service=bool(principal.get("type") == "workload"),
@@ -190,7 +190,7 @@ async def search_prompt_mentions(
             name=str(prompt.name or ""),
             description=prompt.description,
             scope=str(getattr(prompt.scope, "value", prompt.scope)),
-            tenant_id=prompt.tenant_id,
+            organization_id=prompt.organization_id,
             updated_at=prompt.updated_at,
         )
         for prompt in prompts

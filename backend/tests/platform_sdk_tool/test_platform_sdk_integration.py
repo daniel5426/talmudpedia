@@ -10,14 +10,14 @@ from app.system_artifacts.platform_sdk import handler
 def _require_env():
     base_url = os.getenv("TEST_BASE_URL")
     api_key = os.getenv("TEST_API_KEY")
-    tenant_id = os.getenv("TEST_TENANT_ID")
-    if not base_url or not api_key or not tenant_id:
+    organization_id = os.getenv("TEST_TENANT_ID")
+    if not base_url or not api_key or not organization_id:
         pytest.skip("Set TEST_BASE_URL, TEST_API_KEY, and TEST_TENANT_ID to run integration tests.")
     headers = {
         "Authorization": f"Bearer {api_key}",
-        "X-Tenant-ID": tenant_id,
+        "X-Organization-ID": organization_id,
     }
-    return base_url.rstrip("/"), headers, tenant_id, api_key
+    return base_url.rstrip("/"), headers, organization_id, api_key
 
 
 @pytest.mark.real_db
@@ -101,7 +101,7 @@ def test_artifact_draft_promote_create_tool_flow():
 
 @pytest.mark.real_db
 def test_platform_sdk_run_tests_action():
-    base_url, headers, tenant_id, api_key = _require_env()
+    base_url, headers, organization_id, api_key = _require_env()
     model_id = os.getenv("TEST_CHAT_MODEL_SLUG")
     if not model_id:
         pytest.skip("Set TEST_CHAT_MODEL_SLUG to run agent execution integration test.")
@@ -162,7 +162,7 @@ def test_platform_sdk_run_tests_action():
             ],
             "base_url": base_url,
             "token": api_key,
-            "tenant_id": tenant_id,
+            "organization_id": organization_id,
         }
         result = handler.execute({}, {}, {"inputs": inputs})
         summary = result["context"]["result"]["summary"]

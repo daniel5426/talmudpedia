@@ -13,7 +13,7 @@ const baseTool = (overrides: Partial<ToolDefinition>): ToolDefinition => ({
   execution_config: {},
   version: "1.0.0",
   status: "draft",
-  tenant_id: "tenant-1",
+  organization_id: "organization-1",
   created_at: "",
   updated_at: "",
   published_at: null,

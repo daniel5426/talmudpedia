@@ -1,4 +1,4 @@
-Last Updated: 2026-04-16
+Last Updated: 2026-04-21
 
 # Test State
 
@@ -148,6 +148,9 @@ Artifact runtime revision, deploy, and dispatch-time credential lifecycle.
 - Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/artifact_runtime/test_artifact_versions_api.py`
 - Date: 2026-04-16 Asia/Hebron
 - Result: Pass (`5 passed, 10 warnings`)
+- Command: `SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest backend/tests/artifact_runtime/test_artifact_versions_api.py backend/tests/artifact_runtime/test_artifact_working_draft_api.py`
+- Date: 2026-04-21 Asia/Hebron
+- Result: Pass (`9 passed`). Artifact admin routes remain green after the `organization_id` hard cut.
 
 ## Known Gaps
 

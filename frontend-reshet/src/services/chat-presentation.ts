@@ -27,7 +27,7 @@ export type ChatRenderBlockStatus =
 export type ChatToolPresentation = {
   toolCallId?: string;
   toolName: string;
-  toolSlug?: string;
+  builtinKey?: string;
   action?: string;
   displayName?: string;
   summary?: string;
@@ -127,7 +127,7 @@ export type NormalizedRunStreamEvent =
       toolName: string;
       input?: unknown;
       message?: string;
-      toolSlug?: string;
+      builtinKey?: string;
       action?: string;
       displayName?: string;
       summary?: string;
@@ -137,7 +137,7 @@ export type NormalizedRunStreamEvent =
       toolCallId?: string;
       toolName: string;
       output?: unknown;
-      toolSlug?: string;
+      builtinKey?: string;
       action?: string;
       displayName?: string;
       summary?: string;
@@ -431,7 +431,7 @@ export function adaptRunStreamEvent(rawEvent: Record<string, unknown>, index: nu
       toolName: toSafeText(payload.tool) || "tool",
       input: payload.input,
       message: typeof payload.message === "string" ? payload.message : undefined,
-      toolSlug: typeof payload.tool_slug === "string" ? payload.tool_slug : undefined,
+      builtinKey: typeof payload.builtin_key === "string" ? payload.builtin_key : undefined,
       action: typeof payload.action === "string" ? payload.action : undefined,
       displayName: typeof payload.display_name === "string" ? payload.display_name : undefined,
       summary: typeof payload.summary === "string" ? payload.summary : undefined,
@@ -446,7 +446,7 @@ export function adaptRunStreamEvent(rawEvent: Record<string, unknown>, index: nu
       toolName: toSafeText(rawEvent.name) || "tool",
       input: payload.input ?? rawEvent.inputs,
       message: typeof payload.message === "string" ? payload.message : undefined,
-      toolSlug: typeof payload.tool_slug === "string" ? payload.tool_slug : undefined,
+      builtinKey: typeof payload.builtin_key === "string" ? payload.builtin_key : undefined,
       action: typeof payload.action === "string" ? payload.action : undefined,
       displayName: typeof payload.display_name === "string" ? payload.display_name : undefined,
       summary: typeof payload.summary === "string" ? payload.summary : undefined,
@@ -460,7 +460,7 @@ export function adaptRunStreamEvent(rawEvent: Record<string, unknown>, index: nu
       toolCallId: typeof payload.span_id === "string" ? payload.span_id : undefined,
       toolName: toSafeText(payload.tool) || "tool",
       output: payload.output,
-      toolSlug: typeof payload.tool_slug === "string" ? payload.tool_slug : undefined,
+      builtinKey: typeof payload.builtin_key === "string" ? payload.builtin_key : undefined,
       action: typeof payload.action === "string" ? payload.action : undefined,
       displayName: typeof payload.display_name === "string" ? payload.display_name : undefined,
       summary: typeof payload.summary === "string" ? payload.summary : undefined,
@@ -474,7 +474,7 @@ export function adaptRunStreamEvent(rawEvent: Record<string, unknown>, index: nu
       toolCallId: typeof rawEvent.span_id === "string" ? rawEvent.span_id : undefined,
       toolName: toSafeText(rawEvent.name) || "tool",
       output: payload.output ?? rawEvent.outputs,
-      toolSlug: typeof payload.tool_slug === "string" ? payload.tool_slug : undefined,
+      builtinKey: typeof payload.builtin_key === "string" ? payload.builtin_key : undefined,
       action: typeof payload.action === "string" ? payload.action : undefined,
       displayName: typeof payload.display_name === "string" ? payload.display_name : undefined,
       summary: typeof payload.summary === "string" ? payload.summary : undefined,
@@ -524,7 +524,7 @@ function buildToolBlockFromStart(event: Extract<NormalizedRunStreamEvent, { kind
   const presentationPayload = {
     input: event.input,
     message: event.message,
-    tool_slug: event.toolSlug,
+    builtin_key: event.builtinKey,
     action: event.action,
     display_name: event.displayName,
     summary: event.summary,
@@ -541,7 +541,7 @@ function buildToolBlockFromStart(event: Extract<NormalizedRunStreamEvent, { kind
     tool: {
       toolCallId: event.toolCallId,
       toolName: event.toolName,
-      toolSlug: event.toolSlug,
+      builtinKey: event.builtinKey,
       action: event.action,
       displayName: event.displayName,
       summary: event.summary,
@@ -562,7 +562,7 @@ function buildToolBlockFromEnd(
   const presentationPayload = {
     input: existing?.tool.input,
     output: event.output,
-    tool_slug: event.toolSlug,
+    builtin_key: event.builtinKey,
     action: event.action,
     display_name: event.displayName,
     summary: event.summary,
@@ -581,7 +581,7 @@ function buildToolBlockFromEnd(
     tool: {
       toolCallId: event.toolCallId || existing?.tool.toolCallId,
       toolName: event.toolName,
-      toolSlug: event.toolSlug || existing?.tool.toolSlug,
+      builtinKey: event.builtinKey || existing?.tool.builtinKey,
       action: event.action || existing?.tool.action,
       displayName: event.displayName || existing?.tool.displayName,
       summary: event.summary || existing?.tool.summary,

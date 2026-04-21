@@ -16,7 +16,7 @@ from app.api.dependencies import (
     get_current_principal,
     require_scopes,
 )
-from app.db.postgres.models.identity import Tenant
+from app.db.postgres.models.identity import Organization
 from app.db.postgres.models.rag import ExecutablePipeline, VisualPipeline
 from app.db.postgres.models.registry import (
     ToolDefinitionScope,
@@ -49,53 +49,55 @@ async def get_tools_context(
     db: AsyncSession = Depends(get_db),
 ):
     if context.get("type") == "workload":
-        tenant_id = context.get("tenant_id")
-        if not tenant_id:
-            raise HTTPException(status_code=403, detail="Tenant context required")
+        organization_id= context.get("organization_id")
+        if not organization_id:
+            raise HTTPException(status_code=403, detail="Organization context required")
         try:
-            tenant_uuid = uuid.UUID(str(tenant_id))
+            organization_uuid = uuid.UUID(str(organization_id))
         except Exception:
-            raise HTTPException(status_code=403, detail="Invalid tenant context")
-        result = await db.execute(select(Tenant).where(Tenant.id == tenant_uuid))
-        tenant = result.scalar_one_or_none()
-        if not tenant:
-            raise HTTPException(status_code=404, detail="Tenant not found")
-        return {"tenant_id": str(tenant.id), "tenant": tenant, "user": None, "is_service": True}
+            raise HTTPException(status_code=403, detail="Invalid organization context")
+        result = await db.execute(select(Organization).where(Organization.id == organization_uuid))
+        organization = result.scalar_one_or_none()
+        if not organization:
+            raise HTTPException(status_code=404, detail="Organization not found")
+        return {"organization_id": str(organization.id), "organization": organization, "user": None, "is_service": True}
 
-    tenant_id = context.get("tenant_id")
-    if not tenant_id:
-        raise HTTPException(status_code=403, detail="Tenant context required")
+    organization_id= context.get("organization_id")
+    if not organization_id:
+        raise HTTPException(status_code=403, detail="Organization context required")
     try:
-        tenant_uuid = uuid.UUID(str(tenant_id))
+        organization_uuid = uuid.UUID(str(organization_id))
     except Exception:
-        raise HTTPException(status_code=403, detail="Invalid tenant context")
-    result = await db.execute(select(Tenant).where(Tenant.id == tenant_uuid))
-    tenant = result.scalar_one_or_none()
-    if not tenant:
-        raise HTTPException(status_code=404, detail="Tenant not found")
+        raise HTTPException(status_code=403, detail="Invalid organization context")
+    result = await db.execute(select(Organization).where(Organization.id == organization_uuid))
+    organization = result.scalar_one_or_none()
+    if not organization:
+        raise HTTPException(status_code=404, detail="Organization not found")
     return {
-        "tenant_id": str(tenant.id),
-        "tenant": tenant,
+        "organization_id": str(organization.id),
+        "organization": organization,
         "user": context.get("user"),
         "is_service": False,
     }
 
 
-def _service_context(*, tenant_ctx: dict[str, Any], principal: dict[str, Any] | None = None) -> ControlPlaneContext:
+def _service_context(*, organization_ctx: dict[str, Any], principal: dict[str, Any] | None = None) -> ControlPlaneContext:
     principal = principal or {}
-    return ControlPlaneContext.from_tenant_context(
-        tenant_ctx,
-        user=tenant_ctx.get("user") or principal.get("user"),
-        user_id=getattr(tenant_ctx.get("user") or principal.get("user"), "id", None),
+    return ControlPlaneContext.from_organization_context(
+        {
+            "organization_id": organization_ctx.get("organization_id") or organization_ctx.get("organization_id"),
+            "project_id": organization_ctx.get("project_id"),
+        },
+        user=organization_ctx.get("user") or principal.get("user"),
+        user_id=getattr(organization_ctx.get("user") or principal.get("user"), "id", None),
         auth_token=principal.get("auth_token"),
         scopes=principal.get("scopes"),
-        is_service=bool(tenant_ctx.get("is_service")),
+        is_service=bool(organization_ctx.get("is_service")),
     )
 
 
 class CreateToolRequest(BaseModel):
     name: str
-    slug: str
     description: Optional[str] = None
     input_schema: dict
     output_schema: dict
@@ -126,9 +128,8 @@ class UpdateToolRequest(BaseModel):
 
 class ToolResponse(BaseModel):
     id: uuid.UUID
-    tenant_id: Optional[uuid.UUID]
+    organization_id: Optional[uuid.UUID]
     name: str
-    slug: str
     description: Optional[str]
     scope: str
     input_schema: dict
@@ -423,9 +424,8 @@ def _serialize_tool(tool: ToolRegistry | object) -> ToolResponse:
     execution_config = _redact_sensitive_config((config_schema.get("execution") if isinstance(config_schema, dict) else {}) or {})
     return ToolResponse(
         id=getattr(tool, "id"),
-        tenant_id=getattr(tool, "tenant_id", None),
+        organization_id=getattr(tool, "organization_id", None),
         name=getattr(tool, "name"),
-        slug=getattr(tool, "slug"),
         description=getattr(tool, "description", None),
         scope=_serialize_scope(getattr(tool, "scope", None)),
         input_schema=((getattr(tool, "schema", None) or {}).get("input", {})),
@@ -497,12 +497,6 @@ def _compose_config_schema(
     return next_schema
 
 
-async def _ensure_slug_available(db: AsyncSession, slug: str) -> None:
-    exists = await db.execute(select(ToolRegistry.id).where(ToolRegistry.slug == slug))
-    if exists.scalar_one_or_none() is not None:
-        raise HTTPException(status_code=400, detail=f"Tool with slug '{slug}' already exists")
-
-
 def _enum_name(value: ToolImplementationType | ToolStatus | ToolDefinitionScope | str | None) -> str | None:
     if value is None:
         return None
@@ -540,7 +534,7 @@ def _resolve_artifact_binding(
 async def _resolve_tool_artifact_revision_id(
     *,
     db: AsyncSession,
-    tenant_id: uuid.UUID,
+    organization_id: uuid.UUID,
     tool: ToolRegistry,
 ) -> uuid.UUID | None:
     artifact_id, _artifact_version = _resolve_artifact_binding(
@@ -553,12 +547,12 @@ async def _resolve_tool_artifact_revision_id(
     if artifact_uuid is None:
         return None
 
-    artifact = await ArtifactRegistryService(db).get_tenant_artifact(
+    artifact = await ArtifactRegistryService(db).get_organization_artifact(
         artifact_id=artifact_uuid,
-        tenant_id=tenant_id,
+        organization_id=organization_id,
     )
     if artifact is None:
-        raise HTTPException(status_code=400, detail="Artifact-backed tool references an artifact outside tenant scope")
+        raise HTTPException(status_code=400, detail="Artifact-backed tool references an artifact outside organization scope")
     if artifact.kind != ArtifactKind.TOOL_IMPL:
         raise HTTPException(status_code=400, detail="Artifact-backed tool requires a tool_impl artifact")
     if artifact.latest_published_revision_id is None:
@@ -570,13 +564,13 @@ async def _publish_tool(
     *,
     db: AsyncSession,
     tool: ToolRegistry,
-    tenant_ctx: dict,
+    organization_ctx: dict,
     principal: dict,
-    tenant_id: uuid.UUID,
+    organization_id: uuid.UUID,
 ) -> ToolRegistry:
     await ensure_sensitive_action_approved(
         principal=principal,
-        tenant_id=tenant_id,
+        organization_id=organization_id,
         subject_type="tool",
         subject_id=str(tool.id),
         action_scope="tools.publish",
@@ -585,20 +579,20 @@ async def _publish_tool(
 
     tool.artifact_revision_id = await _resolve_tool_artifact_revision_id(
         db=db,
-        tenant_id=tenant_id,
+        organization_id=organization_id,
         tool=tool,
     )
     if tool.artifact_revision_id:
         revision = await ArtifactRegistryService(db).get_revision(
             revision_id=tool.artifact_revision_id,
-            tenant_id=tenant_id,
+            organization_id=organization_id,
         )
         if revision is None:
             raise HTTPException(status_code=400, detail="Artifact-backed tool revision is unavailable")
         await ArtifactDeploymentService(db).ensure_deployment(
             revision=revision,
             namespace="production",
-            tenant_id=tenant_id,
+            organization_id=organization_id,
         )
     tool.status = ToolStatus.PUBLISHED
     tool.is_active = True
@@ -613,7 +607,7 @@ async def _publish_tool(
         "artifact_version": tool.artifact_version,
         "artifact_revision_id": str(tool.artifact_revision_id) if tool.artifact_revision_id else None,
     }
-    actor = tenant_ctx.get("user")
+    actor = organization_ctx.get("user")
     db.add(
         ToolVersion(
             tool_id=tool.id,
@@ -630,7 +624,7 @@ async def _publish_tool(
 async def _validate_pipeline_binding_for_tenant(
     db: AsyncSession,
     *,
-    tenant_id: uuid.UUID,
+    organization_id: uuid.UUID,
     pipeline_id_raw: Optional[str],
 ) -> None:
     if not pipeline_id_raw:
@@ -644,7 +638,7 @@ async def _validate_pipeline_binding_for_tenant(
     executable = await db.execute(
         select(ExecutablePipeline.id).where(
             ExecutablePipeline.id == pipeline_uuid,
-            ExecutablePipeline.tenant_id == tenant_id,
+            ExecutablePipeline.organization_id == organization_id,
         )
     )
     if executable.scalar_one_or_none() is not None:
@@ -653,13 +647,13 @@ async def _validate_pipeline_binding_for_tenant(
     visual = await db.execute(
         select(VisualPipeline.id).where(
             VisualPipeline.id == pipeline_uuid,
-            VisualPipeline.tenant_id == tenant_id,
+            VisualPipeline.organization_id == organization_id,
         )
     )
     if visual.scalar_one_or_none() is not None:
         return
 
-    raise HTTPException(status_code=400, detail="Pipeline not found in tenant scope")
+    raise HTTPException(status_code=400, detail="Pipeline not found in organization scope")
 
 
 def _maybe_validate_builtin_registry_status(requested_status: ToolStatus | None) -> None:
@@ -670,7 +664,7 @@ def _maybe_validate_builtin_registry_status(requested_status: ToolStatus | None)
 async def _validate_pipeline_config_if_needed(
     *,
     db: AsyncSession,
-    tenant_id: uuid.UUID,
+    organization_id: uuid.UUID,
     implementation_type: ToolImplementationType,
     config_schema: dict | None,
     visual_pipeline_id: uuid.UUID | None = None,
@@ -684,7 +678,7 @@ async def _validate_pipeline_config_if_needed(
         pipeline_id = implementation.get("pipeline_id") if isinstance(implementation, dict) else None
     await _validate_pipeline_binding_for_tenant(
         db,
-        tenant_id=tenant_id,
+        organization_id=organization_id,
         pipeline_id_raw=pipeline_id,
     )
 
@@ -700,12 +694,12 @@ async def list_tools(
     limit: int = 20,
     view: str = Query("summary"),
     db: AsyncSession = Depends(get_db),
-    tenant_ctx=Depends(get_tools_context),
+    organization_ctx=Depends(get_tools_context),
 ):
     try:
         query = ListQuery.from_payload({"skip": skip, "limit": limit, "view": view})
         tools, total = await tool_admin.ToolRegistryAdminService(db).list_tools(
-            ctx=_service_context(tenant_ctx=tenant_ctx),
+            ctx=_service_context(organization_ctx=organization_ctx),
             scope=scope,
             is_active=is_active,
             status=status,
@@ -739,7 +733,7 @@ async def list_builtin_templates(
     stmt = (
         select(ToolRegistry)
         .where(
-            ToolRegistry.tenant_id == None,
+            ToolRegistry.organization_id == None,
             or_(ToolRegistry.builtin_key != None, ToolRegistry.is_system == True),
         )
         .order_by(ToolRegistry.name.asc())
@@ -750,7 +744,7 @@ async def list_builtin_templates(
     total = (
         await db.execute(
             select(func.count(ToolRegistry.id)).where(
-                ToolRegistry.tenant_id == None,
+                ToolRegistry.organization_id == None,
                 or_(ToolRegistry.builtin_key != None, ToolRegistry.is_system == True),
             )
         )
@@ -764,11 +758,11 @@ async def create_tool(
     request: CreateToolRequest,
     _: dict = Depends(require_scopes("tools.write")),
     db: AsyncSession = Depends(get_db),
-    tenant_ctx=Depends(get_tools_context),
+    organization_ctx=Depends(get_tools_context),
 ):
     try:
         tool = await tool_admin.ToolRegistryAdminService(db).create_tool(
-            ctx=_service_context(tenant_ctx=tenant_ctx),
+            ctx=_service_context(organization_ctx=organization_ctx),
             request=request,
         )
         return tool_admin.serialize_tool(tool)
@@ -780,11 +774,11 @@ async def create_tool(
 async def get_tool(
     tool_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    tenant_ctx=Depends(get_tools_context),
+    organization_ctx=Depends(get_tools_context),
 ):
     try:
         tool = await tool_admin.ToolRegistryAdminService(db).get_tool(
-            ctx=_service_context(tenant_ctx=tenant_ctx),
+            ctx=_service_context(organization_ctx=organization_ctx),
             tool_id=tool_id,
         )
         return tool_admin.serialize_tool(tool)
@@ -798,11 +792,11 @@ async def update_tool(
     request: UpdateToolRequest,
     _: dict = Depends(require_scopes("tools.write")),
     db: AsyncSession = Depends(get_db),
-    tenant_ctx=Depends(get_tools_context),
+    organization_ctx=Depends(get_tools_context),
 ):
     try:
         tool = await tool_admin.ToolRegistryAdminService(db).update_tool(
-            ctx=_service_context(tenant_ctx=tenant_ctx),
+            ctx=_service_context(organization_ctx=organization_ctx),
             tool_id=tool_id,
             request=request,
         )
@@ -817,11 +811,11 @@ async def publish_tool(
     principal: dict = Depends(get_current_principal),
     _: dict = Depends(require_scopes("tools.write")),
     db: AsyncSession = Depends(get_db),
-    tenant_ctx=Depends(get_tools_context),
+    organization_ctx=Depends(get_tools_context),
 ):
     try:
         tool = await tool_admin.ToolRegistryAdminService(db).publish_tool(
-            ctx=_service_context(tenant_ctx=tenant_ctx, principal=principal),
+            ctx=_service_context(organization_ctx=organization_ctx, principal=principal),
             tool_id=tool_id,
         )
         return tool_admin.serialize_tool(tool)
@@ -835,11 +829,11 @@ async def create_tool_version(
     new_version: str = Query(..., description="New semver version"),
     _: dict = Depends(require_scopes("tools.write")),
     db: AsyncSession = Depends(get_db),
-    tenant_ctx=Depends(get_tools_context),
+    organization_ctx=Depends(get_tools_context),
 ):
     try:
         tool = await tool_admin.ToolRegistryAdminService(db).create_tool_version(
-            ctx=_service_context(tenant_ctx=tenant_ctx),
+            ctx=_service_context(organization_ctx=organization_ctx),
             tool_id=tool_id,
             new_version=new_version,
         )
@@ -854,12 +848,12 @@ async def delete_tool(
     principal: dict = Depends(get_current_principal),
     _: dict = Depends(require_scopes("tools.write")),
     db: AsyncSession = Depends(get_db),
-    tenant_ctx=Depends(get_tools_context),
+    organization_ctx=Depends(get_tools_context),
 ):
-    tid = uuid.UUID(tenant_ctx["tenant_id"])
+    tid = uuid.UUID(str(organization_ctx["organization_id"]))
 
     tool = (
-        await db.execute(select(ToolRegistry).where(ToolRegistry.id == tool_id, ToolRegistry.tenant_id == tid))
+        await db.execute(select(ToolRegistry).where(ToolRegistry.id == tool_id, ToolRegistry.organization_id == tid))
     ).scalar_one_or_none()
     if not tool:
         raise HTTPException(status_code=404, detail="Tool not found")
@@ -873,7 +867,7 @@ async def delete_tool(
 
     await ensure_sensitive_action_approved(
         principal=principal,
-        tenant_id=tid,
+        organization_id=tid,
         subject_type="tool",
         subject_id=str(tool.id),
         action_scope="tools.delete",

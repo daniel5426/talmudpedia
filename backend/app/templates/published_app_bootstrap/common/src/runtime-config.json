@@ -1,6 +1,6 @@
 {
   "app_id": "",
-  "app_slug": "",
+  "app_public_id": "",
   "agent_id": "",
   "api_base_url": "/api/py",
   "bootstrap_path": ""

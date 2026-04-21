@@ -146,7 +146,7 @@ const normalizeExecutionEvent = (rawEvent: Record<string, unknown>): AgentExecut
 export function useAgentRunController(
   agentId: string | undefined,
   graphDefinition?: AgentGraphDefinition | null,
-  agentSlug?: string | null,
+  agentSystemKey?: string | null,
 ): ChatController & {
   executionSteps: ExecutionStep[];
   executionEvents: AgentExecutionEvent[];
@@ -224,7 +224,7 @@ export function useAgentRunController(
   const runtimeContext = useCallback(
     (extra?: Record<string, unknown>) => {
       const context: Record<string, unknown> = {};
-      if (agentSlug === "platform-architect") {
+      if (agentSystemKey === "platform-architect") {
         context.architect_mode = "default";
       }
       if (extra && typeof extra === "object") {
@@ -232,7 +232,7 @@ export function useAgentRunController(
       }
       return Object.keys(context).length > 0 ? context : undefined;
     },
-    [agentSlug],
+    [agentSystemKey],
   );
 
   useEffect(() => {

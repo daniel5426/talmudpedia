@@ -173,7 +173,7 @@ def _call(action: str, payload: Dict[str, Any], *, tool_slug: str) -> Dict[str, 
             "inputs": {
                 "action": action,
                 "payload": payload,
-                "tenant_id": payload.get("tenant_id"),
+                "organization_id": payload.get("organization_id"),
                 "tool_slug": tool_slug,
                 "idempotency_key": payload.get("idempotency_key"),
                 "request_metadata": payload.get("request_metadata"),
@@ -187,13 +187,13 @@ def _call_with_runtime_tenant(
     payload: Dict[str, Any],
     *,
     tool_slug: str,
-    runtime_tenant_id: str,
+    runtime_organization_id: str,
 ) -> Dict[str, Any]:
     return handler.execute(
         state={},
         config={},
         context={
-            "tenant_id": runtime_tenant_id,
+            "organization_id": runtime_tenant_id,
             "inputs": {
                 "action": action,
                 "payload": payload,
@@ -211,7 +211,7 @@ def test_direct_tool_loop_happy_path(monkeypatch):
     create_pipeline = _call(
         "rag.create_visual_pipeline",
         {
-            "tenant_id": "tenant-1",
+            "organization_id": "tenant-1",
             "tenant_slug": "tenant-a",
             "name": "FAQ Pipeline",
             "slug": "faq-pipeline",
@@ -225,7 +225,7 @@ def test_direct_tool_loop_happy_path(monkeypatch):
     compile_pipeline = _call(
         "rag.compile_visual_pipeline",
         {
-            "tenant_id": "tenant-1",
+            "organization_id": "tenant-1",
             "tenant_slug": "tenant-a",
             "pipeline_id": pipeline_id,
             "idempotency_key": "idem-pipe-compile-1",
@@ -236,7 +236,7 @@ def test_direct_tool_loop_happy_path(monkeypatch):
     create_agent = _call(
         "agents.create",
         {
-            "tenant_id": "tenant-1",
+            "organization_id": "tenant-1",
             "name": "FAQ Agent",
             "slug": "faq-agent",
             "graph_definition": {
@@ -257,13 +257,13 @@ def test_direct_tool_loop_happy_path(monkeypatch):
     agent_id = create_agent["result"]["id"]
     validate_agent = _call(
         "agents.validate",
-        {"tenant_id": "tenant-1", "agent_id": agent_id, "validation": {"strict": True}},
+        {"organization_id": "tenant-1", "agent_id": agent_id, "validation": {"strict": True}},
         tool_slug="platform-agents",
     )
     execute_agent = _call(
         "agents.execute",
         {
-            "tenant_id": "tenant-1",
+            "organization_id": "tenant-1",
             "agent_id": agent_id,
             "input": "health-check",
             "idempotency_key": "idem-exec-1",
@@ -463,7 +463,7 @@ def test_direct_tool_loop_repair_path(monkeypatch):
     create_pipeline = _call(
         "rag.create_visual_pipeline",
         {
-            "tenant_id": "tenant-1",
+            "organization_id": "tenant-1",
             "tenant_slug": "tenant-a",
             "name": "FAQ Pipeline",
             "slug": "faq-pipeline",
@@ -478,7 +478,7 @@ def test_direct_tool_loop_repair_path(monkeypatch):
     first_compile = _call(
         "rag.compile_visual_pipeline",
         {
-            "tenant_id": "tenant-1",
+            "organization_id": "tenant-1",
             "tenant_slug": "tenant-a",
             "pipeline_id": pipeline_id,
             "idempotency_key": "idem-pipe-compile-2",
@@ -489,7 +489,7 @@ def test_direct_tool_loop_repair_path(monkeypatch):
     patch_step = _call(
         "rag.update_visual_pipeline",
         {
-            "tenant_id": "tenant-1",
+            "organization_id": "tenant-1",
             "tenant_slug": "tenant-a",
             "pipeline_id": pipeline_id,
             "patch": {"description": "repair patch"},
@@ -501,7 +501,7 @@ def test_direct_tool_loop_repair_path(monkeypatch):
     second_compile = _call(
         "rag.compile_visual_pipeline",
         {
-            "tenant_id": "tenant-1",
+            "organization_id": "tenant-1",
             "tenant_slug": "tenant-a",
             "pipeline_id": pipeline_id,
             "idempotency_key": "idem-pipe-compile-3",
@@ -524,7 +524,7 @@ def test_approval_block_and_draft_first_policy(monkeypatch):
     blocked_by_policy = _call(
         "tools.publish",
         {
-            "tenant_id": "tenant-1",
+            "organization_id": "tenant-1",
             "tool_id": "tool-1",
             "idempotency_key": "idem-tool-pub-1",
             "request_metadata": {"trace_id": "trace-3", "request_id": "req-1"},
@@ -534,7 +534,7 @@ def test_approval_block_and_draft_first_policy(monkeypatch):
     blocked_by_approval = _call(
         "tools.publish",
         {
-            "tenant_id": "tenant-1",
+            "organization_id": "tenant-1",
             "tool_id": "tool-1",
             "objective_flags": {"allow_publish": True},
             "idempotency_key": "idem-tool-pub-2",
@@ -567,7 +567,7 @@ def test_tenant_and_scope_denial_paths(monkeypatch):
     )
     scope_denied = _call(
         "agents.execute",
-        {"tenant_id": "tenant-1", "agent_id": "agent-1", "input": "x"},
+        {"organization_id": "tenant-1", "agent_id": "agent-1", "input": "x"},
         tool_slug="platform-rag",
     )
 
@@ -583,7 +583,7 @@ def test_platform_sdk_outputs_redacted_auth_context(monkeypatch):
     result = _call(
         "models.list",
         {
-            "tenant_id": "tenant-1",
+            "organization_id": "tenant-1",
             "request_metadata": {"trace_id": "trace-auth", "request_id": "req-auth"},
         },
         tool_slug="platform-assets",
@@ -591,7 +591,7 @@ def test_platform_sdk_outputs_redacted_auth_context(monkeypatch):
 
     auth_context = result["meta"]["auth_context"]
     assert auth_context["action"] == "models.list"
-    assert auth_context["tenant_id"] == "tenant-1"
+    assert auth_context["organization_id"] == "tenant-1"
     assert auth_context["runtime_tenant_id"] is None
     assert auth_context["explicit_tenant_id"] == "tenant-1"
     assert auth_context["token_present"] is True
@@ -606,7 +606,7 @@ def test_replay_idempotency_reuses_pipeline(monkeypatch):
     fake = _FakeControlClient()
     monkeypatch.setattr(handler, "_control_client", lambda _client: fake)
     payload = {
-        "tenant_id": "tenant-1",
+        "organization_id": "tenant-1",
         "tenant_slug": "tenant-a",
         "name": "FAQ Pipeline",
         "slug": "faq-pipeline",
@@ -648,7 +648,7 @@ def test_agent_create_surfaces_structured_validation_errors(monkeypatch):
     response = _call(
         "agents.create",
         {
-            "tenant_id": "tenant-1",
+            "organization_id": "tenant-1",
             "name": "Bad Graph Agent",
             "slug": "bad-graph-agent",
             "graph_definition": {"spec_version": "1.0", "nodes": [], "edges": []},
@@ -685,7 +685,7 @@ def test_rag_create_visual_pipeline_surfaces_structured_validation_errors(monkey
     response = _call(
         "rag.create_visual_pipeline",
         {
-            "tenant_id": "tenant-1",
+            "organization_id": "tenant-1",
             "tenant_slug": "tenant-a",
             "name": "Website Ingest",
             "nodes": [{"id": "start"}],
@@ -715,7 +715,7 @@ def test_runtime_tenant_context_satisfies_mutation_without_payload_tenant(monkey
             "graph_definition": {"nodes": [], "edges": []},
         },
         tool_slug="platform-rag",
-        runtime_tenant_id="tenant-runtime-1",
+        runtime_organization_id="tenant-runtime-1",
     )
 
     assert response["errors"] == []
@@ -730,14 +730,14 @@ def test_runtime_tenant_override_is_rejected(monkeypatch):
     response = _call_with_runtime_tenant(
         "rag.create_visual_pipeline",
         {
-            "tenant_id": "tenant-other",
+            "organization_id": "tenant-other",
             "tenant_slug": "tenant-a",
             "name": "FAQ Pipeline",
             "slug": "faq-pipeline",
             "graph_definition": {"nodes": [], "edges": []},
         },
         tool_slug="platform-rag",
-        runtime_tenant_id="tenant-runtime-1",
+        runtime_organization_id="tenant-runtime-1",
     )
 
     assert response["errors"][0]["code"] == "TENANT_MISMATCH"

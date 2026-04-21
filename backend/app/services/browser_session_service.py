@@ -8,7 +8,7 @@ from uuid import UUID
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.postgres.models.identity import OrgMembership, Tenant, User
+from app.db.postgres.models.identity import OrgMembership, Organization, User
 from app.db.postgres.models.workspace import BrowserSession, BrowserSessionStatus, Project, ProjectStatus
 
 
@@ -36,7 +36,7 @@ class BrowserSessionService:
         self,
         *,
         user: User,
-        organization: Tenant,
+        organization: Organization,
         project: Project,
     ) -> tuple[BrowserSession, str]:
         raw_token = self._generate_raw_token()
@@ -91,7 +91,7 @@ class BrowserSessionService:
                 select(OrgMembership).where(
                     and_(
                         OrgMembership.user_id == session.user_id,
-                        OrgMembership.tenant_id == organization_id,
+                        OrgMembership.organization_id == organization_id,
                     )
                 )
             )

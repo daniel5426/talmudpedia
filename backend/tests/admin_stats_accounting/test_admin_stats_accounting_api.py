@@ -6,22 +6,22 @@ import pytest
 from app.core.security import create_access_token, get_password_hash
 from app.db.postgres.models.agent_threads import AgentThread, AgentThreadStatus, AgentThreadSurface
 from app.db.postgres.models.agents import Agent, AgentRun, AgentStatus, RunStatus
-from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Tenant, User
+from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Organization, User
 from app.services.security_bootstrap_service import SecurityBootstrapService
 
 
-def _auth_headers(user_id: str, tenant_id: str, org_unit_id: str) -> dict[str, str]:
+def _auth_headers(user_id: str, organization_id: str, org_unit_id: str) -> dict[str, str]:
     token = create_access_token(
         subject=user_id,
-        tenant_id=tenant_id,
+        organization_id=organization_id,
         org_unit_id=org_unit_id,
         org_role="owner",
     )
-    return {"Authorization": f"Bearer {token}", "X-Tenant-ID": tenant_id}
+    return {"Authorization": f"Bearer {token}", "X-Organization-ID": organization_id}
 
 
 async def _seed_accounting_fixture(db_session):
-    tenant = Tenant(name=f"Tenant {uuid4().hex[:6]}", slug=f"tenant-{uuid4().hex[:8]}")
+    tenant = Organization(name=f"Organization {uuid4().hex[:6]}", slug=f"tenant-{uuid4().hex[:8]}")
     owner = User(
         email=f"owner-{uuid4().hex[:8]}@example.com",
         hashed_password=get_password_hash("secret123"),
@@ -32,7 +32,7 @@ async def _seed_accounting_fixture(db_session):
     await db_session.flush()
 
     org_unit = OrgUnit(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name="Root",
         slug=f"root-{uuid4().hex[:6]}",
         type=OrgUnitType.org,
@@ -42,7 +42,7 @@ async def _seed_accounting_fixture(db_session):
 
     db_session.add(
         OrgMembership(
-            tenant_id=tenant.id,
+            organization_id=tenant.id,
             user_id=owner.id,
             org_unit_id=org_unit.id,
             role=OrgRole.owner,
@@ -53,10 +53,10 @@ async def _seed_accounting_fixture(db_session):
 
     bootstrap = SecurityBootstrapService(db_session)
     await bootstrap.ensure_default_roles(tenant.id)
-    await bootstrap.ensure_owner_assignment(tenant_id=tenant.id, user_id=owner.id, assigned_by=owner.id)
+    await bootstrap.ensure_organization_owner_assignment(organization_id=tenant.id, user_id=owner.id, assigned_by=owner.id)
 
     agent = Agent(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name="Accounting Agent",
         slug=f"accounting-{uuid4().hex[:6]}",
         graph_definition={"nodes": [], "edges": []},
@@ -66,7 +66,7 @@ async def _seed_accounting_fixture(db_session):
     await db_session.flush()
 
     thread = AgentThread(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=owner.id,
         agent_id=agent.id,
         title="Accounting Thread",
@@ -79,7 +79,7 @@ async def _seed_accounting_fixture(db_session):
     now = datetime.now(timezone.utc)
     runs = [
         AgentRun(
-            tenant_id=tenant.id,
+            organization_id=tenant.id,
             agent_id=agent.id,
             user_id=owner.id,
             thread_id=thread.id,
@@ -94,7 +94,7 @@ async def _seed_accounting_fixture(db_session):
             completed_at=now - timedelta(minutes=1, seconds=1),
         ),
         AgentRun(
-            tenant_id=tenant.id,
+            organization_id=tenant.id,
             agent_id=agent.id,
             user_id=owner.id,
             thread_id=thread.id,
@@ -109,7 +109,7 @@ async def _seed_accounting_fixture(db_session):
             completed_at=now - timedelta(minutes=2, seconds=1),
         ),
         AgentRun(
-            tenant_id=tenant.id,
+            organization_id=tenant.id,
             agent_id=agent.id,
             user_id=owner.id,
             thread_id=thread.id,

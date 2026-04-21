@@ -460,7 +460,7 @@ export default function ModelsPage() {
                                             <div className="flex items-center gap-2">
                                                 <CardTitle className="text-lg">{model.name}</CardTitle>
                                                 <StatusBadge status={model.status} />
-                                                {model.tenant_id === null && <Badge variant="outline">Global</Badge>}
+                                                {model.organization_id === null && <Badge variant="outline">Global</Badge>}
                                             </div>
                                             {model.description && (
                                                 <p className="text-sm text-muted-foreground mt-1">{model.description}</p>
@@ -468,7 +468,7 @@ export default function ModelsPage() {
                                         </div>
                                         <div className="flex items-center gap-2">
                                             <CapabilityBadge type={model.capability_type} />
-                                            {model.tenant_id !== null && (
+                                            {model.organization_id !== null && (
                                                 <>
                                                     <EditModelDialog model={model} onUpdated={fetchModels} />
                                                     <Button variant="ghost" size="icon" onClick={() => handleDelete(model.id)}>
@@ -483,7 +483,7 @@ export default function ModelsPage() {
                                     <div className="space-y-3">
                                         <div className="flex items-center justify-between">
                                             <h4 className="text-sm font-medium">Providers ({model.providers.length})</h4>
-                                            {model.tenant_id !== null ? (
+                                            {model.organization_id !== null ? (
                                                 <AddProviderDialog model={model} credentials={credentials} onAdded={fetchModels} />
                                             ) : (
                                                 <span className="text-xs text-muted-foreground">Global models are read-only.</span>
@@ -527,7 +527,7 @@ export default function ModelsPage() {
                                                             </TableCell>
                                                             <TableCell>
                                                                 <div className="flex items-center gap-1">
-                                                                    {model.tenant_id !== null && (
+                                                                    {model.organization_id !== null && (
                                                                         <>
                                                                             <EditProviderDialog
                                                                                 model={model}

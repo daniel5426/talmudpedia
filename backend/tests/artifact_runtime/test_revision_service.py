@@ -6,7 +6,7 @@ import pytest
 from sqlalchemy import func, select
 
 from app.db.postgres.models.artifact_runtime import ArtifactRevision, ArtifactStatus
-from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Tenant, User
+from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Organization, User
 from app.db.postgres.models.registry import IntegrationCredential, IntegrationCredentialCategory
 from app.services.artifact_runtime.bundle_builder import ArtifactBundleBuilder
 from app.services.artifact_runtime.cloudflare_package_builder import CloudflareArtifactPackageBuilder
@@ -16,18 +16,18 @@ from app.services.artifact_runtime.workers_validation import ArtifactWorkersComp
 
 
 async def _seed_tenant_context(db_session):
-    tenant = Tenant(id=uuid.uuid4(), name="Artifact Tenant", slug=f"artifact-tenant-{uuid.uuid4().hex[:8]}")
+    tenant = Organization(id=uuid.uuid4(), name="Artifact Organization", slug=f"artifact-tenant-{uuid.uuid4().hex[:8]}")
     user = User(id=uuid.uuid4(), email=f"artifact-{uuid.uuid4().hex[:6]}@example.com", role="admin")
     org_unit = OrgUnit(
         id=uuid.uuid4(),
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name="Artifact Org",
         slug=f"artifact-org-{uuid.uuid4().hex[:6]}",
         type=OrgUnitType.org,
     )
     membership = OrgMembership(
         id=uuid.uuid4(),
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         org_unit_id=org_unit.id,
         role=OrgRole.owner,
@@ -44,7 +44,7 @@ async def test_revision_service_creates_updates_and_publishes_multifile_revision
 
     service = ArtifactRevisionService(db_session)
     artifact = await service.create_artifact(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         created_by=user.id,
         display_name="Reading Time",
         description="Estimate reading time",
@@ -68,7 +68,7 @@ async def test_revision_service_creates_updates_and_publishes_multifile_revision
         },
     )
     await db_session.commit()
-    artifact = await ArtifactRegistryService(db_session).get_tenant_artifact(artifact_id=artifact.id, tenant_id=tenant.id)
+    artifact = await ArtifactRegistryService(db_session).get_tenant_artifact(artifact_id=artifact.id, organization_id=tenant.id)
 
     assert artifact.latest_draft_revision_id is not None
     assert artifact.status == ArtifactStatus.DRAFT
@@ -101,7 +101,7 @@ async def test_revision_service_creates_updates_and_publishes_multifile_revision
         },
     )
     await db_session.commit()
-    artifact = await ArtifactRegistryService(db_session).get_tenant_artifact(artifact_id=artifact.id, tenant_id=tenant.id)
+    artifact = await ArtifactRegistryService(db_session).get_tenant_artifact(artifact_id=artifact.id, organization_id=tenant.id)
 
     assert artifact.latest_draft_revision.revision_number == 2
     assert artifact.latest_draft_revision.build_hash != first_hash
@@ -111,7 +111,7 @@ async def test_revision_service_creates_updates_and_publishes_multifile_revision
 
     published_revision = await service.publish_latest_draft(artifact)
     await db_session.commit()
-    artifact = await ArtifactRegistryService(db_session).get_tenant_artifact(artifact_id=artifact.id, tenant_id=tenant.id)
+    artifact = await ArtifactRegistryService(db_session).get_tenant_artifact(artifact_id=artifact.id, organization_id=tenant.id)
 
     assert published_revision.is_published is True
     assert published_revision.version_label == "v2"
@@ -125,7 +125,7 @@ async def test_revision_service_does_not_create_new_revision_for_noop_update(db_
 
     service = ArtifactRevisionService(db_session)
     artifact = await service.create_artifact(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         created_by=user.id,
         display_name="Noop Revision",
         description="unchanged",
@@ -148,7 +148,7 @@ async def test_revision_service_does_not_create_new_revision_for_noop_update(db_
         },
     )
     await db_session.commit()
-    artifact = await ArtifactRegistryService(db_session).get_tenant_artifact(artifact_id=artifact.id, tenant_id=tenant.id)
+    artifact = await ArtifactRegistryService(db_session).get_tenant_artifact(artifact_id=artifact.id, organization_id=tenant.id)
     assert artifact.latest_draft_revision is not None
     original_revision_id = artifact.latest_draft_revision.id
     original_revision_number = artifact.latest_draft_revision.revision_number
@@ -174,7 +174,7 @@ async def test_revision_service_does_not_create_new_revision_for_noop_update(db_
         },
     )
     await db_session.commit()
-    artifact = await ArtifactRegistryService(db_session).get_tenant_artifact(artifact_id=artifact.id, tenant_id=tenant.id)
+    artifact = await ArtifactRegistryService(db_session).get_tenant_artifact(artifact_id=artifact.id, organization_id=tenant.id)
     revision_count = await db_session.scalar(
         select(func.count()).select_from(ArtifactRevision).where(ArtifactRevision.artifact_id == artifact.id)
     )
@@ -191,7 +191,7 @@ async def test_revision_service_rejects_language_mutation_for_persisted_artifact
 
     service = ArtifactRevisionService(db_session)
     artifact = await service.create_artifact(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         created_by=user.id,
         display_name="Immutable Language",
         description="language lock",
@@ -212,7 +212,7 @@ async def test_revision_service_rejects_language_mutation_for_persisted_artifact
         },
     )
     await db_session.commit()
-    artifact = await ArtifactRegistryService(db_session).get_tenant_artifact(artifact_id=artifact.id, tenant_id=tenant.id)
+    artifact = await ArtifactRegistryService(db_session).get_tenant_artifact(artifact_id=artifact.id, organization_id=tenant.id)
 
     with pytest.raises(ValueError, match="Artifact language is immutable"):
         await service.update_artifact(
@@ -242,7 +242,7 @@ async def test_publish_latest_draft_rejects_missing_python_execute_handler(db_se
     tenant, user = await _seed_tenant_context(db_session)
     service = ArtifactRevisionService(db_session)
     artifact = await service.create_artifact(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         created_by=user.id,
         display_name="Broken Python Publish",
         description="missing execute",
@@ -272,7 +272,7 @@ async def test_publish_latest_draft_rejects_unexported_javascript_execute_handle
     tenant, user = await _seed_tenant_context(db_session)
     service = ArtifactRevisionService(db_session)
     artifact = await service.create_artifact(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         created_by=user.id,
         display_name="Broken JS Publish",
         description="missing export",
@@ -301,7 +301,7 @@ def test_bundle_builder_hash_is_stable_for_same_revision_payload():
     class _Revision:
         id = uuid.uuid4()
         artifact_id = uuid.uuid4()
-        tenant_id = uuid.uuid4()
+        organization_id = uuid.uuid4()
         display_name = "Stable"
         description = "Stable bundle"
         kind = "rag_operator"
@@ -337,7 +337,7 @@ def test_cloudflare_package_builder_emits_runtime_main_wrapper():
     class _Revision:
         id = uuid.uuid4()
         artifact_id = uuid.uuid4()
-        tenant_id = uuid.uuid4()
+        organization_id = uuid.uuid4()
         kind = "tool_impl"
         language = "python"
         entry_module_path = "main.py"
@@ -358,7 +358,7 @@ def test_cloudflare_package_builder_records_declared_python_dependencies():
     class _Revision:
         id = uuid.uuid4()
         artifact_id = uuid.uuid4()
-        tenant_id = uuid.uuid4()
+        organization_id = uuid.uuid4()
         kind = "tool_impl"
         language = "python"
         entry_module_path = "main.py"
@@ -375,7 +375,7 @@ def test_cloudflare_package_builder_allows_neutral_files_and_keeps_mismatched_co
     class _Revision:
         id = uuid.uuid4()
         artifact_id = uuid.uuid4()
-        tenant_id = uuid.uuid4()
+        organization_id = uuid.uuid4()
         kind = "tool_impl"
         language = "javascript"
         entry_module_path = "main.js"
@@ -402,7 +402,7 @@ def test_cloudflare_python_package_builder_materializes_runtime_source_tree_for_
     class _Revision:
         id = uuid.uuid4()
         artifact_id = uuid.uuid4()
-        tenant_id = uuid.uuid4()
+        organization_id = uuid.uuid4()
         kind = "tool_impl"
         language = "python"
         entry_module_path = "main.py"
@@ -434,7 +434,7 @@ def test_cloudflare_package_builder_rejects_entry_module_that_does_not_match_lan
     class _Revision:
         id = uuid.uuid4()
         artifact_id = uuid.uuid4()
-        tenant_id = uuid.uuid4()
+        organization_id = uuid.uuid4()
         kind = "tool_impl"
         language = "javascript"
         entry_module_path = "main.py"
@@ -451,7 +451,7 @@ def test_cloudflare_package_builder_rejects_entry_module_that_does_not_match_lan
 async def test_revision_service_rejects_unsupported_credential_usage_on_save(db_session):
     tenant, user = await _seed_tenant_context(db_session)
     credential = IntegrationCredential(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         category=IntegrationCredentialCategory.LLM_PROVIDER,
         provider_key="openai",
         display_name="OpenAI Runtime",
@@ -464,7 +464,7 @@ async def test_revision_service_rejects_unsupported_credential_usage_on_save(db_
 
     with pytest.raises(ValueError, match="Only exact string-literal values"):
         await ArtifactRevisionService(db_session).create_artifact(
-            tenant_id=tenant.id,
+            organization_id=tenant.id,
             created_by=user.id,
             display_name="Bad Credential Artifact",
             description=None,

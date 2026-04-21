@@ -27,9 +27,9 @@ def _pipeline_graph() -> dict:
 
 def _service() -> RagGraphMutationService:
     service = RagGraphMutationService.__new__(RagGraphMutationService)
-    service.tenant_id = uuid4()
+    service.organization_id = uuid4()
     service.registry = SimpleNamespace(
-        get=lambda _operator, tenant_id=None: SimpleNamespace(
+        get=lambda _operator, organization_id=None: SimpleNamespace(
             required_config=[],
             optional_config=[SimpleNamespace(name="knowledge_store_id"), SimpleNamespace(name="top_k")],
         )
@@ -73,7 +73,7 @@ async def test_rag_apply_patch_persists_incomplete_graph_and_returns_advisory_di
 
     pipeline = SimpleNamespace(
         id=pipeline_id,
-        tenant_id=service.tenant_id,
+        organization_id=service.organization_id,
         org_unit_id=None,
         name="FAQ Pipeline",
         description="desc",

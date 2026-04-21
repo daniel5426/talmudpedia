@@ -7,8 +7,8 @@ from typing import Any
 
 
 class E2EReport:
-    def __init__(self, tenant_id: str, path: str):
-        self.tenant_id = tenant_id
+    def __init__(self, organization_id: str, path: str):
+        self.organization_id = organization_id
         self.path = Path(path)
         self.started_at = datetime.now(timezone.utc)
         self.results: list[dict[str, Any]] = []
@@ -23,7 +23,7 @@ class E2EReport:
         failed = sum(1 for r in self.results if r.get("status") == "failed")
         payload = {
             "run_id": f"arch-e2e-{int(self.started_at.timestamp())}",
-            "tenant_id": self.tenant_id,
+            "organization_id": self.organization_id,
             "started_at": self.started_at.isoformat(),
             "ended_at": ended.isoformat(),
             "scenarios_total": len(self.results),

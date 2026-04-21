@@ -1,4 +1,4 @@
-import { tenantAPIKeysService } from "@/services/tenant-api-keys"
+import { organizationAPIKeysService } from "@/services/organization-api-keys"
 
 const getMock = jest.fn()
 const postMock = jest.fn()
@@ -10,15 +10,15 @@ jest.mock("@/services/http", () => ({
   },
 }))
 
-describe("tenant API keys service", () => {
+describe("organization API keys service", () => {
   beforeEach(() => {
     jest.clearAllMocks()
   })
 
   it("lists API keys via GET /admin/security/api-keys", async () => {
     getMock.mockResolvedValue({ items: [] })
-    const result = await tenantAPIKeysService.listAPIKeys()
-    expect(getMock).toHaveBeenCalledWith("/admin/security/api-keys")
+    const result = await organizationAPIKeysService.listAPIKeys()
+    expect(getMock).toHaveBeenCalledWith("/admin/organizations/api-keys")
     expect(result).toEqual({ items: [] })
   })
 
@@ -29,9 +29,9 @@ describe("tenant API keys service", () => {
       token_type: "bearer",
     })
 
-    const result = await tenantAPIKeysService.createAPIKey({ name: "Test" })
+    const result = await organizationAPIKeysService.createAPIKey({ name: "Test" })
 
-    expect(postMock).toHaveBeenCalledWith("/admin/security/api-keys", {
+    expect(postMock).toHaveBeenCalledWith("/admin/organizations/api-keys", {
       name: "Test",
       scopes: ["agents.embed"],
     })
@@ -46,9 +46,9 @@ describe("tenant API keys service", () => {
       token_type: "bearer",
     })
 
-    await tenantAPIKeysService.createAPIKey({ name: "Custom", scopes: ["agents.embed", "agents.read"] })
+    await organizationAPIKeysService.createAPIKey({ name: "Custom", scopes: ["agents.embed", "agents.read"] })
 
-    expect(postMock).toHaveBeenCalledWith("/admin/security/api-keys", {
+    expect(postMock).toHaveBeenCalledWith("/admin/organizations/api-keys", {
       name: "Custom",
       scopes: ["agents.embed", "agents.read"],
     })
@@ -59,15 +59,15 @@ describe("tenant API keys service", () => {
       api_key: { id: "k1", status: "revoked" },
     })
 
-    const result = await tenantAPIKeysService.revokeAPIKey("k1")
+    const result = await organizationAPIKeysService.revokeAPIKey("k1")
 
-    expect(postMock).toHaveBeenCalledWith("/admin/security/api-keys/k1/revoke")
+    expect(postMock).toHaveBeenCalledWith("/admin/organizations/api-keys/k1/revoke")
     expect(result.api_key.status).toBe("revoked")
   })
 
   it("propagates errors from httpClient", async () => {
     getMock.mockRejectedValue(new Error("Unauthorized"))
 
-    await expect(tenantAPIKeysService.listAPIKeys()).rejects.toThrow("Unauthorized")
+    await expect(organizationAPIKeysService.listAPIKeys()).rejects.toThrow("Unauthorized")
   })
 })

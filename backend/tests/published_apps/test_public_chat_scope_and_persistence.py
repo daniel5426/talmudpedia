@@ -16,7 +16,6 @@ async def test_preview_chat_stream_uses_preview_token_and_persists_thread(client
         headers=headers,
         json={
             "name": "Preview Chat App",
-            "slug": "preview-chat-app",
             "agent_id": str(agent.id),
             "template_key": "classic-chat",
             "auth_enabled": True,
@@ -55,7 +54,7 @@ async def test_preview_chat_stream_uses_preview_token_and_persists_thread(client
     assert run_context["published_app_preview"] is True
     assert run_context["published_app_preview_revision_id"] == draft_revision_id
 
-    app = await db_session.scalar(select(PublishedApp).where(PublishedApp.slug == "preview-chat-app"))
+    app = await db_session.scalar(select(PublishedApp).where(PublishedApp.public_id == "preview-chat-app"))
     assert app is not None
     thread_count = await db_session.scalar(
         select(func.count(AgentThread.id)).where(AgentThread.published_app_id == app.id)
@@ -72,7 +71,6 @@ async def test_preview_chat_stream_requires_preview_token(client, db_session):
         headers=headers,
         json={
             "name": "Preview Chat Auth App",
-            "slug": "preview-chat-auth-app",
             "agent_id": str(agent.id),
             "template_key": "classic-chat",
             "auth_enabled": False,

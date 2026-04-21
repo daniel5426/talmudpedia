@@ -21,7 +21,7 @@ class OrchestratorPolicy(Base):
     __tablename__ = "orchestrator_policies"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
     orchestrator_agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id", ondelete="CASCADE"), nullable=False, index=True)
 
     is_active = Column(Boolean, nullable=False, default=True)
@@ -40,11 +40,11 @@ class OrchestratorPolicy(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
-    tenant = relationship("Tenant")
+    organization = relationship("Organization")
     orchestrator_agent = relationship("Agent")
 
     __table_args__ = (
-        UniqueConstraint("tenant_id", "orchestrator_agent_id", name="uq_orchestrator_policy_agent"),
+        UniqueConstraint("organization_id", "orchestrator_agent_id", name="uq_orchestrator_policy_agent"),
     )
 
 
@@ -52,34 +52,24 @@ class OrchestratorTargetAllowlist(Base):
     __tablename__ = "orchestrator_target_allowlists"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
     orchestrator_agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id", ondelete="CASCADE"), nullable=False, index=True)
 
     target_agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id", ondelete="CASCADE"), nullable=True, index=True)
-    target_agent_slug = Column(String, nullable=True)
     capability_tag = Column(String, nullable=True)
 
     is_active = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
-    tenant = relationship("Tenant")
+    organization = relationship("Organization")
     orchestrator_agent = relationship("Agent", foreign_keys=[orchestrator_agent_id])
     target_agent = relationship("Agent", foreign_keys=[target_agent_id])
-
-    __table_args__ = (
-        Index(
-            "ix_orchestrator_target_allowlists_orch_slug",
-            "orchestrator_agent_id",
-            "target_agent_slug",
-        ),
-    )
-
 
 class OrchestrationGroup(Base):
     __tablename__ = "orchestration_groups"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
     orchestrator_run_id = Column(UUID(as_uuid=True), ForeignKey("agent_runs.id", ondelete="CASCADE"), nullable=False, index=True)
     parent_node_id = Column(String, nullable=True)
 
@@ -96,7 +86,7 @@ class OrchestrationGroup(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
-    tenant = relationship("Tenant")
+    organization = relationship("Organization")
     orchestrator_run = relationship("AgentRun", foreign_keys=[orchestrator_run_id])
     members = relationship("OrchestrationGroupMember", back_populates="group", cascade="all, delete-orphan")
 

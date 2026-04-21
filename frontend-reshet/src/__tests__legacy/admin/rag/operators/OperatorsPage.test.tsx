@@ -41,7 +41,7 @@ jest.mock("next/navigation", () => ({
 }))
 
 describe("OperatorsPage", () => {
-    const mockTenant = { slug: "test-tenant", name: "Test Tenant" }
+    const mockTenant = { slug: "test-organization", name: "Test Organization" }
     const mockOperators = [
         {
             id: "op-1",
@@ -105,7 +105,7 @@ describe("OperatorsPage", () => {
                     display_name: "New Op",
                     name: "new_op",
                 }),
-                "test-tenant"
+                "test-organization"
             )
         })
     })
@@ -127,7 +127,7 @@ describe("OperatorsPage", () => {
         await waitFor(() => {
             expect(ragAdminService.deleteCustomOperator).toHaveBeenCalledWith(
                 "op-1",
-                "test-tenant"
+                "test-organization"
             )
         })
     })

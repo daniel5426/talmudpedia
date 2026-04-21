@@ -18,7 +18,6 @@ from app.services.prompt_library_service import PromptLibraryService
 @dataclass(frozen=True)
 class ToolRequest:
     name: str | None = None
-    slug: str | None = None
     description: str | None = None
     scope: Any | None = ToolDefinitionScope.TENANT
     input_schema: dict[str, Any] | None = None
@@ -39,7 +38,6 @@ async def tools_list(rt: NativePlatformToolRuntime) -> Any:
     tools, total = await ToolRegistryAdminService(rt.db).list_tools(
         ctx=ctx,
         scope=rt.payload.get("scope"),
-        slug=rt.payload.get("slug"),
         name=rt.payload.get("name"),
         is_active=rt.payload.get("is_active", True),
         status=rt.payload.get("status"),
@@ -62,7 +60,6 @@ async def tools_get(rt: NativePlatformToolRuntime) -> Any:
     tool = await ToolRegistryAdminService(rt.db).get_tool(
         ctx=await rt.build_control_plane_context(),
         tool_id=parse_uuid(rt.payload.get("tool_id") or rt.payload.get("id")),
-        slug=rt.payload.get("slug"),
     )
     return serialize_tool(tool)
 
@@ -172,7 +169,7 @@ async def prompts_list(rt: NativePlatformToolRuntime) -> Any:
     query = ListQuery.from_payload(rt.payload)
     prompts, total = await PromptLibraryService(
         rt.db,
-        tenant_id=ctx.tenant_id,
+        organization_id=ctx.organization_id,
         actor_user_id=ctx.user_id,
         is_service=ctx.is_service,
     ).list_prompts(
@@ -231,7 +228,7 @@ async def credentials_create_or_update(rt: NativePlatformToolRuntime) -> Any:
 async def knowledge_stores_list(rt: NativePlatformToolRuntime) -> Any:
     ctx = await rt.build_control_plane_context()
     query = ListQuery.from_payload(rt.payload)
-    stores = await KnowledgeStoreAdminService(rt.db).list_stores(ctx=ctx, tenant_slug=rt.payload.get("tenant_slug"))
+    stores = await KnowledgeStoreAdminService(rt.db).list_stores(ctx=ctx, organization_id=rt.payload.get("organization_id"))
     sliced = stores[query.skip: query.skip + query.limit]
     return {
         "items": [serialize_store(store, view=query.view) for store in sliced],
@@ -253,13 +250,13 @@ async def knowledge_stores_create_or_update(rt: NativePlatformToolRuntime) -> An
         store = await KnowledgeStoreAdminService(rt.db).update_store(
             ctx=ctx,
             store_id=store_id,
-            tenant_slug=rt.payload.get("tenant_slug"),
+            organization_id=rt.payload.get("organization_id"),
             patch=patch,
         )
     else:
         store = await KnowledgeStoreAdminService(rt.db).create_store(
             ctx=ctx,
-            tenant_slug=rt.payload.get("tenant_slug"),
+            organization_id=rt.payload.get("organization_id"),
             name=rt.payload.get("name"),
             description=rt.payload.get("description"),
             embedding_model_id=rt.payload.get("embedding_model_id"),

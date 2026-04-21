@@ -71,7 +71,7 @@ router = APIRouter(
 
 class StartSessionRequest(BaseModel):
     session_id: str
-    tenant_id: str
+    organization_id: str
     app_id: str
     user_id: str
     revision_id: str

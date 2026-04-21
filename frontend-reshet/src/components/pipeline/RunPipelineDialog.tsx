@@ -12,7 +12,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { CompileResult, ragAdminService } from "@/services"
-import { useTenant } from "@/contexts/TenantContext"
+import { useOrganization } from "@/contexts/OrganizationContext"
 import { DynamicOperatorForm } from "@/components/rag/DynamicOperatorForm"
 import { ExecutablePipelineInputSchema } from "@/components/pipeline/types"
 import { formatHttpErrorMessage } from "@/services/http"
@@ -34,7 +34,7 @@ interface RunPipelineDialogProps {
 }
 
 export function RunPipelineDialog({ open, onOpenChange, onRun, compileResult }: RunPipelineDialogProps) {
-    const { currentTenant } = useTenant()
+    const { currentOrganization } = useOrganization()
     const [inputData, setInputData] = useState<Record<string, Record<string, unknown>>>({})
     const [schema, setSchema] = useState<ExecutablePipelineInputSchema | null>(null)
     const [showAdvanced, setShowAdvanced] = useState(false)
@@ -57,7 +57,7 @@ export function RunPipelineDialog({ open, onOpenChange, onRun, compileResult }: 
             try {
                 setLoadingSchema(true)
                 setSchemaError(null)
-                const response = await ragAdminService.getExecutablePipelineInputSchema(execId, currentTenant?.slug)
+                const response = await ragAdminService.getExecutablePipelineInputSchema(execId, currentOrganization?.id)
                 setSchema(response)
             } catch (error) {
                 console.error("Failed to load input schema", error)
@@ -67,7 +67,7 @@ export function RunPipelineDialog({ open, onOpenChange, onRun, compileResult }: 
             }
         }
         loadSchema()
-    }, [open, compileResult?.executable_pipeline_id, currentTenant?.slug])
+    }, [open, compileResult?.executable_pipeline_id, currentOrganization?.id])
 
     const hasAdvancedFields = (schema?.steps || []).some((step) =>
         (step.fields || []).some((field) =>
@@ -180,7 +180,7 @@ export function RunPipelineDialog({ open, onOpenChange, onRun, compileResult }: 
                                 schema={schema}
                                 values={inputData}
                                 onChange={setInputData}
-                                onUploadFile={(file) => ragAdminService.uploadPipelineInput(file, currentTenant?.slug).then(res => res.path)}
+                                onUploadFile={(file) => ragAdminService.uploadPipelineInput(file, currentOrganization?.id).then(res => res.path)}
                                 showAdvanced={showAdvanced}
                                 disabled={loading}
                             />

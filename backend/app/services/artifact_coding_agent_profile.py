@@ -1,41 +1,73 @@
 from __future__ import annotations
 
+import hashlib
 import os
+from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.postgres.models.agents import Agent, AgentStatus
+from app.db.postgres.models.registry import ModelCapabilityType, ModelRegistry
 from app.services.artifact_coding_agent_tools import ARTIFACT_CODING_AGENT_SURFACE, ensure_artifact_coding_tools
 
-ARTIFACT_CODING_AGENT_PROFILE_SLUG = "artifact-coding-agent"
+ARTIFACT_CODING_AGENT_PROFILE_SYSTEM_KEY = "artifact_coding_agent"
 ARTIFACT_CODING_AGENT_PROFILE_NAME = "Artifact Coding Agent"
-DEFAULT_ARTIFACT_CODING_MODEL_ID = "openai/gpt-5"
+DEFAULT_ARTIFACT_CODING_MODEL_SYSTEM_KEY = "gpt-5-mini"
 
 
-def resolve_artifact_coding_profile_model_id() -> str:
-    raw = str(os.getenv("ARTIFACT_CODING_AGENT_MODEL_ID") or DEFAULT_ARTIFACT_CODING_MODEL_ID).strip()
-    return raw or DEFAULT_ARTIFACT_CODING_MODEL_ID
+def _system_agent_row_key(system_key: str) -> str:
+    digest = hashlib.sha1(system_key.encode("utf-8")).hexdigest()[:24]
+    return f"sys-agent-{digest}"
 
 
-def _resolve_existing_graph_model_id(graph_definition: dict | None) -> str | None:
-    if not isinstance(graph_definition, dict):
-        return None
-    nodes = graph_definition.get("nodes")
-    if not isinstance(nodes, list):
-        return None
-    for node in nodes:
-        if not isinstance(node, dict):
-            continue
-        if str(node.get("id") or "").strip() != "artifact_coding_agent":
-            continue
-        config = node.get("config")
-        if not isinstance(config, dict):
-            return None
-        model_id = str(config.get("model_id") or "").strip()
-        if model_id:
-            return model_id
-    return None
+async def resolve_artifact_coding_profile_model_id(db: AsyncSession, organization_id) -> str:
+    preferred_ref = str(
+        os.getenv("ARTIFACT_CODING_AGENT_MODEL_SYSTEM_KEY")
+        or os.getenv("ARTIFACT_CODING_AGENT_MODEL_ID")
+        or DEFAULT_ARTIFACT_CODING_MODEL_SYSTEM_KEY
+    ).strip()
+    scope_filter = or_(ModelRegistry.organization_id == organization_id, ModelRegistry.organization_id == None)
+
+    if preferred_ref:
+        preferred_query = (
+            select(ModelRegistry)
+            .where(
+                ModelRegistry.capability_type == ModelCapabilityType.CHAT,
+                ModelRegistry.is_active == True,
+                scope_filter,
+            )
+            .order_by(ModelRegistry.organization_id.is_not(None).desc(), ModelRegistry.updated_at.desc())
+        )
+        try:
+            preferred_id = UUID(preferred_ref)
+        except Exception:
+            preferred_id = None
+        if preferred_id is not None:
+            preferred_query = preferred_query.where(ModelRegistry.id == preferred_id)
+        else:
+            preferred_query = preferred_query.where(ModelRegistry.system_key == preferred_ref)
+        preferred = (await db.execute(preferred_query)).scalars().first()
+        if preferred is not None:
+            return str(preferred.id)
+
+    default_query = (
+        select(ModelRegistry)
+        .where(
+            ModelRegistry.capability_type == ModelCapabilityType.CHAT,
+            ModelRegistry.is_active == True,
+            scope_filter,
+        )
+        .order_by(
+            ModelRegistry.organization_id.is_not(None).desc(),
+            ModelRegistry.is_default.desc(),
+            ModelRegistry.updated_at.desc(),
+        )
+    )
+    model = (await db.execute(default_query)).scalars().first()
+    if model is None:
+        raise ValueError("No active chat model available for artifact coding agent profile")
+    return str(model.id)
 
 
 def _build_artifact_coding_graph(model_id: str, tool_ids: list[str]) -> dict:
@@ -68,7 +100,7 @@ def _build_artifact_coding_graph(model_id: str, tool_ids: list[str]) -> dict:
         "Artifacts may use either python or javascript language lanes. "
         "Honor the draft language when writing code and dependencies. "
         "Language is selected during create flow and must not be changed after the artifact has been persisted. "
-        "The openai Python SDK is out of contract for tenant artifacts; prefer direct HTTP or lighter compatible libraries when needed. "
+        "The openai Python SDK is out of contract for organization artifacts; prefer direct HTTP or lighter compatible libraries when needed. "
         "Use artifact_coding_list_credentials when you need to reference an existing credential. "
         "Credential references must use exact string literals of the form @{credential-id}. "
         "Do not invent credential ids. "
@@ -125,7 +157,7 @@ def _build_artifact_coding_graph(model_id: str, tool_ids: list[str]) -> dict:
 
 async def ensure_artifact_coding_agent_profile(
     db: AsyncSession,
-    tenant_id,
+    organization_id,
     *,
     actor_user_id=None,
 ) -> Agent:
@@ -134,24 +166,22 @@ async def ensure_artifact_coding_agent_profile(
     tool_ids = await ensure_artifact_coding_tools(db)
     result = await db.execute(
         select(Agent).where(
-            Agent.slug == ARTIFACT_CODING_AGENT_PROFILE_SLUG,
-            Agent.tenant_id == tenant_id,
+            Agent.system_key == ARTIFACT_CODING_AGENT_PROFILE_SYSTEM_KEY,
+            Agent.organization_id == organization_id,
         )
     )
     agent = result.scalar_one_or_none()
-    model_id = (
-        _resolve_existing_graph_model_id(agent.graph_definition if agent is not None else None)
-        or resolve_artifact_coding_profile_model_id()
-    )
+    model_id = await resolve_artifact_coding_profile_model_id(db, organization_id)
     graph_definition = _build_artifact_coding_graph(model_id, tool_ids)
     description = (
         "Public platform artifact coding agent for live artifact draft editing from the artifact admin surface."
     )
     if agent is None:
         agent = Agent(
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             name=ARTIFACT_CODING_AGENT_PROFILE_NAME,
-            slug=ARTIFACT_CODING_AGENT_PROFILE_SLUG,
+            system_key=ARTIFACT_CODING_AGENT_PROFILE_SYSTEM_KEY,
+            slug=_system_agent_row_key(ARTIFACT_CODING_AGENT_PROFILE_SYSTEM_KEY),
             description=description,
             graph_definition=graph_definition,
             tools=tool_ids,
@@ -165,7 +195,8 @@ async def ensure_artifact_coding_agent_profile(
         await db.flush()
     else:
         agent.name = ARTIFACT_CODING_AGENT_PROFILE_NAME
-        agent.slug = ARTIFACT_CODING_AGENT_PROFILE_SLUG
+        agent.system_key = ARTIFACT_CODING_AGENT_PROFILE_SYSTEM_KEY
+        agent.slug = _system_agent_row_key(ARTIFACT_CODING_AGENT_PROFILE_SYSTEM_KEY)
         agent.description = description
         agent.graph_definition = graph_definition
         agent.tools = tool_ids

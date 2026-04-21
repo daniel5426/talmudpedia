@@ -2,29 +2,36 @@ from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import pytest
+import jwt
 from sqlalchemy import select
 
-from app.core.security import create_access_token, get_password_hash
+from app.core.security import ALGORITHM, SECRET_KEY, create_access_token, get_password_hash
 from app.db.postgres.models.agent_threads import AgentThread, AgentThreadSurface, AgentThreadStatus, AgentThreadTurn
 from app.db.postgres.models.agents import Agent, AgentRun, AgentStatus, RunStatus
-from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Tenant, User
+from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Organization, User
 from app.db.postgres.models.registry import ModelCapabilityType, ModelRegistry, ModelStatus
 from app.db.postgres.models.published_apps import PublishedApp, PublishedAppAccount
 from app.services.security_bootstrap_service import SecurityBootstrapService
 
 
-def _auth_headers(user_id: str, tenant_id: str, org_unit_id: str) -> dict[str, str]:
-    token = create_access_token(
-        subject=user_id,
-        tenant_id=tenant_id,
-        org_unit_id=org_unit_id,
-        org_role="owner",
+def _auth_headers(user_id: str, organization_id: str, org_unit_id: str) -> dict[str, str]:
+    payload = jwt.decode(
+        create_access_token(
+            subject=user_id,
+            organization_id=organization_id,
+            org_unit_id=org_unit_id,
+            org_role="owner",
+        ),
+        SECRET_KEY,
+        algorithms=[ALGORITHM],
     )
-    return {"Authorization": f"Bearer {token}", "X-Tenant-ID": tenant_id}
+    payload["scope"] = ["*"]
+    token = jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+    return {"Authorization": f"Bearer {token}", "X-Organization-ID": organization_id}
 
 
 async def _seed_monitoring_fixture(db_session):
-    tenant = Tenant(name=f"Tenant {uuid4().hex[:6]}", slug=f"tenant-{uuid4().hex[:8]}")
+    tenant = Organization(name=f"Organization {uuid4().hex[:6]}", slug=f"tenant-{uuid4().hex[:8]}")
     owner = User(
         email=f"owner-{uuid4().hex[:8]}@example.com",
         hashed_password=get_password_hash("secret123"),
@@ -41,7 +48,7 @@ async def _seed_monitoring_fixture(db_session):
     await db_session.flush()
 
     org_unit = OrgUnit(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name="Root",
         slug=f"root-{uuid4().hex[:6]}",
         type=OrgUnitType.org,
@@ -52,7 +59,7 @@ async def _seed_monitoring_fixture(db_session):
     for user, role in ((owner, OrgRole.owner), (platform_user, OrgRole.member)):
         db_session.add(
             OrgMembership(
-                tenant_id=tenant.id,
+                organization_id=tenant.id,
                 user_id=user.id,
                 org_unit_id=org_unit.id,
                 role=role,
@@ -63,18 +70,18 @@ async def _seed_monitoring_fixture(db_session):
 
     bootstrap = SecurityBootstrapService(db_session)
     await bootstrap.ensure_default_roles(tenant.id)
-    await bootstrap.ensure_owner_assignment(tenant_id=tenant.id, user_id=owner.id, assigned_by=owner.id)
-    await bootstrap.ensure_member_assignment(tenant_id=tenant.id, user_id=platform_user.id, assigned_by=owner.id)
+    await bootstrap.ensure_organization_owner_assignment(organization_id=tenant.id, user_id=owner.id, assigned_by=owner.id)
+    await bootstrap.ensure_organization_reader_assignment(organization_id=tenant.id, user_id=platform_user.id, assigned_by=owner.id)
 
     agent_primary = Agent(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name="Primary Agent",
         slug=f"primary-{uuid4().hex[:6]}",
         graph_definition={"nodes": [], "edges": []},
         status=AgentStatus.published,
     )
     agent_secondary = Agent(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name="Secondary Agent",
         slug=f"secondary-{uuid4().hex[:6]}",
         graph_definition={"nodes": [], "edges": []},
@@ -84,10 +91,10 @@ async def _seed_monitoring_fixture(db_session):
     await db_session.flush()
 
     app = PublishedApp(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         agent_id=agent_primary.id,
         name="Standalone App",
-        slug=f"standalone-{uuid4().hex[:6]}",
+        public_id=f"app-{uuid4().hex[:12]}",
     )
     db_session.add(app)
     await db_session.flush()
@@ -109,7 +116,7 @@ async def _seed_monitoring_fixture(db_session):
     now = datetime.now(timezone.utc)
     threads = [
         AgentThread(
-            tenant_id=tenant.id,
+            organization_id=tenant.id,
             user_id=platform_user.id,
             agent_id=agent_primary.id,
             title="Platform Thread",
@@ -118,7 +125,7 @@ async def _seed_monitoring_fixture(db_session):
             last_activity_at=now,
         ),
         AgentThread(
-            tenant_id=tenant.id,
+            organization_id=tenant.id,
             app_account_id=mapped_account.id,
             published_app_id=app.id,
             agent_id=agent_primary.id,
@@ -128,7 +135,7 @@ async def _seed_monitoring_fixture(db_session):
             last_activity_at=now - timedelta(minutes=1),
         ),
         AgentThread(
-            tenant_id=tenant.id,
+            organization_id=tenant.id,
             app_account_id=unmapped_account.id,
             published_app_id=app.id,
             agent_id=agent_primary.id,
@@ -138,7 +145,7 @@ async def _seed_monitoring_fixture(db_session):
             last_activity_at=now - timedelta(minutes=2),
         ),
         AgentThread(
-            tenant_id=tenant.id,
+            organization_id=tenant.id,
             agent_id=agent_primary.id,
             external_user_id="embed-user",
             title="Embed Primary Thread",
@@ -147,7 +154,7 @@ async def _seed_monitoring_fixture(db_session):
             last_activity_at=now - timedelta(minutes=3),
         ),
         AgentThread(
-            tenant_id=tenant.id,
+            organization_id=tenant.id,
             agent_id=agent_secondary.id,
             external_user_id="embed-user",
             title="Embed Secondary Thread",
@@ -162,7 +169,7 @@ async def _seed_monitoring_fixture(db_session):
     for index, thread in enumerate(threads):
         db_session.add(
             AgentRun(
-                tenant_id=tenant.id,
+                organization_id=tenant.id,
                 agent_id=thread.agent_id,
                 user_id=platform_user.id if thread.user_id == platform_user.id else None,
                 published_app_id=app.id if thread.published_app_id else None,
@@ -307,7 +314,7 @@ async def test_admin_thread_detail_returns_lineage_and_subthread_tree_when_reque
     await db_session.flush()
 
     child_thread = AgentThread(
-        tenant_id=fixture["tenant"].id,
+        organization_id=fixture["tenant"].id,
         user_id=fixture["platform_user"].id,
         agent_id=fixture["agent_secondary"].id,
         surface=AgentThreadSurface.internal,
@@ -321,7 +328,7 @@ async def test_admin_thread_detail_returns_lineage_and_subthread_tree_when_reque
     db_session.add(child_thread)
     await db_session.flush()
     child_run = AgentRun(
-        tenant_id=fixture["tenant"].id,
+        organization_id=fixture["tenant"].id,
         agent_id=fixture["agent_secondary"].id,
         user_id=fixture["platform_user"].id,
         initiator_user_id=fixture["platform_user"].id,
@@ -429,7 +436,7 @@ async def test_resource_stats_models_do_not_require_slug(client, db_session):
 
     db_session.add(
         ModelRegistry(
-            tenant_id=fixture["tenant"].id,
+            organization_id=fixture["tenant"].id,
             name="Vision Model",
             capability_type=ModelCapabilityType.VISION,
             status=ModelStatus.ACTIVE,

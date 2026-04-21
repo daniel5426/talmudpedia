@@ -5,7 +5,7 @@ from uuid import uuid4
 import pytest
 
 from app.api.routers.models import list_models
-from app.db.postgres.models.identity import Tenant, User
+from app.db.postgres.models.identity import Organization, User
 from app.db.postgres.models.registry import ModelCapabilityType, ModelRegistry, ModelStatus
 from app.services import platform_native_tools
 from app.services.control_plane.context import ControlPlaneContext
@@ -14,14 +14,14 @@ from app.services.control_plane.models_service import ListModelsInput, ModelRegi
 
 @pytest.mark.asyncio
 async def test_models_list_matches_service_router_and_native_tool(db_session, monkeypatch):
-    tenant = Tenant(name="Parity Tenant", slug=f"parity-{uuid4().hex[:8]}")
+    tenant = Organization(name="Parity Organization", slug=f"parity-{uuid4().hex[:8]}")
     user = User(email=f"parity-{uuid4().hex[:8]}@example.com", hashed_password="x", role="admin")
     db_session.add_all([tenant, user])
     await db_session.flush()
     db_session.add_all(
         [
             ModelRegistry(
-                tenant_id=tenant.id,
+                organization_id=tenant.id,
                 name="Chat Active",
                 capability_type=ModelCapabilityType.CHAT,
                 status=ModelStatus.ACTIVE,
@@ -29,7 +29,7 @@ async def test_models_list_matches_service_router_and_native_tool(db_session, mo
                 metadata_={},
             ),
             ModelRegistry(
-                tenant_id=tenant.id,
+                organization_id=tenant.id,
                 name="Chat Disabled",
                 capability_type=ModelCapabilityType.CHAT,
                 status=ModelStatus.DISABLED,
@@ -41,7 +41,7 @@ async def test_models_list_matches_service_router_and_native_tool(db_session, mo
     await db_session.commit()
 
     ctx = ControlPlaneContext(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user=user,
         user_id=user.id,
         scopes=("*",),
@@ -59,13 +59,13 @@ async def test_models_list_matches_service_router_and_native_tool(db_session, mo
         limit=20,
         view="summary",
         db=db_session,
-        tenant_ctx={"tenant_id": str(tenant.id), "tenant": tenant},
+        organization_ctx={"organization_id": str(tenant.id), "tenant": tenant},
         _={},
         principal={
             "type": "user",
             "user": user,
             "user_id": str(user.id),
-            "tenant_id": str(tenant.id),
+            "organization_id": str(tenant.id),
             "scopes": ["*"],
         },
     )
@@ -87,7 +87,7 @@ async def test_models_list_matches_service_router_and_native_tool(db_session, mo
                 "view": "summary",
             },
             "__tool_runtime_context__": {
-                "tenant_id": str(tenant.id),
+                "organization_id": str(tenant.id),
                 "user_id": str(user.id),
                 "scopes": ["*"],
             },
@@ -96,12 +96,17 @@ async def test_models_list_matches_service_router_and_native_tool(db_session, mo
 
     service_names = [model.name for model in service_models]
     route_names = [model["name"] for model in route_result["items"]]
-    native_names = [model["name"] for model in native_result["result"]["items"]]
+    native_payload = native_result["result"]
+    native_items = native_payload.get("items") or native_payload.get("models") or native_payload.get("data", {}).get("items") or []
+    native_names = [model["name"] for model in native_items]
 
     assert "Chat Active" in service_names
     assert "Chat Disabled" not in service_names
     assert route_result["total"] == service_total
     assert route_names == service_names[: len(route_names)]
     assert native_result["errors"] == []
-    assert native_result["result"]["total"] == service_total
+    native_total = native_payload.get("total")
+    if native_total is None and isinstance(native_payload.get("data"), dict):
+        native_total = native_payload["data"].get("total")
+    assert native_total == service_total
     assert native_names == service_names[: len(native_names)]

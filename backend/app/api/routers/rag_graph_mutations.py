@@ -100,34 +100,34 @@ def _raise_pipeline_graph_http_error(
 async def _resolve_service(
     *,
     pipeline_id: UUID,
-    tenant_slug: Optional[str],
+    organization_id: Optional[str],
     context: Dict[str, Any],
     db: AsyncSession,
 ) -> RagGraphMutationService:
-    tenant, user, _db = await get_pipeline_context(
-        tenant_slug,
+    organization, user, _db = await get_pipeline_context(
+        organization_id,
         current_user=context.get("user"),
         db=db,
         context=context,
     )
-    if not tenant:
-        raise HTTPException(status_code=400, detail="Tenant context required")
-    if not await require_pipeline_permission(tenant, user, Action.WRITE, pipeline_id=pipeline_id, db=db):
+    if not organization:
+        raise HTTPException(status_code=400, detail="Organization context required")
+    if not await require_pipeline_permission(organization, user, Action.WRITE, pipeline_id=pipeline_id, db=db):
         raise HTTPException(status_code=403, detail="Permission denied")
-    return RagGraphMutationService(db=db, tenant_id=tenant.id)
+    return RagGraphMutationService(db=db, organization_id=organization.id)
 
 
 @router.get("/visual-pipelines/{pipeline_id}/graph", response_model=Dict[str, Any])
 async def get_pipeline_graph(
     request: Request,
     pipeline_id: UUID,
-    tenant_slug: Optional[str] = None,
+    organization_id: Optional[str] = None,
     context: Dict[str, Any] = Depends(get_current_principal),
     _: Dict[str, Any] = Depends(require_scopes("pipelines.read")),
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        service = await _resolve_service(pipeline_id=pipeline_id, tenant_slug=tenant_slug, context=context, db=db)
+        service = await _resolve_service(pipeline_id=pipeline_id, organization_id=organization_id, context=context, db=db)
         return await service.get_graph(pipeline_id)
     except Exception as exc:
         _raise_pipeline_graph_http_error(
@@ -143,13 +143,13 @@ async def validate_pipeline_graph_patch(
     request: Request,
     pipeline_id: UUID,
     payload: GraphPatchRequest,
-    tenant_slug: Optional[str] = None,
+    organization_id: Optional[str] = None,
     context: Dict[str, Any] = Depends(get_current_principal),
     _: Dict[str, Any] = Depends(require_scopes("pipelines.write")),
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        service = await _resolve_service(pipeline_id=pipeline_id, tenant_slug=tenant_slug, context=context, db=db)
+        service = await _resolve_service(pipeline_id=pipeline_id, organization_id=organization_id, context=context, db=db)
         return await service.validate_patch(pipeline_id, payload.operations)
     except Exception as exc:
         _raise_pipeline_graph_http_error(
@@ -165,13 +165,13 @@ async def apply_pipeline_graph_patch(
     request: Request,
     pipeline_id: UUID,
     payload: GraphPatchRequest,
-    tenant_slug: Optional[str] = None,
+    organization_id: Optional[str] = None,
     context: Dict[str, Any] = Depends(get_current_principal),
     _: Dict[str, Any] = Depends(require_scopes("pipelines.write")),
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        service = await _resolve_service(pipeline_id=pipeline_id, tenant_slug=tenant_slug, context=context, db=db)
+        service = await _resolve_service(pipeline_id=pipeline_id, organization_id=organization_id, context=context, db=db)
         return await service.apply_patch(pipeline_id, payload.operations)
     except Exception as exc:
         _raise_pipeline_graph_http_error(
@@ -187,13 +187,13 @@ async def attach_knowledge_store_to_node(
     request: Request,
     pipeline_id: UUID,
     payload: AttachKnowledgeStoreRequest,
-    tenant_slug: Optional[str] = None,
+    organization_id: Optional[str] = None,
     context: Dict[str, Any] = Depends(get_current_principal),
     _: Dict[str, Any] = Depends(require_scopes("pipelines.write")),
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        service = await _resolve_service(pipeline_id=pipeline_id, tenant_slug=tenant_slug, context=context, db=db)
+        service = await _resolve_service(pipeline_id=pipeline_id, organization_id=organization_id, context=context, db=db)
         return await service.attach_knowledge_store_to_node(
             pipeline_id,
             node_id=payload.node_id,
@@ -213,13 +213,13 @@ async def set_pipeline_node_config(
     request: Request,
     pipeline_id: UUID,
     payload: SetPipelineNodeConfigRequest,
-    tenant_slug: Optional[str] = None,
+    organization_id: Optional[str] = None,
     context: Dict[str, Any] = Depends(get_current_principal),
     _: Dict[str, Any] = Depends(require_scopes("pipelines.write")),
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        service = await _resolve_service(pipeline_id=pipeline_id, tenant_slug=tenant_slug, context=context, db=db)
+        service = await _resolve_service(pipeline_id=pipeline_id, organization_id=organization_id, context=context, db=db)
         return await service.set_pipeline_node_config(
             pipeline_id,
             node_id=payload.node_id,

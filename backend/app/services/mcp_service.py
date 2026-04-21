@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import html
 import json
-import re
 import secrets
 from types import SimpleNamespace
 from typing import Any
@@ -77,11 +76,6 @@ class McpToolUnavailableRuntimeError(McpServiceError):
     pass
 
 
-def _slugify(value: str) -> str:
-    text = re.sub(r"[^a-zA-Z0-9]+", "_", str(value or "").strip().lower())
-    return re.sub(r"_+", "_", text).strip("_") or "tool"
-
-
 def _json_dict(value: Any) -> dict[str, Any]:
     return dict(value) if isinstance(value, dict) else {}
 
@@ -103,15 +97,15 @@ class ResolvedMcpAuth:
 
 
 class McpService:
-    def __init__(self, db: AsyncSession, tenant_id: UUID):
+    def __init__(self, db: AsyncSession, organization_id: UUID):
         self.db = db
-        self.tenant_id = tenant_id
+        self.organization_id = organization_id
 
     async def _get_server(self, server_id: UUID) -> McpServer:
         server = await self.db.scalar(
             select(McpServer).where(
                 McpServer.id == server_id,
-                McpServer.tenant_id == self.tenant_id,
+                McpServer.organization_id == self.organization_id,
             )
         )
         if server is None:
@@ -125,7 +119,7 @@ class McpService:
         return await self.db.scalar(
             select(McpServer)
             .where(
-                McpServer.tenant_id == self.tenant_id,
+                McpServer.organization_id == self.organization_id,
                 func.lower(func.regexp_replace(McpServer.server_url, r"/+$", "")) == normalized,
             )
             .order_by(desc(McpServer.updated_at), McpServer.name.asc())
@@ -135,7 +129,7 @@ class McpService:
         agent = await self.db.scalar(
             select(Agent).where(
                 Agent.id == agent_id,
-                Agent.tenant_id == self.tenant_id,
+                Agent.organization_id == self.organization_id,
             )
         )
         if agent is None:
@@ -172,7 +166,7 @@ class McpService:
     async def list_servers(self) -> list[McpServer]:
         result = await self.db.execute(
             select(McpServer)
-            .where(McpServer.tenant_id == self.tenant_id)
+            .where(McpServer.organization_id == self.organization_id)
             .order_by(desc(McpServer.updated_at), McpServer.name.asc())
         )
         return list(result.scalars().all())
@@ -191,7 +185,7 @@ class McpService:
             await self.db.flush()
             return existing
         server = McpServer(
-            tenant_id=self.tenant_id,
+            organization_id=self.organization_id,
             created_by=created_by,
             name=str(payload.get("name") or "").strip(),
             description=str(payload.get("description") or "").strip() or None,
@@ -271,7 +265,7 @@ class McpService:
             select(McpUserAccountConnection).where(
                 McpUserAccountConnection.server_id == server_id,
                 McpUserAccountConnection.user_id == user_id,
-                McpUserAccountConnection.tenant_id == self.tenant_id,
+                McpUserAccountConnection.organization_id == self.organization_id,
             )
         )
 
@@ -285,7 +279,7 @@ class McpService:
             delete(McpUserAccountConnection).where(
                 McpUserAccountConnection.server_id == server_id,
                 McpUserAccountConnection.user_id == user_id,
-                McpUserAccountConnection.tenant_id == self.tenant_id,
+                McpUserAccountConnection.organization_id == self.organization_id,
             )
         )
 
@@ -492,7 +486,7 @@ class McpService:
             if not isinstance(item, dict):
                 continue
             discovered = McpDiscoveredTool(
-                tenant_id=self.tenant_id,
+                organization_id=self.organization_id,
                 server_id=server.id,
                 snapshot_version=version,
                 name=str(item.get("name") or "").strip(),
@@ -600,7 +594,7 @@ class McpService:
         scopes = _json_list(server.auth_config.get("scopes")) or _json_list(protected_resource.get("scopes_supported")) or ["mcp:tools"]
 
         oauth_state = McpOauthState(
-            tenant_id=self.tenant_id,
+            organization_id=self.organization_id,
             server_id=server.id,
             user_id=user_id,
             state=state_token,
@@ -663,7 +657,7 @@ class McpService:
         connection = await self._get_user_connection(server.id, oauth_state.user_id)
         if connection is None:
             connection = McpUserAccountConnection(
-                tenant_id=self.tenant_id,
+                organization_id=self.organization_id,
                 server_id=server.id,
                 user_id=oauth_state.user_id,
             )
@@ -726,7 +720,7 @@ class McpService:
             select(McpAgentMount)
             .where(
                 McpAgentMount.agent_id == agent_id,
-                McpAgentMount.tenant_id == self.tenant_id,
+                McpAgentMount.organization_id == self.organization_id,
             )
             .order_by(McpAgentMount.created_at.asc())
         )
@@ -745,7 +739,7 @@ class McpService:
         if int(server.tool_snapshot_version or 0) <= 0:
             raise McpServiceError("Sync the MCP server before attaching it to an agent")
         mount = McpAgentMount(
-            tenant_id=self.tenant_id,
+            organization_id=self.organization_id,
             agent_id=agent_id,
             server_id=server.id,
             created_by=created_by,
@@ -762,7 +756,7 @@ class McpService:
         mount = await self.db.scalar(
             select(McpAgentMount).where(
                 McpAgentMount.id == mount_id,
-                McpAgentMount.tenant_id == self.tenant_id,
+                McpAgentMount.organization_id == self.organization_id,
             )
         )
         if mount is None:
@@ -781,7 +775,7 @@ class McpService:
         mount = await self.db.scalar(
             select(McpAgentMount).where(
                 McpAgentMount.id == mount_id,
-                McpAgentMount.tenant_id == self.tenant_id,
+                McpAgentMount.organization_id == self.organization_id,
             )
         )
         if mount is None:
@@ -790,10 +784,10 @@ class McpService:
 
 
 class McpRuntimeService:
-    def __init__(self, db: AsyncSession, tenant_id: UUID):
+    def __init__(self, db: AsyncSession, organization_id: UUID):
         self.db = db
-        self.tenant_id = tenant_id
-        self.mcp = McpService(db, tenant_id)
+        self.organization_id = organization_id
+        self.mcp = McpService(db, organization_id)
 
     def _virtual_tool_id(self, mount_id: UUID, tool_name: str) -> str:
         return f"mcp:{mount_id}:{tool_name}"
@@ -805,7 +799,7 @@ class McpRuntimeService:
             .join(McpServer, McpServer.id == McpAgentMount.server_id)
             .where(
                 McpAgentMount.agent_id == agent_id,
-                McpAgentMount.tenant_id == self.tenant_id,
+                McpAgentMount.organization_id == self.organization_id,
                 McpAgentMount.is_active == True,
                 McpServer.is_active == True,
             )
@@ -825,13 +819,11 @@ class McpRuntimeService:
                 tool_name = str(tool.name or "").strip()
                 if not tool_name:
                     continue
-                server_slug = _slugify(server.name)
-                tool_slug = _slugify(tool_name)
                 virtual_tools.append(
                     SimpleNamespace(
                         id=self._virtual_tool_id(mount.id, tool_name),
                         name=tool.title or tool_name,
-                        slug=f"mcp_{server_slug}_{tool_slug}",
+                        slug=f"mcpvt-{str(mount.id).replace('-', '')[:12]}-{str(tool.id).replace('-', '')[:12]}",
                         description=tool.description or f"MCP tool from {server.name}",
                         schema={"input": _json_dict(tool.input_schema), "output": {}},
                         config_schema={
@@ -865,7 +857,7 @@ class McpRuntimeService:
             .join(McpServer, McpServer.id == McpAgentMount.server_id)
             .where(
                 McpAgentMount.id == mount_id,
-                McpAgentMount.tenant_id == self.tenant_id,
+                McpAgentMount.organization_id == self.organization_id,
                 McpAgentMount.is_active == True,
             )
         )

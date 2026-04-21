@@ -5,7 +5,7 @@ from sqlalchemy import select
 
 from app.api.dependencies import get_current_principal
 from app.db.postgres.models.artifact_runtime import ArtifactCodingSession, ArtifactCodingSharedDraft
-from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Tenant, User
+from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Organization, User
 from app.services.artifact_coding_agent_profile import ensure_artifact_coding_agent_profile
 from app.services.artifact_coding_runtime_service import ArtifactCodingRuntimeService
 from app.services.artifact_coding_shared_draft_service import ArtifactCodingSharedDraftService
@@ -13,18 +13,18 @@ from main import app
 
 
 async def _seed_tenant_context(db_session):
-    tenant = Tenant(id=uuid.uuid4(), name="Artifact Tenant", slug=f"artifact-tenant-{uuid.uuid4().hex[:8]}")
+    tenant = Organization(id=uuid.uuid4(), name="Artifact Organization", slug=f"artifact-tenant-{uuid.uuid4().hex[:8]}")
     user = User(id=uuid.uuid4(), email=f"artifact-{uuid.uuid4().hex[:6]}@example.com", role="admin")
     org_unit = OrgUnit(
         id=uuid.uuid4(),
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name="Artifact Org",
         slug=f"artifact-org-{uuid.uuid4().hex[:6]}",
         type=OrgUnitType.org,
     )
     membership = OrgMembership(
         id=uuid.uuid4(),
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         org_unit_id=org_unit.id,
         role=OrgRole.owner,
@@ -35,13 +35,13 @@ async def _seed_tenant_context(db_session):
     return tenant, user
 
 
-def _override_principal(tenant_id, user):
+def _override_principal(organization_id, user):
     async def _inner():
         return {
             "type": "user",
             "user": user,
             "user_id": str(user.id),
-            "tenant_id": str(tenant_id),
+            "organization_id": str(organization_id),
             "scopes": ["artifacts.read", "artifacts.write"],
             "auth_token": "test-token",
         }
@@ -160,7 +160,7 @@ async def test_artifact_working_draft_update_keeps_artifact_scope_isolated_from_
 
         draft_key = f"draft-{uuid.uuid4().hex[:8]}"
         await ArtifactCodingSharedDraftService(db_session).get_or_create_for_scope(
-            tenant_id=tenant.id,
+            organization_id=tenant.id,
             artifact_id=None,
             draft_key=draft_key,
             initial_snapshot={
@@ -202,7 +202,7 @@ async def test_artifact_working_draft_update_keeps_artifact_scope_isolated_from_
 
         rows = (
             await db_session.execute(
-                select(ArtifactCodingSharedDraft).where(ArtifactCodingSharedDraft.tenant_id == tenant.id)
+                select(ArtifactCodingSharedDraft).where(ArtifactCodingSharedDraft.organization_id == tenant.id)
             )
         ).scalars().all()
         assert len(rows) == 2
@@ -228,7 +228,7 @@ async def test_artifact_create_links_existing_coding_sessions_by_draft_key(clien
         agent = await ensure_artifact_coding_agent_profile(db_session, tenant.id, actor_user_id=user.id)
         runtime = ArtifactCodingRuntimeService(db_session)
         prepared = await runtime.prepare_session(
-            tenant_id=tenant.id,
+            organization_id=tenant.id,
             user_id=user.id,
             agent_id=agent.id,
             title_prompt="Create artifact from coding session",
@@ -286,7 +286,7 @@ async def test_artifact_create_links_existing_coding_sessions_by_draft_key(clien
 
         shared_rows = (
             await db_session.execute(
-                select(ArtifactCodingSharedDraft).where(ArtifactCodingSharedDraft.tenant_id == tenant.id)
+                select(ArtifactCodingSharedDraft).where(ArtifactCodingSharedDraft.organization_id == tenant.id)
             )
         ).scalars().all()
         linked_row = next(item for item in shared_rows if item.draft_key == draft_key)

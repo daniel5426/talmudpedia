@@ -52,14 +52,17 @@ from app.services.published_app_host_runtime_support import (
     _normalize_return_to_for_host,
     _request_origin_from_base_url,
     _request_relative_url,
-    _serialize_thread_detail as _serialize_thread_detail_impl,
-    _serialize_thread_summary,
-    _slug_from_host,
+    _public_id_from_host,
 )
-from app.services.embedded_agent_runtime_service import list_public_run_events
 from app.services.published_app_auth_shell_renderer import render_published_app_auth_shell
-from app.services.thread_service import ThreadService
 from app.services.runtime_attachment_service import RuntimeAttachmentOwner, RuntimeAttachmentService
+from app.services.runtime_surface import (
+    RuntimeEventView,
+    RuntimeSurfaceContext,
+    RuntimeSurfaceService,
+    RuntimeThreadOptions,
+)
+from app.services.thread_detail_service import serialize_thread_summary
 from app.services.published_app_bundle_storage import (
     PublishedAppBundleAssetNotFound,
     PublishedAppBundleStorage,
@@ -79,17 +82,7 @@ GOOGLE_OAUTH_STATE_COOKIE_NAME = (
 
 
 def _is_app_host_request(request: Request) -> bool:
-    return _slug_from_host(request.headers.get("host")) is not None
-
-
-async def _serialize_thread_detail(*, db: AsyncSession, thread, page=None, subthread_tree=None):
-    return await _serialize_thread_detail_impl(
-        db=db,
-        thread=thread,
-        page=page,
-        subthread_tree=subthread_tree,
-        run_events_loader=list_public_run_events,
-    )
+    return _public_id_from_host(request.headers.get("host")) is not None
 
 
 def _set_session_cookie(*, response: Response, request: Request, token: str) -> None:
@@ -148,7 +141,7 @@ def _build_host_runtime_bootstrap(*, request: Request, app: PublishedApp, revisi
     stream_path = f"{INTERNAL_PREFIX}/chat/stream"
     return RuntimeBootstrapResponse(
         app_id=str(app.id),
-        slug=app.slug,
+        public_id=app.public_id,
         revision_id=str(revision.id),
         mode="published-runtime",
         api_base_path="/",
@@ -185,10 +178,10 @@ async def _read_published_asset_bytes(*, revision: PublishedAppRevision, asset_p
 
 
 async def _resolve_app_for_host_or_none(db: AsyncSession, request: Request) -> Optional[PublishedApp]:
-    slug = _slug_from_host(request.headers.get("host"))
-    if not slug:
+    public_id = _public_id_from_host(request.headers.get("host"))
+    if not public_id:
         return None
-    result = await db.execute(select(PublishedApp).where(PublishedApp.slug == slug).limit(1))
+    result = await db.execute(select(PublishedApp).where(PublishedApp.public_id == public_id).limit(1))
     app = result.scalar_one_or_none()
     if app is None:
         return None
@@ -265,9 +258,9 @@ async def _resolve_optional_principal_from_cookie(
     return (
         {
             "type": "published_app_user",
-            "tenant_id": str(app.tenant_id),
+            "organization_id": str(app.organization_id),
             "app_id": str(app.id),
-            "app_slug": app.slug,
+            "app_public_id": app.public_id,
             "session_id": str(session.id),
             "app_account_id": str(account.id),
             "global_user_id": str(account.global_user_id) if account.global_user_id else None,
@@ -444,7 +437,7 @@ async def host_auth_state(
         "providers": list(app.auth_providers or []),
         "app": {
             "id": str(app.id),
-            "slug": app.slug,
+            "public_id": app.public_id,
             "name": app.name,
             "description": app.description,
             "logo_url": app.logo_url,
@@ -563,9 +556,9 @@ async def host_google_start(
         raise HTTPException(status_code=400, detail="Google auth is disabled for this app")
 
     auth_service = PublishedAppAuthService(db)
-    credential = await auth_service.get_google_credential(app.tenant_id)
+    credential = await auth_service.get_google_credential(app.organization_id)
     if credential is None:
-        raise HTTPException(status_code=400, detail="Tenant Google OAuth credentials are missing")
+        raise HTTPException(status_code=400, detail="Organization Google OAuth credentials are missing")
 
     creds = credential.credentials or {}
     client_id = creds.get("client_id")
@@ -579,7 +572,7 @@ async def host_google_start(
     auth_url = auth_service.build_google_auth_url(
         client_id=client_id,
         redirect_uri=redirect_uri,
-        app_slug=app.slug,
+        app_public_id=app.public_id,
         return_to=target_abs,
         nonce=oauth_state_nonce,
     )
@@ -602,9 +595,9 @@ async def host_google_callback(
 ):
     app = await _resolve_host_app_or_404(db, request)
     auth_service = PublishedAppAuthService(db)
-    credential = await auth_service.get_google_credential(app.tenant_id)
+    credential = await auth_service.get_google_credential(app.organization_id)
     if credential is None:
-        raise HTTPException(status_code=400, detail="Tenant Google OAuth credentials are missing")
+        raise HTTPException(status_code=400, detail="Organization Google OAuth credentials are missing")
 
     creds = credential.credentials or {}
     client_id = creds.get("client_id")
@@ -616,8 +609,8 @@ async def host_google_callback(
     oauth_state_nonce = (request.cookies.get(GOOGLE_OAUTH_STATE_COOKIE_NAME) or "").strip()
     try:
         state_payload = auth_service.parse_google_state(state, expected_nonce=oauth_state_nonce)
-        if state_payload.get("app_slug") != app.slug:
-            raise PublishedAppAuthError("OAuth state app slug mismatch")
+        if state_payload.get("app_public_id") != app.public_id:
+            raise PublishedAppAuthError("OAuth state app public id mismatch")
         token_response = auth_service.exchange_google_code(
             code=code,
             client_id=client_id,
@@ -757,7 +750,7 @@ async def host_upload_attachments(
         return response
 
     owner = RuntimeAttachmentOwner(
-        tenant_id=app.tenant_id,
+        organization_id=app.organization_id,
         surface=AgentThreadSurface.published_host_runtime,
         app_account_id=UUID(str(principal["app_account_id"])) if principal else None,
         published_app_id=app.id,
@@ -786,16 +779,19 @@ async def host_list_threads(
         return response
     principal = _host_runtime_principal(app, principal, required_scopes=("public.chats.read",), require_authenticated=True)
 
-    service = ThreadService(db)
-    threads, total = await service.list_threads(
-        tenant_id=app.tenant_id,
-        app_account_id=UUID(principal["app_account_id"]),
-        published_app_id=app.id,
+    threads, total = await RuntimeSurfaceService(db).list_threads(
+        scope=RuntimeSurfaceContext(
+            organization_id=app.organization_id,
+            surface=AgentThreadSurface.published_host_runtime,
+            event_view=RuntimeEventView.public_safe,
+            app_account_id=UUID(principal["app_account_id"]),
+            published_app_id=app.id,
+        ).thread_scope(),
         skip=skip,
         limit=limit,
     )
     payload = {
-        "items": [_serialize_thread_summary(thread) for thread in threads],
+        "items": [serialize_thread_summary(thread) for thread in threads],
         "total": int(total),
         "page": (skip // limit) + 1 if limit > 0 else 1,
         "pages": ((total + limit - 1) // limit) if limit > 0 else 1,
@@ -826,34 +822,28 @@ async def host_get_thread(
             _clear_session_cookie(response=response, request=request)
         return response
     principal = _host_runtime_principal(app, principal, required_scopes=("public.chats.read",), require_authenticated=True)
-
-    service = ThreadService(db)
-    repaired = await service.repair_thread_turn_indices(thread_id=thread_id)
-    if repaired:
-        await db.commit()
-    page_result = await service.get_thread_turn_page(
-        tenant_id=app.tenant_id,
-        thread_id=thread_id,
-        app_account_id=UUID(principal["app_account_id"]),
-        published_app_id=app.id,
-        before_turn_index=before_turn_index,
-        limit=limit,
-    )
-    if page_result is None:
-        raise HTTPException(status_code=404, detail="Thread not found")
-
-    subtree = None
-    if include_subthreads:
-        subtree = await service.build_subthread_tree(
-            root_thread=page_result.thread,
-            root_page=page_result.page,
-            depth=subthread_depth,
-            turn_limit=subthread_turn_limit or limit,
-            child_limit=subthread_child_limit,
-        )
-
     response = JSONResponse(
-        jsonable_encoder(await _serialize_thread_detail(db=db, thread=page_result.thread, page=page_result.page, subthread_tree=subtree))
+        jsonable_encoder(
+            await RuntimeSurfaceService(db).get_thread_detail(
+                scope=RuntimeSurfaceContext(
+                    organization_id=app.organization_id,
+                    surface=AgentThreadSurface.published_host_runtime,
+                    event_view=RuntimeEventView.public_safe,
+                    app_account_id=UUID(principal["app_account_id"]),
+                    published_app_id=app.id,
+                ).thread_scope(),
+                thread_id=thread_id,
+                options=RuntimeThreadOptions(
+                    before_turn_index=before_turn_index,
+                    limit=limit,
+                    include_subthreads=include_subthreads,
+                    subthread_depth=subthread_depth,
+                    subthread_turn_limit=subthread_turn_limit,
+                    subthread_child_limit=subthread_child_limit,
+                ),
+                event_view=RuntimeEventView.public_safe,
+            )
+        )
     )
     if stale_cookie:
         _clear_session_cookie(response=response, request=request)

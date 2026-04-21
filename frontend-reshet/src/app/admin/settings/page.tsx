@@ -214,7 +214,6 @@ export default function SettingsPage() {
     try {
       const updated = await settingsOrgService.updateOrganization({
         name: organizationForm.name,
-        slug: organizationForm.slug,
         status: organizationForm.status,
         default_chat_model_id: organizationForm.default_chat_model_id,
         default_embedding_model_id: organizationForm.default_embedding_model_id,
@@ -260,15 +259,6 @@ export default function SettingsPage() {
               <Input
                 value={organizationForm?.name || ""}
                 onChange={(e) => setOrganizationForm((prev) => prev ? { ...prev, name: e.target.value } : prev)}
-                disabled={!canManageOrganization}
-                className="h-9 w-full"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs font-medium text-muted-foreground">Slug</Label>
-              <Input
-                value={organizationForm?.slug || ""}
-                onChange={(e) => setOrganizationForm((prev) => prev ? { ...prev, slug: e.target.value } : prev)}
                 disabled={!canManageOrganization}
                 className="h-9 w-full"
               />

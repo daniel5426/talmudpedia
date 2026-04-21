@@ -80,14 +80,14 @@ async def _published_app_row(db_session, app_id: str) -> PublishedApp:
     return app
 
 
-async def _run_revision_build_now(*, revision_id: str, tenant_id: str, app_id: str, slug: str) -> dict[str, Any]:
+async def _run_revision_build_now(*, revision_id: str, organization_id: str, app_id: str, slug: str) -> dict[str, Any]:
     from app.workers.tasks import build_published_app_revision_task
 
     def _invoke() -> dict[str, Any]:
         result = build_published_app_revision_task.apply(
             kwargs={
                 "revision_id": revision_id,
-                "tenant_id": tenant_id,
+                "organization_id": organization_id,
                 "app_id": app_id,
                 "slug": slug,
                 "build_kind": "draft",
@@ -560,7 +560,7 @@ async def test_live_coding_run_updates_preview_and_creates_version(client, db_se
                 reporter.log("build.force_start", revision_id=latest_revision_id)
                 build_result = await _run_revision_build_now(
                     revision_id=latest_revision_id,
-                    tenant_id=str(app_row.tenant_id),
+                    organization_id=str(app_row.organization_id),
                     app_id=str(app_row.id),
                     slug=str(app_row.slug or ""),
                 )

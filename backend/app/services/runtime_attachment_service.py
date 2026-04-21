@@ -65,11 +65,11 @@ AUDIO_MIME_TYPES = {
 }
 @dataclass
 class RuntimeAttachmentOwner:
-    tenant_id: UUID
+    organization_id: UUID
     surface: AgentThreadSurface
     user_id: UUID | None = None
     app_account_id: UUID | None = None
-    tenant_api_key_id: UUID | None = None
+    organization_api_key_id: UUID | None = None
     agent_id: UUID | None = None
     published_app_id: UUID | None = None
     external_user_id: str | None = None
@@ -108,11 +108,11 @@ class RuntimeAttachmentService:
             kind = self._classify_kind(filename=filename, mime_type=mime_type)
             digest = hashlib.sha256(payload).hexdigest()
             attachment = RuntimeAttachment(
-                tenant_id=owner.tenant_id,
+                organization_id=owner.organization_id,
                 thread_id=owner.thread_id,
                 user_id=owner.user_id,
                 app_account_id=owner.app_account_id,
-                tenant_api_key_id=owner.tenant_api_key_id,
+                organization_api_key_id=owner.organization_api_key_id,
                 agent_id=owner.agent_id,
                 published_app_id=owner.published_app_id,
                 external_user_id=owner.external_user_id,
@@ -145,7 +145,7 @@ class RuntimeAttachmentService:
         thread_id: UUID,
     ) -> AgentThread | None:
         return await ThreadService(self.db).get_thread_with_turns(
-            tenant_id=owner.tenant_id,
+            organization_id=owner.organization_id,
             thread_id=thread_id,
             user_id=owner.user_id,
             app_account_id=owner.app_account_id,
@@ -258,7 +258,7 @@ class RuntimeAttachmentService:
         result = await self.db.execute(
             select(RuntimeAttachment)
             .where(
-                RuntimeAttachment.tenant_id == owner.tenant_id,
+                RuntimeAttachment.organization_id == owner.organization_id,
                 RuntimeAttachment.id.in_(parsed_ids),
             )
             .options(selectinload(RuntimeAttachment.turn_links))
@@ -282,7 +282,7 @@ class RuntimeAttachmentService:
             return False
         if owner.app_account_id and attachment.app_account_id and attachment.app_account_id != owner.app_account_id:
             return False
-        if owner.tenant_api_key_id and attachment.tenant_api_key_id and attachment.tenant_api_key_id != owner.tenant_api_key_id:
+        if owner.organization_api_key_id and attachment.organization_api_key_id and attachment.organization_api_key_id != owner.organization_api_key_id:
             return False
         if owner.external_user_id and attachment.external_user_id and attachment.external_user_id != owner.external_user_id:
             return False
@@ -309,8 +309,8 @@ class RuntimeAttachmentService:
                 attachment.user_id = owner.user_id
             if attachment.app_account_id is None and owner.app_account_id is not None:
                 attachment.app_account_id = owner.app_account_id
-            if attachment.tenant_api_key_id is None and owner.tenant_api_key_id is not None:
-                attachment.tenant_api_key_id = owner.tenant_api_key_id
+            if attachment.organization_api_key_id is None and owner.organization_api_key_id is not None:
+                attachment.organization_api_key_id = owner.organization_api_key_id
             if attachment.external_user_id is None and owner.external_user_id is not None:
                 attachment.external_user_id = owner.external_user_id
             if attachment.external_session_id is None and owner.external_session_id is not None:

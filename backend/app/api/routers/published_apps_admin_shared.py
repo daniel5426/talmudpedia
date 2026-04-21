@@ -21,7 +21,6 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_current_principal, require_scopes
-from app.core.security import create_published_app_preview_token
 from app.db.postgres.models.agents import Agent, AgentStatus
 from app.db.postgres.models.identity import OrgMembership, OrgRole, User
 from app.db.postgres.models.published_apps import (
@@ -68,7 +67,6 @@ from app.services.published_app_auth_templates import (
 router = APIRouter(prefix="/admin/apps", tags=["published-apps-admin"])
 logger = logging.getLogger(__name__)
 
-APP_SLUG_PATTERN = re.compile(r"^[a-z0-9-]{3,64}$")
 DOMAIN_HOST_PATTERN = re.compile(r"^(?=.{4,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$")
 # Path policy: allow editing project files across the workspace, while
 # explicitly blocking unsafe/generated/system directories.
@@ -157,12 +155,12 @@ PUBLISH_POLL_MAX_DIAGNOSTICS = 12
 
 class PublishedAppResponse(BaseModel):
     id: str
-    tenant_id: str
+    organization_id: str
     agent_id: str
     name: str
     description: Optional[str] = None
     logo_url: Optional[str] = None
-    slug: str
+    public_id: str
     status: str
     visibility: str
     auth_enabled: bool
@@ -256,7 +254,6 @@ class BuilderStateResponse(BaseModel):
     templates: List[PublishedAppTemplateResponse]
     current_draft_revision: Optional[PublishedAppRevisionResponse] = None
     current_published_revision: Optional[PublishedAppRevisionResponse] = None
-    preview_token: Optional[str] = None
     draft_dev: Optional["DraftDevSessionResponse"] = None
 
 
@@ -273,7 +270,6 @@ class CreatePublishedAppRequest(BaseModel):
     name: str
     description: Optional[str] = None
     logo_url: Optional[str] = None
-    slug: Optional[str] = None
     agent_id: UUID
     template_key: str = "classic-chat"
     visibility: str = "public"
@@ -288,7 +284,6 @@ class UpdatePublishedAppRequest(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     logo_url: Optional[str] = None
-    slug: Optional[str] = None
     agent_id: Optional[UUID] = None
     visibility: Optional[str] = None
     auth_enabled: Optional[bool] = None
@@ -353,8 +348,6 @@ class DraftDevSessionResponse(BaseModel):
     active_coding_run_count: int
     preview_url: Optional[str] = None
     preview_transport_generation: Optional[int] = None
-    preview_auth_token: Optional[str] = None
-    preview_auth_expires_at: Optional[datetime] = None
     workspace_revision_token: Optional[str] = None
     expires_at: Optional[datetime] = None
     idle_timeout_seconds: int = 180
@@ -483,10 +476,10 @@ def _apps_url_port() -> str:
     return resolve_apps_url_port()
 
 
-def _build_published_url(slug: str) -> str:
+def _build_published_url(public_id: str) -> str:
     from app.core.runtime_urls import build_published_app_url
 
-    return build_published_app_url(slug)
+    return build_published_app_url(public_id)
 
 
 def _slugify(value: str) -> str:
@@ -602,12 +595,12 @@ def _normalize_domain_host(host: str) -> str:
 def _app_to_response(app: PublishedApp) -> PublishedAppResponse:
     return PublishedAppResponse(
         id=str(app.id),
-        tenant_id=str(app.tenant_id),
+        organization_id=str(app.organization_id),
         agent_id=str(app.agent_id),
         name=app.name,
         description=app.description,
         logo_url=app.logo_url,
-        slug=app.slug,
+        public_id=app.public_id,
         status=app.status.value if hasattr(app.status, "value") else str(app.status),
         visibility=app.visibility.value if hasattr(app.visibility, "value") else str(app.visibility or "public"),
         auth_enabled=bool(app.auth_enabled),
@@ -619,7 +612,7 @@ def _app_to_response(app: PublishedApp) -> PublishedAppResponse:
         default_policy_set_id=str(app.default_policy_set_id) if app.default_policy_set_id else None,
         current_draft_revision_id=str(app.current_draft_revision_id) if app.current_draft_revision_id else None,
         current_published_revision_id=str(app.current_published_revision_id) if app.current_published_revision_id else None,
-        published_url=_build_published_url(app.slug) if app.status == PublishedAppStatus.published else None,
+        published_url=_build_published_url(app.public_id) if app.status == PublishedAppStatus.published else None,
         created_by=str(app.created_by) if app.created_by else None,
         created_at=app.created_at,
         updated_at=app.updated_at,

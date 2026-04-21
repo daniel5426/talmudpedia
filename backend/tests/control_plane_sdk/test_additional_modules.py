@@ -38,7 +38,7 @@ def _client_with_session(session: _RecordingSession) -> ControlPlaneClient:
     return ControlPlaneClient(
         base_url="http://localhost:8000",
         token="token-123",
-        tenant_id="tenant-1",
+        organization_id="tenant-1",
         session=session,
     )
 

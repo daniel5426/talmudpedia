@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react"
 import { useRouter } from "next/navigation"
-import { useTenant } from "@/contexts/TenantContext"
+import { useOrganization } from "@/contexts/OrganizationContext"
 import { ragAdminService, VisualPipeline, CompileResult } from "@/services"
 import { CustomBreadcrumb } from "@/components/ui/custom-breadcrumb"
 import { AdminPageHeader } from "@/components/admin/AdminPageHeader"
@@ -33,7 +33,7 @@ import {
 } from "lucide-react"
 
 export default function PipelinesPage() {
-  const { currentTenant } = useTenant()
+  const { currentOrganization } = useOrganization()
   const router = useRouter()
   const { canDelete } = usePermissions()
 
@@ -56,14 +56,14 @@ export default function PipelinesPage() {
   const fetchData = useCallback(async () => {
     setLoading(true)
     try {
-      const pipelinesRes = await ragAdminService.listVisualPipelines(currentTenant?.slug, { view: "summary", limit: 100 })
+      const pipelinesRes = await ragAdminService.listVisualPipelines(currentOrganization?.id, { view: "summary", limit: 100 })
       setPipelines(pipelinesRes.items)
     } catch (error) {
       console.error("Failed to fetch pipelines data", error)
     } finally {
       setLoading(false)
     }
-  }, [currentTenant?.slug])
+  }, [currentOrganization?.id])
 
   const handleViewHistory = async (pipeline: VisualPipeline) => {
     setSelectedPipelineHistory(pipeline)
@@ -73,7 +73,7 @@ export default function PipelinesPage() {
       const res = await ragAdminService.listPipelineJobs({
         visual_pipeline_id: pipeline.id,
         limit: 50
-      }, currentTenant?.slug)
+      }, currentOrganization?.id)
       setPipelineHistoryJobs(res.jobs)
     } catch (error) {
       console.error("Failed to fetch history", error)
@@ -89,7 +89,7 @@ export default function PipelinesPage() {
   const handleDelete = async (pipelineId: string) => {
     if (!confirm("Are you sure you want to delete this pipeline?")) return
     try {
-      await ragAdminService.deleteVisualPipeline(pipelineId, currentTenant?.slug)
+      await ragAdminService.deleteVisualPipeline(pipelineId, currentOrganization?.id)
       fetchData()
     } catch (error) {
       console.error("Failed to delete pipeline", error)
@@ -97,12 +97,12 @@ export default function PipelinesPage() {
   }
 
   const handleRunPipeline = async (pipeline: VisualPipeline) => {
-    if (!currentTenant) return
+    if (!currentOrganization) return
     setRunTarget(pipeline)
     setRunCompileResult(null)
     setRunningCompileId(pipeline.id)
     try {
-      const result = await ragAdminService.compilePipeline(pipeline.id, currentTenant.slug)
+      const result = await ragAdminService.compilePipeline(pipeline.id, currentOrganization.id)
       setRunCompileResult(result)
       if (result.success) {
         setIsRunDialogOpen(true)
@@ -131,10 +131,10 @@ export default function PipelinesPage() {
   }
 
   const handleDuplicatePipeline = async (pipeline: VisualPipeline) => {
-    if (!currentTenant?.slug) return
+    if (!currentOrganization?.id) return
     setDuplicatingPipelineId(pipeline.id)
     try {
-      const fullPipeline = await ragAdminService.getVisualPipeline(pipeline.id, currentTenant.slug)
+      const fullPipeline = await ragAdminService.getVisualPipeline(pipeline.id, currentOrganization.id)
       const duplicateName = generateDuplicatePipelineName(fullPipeline.name)
       const result = await ragAdminService.createVisualPipeline(
         {
@@ -145,7 +145,7 @@ export default function PipelinesPage() {
           edges: structuredClone(fullPipeline.edges || []),
           org_unit_id: fullPipeline.org_unit_id,
         },
-        currentTenant.slug
+        currentOrganization.id
       )
       fetchData()
       router.push(`/admin/pipelines/${result.id}`)
@@ -158,7 +158,7 @@ export default function PipelinesPage() {
   }
 
   const handleQuickCreate = async (type: "ingestion" | "retrieval") => {
-    if (!currentTenant) return
+    if (!currentOrganization) return
     setIsCreating(true)
     try {
       const res = await ragAdminService.createVisualPipeline({
@@ -166,7 +166,7 @@ export default function PipelinesPage() {
         pipeline_type: type,
         nodes: [],
         edges: [],
-      }, currentTenant.slug)
+      }, currentOrganization.id)
       router.push(`/admin/pipelines/${res.id}`)
     } catch (error) {
       console.error("Failed to create pipeline", error)
@@ -182,7 +182,7 @@ export default function PipelinesPage() {
       const res = await ragAdminService.createPipelineJob({
         executable_pipeline_id: runCompileResult.executable_pipeline_id,
         input_params: inputParams,
-      }, currentTenant?.slug)
+      }, currentOrganization?.id)
       setRunningJobs((prev) => ({
         ...prev,
         [runTarget.id]: {
@@ -198,7 +198,7 @@ export default function PipelinesPage() {
   }
 
   useEffect(() => {
-    if (!currentTenant?.slug) return
+    if (!currentOrganization?.id) return
     const jobEntries = Object.entries(runningJobs)
     if (jobEntries.length === 0) return
 
@@ -207,8 +207,8 @@ export default function PipelinesPage() {
       await Promise.all(jobEntries.map(async ([pipelineId, job]) => {
         try {
           const [jobRes, stepsRes] = await Promise.all([
-            ragAdminService.getPipelineJob(job.jobId, currentTenant.slug),
-            ragAdminService.getJobSteps(job.jobId, currentTenant.slug),
+            ragAdminService.getPipelineJob(job.jobId, currentOrganization.id),
+            ragAdminService.getJobSteps(job.jobId, currentOrganization.id),
           ])
           if (!isMounted) return
           const terminalStatuses = ["completed", "failed", "cancelled"]
@@ -244,7 +244,7 @@ export default function PipelinesPage() {
       isMounted = false
       clearInterval(interval)
     }
-  }, [runningJobs, currentTenant?.slug])
+  }, [runningJobs, currentOrganization?.id])
 
   return (
     <div className="flex flex-col h-full w-full">
@@ -316,12 +316,12 @@ export default function PipelinesPage() {
                 onBulkDelete={async (ids) => {
                   if (!confirm(`Delete ${ids.length} selected pipeline${ids.length === 1 ? "" : "s"}?`)) return
                   for (const id of ids) {
-                    await ragAdminService.deleteVisualPipeline(id, currentTenant?.slug)
+                    await ragAdminService.deleteVisualPipeline(id, currentOrganization?.id)
                   }
                   await fetchData()
                 }}
                 onViewHistory={handleViewHistory}
-                canDelete={canDelete("pipeline")}
+                canDelete={canDelete("pipelines")}
                 onRun={handleRunPipeline}
                 onDuplicate={handleDuplicatePipeline}
                 runningJobs={runningJobs}

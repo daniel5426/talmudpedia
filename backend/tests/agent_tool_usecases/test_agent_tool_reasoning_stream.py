@@ -11,7 +11,7 @@ from app.agent.execution.adapter import StreamAdapter
 from app.agent.execution.service import AgentExecutorService
 from app.agent.execution.types import ExecutionMode
 from app.db.postgres.models.agents import AgentRun, RunStatus
-from app.db.postgres.models.identity import Tenant, User
+from app.db.postgres.models.identity import Organization, User
 from app.db.postgres.models.rag import (
     ExecutablePipeline,
     PipelineJob,
@@ -57,7 +57,7 @@ def _multi_tool_call_chunk(calls: list[dict[str, str]]) -> list[AIMessageChunk]:
 
 async def _seed_tenant_and_user(db_session):
     suffix = uuid4().hex[:8]
-    tenant = Tenant(name=f"Tenant {suffix}", slug=f"tenant-{suffix}")
+    tenant = Organization(name=f"Organization {suffix}", slug=f"tenant-{suffix}")
     user = User(email=f"owner-{suffix}@example.com", role="admin")
     db_session.add_all([tenant, user])
     await db_session.commit()
@@ -69,7 +69,7 @@ async def _seed_tenant_and_user(db_session):
 async def _create_tool(
     db_session,
     *,
-    tenant_id: UUID,
+    organization_id: UUID,
     name: str,
     slug: str,
     builtin_key: str,
@@ -82,7 +82,7 @@ async def _create_tool(
         config_schema["execution"] = execution
 
     tool = ToolRegistry(
-        tenant_id=tenant_id,
+        organization_id=organization_id,
         name=name,
         slug=slug,
         description=f"{name} tool",
@@ -104,9 +104,9 @@ async def _create_tool(
     return tool
 
 
-async def _create_retrieval_pipeline(db_session, *, tenant_id: UUID, user_id: UUID, suffix: str) -> VisualPipeline:
+async def _create_retrieval_pipeline(db_session, *, organization_id: UUID, user_id: UUID, suffix: str) -> VisualPipeline:
     visual = VisualPipeline(
-        tenant_id=tenant_id,
+        organization_id=organization_id,
         name=f"retrieval-pipeline-{suffix}",
         description="retrieval test pipeline",
         nodes=[],
@@ -122,7 +122,7 @@ async def _create_retrieval_pipeline(db_session, *, tenant_id: UUID, user_id: UU
 
     executable = ExecutablePipeline(
         visual_pipeline_id=visual.id,
-        tenant_id=tenant_id,
+        organization_id=organization_id,
         version=1,
         compiled_graph={"dag": []},
         pipeline_type=PipelineType.RETRIEVAL,
@@ -137,7 +137,7 @@ async def _create_retrieval_pipeline(db_session, *, tenant_id: UUID, user_id: UU
 async def _create_agent_with_tools(
     db_session,
     *,
-    tenant_id: UUID,
+    organization_id: UUID,
     user_id: UUID,
     tool_ids: list[UUID],
     slug_suffix: str,
@@ -175,7 +175,7 @@ async def _create_agent_with_tools(
         ],
     }
 
-    service = AgentService(db=db_session, tenant_id=tenant_id)
+    service = AgentService(db=db_session, organization_id=organization_id)
     return await service.create_agent(
         CreateAgentData(
             name=f"agent-{slug_suffix}",
@@ -250,7 +250,7 @@ async def test_debug_stream_generates_reasoning_steps_for_each_tool_and_step(db_
 
     web_search_tool = await _create_tool(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name="Web Search",
         slug=f"web-search-{suffix}",
         builtin_key="web_search",
@@ -272,7 +272,7 @@ async def test_debug_stream_generates_reasoning_steps_for_each_tool_and_step(db_
 
     datetime_tool = await _create_tool(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name="Datetime Utils",
         slug=f"datetime-utils-{suffix}",
         builtin_key="datetime_utils",
@@ -331,7 +331,7 @@ async def test_debug_stream_generates_reasoning_steps_for_each_tool_and_step(db_
 
     agent = await _create_agent_with_tools(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         tool_ids=[web_search_tool.id, datetime_tool.id],
         slug_suffix=suffix,
@@ -384,7 +384,7 @@ async def test_production_stream_includes_internal_tool_and_reasoning_events(db_
 
     web_search_tool = await _create_tool(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name="Web Search",
         slug=f"web-search-prod-{suffix}",
         builtin_key="web_search",
@@ -427,7 +427,7 @@ async def test_production_stream_includes_internal_tool_and_reasoning_events(db_
 
     agent = await _create_agent_with_tools(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         tool_ids=[web_search_tool.id],
         slug_suffix=f"prod-{suffix}",
@@ -462,7 +462,7 @@ async def test_debug_stream_tool_error_emits_failed_terminal_tool_event(db_sessi
 
     web_fetch_tool = await _create_tool(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name="Web Fetch",
         slug=f"web-fetch-{suffix}",
         builtin_key="web_fetch",
@@ -491,7 +491,7 @@ async def test_debug_stream_tool_error_emits_failed_terminal_tool_event(db_sessi
 
     agent = await _create_agent_with_tools(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         tool_ids=[web_fetch_tool.id],
         slug_suffix=f"err-{suffix}",
@@ -529,7 +529,7 @@ async def test_parallel_tool_calls_emit_reasoning_steps_for_each_call(db_session
 
     datetime_tool = await _create_tool(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name="Datetime Utils",
         slug=f"datetime-utils-par-{suffix}",
         builtin_key="datetime_utils",
@@ -546,7 +546,7 @@ async def test_parallel_tool_calls_emit_reasoning_steps_for_each_call(db_session
 
     json_transform_tool = await _create_tool(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name="JSON Transform",
         slug=f"json-transform-{suffix}",
         builtin_key="json_transform",
@@ -591,7 +591,7 @@ async def test_parallel_tool_calls_emit_reasoning_steps_for_each_call(db_session
 
     agent = await _create_agent_with_tools(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         tool_ids=[datetime_tool.id, json_transform_tool.id],
         slug_suffix=f"parallel-{suffix}",
@@ -631,14 +631,14 @@ async def test_multiple_agents_web_search_and_retrieval_calls_reflect_in_product
 
     retrieval_pipeline = await _create_retrieval_pipeline(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         suffix=suffix,
     )
 
     web_search_tool = await _create_tool(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name="Web Search",
         slug=f"web-search-multi-{suffix}",
         builtin_key="web_search",
@@ -660,7 +660,7 @@ async def test_multiple_agents_web_search_and_retrieval_calls_reflect_in_product
 
     retrieval_tool = await _create_tool(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name="Retrieval Pipeline",
         slug=f"retrieval-multi-{suffix}",
         builtin_key="retrieval_pipeline",
@@ -738,21 +738,21 @@ async def test_multiple_agents_web_search_and_retrieval_calls_reflect_in_product
 
     agent_web = await _create_agent_with_tools(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         tool_ids=[web_search_tool.id],
         slug_suffix=f"multi-web-{suffix}",
     )
     agent_retrieval = await _create_agent_with_tools(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         tool_ids=[retrieval_tool.id],
         slug_suffix=f"multi-retrieval-{suffix}",
     )
     agent_mixed = await _create_agent_with_tools(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         tool_ids=[web_search_tool.id, retrieval_tool.id],
         slug_suffix=f"multi-mixed-{suffix}",

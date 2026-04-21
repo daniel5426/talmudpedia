@@ -4,9 +4,12 @@ import csv
 from io import BytesIO, StringIO
 from pathlib import PurePosixPath
 from typing import Any
+from xml.etree import ElementTree
+from zipfile import ZipFile
 
 import markdown as markdown_renderer
 from openpyxl import load_workbook
+from pypdf import PdfReader
 
 from app.services.file_reference_access import (
     AuthorizedFileSpaceContext,
@@ -20,6 +23,7 @@ RAW_TEXT_REPRESENTATION = "raw_text"
 MARKDOWN_RENDERED_REPRESENTATION = "markdown_rendered"
 DELIMITED_TABLE_REPRESENTATION = "delimited_table"
 WORKBOOK_REPRESENTATION = "workbook"
+DOCUMENT_TEXT_REPRESENTATION = "document_text"
 BINARY_META_REPRESENTATION = "binary_meta"
 
 _MARKDOWN_EXTENSIONS = {"md", "markdown", "mdown"}
@@ -38,6 +42,13 @@ _XLSX_MIME_TYPES = {
     "application/vnd.ms-excel.sheet.macroenabled.12",
     "application/vnd.openxmlformats-officedocument.spreadsheetml.template",
 }
+_DOCX_EXTENSIONS = {"docx"}
+_DOCX_MIME_TYPES = {
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.ms-word.document.macroenabled.12",
+}
+_PDF_EXTENSIONS = {"pdf"}
+_PDF_MIME_TYPES = {"application/pdf"}
 
 
 def _file_extension(path: str) -> str:
@@ -61,6 +72,14 @@ def _is_xlsx(entry: Any, revision: Any | None) -> bool:
     return _file_extension(getattr(entry, "path", "")) in _XLSX_EXTENSIONS or _mime_type(entry, revision) in _XLSX_MIME_TYPES
 
 
+def _is_docx(entry: Any, revision: Any | None) -> bool:
+    return _file_extension(getattr(entry, "path", "")) in _DOCX_EXTENSIONS or _mime_type(entry, revision) in _DOCX_MIME_TYPES
+
+
+def _is_pdf(entry: Any, revision: Any | None) -> bool:
+    return _file_extension(getattr(entry, "path", "")) in _PDF_EXTENSIONS or _mime_type(entry, revision) in _PDF_MIME_TYPES
+
+
 def _category(entry: Any, revision: Any | None) -> str:
     if _is_delimited(entry, revision):
         return "delimited"
@@ -68,6 +87,8 @@ def _category(entry: Any, revision: Any | None) -> str:
         return "markdown"
     if _is_xlsx(entry, revision):
         return "workbook"
+    if _is_docx(entry, revision) or _is_pdf(entry, revision):
+        return "document"
     if bool(getattr(entry, "is_text", False)):
         return "text"
     return "binary"
@@ -83,6 +104,8 @@ def list_supported_representations(entry: Any, revision: Any | None) -> list[dic
         representations.append({"id": DELIMITED_TABLE_REPRESENTATION, "label": "Delimited table"})
     if _is_xlsx(entry, revision):
         representations.append({"id": WORKBOOK_REPRESENTATION, "label": "Workbook"})
+    if _is_docx(entry, revision) or _is_pdf(entry, revision):
+        representations.append({"id": DOCUMENT_TEXT_REPRESENTATION, "label": "Document text"})
     representations.append({"id": BINARY_META_REPRESENTATION, "label": "Binary metadata"})
     return representations
 
@@ -155,6 +178,43 @@ def _normalize_tabular_rows(rows: list[list[Any]]) -> tuple[list[list[str]], int
     normalized_rows = [[("" if cell is None else str(cell)) for cell in row] for row in rows]
     column_count = max((len(row) for row in normalized_rows), default=0)
     return normalized_rows, column_count
+
+
+def _extract_pdf_text(payload: bytes) -> str:
+    reader = PdfReader(BytesIO(payload))
+    pages: list[str] = []
+    for page in reader.pages:
+        extracted = page.extract_text() or ""
+        normalized = extracted.strip()
+        if normalized:
+            pages.append(normalized)
+    return "\n\n".join(pages)
+
+
+def _extract_docx_text(payload: bytes) -> str:
+    namespace = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+    with ZipFile(BytesIO(payload)) as archive:
+        try:
+            document_xml = archive.read("word/document.xml")
+        except KeyError as exc:
+            raise FileSpaceValidationError("docx document.xml is missing") from exc
+
+    root = ElementTree.fromstring(document_xml)
+    paragraphs: list[str] = []
+    for paragraph in root.findall(".//w:body/w:p", namespace):
+        parts: list[str] = []
+        for node in paragraph.iter():
+            tag = node.tag.rsplit("}", 1)[-1]
+            if tag == "t":
+                parts.append(node.text or "")
+            elif tag == "tab":
+                parts.append("\t")
+            elif tag in {"br", "cr"}:
+                parts.append("\n")
+        text = "".join(parts).strip()
+        if text:
+            paragraphs.append(text)
+    return "\n\n".join(paragraphs)
 
 
 async def inspect_file(
@@ -263,6 +323,30 @@ async def read_representation(
             "displayed_row_count": len(normalized_rows),
             "column_count": column_count,
             "truncated": truncated,
+        }
+
+    if normalized_representation == DOCUMENT_TEXT_REPRESENTATION:
+        file_ref, payload = await read_authorized_bytes_reference(ctx, path=path)
+        if _is_pdf(file_ref.entry, file_ref.revision):
+            content = _extract_pdf_text(payload)
+        elif _is_docx(file_ref.entry, file_ref.revision):
+            content = _extract_docx_text(payload)
+        else:
+            raise FileSpaceValidationError("document_text is not supported for this file")
+        return {
+            "representation": DOCUMENT_TEXT_REPRESENTATION,
+            "entry": FileSpaceService.serialize_entry(file_ref.entry),
+            "revision": FileSpaceService.serialize_revision(file_ref.revision),
+            "source_format": _file_extension(file_ref.path) or _mime_type(file_ref.entry, file_ref.revision) or "document",
+            **_slice_text_content(
+                path=file_ref.path,
+                content=content,
+                start_line_raw=normalized_options.get("start_line") or normalized_options.get("startLine"),
+                end_line_raw=normalized_options.get("end_line") or normalized_options.get("endLine"),
+                include_line_numbers=bool(
+                    normalized_options.get("include_line_numbers") or normalized_options.get("includeLineNumbers")
+                ),
+            ),
         }
 
     if normalized_representation == BINARY_META_REPRESENTATION:

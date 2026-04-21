@@ -128,10 +128,10 @@ async def entrypoint(ctx: JobContext):
         # Identity and context from participant metadata
         user_id = None
         chat_id = None
-        tenant_id = None
+        organization_id= None
         
         async def wait_for_participant():
-            nonlocal user_id, chat_id, tenant_id
+            nonlocal user_id, chat_id, organization_id
             print("[INIT] Checking for existing participants...")
             for participant in ctx.room.remote_participants.values():
                 if participant.metadata:
@@ -139,8 +139,8 @@ async def entrypoint(ctx: JobContext):
                         metadata = json.loads(participant.metadata)
                         user_id = metadata.get("userId")
                         chat_id = metadata.get("chatId")
-                        tenant_id = metadata.get("tenantId")
-                        print(f"[INIT] Found existing participant: user_id={user_id}, chat_id={chat_id}, tenant_id={tenant_id}")
+                        organization_id= metadata.get("tenantId")
+                        print(f"[INIT] Found existing participant: user_id={user_id}, chat_id={chat_id}, organization_id={organization_id}")
                         return
                     except json.JSONDecodeError:
                         pass
@@ -155,8 +155,8 @@ async def entrypoint(ctx: JobContext):
                         metadata = json.loads(participant.metadata)
                         user_id = metadata.get("userId")
                         chat_id = metadata.get("chatId")
-                        tenant_id = metadata.get("tenantId")
-                        print(f"[INIT] Participant metadata: user_id={user_id}, chat_id={chat_id}, tenant_id={tenant_id}")
+                        organization_id= metadata.get("tenantId")
+                        print(f"[INIT] Participant metadata: user_id={user_id}, chat_id={chat_id}, organization_id={organization_id}")
                     except json.JSONDecodeError:
                         print("[INIT] Failed to parse participant metadata")
                         pass
@@ -178,19 +178,19 @@ async def entrypoint(ctx: JobContext):
 
         user_uuid = _to_uuid(user_id)
         chat_uuid = _to_uuid(chat_id)
-        tenant_uuid = _to_uuid(tenant_id)
+        organization_uuid = _to_uuid(organization_id)
 
-        if not tenant_uuid:
-            # Fallback to a default tenant ID if needed, or error out
-            print("[INIT] Warning: No tenant_id found, using environment default if available")
-            tenant_uuid = _to_uuid(os.getenv("DEFAULT_TENANT_ID"))
+        if not organization_uuid:
+            # Fallback to a default organization ID if needed, or error out
+            print("[INIT] Warning: No organization_id found, using environment default if available")
+            organization_uuid = _to_uuid(os.getenv("DEFAULT_ORGANIZATION_ID"))
             
         if not user_uuid:
             print("[INIT] Warning: No user_uuid found, using environment default if available")
             user_uuid = _to_uuid(os.getenv("DEFAULT_USER_ID"))
 
-        if not tenant_uuid or not user_uuid:
-            print("[INIT ERROR] Missing required tenant_id or user_id for persistence. Cannot proceed.")
+        if not organization_uuid or not user_uuid:
+            print("[INIT ERROR] Missing required organization_id or user_id for persistence. Cannot proceed.")
             # raise Exception("Missing required identity metadata")
             # For now, allow proceed without persistence or with a mock? 
             # Better to show we need these for Phase 3 parity.
@@ -215,7 +215,7 @@ async def entrypoint(ctx: JobContext):
             session_manager = VoiceSessionManager(
                 db=db, 
                 user_id=user_uuid, 
-                tenant_id=tenant_uuid, 
+                organization_id=organization_uuid, 
                 chat_id=chat_uuid
             )
             chat_uuid = await session_manager.ensure_chat()

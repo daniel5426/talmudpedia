@@ -114,13 +114,13 @@ class ResourcePolicyAssignmentResponse(BaseModel):
     updated_at: datetime
 
 
-def _principal_tenant_id(principal: dict[str, Any]) -> UUID:
+def _principal_organization_id(principal: dict[str, Any]) -> UUID:
     if principal.get("type") != "user":
         raise HTTPException(status_code=403, detail="Only users can manage resource policies")
     try:
-        return UUID(str(principal["tenant_id"]))
+        return UUID(str(principal["organization_id"]))
     except Exception as exc:
-        raise HTTPException(status_code=403, detail="Tenant context required") from exc
+        raise HTTPException(status_code=403, detail="Organization context required") from exc
 
 
 def _serialize_rule(rule: ResourcePolicyRule) -> ResourcePolicyRuleResponse:
@@ -152,9 +152,9 @@ def _serialize_assignment(assignment: ResourcePolicyAssignment) -> ResourcePolic
     )
 
 
-async def _get_policy_set_or_404(db: AsyncSession, *, tenant_id: UUID, policy_set_id: UUID) -> ResourcePolicySet:
+async def _get_policy_set_or_404(db: AsyncSession, *, organization_id: UUID, policy_set_id: UUID) -> ResourcePolicySet:
     policy_set = await db.get(ResourcePolicySet, policy_set_id)
-    if policy_set is None or policy_set.tenant_id != tenant_id:
+    if policy_set is None or policy_set.organization_id != organization_id:
         raise HTTPException(status_code=404, detail="Policy set not found")
     return policy_set
 
@@ -178,9 +178,9 @@ async def _serialize_policy_set(db: AsyncSession, policy_set: ResourcePolicySet)
 
 
 def _apply_assignment_scope_filters(stmt, request: ResourcePolicyAssignmentUpsertRequest):
-    if request.principal_type == ResourcePolicyPrincipalType.TENANT_USER:
+    if request.principal_type == ResourcePolicyPrincipalType.ORGANIZATION_USER:
         if request.user_id is None:
-            raise HTTPException(status_code=400, detail="user_id is required for tenant_user assignments")
+            raise HTTPException(status_code=400, detail="user_id is required for organization_user assignments")
         return stmt.where(ResourcePolicyAssignment.user_id == request.user_id)
     if request.principal_type == ResourcePolicyPrincipalType.PUBLISHED_APP_ACCOUNT:
         if request.published_app_account_id is None:
@@ -197,18 +197,18 @@ def _apply_assignment_scope_filters(stmt, request: ResourcePolicyAssignmentUpser
 async def _validate_assignment_principal_scope(
     db: AsyncSession,
     *,
-    tenant_id: UUID,
+    organization_id: UUID,
     request: ResourcePolicyAssignmentUpsertRequest,
 ) -> None:
-    if request.principal_type == ResourcePolicyPrincipalType.TENANT_USER:
+    if request.principal_type == ResourcePolicyPrincipalType.ORGANIZATION_USER:
         membership_id = await db.scalar(
             select(OrgMembership.id).where(
-                OrgMembership.tenant_id == tenant_id,
+                OrgMembership.organization_id == organization_id,
                 OrgMembership.user_id == request.user_id,
             ).limit(1)
         )
         if membership_id is None:
-            raise HTTPException(status_code=404, detail="Tenant user not found")
+            raise HTTPException(status_code=404, detail="Organization user not found")
         return
 
     if request.principal_type == ResourcePolicyPrincipalType.PUBLISHED_APP_ACCOUNT:
@@ -217,7 +217,7 @@ async def _validate_assignment_principal_scope(
             .join(PublishedApp, PublishedApp.id == PublishedAppAccount.published_app_id)
             .where(
                 PublishedAppAccount.id == request.published_app_account_id,
-                PublishedApp.tenant_id == tenant_id,
+                PublishedApp.organization_id == organization_id,
             )
             .limit(1)
         )
@@ -228,7 +228,7 @@ async def _validate_assignment_principal_scope(
     agent_id = await db.scalar(
         select(Agent.id).where(
             Agent.id == request.embedded_agent_id,
-            Agent.tenant_id == tenant_id,
+            Agent.organization_id == organization_id,
         ).limit(1)
     )
     if agent_id is None:
@@ -240,10 +240,10 @@ async def list_policy_sets(
     principal: dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ) -> list[ResourcePolicySetResponse]:
-    tenant_id = _principal_tenant_id(principal)
+    organization_id= _principal_organization_id(principal)
     result = await db.execute(
         select(ResourcePolicySet)
-        .where(ResourcePolicySet.tenant_id == tenant_id)
+        .where(ResourcePolicySet.organization_id == organization_id)
         .order_by(ResourcePolicySet.created_at.asc())
     )
     return [await _serialize_policy_set(db, policy_set) for policy_set in result.scalars().all()]
@@ -255,10 +255,10 @@ async def create_policy_set(
     principal: dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ) -> ResourcePolicySetResponse:
-    tenant_id = _principal_tenant_id(principal)
+    organization_id= _principal_organization_id(principal)
     actor_user_id = UUID(str(principal["user_id"]))
     policy_set = ResourcePolicySet(
-        tenant_id=tenant_id,
+        organization_id=organization_id,
         name=request.name.strip(),
         description=request.description,
         is_active=request.is_active,
@@ -280,8 +280,8 @@ async def get_policy_set(
     principal: dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ) -> ResourcePolicySetResponse:
-    tenant_id = _principal_tenant_id(principal)
-    return await _serialize_policy_set(db, await _get_policy_set_or_404(db, tenant_id=tenant_id, policy_set_id=policy_set_id))
+    organization_id= _principal_organization_id(principal)
+    return await _serialize_policy_set(db, await _get_policy_set_or_404(db, organization_id=organization_id, policy_set_id=policy_set_id))
 
 
 @router.patch("/sets/{policy_set_id}", response_model=ResourcePolicySetResponse, dependencies=[Depends(require_scopes("roles.write"))])
@@ -291,8 +291,8 @@ async def update_policy_set(
     principal: dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ) -> ResourcePolicySetResponse:
-    tenant_id = _principal_tenant_id(principal)
-    policy_set = await _get_policy_set_or_404(db, tenant_id=tenant_id, policy_set_id=policy_set_id)
+    organization_id= _principal_organization_id(principal)
+    policy_set = await _get_policy_set_or_404(db, organization_id=organization_id, policy_set_id=policy_set_id)
     if request.name is not None:
         policy_set.name = request.name.strip()
     if request.description is not None:
@@ -314,8 +314,8 @@ async def delete_policy_set(
     principal: dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ) -> Response:
-    tenant_id = _principal_tenant_id(principal)
-    policy_set = await _get_policy_set_or_404(db, tenant_id=tenant_id, policy_set_id=policy_set_id)
+    organization_id= _principal_organization_id(principal)
+    policy_set = await _get_policy_set_or_404(db, organization_id=organization_id, policy_set_id=policy_set_id)
     await db.delete(policy_set)
     await db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -328,9 +328,9 @@ async def add_policy_set_include(
     principal: dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ) -> ResourcePolicySetResponse:
-    tenant_id = _principal_tenant_id(principal)
-    await _get_policy_set_or_404(db, tenant_id=tenant_id, policy_set_id=policy_set_id)
-    await _get_policy_set_or_404(db, tenant_id=tenant_id, policy_set_id=request.included_policy_set_id)
+    organization_id= _principal_organization_id(principal)
+    await _get_policy_set_or_404(db, organization_id=organization_id, policy_set_id=policy_set_id)
+    await _get_policy_set_or_404(db, organization_id=organization_id, policy_set_id=request.included_policy_set_id)
     include = ResourcePolicySetInclude(
         parent_policy_set_id=policy_set_id,
         included_policy_set_id=request.included_policy_set_id,
@@ -339,7 +339,7 @@ async def add_policy_set_include(
     service = ResourcePolicyService(db)
     try:
         await db.flush()
-        await service.validate_policy_set_graph(tenant_id=tenant_id, policy_set_id=policy_set_id)
+        await service.validate_policy_set_graph(organization_id=organization_id, policy_set_id=policy_set_id)
         await db.commit()
     except IntegrityError as exc:
         await db.rollback()
@@ -347,7 +347,7 @@ async def add_policy_set_include(
     except ResourcePolicyError as exc:
         await db.rollback()
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return await _serialize_policy_set(db, await _get_policy_set_or_404(db, tenant_id=tenant_id, policy_set_id=policy_set_id))
+    return await _serialize_policy_set(db, await _get_policy_set_or_404(db, organization_id=organization_id, policy_set_id=policy_set_id))
 
 
 @router.delete("/sets/{policy_set_id}/includes/{included_policy_set_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(require_scopes("roles.write"))])
@@ -357,8 +357,8 @@ async def remove_policy_set_include(
     principal: dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ) -> Response:
-    tenant_id = _principal_tenant_id(principal)
-    await _get_policy_set_or_404(db, tenant_id=tenant_id, policy_set_id=policy_set_id)
+    organization_id= _principal_organization_id(principal)
+    await _get_policy_set_or_404(db, organization_id=organization_id, policy_set_id=policy_set_id)
     result = await db.execute(
         select(ResourcePolicySetInclude).where(
             and_(
@@ -382,8 +382,8 @@ async def create_policy_rule(
     principal: dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ) -> ResourcePolicyRuleResponse:
-    tenant_id = _principal_tenant_id(principal)
-    await _get_policy_set_or_404(db, tenant_id=tenant_id, policy_set_id=policy_set_id)
+    organization_id= _principal_organization_id(principal)
+    await _get_policy_set_or_404(db, organization_id=organization_id, policy_set_id=policy_set_id)
     service = ResourcePolicyService(db)
     try:
         await service.validate_policy_rule(
@@ -421,11 +421,11 @@ async def update_policy_rule(
     principal: dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ) -> ResourcePolicyRuleResponse:
-    tenant_id = _principal_tenant_id(principal)
+    organization_id= _principal_organization_id(principal)
     result = await db.execute(
         select(ResourcePolicyRule, ResourcePolicySet)
         .join(ResourcePolicySet, ResourcePolicySet.id == ResourcePolicyRule.policy_set_id)
-        .where(ResourcePolicyRule.id == rule_id, ResourcePolicySet.tenant_id == tenant_id)
+        .where(ResourcePolicyRule.id == rule_id, ResourcePolicySet.organization_id == organization_id)
     )
     row = result.first()
     if row is None:
@@ -465,11 +465,11 @@ async def delete_policy_rule(
     principal: dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ) -> Response:
-    tenant_id = _principal_tenant_id(principal)
+    organization_id= _principal_organization_id(principal)
     result = await db.execute(
         select(ResourcePolicyRule, ResourcePolicySet)
         .join(ResourcePolicySet, ResourcePolicySet.id == ResourcePolicyRule.policy_set_id)
-        .where(ResourcePolicyRule.id == rule_id, ResourcePolicySet.tenant_id == tenant_id)
+        .where(ResourcePolicyRule.id == rule_id, ResourcePolicySet.organization_id == organization_id)
     )
     row = result.first()
     if row is None:
@@ -484,10 +484,10 @@ async def list_assignments(
     principal: dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ) -> list[ResourcePolicyAssignmentResponse]:
-    tenant_id = _principal_tenant_id(principal)
+    organization_id= _principal_organization_id(principal)
     result = await db.execute(
         select(ResourcePolicyAssignment)
-        .where(ResourcePolicyAssignment.tenant_id == tenant_id)
+        .where(ResourcePolicyAssignment.organization_id == organization_id)
         .order_by(ResourcePolicyAssignment.created_at.asc())
     )
     return [_serialize_assignment(item) for item in result.scalars().all()]
@@ -499,12 +499,12 @@ async def upsert_assignment(
     principal: dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ) -> ResourcePolicyAssignmentResponse:
-    tenant_id = _principal_tenant_id(principal)
+    organization_id= _principal_organization_id(principal)
     actor_user_id = UUID(str(principal["user_id"]))
-    await _get_policy_set_or_404(db, tenant_id=tenant_id, policy_set_id=request.policy_set_id)
-    await _validate_assignment_principal_scope(db, tenant_id=tenant_id, request=request)
+    await _get_policy_set_or_404(db, organization_id=organization_id, policy_set_id=request.policy_set_id)
+    await _validate_assignment_principal_scope(db, organization_id=organization_id, request=request)
     stmt = select(ResourcePolicyAssignment).where(
-        ResourcePolicyAssignment.tenant_id == tenant_id,
+        ResourcePolicyAssignment.organization_id == organization_id,
         ResourcePolicyAssignment.principal_type == request.principal_type,
     )
     stmt = _apply_assignment_scope_filters(stmt, request)
@@ -512,7 +512,7 @@ async def upsert_assignment(
     assignment = result.scalar_one_or_none()
     if assignment is None:
         assignment = ResourcePolicyAssignment(
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             principal_type=request.principal_type,
             policy_set_id=request.policy_set_id,
             user_id=request.user_id,
@@ -543,12 +543,12 @@ async def delete_assignment(
     principal: dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ) -> Response:
-    tenant_id = _principal_tenant_id(principal)
+    organization_id= _principal_organization_id(principal)
     stmt = select(ResourcePolicyAssignment).where(
-        ResourcePolicyAssignment.tenant_id == tenant_id,
+        ResourcePolicyAssignment.organization_id == organization_id,
         ResourcePolicyAssignment.principal_type == principal_type,
     )
-    if principal_type == ResourcePolicyPrincipalType.TENANT_USER:
+    if principal_type == ResourcePolicyPrincipalType.ORGANIZATION_USER:
         stmt = stmt.where(ResourcePolicyAssignment.user_id == user_id)
     elif principal_type == ResourcePolicyPrincipalType.PUBLISHED_APP_ACCOUNT:
         stmt = stmt.where(ResourcePolicyAssignment.published_app_account_id == published_app_account_id)
@@ -573,12 +573,12 @@ async def set_published_app_default_policy(
     principal: dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ) -> Response:
-    tenant_id = _principal_tenant_id(principal)
+    organization_id= _principal_organization_id(principal)
     app = await db.get(PublishedApp, published_app_id)
-    if app is None or app.tenant_id != tenant_id:
+    if app is None or app.organization_id != organization_id:
         raise HTTPException(status_code=404, detail="Published app not found")
     if request.policy_set_id is not None:
-        await _get_policy_set_or_404(db, tenant_id=tenant_id, policy_set_id=request.policy_set_id)
+        await _get_policy_set_or_404(db, organization_id=organization_id, policy_set_id=request.policy_set_id)
     app.default_policy_set_id = request.policy_set_id
     await db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -591,12 +591,12 @@ async def set_embedded_agent_default_policy(
     principal: dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ) -> Response:
-    tenant_id = _principal_tenant_id(principal)
+    organization_id= _principal_organization_id(principal)
     agent = await db.get(Agent, agent_id)
-    if agent is None or agent.tenant_id != tenant_id:
+    if agent is None or agent.organization_id != organization_id:
         raise HTTPException(status_code=404, detail="Agent not found")
     if request.policy_set_id is not None:
-        await _get_policy_set_or_404(db, tenant_id=tenant_id, policy_set_id=request.policy_set_id)
+        await _get_policy_set_or_404(db, organization_id=organization_id, policy_set_id=request.policy_set_id)
     agent.default_embed_policy_set_id = request.policy_set_id
     await db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)

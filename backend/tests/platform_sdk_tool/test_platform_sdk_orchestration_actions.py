@@ -35,7 +35,7 @@ def test_execute_dispatches_spawn_run_action(monkeypatch):
         context={
             "inputs": {
                 "action": "spawn_run",
-                "tenant_id": "tenant-1",
+                "organization_id": "tenant-1",
                 "caller_run_id": "run-1",
                 "target_agent_slug": "agent-a",
                 "scope_subset": ["agents.execute"],

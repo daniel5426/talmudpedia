@@ -6,20 +6,20 @@ import pytest
 from sqlalchemy import select
 
 from app.db.postgres.models.agents import Agent, AgentRun, AgentRunInvocation, AgentStatus, RunStatus
-from app.db.postgres.models.identity import Tenant, User
+from app.db.postgres.models.identity import Organization, User
 from app.services.context_window_service import ContextWindowService
 from app.services.run_invocation_service import RunInvocationService
 
 
 async def _seed_run(db_session) -> AgentRun:
     suffix = uuid4().hex[:8]
-    tenant = Tenant(name=f"Tenant {suffix}", slug=f"tenant-{suffix}")
+    tenant = Organization(name=f"Organization {suffix}", slug=f"tenant-{suffix}")
     user = User(email=f"user-{suffix}@example.com", role="admin")
     db_session.add_all([tenant, user])
     await db_session.flush()
 
     agent = Agent(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name=f"Agent {suffix}",
         slug=f"agent-{suffix}",
         status=AgentStatus.draft,
@@ -31,7 +31,7 @@ async def _seed_run(db_session) -> AgentRun:
     await db_session.flush()
 
     run = AgentRun(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         agent_id=agent.id,
         user_id=user.id,
         initiator_user_id=user.id,

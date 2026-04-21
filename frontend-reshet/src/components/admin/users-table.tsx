@@ -2,13 +2,11 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { adminService, User } from "@/services"
-import { useTenant } from "@/contexts/TenantContext"
-import { rbacService, Role, RoleAssignment } from "@/services/rbac"
 import { DataTable } from "@/components/ui/data-table"
 import { ColumnDef, type PaginationState } from "@tanstack/react-table"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Button } from "@/components/ui/button"
-import { MoreHorizontal, Edit, Shield, Trash2, Users, PencilLine } from "lucide-react"
+import { MoreHorizontal, Edit, Trash2, Users, PencilLine } from "lucide-react"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -69,17 +67,11 @@ export function UsersTable({
   search: externalSearch,
   onSearchChange,
 }: UsersTableProps) {
-  const { currentTenant } = useTenant()
   const [internalUsers, setInternalUsers] = useState<User[]>([])
-  const [roles, setRoles] = useState<Role[]>([])
-  const [assignments, setAssignments] = useState<RoleAssignment[]>([])
   const [loading, setLoading] = useState(true)
   const [editingUser, setEditingUser] = useState<User | null>(null)
   const [editName, setEditName] = useState("")
-  const [managingUser, setManagingUser] = useState<User | null>(null)
-  const [selectedRoleId, setSelectedRoleId] = useState("")
   const [isEditOpen, setIsEditOpen] = useState(false)
-  const [isRolesOpen, setIsRolesOpen] = useState(false)
   const [actorType, setActorType] = useState("")
   const [selectionMode, setSelectionMode] = useState(false)
   const [internalSearch, setInternalSearch] = useState("")
@@ -122,34 +114,10 @@ export function UsersTable({
     void fetchUsers()
   }, [fetchUsers])
 
-  const fetchSecurityData = useCallback(async () => {
-    if (!currentTenant) return
-    try {
-      const [rolesData, assignmentsData] = await Promise.all([
-        rbacService.listRoles(currentTenant.slug),
-        rbacService.listRoleAssignments(currentTenant.slug),
-      ])
-      setRoles(rolesData)
-      setAssignments(assignmentsData)
-    } catch (error) {
-      console.error("Failed to fetch RBAC data", error)
-    }
-  }, [currentTenant])
-
-  useEffect(() => {
-    void fetchSecurityData()
-  }, [fetchSecurityData])
-
   const handleEditClick = (user: User) => {
     setEditingUser(user)
     setEditName(user.display_name || user.full_name || "")
     setIsEditOpen(true)
-  }
-
-  const handleManageRolesClick = (user: User) => {
-    setManagingUser(user)
-    setSelectedRoleId("")
-    setIsRolesOpen(true)
   }
 
   const handleSaveEdit = async () => {
@@ -162,40 +130,6 @@ export function UsersTable({
     } catch (error) {
       console.error("Failed to update user", error)
       alert("Failed to update user")
-    }
-  }
-
-  const userAssignments = useCallback((user: User) => {
-    const targetId = user.platform_user_id || user.id
-    return assignments.filter((assignment) => assignment.user_id === targetId)
-  }, [assignments])
-
-  const handleAssignRole = async () => {
-    if (!currentTenant || !managingUser || !selectedRoleId) return
-    try {
-      await rbacService.createRoleAssignment(currentTenant.slug, {
-        user_id: managingUser.platform_user_id || managingUser.id,
-        role_id: selectedRoleId,
-        scope_id: currentTenant.id,
-        scope_type: "tenant",
-        actor_type: "user",
-      })
-      setSelectedRoleId("")
-      await fetchSecurityData()
-    } catch (error) {
-      console.error("Failed to assign role", error)
-      alert("Failed to assign role")
-    }
-  }
-
-  const handleRevokeRole = async (assignmentId: string) => {
-    if (!currentTenant) return
-    try {
-      await rbacService.deleteRoleAssignment(currentTenant.slug, assignmentId)
-      await fetchSecurityData()
-    } catch (error) {
-      console.error("Failed to revoke role", error)
-      alert("Failed to revoke role")
     }
   }
 
@@ -247,12 +181,11 @@ export function UsersTable({
     },
     {
       accessorKey: "role",
-      header: "Roles",
+      header: "Access",
       cell: ({ row }) => {
         const user = row.original
         if (!user.is_manageable) return <span className="text-muted-foreground">Read only</span>
-        const names = userAssignments(user).map((assignment) => assignment.role_name)
-        return <span className="text-sm text-muted-foreground">{names.length > 0 ? names.join(", ") : user.role || "user"}</span>
+        return <span className="text-sm text-muted-foreground">{user.org_role || user.role || "User"}</span>
       },
     },
     {
@@ -290,9 +223,6 @@ export function UsersTable({
                 <>
                   <DropdownMenuItem onClick={() => handleEditClick(user)}>
                     <Edit className="mr-2 h-4 w-4" /> Edit
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => handleManageRolesClick(user)}>
-                    <Shield className="mr-2 h-4 w-4" /> Manage Roles
                   </DropdownMenuItem>
                   <DropdownMenuItem
                     className="text-red-600"
@@ -338,7 +268,7 @@ export function UsersTable({
       },
       ...dataColumns,
     ]
-  }, [fetchUsers, selectionMode, userAssignments])
+  }, [fetchUsers, selectionMode])
 
   return (
     <div className="space-y-4">
@@ -406,43 +336,6 @@ export function UsersTable({
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsEditOpen(false)}>Cancel</Button>
             <Button onClick={handleSaveEdit}>Save</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={isRolesOpen} onOpenChange={setIsRolesOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Manage Roles</DialogTitle>
-            <DialogDescription>Assign tenant-scoped roles for this platform user.</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-3">
-            <Select value={selectedRoleId} onValueChange={setSelectedRoleId}>
-              <SelectTrigger>
-                <SelectValue placeholder="Select role" />
-              </SelectTrigger>
-              <SelectContent>
-                {roles.map((role) => (
-                  <SelectItem key={role.id} value={role.id}>
-                    {role.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <div className="space-y-2">
-              {managingUser ? userAssignments(managingUser).map((assignment) => (
-                <div key={assignment.id} className="flex items-center justify-between rounded border px-3 py-2">
-                  <span>{assignment.role_name}</span>
-                  <Button variant="ghost" size="sm" onClick={() => handleRevokeRole(assignment.id)}>
-                    Remove
-                  </Button>
-                </div>
-              )) : null}
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setIsRolesOpen(false)}>Close</Button>
-            <Button onClick={handleAssignRole}>Assign Role</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

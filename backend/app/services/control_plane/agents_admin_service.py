@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
@@ -32,14 +31,9 @@ from app.services.tool_binding_service import ToolBindingService
 from app.services.model_accounting import usage_payload_from_run
 
 
-def _slugify(value: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "-", str(value or "").strip().lower()).strip("-")
-
-
 @dataclass(frozen=True)
 class CreateAgentInput:
     name: str
-    slug: str | None = None
     description: str | None = None
     graph_definition: dict[str, Any] | None = None
     memory_config: dict[str, Any] | None = None
@@ -70,7 +64,7 @@ class AgentAdminService:
         self.db = db
 
     def _service(self, ctx: ControlPlaneContext) -> AgentService:
-        return AgentService(db=self.db, tenant_id=ctx.tenant_id)
+        return AgentService(db=self.db, organization_id=ctx.organization_id)
 
     async def list_agents(
         self,
@@ -105,14 +99,10 @@ class AgentAdminService:
         name = str(params.name or "").strip()
         if not name:
             raise validation("name is required", field="name")
-        slug = _slugify(params.slug or name)
-        if not slug:
-            raise validation("slug is required", field="slug")
         try:
             agent = await self._service(ctx).create_agent(
                 CreateAgentData(
                     name=name,
-                    slug=slug,
                     description=params.description,
                     graph_definition=dict(params.graph_definition or {}),
                     memory_config=dict(params.memory_config or {}),
@@ -122,7 +112,7 @@ class AgentAdminService:
                 user_id=ctx.user_id,
             )
         except AgentSlugExistsError as exc:
-            raise conflict(str(exc), field="slug", value=slug) from exc
+            raise conflict(str(exc)) from exc
         except AgentGraphValidationError as exc:
             raise validation("Graph write rejected", errors=exc.errors) from exc
         except AgentServiceError as exc:
@@ -187,12 +177,12 @@ class AgentAdminService:
             raise not_found(str(exc)) from exc
         executor = AgentExecutorService(db=self.db)
         input_context = dict(params.context or {})
-        input_context.setdefault("tenant_id", str(ctx.tenant_id))
+        input_context.setdefault("organization_id", str(ctx.organization_id))
         input_context.setdefault("project_id", str(ctx.project_id) if ctx.project_id else None)
         input_context.setdefault("user_id", str(ctx.user_id) if ctx.user_id else None)
         input_context.setdefault("token", ctx.auth_token)
         grants = await FileSpaceService(self.db).resolve_agent_file_space_grants(
-            tenant_id=ctx.tenant_id,
+            organization_id=ctx.organization_id,
             project_id=ctx.project_id,
             agent_id=agent_id,
         )
@@ -220,7 +210,7 @@ class AgentAdminService:
         run = await self.db.scalar(
             select(AgentRun).where(
                 AgentRun.id == run_id,
-                AgentRun.tenant_id == ctx.tenant_id,
+                AgentRun.organization_id == ctx.organization_id,
             )
         )
         if run is None:
@@ -310,9 +300,8 @@ class AgentAdminService:
     def serialize_agent(agent: Any, *, view: str = "full", tool_binding: ToolRegistry | None = None) -> dict[str, Any]:
         payload = {
             "id": str(agent.id),
-            "tenant_id": str(agent.tenant_id) if agent.tenant_id else None,
+            "organization_id": str(agent.organization_id) if agent.organization_id else None,
             "name": agent.name,
-            "slug": agent.slug,
             "description": agent.description,
             "version": agent.version,
             "status": getattr(agent.status, "value", agent.status or "draft"),

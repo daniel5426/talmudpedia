@@ -377,13 +377,13 @@ export function LandingV12() {
               built in
             </h2>
             <p className="text-[16px] text-[#4b5563] leading-relaxed mt-5 max-w-md">
-              Multi-tenant isolation, complete audit trails, and role-based
+              Multi-organization isolation, complete audit trails, and role-based
               access control&nbsp;&mdash; designed for organizations that take AI
               operations seriously.
             </p>
             <div className="mt-8 space-y-4">
               {[
-                "Multi-tenant data isolation at the infrastructure level",
+                "Multi-organization data isolation at the infrastructure level",
                 "Complete audit trails for every agent action and token",
                 "Role-based access control across teams and agents",
                 "Configurable guardrails and policy boundaries",
@@ -406,7 +406,7 @@ export function LandingV12() {
             <div className="space-y-4">
               {[
                 {
-                  tenant: "Acme Corp",
+                  organization: "Acme Corp",
                   badge: "Isolated",
                   badgeColor: "bg-emerald-50 text-emerald-600",
                   agents: [
@@ -416,25 +416,25 @@ export function LandingV12() {
                   ],
                 },
                 {
-                  tenant: "Beta Inc",
+                  organization: "Beta Inc",
                   badge: "Isolated",
                   badgeColor: "bg-emerald-50 text-emerald-600",
                   agents: ["Coding Agent", "Data Analyst"],
                 },
                 {
-                  tenant: "Demo",
+                  organization: "Demo",
                   badge: "Sandbox",
                   badgeColor: "bg-amber-50 text-amber-600",
                   agents: ["Demo Agent"],
                 },
               ].map((row) => (
                 <div
-                  key={row.tenant}
+                  key={row.organization}
                   className="rounded-xl border border-gray-100 p-4"
                 >
                   <div className="flex items-center justify-between mb-3">
                     <span className="text-[14px] font-medium text-[#111827]">
-                      Tenant: {row.tenant}
+                      Organization: {row.organization}
                     </span>
                     <span
                       className={`text-[11px] font-medium rounded-full px-2.5 py-0.5 ${row.badgeColor}`}
@@ -456,7 +456,7 @@ export function LandingV12() {
               ))}
             </div>
             <p className="text-[12px] text-gray-400 mt-5 leading-relaxed">
-              All data, traces, and model access fully segregated per tenant.
+              All data, traces, and model access fully segregated per organization.
             </p>
           </div>
         </div>

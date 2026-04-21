@@ -12,8 +12,8 @@ from app.rag.pipeline.registry import ConfigFieldSpec, DataType, OperatorRegistr
 from app.services.artifact_runtime.registry_service import ArtifactRegistryService
 
 
-async def sync_custom_operators(db: AsyncSession, tenant_id: UUID) -> list[OperatorSpec]:
-    query = select(CustomOperator).where(CustomOperator.tenant_id == tenant_id, CustomOperator.is_active == True)
+async def sync_custom_operators(db: AsyncSession, organization_id: UUID) -> list[OperatorSpec]:
+    query = select(CustomOperator).where(CustomOperator.organization_id == organization_id, CustomOperator.is_active == True)
     result = await db.execute(query)
     custom_ops = result.scalars().all()
 
@@ -34,7 +34,7 @@ async def sync_custom_operators(db: AsyncSession, tenant_id: UUID) -> list[Opera
                     continue
 
         artifact = await artifact_registry.get_artifact_for_custom_operator(
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             custom_operator_id=op.id,
         )
         if artifact is not None and artifact.kind != ArtifactKind.RAG_OPERATOR:
@@ -62,5 +62,5 @@ async def sync_custom_operators(db: AsyncSession, tenant_id: UUID) -> list[Opera
             )
         )
 
-    OperatorRegistry.get_instance().load_custom_operators(specs, str(tenant_id))
+    OperatorRegistry.get_instance().load_custom_operators(specs, str(organization_id))
     return specs

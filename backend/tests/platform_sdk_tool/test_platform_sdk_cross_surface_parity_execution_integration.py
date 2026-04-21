@@ -15,15 +15,15 @@ from talmudpedia_control_sdk import ControlPlaneClient
 def _require_env() -> tuple[str, Dict[str, str], str, str]:
     base_url = os.getenv("TEST_BASE_URL")
     api_key = os.getenv("TEST_API_KEY")
-    tenant_id = os.getenv("TEST_TENANT_ID")
-    if not base_url or not api_key or not tenant_id:
+    organization_id = os.getenv("TEST_TENANT_ID")
+    if not base_url or not api_key or not organization_id:
         pytest.skip("Set TEST_BASE_URL, TEST_API_KEY, and TEST_TENANT_ID to run integration tests.")
 
     headers = {
         "Authorization": f"Bearer {api_key}",
-        "X-Tenant-ID": tenant_id,
+        "X-Organization-ID": organization_id,
     }
-    return base_url.rstrip("/"), headers, tenant_id, api_key
+    return base_url.rstrip("/"), headers, organization_id, api_key
 
 
 def _require_chat_model() -> str:
@@ -108,9 +108,9 @@ def _delete_agent(base_url: str, headers: Dict[str, str], agent_id: str) -> None
 
 @pytest.mark.real_db
 def test_cross_surface_agents_start_run_parity() -> None:
-    base_url, headers, tenant_id, api_key = _require_env()
+    base_url, headers, organization_id, api_key = _require_env()
     model_id = _require_chat_model()
-    sdk_client = ControlPlaneClient(base_url=base_url, token=api_key, tenant_id=tenant_id)
+    sdk_client = ControlPlaneClient(base_url=base_url, token=api_key, organization_id=organization_id)
 
     unique = uuid.uuid4().hex[:8]
     ui_agent_id = None
@@ -141,7 +141,7 @@ def test_cross_surface_agents_start_run_parity() -> None:
                     context={
                         "inputs": {
                             "action": "agents.create_or_update",
-                            "tenant_id": tenant_id,
+                            "organization_id": organization_id,
                             "token": api_key,
                             "base_url": base_url,
                             "payload": _agent_payload(f"Run Tool {unique}", f"run-tool-{unique}", model_id),
@@ -169,7 +169,7 @@ def test_cross_surface_agents_start_run_parity() -> None:
             context={
                 "inputs": {
                     "action": "agents.start_run",
-                    "tenant_id": tenant_id,
+                    "organization_id": organization_id,
                     "token": api_key,
                     "base_url": base_url,
                     "payload": {"agent_id": tool_agent_id, "run": {"input": {"text": "hello"}}},
@@ -194,8 +194,8 @@ def test_cross_surface_agents_start_run_parity() -> None:
 
 @pytest.mark.real_db
 def test_cross_surface_agents_resume_run_error_parity() -> None:
-    base_url, headers, tenant_id, api_key = _require_env()
-    sdk_client = ControlPlaneClient(base_url=base_url, token=api_key, tenant_id=tenant_id)
+    base_url, headers, organization_id, api_key = _require_env()
+    sdk_client = ControlPlaneClient(base_url=base_url, token=api_key, organization_id=organization_id)
     nonexistent_run_id = f"00000000-0000-0000-0000-{uuid.uuid4().hex[:12]}"
 
     ui_resp = requests.post(
@@ -220,7 +220,7 @@ def test_cross_surface_agents_resume_run_error_parity() -> None:
         context={
             "inputs": {
                 "action": "agents.resume_run",
-                "tenant_id": tenant_id,
+                "organization_id": organization_id,
                 "token": api_key,
                 "base_url": base_url,
                 "payload": {"run_id": nonexistent_run_id, "run": {"input": {"text": "resume"}}},

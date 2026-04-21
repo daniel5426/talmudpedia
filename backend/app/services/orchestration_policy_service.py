@@ -27,7 +27,7 @@ class OrchestrationPolicyError(PermissionError):
 
 @dataclass
 class PolicySnapshot:
-    tenant_id: UUID
+    organization_id: UUID
     orchestrator_agent_id: UUID
     enforce_published_only: bool = True
     default_failure_policy: str = DEFAULT_FAILURE_POLICY
@@ -39,7 +39,7 @@ class PolicySnapshot:
 
     def as_dict(self) -> dict[str, Any]:
         return {
-            "tenant_id": str(self.tenant_id),
+            "organization_id": str(self.organization_id),
             "orchestrator_agent_id": str(self.orchestrator_agent_id),
             "enforce_published_only": self.enforce_published_only,
             "default_failure_policy": self.default_failure_policy,
@@ -55,10 +55,10 @@ class OrchestrationPolicyService:
     def __init__(self, db: AsyncSession):
         self.db = db
 
-    async def get_policy(self, tenant_id: UUID, orchestrator_agent_id: UUID) -> PolicySnapshot:
+    async def get_policy(self, organization_id: UUID, orchestrator_agent_id: UUID) -> PolicySnapshot:
         result = await self.db.execute(
             select(OrchestratorPolicy).where(
-                OrchestratorPolicy.tenant_id == tenant_id,
+                OrchestratorPolicy.organization_id == organization_id,
                 OrchestratorPolicy.orchestrator_agent_id == orchestrator_agent_id,
                 OrchestratorPolicy.is_active.is_(True),
             )
@@ -66,12 +66,12 @@ class OrchestrationPolicyService:
         row = result.scalar_one_or_none()
         if row is None:
             return PolicySnapshot(
-                tenant_id=tenant_id,
+                organization_id=organization_id,
                 orchestrator_agent_id=orchestrator_agent_id,
             )
 
         return PolicySnapshot(
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             orchestrator_agent_id=orchestrator_agent_id,
             enforce_published_only=bool(row.enforce_published_only),
             default_failure_policy=row.default_failure_policy or DEFAULT_FAILURE_POLICY,
@@ -85,7 +85,7 @@ class OrchestrationPolicyService:
     async def assert_target_allowed(
         self,
         *,
-        tenant_id: UUID,
+        organization_id: UUID,
         orchestrator_agent_id: UUID,
         target: Agent,
         policy: PolicySnapshot,
@@ -97,7 +97,7 @@ class OrchestrationPolicyService:
 
         allowlist_res = await self.db.execute(
             select(OrchestratorTargetAllowlist).where(
-                OrchestratorTargetAllowlist.tenant_id == tenant_id,
+                OrchestratorTargetAllowlist.organization_id == organization_id,
                 OrchestratorTargetAllowlist.orchestrator_agent_id == orchestrator_agent_id,
                 OrchestratorTargetAllowlist.is_active.is_(True),
             )
@@ -106,12 +106,10 @@ class OrchestrationPolicyService:
         if not allowlist:
             raise OrchestrationPolicyError("Orchestrator has no target allowlist entries")
 
-        target_slug = str(target.slug)
         target_id = target.id
 
         allowed = any(
             (entry.target_agent_id and entry.target_agent_id == target_id)
-            or (entry.target_agent_slug and entry.target_agent_slug == target_slug)
             for entry in allowlist
         )
         if not allowed:
@@ -182,10 +180,10 @@ class OrchestrationPolicyService:
 def is_orchestration_surface_enabled(
     *,
     surface: str,
-    tenant_id: UUID | str | None,
+    organization_id: UUID | str | None,
 ) -> bool:
     """
-    Feature-gate orchestration surfaces with optional tenant allowlists.
+    Feature-gate orchestration surfaces with optional organization allowlists.
 
     Env flags:
     - ORCHESTRATION_OPTION_A_ENABLED (default: true)
@@ -195,13 +193,13 @@ def is_orchestration_surface_enabled(
     """
     if surface == ORCHESTRATION_SURFACE_OPTION_A:
         enabled = _read_bool_env("ORCHESTRATION_OPTION_A_ENABLED", default=True)
-        allowlist = _read_tenant_allowlist_env(
+        allowlist = _read_organization_allowlist_env(
             "ORCHESTRATION_OPTION_A_TENANT_ALLOWLIST",
             "ORCHESTRATION_OPTION_A_TENANTS",
         )
     elif surface == ORCHESTRATION_SURFACE_OPTION_B:
         enabled = _read_bool_env("ORCHESTRATION_OPTION_B_ENABLED", default=True)
-        allowlist = _read_tenant_allowlist_env(
+        allowlist = _read_organization_allowlist_env(
             "ORCHESTRATION_OPTION_B_TENANT_ALLOWLIST",
             "ORCHESTRATION_OPTION_B_TENANTS",
         )
@@ -212,9 +210,9 @@ def is_orchestration_surface_enabled(
         return False
     if not allowlist:
         return True
-    if tenant_id is None:
+    if organization_id is None:
         return False
-    return str(tenant_id) in allowlist
+    return str(organization_id) in allowlist
 
 
 def _read_bool_env(name: str, *, default: bool) -> bool:
@@ -224,7 +222,7 @@ def _read_bool_env(name: str, *, default: bool) -> bool:
     return str(raw).strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _read_tenant_allowlist_env(*names: str) -> set[str]:
+def _read_organization_allowlist_env(*names: str) -> set[str]:
     for name in names:
         raw = os.getenv(name)
         if raw is None:

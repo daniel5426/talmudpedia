@@ -38,22 +38,19 @@ export type {
   SinglePageTextData,
 } from "./source";
 
-export { orgUnitsService } from "./org-units";
-export type { Tenant, TenantStatus, RetrievalPolicy, TenantSettings, OrgUnit, OrgUnitTree, OrgMember } from "./org-units";
+export { organizationUnitsService } from "./org-units";
+export type { Organization, OrganizationStatus, RetrievalPolicy, OrganizationSettings, OrgUnit, OrgUnitTree, OrgMember } from "./org-units";
 
-export { rbacService } from "./rbac";
-export type { Role, RoleAssignment, UserPermissions, ScopeCatalog } from "./rbac";
-
-export { auditService } from "./audit";
+export { organizationAuditService } from "./audit";
 export type { AuditLog, AuditLogDetail, AuditFilters, ActionStats, ActorStats } from "./audit";
-export { tenantAPIKeysService } from "./tenant-api-keys";
+export { organizationAPIKeysService } from "./organization-api-keys";
 export type {
-  TenantAPIKey,
-  TenantAPIKeyStatus,
-  TenantAPIKeyListResponse,
-  TenantAPIKeyCreateResponse,
-  TenantAPIKeyRevokeResponse,
-} from "./tenant-api-keys";
+  OrganizationAPIKey,
+  OrganizationAPIKeyStatus,
+  OrganizationAPIKeyListResponse,
+  OrganizationAPIKeyCreateResponse,
+  OrganizationAPIKeyRevokeResponse,
+} from "./organization-api-keys";
 export { settingsProfileService } from "./settings-profile";
 export type { SettingsProfile } from "./settings-profile";
 export { settingsOrgService } from "./settings-org";

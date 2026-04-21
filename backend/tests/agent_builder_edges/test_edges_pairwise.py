@@ -41,7 +41,7 @@ async def test_pairwise_connections_compile(db_session, test_tenant_id, test_use
     if store_id is None:
         node_types = [t for t in node_types if t != "vector_search"]
 
-    compiler = AgentCompiler(db=db_session, tenant_id=test_tenant_id)
+    compiler = AgentCompiler(db=db_session, organization_id=test_tenant_id)
 
     try:
         for idx, (a_type, b_type) in enumerate(itertools.product(node_types, node_types)):

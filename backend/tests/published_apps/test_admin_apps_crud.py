@@ -1,72 +1,18 @@
 import pytest
 from sqlalchemy import select
 from uuid import UUID
-from types import SimpleNamespace
 
 from app.db.postgres.models.published_apps import PublishedAppCustomDomain
 from app.db.postgres.models.published_apps import PublishedAppRevision, PublishedAppRevisionBuildStatus, PublishedAppRevisionKind
-from app.services.published_app_templates import build_template_files, get_template
-from app.services.published_app_versioning import create_app_version
-from ._helpers import admin_headers, seed_admin_tenant_and_agent
+from ._helpers import admin_headers, install_app_create_stub, seed_admin_tenant_and_agent
 
 
-def _host_headers(slug: str) -> dict[str, str]:
-    return {"Host": f"{slug}.apps.localhost"}
-
-
-def _install_app_create_stub(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def _provision_workspace_from_files(self, *, app, user_id, files, entry_file, trace_source=None):
-        _ = self, app, user_id, files, entry_file, trace_source
-        return None
-
-    async def _materialize_live_workspace(self, *, app, entry_file, source_revision_id, created_by, origin_kind, **kwargs):
-        _ = kwargs
-        template = get_template(app.template_key)
-        files = build_template_files(
-            app.template_key,
-            runtime_context={
-                "app_id": str(app.id),
-                "app_slug": app.slug,
-                "agent_id": str(app.agent_id),
-            },
-        )
-        revision = await create_app_version(
-            self.db,
-            app=app,
-            kind=PublishedAppRevisionKind.draft,
-            template_key=app.template_key,
-            entry_file=entry_file or template.entry_file,
-            files=files,
-            created_by=created_by,
-            source_revision_id=source_revision_id,
-            origin_kind=origin_kind,
-            build_status=PublishedAppRevisionBuildStatus.succeeded,
-            build_seq=1,
-            dist_storage_prefix=f"apps/{app.id}/revisions/init/dist",
-            dist_manifest={"entry_html": "index.html", "assets": [], "source_fingerprint": f"fp-{app.id}"},
-            template_runtime="vite_static",
-        )
-        app.current_draft_revision_id = revision.id
-        return SimpleNamespace(
-            revision=revision,
-            reused=False,
-            source_fingerprint=f"fp-{app.id}",
-            workspace_revision_token=None,
-        )
-
-    monkeypatch.setattr(
-        "app.services.published_app_draft_dev_runtime.PublishedAppDraftDevRuntimeService.provision_workspace_from_files",
-        _provision_workspace_from_files,
-    )
-    monkeypatch.setattr(
-        "app.services.published_app_draft_revision_materializer.PublishedAppDraftRevisionMaterializerService.materialize_live_workspace",
-        _materialize_live_workspace,
-    )
-
+def _host_headers(public_id: str) -> dict[str, str]:
+    return {"Host": f"{public_id}.apps.localhost"}
 
 @pytest.mark.asyncio
 async def test_admin_apps_crud(client, db_session, monkeypatch):
-    _install_app_create_stub(monkeypatch)
+    install_app_create_stub(monkeypatch)
     tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
     headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
 
@@ -87,7 +33,7 @@ async def test_admin_apps_crud(client, db_session, monkeypatch):
     )
     assert create_resp.status_code == 200
     created = create_resp.json()
-    assert created["slug"] == "support-app"
+    assert created["public_id"]
     assert created["description"] == "App description"
     assert created["logo_url"] == "https://cdn.example.com/logo.png"
     assert created["visibility"] == "public"
@@ -136,7 +82,7 @@ async def test_admin_apps_crud(client, db_session, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_admin_app_create_materializes_first_draft_revision(client, db_session, monkeypatch):
-    _install_app_create_stub(monkeypatch)
+    install_app_create_stub(monkeypatch)
     tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
     headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
 
@@ -220,7 +166,8 @@ async def test_admin_lists_auth_templates(client, db_session):
 
 
 @pytest.mark.asyncio
-async def test_admin_users_list_block_unblock_and_revoke_session(client, db_session):
+async def test_admin_users_list_block_unblock_and_revoke_session(client, db_session, monkeypatch):
+    install_app_create_stub(monkeypatch)
     tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
     headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
 
@@ -229,7 +176,6 @@ async def test_admin_users_list_block_unblock_and_revoke_session(client, db_sess
         headers=headers,
         json={
             "name": "Users App",
-            "slug": "users-app",
             "agent_id": str(agent.id),
             "template_key": "classic-chat",
             "auth_enabled": True,
@@ -241,13 +187,17 @@ async def test_admin_users_list_block_unblock_and_revoke_session(client, db_sess
     publish_toggle_resp = await client.patch(
         f"/admin/apps/{app['id']}",
         headers=headers,
-        json={"status": "published"},
+        json={
+            "status": "published",
+            "auth_enabled": True,
+            "auth_providers": ["password"],
+        },
     )
     assert publish_toggle_resp.status_code == 200
 
     signup_resp = await client.post(
         "/_talmudpedia/auth/signup",
-        headers=_host_headers(app["slug"]),
+        headers=_host_headers(app["public_id"]),
         json={
             "email": "member@example.com",
             "password": "secret123",
@@ -276,7 +226,7 @@ async def test_admin_users_list_block_unblock_and_revoke_session(client, db_sess
 
     state_resp = await client.get(
         "/_talmudpedia/auth/state",
-        headers=_host_headers(app["slug"]),
+        headers=_host_headers(app["public_id"]),
     )
     assert state_resp.status_code == 200
     assert state_resp.json()["authenticated"] is False
@@ -291,7 +241,8 @@ async def test_admin_users_list_block_unblock_and_revoke_session(client, db_sess
 
 
 @pytest.mark.asyncio
-async def test_admin_custom_domains_crud(client, db_session):
+async def test_admin_custom_domains_crud(client, db_session, monkeypatch):
+    install_app_create_stub(monkeypatch)
     tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
     headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
 
@@ -300,7 +251,6 @@ async def test_admin_custom_domains_crud(client, db_session):
         headers=headers,
         json={
             "name": "Domains App",
-            "slug": "domains-app",
             "agent_id": str(agent.id),
             "template_key": "classic-chat",
             "auth_enabled": True,

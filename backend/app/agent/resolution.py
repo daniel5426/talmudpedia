@@ -17,9 +17,9 @@ class ResolutionError(Exception):
     pass
 
 class ComponentResolver:
-    def __init__(self, db: AsyncSession, tenant_id: UUID):
+    def __init__(self, db: AsyncSession, organization_id: UUID):
         self.db = db
-        self.tenant_id = tenant_id
+        self.organization_id = organization_id
 
     @staticmethod
     def _parse_uuid(value: Any) -> UUID | None:
@@ -60,12 +60,12 @@ class ToolResolver(ComponentResolver):
         try:
             columns = await self._tool_registry_columns()
             if "artifact_id" in columns and "artifact_version" in columns:
-                if self.tenant_id is None:
-                    scope_condition = ToolRegistry.tenant_id == None
+                if self.organization_id is None:
+                    scope_condition = ToolRegistry.organization_id == None
                 else:
                     scope_condition = or_(
-                        ToolRegistry.tenant_id == self.tenant_id,
-                        ToolRegistry.tenant_id == None,
+                        ToolRegistry.organization_id == self.organization_id,
+                        ToolRegistry.organization_id == None,
                     )
                 stmt = select(ToolRegistry).where(
                     and_(
@@ -152,8 +152,8 @@ class ToolResolver(ComponentResolver):
 
 
 class ArtifactResolver(ComponentResolver):
-    def __init__(self, db: AsyncSession, tenant_id: UUID):
-        super().__init__(db, tenant_id)
+    def __init__(self, db: AsyncSession, organization_id: UUID):
+        super().__init__(db, organization_id)
         self._registry = ArtifactRegistryService(db)
 
     async def resolve(self, artifact_ref: str, require_published: bool = False) -> Dict[str, Any]:
@@ -161,12 +161,12 @@ class ArtifactResolver(ComponentResolver):
         if artifact_uuid is None:
             raise ResolutionError("Artifact nodes now require UUID artifact ids")
 
-        if self.tenant_id is None:
-            raise ResolutionError("Tenant context required for tenant artifact resolution")
+        if self.organization_id is None:
+            raise ResolutionError("Organization context required for organization artifact resolution")
 
-        artifact = await self._registry.get_tenant_artifact(
+        artifact = await self._registry.get_organization_artifact(
             artifact_id=artifact_uuid,
-            tenant_id=self.tenant_id,
+            organization_id=self.organization_id,
         )
         if artifact is None:
             raise ResolutionError(f"Artifact {artifact_ref} not found")
@@ -182,7 +182,7 @@ class ArtifactResolver(ComponentResolver):
             raise ResolutionError(f"Artifact {artifact_ref} requires a published immutable revision")
 
         return {
-            "artifact_kind": "tenant",
+            "artifact_kind": "organization",
             "artifact_id": str(artifact.id),
             "artifact_revision_id": str(revision.id),
             "status": str(getattr(getattr(artifact, "status", None), "value", getattr(artifact, "status", ""))),
@@ -215,7 +215,7 @@ class RAGPipelineResolver(ComponentResolver):
 
         visual_stmt = select(VisualPipeline).where(
             VisualPipeline.id == pipeline_id,
-            VisualPipeline.tenant_id == self.tenant_id,
+            VisualPipeline.organization_id == self.organization_id,
             VisualPipeline.pipeline_type == PipelineType.RETRIEVAL,
         )
         visual_result = await self.db.execute(visual_stmt)

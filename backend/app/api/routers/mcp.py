@@ -28,11 +28,11 @@ from app.services.mcp_service import McpNotFoundError, McpService, McpServiceErr
 router = APIRouter(tags=["mcp"])
 
 
-def _tenant_id_from_principal(principal: dict) -> UUID:
+def _organization_id_from_principal(principal: dict) -> UUID:
     try:
-        return UUID(str(principal.get("tenant_id")))
+        return UUID(str(principal.get("organization_id")))
     except Exception as exc:
-        raise HTTPException(status_code=400, detail="Invalid tenant context") from exc
+        raise HTTPException(status_code=400, detail="Invalid organization context") from exc
 
 
 def _user_id_from_principal(principal: dict) -> UUID:
@@ -46,7 +46,7 @@ def _user_id_from_principal(principal: dict) -> UUID:
 
 
 def _serialize_server(server) -> McpServerResponse:
-    return McpServerResponse(**McpService(None, server.tenant_id)._server_secret_payload(server), id=server.id, tenant_id=server.tenant_id)
+    return McpServerResponse(**McpService(None, server.organization_id)._server_secret_payload(server), id=server.id, organization_id=server.organization_id)
 
 
 def _serialize_tool(tool) -> McpDiscoveredToolResponse:
@@ -100,7 +100,7 @@ async def create_mcp_server(
     principal: dict = Depends(require_scopes("tools.write")),
     db: AsyncSession = Depends(get_db),
 ):
-    service = McpService(db, _tenant_id_from_principal(principal))
+    service = McpService(db, _organization_id_from_principal(principal))
     try:
         server = await service.create_server(request.model_dump(), created_by=_user_id_from_principal(principal))
         await db.commit()
@@ -116,7 +116,7 @@ async def list_mcp_servers(
     principal: dict = Depends(require_scopes("tools.read")),
     db: AsyncSession = Depends(get_db),
 ):
-    service = McpService(db, _tenant_id_from_principal(principal))
+    service = McpService(db, _organization_id_from_principal(principal))
     servers = await service.list_servers()
     return [_serialize_server(server) for server in servers]
 
@@ -127,7 +127,7 @@ async def get_mcp_server(
     principal: dict = Depends(require_scopes("tools.read")),
     db: AsyncSession = Depends(get_db),
 ):
-    service = McpService(db, _tenant_id_from_principal(principal))
+    service = McpService(db, _organization_id_from_principal(principal))
     try:
         server = await service._get_server(server_id)
         return _serialize_server(server)
@@ -142,7 +142,7 @@ async def patch_mcp_server(
     principal: dict = Depends(require_scopes("tools.write")),
     db: AsyncSession = Depends(get_db),
 ):
-    service = McpService(db, _tenant_id_from_principal(principal))
+    service = McpService(db, _organization_id_from_principal(principal))
     try:
         server = await service.update_server(server_id, request.model_dump(exclude_unset=True))
         await db.commit()
@@ -162,7 +162,7 @@ async def test_mcp_server(
     principal: dict = Depends(require_scopes("tools.write")),
     db: AsyncSession = Depends(get_db),
 ):
-    service = McpService(db, _tenant_id_from_principal(principal))
+    service = McpService(db, _organization_id_from_principal(principal))
     try:
         payload = await service.test_server(server_id)
         await db.commit()
@@ -181,7 +181,7 @@ async def sync_mcp_server(
     principal: dict = Depends(require_scopes("tools.write")),
     db: AsyncSession = Depends(get_db),
 ):
-    service = McpService(db, _tenant_id_from_principal(principal))
+    service = McpService(db, _organization_id_from_principal(principal))
     try:
         payload = await service.sync_server(server_id, user_id=_user_id_from_principal(principal))
         await db.commit()
@@ -201,7 +201,7 @@ async def get_mcp_server_tools(
     principal: dict = Depends(require_scopes("tools.read")),
     db: AsyncSession = Depends(get_db),
 ):
-    service = McpService(db, _tenant_id_from_principal(principal))
+    service = McpService(db, _organization_id_from_principal(principal))
     try:
         tools = await service.get_server_tools(server_id, snapshot_version=snapshot_version)
         return [_serialize_tool(tool) for tool in tools]
@@ -215,7 +215,7 @@ async def start_mcp_auth(
     principal: dict = Depends(require_scopes("tools.write")),
     db: AsyncSession = Depends(get_db),
 ):
-    service = McpService(db, _tenant_id_from_principal(principal))
+    service = McpService(db, _organization_id_from_principal(principal))
     try:
         payload = await service.start_oauth(server_id, user_id=_user_id_from_principal(principal))
         await db.commit()
@@ -237,7 +237,7 @@ async def handle_mcp_auth_callback(
     oauth_state = await db.scalar(select(McpOauthState).where(McpOauthState.state == state))
     if oauth_state is None:
         return HTMLResponse("<html><body>Invalid MCP OAuth state.</body></html>", status_code=400)
-    service = McpService(db, oauth_state.tenant_id)
+    service = McpService(db, oauth_state.organization_id)
     try:
         server, _connection = await service.handle_oauth_callback(state=state, code=code)
         await db.commit()
@@ -273,7 +273,7 @@ async def get_mcp_account_me(
     principal: dict = Depends(require_scopes("tools.read")),
     db: AsyncSession = Depends(get_db),
 ):
-    service = McpService(db, _tenant_id_from_principal(principal))
+    service = McpService(db, _organization_id_from_principal(principal))
     connection = await service.get_current_user_connection(server_id, user_id=_user_id_from_principal(principal))
     if connection is None:
         return None
@@ -286,7 +286,7 @@ async def delete_mcp_account_me(
     principal: dict = Depends(require_scopes("tools.write")),
     db: AsyncSession = Depends(get_db),
 ):
-    service = McpService(db, _tenant_id_from_principal(principal))
+    service = McpService(db, _organization_id_from_principal(principal))
     await service.disconnect_current_user(server_id, user_id=_user_id_from_principal(principal))
     await db.commit()
     return {"ok": True}
@@ -299,7 +299,7 @@ async def create_mcp_mount(
     principal: dict = Depends(require_scopes("agents.write")),
     db: AsyncSession = Depends(get_db),
 ):
-    service = McpService(db, _tenant_id_from_principal(principal))
+    service = McpService(db, _organization_id_from_principal(principal))
     try:
         mount = await service.create_agent_mount(
             agent_id=agent_id,
@@ -324,7 +324,7 @@ async def list_mcp_mounts(
     principal: dict = Depends(require_scopes("agents.read")),
     db: AsyncSession = Depends(get_db),
 ):
-    service = McpService(db, _tenant_id_from_principal(principal))
+    service = McpService(db, _organization_id_from_principal(principal))
     mounts = await service.list_agent_mounts(agent_id)
     return [_serialize_mount(mount) for mount in mounts]
 
@@ -338,7 +338,7 @@ async def patch_mcp_mount(
     db: AsyncSession = Depends(get_db),
 ):
     _ = agent_id
-    service = McpService(db, _tenant_id_from_principal(principal))
+    service = McpService(db, _organization_id_from_principal(principal))
     try:
         mount = await service.update_agent_mount(mount_id, request.model_dump(exclude_unset=True))
         await db.commit()
@@ -360,7 +360,7 @@ async def delete_mcp_mount(
     db: AsyncSession = Depends(get_db),
 ):
     _ = agent_id
-    service = McpService(db, _tenant_id_from_principal(principal))
+    service = McpService(db, _organization_id_from_principal(principal))
     try:
         await service.delete_agent_mount(mount_id)
         await db.commit()

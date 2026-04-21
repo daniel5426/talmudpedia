@@ -110,7 +110,7 @@ def execute(state: Dict[str, Any], config: Dict[str, Any], context: Dict[str, An
             "action": "noop",
             "dry_run": dry_run,
         }
-        return _finalize_output(output, inputs=inputs, payload=payload, tool_slug=None)
+        return _finalize_output(output, inputs=inputs, payload=payload, builtin_key=None)
 
     if action == "noop":
         output = {
@@ -129,7 +129,7 @@ def execute(state: Dict[str, Any], config: Dict[str, Any], context: Dict[str, An
             "action": "noop",
             "dry_run": dry_run,
         }
-        return _finalize_output(output, inputs=inputs, payload=payload, tool_slug=None)
+        return _finalize_output(output, inputs=inputs, payload=payload, builtin_key=None)
 
     if tenant_mismatch_error is not None:
         output = {
@@ -142,7 +142,7 @@ def execute(state: Dict[str, Any], config: Dict[str, Any], context: Dict[str, An
             "action": _canonicalize_action(action),
             "dry_run": dry_run,
         }
-        return _finalize_output(output, inputs=inputs, payload=payload, tool_slug=None)
+        return _finalize_output(output, inputs=inputs, payload=payload, builtin_key=None)
 
     if action in DEPRECATED_ACTIONS:
         output = {
@@ -162,11 +162,11 @@ def execute(state: Dict[str, Any], config: Dict[str, Any], context: Dict[str, An
             "action": action,
             "dry_run": dry_run,
         }
-        return _finalize_output(output, inputs=inputs, payload=payload, tool_slug=None)
+        return _finalize_output(output, inputs=inputs, payload=payload, builtin_key=None)
 
     canonical_action = _canonicalize_action(action)
-    tool_slug = _resolve_tool_slug(inputs=inputs, payload=payload, state=state, context=context, config=config)
-    domain_error = _validate_domain_action_access(canonical_action=canonical_action, tool_slug=tool_slug)
+    builtin_key = _resolve_builtin_key(inputs=inputs, payload=payload, state=state, context=context, config=config)
+    domain_error = _validate_domain_action_access(canonical_action=canonical_action, builtin_key=builtin_key)
     if domain_error is not None:
         output = {
             "result": {
@@ -178,7 +178,7 @@ def execute(state: Dict[str, Any], config: Dict[str, Any], context: Dict[str, An
             "action": canonical_action,
             "dry_run": dry_run,
         }
-        return _finalize_output(output, inputs=inputs, payload=payload, tool_slug=tool_slug)
+        return _finalize_output(output, inputs=inputs, payload=payload, builtin_key=builtin_key)
 
     if _is_mutating_action(canonical_action) and not tenant_for_flags:
         output = {
@@ -198,7 +198,7 @@ def execute(state: Dict[str, Any], config: Dict[str, Any], context: Dict[str, An
             "action": canonical_action,
             "dry_run": dry_run,
         }
-        return _finalize_output(output, inputs=inputs, payload=payload, tool_slug=tool_slug)
+        return _finalize_output(output, inputs=inputs, payload=payload, builtin_key=builtin_key)
 
     if canonical_action in PUBLISH_ACTIONS and not _has_explicit_publish_intent(inputs, payload):
         output = {
@@ -222,7 +222,7 @@ def execute(state: Dict[str, Any], config: Dict[str, Any], context: Dict[str, An
             "action": canonical_action,
             "dry_run": dry_run,
         }
-        return _finalize_output(output, inputs=inputs, payload=payload, tool_slug=tool_slug)
+        return _finalize_output(output, inputs=inputs, payload=payload, builtin_key=builtin_key)
 
     gated_actions = {canonical_action} if canonical_action in ORCHESTRATION_PRIMITIVE_ACTIONS else set()
     if gated_actions and not is_orchestration_surface_enabled(
@@ -245,7 +245,7 @@ def execute(state: Dict[str, Any], config: Dict[str, Any], context: Dict[str, An
             "action": action,
             "dry_run": dry_run,
         }
-        return _finalize_output(output, inputs=inputs, payload=payload, tool_slug=tool_slug)
+        return _finalize_output(output, inputs=inputs, payload=payload, builtin_key=builtin_key)
 
     required_scopes = _resolve_required_scopes(action=canonical_action)
     base_url, api_key, tenant_id, extra_headers = _resolve_auth(
@@ -300,7 +300,7 @@ def execute(state: Dict[str, Any], config: Dict[str, Any], context: Dict[str, An
         "action": canonical_action,
         "dry_run": dry_run,
     }
-    return _finalize_output(output, inputs=inputs, payload=payload, tool_slug=tool_slug)
+    return _finalize_output(output, inputs=inputs, payload=payload, builtin_key=builtin_key)
 
 
 def _extract_explicit_action(inputs: Dict[str, Any]) -> Optional[str]:
@@ -383,7 +383,7 @@ def _validate_tenant_override(
     }
 
 
-def _resolve_tool_slug(
+def _resolve_builtin_key(
     *,
     inputs: Dict[str, Any],
     payload: Dict[str, Any],
@@ -392,23 +392,23 @@ def _resolve_tool_slug(
     config: Optional[Dict[str, Any]],
 ) -> Optional[str]:
     candidates = [
-        payload.get("tool_slug"),
-        inputs.get("tool_slug"),
-        (config or {}).get("tool_slug"),
-        (context or {}).get("tool_slug"),
+        payload.get("builtin_key"),
+        inputs.get("builtin_key"),
+        (config or {}).get("builtin_key"),
+        (context or {}).get("builtin_key"),
     ]
     state_ctx = state.get("context") if isinstance(state, dict) and isinstance(state.get("context"), dict) else {}
-    candidates.append(state_ctx.get("tool_slug"))
+    candidates.append(state_ctx.get("builtin_key"))
     for candidate in candidates:
         if isinstance(candidate, str) and candidate.strip():
             return candidate.strip()
     return None
 
 
-def _validate_domain_action_access(canonical_action: str, tool_slug: Optional[str]) -> Optional[Dict[str, Any]]:
-    if not tool_slug:
+def _validate_domain_action_access(canonical_action: str, builtin_key: Optional[str]) -> Optional[Dict[str, Any]]:
+    if not builtin_key:
         return None
-    prefixes = DOMAIN_TOOL_ALLOWED_PREFIXES.get(tool_slug)
+    prefixes = DOMAIN_TOOL_ALLOWED_PREFIXES.get(builtin_key)
     if not prefixes:
         return None
     if any(canonical_action.startswith(prefix) for prefix in prefixes):
@@ -416,9 +416,9 @@ def _validate_domain_action_access(canonical_action: str, tool_slug: Optional[st
     return {
         "error": "tool_action_scope_mismatch",
         "code": "SCOPE_DENIED",
-        "tool_slug": tool_slug,
+        "builtin_key": builtin_key,
         "action": canonical_action,
-        "message": f"Action '{canonical_action}' is not allowed by tool '{tool_slug}'.",
+        "message": f"Action '{canonical_action}' is not allowed by tool '{builtin_key}'.",
         "http_status": 403,
         "retryable": False,
     }
@@ -493,7 +493,7 @@ def _extract_noncanonical_input_error(inputs: Dict[str, Any]) -> Optional[Dict[s
     return None
 
 
-def _extract_meta(inputs: Dict[str, Any], payload: Dict[str, Any], tool_slug: Optional[str]) -> Dict[str, Any]:
+def _extract_meta(inputs: Dict[str, Any], payload: Dict[str, Any], builtin_key: Optional[str]) -> Dict[str, Any]:
     request_metadata = payload.get("request_metadata") if isinstance(payload.get("request_metadata"), dict) else {}
     if not request_metadata and isinstance(inputs.get("request_metadata"), dict):
         request_metadata = inputs.get("request_metadata")
@@ -518,7 +518,7 @@ def _extract_meta(inputs: Dict[str, Any], payload: Dict[str, Any], tool_slug: Op
         "request_id": str(request_id) if request_id is not None else None,
         "idempotency_key": str(idempotency_key) if idempotency_key else None,
         "idempotency_provided": bool(idempotency_key),
-        "tool_slug": tool_slug,
+        "builtin_key": builtin_key,
     }
 
 
@@ -527,9 +527,9 @@ def _finalize_output(
     *,
     inputs: Dict[str, Any],
     payload: Dict[str, Any],
-    tool_slug: Optional[str],
+    builtin_key: Optional[str],
 ) -> Dict[str, Any]:
-    output["meta"] = _extract_meta(inputs=inputs, payload=payload, tool_slug=tool_slug)
+    output["meta"] = _extract_meta(inputs=inputs, payload=payload, builtin_key=builtin_key)
     return {"context": output, "tool_outputs": [output]}
 
 
@@ -710,7 +710,6 @@ def _run_agent(client: Client, payload: Dict[str, Any], dry_run: bool) -> Tuple[
         payload,
         dry_run,
         control_client_factory=_control_client,
-        resolve_agent_id_by_slug_fn=_resolve_agent_id_by_slug,
     )
 
 
@@ -719,7 +718,6 @@ def _run_tests(client: Client, tests: List[Dict[str, Any]], dry_run: bool) -> Tu
         client,
         tests,
         dry_run,
-        resolve_agent_id_by_slug_fn=_resolve_agent_id_by_slug,
         call_agent_execute_fn=_call_agent_execute,
         augment_agent_response_fn=_augment_agent_response,
         evaluate_assertions_fn=_evaluate_assertions,
@@ -806,10 +804,6 @@ def _request_options(
 
 def _control_client(client: Client) -> ControlPlaneClient:
     return shared_actions.control_client(client)
-
-
-def _resolve_agent_id_by_slug(client: Client, agent_slug: str) -> Optional[str]:
-    return shared_actions.resolve_agent_id_by_slug(client, agent_slug, control_client_factory=_control_client)
 
 
 def _call_agent_execute(client: Client, agent_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:

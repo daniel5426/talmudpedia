@@ -85,12 +85,12 @@ def _build_scope_requirements() -> tuple[set[str], dict[str, list[str]]]:
 
 async def _compute_scope_preflight(
     *,
-    tenant_id: str,
+    organization_id: str,
     architect_agent_id: str,
     initiator_user_id: str | None,
     required_scopes: set[str],
 ) -> dict[str, Any]:
-    del tenant_id, architect_agent_id
+    del organization_id, architect_agent_id
     if not initiator_user_id:
         return {
             "ok": True,
@@ -131,7 +131,7 @@ def _env(name: str, default: str | None = None) -> str | None:
 def _resolve_runtime_env() -> dict[str, str]:
     base_url = _env("TEST_BASE_URL", DEFAULT_TEST_BASE_URL)
     api_key = _env("TEST_API_KEY", DEFAULT_TEST_API_KEY)
-    tenant_id = _env("TEST_TENANT_ID", DEFAULT_TEST_TENANT_ID)
+    organization_id = _env("TEST_TENANT_ID", DEFAULT_TEST_TENANT_ID)
     tenant_email = _env("TEST_TENANT_EMAIL", DEFAULT_TEST_TENANT_EMAIL)
     timeout_s = _env("ARCH_E2E_TIMEOUT_SECONDS", "120")
     resource_prefix = _env("ARCH_E2E_RESOURCE_PREFIX", "arch-e2e")
@@ -144,7 +144,7 @@ def _resolve_runtime_env() -> dict[str, str]:
     return {
         "base_url": str(base_url).rstrip("/"),
         "api_key": str(api_key),
-        "tenant_id": str(tenant_id),
+        "organization_id": str(organization_id),
         "tenant_email": str(tenant_email),
         "timeout_s": str(timeout_s),
         "resource_prefix": str(resource_prefix),
@@ -153,10 +153,10 @@ def _resolve_runtime_env() -> dict[str, str]:
     }
 
 
-def _headers(api_key: str, tenant_id: str) -> dict[str, str]:
+def _headers(api_key: str, organization_id: str) -> dict[str, str]:
     return {
         "Authorization": f"Bearer {api_key}",
-        "X-Tenant-ID": tenant_id,
+        "X-Organization-ID": organization_id,
         "Content-Type": "application/json",
     }
 
@@ -237,7 +237,7 @@ def _poll_run(base_url: str, headers: dict[str, str], run_id: str, timeout_s: in
 def _scenario_prompt(
     scenario: ScenarioDefinition,
     unique_prefix: str,
-    tenant_id: str,
+    organization_id: str,
     tenant_slug: str | None,
     chat_model: str,
 ) -> str:
@@ -249,12 +249,12 @@ def _scenario_prompt(
         f"Tool slug: {scenario.tool_slug}\\n"
         "Rules:\\n"
         "1) Execute exactly one canonical action call matching target action.\\n"
-        "2) Use tenant_id exactly as provided.\\n"
+        "2) Use organization_id exactly as provided.\\n"
         "3) Use names/slugs starting with provided test prefix.\\n"
         "4) For create actions produce a minimal valid payload. For agents.create include exactly one start node, "
         "at least one end node, and a control edge from start to end; never use empty agent graph.\\n"
         "5) Return final response as one JSON object only with keys: status, action, resources, errors.\\n"
-        f"Inputs: tenant_id={tenant_id}, tenant_slug={slug_hint}, prefix={unique_prefix}, model_slug={model_hint}."
+        f"Inputs: organization_id={organization_id}, tenant_slug={slug_hint}, prefix={unique_prefix}, model_slug={model_hint}."
     )
 
 
@@ -341,14 +341,14 @@ def _action_specific_api_check(
 @pytest.fixture(scope="session")
 def e2e_runtime() -> dict[str, Any]:
     env = _resolve_runtime_env()
-    tenant_slug = resolve_tenant_slug(env["tenant_id"])
-    sdk = ControlPlaneClient(base_url=env["base_url"], token=env["api_key"], tenant_id=env["tenant_id"])
+    tenant_slug = resolve_tenant_slug(env["organization_id"])
+    sdk = ControlPlaneClient(base_url=env["base_url"], token=env["api_key"], organization_id=env["organization_id"])
     architect_agent_id = _resolve_architect_agent_id(sdk)
     required_scopes, scope_to_actions = _build_scope_requirements()
     initiator_user_id = _decode_jwt_sub(env["api_key"])
     preflight = _run_async(
         _compute_scope_preflight(
-            tenant_id=env["tenant_id"],
+            organization_id=env["organization_id"],
             architect_agent_id=architect_agent_id,
             initiator_user_id=initiator_user_id,
             required_scopes=required_scopes,
@@ -362,7 +362,7 @@ def e2e_runtime() -> dict[str, Any]:
         impacted_actions = sorted(set(impacted_actions))
         lines = [
             "Architect E2E scope preflight failed before scenario execution.",
-            f"tenant_id={env['tenant_id']}",
+            f"organization_id={env['organization_id']}",
             f"architect_agent_id={architect_agent_id}",
             f"initiator_user_id={initiator_user_id or 'unresolved'}",
             f"reason={preflight.get('reason') or 'missing effective scopes'}",
@@ -374,7 +374,7 @@ def e2e_runtime() -> dict[str, Any]:
         ]
         pytest.exit("\n".join(lines), returncode=1)
 
-    report = E2EReport(tenant_id=env["tenant_id"], path=env["report_path"])
+    report = E2EReport(organization_id=env["organization_id"], path=env["report_path"])
 
     return {
         **env,
@@ -382,7 +382,7 @@ def e2e_runtime() -> dict[str, Any]:
         "sdk": sdk,
         "architect_agent_id": architect_agent_id,
         "report": report,
-        "headers": _headers(env["api_key"], env["tenant_id"]),
+        "headers": _headers(env["api_key"], env["organization_id"]),
         "requested_scopes": sorted(required_scopes),
     }
 
@@ -403,7 +403,7 @@ def test_platform_architect_capability_matrix_live(e2e_runtime, scenario: Scenar
     prompt = _scenario_prompt(
         scenario=scenario,
         unique_prefix=unique_prefix,
-        tenant_id=e2e_runtime["tenant_id"],
+        organization_id=e2e_runtime["organization_id"],
         tenant_slug=e2e_runtime.get("tenant_slug"),
         chat_model=e2e_runtime.get("chat_model", ""),
     )
@@ -431,7 +431,7 @@ def test_platform_architect_capability_matrix_live(e2e_runtime, scenario: Scenar
         scenario.target_action,
     )
 
-    db_check = check_agent_run_exists(run_id, e2e_runtime["tenant_id"])
+    db_check = check_agent_run_exists(run_id, e2e_runtime["organization_id"])
     api_side_effect_ok, api_side_effect_detail = _action_specific_api_check(
         scenario=scenario,
         sdk_client=e2e_runtime["sdk"],

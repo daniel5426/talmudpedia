@@ -130,7 +130,7 @@ export default function AppsPage() {
     return apps.filter(
       (app) =>
         app.name.toLowerCase().includes(query) ||
-        app.slug.toLowerCase().includes(query)
+        app.public_id.toLowerCase().includes(query)
     );
   }, [apps, search]);
 
@@ -162,13 +162,13 @@ export default function AppsPage() {
         publishedAppsService.listTemplates(),
         publishedAppsService.listAuthTemplates(),
       ]);
-      const publishedOnly = agentsResponse.items.filter(
-        (agent) => String(agent.status).toLowerCase() === "published"
+      const eligibleAgents = agentsResponse.items.filter(
+        (agent) => ["published", "draft"].includes(String(agent.status).toLowerCase())
       );
-      setPublishedAgents(publishedOnly);
+      setPublishedAgents(eligibleAgents);
       setTemplates(templatesResponse);
       setAuthTemplates(authTemplatesResponse);
-      setAgentId((prev) => prev || publishedOnly[0]?.id || "");
+      setAgentId((prev) => prev || eligibleAgents[0]?.id || "");
       setTemplateKey((prev) => prev || templatesResponse[0]?.key || "");
       setAuthTemplateKey((prev) => prev || authTemplatesResponse[0]?.key || "");
     } catch (err) {
@@ -223,7 +223,7 @@ export default function AppsPage() {
   async function handleCreate() {
     const nextName = name.trim();
     if (!nextName || !agentId || !templateKey || !authTemplateKey) {
-      setCreateError("Name, template, auth template, and published agent are required");
+      setCreateError("Name, template, auth template, and agent are required");
       return;
     }
 
@@ -501,7 +501,7 @@ export default function AppsPage() {
                   resources={publishedAgents.map((agent) => ({
                     value: agent.id,
                     label: agent.name,
-                    info: agent.slug,
+                    info: agent.id,
                   }))}
                 />
                 {isCreateResourcesLoading && (

@@ -38,7 +38,7 @@ from app.services.artifact_coding_chat_history_service import ArtifactCodingChat
 from app.services.artifact_coding_shared_draft_service import ArtifactCodingSharedDraftService
 from app.db.postgres.models.artifact_runtime import Artifact as ArtifactModel
 from app.db.postgres.models.artifact_runtime import ArtifactKind, ArtifactOwnerType, ArtifactRevision as ArtifactRevisionModel, ArtifactRunStatus, ArtifactStatus
-from app.db.postgres.models.identity import OrgMembership, Tenant
+from app.db.postgres.models.identity import OrgMembership, Organization
 from app.db.postgres.session import get_db
 from app.services.artifact_runtime.deployment_service import ArtifactDeploymentService
 from app.services.artifact_runtime.dependency_registry import analyze_artifact_dependencies, verify_python_package_exists
@@ -64,112 +64,111 @@ router = APIRouter(prefix="/admin/artifacts", tags=["artifacts"])
 _DUPLICATE_NAME_SUFFIX_RE = re.compile(r"^(?P<base>.*?)(?: \((?P<index>\d+)\))?$")
 
 
-def _artifact_control_plane_context(*, tenant: Tenant | None, user: Any | None, context: Dict[str, Any] | None = None) -> ControlPlaneContext:
-    if tenant is None:
-        raise HTTPException(status_code=400, detail="Tenant context required")
+def _artifact_control_plane_context(*, organization: Organization | None, user: Any | None, context: Dict[str, Any] | None = None) -> ControlPlaneContext:
+    if organization is None:
+        raise HTTPException(status_code=400, detail="Organization context required")
     principal = context or {}
     return ControlPlaneContext(
-        tenant_id=tenant.id,
+        organization_id=organization.id,
         user=user,
         user_id=getattr(user, "id", None),
         auth_token=principal.get("auth_token"),
         scopes=tuple(principal.get("scopes") or ()),
         is_service=bool(principal.get("type") == "workload"),
-        tenant_slug=tenant.slug,
     )
 
 
-async def _resolve_tenant_from_artifact_if_missing(
+async def _resolve_organization_from_artifact_if_missing(
     *,
-    tenant,
+    organization,
     user,
     db: AsyncSession,
     artifact_id: str | None,
 ):
-    if tenant is not None or not artifact_id:
-        return tenant
+    if organization is not None or not artifact_id:
+        return organization
     artifact_uuid = _parse_artifact_uuid(artifact_id)
     if artifact_uuid is None:
-        return tenant
-    artifact = await ArtifactRegistryService(db).get_accessible_artifact(artifact_id=artifact_uuid, tenant_id=None)
-    if artifact is None or artifact.tenant_id is None:
-        return tenant
-    resolved_tenant = await db.scalar(select(Tenant).where(Tenant.id == artifact.tenant_id))
+        return organization
+    artifact = await ArtifactRegistryService(db).get_accessible_artifact(artifact_id=artifact_uuid, organization_id=None)
+    if artifact is None or artifact.organization_id is None:
+        return organization
+    resolved_tenant = await db.scalar(select(Organization).where(Organization.id == artifact.organization_id))
     if resolved_tenant is None:
-        raise HTTPException(status_code=404, detail="Tenant not found")
+        raise HTTPException(status_code=404, detail="Organization not found")
     if user is not None and getattr(user, "role", None) != "admin":
         membership = await db.scalar(
             select(OrgMembership).where(
-                OrgMembership.tenant_id == resolved_tenant.id,
+                OrgMembership.organization_id == resolved_tenant.id,
                 OrgMembership.user_id == user.id,
             )
         )
         if membership is None:
-            raise HTTPException(status_code=403, detail="Not a member of this tenant")
+            raise HTTPException(status_code=403, detail="Not a member of this organization")
     return resolved_tenant
 
 
 async def get_artifact_context(
-    tenant_slug: Optional[str] = None,
+    organization_id: Optional[str] = None,
     context: Dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ):
     if context.get("type") == "workload":
-        tenant_id = context.get("tenant_id")
-        if not tenant_id:
-            raise HTTPException(status_code=403, detail="Tenant context required")
+        organization_id= context.get("organization_id")
+        if not organization_id:
+            raise HTTPException(status_code=403, detail="Organization context required")
         try:
-            tenant_uuid = UUID(str(tenant_id))
+            organization_uuid = UUID(str(organization_id))
         except Exception:
-            raise HTTPException(status_code=403, detail="Invalid tenant context")
-        tenant = await db.scalar(select(Tenant).where(Tenant.id == tenant_uuid))
-        if tenant is None:
-            raise HTTPException(status_code=404, detail="Tenant not found")
-        return tenant, None, db
+            raise HTTPException(status_code=403, detail="Invalid organization context")
+        organization = await db.scalar(select(Organization).where(Organization.id == organization_uuid))
+        if organization is None:
+            raise HTTPException(status_code=404, detail="Organization not found")
+        return organization, None, db
 
     current_user = context.get("user")
     if current_user is None:
         raise HTTPException(status_code=403, detail="Not authorized")
 
-    principal_tenant_id = context.get("tenant_id")
-    if principal_tenant_id:
+    principal_organization_id = context.get("organization_id")
+    if principal_organization_id:
         try:
-            principal_tenant_uuid = UUID(str(principal_tenant_id))
+            principal_organization_uuid = UUID(str(principal_organization_id))
         except Exception:
-            raise HTTPException(status_code=403, detail="Invalid tenant context")
-        principal_tenant = await db.scalar(select(Tenant).where(Tenant.id == principal_tenant_uuid))
+            raise HTTPException(status_code=403, detail="Invalid organization context")
+        principal_tenant = await db.scalar(select(Organization).where(Organization.id == principal_organization_uuid))
         if principal_tenant is None:
-            raise HTTPException(status_code=404, detail="Tenant not found")
-        if tenant_slug and principal_tenant.slug != tenant_slug:
+            raise HTTPException(status_code=404, detail="Organization not found")
+        if organization_id and str(principal_tenant.id) != organization_id:
             membership = await db.scalar(
                 select(OrgMembership).where(
-                    OrgMembership.tenant_id == principal_tenant.id,
+                    OrgMembership.organization_id == principal_tenant.id,
                     OrgMembership.user_id == current_user.id,
                 )
             )
             if membership is None and getattr(current_user, "role", None) != "admin":
-                raise HTTPException(status_code=403, detail="Not a member of this tenant")
-        if not tenant_slug or principal_tenant.slug == tenant_slug:
+                raise HTTPException(status_code=403, detail="Not a member of this organization")
+        if not organization_id or str(principal_tenant.id) == organization_id:
             return principal_tenant, current_user, db
 
-    if not tenant_slug:
+    if not organization_id:
         if getattr(current_user, "role", None) != "admin":
-            raise HTTPException(status_code=403, detail="Tenant context required")
+            raise HTTPException(status_code=403, detail="Organization context required")
         return None, current_user, db
 
-    tenant = await db.scalar(select(Tenant).where(Tenant.slug == tenant_slug))
-    if tenant is None:
-        raise HTTPException(status_code=404, detail="Tenant not found")
+    organization = await db.scalar(select(Organization).where(Organization.id == UUID(str(organization_id))))
+    if organization is None:
+        raise HTTPException(status_code=404, detail="Organization not found")
 
     membership = await db.scalar(
         select(OrgMembership).where(
-            OrgMembership.tenant_id == tenant.id,
+            OrgMembership.organization_id == organization.id,
             OrgMembership.user_id == current_user.id,
         )
     )
     if membership is None and getattr(current_user, "role", None) != "admin":
-        raise HTTPException(status_code=403, detail="Not a member of this tenant")
-    return tenant, current_user, db
+        raise HTTPException(status_code=403, detail="Not a member of this organization")
+    return organization, current_user, db
 
 
 def _model_dump(model: Any, **kwargs):
@@ -269,7 +268,7 @@ def _artifact_to_schema(artifact: ArtifactModel, *, include_code: bool = False) 
 async def _link_artifact_coding_scope_to_saved_artifact(
     *,
     db: AsyncSession,
-    tenant_id: UUID,
+    organization_id: UUID,
     artifact_id: UUID,
     draft_key: str | None,
 ) -> None:
@@ -277,12 +276,12 @@ async def _link_artifact_coding_scope_to_saved_artifact(
     if normalized_draft_key is None:
         return
     await ArtifactCodingSharedDraftService(db).link_scope_to_artifact(
-        tenant_id=tenant_id,
+        organization_id=organization_id,
         draft_key=normalized_draft_key,
         artifact_id=artifact_id,
     )
     await ArtifactCodingChatHistoryService(db).link_sessions_to_artifact(
-        tenant_id=tenant_id,
+        organization_id=organization_id,
         draft_key=normalized_draft_key,
         artifact_id=artifact_id,
     )
@@ -371,16 +370,16 @@ def _artifact_transfer_payload_from_artifact(artifact: ArtifactModel) -> Artifac
 
 @router.get("", response_model=dict[str, Any])
 async def list_artifacts(
-    tenant_slug: Optional[str] = None,
+    organization_id: Optional[str] = None,
     skip: int = 0,
     limit: int = 20,
     view: str = "summary",
     artifact_ctx=Depends(get_artifact_context),
 ):
-    tenant, user, db = artifact_ctx
+    organization, user, db = artifact_ctx
     query = ListQuery.from_payload({"skip": skip, "limit": limit, "view": view})
     page = await ArtifactAdminService(db).list_artifacts(
-        ctx=_artifact_control_plane_context(tenant=tenant, user=user),
+        ctx=_artifact_control_plane_context(organization=organization, user=user),
         query=query,
     )
     return page.to_payload()
@@ -389,16 +388,16 @@ async def list_artifacts(
 @router.get("/{artifact_id}", response_model=ArtifactSchema)
 async def get_artifact(
     artifact_id: str,
-    tenant_slug: Optional[str] = None,
+    organization_id: Optional[str] = None,
     artifact_ctx=Depends(get_artifact_context),
 ):
-    tenant, _user, db = artifact_ctx
+    organization, _user, db = artifact_ctx
     artifact_uuid = _parse_artifact_uuid(artifact_id)
     if artifact_uuid is None:
         raise HTTPException(status_code=404, detail="Artifact not found")
     artifact = await ArtifactRegistryService(db).get_accessible_artifact(
         artifact_id=artifact_uuid,
-        tenant_id=tenant.id if tenant is not None else None,
+        organization_id=organization.id if organization is not None else None,
     )
     if artifact is None:
         raise HTTPException(status_code=404, detail="Artifact not found")
@@ -408,17 +407,17 @@ async def get_artifact(
 @router.get("/{artifact_id}/export", response_model=ArtifactTransferFile)
 async def export_artifact(
     artifact_id: str,
-    tenant_slug: Optional[str] = None,
+    organization_id: Optional[str] = None,
     _: Dict[str, Any] = Depends(require_scopes("artifacts.read")),
     artifact_ctx=Depends(get_artifact_context),
 ):
-    tenant, _user, db = artifact_ctx
+    organization, _user, db = artifact_ctx
     artifact_uuid = _parse_artifact_uuid(artifact_id)
     if artifact_uuid is None:
         raise HTTPException(status_code=404, detail="Artifact not found")
     artifact = await ArtifactRegistryService(db).get_accessible_artifact(
         artifact_id=artifact_uuid,
-        tenant_id=tenant.id if tenant is not None else None,
+        organization_id=organization.id if organization is not None else None,
     )
     if artifact is None:
         raise HTTPException(status_code=404, detail="Artifact not found")
@@ -431,15 +430,15 @@ async def export_artifact(
 @router.post("/import", response_model=ArtifactImportResponse)
 async def import_artifact(
     request: ArtifactTransferFile,
-    tenant_slug: Optional[str] = None,
+    organization_id: Optional[str] = None,
     _: Dict[str, Any] = Depends(require_scopes("artifacts.write")),
     artifact_ctx=Depends(get_artifact_context),
 ):
-    tenant, user, db = artifact_ctx
-    if tenant is None:
-        raise HTTPException(status_code=400, detail="Tenant context required")
+    organization, user, db = artifact_ctx
+    if organization is None:
+        raise HTTPException(status_code=400, detail="Organization context required")
     registry = ArtifactRegistryService(db)
-    accessible_artifacts = await registry.list_accessible_artifacts(tenant_id=tenant.id)
+    accessible_artifacts = await registry.list_accessible_artifacts(organization_id=organization.id)
     imported_payload = request.artifact
     display_name = imported_payload.display_name
     if any(artifact.display_name == display_name for artifact in accessible_artifacts):
@@ -448,7 +447,7 @@ async def import_artifact(
             [artifact.display_name for artifact in accessible_artifacts],
         )
     created = await ArtifactRevisionService(db).create_artifact(
-        tenant_id=tenant.id,
+        organization_id=organization.id,
         created_by=user.id if user else None,
         display_name=display_name,
         description=imported_payload.description,
@@ -470,7 +469,7 @@ async def import_artifact(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     await db.commit()
-    imported_artifact = await registry.get_tenant_artifact(artifact_id=created.id, tenant_id=tenant.id)
+    imported_artifact = await registry.get_organization_artifact(artifact_id=created.id, organization_id=organization.id)
     if imported_artifact is None:
         raise HTTPException(status_code=500, detail="Imported artifact could not be loaded")
     return ArtifactImportResponse(
@@ -482,7 +481,7 @@ async def import_artifact(
 @router.post("/validate-source", response_model=ArtifactSourceValidationResponse)
 async def validate_artifact_source(
     request: ArtifactSourceValidationRequest,
-    tenant_slug: Optional[str] = None,
+    organization_id: Optional[str] = None,
     artifact_ctx=Depends(get_artifact_context),
 ):
     _tenant, _user, _db = artifact_ctx
@@ -497,7 +496,7 @@ async def validate_artifact_source(
 @router.post("/analyze-dependencies", response_model=ArtifactDependencyAnalysisResponse)
 async def analyze_artifact_dependencies_route(
     request: ArtifactDependencyAnalysisRequest,
-    tenant_slug: Optional[str] = None,
+    organization_id: Optional[str] = None,
     artifact_ctx=Depends(get_artifact_context),
 ):
     _tenant, _user, _db = artifact_ctx
@@ -512,7 +511,7 @@ async def analyze_artifact_dependencies_route(
 @router.post("/verify-python-package", response_model=PythonPackageVerificationResponse)
 async def verify_python_package_route(
     request: PythonPackageVerificationRequest,
-    tenant_slug: Optional[str] = None,
+    organization_id: Optional[str] = None,
     artifact_ctx=Depends(get_artifact_context),
 ):
     _tenant, _user, _db = artifact_ctx
@@ -546,17 +545,17 @@ def _artifact_form_snapshot(artifact: ArtifactModel) -> dict[str, Any]:
 @router.get("/{artifact_id}/versions", response_model=List[ArtifactVersionListItem])
 async def list_artifact_versions(
     artifact_id: str,
-    tenant_slug: Optional[str] = None,
+    organization_id: Optional[str] = None,
     _: Dict[str, Any] = Depends(require_scopes("artifacts.read")),
     artifact_ctx=Depends(get_artifact_context),
 ):
-    tenant, _user, db = artifact_ctx
+    organization, _user, db = artifact_ctx
     artifact_uuid = _parse_artifact_uuid(artifact_id)
     if artifact_uuid is None:
         raise HTTPException(status_code=404, detail="Artifact not found")
     artifact = await ArtifactRegistryService(db).get_accessible_artifact(
         artifact_id=artifact_uuid,
-        tenant_id=tenant.id if tenant is not None else None,
+        organization_id=organization.id if organization is not None else None,
     )
     if artifact is None:
         raise HTTPException(status_code=404, detail="Artifact not found")
@@ -575,18 +574,18 @@ async def list_artifact_versions(
 async def get_artifact_version(
     artifact_id: str,
     revision_id: str,
-    tenant_slug: Optional[str] = None,
+    organization_id: Optional[str] = None,
     _: Dict[str, Any] = Depends(require_scopes("artifacts.read")),
     artifact_ctx=Depends(get_artifact_context),
 ):
-    tenant, _user, db = artifact_ctx
+    organization, _user, db = artifact_ctx
     artifact_uuid = _parse_artifact_uuid(artifact_id)
     revision_uuid = _parse_artifact_uuid(revision_id)
     if artifact_uuid is None or revision_uuid is None:
         raise HTTPException(status_code=404, detail="Artifact version not found")
     artifact = await ArtifactRegistryService(db).get_accessible_artifact(
         artifact_id=artifact_uuid,
-        tenant_id=tenant.id if tenant is not None else None,
+        organization_id=organization.id if organization is not None else None,
     )
     if artifact is None:
         raise HTTPException(status_code=404, detail="Artifact not found")
@@ -599,23 +598,23 @@ async def get_artifact_version(
 @router.get("/{artifact_id}/working-draft", response_model=ArtifactWorkingDraftResponse)
 async def get_artifact_working_draft(
     artifact_id: str,
-    tenant_slug: Optional[str] = None,
+    organization_id: Optional[str] = None,
     _: Dict[str, Any] = Depends(require_scopes("artifacts.read")),
     artifact_ctx=Depends(get_artifact_context),
 ):
-    tenant, _user, db = artifact_ctx
+    organization, _user, db = artifact_ctx
     artifact_uuid = _parse_artifact_uuid(artifact_id)
     if artifact_uuid is None:
         raise HTTPException(status_code=404, detail="Artifact not found")
     artifact = await ArtifactRegistryService(db).get_accessible_artifact(
         artifact_id=artifact_uuid,
-        tenant_id=tenant.id if tenant is not None else None,
+        organization_id=organization.id if organization is not None else None,
     )
     if artifact is None:
         raise HTTPException(status_code=404, detail="Artifact not found")
     initial_snapshot = _artifact_form_snapshot(artifact)
     shared = await ArtifactCodingSharedDraftService(db).get_or_create_for_scope(
-        tenant_id=tenant.id if tenant is not None else artifact.tenant_id,
+        organization_id=organization.id if organization is not None else artifact.organization_id,
         artifact_id=artifact.id,
         draft_key=None,
         initial_snapshot=initial_snapshot,
@@ -631,20 +630,20 @@ async def get_artifact_working_draft(
 async def update_artifact_working_draft(
     artifact_id: str,
     request: ArtifactWorkingDraftUpdateRequest,
-    tenant_slug: Optional[str] = None,
+    organization_id: Optional[str] = None,
     _: Dict[str, Any] = Depends(require_scopes("artifacts.write")),
     artifact_ctx=Depends(get_artifact_context),
 ):
-    tenant, _user, db = artifact_ctx
+    organization, _user, db = artifact_ctx
     artifact_uuid = _parse_artifact_uuid(artifact_id)
     if artifact_uuid is None:
         raise HTTPException(status_code=404, detail="Artifact not found")
-    artifact = await ArtifactRegistryService(db).get_tenant_artifact(artifact_id=artifact_uuid, tenant_id=tenant.id)
+    artifact = await ArtifactRegistryService(db).get_organization_artifact(artifact_id=artifact_uuid, organization_id=organization.id)
     if artifact is None:
         raise HTTPException(status_code=404, detail="Artifact not found")
     shared_service = ArtifactCodingSharedDraftService(db)
     shared = await shared_service.get_or_create_for_scope(
-        tenant_id=tenant.id,
+        organization_id=organization.id,
         artifact_id=artifact.id,
         draft_key=None,
         initial_snapshot=_artifact_form_snapshot(artifact),
@@ -667,14 +666,14 @@ async def update_artifact_working_draft(
 @router.post("", response_model=ArtifactSchema)
 async def create_artifact_draft(
     request: ArtifactCreate,
-    tenant_slug: Optional[str] = None,
+    organization_id: Optional[str] = None,
     _: Dict[str, Any] = Depends(require_scopes("artifacts.write")),
     artifact_ctx=Depends(get_artifact_context),
 ):
-    tenant, user, db = artifact_ctx
+    organization, user, db = artifact_ctx
     try:
         payload = await ArtifactAdminService(db).create_artifact(
-            ctx=_artifact_control_plane_context(tenant=tenant, user=user),
+            ctx=_artifact_control_plane_context(organization=organization, user=user),
             params=ControlPlaneCreateArtifactInput(
                 display_name=request.display_name,
                 description=request.description,
@@ -697,7 +696,7 @@ async def create_artifact_draft(
         raise exc.to_http_exception() from exc
     await _link_artifact_coding_scope_to_saved_artifact(
         db=db,
-        tenant_id=tenant.id,
+        organization_id=organization.id,
         artifact_id=UUID(str(payload["id"])),
         draft_key=request.draft_key,
     )
@@ -709,11 +708,11 @@ async def create_artifact_draft(
 async def update_artifact(
     artifact_id: str,
     update_data: ArtifactUpdate,
-    tenant_slug: Optional[str] = None,
+    organization_id: Optional[str] = None,
     _: Dict[str, Any] = Depends(require_scopes("artifacts.write")),
     artifact_ctx=Depends(get_artifact_context),
 ):
-    tenant, user, db = artifact_ctx
+    organization, user, db = artifact_ctx
     artifact_uuid = _parse_artifact_uuid(artifact_id)
     if artifact_uuid is None:
         raise HTTPException(status_code=404, detail="Artifact not found")
@@ -721,7 +720,7 @@ async def update_artifact(
     runtime = payload.get("runtime") or {}
     try:
         response_payload = await ArtifactAdminService(db).update_artifact(
-            ctx=_artifact_control_plane_context(tenant=tenant, user=user),
+            ctx=_artifact_control_plane_context(organization=organization, user=user),
             artifact_id=artifact_uuid,
             params=ControlPlaneUpdateArtifactInput(
                 display_name=payload.get("display_name"),
@@ -744,7 +743,7 @@ async def update_artifact(
         raise exc.to_http_exception() from exc
     await _link_artifact_coding_scope_to_saved_artifact(
         db=db,
-        tenant_id=tenant.id,
+        organization_id=organization.id,
         artifact_id=artifact_uuid,
         draft_key=update_data.draft_key,
     )
@@ -755,21 +754,21 @@ async def update_artifact(
 @router.post("/{artifact_id}/publish", response_model=ArtifactPublishResponse)
 async def publish_artifact(
     artifact_id: str,
-    tenant_slug: Optional[str] = None,
+    organization_id: Optional[str] = None,
     principal: Dict[str, Any] = Depends(get_current_principal),
     _: Dict[str, Any] = Depends(require_scopes("artifacts.write")),
     artifact_ctx=Depends(get_artifact_context),
 ):
-    tenant, _user, db = artifact_ctx
+    organization, _user, db = artifact_ctx
     artifact_uuid = _parse_artifact_uuid(artifact_id)
     if artifact_uuid is None:
         raise HTTPException(status_code=404, detail="Artifact not found")
-    artifact = await ArtifactRegistryService(db).get_tenant_artifact(artifact_id=artifact_uuid, tenant_id=tenant.id if tenant else None)
+    artifact = await ArtifactRegistryService(db).get_organization_artifact(artifact_id=artifact_uuid, organization_id=organization.id if organization else None)
     if artifact is None:
         raise HTTPException(status_code=404, detail="Artifact not found")
     await ensure_sensitive_action_approved(
         principal=principal,
-        tenant_id=tenant.id,
+        organization_id=organization.id,
         subject_type="artifact",
         subject_id=str(artifact.id),
         action_scope="artifacts.publish",
@@ -777,7 +776,7 @@ async def publish_artifact(
     )
     try:
         payload = await ArtifactAdminService(db).publish_artifact(
-            ctx=_artifact_control_plane_context(tenant=tenant, user=_user, context=principal),
+            ctx=_artifact_control_plane_context(organization=organization, user=_user, context=principal),
             artifact_id=artifact_uuid,
         )
     except ControlPlaneError as exc:
@@ -789,17 +788,17 @@ async def publish_artifact(
 async def convert_artifact_kind(
     artifact_id: str,
     request: ArtifactConvertKindRequest,
-    tenant_slug: Optional[str] = None,
+    organization_id: Optional[str] = None,
     _: Dict[str, Any] = Depends(require_scopes("artifacts.write")),
     artifact_ctx=Depends(get_artifact_context),
 ):
-    tenant, user, db = artifact_ctx
+    organization, user, db = artifact_ctx
     artifact_uuid = _parse_artifact_uuid(artifact_id)
     if artifact_uuid is None:
         raise HTTPException(status_code=404, detail="Artifact not found")
     try:
         payload = await ArtifactAdminService(db).convert_kind(
-            ctx=_artifact_control_plane_context(tenant=tenant, user=user),
+            ctx=_artifact_control_plane_context(organization=organization, user=user),
             artifact_id=artifact_uuid,
             kind=request.kind.value,
             agent_contract=_model_dump(request.agent_contract) if request.agent_contract is not None else None,
@@ -814,33 +813,33 @@ async def convert_artifact_kind(
 @router.post("/{artifact_id}/duplicate", response_model=ArtifactSchema)
 async def duplicate_artifact(
     artifact_id: str,
-    tenant_slug: Optional[str] = None,
+    organization_id: Optional[str] = None,
     _: Dict[str, Any] = Depends(require_scopes("artifacts.write")),
     artifact_ctx=Depends(get_artifact_context),
 ):
-    tenant, user, db = artifact_ctx
-    if tenant is None:
-        raise HTTPException(status_code=400, detail="Tenant context required")
+    organization, user, db = artifact_ctx
+    if organization is None:
+        raise HTTPException(status_code=400, detail="Organization context required")
     artifact_uuid = _parse_artifact_uuid(artifact_id)
     if artifact_uuid is None:
         raise HTTPException(status_code=404, detail="Artifact not found")
     registry = ArtifactRegistryService(db)
     source_artifact = await registry.get_accessible_artifact(
         artifact_id=artifact_uuid,
-        tenant_id=tenant.id,
+        organization_id=organization.id,
     )
     if source_artifact is None:
         raise HTTPException(status_code=404, detail="Artifact not found")
     source_revision = source_artifact.latest_draft_revision or source_artifact.latest_published_revision
     if source_revision is None:
         raise HTTPException(status_code=409, detail="Artifact is missing a current revision")
-    accessible_artifacts = await registry.list_accessible_artifacts(tenant_id=tenant.id)
+    accessible_artifacts = await registry.list_accessible_artifacts(organization_id=organization.id)
     duplicate_name = _next_duplicate_display_name(
         source_artifact.display_name,
         [artifact.display_name for artifact in accessible_artifacts],
     )
     duplicated = await ArtifactRevisionService(db).create_artifact(
-        tenant_id=tenant.id,
+        organization_id=organization.id,
         created_by=user.id if user else None,
         display_name=duplicate_name,
         description=source_artifact.description,
@@ -862,28 +861,28 @@ async def duplicate_artifact(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     await db.commit()
-    refreshed = await registry.get_tenant_artifact(artifact_id=duplicated.id, tenant_id=tenant.id)
+    refreshed = await registry.get_organization_artifact(artifact_id=duplicated.id, organization_id=organization.id)
     return _artifact_to_schema(refreshed, include_code=True)
 
 
 @router.delete("/{artifact_id}")
 async def delete_artifact(
     artifact_id: str,
-    tenant_slug: Optional[str] = None,
+    organization_id: Optional[str] = None,
     principal: Dict[str, Any] = Depends(get_current_principal),
     _: Dict[str, Any] = Depends(require_scopes("artifacts.write")),
     artifact_ctx=Depends(get_artifact_context),
 ):
-    tenant, _user, db = artifact_ctx
+    organization, _user, db = artifact_ctx
     artifact_uuid = _parse_artifact_uuid(artifact_id)
     if artifact_uuid is None:
         raise HTTPException(status_code=404, detail="Artifact not found")
-    artifact = await ArtifactRegistryService(db).get_tenant_artifact(artifact_id=artifact_uuid, tenant_id=tenant.id if tenant else None)
+    artifact = await ArtifactRegistryService(db).get_organization_artifact(artifact_id=artifact_uuid, organization_id=organization.id if organization else None)
     if artifact is None:
         raise HTTPException(status_code=404, detail="Artifact not found")
     await ensure_sensitive_action_approved(
         principal=principal,
-        tenant_id=tenant.id,
+        organization_id=organization.id,
         subject_type="artifact",
         subject_id=str(artifact.id),
         action_scope="artifacts.delete",
@@ -891,7 +890,7 @@ async def delete_artifact(
     )
     try:
         return await ArtifactAdminService(db).delete_artifact(
-            ctx=_artifact_control_plane_context(tenant=tenant, user=_user, context=principal),
+            ctx=_artifact_control_plane_context(organization=organization, user=_user, context=principal),
             artifact_id=artifact_uuid,
         )
     except ControlPlaneError as exc:
@@ -901,20 +900,20 @@ async def delete_artifact(
 @router.post("/test-runs", response_model=ArtifactRunCreateResponse)
 async def create_unsaved_test_run(
     request: ArtifactTestRequest,
-    tenant_slug: Optional[str] = None,
+    organization_id: Optional[str] = None,
     _: Dict[str, Any] = Depends(require_scopes("artifacts.write")),
     artifact_ctx=Depends(get_artifact_context),
 ):
-    tenant, user, db = artifact_ctx
-    tenant = await _resolve_tenant_from_artifact_if_missing(
-        tenant=tenant,
+    organization, user, db = artifact_ctx
+    organization = await _resolve_organization_from_artifact_if_missing(
+        organization=organization,
         user=user,
         db=db,
         artifact_id=request.artifact_id,
     )
     try:
         operation = await ArtifactAdminService(db).create_test_run(
-            ctx=_artifact_control_plane_context(tenant=tenant, user=user),
+            ctx=_artifact_control_plane_context(organization=organization, user=user),
             artifact_id=_parse_artifact_uuid(request.artifact_id),
             source_files=[_model_dump(item) for item in request.source_files],
             entry_module_path=request.entry_module_path,
@@ -942,9 +941,9 @@ async def create_unsaved_test_run(
 async def create_saved_artifact_test_run(
     artifact_id: str,
     request: ArtifactTestRequest,
-    tenant_slug: Optional[str] = None,
+    organization_id: Optional[str] = None,
     _: Dict[str, Any] = Depends(require_scopes("artifacts.write")),
     artifact_ctx=Depends(get_artifact_context),
 ):
     request.artifact_id = artifact_id
-    return await create_unsaved_test_run(request, tenant_slug=tenant_slug, artifact_ctx=artifact_ctx)
+    return await create_unsaved_test_run(request, organization_id=organization_id, artifact_ctx=artifact_ctx)

@@ -1,7 +1,9 @@
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from uuid import uuid4
 
 import jwt
+from sqlalchemy import delete
 
 from app.agent.execution.trace_recorder import ExecutionTraceRecorder
 from app.agent.execution.service import AgentExecutorService
@@ -13,15 +15,21 @@ from app.db.postgres.models.identity import (
     OrgRole,
     OrgUnit,
     OrgUnitType,
-    Tenant,
+    Organization,
     User,
 )
 from app.db.postgres.models.published_apps import PublishedApp, PublishedAppStatus, PublishedAppVisibility
+from app.db.postgres.models.published_apps import (
+    PublishedAppRevisionBuildStatus,
+    PublishedAppRevisionKind,
+)
+from app.services.published_app_templates import build_template_files, get_template
+from app.services.published_app_versioning import create_app_version
 from app.services.security_bootstrap_service import SecurityBootstrapService
 
 
 async def seed_admin_tenant_and_agent(db_session):
-    tenant = Tenant(name=f"Tenant {uuid4().hex[:6]}", slug=f"tenant-{uuid4().hex[:8]}")
+    tenant = Organization(name=f"Organization {uuid4().hex[:6]}", slug=f"tenant-{uuid4().hex[:8]}")
     user = User(
         email=f"owner-{uuid4().hex[:8]}@example.com",
         hashed_password=get_password_hash("secret123"),
@@ -31,7 +39,7 @@ async def seed_admin_tenant_and_agent(db_session):
     await db_session.flush()
 
     org_unit = OrgUnit(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name="Root",
         slug="root",
         type=OrgUnitType.org,
@@ -40,7 +48,7 @@ async def seed_admin_tenant_and_agent(db_session):
     await db_session.flush()
 
     membership = OrgMembership(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         org_unit_id=org_unit.id,
         role=OrgRole.owner,
@@ -49,10 +57,10 @@ async def seed_admin_tenant_and_agent(db_session):
     db_session.add(membership)
     bootstrap = SecurityBootstrapService(db_session)
     await bootstrap.ensure_default_roles(tenant.id)
-    await bootstrap.ensure_owner_assignment(tenant_id=tenant.id, user_id=user.id, assigned_by=user.id)
+    await bootstrap.ensure_organization_owner_assignment(organization_id=tenant.id, user_id=user.id, assigned_by=user.id)
 
     agent = Agent(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name="Published Agent",
         slug=f"agent-{uuid4().hex[:8]}",
         status=AgentStatus.published,
@@ -65,11 +73,11 @@ async def seed_admin_tenant_and_agent(db_session):
     return tenant, user, org_unit, agent
 
 
-def admin_headers(user_id: str, tenant_id: str, org_unit_id: str) -> dict[str, str]:
+def admin_headers(user_id: str, organization_id: str, org_unit_id: str) -> dict[str, str]:
     payload = jwt.decode(
         create_access_token(
             subject=user_id,
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             org_unit_id=org_unit_id,
             org_role="owner",
         ),
@@ -78,7 +86,7 @@ def admin_headers(user_id: str, tenant_id: str, org_unit_id: str) -> dict[str, s
     )
     payload["scope"] = ["*"]
     token = jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
-    return {"Authorization": f"Bearer {token}", "X-Tenant-ID": tenant_id}
+    return {"Authorization": f"Bearer {token}", "X-Organization-ID": organization_id}
 
 
 async def start_publish_version_and_wait(
@@ -132,7 +140,7 @@ async def start_publish_and_wait(
 
 async def seed_published_app(
     db_session,
-    tenant_id,
+    organization_id,
     agent_id,
     created_by,
     *,
@@ -146,11 +154,14 @@ async def seed_published_app(
     allowed_origins=None,
     external_auth_oidc=None,
 ):
+    await db_session.execute(
+        delete(PublishedApp).where(PublishedApp.public_id == slug)
+    )
     app = PublishedApp(
-        tenant_id=tenant_id,
+        organization_id=organization_id,
         agent_id=agent_id,
         name=f"App {slug}",
-        slug=slug,
+        public_id=slug,
         description=description,
         logo_url=logo_url,
         visibility=visibility,
@@ -208,4 +219,54 @@ def install_stub_agent_worker(
         AgentExecutorService,
         "_enqueue_background_run",
         fake_enqueue_background_run,
+    )
+
+
+def install_app_create_stub(monkeypatch) -> None:
+    async def _provision_workspace_from_files(self, *, app, user_id, files, entry_file, trace_source=None):
+        _ = self, app, user_id, files, entry_file, trace_source
+        return None
+
+    async def _materialize_live_workspace(self, *, app, entry_file, source_revision_id, created_by, origin_kind, **kwargs):
+        _ = kwargs
+        template = get_template(app.template_key)
+        files = build_template_files(
+            app.template_key,
+            runtime_context={
+                "app_id": str(app.id),
+                "app_public_id": app.public_id,
+                "agent_id": str(app.agent_id),
+            },
+        )
+        revision = await create_app_version(
+            self.db,
+            app=app,
+            kind=PublishedAppRevisionKind.draft,
+            template_key=app.template_key,
+            entry_file=entry_file or template.entry_file,
+            files=files,
+            created_by=created_by,
+            source_revision_id=source_revision_id,
+            origin_kind=origin_kind,
+            build_status=PublishedAppRevisionBuildStatus.succeeded,
+            build_seq=1,
+            dist_storage_prefix=f"apps/{app.id}/revisions/init/dist",
+            dist_manifest={"entry_html": "index.html", "assets": [], "source_fingerprint": f"fp-{app.id}"},
+            template_runtime="vite_static",
+        )
+        app.current_draft_revision_id = revision.id
+        return SimpleNamespace(
+            revision=revision,
+            reused=False,
+            source_fingerprint=f"fp-{app.id}",
+            workspace_revision_token=None,
+        )
+
+    monkeypatch.setattr(
+        "app.services.published_app_draft_dev_runtime.PublishedAppDraftDevRuntimeService.provision_workspace_from_files",
+        _provision_workspace_from_files,
+    )
+    monkeypatch.setattr(
+        "app.services.published_app_draft_revision_materializer.PublishedAppDraftRevisionMaterializerService.materialize_live_workspace",
+        _materialize_live_workspace,
     )

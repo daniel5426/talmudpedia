@@ -79,8 +79,6 @@ def create_or_update(
         missing: List[str] = []
         if not payload.get("name"):
             missing.append("name")
-        if not payload.get("slug"):
-            missing.append("slug")
         if not payload.get("input_schema"):
             missing.append("input_schema")
         if not payload.get("output_schema"):
@@ -93,7 +91,7 @@ def create_or_update(
         if tool_id:
             skipped["tool_id"] = str(tool_id)
         else:
-            skipped["slug"] = payload.get("slug")
+            skipped["name"] = payload.get("name")
         return skipped, []
 
     try:
@@ -117,12 +115,11 @@ def create_or_update(
         return None, [{
             "error": "create_tool_failed",
             "detail": str(exc),
-            "slug": payload.get("slug"),
             "code": exc.code,
             "http_status": exc.http_status,
         }]
     except Exception as exc:
-        return None, [{"error": "create_tool_failed", "detail": str(exc), "slug": payload.get("slug")}]
+        return None, [{"error": "create_tool_failed", "detail": str(exc), "name": payload.get("name")}]
 
 
 def publish(

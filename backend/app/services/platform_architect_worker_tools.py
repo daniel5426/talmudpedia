@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+
 from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
@@ -17,10 +19,7 @@ from app.db.postgres.models.registry import (
     ToolStatus,
     set_tool_management_metadata,
 )
-from app.services.artifact_coding_agent_profile import (
-    ARTIFACT_CODING_AGENT_PROFILE_SLUG,
-    ensure_artifact_coding_agent_profile,
-)
+from app.services.artifact_coding_agent_profile import ensure_artifact_coding_agent_profile
 from app.db.postgres.models.artifact_runtime import ArtifactKind
 from app.services.platform_architect_worker_runtime_service import PlatformArchitectWorkerRuntimeService
 from app.services.tool_function_registry import register_tool_function
@@ -120,7 +119,7 @@ def _spawn_target_schema() -> dict[str, Any]:
     return {
         "type": "object",
         "properties": {
-            "worker_agent_slug": {"type": "string"},
+            "worker_agent_id": {"type": "string"},
             "binding_ref": _binding_ref_schema(),
             "objective": {"type": "string"},
             "context": {"type": "object", "additionalProperties": True},
@@ -130,7 +129,7 @@ def _spawn_target_schema() -> dict[str, Any]:
         "required": ["objective"],
         "additionalProperties": False,
         "anyOf": [
-            {"required": ["worker_agent_slug", "objective"]},
+            {"required": ["worker_agent_id", "objective"]},
             {"required": ["binding_ref", "objective"]},
         ],
     }
@@ -220,7 +219,7 @@ async def architect_worker_cancel(payload: Any) -> dict[str, Any]:
 
 ARCHITECT_WORKER_TOOL_SPECS: list[dict[str, Any]] = [
     {
-        "slug": "architect-worker-binding-prepare",
+        "builtin_key": "architect-worker-binding-prepare",
         "name": "Architect Worker Binding Prepare",
         "description": "Prepare or reuse a binding-backed worker state for the architect. Normal artifact creation uses prepare_mode=create_new_draft with title_prompt plus draft_seed.kind; full draft_snapshot is reserved for seed_snapshot only.",
         "implementation_type": ToolImplementationType.FUNCTION,
@@ -291,7 +290,7 @@ ARCHITECT_WORKER_TOOL_SPECS: list[dict[str, Any]] = [
         },
     },
     {
-        "slug": "architect-worker-binding-get-state",
+        "builtin_key": "architect-worker-binding-get-state",
         "name": "Architect Worker Binding Get State",
         "description": "Fetch the latest binding-backed worker state and canonical export payload.",
         "implementation_type": ToolImplementationType.FUNCTION,
@@ -314,7 +313,7 @@ ARCHITECT_WORKER_TOOL_SPECS: list[dict[str, Any]] = [
         },
     },
     {
-        "slug": "architect-worker-binding-persist-artifact",
+        "builtin_key": "architect-worker-binding-persist-artifact",
         "name": "Architect Worker Binding Persist Artifact",
         "description": "Persist a binding-backed artifact draft server-side without routing persistence payloads through the model layer.",
         "implementation_type": ToolImplementationType.FUNCTION,
@@ -337,13 +336,13 @@ ARCHITECT_WORKER_TOOL_SPECS: list[dict[str, Any]] = [
         },
     },
     {
-        "slug": "architect-worker-spawn",
+        "builtin_key": "architect-worker-spawn",
         "name": "Architect Worker Spawn",
         "description": "Spawn one async worker run for the architect.",
         "implementation_type": ToolImplementationType.FUNCTION,
         "schema": _tool_schema(
             properties={
-                "worker_agent_slug": {"type": "string"},
+                "worker_agent_id": {"type": "string"},
                 "binding_ref": _binding_ref_schema(),
                 "objective": {"type": "string"},
                 "context": {"type": "object", "additionalProperties": True},
@@ -356,7 +355,7 @@ ARCHITECT_WORKER_TOOL_SPECS: list[dict[str, Any]] = [
             },
             required=["objective"],
             any_of=[
-                {"required": ["worker_agent_slug", "objective"]},
+                {"required": ["worker_agent_id", "objective"]},
                 {"required": ["binding_ref", "objective"]},
             ],
         ),
@@ -372,7 +371,7 @@ ARCHITECT_WORKER_TOOL_SPECS: list[dict[str, Any]] = [
         },
     },
     {
-        "slug": "architect-worker-spawn-group",
+        "builtin_key": "architect-worker-spawn-group",
         "name": "Architect Worker Spawn Group",
         "description": "Spawn an async parallel worker group for the architect.",
         "implementation_type": ToolImplementationType.FUNCTION,
@@ -400,7 +399,7 @@ ARCHITECT_WORKER_TOOL_SPECS: list[dict[str, Any]] = [
         },
     },
     {
-        "slug": "architect-worker-get-run",
+        "builtin_key": "architect-worker-get-run",
         "name": "Architect Worker Get Run",
         "description": "Inspect one architect worker run snapshot. Prefer architect-worker-await for normal waiting behavior.",
         "implementation_type": ToolImplementationType.FUNCTION,
@@ -417,7 +416,7 @@ ARCHITECT_WORKER_TOOL_SPECS: list[dict[str, Any]] = [
         },
     },
     {
-        "slug": "architect-worker-await",
+        "builtin_key": "architect-worker-await",
         "name": "Architect Worker Await",
         "description": "Wait server-side for a child worker to complete, fail, cancel, or block on input instead of repeatedly polling get-run.",
         "implementation_type": ToolImplementationType.FUNCTION,
@@ -441,7 +440,7 @@ ARCHITECT_WORKER_TOOL_SPECS: list[dict[str, Any]] = [
         },
     },
     {
-        "slug": "architect-worker-respond",
+        "builtin_key": "architect-worker-respond",
         "name": "Architect Worker Respond",
         "description": "Provide an orchestrator response when a worker is waiting for input, resuming or continuing the delegated run.",
         "implementation_type": ToolImplementationType.FUNCTION,
@@ -464,7 +463,7 @@ ARCHITECT_WORKER_TOOL_SPECS: list[dict[str, Any]] = [
         },
     },
     {
-        "slug": "architect-worker-join",
+        "builtin_key": "architect-worker-join",
         "name": "Architect Worker Join",
         "description": "Join an architect worker group.",
         "implementation_type": ToolImplementationType.FUNCTION,
@@ -489,7 +488,7 @@ ARCHITECT_WORKER_TOOL_SPECS: list[dict[str, Any]] = [
         },
     },
     {
-        "slug": "architect-worker-cancel",
+        "builtin_key": "architect-worker-cancel",
         "name": "Architect Worker Cancel",
         "description": "Cancel an architect worker subtree.",
         "implementation_type": ToolImplementationType.FUNCTION,
@@ -515,13 +514,18 @@ ARCHITECT_WORKER_TOOL_SPECS: list[dict[str, Any]] = [
 ]
 
 
+def _system_tool_row_key(builtin_key: str) -> str:
+    digest = hashlib.sha1(builtin_key.encode("utf-8")).hexdigest()[:24]
+    return f"sys-tool-{digest}"
+
+
 async def ensure_platform_architect_worker_tools(
     db: AsyncSession,
     *,
-    tenant_id: UUID,
+    organization_id: UUID,
     actor_user_id: UUID | None = None,
 ) -> list[str]:
-    await ensure_artifact_coding_agent_profile(db, tenant_id, actor_user_id=actor_user_id)
+    await ensure_artifact_coding_agent_profile(db, organization_id, actor_user_id=actor_user_id)
 
     try:
         result = await db.execute(
@@ -546,17 +550,17 @@ async def ensure_platform_architect_worker_tools(
         result = await db.execute(
             select(ToolRegistry).where(
                 and_(
-                    ToolRegistry.tenant_id.is_(None),
-                    ToolRegistry.slug == spec["slug"],
+                    ToolRegistry.organization_id.is_(None),
+                    ToolRegistry.builtin_key == spec["builtin_key"],
                 )
             )
         )
         tool = result.scalar_one_or_none()
         if tool is None:
             tool = ToolRegistry(
-                tenant_id=None,
+                organization_id=None,
                 name=spec["name"],
-                slug=spec["slug"],
+                slug=_system_tool_row_key(spec["builtin_key"]),
                 description=spec["description"],
                 scope=ToolDefinitionScope.GLOBAL,
                 schema=spec["schema"],
@@ -567,7 +571,7 @@ async def ensure_platform_architect_worker_tools(
                 artifact_id=None,
                 artifact_version=None,
                 artifact_revision_id=None,
-                builtin_key=None,
+                builtin_key=spec["builtin_key"],
                 builtin_template_id=None,
                 is_builtin_template=False,
                 is_active=True,
@@ -601,14 +605,14 @@ async def ensure_platform_architect_worker_tools(
 async def ensure_platform_architect_worker_orchestration_policy(
     db: AsyncSession,
     *,
-    tenant_id: UUID,
+    organization_id: UUID,
     orchestrator_agent_id: UUID,
 ) -> None:
-    artifact_agent = await ensure_artifact_coding_agent_profile(db, tenant_id, actor_user_id=None)
+    artifact_agent = await ensure_artifact_coding_agent_profile(db, organization_id, actor_user_id=None)
     result = await db.execute(
         select(OrchestratorPolicy).where(
             and_(
-                OrchestratorPolicy.tenant_id == tenant_id,
+                OrchestratorPolicy.organization_id == organization_id,
                 OrchestratorPolicy.orchestrator_agent_id == orchestrator_agent_id,
             )
         )
@@ -616,7 +620,7 @@ async def ensure_platform_architect_worker_orchestration_policy(
     policy = result.scalar_one_or_none()
     if policy is None:
         policy = OrchestratorPolicy(
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             orchestrator_agent_id=orchestrator_agent_id,
             allowed_scope_subset=["agents.execute"],
             is_active=True,
@@ -626,20 +630,11 @@ async def ensure_platform_architect_worker_orchestration_policy(
         policy.is_active = True
         policy.allowed_scope_subset = ["agents.execute"]
 
-    agent_result = await db.execute(
-        select(Agent).where(
-            and_(
-                Agent.tenant_id == tenant_id,
-                Agent.slug == ARTIFACT_CODING_AGENT_PROFILE_SLUG,
-            )
-        )
-    )
-    artifact_agent_row = agent_result.scalar_one_or_none()
-    target_agent_id = artifact_agent_row.id if artifact_agent_row is not None else artifact_agent.id
+    target_agent_id = artifact_agent.id
     allow_result = await db.execute(
         select(OrchestratorTargetAllowlist).where(
             and_(
-                OrchestratorTargetAllowlist.tenant_id == tenant_id,
+                OrchestratorTargetAllowlist.organization_id == organization_id,
                 OrchestratorTargetAllowlist.orchestrator_agent_id == orchestrator_agent_id,
                 OrchestratorTargetAllowlist.target_agent_id == target_agent_id,
             )
@@ -648,14 +643,12 @@ async def ensure_platform_architect_worker_orchestration_policy(
     allow = allow_result.scalar_one_or_none()
     if allow is None:
         allow = OrchestratorTargetAllowlist(
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             orchestrator_agent_id=orchestrator_agent_id,
             target_agent_id=target_agent_id,
-            target_agent_slug=ARTIFACT_CODING_AGENT_PROFILE_SLUG,
             is_active=True,
         )
         db.add(allow)
     else:
-        allow.target_agent_slug = ARTIFACT_CODING_AGENT_PROFILE_SLUG
         allow.is_active = True
     await db.flush()

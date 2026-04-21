@@ -50,7 +50,7 @@ function ErrorBanner({ message }: { message: string | null }) {
 export function ApiKeysSection() {
   const [scope, setScope] = useState<"organization" | "project">("organization")
   const [projects, setProjects] = useState<SettingsProject[]>([])
-  const [projectSlug, setProjectSlug] = useState("")
+  const [projectId, setProjectId] = useState("")
   const [items, setItems] = useState<SettingsApiKey[]>([])
   const [search, setSearch] = useState("")
   const [error, setError] = useState<string | null>(null)
@@ -61,14 +61,14 @@ export function ApiKeysSection() {
   const [createOpen, setCreateOpen] = useState(false)
   const [createName, setCreateName] = useState("")
   const [createScope, setCreateScope] = useState<"organization" | "project">("organization")
-  const [createProjectSlug, setCreateProjectSlug] = useState("")
+  const [createProjectId, setCreateProjectId] = useState("")
   const [creating, setCreating] = useState(false)
 
   // Load projects list
   useEffect(() => {
     void settingsProjectsService.listProjects().then((data) => {
       setProjects(data)
-      if (!projectSlug && data[0]) setProjectSlug(data[0].slug)
+      if (!projectId && data[0]) setProjectId(data[0].id)
     })
   }, [])
 
@@ -79,7 +79,7 @@ export function ApiKeysSection() {
     try {
       const data = await settingsApiKeysService.listApiKeys({
         owner_scope: scope,
-        project_slug: scope === "project" ? projectSlug : undefined,
+        project_id: scope === "project" ? projectId : undefined,
       })
       setItems(data)
     } catch (error) {
@@ -90,9 +90,9 @@ export function ApiKeysSection() {
   }
 
   useEffect(() => {
-    if (scope === "project" && !projectSlug) return
+    if (scope === "project" && !projectId) return
     void loadKeys()
-  }, [scope, projectSlug])
+  }, [scope, projectId])
 
   const createKey = async () => {
     if (!createName.trim()) return
@@ -101,7 +101,7 @@ export function ApiKeysSection() {
     try {
       const created = await settingsApiKeysService.createApiKey({
         owner_scope: createScope,
-        project_slug: createScope === "project" ? createProjectSlug : undefined,
+        project_id: createScope === "project" ? createProjectId : undefined,
         name: createName.trim(),
       })
       setToken(created.token)
@@ -109,7 +109,7 @@ export function ApiKeysSection() {
       setCreateOpen(false)
       // Switch view to match what was just created
       setScope(createScope)
-      if (createScope === "project") setProjectSlug(createProjectSlug)
+      if (createScope === "project") setProjectId(createProjectId)
       await loadKeys()
     } catch (error) {
       setError(formatHttpErrorMessage(error, "Failed to create API key."))
@@ -122,7 +122,7 @@ export function ApiKeysSection() {
     try {
       await settingsApiKeysService.revokeApiKey(keyId, {
         owner_scope: scope,
-        project_slug: scope === "project" ? projectSlug : undefined,
+        project_id: scope === "project" ? projectId : undefined,
       })
       await loadKeys()
     } catch (error) {
@@ -134,7 +134,7 @@ export function ApiKeysSection() {
     try {
       await settingsApiKeysService.deleteApiKey(keyId, {
         owner_scope: scope,
-        project_slug: scope === "project" ? projectSlug : undefined,
+        project_id: scope === "project" ? projectId : undefined,
       })
       await loadKeys()
     } catch (error) {
@@ -179,8 +179,8 @@ export function ApiKeysSection() {
         </Select>
         {scope === "project" && (
           <Select
-            value={projectSlug || "__none__"}
-            onValueChange={(value) => setProjectSlug(value === "__none__" ? "" : value)}
+            value={projectId || "__none__"}
+            onValueChange={(value) => setProjectId(value === "__none__" ? "" : value)}
           >
             <SelectTrigger className="h-8 w-[180px]">
               <SelectValue placeholder="Project" />
@@ -188,7 +188,7 @@ export function ApiKeysSection() {
             <SelectContent>
               <SelectItem value="__none__">Select project</SelectItem>
               {projects.map((project) => (
-                <SelectItem key={project.id} value={project.slug}>
+                <SelectItem key={project.id} value={project.id}>
                   {project.name}
                 </SelectItem>
               ))}
@@ -202,7 +202,7 @@ export function ApiKeysSection() {
           variant="outline"
           size="sm"
           className="h-8 text-xs shrink-0"
-          onClick={() => { setCreateScope(scope); setCreateProjectSlug(projectSlug); setCreateOpen(true) }}
+          onClick={() => { setCreateScope(scope); setCreateProjectId(projectId); setCreateOpen(true) }}
         >
           <Plus className="h-3.5 w-3.5 mr-1.5" />
           New API Key
@@ -324,8 +324,8 @@ export function ApiKeysSection() {
               <div className="space-y-1.5">
                 <Label className="text-xs">Project</Label>
                 <Select
-                  value={createProjectSlug || "__none__"}
-                  onValueChange={(value) => setCreateProjectSlug(value === "__none__" ? "" : value)}
+                  value={createProjectId || "__none__"}
+                  onValueChange={(value) => setCreateProjectId(value === "__none__" ? "" : value)}
                 >
                   <SelectTrigger className="h-9">
                     <SelectValue placeholder="Select project" />
@@ -333,7 +333,7 @@ export function ApiKeysSection() {
                   <SelectContent>
                     <SelectItem value="__none__">Select project</SelectItem>
                     {projects.map((project) => (
-                      <SelectItem key={project.id} value={project.slug}>{project.name}</SelectItem>
+                      <SelectItem key={project.id} value={project.id}>{project.name}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>

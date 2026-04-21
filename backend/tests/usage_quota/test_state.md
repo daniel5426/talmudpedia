@@ -11,7 +11,7 @@ Usage quota reserve/settle/release/reconcile behavior for tenant and user scopes
 **Scenarios Covered**
 - Reserve success when both scopes are under limits
 - User-scope rejection when over limit
-- Tenant-scope rejection when over limit
+- Organization-scope rejection when over limit
 - Settle idempotency and reserved-to-used accounting
 - Release and stale-expire reservation flows
 - Reconciliation from persisted run accounting totals with `usage_tokens` as a legacy mirror

@@ -39,7 +39,7 @@ export interface Thread {
   user_id?: string | null;
   agent_id?: string | null;
   agent_name?: string | null;
-  agent_slug?: string | null;
+  agent_system_key?: string | null;
   surface?: string | null;
   actor_id?: string | null;
   actor_type?: string | null;
@@ -93,7 +93,7 @@ export interface User {
   avatar?: string;
   role?: string;
   org_role?: string;
-  tenant_id?: string;
+  organization_id?: string;
   org_unit_id?: string;
   created_at?: string;
   platform_user_id?: string | null;
@@ -107,7 +107,6 @@ export interface User {
 export interface OrganizationSummary {
   id: string;
   name: string;
-  slug: string;
   status: string;
 }
 
@@ -115,7 +114,6 @@ export interface ProjectSummary {
   id: string;
   organization_id: string;
   name: string;
-  slug: string;
   description?: string | null;
   status: string;
   is_default: boolean;
@@ -232,7 +230,7 @@ export interface PipelineUsageSummary {
 export interface AgentUsageSummary {
   id: string;
   name: string;
-  slug: string;
+  system_key?: string | null;
   run_count: number;
   tokens_used: number;
 }
@@ -330,7 +328,7 @@ export interface AdminStatsRAG {
 export interface AgentSummary {
   id: string;
   name: string;
-  slug: string;
+  system_key?: string | null;
   status: string;
   thread_count: number;
   threads_by_day: DailyDataPoint[];
@@ -369,7 +367,7 @@ export interface ToolSummary {
 export interface ModelSummary {
   id: string;
   name: string;
-  slug: string;
+  system_key?: string | null;
   capability_type: string;
   status: string;
   provider_count: number;

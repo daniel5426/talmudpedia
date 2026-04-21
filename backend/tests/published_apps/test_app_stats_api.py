@@ -60,9 +60,9 @@ async def test_host_bootstrap_tracks_bootstrap_views_and_dedupes_visits(client, 
     )
     await _attach_published_revision(db_session, app, created_by=owner.id)
 
-    first = await client.get("/_talmudpedia/runtime/bootstrap", headers=_host_headers(app.slug))
+    first = await client.get("/_talmudpedia/runtime/bootstrap", headers=_host_headers(app.public_id))
     assert first.status_code == 200
-    second = await client.get("/_talmudpedia/runtime/bootstrap", headers=_host_headers(app.slug))
+    second = await client.get("/_talmudpedia/runtime/bootstrap", headers=_host_headers(app.public_id))
     assert second.status_code == 200
 
     events = list(
@@ -82,7 +82,7 @@ async def test_host_bootstrap_tracks_bootstrap_views_and_dedupes_visits(client, 
     visit_started.occurred_at = datetime.now(timezone.utc) - timedelta(minutes=31)
     await db_session.commit()
 
-    third = await client.get("/_talmudpedia/runtime/bootstrap", headers=_host_headers(app.slug))
+    third = await client.get("/_talmudpedia/runtime/bootstrap", headers=_host_headers(app.public_id))
     assert third.status_code == 200
 
     visits_after = list(
@@ -113,7 +113,7 @@ async def test_external_bootstrap_associates_authenticated_app_account(client, d
     await _attach_published_revision(db_session, app, created_by=owner.id)
 
     signup_resp = await client.post(
-        f"/public/external/apps/{app.slug}/auth/signup",
+        f"/public/external/apps/{app.public_id}/auth/signup",
         headers={"Origin": "https://client.example.com"},
         json={"email": "stats-auth@example.com", "password": "secret123"},
     )
@@ -121,7 +121,7 @@ async def test_external_bootstrap_associates_authenticated_app_account(client, d
     token = signup_resp.json()["token"]
 
     bootstrap_resp = await client.get(
-        f"/public/external/apps/{app.slug}/runtime/bootstrap",
+        f"/public/external/apps/{app.public_id}/runtime/bootstrap",
         headers={
             "Origin": "https://client.example.com",
             "Authorization": f"Bearer {token}",
@@ -173,7 +173,7 @@ async def test_admin_apps_stats_returns_app_level_metrics(client, db_session):
     )
     db_session.add(session)
     thread = AgentThread(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         app_account_id=account.id,
         agent_id=agent.id,
         published_app_id=app.id,
@@ -187,7 +187,7 @@ async def test_admin_apps_stats_returns_app_level_metrics(client, db_session):
     await db_session.flush()
     db_session.add(
         AgentRun(
-            tenant_id=tenant.id,
+            organization_id=tenant.id,
             agent_id=agent.id,
             thread_id=thread.id,
             published_app_id=app.id,
@@ -200,7 +200,7 @@ async def test_admin_apps_stats_returns_app_level_metrics(client, db_session):
     )
     db_session.add(
         PublishedAppAnalyticsEvent(
-            tenant_id=tenant.id,
+            organization_id=tenant.id,
             published_app_id=app.id,
             app_account_id=account.id,
             session_id=session.id,
@@ -214,7 +214,7 @@ async def test_admin_apps_stats_returns_app_level_metrics(client, db_session):
     )
     db_session.add(
         PublishedAppAnalyticsEvent(
-            tenant_id=tenant.id,
+            organization_id=tenant.id,
             published_app_id=app.id,
             app_account_id=account.id,
             session_id=session.id,

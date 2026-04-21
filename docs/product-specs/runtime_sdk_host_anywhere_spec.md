@@ -1,6 +1,6 @@
 # Runtime SDK Host-Anywhere Spec
 
-Last Updated: 2026-03-17
+Last Updated: 2026-04-20
 
 This document is the canonical runtime SDK contract for externally hosted published-app clients.
 
@@ -41,7 +41,7 @@ Current bootstrap schema version:
 - `runtime-bootstrap.v1`
 
 Current bootstrap endpoints:
-- `GET /public/external/apps/{app_slug}/runtime/bootstrap`
+- `GET /public/external/apps/{app_public_id}/runtime/bootstrap`
 - `GET /public/apps/preview/revisions/{revision_id}/runtime/bootstrap`
 
 Current bootstrap payload includes:
@@ -52,14 +52,14 @@ Current bootstrap payload includes:
 
 Important current behavior verified in code:
 - published same-origin app-host runtime remains on `/_talmudpedia/*`
-- external published runtime uses the dedicated `/public/external/apps/{slug}/*` route family
+- external published runtime uses the dedicated `/public/external/apps/{public_id}/*` route family
 - preview runtime/bootstrap endpoints are active on the public router
 - preview token transport is bearer/cookie based; query-token-only auth is not supported
 
 ## Current Auth Exchange Contract
 
 Endpoint:
-- `POST /public/external/apps/{app_slug}/auth/exchange`
+- `POST /public/external/apps/{app_public_id}/auth/exchange`
 
 Purpose:
 - exchange external identity for a platform-native app session token
@@ -68,9 +68,9 @@ Current backend also supports host-runtime auth-exchange handling under hosted i
 
 ## Current Integration Flow
 
-1. Fetch bootstrap from `/public/external/apps/{slug}/runtime/bootstrap` or the preview revision endpoint.
+1. Fetch bootstrap from `/public/external/apps/{app_public_id}/runtime/bootstrap` or the preview revision endpoint.
 2. Build the runtime client with the bootstrap payload.
-3. Authenticate external clients through bearer-token auth routes under `/public/external/apps/{slug}/auth/*`.
+3. Authenticate external clients through bearer-token auth routes under `/public/external/apps/{app_public_id}/auth/*`.
 4. Use the returned bearer token for chat streaming and thread/history APIs.
 5. For preview iframe flows, update preview auth state without relying on query-token-only URLs.
 

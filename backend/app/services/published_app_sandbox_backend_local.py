@@ -54,10 +54,12 @@ class LocalSandboxBackend(PublishedAppSandboxBackend):
         *,
         session_id: str,
         runtime_generation: int,
-        tenant_id: str,
+        organization_id: str,
         app_id: str,
+        app_public_id: str,
         user_id: str,
         revision_id: str,
+        agent_id: str,
         entry_file: str,
         files: Dict[str, str],
         idle_timeout_seconds: int,
@@ -65,7 +67,17 @@ class LocalSandboxBackend(PublishedAppSandboxBackend):
         draft_dev_token: str,
         preview_base_path: str,
     ) -> Dict[str, Any]:
-        _ = runtime_generation, tenant_id, app_id, user_id, revision_id, entry_file, idle_timeout_seconds
+        _ = (
+            runtime_generation,
+            organization_id,
+            app_id,
+            app_public_id,
+            user_id,
+            revision_id,
+            agent_id,
+            entry_file,
+            idle_timeout_seconds,
+        )
         try:
             payload = await self._manager().start_session(
                 session_id=session_id,
@@ -88,6 +100,9 @@ class LocalSandboxBackend(PublishedAppSandboxBackend):
         self,
         *,
         sandbox_id: str,
+        app_id: str,
+        app_public_id: str,
+        agent_id: str,
         entry_file: str,
         files: Dict[str, str],
         idle_timeout_seconds: int,
@@ -95,7 +110,7 @@ class LocalSandboxBackend(PublishedAppSandboxBackend):
         install_dependencies: bool,
         preview_base_path: str | None = None,
     ) -> Dict[str, Any]:
-        _ = entry_file, idle_timeout_seconds, preview_base_path
+        _ = app_id, app_public_id, agent_id, entry_file, idle_timeout_seconds, preview_base_path
         try:
             payload = await self._manager().sync_session(
                 sandbox_id=sandbox_id,

@@ -11,7 +11,7 @@ from ..base import Base
 # Enums
 class ToolDefinitionScope(str, enum.Enum):
     GLOBAL = "global"
-    TENANT = "tenant"
+    TENANT = "organization"
     USER = "user"
 
 class ToolStatus(str, enum.Enum):
@@ -87,10 +87,10 @@ class ToolRegistry(Base):
     __tablename__ = "tool_registry"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=True, index=True) # Null for Global tools
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=True, index=True) # Null for Global tools
     
     name = Column(String, nullable=False, index=True)
-    slug = Column(String, unique=True, nullable=False, index=True)
+    slug = Column(String, unique=True, nullable=False, index=True)  # Opaque internal row key; canonical identity is id/builtin_key.
     description = Column(String, nullable=True)
     
     scope = Column(SQLEnum(ToolDefinitionScope), default=ToolDefinitionScope.GLOBAL, nullable=False)
@@ -128,7 +128,7 @@ class ToolRegistry(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
     # Relationships
-    tenant = relationship("Tenant")
+    organization = relationship("Organization")
     builtin_template = relationship("ToolRegistry", remote_side=[id])
     visual_pipeline = relationship("VisualPipeline", foreign_keys=[visual_pipeline_id])
     executable_pipeline = relationship("ExecutablePipeline", foreign_keys=[executable_pipeline_id])
@@ -139,8 +139,8 @@ class ToolRegistry(Base):
             "uq_tool_registry_global_builtin_key",
             "builtin_key",
             unique=True,
-            postgresql_where=and_(tenant_id == None, is_builtin_template == True, builtin_key != None),
-            sqlite_where=and_(tenant_id == None, is_builtin_template == True, builtin_key != None),
+            postgresql_where=and_(organization_id == None, builtin_key != None),
+            sqlite_where=and_(organization_id == None, builtin_key != None),
         ),
     )
 
@@ -199,7 +199,7 @@ class ModelRegistry(Base):
     __tablename__ = "model_registry"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=True, index=True)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=True, index=True)
     
     name = Column(String, nullable=False) # Display Name
     system_key = Column(String, nullable=True, index=True) # System-managed seed/import key
@@ -221,7 +221,7 @@ class ModelRegistry(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
     # Relationships
-    tenant = relationship("Tenant")
+    organization = relationship("Organization")
     providers = relationship("ModelProviderBinding", back_populates="model", cascade="all, delete-orphan")
 
     __table_args__ = (
@@ -229,23 +229,23 @@ class ModelRegistry(Base):
             "uq_model_registry_system_key_global",
             "system_key",
             unique=True,
-            postgresql_where=and_(tenant_id == None, system_key != None),
-            sqlite_where=and_(tenant_id == None, system_key != None),
+            postgresql_where=and_(organization_id == None, system_key != None),
+            sqlite_where=and_(organization_id == None, system_key != None),
         ),
         Index(
-            "uq_model_registry_default_tenant_capability",
-            "tenant_id",
+            "uq_model_registry_default_organization_capability",
+            "organization_id",
             "capability_type",
             unique=True,
-            postgresql_where=and_(tenant_id != None, is_default == True),
-            sqlite_where=and_(tenant_id != None, is_default == True),
+            postgresql_where=and_(organization_id != None, is_default == True),
+            sqlite_where=and_(organization_id != None, is_default == True),
         ),
         Index(
             "uq_model_registry_default_global_capability",
             "capability_type",
             unique=True,
-            postgresql_where=and_(tenant_id == None, is_default == True),
-            sqlite_where=and_(tenant_id == None, is_default == True),
+            postgresql_where=and_(organization_id == None, is_default == True),
+            sqlite_where=and_(organization_id == None, is_default == True),
         ),
     )
 
@@ -256,7 +256,7 @@ class ModelProviderBinding(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     model_id = Column(UUID(as_uuid=True), ForeignKey("model_registry.id", ondelete="CASCADE"), nullable=False, index=True)
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=True, index=True)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=True, index=True)
     
     provider = Column(SQLEnum(ModelProviderType), nullable=False)
     provider_model_id = Column(String, nullable=False) # e.g. "gpt-4o-2024-08-06"
@@ -277,11 +277,11 @@ class ModelProviderBinding(Base):
 
     # Relationships
     model = relationship("ModelRegistry", back_populates="providers")
-    tenant = relationship("Tenant")
+    organization = relationship("Organization")
 
     __table_args__ = (
-        Index('uq_model_binding_tenant', 'model_id', 'provider', 'provider_model_id', 'tenant_id', unique=True, postgresql_where=(tenant_id != None)),
-        Index('uq_model_binding_global', 'model_id', 'provider', 'provider_model_id', unique=True, postgresql_where=(tenant_id == None)),
+        Index('uq_model_binding_tenant', 'model_id', 'provider', 'provider_model_id', 'organization_id', unique=True, postgresql_where=(organization_id != None)),
+        Index('uq_model_binding_global', 'model_id', 'provider', 'provider_model_id', unique=True, postgresql_where=(organization_id == None)),
     )
 
 
@@ -293,11 +293,11 @@ class IntegrationCredentialCategory(str, enum.Enum):
 
 
 class IntegrationCredential(Base):
-    """Tenant-scoped credentials for external integrations."""
+    """Organization-scoped credentials for external integrations."""
     __tablename__ = "integration_credentials"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=True, index=True)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=True, index=True)
 
     category = Column(
         SQLEnum(
@@ -317,19 +317,19 @@ class IntegrationCredential(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
-    tenant = relationship("Tenant")
+    organization = relationship("Organization")
 
     __table_args__ = (
         Index(
             "ix_integration_credentials_lookup",
-            "tenant_id",
+            "organization_id",
             "category",
             "provider_key",
             "provider_variant",
         ),
         Index(
             "uq_integration_credentials_default_with_variant",
-            "tenant_id",
+            "organization_id",
             "category",
             "provider_key",
             "provider_variant",
@@ -339,7 +339,7 @@ class IntegrationCredential(Base):
         ),
         Index(
             "uq_integration_credentials_default_no_variant",
-            "tenant_id",
+            "organization_id",
             "category",
             "provider_key",
             unique=True,

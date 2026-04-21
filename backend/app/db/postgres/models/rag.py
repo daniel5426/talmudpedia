@@ -74,7 +74,7 @@ class KnowledgeStore(Base):
     __tablename__ = "knowledge_stores"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
     
     # Identity
     name = Column(String, nullable=False)
@@ -101,7 +101,7 @@ class KnowledgeStore(Base):
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
 
     # Relationships
-    tenant = relationship("Tenant")
+    organization = relationship("Organization")
     creator = relationship("User")
 
 
@@ -111,7 +111,7 @@ class RAGPipeline(Base):
     __tablename__ = "rag_pipelines"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
     
     name = Column(String, nullable=False)
     slug = Column(String, unique=True, nullable=False, index=True)
@@ -131,7 +131,7 @@ class RAGPipeline(Base):
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
 
     # Relationships
-    tenant = relationship("Tenant")
+    organization = relationship("Organization")
     creator = relationship("User")
 
 
@@ -140,7 +140,7 @@ class VisualPipeline(Base):
     __tablename__ = "visual_pipelines"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
     org_unit_id = Column(UUID(as_uuid=True), ForeignKey("org_units.id", ondelete="SET NULL"), nullable=True, index=True)
     
     name = Column(String, nullable=False)
@@ -160,7 +160,7 @@ class VisualPipeline(Base):
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
 
     # Relationships
-    tenant = relationship("Tenant")
+    organization = relationship("Organization")
     org_unit = relationship("OrgUnit")
     creator = relationship("User")
     executable_pipelines = relationship("ExecutablePipeline", back_populates="visual_pipeline", cascade="all, delete-orphan")
@@ -172,7 +172,7 @@ class ExecutablePipeline(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     visual_pipeline_id = Column(UUID(as_uuid=True), ForeignKey("visual_pipelines.id", ondelete="CASCADE"), nullable=False, index=True)
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
     
     version = Column(Integer, nullable=False)
     
@@ -187,7 +187,7 @@ class ExecutablePipeline(Base):
 
     # Relationships
     visual_pipeline = relationship("VisualPipeline", back_populates="executable_pipelines")
-    tenant = relationship("Tenant")
+    organization = relationship("Organization")
     compiler = relationship("User")
     jobs = relationship("PipelineJob", back_populates="executable_pipeline", cascade="all, delete-orphan")
 
@@ -197,7 +197,7 @@ class PipelineJob(Base):
     __tablename__ = "pipeline_jobs"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
     executable_pipeline_id = Column(UUID(as_uuid=True), ForeignKey("executable_pipelines.id", ondelete="CASCADE"), nullable=False, index=True)
     
     status = Column(pg_enum(PipelineJobStatus), default=PipelineJobStatus.QUEUED, nullable=False)
@@ -213,7 +213,7 @@ class PipelineJob(Base):
     triggered_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
 
     # Relationships
-    tenant = relationship("Tenant")
+    organization = relationship("Organization")
     executable_pipeline = relationship("ExecutablePipeline", back_populates="jobs")
     trigger_user = relationship("User")
 
@@ -226,7 +226,7 @@ class PipelineStepExecution(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     job_id = Column(UUID(as_uuid=True), ForeignKey("pipeline_jobs.id", ondelete="CASCADE"), nullable=False, index=True)
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
     
     step_id = Column(String, nullable=False) # Node ID from visual graph
     operator_id = Column(String, nullable=False) # Operator Identifier
@@ -246,5 +246,5 @@ class PipelineStepExecution(Base):
 
     # Relationships
     job = relationship("PipelineJob", backref="steps")
-    tenant = relationship("Tenant")
+    organization = relationship("Organization")
 

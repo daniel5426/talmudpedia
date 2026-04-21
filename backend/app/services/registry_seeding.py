@@ -5,7 +5,7 @@ import hashlib
 from pathlib import Path
 from datetime import datetime
 import uuid
-from sqlalchemy import select, or_, text, update
+from sqlalchemy import delete, select, or_, text, update
 from sqlalchemy.exc import ProgrammingError
 from app.db.postgres.models.registry import (
     ModelRegistry,
@@ -19,7 +19,7 @@ from app.db.postgres.models.registry import (
     ToolImplementationType,
 )
 from app.db.postgres.models.artifact_runtime import ArtifactKind, ArtifactOwnerType
-from app.db.postgres.models.identity import Tenant
+from app.db.postgres.models.identity import Organization
 from app.db.postgres.models.agents import Agent, AgentStatus
 from app.services.builtin_tools import BUILTIN_TEMPLATE_SPECS, is_builtin_tools_v1_enabled
 from app.services.artifact_runtime.registry_service import ArtifactRegistryService
@@ -42,6 +42,12 @@ _build_architect_graph_definition = build_architect_graph_definition
 _build_platform_domain_tool_schema = build_platform_domain_tool_schema
 
 DEFAULT_PLATFORM_ARCHITECT_MODEL_SYSTEM_KEY = "grok-4-1-fast-reasoning"
+PLATFORM_ARCHITECT_AGENT_SYSTEM_KEY = "platform_architect"
+
+
+def _system_row_key(prefix: str, key: str) -> str:
+    digest = hashlib.sha1(f"{prefix}:{key}".encode("utf-8")).hexdigest()[:24]
+    return f"{prefix}-{digest}"
 
 
 def _is_postgres_session(db) -> bool:
@@ -61,6 +67,13 @@ async def seed_global_models(db):
     Seeds global models from a JSON file.
     Expects an AsyncSession.
     """
+    await db.execute(
+        delete(ModelRegistry).where(
+            ModelRegistry.organization_id == None,
+            ModelRegistry.system_key == None,
+        )
+    )
+
     # Use relative path from this file
     base_dir = os.path.dirname(os.path.dirname(__file__)) # back to app/
     json_path = os.path.join(base_dir, "db", "postgres", "seeds", "models.json")
@@ -77,7 +90,7 @@ async def seed_global_models(db):
     for m_def in models_data:
         stmt = select(ModelRegistry).where(
             ModelRegistry.system_key == m_def["system_key"],
-            ModelRegistry.tenant_id == None,
+            ModelRegistry.organization_id == None,
         )
         res = await db.execute(stmt)
         model = res.scalars().first()
@@ -92,7 +105,7 @@ async def seed_global_models(db):
         if not model:
             print(f"Creating model: {m_def['name']}...")
             model = ModelRegistry(
-                tenant_id=None,
+                organization_id=None,
                 name=m_def["name"],
                 system_key=m_def["system_key"],
                 capability_type=capability,
@@ -115,7 +128,7 @@ async def seed_global_models(db):
             await db.execute(
                 update(ModelRegistry)
                 .where(
-                    ModelRegistry.tenant_id == None,
+                    ModelRegistry.organization_id == None,
                     ModelRegistry.capability_type == capability,
                     ModelRegistry.id != model.id,
                 )
@@ -135,7 +148,7 @@ async def seed_global_models(db):
                 ModelProviderBinding.model_id == model.id,
                 ModelProviderBinding.provider == provider_type,
                 ModelProviderBinding.provider_model_id == p_def["provider_model_id"],
-                ModelProviderBinding.tenant_id == None
+                ModelProviderBinding.organization_id == None
             )
             b_res = await db.execute(b_stmt)
             binding = b_res.scalars().first()
@@ -148,7 +161,7 @@ async def seed_global_models(db):
             if not binding:
                 binding = ModelProviderBinding(
                     model_id=model.id,
-                    tenant_id=None,
+                    organization_id=None,
                     provider=provider_type,
                     provider_model_id=p_def["provider_model_id"],
                     priority=p_def.get("priority", 0),
@@ -256,8 +269,8 @@ async def seed_platform_sdk_tool(db):
 
     result = await db.execute(
         select(ToolRegistry).where(
-            ToolRegistry.slug == "platform-sdk",
-            ToolRegistry.tenant_id == None,
+            ToolRegistry.builtin_key == "platform_sdk",
+            ToolRegistry.organization_id == None,
         )
     )
     tool = result.scalars().first()
@@ -272,9 +285,9 @@ async def seed_platform_sdk_tool(db):
 
     if tool is None:
         tool = ToolRegistry(
-            tenant_id=None,
+            organization_id=None,
             name="Platform SDK",
-            slug="platform-sdk",
+            slug=_system_row_key("sys-tool", "platform_sdk"),
             description="SDK-powered tool to fetch catalogs, create draft assets, and run multi-case tests.",
             scope=ToolDefinitionScope.GLOBAL,
             schema=schema,
@@ -296,6 +309,7 @@ async def seed_platform_sdk_tool(db):
         db.add(tool)
     else:
         tool.name = "Platform SDK"
+        tool.slug = _system_row_key("sys-tool", "platform_sdk")
         tool.description = "SDK-powered tool to fetch catalogs, create draft assets, and run multi-case tests."
         tool.scope = ToolDefinitionScope.GLOBAL
         tool.schema = schema
@@ -327,7 +341,7 @@ async def _seed_platform_sdk_system_artifact(db, *, input_schema: dict, output_s
 
     if artifact is None:
         artifact = await revision_service.create_artifact(
-            tenant_id=None,
+            organization_id=None,
             created_by=None,
             display_name="Platform SDK",
             description="SDK-powered tool to fetch catalogs, create draft assets, and run multi-case tests.",
@@ -422,7 +436,7 @@ async def seed_builtin_tool_templates(db):
 
         result = await db.execute(
             select(ToolRegistry).where(
-                ToolRegistry.tenant_id == None,
+                ToolRegistry.organization_id == None,
                 ToolRegistry.builtin_key == spec.key,
             )
         )
@@ -439,9 +453,9 @@ async def seed_builtin_tool_templates(db):
 
         if tool is None:
             tool = ToolRegistry(
-                tenant_id=None,
+                organization_id=None,
                 name=spec.name,
-                slug=spec.slug,
+                slug=_system_row_key("sys-tool", spec.key),
                 description=spec.description,
                 scope=ToolDefinitionScope.GLOBAL,
                 schema=schema,
@@ -462,7 +476,7 @@ async def seed_builtin_tool_templates(db):
             db.add(tool)
         else:
             tool.name = spec.name
-            tool.slug = spec.slug
+            tool.slug = _system_row_key("sys-tool", spec.key)
             tool.description = spec.description
             tool.scope = ToolDefinitionScope.GLOBAL
             tool.schema = schema
@@ -497,9 +511,10 @@ async def seed_file_space_tools(db):
 async def seed_platform_architect_domain_tools(db) -> dict[str, str]:
     required_cols = {
         "id",
-        "tenant_id",
+        "organization_id",
         "name",
         "slug",
+        "builtin_key",
         "description",
         "scope",
         "schema",
@@ -519,12 +534,12 @@ async def seed_platform_architect_domain_tools(db) -> dict[str, str]:
         return {}
 
     seeded: dict[str, str] = {}
-    for slug, spec in PLATFORM_ARCHITECT_DOMAIN_TOOLS.items():
-        schema = build_platform_domain_tool_schema(slug, spec)
+    for builtin_key, spec in PLATFORM_ARCHITECT_DOMAIN_TOOLS.items():
+        schema = build_platform_domain_tool_schema(builtin_key, spec)
         config_schema = {
             "implementation": {
                 "type": "function",
-                "function_name": PLATFORM_NATIVE_FUNCTIONS[slug],
+                "function_name": PLATFORM_NATIVE_FUNCTIONS[builtin_key],
             },
             "execution": {
                 "timeout_s": 60,
@@ -538,16 +553,16 @@ async def seed_platform_architect_domain_tools(db) -> dict[str, str]:
 
         result = await db.execute(
             select(ToolRegistry).where(
-                ToolRegistry.slug == slug,
-                ToolRegistry.tenant_id == None,
+                ToolRegistry.builtin_key == builtin_key,
+                ToolRegistry.organization_id == None,
             )
         )
         tool = result.scalars().first()
         if tool is None:
             tool = ToolRegistry(
-                tenant_id=None,
+                organization_id=None,
                 name=spec["name"],
-                slug=slug,
+                slug=_system_row_key("sys-tool", builtin_key),
                 description=spec["description"],
                 scope=ToolDefinitionScope.GLOBAL,
                 schema=schema,
@@ -558,7 +573,7 @@ async def seed_platform_architect_domain_tools(db) -> dict[str, str]:
                 artifact_id=None,
                 artifact_version=None,
                 artifact_revision_id=None,
-                builtin_key=None,
+                builtin_key=builtin_key,
                 builtin_template_id=None,
                 is_builtin_template=False,
                 is_active=True,
@@ -569,6 +584,7 @@ async def seed_platform_architect_domain_tools(db) -> dict[str, str]:
             db.add(tool)
         else:
             tool.name = spec["name"]
+            tool.slug = _system_row_key("sys-tool", builtin_key)
             tool.description = spec["description"]
             tool.scope = ToolDefinitionScope.GLOBAL
             tool.schema = schema
@@ -579,7 +595,7 @@ async def seed_platform_architect_domain_tools(db) -> dict[str, str]:
             tool.artifact_id = None
             tool.artifact_version = None
             tool.artifact_revision_id = None
-            tool.builtin_key = None
+            tool.builtin_key = builtin_key
             tool.builtin_template_id = None
             tool.is_builtin_template = False
             tool.is_active = True
@@ -587,7 +603,7 @@ async def seed_platform_architect_domain_tools(db) -> dict[str, str]:
             tool.published_at = tool.published_at or datetime.utcnow()
             set_tool_management_metadata(tool, ownership="system")
         await db.flush()
-        seeded[slug] = str(tool.id)
+        seeded[builtin_key] = str(tool.id)
 
     await db.commit()
     return seeded
@@ -595,38 +611,38 @@ async def seed_platform_architect_domain_tools(db) -> dict[str, str]:
 
 async def ensure_platform_architect_agent(
     db,
-    tenant_id,
+    organization_id,
     *,
     actor_user_id=None,
 ):
     """
-    Ensure the canonical platform architect agent exists for a specific tenant/organization.
+    Ensure the canonical platform architect agent exists for a specific organization/organization.
     """
     await _acquire_registry_seed_lock(db)
     # Prevent enum mismatches when loading tool references
     await _normalize_tool_status_values(db)
     await _normalize_tool_impl_values(db)
 
-    tenant = await db.get(Tenant, tenant_id)
-    if tenant is None:
-        print(f"Tenant {tenant_id} not found; skipping Platform Architect agent seed.")
+    organization = await db.get(Organization, organization_id)
+    if organization is None:
+        print(f"Organization {organization_id} not found; skipping Platform Architect agent seed.")
         return None
 
     tool_ids = await seed_platform_architect_domain_tools(db)
-    expected_slugs = tuple(PLATFORM_ARCHITECT_DOMAIN_TOOLS.keys())
-    if not all(tool_ids.get(slug) for slug in expected_slugs):
+    expected_builtin_keys = tuple(PLATFORM_ARCHITECT_DOMAIN_TOOLS.keys())
+    if not all(tool_ids.get(key) for key in expected_builtin_keys):
         print("Platform architect domain tools missing; skipping Platform Architect agent seed.")
         return None
 
     agent_columns = await _get_table_columns(db, "agents")
-    minimal_agent_cols = {"id", "tenant_id", "name", "slug", "description", "graph_definition"}
+    minimal_agent_cols = {"id", "organization_id", "name", "slug", "description", "graph_definition"}
     if not minimal_agent_cols.issubset(agent_columns):
         print("Agents table missing required columns; skipping Platform Architect agent seed.")
         return None
 
     full_agent_cols = {
         "id",
-        "tenant_id",
+        "organization_id",
         "name",
         "slug",
         "description",
@@ -652,15 +668,15 @@ async def ensure_platform_architect_agent(
 
     worker_tool_ids = await ensure_platform_architect_worker_tools(
         db,
-        tenant_id=tenant.id,
+        organization_id=organization.id,
     )
-    model_id = await _resolve_platform_architect_model_id(db, tenant.id)
+    model_id = await _resolve_platform_architect_model_id(db, organization.id)
     if not model_id:
-        print(f"No chat model available; skipping Platform Architect agent seed for tenant {tenant.id}.")
+        print(f"No chat model available; skipping Platform Architect agent seed for organization {organization.id}.")
         return None
 
     architect_tool_ids = [
-        *[tool_ids[slug] for slug in expected_slugs],
+        *[tool_ids[key] for key in expected_builtin_keys],
         *worker_tool_ids,
     ]
     graph_definition = build_architect_graph_definition(
@@ -673,8 +689,8 @@ async def ensure_platform_architect_agent(
         try:
             agent_result = await db.execute(
                 select(Agent).where(
-                    Agent.slug == "platform-architect",
-                    Agent.tenant_id == tenant.id,
+                    Agent.system_key == PLATFORM_ARCHITECT_AGENT_SYSTEM_KEY,
+                    Agent.organization_id == organization.id,
                 )
             )
             agent = agent_result.scalar_one_or_none()
@@ -685,9 +701,10 @@ async def ensure_platform_architect_agent(
     if use_orm:
         if agent is None:
             agent = Agent(
-                tenant_id=tenant.id,
+                organization_id=organization.id,
                 name="Platform Architect",
-                slug="platform-architect",
+                system_key=PLATFORM_ARCHITECT_AGENT_SYSTEM_KEY,
+                slug=_system_row_key("sys-agent", PLATFORM_ARCHITECT_AGENT_SYSTEM_KEY),
                 description="Dynamic single-agent platform architect runtime using Control Plane SDK domain tools.",
                 graph_definition=graph_definition,
                 tools=architect_tool_ids,
@@ -713,7 +730,7 @@ async def ensure_platform_architect_agent(
         await db.commit()
         await ensure_platform_architect_worker_orchestration_policy(
             db,
-            tenant_id=tenant.id,
+            organization_id=organization.id,
             orchestrator_agent_id=agent.id,
         )
         await db.commit()
@@ -722,7 +739,7 @@ async def ensure_platform_architect_agent(
     await db.rollback()
     agent = await _seed_platform_architect_agent_legacy(
         db,
-        tenant.id,
+        organization.id,
         graph_definition,
         architect_tool_ids,
         agent_columns,
@@ -730,7 +747,7 @@ async def ensure_platform_architect_agent(
     if agent is not None:
         await ensure_platform_architect_worker_orchestration_policy(
             db,
-            tenant_id=tenant.id,
+            organization_id=organization.id,
             orchestrator_agent_id=agent.id,
         )
         await db.commit()
@@ -741,28 +758,28 @@ async def seed_platform_architect_agent(db):
     """
     Backward-compatible explicit seeding helper for tests/internal callers.
     """
-    tenant_result = await db.execute(select(Tenant).order_by(Tenant.created_at.asc()).limit(1))
-    tenant = tenant_result.scalar_one_or_none()
-    if tenant is None:
-        print("No tenant found; skipping Platform Architect agent seed.")
+    organization_result = await db.execute(select(Organization).order_by(Organization.created_at.asc()).limit(1))
+    organization = organization_result.scalar_one_or_none()
+    if organization is None:
+        print("No organization found; skipping Platform Architect agent seed.")
         return None
-    return await ensure_platform_architect_agent(db, tenant.id)
+    return await ensure_platform_architect_agent(db, organization.id)
 
 
 async def seed_artifact_coding_agent(db):
-    tenant_result = await db.execute(select(Tenant).order_by(Tenant.created_at.asc()).limit(1))
-    tenant = tenant_result.scalar_one_or_none()
-    if not tenant:
-        print("No tenant found; skipping Artifact Coding agent seed.")
+    organization_result = await db.execute(select(Organization).order_by(Organization.created_at.asc()).limit(1))
+    organization = organization_result.scalar_one_or_none()
+    if not organization:
+        print("No organization found; skipping Artifact Coding agent seed.")
         return None
-    agent = await ensure_artifact_coding_agent_profile(db, tenant.id)
+    agent = await ensure_artifact_coding_agent_profile(db, organization.id)
     await db.commit()
     return agent
 
 
-async def _resolve_default_chat_model_id(db, tenant_id):
+async def _resolve_default_chat_model_id(db, organization_id):
     default_stmt = select(ModelRegistry).where(
-        ModelRegistry.tenant_id == tenant_id,
+        ModelRegistry.organization_id == organization_id,
         ModelRegistry.capability_type == ModelCapabilityType.CHAT,
         ModelRegistry.is_default == True,
         ModelRegistry.is_active == True,
@@ -773,7 +790,7 @@ async def _resolve_default_chat_model_id(db, tenant_id):
         return str(model.id)
 
     global_default_stmt = select(ModelRegistry).where(
-        ModelRegistry.tenant_id == None,
+        ModelRegistry.organization_id == None,
         ModelRegistry.capability_type == ModelCapabilityType.CHAT,
         ModelRegistry.is_default == True,
         ModelRegistry.is_active == True,
@@ -786,14 +803,14 @@ async def _resolve_default_chat_model_id(db, tenant_id):
     fallback_stmt = select(ModelRegistry).where(
         ModelRegistry.capability_type == ModelCapabilityType.CHAT,
         ModelRegistry.is_active == True,
-        or_(ModelRegistry.tenant_id == tenant_id, ModelRegistry.tenant_id == None),
+        or_(ModelRegistry.organization_id == organization_id, ModelRegistry.organization_id == None),
     )
     res = await db.execute(fallback_stmt)
     model = res.scalars().first()
     return str(model.id) if model else None
 
 
-async def _resolve_platform_architect_model_id(db, tenant_id):
+async def _resolve_platform_architect_model_id(db, organization_id):
     preferred_system_key = str(
         os.getenv("PLATFORM_ARCHITECT_MODEL_SYSTEM_KEY") or DEFAULT_PLATFORM_ARCHITECT_MODEL_SYSTEM_KEY
     ).strip() or DEFAULT_PLATFORM_ARCHITECT_MODEL_SYSTEM_KEY
@@ -804,15 +821,15 @@ async def _resolve_platform_architect_model_id(db, tenant_id):
             ModelRegistry.system_key == preferred_system_key,
             ModelRegistry.capability_type == ModelCapabilityType.CHAT,
             ModelRegistry.is_active == True,
-            or_(ModelRegistry.tenant_id == tenant_id, ModelRegistry.tenant_id == None),
+            or_(ModelRegistry.organization_id == organization_id, ModelRegistry.organization_id == None),
         )
-        .order_by(ModelRegistry.tenant_id.is_not(None).desc(), ModelRegistry.updated_at.desc())
+        .order_by(ModelRegistry.organization_id.is_not(None).desc(), ModelRegistry.updated_at.desc())
     )
     preferred = (await db.execute(preferred_stmt)).scalars().first()
     if preferred is not None:
         return str(preferred.id)
 
-    return await _resolve_default_chat_model_id(db, tenant_id)
+    return await _resolve_default_chat_model_id(db, organization_id)
 
 
 async def _get_table_columns(db, table_name: str) -> set:
@@ -843,32 +860,33 @@ async def _get_table_columns(db, table_name: str) -> set:
 
 async def _seed_platform_architect_agent_legacy(
     db,
-    tenant_id,
+    organization_id,
     graph_definition: dict,
     tool_ids: list[str],
     columns: set,
 ):
-    slug = "platform-architect"
+    system_key = PLATFORM_ARCHITECT_AGENT_SYSTEM_KEY
     name = "Platform Architect"
     description = "Meta-agent that designs and deploys pipelines and agents."
     now = datetime.utcnow()
 
-    where_clause = "slug = :slug"
-    if "tenant_id" in columns:
-        where_clause += " AND tenant_id = :tenant_id"
+    where_clause = "system_key = :system_key"
+    if "organization_id" in columns:
+        where_clause += " AND organization_id= :organization_id"
 
     select_sql = f"SELECT id FROM agents WHERE {where_clause} LIMIT 1"
-    params = {"slug": slug}
-    if "tenant_id" in columns:
-        params["tenant_id"] = tenant_id
+    params = {"system_key": system_key}
+    if "organization_id" in columns:
+        params["organization_id"] = organization_id
     result = await db.execute(text(select_sql), params)
     row = result.first()
 
     values = {
         "id": uuid.uuid4(),
-        "tenant_id": tenant_id,
+        "organization_id": organization_id,
         "name": name,
-        "slug": slug,
+        "system_key": system_key,
+        "slug": _system_row_key("sys-agent", system_key),
         "description": description,
         "graph_definition": graph_definition,
         "tools": list(tool_ids or []),
@@ -895,7 +913,7 @@ async def _seed_platform_architect_agent_legacy(
         agent_id = row[0]
         updates = []
         for key in filtered.keys():
-            if key in {"id", "slug", "tenant_id", "created_at"}:
+            if key in {"id", "system_key", "organization_id", "created_at"}:
                 continue
             updates.append(f"{key} = :{key}")
         if updates:

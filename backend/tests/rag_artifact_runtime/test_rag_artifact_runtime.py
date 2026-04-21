@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.agent.executors.retrieval_runtime import RetrievalPipelineRuntime
-from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Tenant, User
+from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Organization, User
 from app.db.postgres.models.operators import CustomOperator, OperatorCategory
 from app.db.postgres.models.rag import ExecutablePipeline, PipelineJob, PipelineJobStatus, PipelineType, VisualPipeline
 from app.rag.pipeline.compiler import PipelineCompiler
@@ -15,18 +15,18 @@ from app.services.artifact_runtime.revision_service import ArtifactRevisionServi
 
 
 async def _seed_tenant_context(db_session):
-    tenant = Tenant(id=uuid.uuid4(), name="RAG Tenant", slug=f"rag-{uuid.uuid4().hex[:8]}")
+    tenant = Organization(id=uuid.uuid4(), name="RAG Organization", slug=f"rag-{uuid.uuid4().hex[:8]}")
     user = User(id=uuid.uuid4(), email=f"rag-{uuid.uuid4().hex[:6]}@example.com", role="admin")
     org_unit = OrgUnit(
         id=uuid.uuid4(),
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name="RAG Org",
         slug=f"rag-org-{uuid.uuid4().hex[:6]}",
         type=OrgUnitType.org,
     )
     membership = OrgMembership(
         id=uuid.uuid4(),
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         org_unit_id=org_unit.id,
         role=OrgRole.owner,
@@ -37,12 +37,12 @@ async def _seed_tenant_context(db_session):
     return tenant, user
 
 
-async def _create_custom_operator(db_session, tenant_id, created_by):
+async def _create_custom_operator(db_session, organization_id, created_by):
     operator = CustomOperator(
         id=uuid.uuid4(),
-        tenant_id=tenant_id,
+        organization_id=organization_id,
         name=f"tenant_custom_{uuid.uuid4().hex[:6]}",
-        display_name="Tenant Custom",
+        display_name="Organization Custom",
         category=OperatorCategory.CUSTOM,
         description="Custom operator",
         python_code="def execute(inputs, config):\n    return {'data': inputs, 'metadata': config}\n",
@@ -59,10 +59,10 @@ async def _create_custom_operator(db_session, tenant_id, created_by):
     return operator
 
 
-async def _create_artifact_for_operator(db_session, tenant_id, created_by, operator_id, *, publish: bool):
+async def _create_artifact_for_operator(db_session, organization_id, created_by, operator_id, *, publish: bool):
     revisions = ArtifactRevisionService(db_session)
     artifact = await revisions.create_artifact(
-        tenant_id=tenant_id,
+        organization_id=organization_id,
         created_by=created_by,
         display_name="RAG Artifact",
         description=None,
@@ -88,10 +88,10 @@ async def _create_artifact_for_operator(db_session, tenant_id, created_by, opera
     return artifact
 
 
-def _build_pipeline(tenant_id, operator_name):
+def _build_pipeline(organization_id, operator_name):
     return VisualPipeline(
         id=uuid.uuid4(),
-        tenant_id=tenant_id,
+        organization_id=organization_id,
         name="Retrieval Pipeline",
         description=None,
         pipeline_type=PipelineType.RETRIEVAL,
@@ -143,7 +143,7 @@ async def test_sync_and_compile_pin_published_artifact_revision(db_session):
     result = compiler.compile(
         _build_pipeline(tenant.id, operator.name),
         compiled_by=str(user.id),
-        tenant_id=str(tenant.id),
+        organization_id=str(tenant.id),
         require_published_artifacts=True,
     )
 
@@ -167,7 +167,7 @@ async def test_pipeline_compile_requires_published_artifact_revision(db_session)
         compiler.compile(
             _build_pipeline(tenant.id, operator.name),
             compiled_by=str(user.id),
-            tenant_id=str(tenant.id),
+            organization_id=str(tenant.id),
             require_published_artifacts=True,
         )
 
@@ -183,14 +183,14 @@ async def test_pipeline_executor_routes_artifact_steps_to_background_queue(db_se
     compiled = PipelineCompiler().compile(
         _build_pipeline(tenant.id, operator.name),
         compiled_by=str(user.id),
-        tenant_id=str(tenant.id),
+        organization_id=str(tenant.id),
         require_published_artifacts=True,
     )
     visual_pipeline = _build_pipeline(tenant.id, operator.name)
     executable = ExecutablePipeline(
         id=uuid.uuid4(),
         visual_pipeline_id=visual_pipeline.id,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         version=1,
         compiled_graph=compiled.executable_pipeline.model_dump(mode="json"),
         pipeline_type=PipelineType.RETRIEVAL,
@@ -199,7 +199,7 @@ async def test_pipeline_executor_routes_artifact_steps_to_background_queue(db_se
     )
     job = PipelineJob(
         id=uuid.uuid4(),
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         executable_pipeline_id=executable.id,
         status=PipelineJobStatus.QUEUED,
         input_params={"query": "hello", "text": "hello"},
@@ -235,7 +235,7 @@ async def test_retrieval_runtime_uses_interactive_artifact_queue(db_session, mon
     tenant, user = await _seed_tenant_context(db_session)
     visual_pipeline = VisualPipeline(
         id=uuid.uuid4(),
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name="Runtime Queue Pipeline",
         description=None,
         nodes=[],
@@ -248,7 +248,7 @@ async def test_retrieval_runtime_uses_interactive_artifact_queue(db_session, mon
     executable = ExecutablePipeline(
         id=uuid.uuid4(),
         visual_pipeline_id=visual_pipeline.id,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         version=1,
         compiled_graph={"dag": []},
         pipeline_type=PipelineType.RETRIEVAL,

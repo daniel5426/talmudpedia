@@ -6,25 +6,25 @@ import pytest
 
 from app.api.dependencies import get_current_principal
 from app.api.routers.auth import get_current_user
-from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Tenant, User
+from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Organization, User
 from app.db.postgres.models.rag import ExecutablePipeline, KnowledgeStore, PipelineJob, PipelineJobStatus, RetrievalPolicy, StorageBackend, VisualPipeline
 from app.db.postgres.models.registry import ModelRegistry, ModelCapabilityType, ModelStatus
 from main import app
 
 
 async def _seed_context(db_session):
-    tenant = Tenant(id=uuid.uuid4(), name="RAG Campaign Tenant", slug=f"rag-campaign-{uuid.uuid4().hex[:8]}")
+    tenant = Organization(id=uuid.uuid4(), name="RAG Campaign Organization", slug=f"rag-campaign-{uuid.uuid4().hex[:8]}")
     user = User(id=uuid.uuid4(), email=f"rag-campaign-{uuid.uuid4().hex[:6]}@example.com", role="admin")
     org_unit = OrgUnit(
         id=uuid.uuid4(),
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name="RAG Campaign Org",
         slug=f"rag-campaign-org-{uuid.uuid4().hex[:6]}",
         type=OrgUnitType.org,
     )
     membership = OrgMembership(
         id=uuid.uuid4(),
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         org_unit_id=org_unit.id,
         role=OrgRole.owner,
@@ -35,13 +35,13 @@ async def _seed_context(db_session):
     return tenant, user
 
 
-def _override_principal(tenant_id, user, scopes: list[str]):
+def _override_principal(organization_id, user, scopes: list[str]):
     async def _inner():
         return {
             "type": "user",
             "user": user,
             "user_id": str(user.id),
-            "tenant_id": str(tenant_id),
+            "organization_id": str(organization_id),
             "scopes": scopes,
         }
 
@@ -74,10 +74,10 @@ def _graph_payload(name: str, *, embed_model_id: str, knowledge_store_id: str) -
     }
 
 
-async def _seed_embed_model(db_session, tenant_id) -> str:
+async def _seed_embed_model(db_session, organization_id) -> str:
     model = ModelRegistry(
         id=uuid.uuid4(),
-        tenant_id=tenant_id,
+        organization_id=organization_id,
         name="Campaign Embedding",
         system_key=f"campaign-embed-{uuid.uuid4().hex[:6]}",
         capability_type=ModelCapabilityType.EMBEDDING,
@@ -92,10 +92,10 @@ async def _seed_embed_model(db_session, tenant_id) -> str:
     return str(model.id)
 
 
-async def _seed_knowledge_store(db_session, tenant_id, user_id) -> str:
+async def _seed_knowledge_store(db_session, organization_id, user_id) -> str:
     store = KnowledgeStore(
         id=uuid.uuid4(),
-        tenant_id=tenant_id,
+        organization_id=organization_id,
         name="Campaign Store",
         description="RAG campaign API store",
         embedding_model_id="manual-store-model",
@@ -191,14 +191,14 @@ async def test_rag_admin_compile_and_job_creation_persist_rows(client, db_sessio
 
     try:
         create_response = await client.post(
-            f"/admin/pipelines/visual-pipelines?tenant_slug={tenant.slug}",
+            f"/admin/pipelines/visual-pipelines?organization_id={tenant.id}",
             json=_graph_payload("Campaign Compile", embed_model_id=embed_model_id, knowledge_store_id=knowledge_store_id),
         )
         assert create_response.status_code == 200, create_response.text
         pipeline_id = create_response.json()["id"]
 
         compile_response = await client.post(
-            f"/admin/pipelines/visual-pipelines/{pipeline_id}/compile?tenant_slug={tenant.slug}"
+            f"/admin/pipelines/visual-pipelines/{pipeline_id}/compile?organization_id={tenant.id}"
         )
         assert compile_response.status_code == 200, compile_response.text
         compile_payload = compile_response.json()
@@ -209,7 +209,7 @@ async def test_rag_admin_compile_and_job_creation_persist_rows(client, db_sessio
         assert executable is not None
 
         job_response = await client.post(
-            f"/admin/pipelines/jobs?tenant_slug={tenant.slug}",
+            f"/admin/pipelines/jobs?organization_id={tenant.id}",
             json={"executable_pipeline_id": executable_id, "input_params": {"text": "hello retrieval", "top_k": 2}},
         )
         assert job_response.status_code == 200, job_response.text

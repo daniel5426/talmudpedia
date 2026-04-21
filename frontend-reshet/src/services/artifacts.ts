@@ -6,7 +6,7 @@ import type { ControlPlaneListResponse, ControlPlaneListView } from "./types";
 export type ArtifactType = "draft" | "published";
 export type ArtifactKind = "agent_node" | "rag_operator" | "tool_impl";
 export type ArtifactLanguage = "python" | "javascript";
-export type ArtifactOwnerType = "tenant" | "system";
+export type ArtifactOwnerType = "organization" | "system";
 export type ArtifactRunStatus = "queued" | "running" | "completed" | "failed" | "cancel_requested" | "cancelled";
 
 export interface ArtifactSourceFile {
@@ -425,39 +425,39 @@ export interface ArtifactCodingModelOption {
 
 export const artifactsService = {
   list: async (
-    tenantSlug?: string,
+    organizationId?: string,
     params?: { skip?: number; limit?: number; view?: ControlPlaneListView }
   ): Promise<ControlPlaneListResponse<Artifact>> => {
     const query = new URLSearchParams();
-    if (tenantSlug) query.set("tenant_slug", tenantSlug);
+    if (organizationId) query.set("organization_id", organizationId);
     query.set("skip", String(params?.skip ?? 0));
     query.set("limit", String(params?.limit ?? 20));
     query.set("view", params?.view ?? "summary");
     return httpClient.get<ControlPlaneListResponse<Artifact>>(`/admin/artifacts?${query.toString()}`);
   },
 
-  get: async (id: string, tenantSlug?: string): Promise<Artifact> => {
-    const url = tenantSlug ? `/admin/artifacts/${id}?tenant_slug=${tenantSlug}` : `/admin/artifacts/${id}`;
+  get: async (id: string, organizationId?: string): Promise<Artifact> => {
+    const url = organizationId ? `/admin/artifacts/${id}?organization_id=${organizationId}` : `/admin/artifacts/${id}`;
     return httpClient.get<Artifact>(url);
   },
 
-  listVersions: async (artifactId: string, tenantSlug?: string): Promise<ArtifactVersionListItem[]> => {
-    const url = tenantSlug
-      ? `/admin/artifacts/${artifactId}/versions?tenant_slug=${tenantSlug}`
+  listVersions: async (artifactId: string, organizationId?: string): Promise<ArtifactVersionListItem[]> => {
+    const url = organizationId
+      ? `/admin/artifacts/${artifactId}/versions?organization_id=${organizationId}`
       : `/admin/artifacts/${artifactId}/versions`;
     return httpClient.get<ArtifactVersionListItem[]>(url);
   },
 
-  getVersion: async (artifactId: string, revisionId: string, tenantSlug?: string): Promise<ArtifactVersion> => {
-    const url = tenantSlug
-      ? `/admin/artifacts/${artifactId}/versions/${revisionId}?tenant_slug=${tenantSlug}`
+  getVersion: async (artifactId: string, revisionId: string, organizationId?: string): Promise<ArtifactVersion> => {
+    const url = organizationId
+      ? `/admin/artifacts/${artifactId}/versions/${revisionId}?organization_id=${organizationId}`
       : `/admin/artifacts/${artifactId}/versions/${revisionId}`;
     return httpClient.get<ArtifactVersion>(url);
   },
 
-  getWorkingDraft: async (artifactId: string, tenantSlug?: string): Promise<ArtifactWorkingDraft> => {
-    const url = tenantSlug
-      ? `/admin/artifacts/${artifactId}/working-draft?tenant_slug=${tenantSlug}`
+  getWorkingDraft: async (artifactId: string, organizationId?: string): Promise<ArtifactWorkingDraft> => {
+    const url = organizationId
+      ? `/admin/artifacts/${artifactId}/working-draft?organization_id=${organizationId}`
       : `/admin/artifacts/${artifactId}/working-draft`;
     return httpClient.get<ArtifactWorkingDraft>(url);
   },
@@ -465,125 +465,125 @@ export const artifactsService = {
   updateWorkingDraft: async (
     artifactId: string,
     payload: ArtifactWorkingDraftUpdateRequest,
-    tenantSlug?: string,
+    organizationId?: string,
   ): Promise<ArtifactWorkingDraft> => {
-    const url = tenantSlug
-      ? `/admin/artifacts/${artifactId}/working-draft?tenant_slug=${tenantSlug}`
+    const url = organizationId
+      ? `/admin/artifacts/${artifactId}/working-draft?organization_id=${organizationId}`
       : `/admin/artifacts/${artifactId}/working-draft`;
     return httpClient.put<ArtifactWorkingDraft>(url, payload);
   },
 
-  create: async (data: ArtifactCreateRequest, tenantSlug?: string): Promise<Artifact> => {
-    const url = tenantSlug ? `/admin/artifacts?tenant_slug=${tenantSlug}` : "/admin/artifacts";
+  create: async (data: ArtifactCreateRequest, organizationId?: string): Promise<Artifact> => {
+    const url = organizationId ? `/admin/artifacts?organization_id=${organizationId}` : "/admin/artifacts";
     return httpClient.post<Artifact>(url, data);
   },
 
-  update: async (id: string, data: ArtifactUpdateRequest, tenantSlug?: string): Promise<Artifact> => {
-    const url = tenantSlug ? `/admin/artifacts/${id}?tenant_slug=${tenantSlug}` : `/admin/artifacts/${id}`;
+  update: async (id: string, data: ArtifactUpdateRequest, organizationId?: string): Promise<Artifact> => {
+    const url = organizationId ? `/admin/artifacts/${id}?organization_id=${organizationId}` : `/admin/artifacts/${id}`;
     return httpClient.put<Artifact>(url, data);
   },
 
-  publish: async (id: string, tenantSlug?: string): Promise<ArtifactPublishResponse> => {
-    const url = tenantSlug ? `/admin/artifacts/${id}/publish?tenant_slug=${tenantSlug}` : `/admin/artifacts/${id}/publish`;
+  publish: async (id: string, organizationId?: string): Promise<ArtifactPublishResponse> => {
+    const url = organizationId ? `/admin/artifacts/${id}/publish?organization_id=${organizationId}` : `/admin/artifacts/${id}/publish`;
     return httpClient.post<ArtifactPublishResponse>(url, {});
   },
 
-  convertKind: async (id: string, data: ArtifactConvertKindRequest, tenantSlug?: string): Promise<Artifact> => {
-    const url = tenantSlug ? `/admin/artifacts/${id}/convert-kind?tenant_slug=${tenantSlug}` : `/admin/artifacts/${id}/convert-kind`;
+  convertKind: async (id: string, data: ArtifactConvertKindRequest, organizationId?: string): Promise<Artifact> => {
+    const url = organizationId ? `/admin/artifacts/${id}/convert-kind?organization_id=${organizationId}` : `/admin/artifacts/${id}/convert-kind`;
     return httpClient.post<Artifact>(url, data);
   },
 
-  duplicate: async (id: string, tenantSlug?: string): Promise<Artifact> => {
-    const url = tenantSlug ? `/admin/artifacts/${id}/duplicate?tenant_slug=${tenantSlug}` : `/admin/artifacts/${id}/duplicate`;
+  duplicate: async (id: string, organizationId?: string): Promise<Artifact> => {
+    const url = organizationId ? `/admin/artifacts/${id}/duplicate?organization_id=${organizationId}` : `/admin/artifacts/${id}/duplicate`;
     return httpClient.post<Artifact>(url, {});
   },
 
-  exportArtifact: async (id: string, tenantSlug?: string): Promise<ArtifactTransferFile> => {
-    const url = tenantSlug ? `/admin/artifacts/${id}/export?tenant_slug=${tenantSlug}` : `/admin/artifacts/${id}/export`;
+  exportArtifact: async (id: string, organizationId?: string): Promise<ArtifactTransferFile> => {
+    const url = organizationId ? `/admin/artifacts/${id}/export?organization_id=${organizationId}` : `/admin/artifacts/${id}/export`;
     return httpClient.get<ArtifactTransferFile>(url);
   },
 
-  importArtifact: async (data: ArtifactTransferFile, tenantSlug?: string): Promise<ArtifactImportResponse> => {
-    const url = tenantSlug ? `/admin/artifacts/import?tenant_slug=${tenantSlug}` : "/admin/artifacts/import";
+  importArtifact: async (data: ArtifactTransferFile, organizationId?: string): Promise<ArtifactImportResponse> => {
+    const url = organizationId ? `/admin/artifacts/import?organization_id=${organizationId}` : "/admin/artifacts/import";
     return httpClient.post<ArtifactImportResponse>(url, data);
   },
 
-  delete: async (id: string, tenantSlug?: string): Promise<void> => {
-    const url = tenantSlug ? `/admin/artifacts/${id}?tenant_slug=${tenantSlug}` : `/admin/artifacts/${id}`;
+  delete: async (id: string, organizationId?: string): Promise<void> => {
+    const url = organizationId ? `/admin/artifacts/${id}?organization_id=${organizationId}` : `/admin/artifacts/${id}`;
     await httpClient.delete(url);
   },
 
-  createTestRun: async (data: ArtifactTestRequest, tenantSlug?: string): Promise<ArtifactRunCreateResponse> => {
-    const url = tenantSlug ? `/admin/artifacts/test-runs?tenant_slug=${tenantSlug}` : "/admin/artifacts/test-runs";
+  createTestRun: async (data: ArtifactTestRequest, organizationId?: string): Promise<ArtifactRunCreateResponse> => {
+    const url = organizationId ? `/admin/artifacts/test-runs?organization_id=${organizationId}` : "/admin/artifacts/test-runs";
     return httpClient.post<ArtifactRunCreateResponse>(url, data);
   },
 
   getRuntimeQueueStatus: async (
     queueClass = "artifact_test",
-    tenantSlug?: string,
+    organizationId?: string,
   ): Promise<ArtifactRuntimeQueueStatus> => {
     const encodedQueueClass = encodeURIComponent(queueClass);
-    const url = tenantSlug
-      ? `/admin/artifact-runs/runtime-status?tenant_slug=${tenantSlug}&queue_class=${encodedQueueClass}`
+    const url = organizationId
+      ? `/admin/artifact-runs/runtime-status?organization_id=${organizationId}&queue_class=${encodedQueueClass}`
       : `/admin/artifact-runs/runtime-status?queue_class=${encodedQueueClass}`;
     return httpClient.get<ArtifactRuntimeQueueStatus>(url);
   },
 
   validateSource: async (
     data: { language: ArtifactLanguage; source_files: ArtifactSourceFile[]; dependencies?: string[] },
-    tenantSlug?: string,
+    organizationId?: string,
   ): Promise<ArtifactSourceValidationResponse> => {
-    const url = tenantSlug ? `/admin/artifacts/validate-source?tenant_slug=${tenantSlug}` : "/admin/artifacts/validate-source";
+    const url = organizationId ? `/admin/artifacts/validate-source?organization_id=${organizationId}` : "/admin/artifacts/validate-source";
     return httpClient.post<ArtifactSourceValidationResponse>(url, data);
   },
 
   analyzeDependencies: async (
     data: { language: ArtifactLanguage; source_files: ArtifactSourceFile[]; dependencies?: string[] },
-    tenantSlug?: string,
+    organizationId?: string,
   ): Promise<ArtifactDependencyAnalysisResponse> => {
-    const url = tenantSlug ? `/admin/artifacts/analyze-dependencies?tenant_slug=${tenantSlug}` : "/admin/artifacts/analyze-dependencies";
+    const url = organizationId ? `/admin/artifacts/analyze-dependencies?organization_id=${organizationId}` : "/admin/artifacts/analyze-dependencies";
     return httpClient.post<ArtifactDependencyAnalysisResponse>(url, data);
   },
 
   verifyPythonPackage: async (
     data: { package_name: string },
-    tenantSlug?: string,
+    organizationId?: string,
   ): Promise<PythonPackageVerificationResponse> => {
-    const url = tenantSlug ? `/admin/artifacts/verify-python-package?tenant_slug=${tenantSlug}` : "/admin/artifacts/verify-python-package";
+    const url = organizationId ? `/admin/artifacts/verify-python-package?organization_id=${organizationId}` : "/admin/artifacts/verify-python-package";
     return httpClient.post<PythonPackageVerificationResponse>(url, data);
   },
 
-  getRun: async (runId: string, tenantSlug?: string): Promise<ArtifactRun> => {
-    const url = tenantSlug ? `/admin/artifact-runs/${runId}?tenant_slug=${tenantSlug}` : `/admin/artifact-runs/${runId}`;
+  getRun: async (runId: string, organizationId?: string): Promise<ArtifactRun> => {
+    const url = organizationId ? `/admin/artifact-runs/${runId}?organization_id=${organizationId}` : `/admin/artifact-runs/${runId}`;
     return httpClient.get<ArtifactRun>(url);
   },
 
-  getRunEvents: async (runId: string, tenantSlug?: string): Promise<ArtifactRunEventsResponse> => {
-    const url = tenantSlug
-      ? `/admin/artifact-runs/${runId}/events?tenant_slug=${tenantSlug}`
+  getRunEvents: async (runId: string, organizationId?: string): Promise<ArtifactRunEventsResponse> => {
+    const url = organizationId
+      ? `/admin/artifact-runs/${runId}/events?organization_id=${organizationId}`
       : `/admin/artifact-runs/${runId}/events`;
     return httpClient.get<ArtifactRunEventsResponse>(url);
   },
 
   submitCodingAgentPrompt: async (
     payload: ArtifactCodingPromptRequest,
-    tenantSlug?: string,
+    organizationId?: string,
   ): Promise<ArtifactCodingPromptSubmissionResponse> => {
-    const url = tenantSlug
-      ? `/admin/artifacts/coding-agent/v1/prompts?tenant_slug=${tenantSlug}`
+    const url = organizationId
+      ? `/admin/artifacts/coding-agent/v1/prompts?organization_id=${organizationId}`
       : "/admin/artifacts/coding-agent/v1/prompts";
     return httpClient.post<ArtifactCodingPromptSubmissionResponse>(url, payload);
   },
 
   listCodingAgentChatSessions: async (
     options: { artifactId?: string | null; draftKey?: string | null; limit?: number },
-    tenantSlug?: string,
+    organizationId?: string,
   ): Promise<ArtifactCodingChatSession[]> => {
     const params = new URLSearchParams();
     if (options.artifactId) params.set("artifact_id", options.artifactId);
     if (options.draftKey) params.set("draft_key", options.draftKey);
     params.set("limit", String(Math.max(1, Number(options.limit || 25))));
-    if (tenantSlug) params.set("tenant_slug", tenantSlug);
+    if (organizationId) params.set("organization_id", organizationId);
     return httpClient.get<ArtifactCodingChatSession[]>(
       `/admin/artifacts/coding-agent/v1/sessions?${params.toString()}`,
     );
@@ -591,15 +591,15 @@ export const artifactsService = {
 
   getCodingAgentChatSession: async (
     sessionId: string,
-    options: { limit?: number; before_message_id?: string | null; tenantSlug?: string } = {},
+    options: { limit?: number; before_message_id?: string | null; organizationId?: string } = {},
   ): Promise<ArtifactCodingChatSessionDetail> => {
     const params = new URLSearchParams();
     params.set("limit", String(Math.max(1, Number(options.limit || 10))));
     if (options.before_message_id) {
       params.set("before_message_id", options.before_message_id);
     }
-    if (options.tenantSlug) {
-      params.set("tenant_slug", options.tenantSlug);
+    if (options.organizationId) {
+      params.set("organization_id", options.organizationId);
     }
     return httpClient.get<ArtifactCodingChatSessionDetail>(
       `/admin/artifacts/coding-agent/v1/sessions/${sessionId}?${params.toString()}`,
@@ -608,30 +608,30 @@ export const artifactsService = {
 
   getCodingAgentChatSessionDraftSnapshot: async (
     sessionId: string,
-    tenantSlug?: string,
+    organizationId?: string,
   ): Promise<ArtifactCodingDraftSnapshot> => {
-    const url = tenantSlug
-      ? `/admin/artifacts/coding-agent/v1/sessions/${sessionId}/draft-snapshot?tenant_slug=${tenantSlug}`
+    const url = organizationId
+      ? `/admin/artifacts/coding-agent/v1/sessions/${sessionId}/draft-snapshot?organization_id=${organizationId}`
       : `/admin/artifacts/coding-agent/v1/sessions/${sessionId}/draft-snapshot`;
     return httpClient.get<ArtifactCodingDraftSnapshot>(url);
   },
 
   getCodingAgentChatSessionActiveRun: async (
     sessionId: string,
-    tenantSlug?: string,
+    organizationId?: string,
   ): Promise<ArtifactCodingActiveRunState> => {
-    const url = tenantSlug
-      ? `/admin/artifacts/coding-agent/v1/sessions/${sessionId}/active-run?tenant_slug=${tenantSlug}`
+    const url = organizationId
+      ? `/admin/artifacts/coding-agent/v1/sessions/${sessionId}/active-run?organization_id=${organizationId}`
       : `/admin/artifacts/coding-agent/v1/sessions/${sessionId}/active-run`;
     return httpClient.get<ArtifactCodingActiveRunState>(url);
   },
 
   findCodingAgentChatSessionActiveRun: async (
     sessionId: string,
-    tenantSlug?: string,
+    organizationId?: string,
   ): Promise<ArtifactCodingActiveRunState | null> => {
-    const url = tenantSlug
-      ? `/admin/artifacts/coding-agent/v1/sessions/${sessionId}/active-run?tenant_slug=${tenantSlug}`
+    const url = organizationId
+      ? `/admin/artifacts/coding-agent/v1/sessions/${sessionId}/active-run?organization_id=${organizationId}`
       : `/admin/artifacts/coding-agent/v1/sessions/${sessionId}/active-run`;
     const response = await httpClient.requestRaw(url, { method: "GET" });
     if (response.status === 404) {
@@ -650,7 +650,7 @@ export const artifactsService = {
     return response.json() as Promise<ArtifactCodingActiveRunState>;
   },
 
-  streamCodingAgentRun: async (runId: string, _tenantId?: string | null): Promise<Response> => {
+  streamCodingAgentRun: async (runId: string, _organizationId?: string | null): Promise<Response> => {
     const streamBase = String(process.env.NEXT_PUBLIC_BACKEND_STREAM_URL || "").trim();
     const backendBase = String(process.env.NEXT_PUBLIC_BACKEND_URL || "").trim();
     const directBackendUrl = /^https?:\/\//i.test(streamBase)
@@ -673,20 +673,20 @@ export const artifactsService = {
     });
   },
 
-  getCodingAgentRun: async (runId: string, tenantSlug?: string): Promise<ArtifactCodingRun> => {
-    const url = tenantSlug
-      ? `/admin/artifacts/coding-agent/v1/runs/${runId}?tenant_slug=${tenantSlug}`
+  getCodingAgentRun: async (runId: string, organizationId?: string): Promise<ArtifactCodingRun> => {
+    const url = organizationId
+      ? `/admin/artifacts/coding-agent/v1/runs/${runId}?organization_id=${organizationId}`
       : `/admin/artifacts/coding-agent/v1/runs/${runId}`;
     return httpClient.get<ArtifactCodingRun>(url);
   },
 
   cancelCodingAgentRun: async (
     runId: string,
-    tenantSlug?: string,
+    organizationId?: string,
     payload: ArtifactCodingCancelRunRequest = {},
   ): Promise<ArtifactCodingRun> => {
-    const url = tenantSlug
-      ? `/admin/artifacts/coding-agent/v1/runs/${runId}/cancel?tenant_slug=${tenantSlug}`
+    const url = organizationId
+      ? `/admin/artifacts/coding-agent/v1/runs/${runId}/cancel?organization_id=${organizationId}`
       : `/admin/artifacts/coding-agent/v1/runs/${runId}/cancel`;
     return httpClient.post<ArtifactCodingRun>(url, payload);
   },
@@ -694,10 +694,10 @@ export const artifactsService = {
   answerCodingAgentRunQuestion: async (
     runId: string,
     payload: ArtifactCodingAnswerQuestionRequest,
-    tenantSlug?: string,
+    organizationId?: string,
   ): Promise<ArtifactCodingRun> => {
-    const url = tenantSlug
-      ? `/admin/artifacts/coding-agent/v1/runs/${runId}/answer-question?tenant_slug=${tenantSlug}`
+    const url = organizationId
+      ? `/admin/artifacts/coding-agent/v1/runs/${runId}/answer-question?organization_id=${organizationId}`
       : `/admin/artifacts/coding-agent/v1/runs/${runId}/answer-question`;
     return httpClient.post<ArtifactCodingRun>(url, payload);
   },
@@ -705,10 +705,10 @@ export const artifactsService = {
   revertCodingAgentSession: async (
     sessionId: string,
     payload: ArtifactCodingRevertRequest,
-    tenantSlug?: string,
+    organizationId?: string,
   ): Promise<ArtifactCodingChatSessionDetail> => {
-    const url = tenantSlug
-      ? `/admin/artifacts/coding-agent/v1/sessions/${sessionId}/revert?tenant_slug=${tenantSlug}`
+    const url = organizationId
+      ? `/admin/artifacts/coding-agent/v1/sessions/${sessionId}/revert?organization_id=${organizationId}`
       : `/admin/artifacts/coding-agent/v1/sessions/${sessionId}/revert`;
     return httpClient.post<ArtifactCodingChatSessionDetail>(url, payload);
   },

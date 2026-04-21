@@ -11,7 +11,7 @@ from tests.published_apps._helpers import admin_headers, seed_admin_tenant_and_a
 async def test_settings_audit_list_count_and_detail(client, db_session):
     tenant, owner, org_unit, _ = await seed_admin_tenant_and_agent(db_session)
     log = AuditLog(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         org_unit_id=org_unit.id,
         actor_id=owner.id,
         actor_type=ActorType.USER,

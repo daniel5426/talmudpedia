@@ -8,7 +8,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_current_principal, require_scopes
 from app.core.runtime_urls import resolve_runtime_api_base_url as _resolve_runtime_api_base_url
-from app.core.security import create_published_app_preview_token
 from app.db.postgres.models.published_apps import (
     PublishedApp,
     PublishedAppBuilderConversationTurn,
@@ -40,7 +39,7 @@ from .published_apps_admin_access import (
     _get_active_publish_job_for_app,
     _get_revision,
     _get_revision_for_app,
-    _resolve_tenant_admin_context,
+    _resolve_organization_admin_context,
 )
 from .published_apps_admin_builder_core import (
     _builder_conversation_to_response,
@@ -102,18 +101,7 @@ async def _decorate_draft_dev_session_response(
     if effective_revision_id is None:
         return response
 
-    preview_auth_expires_at = datetime.now(timezone.utc) + timedelta(hours=2)
-    preview_auth_token = create_published_app_preview_token(
-        subject=str(actor_id),
-        tenant_id=str(app.tenant_id),
-        app_id=str(app.id),
-        revision_id=str(effective_revision_id),
-        scopes=["apps.preview"],
-        expires_delta=timedelta(hours=2),
-    )
     response.preview_url = preview_url
-    response.preview_auth_token = preview_auth_token
-    response.preview_auth_expires_at = preview_auth_expires_at
     return response
 
 
@@ -209,9 +197,9 @@ async def get_builder_state(
     principal: Dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ):
-    ctx = await _resolve_tenant_admin_context(request, principal, db)
+    ctx = await _resolve_organization_admin_context(request, principal, db)
     _assert_can_manage_apps(ctx)
-    app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
+    app = await _get_app_for_tenant(db, ctx["organization_id"], app_id)
     actor_id = ctx["user"].id if ctx["user"] else None
 
     draft = await _get_revision(db, app.current_draft_revision_id)
@@ -259,22 +247,11 @@ async def get_builder_state(
                         reason="runtime_disabled",
                     )
 
-    preview_token: Optional[str] = None
-    if actor_id and draft:
-        preview_token = create_published_app_preview_token(
-            subject=str(actor_id),
-            tenant_id=str(app.tenant_id),
-            app_id=str(app.id),
-            revision_id=str(draft.id),
-            scopes=["apps.preview"],
-        )
-
     return BuilderStateResponse(
         app=_app_to_response(app),
         templates=[_template_to_response(template) for template in list_templates()],
         current_draft_revision=_revision_to_response(draft) if draft else None,
         current_published_revision=_revision_to_response(published) if published else None,
-        preview_token=preview_token,
         draft_dev=(
             await _decorate_draft_dev_session_response(
                 db=db,
@@ -298,9 +275,9 @@ async def get_builder_agent_contract(
     principal: Dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ):
-    ctx = await _resolve_tenant_admin_context(request, principal, db)
+    ctx = await _resolve_organization_admin_context(request, principal, db)
     _assert_can_manage_apps(ctx)
-    app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
+    app = await _get_app_for_tenant(db, ctx["organization_id"], app_id)
     try:
         return await build_published_app_agent_integration_contract(db=db, app=app)
     except LookupError as exc:
@@ -356,12 +333,12 @@ async def get_builder_draft_dev_session(
     principal: Dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ):
-    ctx = await _resolve_tenant_admin_context(request, principal, db)
+    ctx = await _resolve_organization_admin_context(request, principal, db)
     _assert_can_manage_apps(ctx)
     actor = ctx.get("user")
     if actor is None:
         raise HTTPException(status_code=403, detail="Draft dev session requires a user principal")
-    app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
+    app = await _get_app_for_tenant(db, ctx["organization_id"], app_id)
     runtime_service = PublishedAppDraftDevRuntimeService(db)
     await runtime_service.expire_idle_sessions(app_id=app.id, user_id=actor.id)
     session = await _get_draft_dev_session_for_scope(
@@ -393,14 +370,14 @@ async def ensure_builder_draft_dev_session(
     principal: Dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ):
-    ctx = await _resolve_tenant_admin_context(request, principal, db)
+    ctx = await _resolve_organization_admin_context(request, principal, db)
     _assert_can_manage_apps(ctx)
     actor = ctx.get("user")
     if actor is None:
         raise HTTPException(status_code=403, detail="Draft dev session requires a user principal")
     await _assert_no_active_coding_run_for_scope(db=db, app_id=app_id, user_id=actor.id)
 
-    app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
+    app = await _get_app_for_tenant(db, ctx["organization_id"], app_id)
     draft = await _ensure_current_draft_revision(db, app, actor.id)
     runtime_service = PublishedAppDraftDevRuntimeService(db)
     try:
@@ -436,13 +413,13 @@ async def sync_builder_draft_dev_session(
     principal: Dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ):
-    ctx = await _resolve_tenant_admin_context(request, principal, db)
+    ctx = await _resolve_organization_admin_context(request, principal, db)
     _assert_can_manage_apps(ctx)
     actor = ctx.get("user")
     if actor is None:
         raise HTTPException(status_code=403, detail="Draft dev session requires a user principal")
 
-    app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
+    app = await _get_app_for_tenant(db, ctx["organization_id"], app_id)
     await _assert_no_active_coding_run_for_scope(db=db, app_id=app.id, user_id=actor.id)
     draft = await _ensure_current_draft_revision(db, app, actor.id)
 
@@ -452,7 +429,7 @@ async def sync_builder_draft_dev_session(
         raise HTTPException(status_code=404, detail="Draft dev session not found")
     runtime_context = TemplateRuntimeContext(
         app_id=str(app.id),
-        app_slug=str(app.slug or ""),
+        app_public_id=str(app.public_id or ""),
         agent_id=str(app.agent_id or ""),
     )
 
@@ -587,12 +564,12 @@ async def heartbeat_builder_draft_dev_session(
     principal: Dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ):
-    ctx = await _resolve_tenant_admin_context(request, principal, db)
+    ctx = await _resolve_organization_admin_context(request, principal, db)
     _assert_can_manage_apps(ctx)
     actor = ctx.get("user")
     if actor is None:
         raise HTTPException(status_code=403, detail="Draft dev session requires a user principal")
-    app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
+    app = await _get_app_for_tenant(db, ctx["organization_id"], app_id)
     apps_builder_trace(
         "session.heartbeat.requested",
         domain="draft_dev.api",
@@ -662,12 +639,12 @@ async def delete_builder_draft_dev_session(
     principal: Dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ):
-    ctx = await _resolve_tenant_admin_context(request, principal, db)
+    ctx = await _resolve_organization_admin_context(request, principal, db)
     _assert_can_manage_apps(ctx)
     actor = ctx.get("user")
     if actor is None:
         raise HTTPException(status_code=403, detail="Draft dev session requires a user principal")
-    app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
+    app = await _get_app_for_tenant(db, ctx["organization_id"], app_id)
     session = await _get_draft_dev_session_for_scope(db, app_id=app.id, user_id=actor.id)
     if session is None:
         raise HTTPException(status_code=404, detail="Draft dev session not found")
@@ -741,9 +718,9 @@ async def validate_builder_revision(
     principal: Dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ):
-    ctx = await _resolve_tenant_admin_context(request, principal, db)
+    ctx = await _resolve_organization_admin_context(request, principal, db)
     _assert_can_manage_apps(ctx)
-    app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
+    app = await _get_app_for_tenant(db, ctx["organization_id"], app_id)
     actor_id = ctx["user"].id if ctx["user"] else None
     current = await _ensure_current_draft_revision(db, app, actor_id)
 
@@ -787,10 +764,10 @@ async def reset_builder_template(
     principal: Dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ):
-    ctx = await _resolve_tenant_admin_context(request, principal, db)
+    ctx = await _resolve_organization_admin_context(request, principal, db)
     _assert_can_manage_apps(ctx)
 
-    app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
+    app = await _get_app_for_tenant(db, ctx["organization_id"], app_id)
     actor_id = ctx["user"].id if ctx["user"] else None
     await _assert_no_active_coding_run_for_scope(db=db, app_id=app.id, user_id=actor_id)
     current = await _ensure_current_draft_revision(db, app, actor_id)
@@ -801,7 +778,7 @@ async def reset_builder_template(
         template_key,
         runtime_context={
             "app_id": str(app.id),
-            "app_slug": app.slug,
+            "app_public_id": app.public_id,
             "agent_id": str(app.agent_id),
         },
     )
@@ -851,9 +828,9 @@ async def list_builder_conversations(
     principal: Dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ):
-    ctx = await _resolve_tenant_admin_context(request, principal, db)
+    ctx = await _resolve_organization_admin_context(request, principal, db)
     _assert_can_manage_apps(ctx)
-    app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
+    app = await _get_app_for_tenant(db, ctx["organization_id"], app_id)
 
     result = await db.execute(
         select(PublishedAppBuilderConversationTurn)

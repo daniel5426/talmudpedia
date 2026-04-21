@@ -56,7 +56,7 @@ class MonitoringThreadRow:
     updated_at: datetime | None
     agent_id: str | None
     agent_name: str | None
-    agent_slug: str | None
+    agent_system_key: str | None
     surface: str | None
     actor_id: str | None
     actor_type: str | None
@@ -78,7 +78,7 @@ class _ThreadContext:
     actor_display: str | None
     actor_email: str | None
     agent_name: str | None
-    agent_slug: str | None
+    agent_system_key: str | None
     app_id: UUID | None
 
 
@@ -158,9 +158,9 @@ def _sort_datetime(value: datetime | None) -> datetime:
 
 
 class AdminMonitoringService:
-    def __init__(self, db: AsyncSession, tenant_id: UUID | None):
+    def __init__(self, db: AsyncSession, organization_id: UUID | None):
         self.db = db
-        self.tenant_id = tenant_id
+        self.organization_id = organization_id
 
     async def list_monitored_actors(
         self,
@@ -256,7 +256,7 @@ class AdminMonitoringService:
                     context.actor_display or "",
                     context.actor_email or "",
                     context.agent_name or "",
-                    context.agent_slug or "",
+                    context.agent_system_key or "",
                 ]
                 if not any(needle in value.lower() for value in haystacks if value):
                     continue
@@ -268,7 +268,7 @@ class AdminMonitoringService:
                     updated_at=thread.last_activity_at or thread.updated_at,
                     agent_id=str(thread.agent_id) if thread.agent_id else None,
                     agent_name=context.agent_name,
-                    agent_slug=context.agent_slug,
+                    agent_system_key=context.agent_system_key,
                     surface=surface_value or None,
                     actor_id=context.actor_id,
                     actor_type=context.actor_type,
@@ -317,8 +317,8 @@ class AdminMonitoringService:
         query = select(func.count(AgentThread.id)).where(
             and_(AgentThread.created_at >= start, AgentThread.created_at <= end)
         )
-        if self.tenant_id:
-            query = query.where(AgentThread.tenant_id == self.tenant_id)
+        if self.organization_id:
+            query = query.where(AgentThread.organization_id == self.organization_id)
         if agent_id:
             query = query.where(AgentThread.agent_id == agent_id)
         return int((await self.db.execute(query)).scalar() or 0)
@@ -341,8 +341,8 @@ class AdminMonitoringService:
                 AgentRun.thread_id.is_not(None),
             )
         )
-        if self.tenant_id:
-            query = query.where(AgentRun.tenant_id == self.tenant_id)
+        if self.organization_id:
+            query = query.where(AgentRun.organization_id == self.organization_id)
         if agent_id:
             query = query.where(AgentRun.agent_id == agent_id)
         query = query.group_by(AgentRun.thread_id)
@@ -395,8 +395,8 @@ class AdminMonitoringService:
                 )
             )
         )
-        if self.tenant_id:
-            query = query.where(AgentRun.tenant_id == self.tenant_id)
+        if self.organization_id:
+            query = query.where(AgentRun.organization_id == self.organization_id)
         rows = (await self.db.execute(query)).all()
 
         by_day: dict[str, set[str]] = defaultdict(set)
@@ -496,7 +496,7 @@ class AdminMonitoringService:
                     "email": account.email,
                     "published_app_id": str(published_app.id) if published_app else None,
                     "published_app_name": published_app.name if published_app else None,
-                    "published_app_slug": published_app.slug if published_app else None,
+                    "published_app_public_id": published_app.public_id if published_app else None,
                     "mapped_platform_user_id": mapped_platform_id,
                 }
             )
@@ -537,7 +537,7 @@ class AdminMonitoringService:
                         "email": context.actor_email,
                         "agent_id": str(context.thread.agent_id) if context.thread.agent_id else None,
                         "agent_name": context.agent_name,
-                        "agent_slug": context.agent_slug,
+                        "agent_system_key": context.agent_system_key,
                         "external_user_id": context.thread.external_user_id,
                     }
                 )
@@ -552,8 +552,8 @@ class AdminMonitoringService:
 
     async def _load_platform_users(self) -> list[User]:
         query = select(User)
-        if self.tenant_id:
-            query = query.join(OrgMembership).where(OrgMembership.tenant_id == self.tenant_id)
+        if self.organization_id:
+            query = query.join(OrgMembership).where(OrgMembership.organization_id == self.organization_id)
         query = query.order_by(User.created_at.desc())
         return list((await self.db.execute(query)).scalars().all())
 
@@ -566,8 +566,8 @@ class AdminMonitoringService:
             select(PublishedAppAccount, PublishedApp)
             .join(PublishedApp, PublishedAppAccount.published_app_id == PublishedApp.id)
         )
-        if self.tenant_id:
-            query = query.where(PublishedApp.tenant_id == self.tenant_id)
+        if self.organization_id:
+            query = query.where(PublishedApp.organization_id == self.organization_id)
         if app_id:
             query = query.where(PublishedApp.id == app_id)
         query = query.order_by(PublishedAppAccount.updated_at.desc())
@@ -590,8 +590,8 @@ class AdminMonitoringService:
             )
             .group_by(AgentRun.thread_id)
         )
-        if self.tenant_id:
-            query = query.where(AgentRun.tenant_id == self.tenant_id)
+        if self.organization_id:
+            query = query.where(AgentRun.organization_id == self.organization_id)
         rows = (await self.db.execute(query)).all()
         return {str(thread_id): int(tokens or 0) for thread_id, tokens in rows if thread_id is not None}
 
@@ -618,8 +618,8 @@ class AdminMonitoringService:
             .outerjoin(published_app_alias, AgentThread.published_app_id == published_app_alias.id)
             .outerjoin(AgentModel, AgentThread.agent_id == AgentModel.id)
         )
-        if self.tenant_id:
-            query = query.where(AgentThread.tenant_id == self.tenant_id)
+        if self.organization_id:
+            query = query.where(AgentThread.organization_id == self.organization_id)
         if agent_id:
             query = query.where(AgentThread.agent_id == agent_id)
         if app_id:
@@ -664,7 +664,7 @@ class AdminMonitoringService:
                     actor_display=resolved_display,
                     actor_email=resolved_email,
                     agent_name=agent.name if agent is not None else None,
-                    agent_slug=agent.slug if agent is not None else None,
+                    agent_system_key=agent.system_key if agent is not None else None,
                     app_id=resolved_app.id if resolved_app is not None else None,
                 )
             )

@@ -85,12 +85,12 @@ class PublishedAppBundleStorage:
         return self._client
 
     @staticmethod
-    def build_revision_dist_prefix(*, tenant_id: str, app_id: str, revision_id: str) -> str:
-        return f"apps/{tenant_id}/{app_id}/revisions/{revision_id}/dist"
+    def build_revision_dist_prefix(*, organization_id: str, app_id: str, revision_id: str) -> str:
+        return f"apps/{organization_id}/{app_id}/revisions/{revision_id}/dist"
 
     @staticmethod
-    def build_workspace_build_dist_prefix(*, tenant_id: str, app_id: str, workspace_build_id: str) -> str:
-        return f"apps/{tenant_id}/{app_id}/workspace-builds/{workspace_build_id}/dist"
+    def build_workspace_build_dist_prefix(*, organization_id: str, app_id: str, workspace_build_id: str) -> str:
+        return f"apps/{organization_id}/{app_id}/workspace-builds/{workspace_build_id}/dist"
 
     @staticmethod
     def _normalize_prefix(prefix: str) -> str:

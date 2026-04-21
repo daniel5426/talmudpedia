@@ -65,7 +65,7 @@ class CustomOperatorUpdate(BaseModel):
 
 class CustomOperatorResponse(CustomOperatorBase):
     id: uuid.UUID
-    tenant_id: uuid.UUID
+    organization_id: uuid.UUID
     version: str
     created_at: datetime
     updated_at: datetime

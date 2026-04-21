@@ -57,7 +57,7 @@ import { loadRunTraceInspection, type ExecutionStep as LoadedExecutionStep } fro
 
 interface AgentBuilderProps {
     agentId?: string
-    agentSlug?: string | null
+    agentSystemKey?: string | null
     initialGraphDefinition?: AgentGraphDefinition
     onSave?: (graphDefinition: AgentGraphDefinition) => void
     onCompile?: () => void
@@ -148,7 +148,7 @@ function validateNodePreflight(node: Node<AgentNodeData>): string[] {
     if (!isOrchestrationNodeType(String(nodeType || ""))) return issues
 
     if (nodeType === "spawn_run") {
-        const hasTarget = Boolean(String(config.target_agent_slug || "").trim()) || Boolean(String(config.target_agent_id || "").trim())
+        const hasTarget = Boolean(String(config.target_agent_id || "").trim())
         if (!hasTarget) issues.push("requires target agent")
         if (toStringList(config.scope_subset).length === 0) issues.push("requires scope subset")
     }
@@ -226,7 +226,7 @@ function shouldRenderOrchestrationEventInTrace(event: AgentExecutionEvent): bool
 
 function AgentBuilderInner({
     agentId,
-    agentSlug,
+    agentSystemKey,
     initialGraphDefinition,
     onSave,
     onCompile,
@@ -336,7 +336,7 @@ function AgentBuilderInner({
         edges,
     }), [graphDefinitionMeta.spec_version, graphDefinitionMeta.workflow_contract, graphDefinitionMeta.state_contract, nodes, edges])
     // Dedicated controller for execution (chat) mode
-    const controller = useAgentRunController(agentId, analysisGraphDefinition, agentSlug)
+    const controller = useAgentRunController(agentId, analysisGraphDefinition, agentSystemKey)
     const { executionSteps, executionEvents, currentRunId, currentRunStatus } = controller
     const runtimeOverlay = useAgentRuntimeGraph({
         staticNodes: nodes as Node<AgentNodeData>[],

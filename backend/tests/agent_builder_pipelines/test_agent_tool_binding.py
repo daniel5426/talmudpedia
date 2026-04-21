@@ -32,7 +32,7 @@ async def test_agent_node_tool_binding_executes_tool(
         pytest.skip("No chat model available for agent tool binding test.")
 
     tool = ToolRegistry(
-        tenant_id=test_tenant_id,
+        organization_id=test_tenant_id,
         name=f"{run_prefix}-tool",
         slug=f"{run_prefix}-tool",
         description="agent tool binding test",

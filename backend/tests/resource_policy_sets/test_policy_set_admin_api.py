@@ -125,17 +125,17 @@ async def test_include_rule_and_assignment_routes_cover_conflicts_and_cross_tena
     user = tenant_context["user"]
     other_tenant = secondary_tenant_context["tenant"]
     other_user = secondary_tenant_context["user"]
-    primary = await resource_factory.policy_set(tenant_id=tenant.id, created_by=user.id, name="primary")
-    included = await resource_factory.policy_set(tenant_id=tenant.id, created_by=user.id, name="included")
-    foreign = await resource_factory.policy_set(tenant_id=other_tenant.id, created_by=other_user.id, name="foreign")
-    model = await resource_factory.model(tenant_id=tenant.id, name="Quota Model")
-    second_model = await resource_factory.model(tenant_id=tenant.id, name="Quota Model 2")
-    third_model = await resource_factory.model(tenant_id=tenant.id, name="Quota Model 3")
-    published_agent = await resource_factory.agent(tenant_id=tenant.id, created_by=user.id, name="Published Agent")
-    published_app = await resource_factory.published_app(tenant_id=tenant.id, agent_id=published_agent.id)
+    primary = await resource_factory.policy_set(organization_id=tenant.id, created_by=user.id, name="primary")
+    included = await resource_factory.policy_set(organization_id=tenant.id, created_by=user.id, name="included")
+    foreign = await resource_factory.policy_set(organization_id=other_tenant.id, created_by=other_user.id, name="foreign")
+    model = await resource_factory.model(organization_id=tenant.id, name="Quota Model")
+    second_model = await resource_factory.model(organization_id=tenant.id, name="Quota Model 2")
+    third_model = await resource_factory.model(organization_id=tenant.id, name="Quota Model 3")
+    published_agent = await resource_factory.agent(organization_id=tenant.id, created_by=user.id, name="Published Agent")
+    published_app = await resource_factory.published_app(organization_id=tenant.id, agent_id=published_agent.id)
     app_account = await resource_factory.published_app_account(published_app=published_app)
-    embed_agent = await resource_factory.agent(tenant_id=tenant.id, created_by=user.id, name="Embed Agent")
-    foreign_embed_agent = await resource_factory.agent(tenant_id=other_tenant.id, created_by=other_user.id, name="Other Embed")
+    embed_agent = await resource_factory.agent(organization_id=tenant.id, created_by=user.id, name="Embed Agent")
+    foreign_embed_agent = await resource_factory.agent(organization_id=other_tenant.id, created_by=other_user.id, name="Other Embed")
     await db_session.commit()
     primary_id = str(primary.id)
     included_id = str(included.id)
@@ -332,10 +332,10 @@ async def test_default_policy_routes_and_non_user_principals_are_rejected(
     user = tenant_context["user"]
     other_tenant = secondary_tenant_context["tenant"]
     other_user = secondary_tenant_context["user"]
-    agent = await resource_factory.agent(tenant_id=tenant.id, created_by=user.id, name="Default Agent")
-    published_app = await resource_factory.published_app(tenant_id=tenant.id, agent_id=agent.id)
-    default_set = await resource_factory.policy_set(tenant_id=tenant.id, created_by=user.id, name="default")
-    foreign_set = await resource_factory.policy_set(tenant_id=other_tenant.id, created_by=other_user.id, name="foreign")
+    agent = await resource_factory.agent(organization_id=tenant.id, created_by=user.id, name="Default Agent")
+    published_app = await resource_factory.published_app(organization_id=tenant.id, agent_id=agent.id)
+    default_set = await resource_factory.policy_set(organization_id=tenant.id, created_by=user.id, name="default")
+    foreign_set = await resource_factory.policy_set(organization_id=other_tenant.id, created_by=other_user.id, name="foreign")
     await db_session.commit()
 
     app.dependency_overrides[get_current_principal] = principal_override_factory(
@@ -393,9 +393,9 @@ async def test_default_policy_ids_are_exposed_by_apps_and_agents_list_endpoints(
 ):
     tenant = tenant_context["tenant"]
     user = tenant_context["user"]
-    agent = await resource_factory.agent(tenant_id=tenant.id, created_by=user.id, name="Default Agent")
-    published_app = await resource_factory.published_app(tenant_id=tenant.id, agent_id=agent.id, name="Default App")
-    default_set = await resource_factory.policy_set(tenant_id=tenant.id, created_by=user.id, name="default")
+    agent = await resource_factory.agent(organization_id=tenant.id, created_by=user.id, name="Default Agent")
+    published_app = await resource_factory.published_app(organization_id=tenant.id, agent_id=agent.id, name="Default App")
+    default_set = await resource_factory.policy_set(organization_id=tenant.id, created_by=user.id, name="default")
     agent.default_embed_policy_set_id = default_set.id
     published_app.default_policy_set_id = default_set.id
     await db_session.commit()

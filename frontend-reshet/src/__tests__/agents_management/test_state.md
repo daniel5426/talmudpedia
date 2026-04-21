@@ -1,6 +1,6 @@
 # Agents Management Test State
 
-Last Updated: 2026-04-14
+Last Updated: 2026-04-21
 
 ## Scope
 Frontend Agents page management actions, including delete flow wiring and the card-level make-tool bind flow.
@@ -23,6 +23,9 @@ Frontend Agents page management actions, including delete flow wiring and the ca
 - Command: `pnpm -C frontend-reshet test -- --runTestsByPath src/__tests__/agents_management/agents_page_tool_binding.test.tsx --watch=false`
 - Date/Time: 2026-03-31 Asia/Hebron
 - Result: pass (`1 suite, 2 tests`)
+- Command: `cd frontend-reshet && npm exec pnpm -- test -- --runTestsByPath src/__tests__/agents_management/agents_page_tool_binding.test.tsx`
+- Date/Time: 2026-04-21 Asia/Hebron
+- Result: pass (`1 suite`)
 
 ## Known gaps or follow-ups
 - Add a test for cancel path (`window.confirm` returns false).

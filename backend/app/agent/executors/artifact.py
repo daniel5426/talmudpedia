@@ -67,7 +67,7 @@ class ArtifactNodeExecutor(BaseNodeExecutor):
     def _is_production_mode(context: Optional[Dict[str, Any]]) -> bool:
         return str((context or {}).get("mode") or "debug").strip().lower() == "production"
 
-    async def _resolve_tenant_revision(
+    async def _resolve_organization_revision(
         self,
         *,
         artifact_id: UUID,
@@ -76,14 +76,14 @@ class ArtifactNodeExecutor(BaseNodeExecutor):
     ):
         registry = ArtifactRegistryService(self.db)
         if pinned_revision_id is not None:
-            revision = await registry.get_revision(revision_id=pinned_revision_id, tenant_id=self.tenant_id)
+            revision = await registry.get_revision(revision_id=pinned_revision_id, organization_id=self.organization_id)
             if revision is None:
                 raise ValueError("Pinned artifact revision not found")
             if require_published and (not revision.is_published or revision.is_ephemeral):
                 raise PermissionError("Production artifact execution requires a published immutable revision")
             return revision
 
-        artifact = await registry.get_tenant_artifact(artifact_id=artifact_id, tenant_id=self.tenant_id)
+        artifact = await registry.get_organization_artifact(artifact_id=artifact_id, organization_id=self.organization_id)
         if artifact is None:
             raise ValueError(f"Artifact '{artifact_id}' not found")
         if artifact.kind != ArtifactKind.AGENT_NODE:
@@ -106,7 +106,7 @@ class ArtifactNodeExecutor(BaseNodeExecutor):
             return ValidationResult(valid=False, errors=["Artifact nodes now require a UUID artifact id"])
         if self.db is None:
             return ValidationResult(valid=True)
-        artifact = await ArtifactRegistryService(self.db).get_tenant_artifact(artifact_id=artifact_uuid, tenant_id=self.tenant_id)
+        artifact = await ArtifactRegistryService(self.db).get_organization_artifact(artifact_id=artifact_uuid, organization_id=self.organization_id)
         if artifact is None:
             return ValidationResult(valid=False, errors=[f"Artifact '{artifact_id}' not found"])
         if artifact.kind != ArtifactKind.AGENT_NODE:
@@ -160,7 +160,7 @@ class ArtifactNodeExecutor(BaseNodeExecutor):
 
             artifact_inputs = None
             if artifact_uuid is not None:
-                revision = await self._resolve_tenant_revision(
+                revision = await self._resolve_organization_revision(
                     artifact_id=artifact_uuid,
                     pinned_revision_id=artifact_revision_id,
                     require_published=production_mode,
@@ -180,10 +180,10 @@ class ArtifactNodeExecutor(BaseNodeExecutor):
                 "artifact_id": artifact_id,
                 "artifact_revision_id": str(artifact_revision_id) if artifact_revision_id else None,
                 "emitter": emitter,
-                "tenant_id": self.tenant_id,
+                "organization_id": self.organization_id,
                 "inputs": resolved_inputs,
                 "agent_id": (context or {}).get("agent_id"),
-                "agent_slug": (context or {}).get("agent_slug"),
+                "agent_system_key": (context or {}).get("agent_system_key"),
                 "auth": {
                     "initiator_user_id": (context or {}).get("initiator_user_id"),
                     "run_id": (context or {}).get("run_id"),
@@ -192,7 +192,7 @@ class ArtifactNodeExecutor(BaseNodeExecutor):
             }
 
             run = await ArtifactExecutionService(self.db).execute_live_run(
-                tenant_id=self.tenant_id,
+                organization_id=self.organization_id,
                 created_by=self._parse_uuid((context or {}).get("initiator_user_id")),
                 revision_id=revision.id,
                 domain=ArtifactRunDomain.AGENT,

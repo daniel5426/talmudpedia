@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import datetime
-import re
 from typing import Any
 from uuid import UUID
 
@@ -64,11 +63,6 @@ def _normalized_tool_io_schema(schema: dict[str, Any] | None) -> dict[str, Any]:
     return sanitize_schema_dict(deepcopy(schema) if isinstance(schema, dict) else {})
 
 
-def _slugify(value: str, *, fallback: str) -> str:
-    text = re.sub(r"[^a-z0-9]+", "-", str(value or "").strip().lower()).strip("-")
-    return text or fallback
-
-
 def _tool_semver(version_number: int | None) -> str:
     patch = max(int(version_number or 1) - 1, 0)
     return f"1.0.{patch}"
@@ -116,11 +110,8 @@ class ToolBindingService:
         self._db = db
 
     @staticmethod
-    def _artifact_tool_slug(artifact: Artifact) -> str:
-        display_name = str(getattr(artifact, "display_name", "") or "").strip()
-        artifact_id = str(getattr(artifact, "id", "") or "").replace("-", "")
-        suffix = artifact_id[:12] or "artifact"
-        return _slugify(display_name, fallback=f"artifact-tool-{suffix}") + f"-{suffix}"
+    def _tool_row_key(kind: str, object_id: UUID) -> str:
+        return f"tool-{kind}-{str(object_id).replace('-', '')}"
 
     async def sync_artifact_tool_binding(self, artifact: Artifact) -> ToolRegistry | None:
         if artifact.kind != ArtifactKind.TOOL_IMPL:
@@ -206,15 +197,15 @@ class ToolBindingService:
         if tool is None and not enabled:
             return None
 
-        slug = self._pipeline_tool_slug(pipeline)
-        await self._ensure_slug_available(slug, exclude_tool_id=tool.id if tool else None)
+        row_key = self._tool_row_key("pipeline", pipeline.id)
+        await self._ensure_row_key_available(row_key, exclude_tool_id=tool.id if tool else None)
         normalized_name = str(tool_name).strip() if tool_name is not None else None
 
         if tool is None:
             tool = ToolRegistry(
-                tenant_id=pipeline.tenant_id,
+                organization_id=pipeline.organization_id,
                 name=normalized_name or pipeline.name,
-                slug=slug,
+                slug=row_key,
                 description=description if description is not None else pipeline.description,
                 scope=ToolDefinitionScope.TENANT,
                 schema={
@@ -247,7 +238,7 @@ class ToolBindingService:
             tool.name = normalized_name or pipeline.name
         elif not str(tool.name or "").strip():
             tool.name = pipeline.name
-        tool.slug = slug
+        tool.slug = row_key
         tool.implementation_type = ToolImplementationType.RAG_PIPELINE
         tool.visual_pipeline_id = pipeline.id
         tool.artifact_id = None
@@ -296,11 +287,11 @@ class ToolBindingService:
         if tool is None:
             return None
 
-        slug = self._pipeline_tool_slug(pipeline)
-        await self._ensure_slug_available(slug, exclude_tool_id=tool.id)
+        row_key = self._tool_row_key("pipeline", pipeline.id)
+        await self._ensure_row_key_available(row_key, exclude_tool_id=tool.id)
         if tool.name in {None, "", previous_name}:
             tool.name = pipeline.name
-        tool.slug = slug
+        tool.slug = row_key
         if tool.description in {None, "", previous_description}:
             tool.description = pipeline.description
         tool.version = _tool_semver(pipeline.version)
@@ -352,7 +343,7 @@ class ToolBindingService:
         }
         if not str(tool.name or "").strip():
             tool.name = pipeline.name
-        tool.slug = self._pipeline_tool_slug(pipeline)
+        tool.slug = self._tool_row_key("pipeline", pipeline.id)
         tool.implementation_type = ToolImplementationType.RAG_PIPELINE
         tool.visual_pipeline_id = pipeline.id
         tool.executable_pipeline_id = executable_pipeline.id
@@ -386,7 +377,10 @@ class ToolBindingService:
     async def get_agent_tool(self, agent_id: UUID) -> ToolRegistry | None:
         return (
             await self._db.execute(
-                select(ToolRegistry).where(ToolRegistry.slug == self._agent_tool_slug(agent_id))
+                select(ToolRegistry).where(
+                    ToolRegistry.source_object_type == "agent",
+                    ToolRegistry.source_object_id == str(agent_id),
+                )
             )
         ).scalar_one_or_none()
 
@@ -409,9 +403,9 @@ class ToolBindingService:
 
         if tool is None:
             tool = ToolRegistry(
-                tenant_id=agent.tenant_id,
+                organization_id=agent.organization_id,
                 name=str(name or agent.name).strip() or agent.name,
-                slug=self._agent_tool_slug(agent.id),
+                slug=self._tool_row_key("agent", agent.id),
                 description=description if description is not None else agent.description,
                 scope=ToolDefinitionScope.TENANT,
                 schema=schema,
@@ -479,17 +473,17 @@ class ToolBindingService:
     def build_pipeline_input_schema(self, executable_pipeline: ExecutablePipeline) -> dict[str, Any]:
         dag = ((executable_pipeline.compiled_graph or {}).get("dag") or [])
         registry = OperatorRegistry.get_instance()
-        tenant_id = str(executable_pipeline.tenant_id) if executable_pipeline.tenant_id else None
+        organization_id= str(executable_pipeline.organization_id) if executable_pipeline.organization_id else None
         root_steps = [step for step in dag if not (step.get("depends_on") or [])]
 
         if len(root_steps) == 1:
-            return self._step_input_object(root_steps[0], registry=registry, tenant_id=tenant_id)
+            return self._step_input_object(root_steps[0], registry=registry, organization_id=organization_id)
 
         properties: dict[str, Any] = {}
         required: list[str] = []
         for step in root_steps:
             step_id = str(step.get("step_id") or step.get("operator") or "step")
-            properties[step_id] = self._step_input_object(step, registry=registry, tenant_id=tenant_id)
+            properties[step_id] = self._step_input_object(step, registry=registry, organization_id=organization_id)
             required.append(step_id)
         return {
             "type": "object",
@@ -521,14 +515,14 @@ class ToolBindingService:
     async def run_pipeline_tool(
         self,
         *,
-        tenant_id: UUID,
+        organization_id: UUID,
         executable_pipeline_id: UUID,
         input_payload: dict[str, Any],
     ) -> tuple[dict[str, Any], PipelineJob]:
         from app.rag.pipeline.executor import PipelineExecutor
 
         job = PipelineJob(
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             executable_pipeline_id=executable_pipeline_id,
             status=PipelineJobStatus.QUEUED,
             input_params=input_payload,
@@ -552,12 +546,12 @@ class ToolBindingService:
             )
         ).scalar_one_or_none()
 
-    async def _ensure_slug_available(self, slug: str, *, exclude_tool_id: UUID | None) -> None:
+    async def _ensure_row_key_available(self, row_key: str, *, exclude_tool_id: UUID | None) -> None:
         existing = (
-            await self._db.execute(select(ToolRegistry).where(ToolRegistry.slug == slug))
+            await self._db.execute(select(ToolRegistry).where(ToolRegistry.slug == row_key))
         ).scalar_one_or_none()
         if existing is not None and existing.id != exclude_tool_id:
-            raise ValueError(f"Tool slug '{slug}' is already in use")
+            raise ValueError(f"Tool row key '{row_key}' is already in use")
 
     def _artifact_schema_from_revision(self, revision: ArtifactRevision) -> dict[str, Any]:
         try:
@@ -581,8 +575,8 @@ class ToolBindingService:
         created_by: UUID | None,
     ) -> ToolRegistry:
         tool = await self._get_artifact_tool(artifact.id)
-        slug = self._artifact_tool_slug(artifact)
-        await self._ensure_slug_available(slug, exclude_tool_id=tool.id if tool else None)
+        row_key = self._tool_row_key("artifact", artifact.id)
+        await self._ensure_row_key_available(row_key, exclude_tool_id=tool.id if tool else None)
 
         raw_schema = self._artifact_schema_from_revision(revision)
         schema = {
@@ -592,9 +586,9 @@ class ToolBindingService:
         version = _tool_semver(revision.revision_number)
         if tool is None:
             tool = ToolRegistry(
-                tenant_id=artifact.tenant_id,
+                organization_id=artifact.organization_id,
                 name=revision.display_name,
-                slug=slug,
+                slug=row_key,
                 description=revision.description,
                 scope=ToolDefinitionScope.TENANT,
                 schema=schema,
@@ -618,7 +612,7 @@ class ToolBindingService:
             self._db.add(tool)
         else:
             tool.name = revision.display_name
-            tool.slug = slug
+            tool.slug = row_key
             tool.description = revision.description
             tool.schema = schema
             tool.config_schema = dict(revision.config_schema or {})
@@ -651,10 +645,6 @@ class ToolBindingService:
             )
             await self._db.flush()
         return tool
-
-    def _pipeline_tool_slug(self, pipeline: VisualPipeline) -> str:
-        base = _slugify(pipeline.name, fallback="pipeline-tool")
-        return f"{base}-pipeline-{str(pipeline.id).replace('-', '')[:8]}"
 
     def _build_agent_input_schema(self, agent: Agent) -> dict[str, Any]:
         graph = AgentGraph.model_validate(agent.graph_definition or {"nodes": [], "edges": []})
@@ -694,9 +684,6 @@ class ToolBindingService:
             "additionalProperties": False,
         }
 
-    def _agent_tool_slug(self, agent_id: UUID) -> str:
-        return f"agent-tool-{str(agent_id).replace('-', '')[:12]}"
-
     def _agent_tool_status(self, agent: Agent) -> ToolStatus:
         status_text = str(getattr(getattr(agent, "status", None), "value", getattr(agent, "status", ""))).lower()
         if status_text == AgentStatus.published.value:
@@ -714,7 +701,6 @@ class ToolBindingService:
             "implementation": {
                 "type": "agent_call",
                 "target_agent_id": str(agent.id),
-                "target_agent_slug": agent.slug,
                 "mode": "sync",
             },
             "execution": {
@@ -764,12 +750,12 @@ class ToolBindingService:
         step: dict[str, Any],
         *,
         registry: OperatorRegistry,
-        tenant_id: str | None,
+        organization_id: str | None,
     ) -> dict[str, Any]:
         operator_id = step.get("operator")
         if not operator_id:
             return {"type": "object", "properties": {}, "additionalProperties": False}
-        spec = registry.get(operator_id, tenant_id)
+        spec = registry.get(operator_id, organization_id)
         if spec is None:
             return {"type": "object", "properties": {}, "additionalProperties": False}
 

@@ -106,15 +106,15 @@ class UsageQuotaService:
             next_month = start_local.replace(month=start_local.month + 1)
         return start_local.astimezone(timezone.utc), next_month.astimezone(timezone.utc)
 
-    async def _resolve_policy(self, *, tenant_id: UUID, user_id: Optional[UUID], scope: UsageQuotaScopeType) -> Optional[_ScopePolicy]:
-        if scope == UsageQuotaScopeType.tenant:
+    async def _resolve_policy(self, *, organization_id: UUID, user_id: Optional[UUID], scope: UsageQuotaScopeType) -> Optional[_ScopePolicy]:
+        if scope == UsageQuotaScopeType.organization:
             result = await self.db.execute(
                 select(UsageQuotaPolicy)
                 .where(
                     and_(
-                        UsageQuotaPolicy.tenant_id == tenant_id,
+                        UsageQuotaPolicy.organization_id == organization_id,
                         UsageQuotaPolicy.user_id.is_(None),
-                        UsageQuotaPolicy.scope_type == UsageQuotaScopeType.tenant,
+                        UsageQuotaPolicy.scope_type == UsageQuotaScopeType.organization,
                         UsageQuotaPolicy.period_type == UsageQuotaPeriodType.monthly,
                         UsageQuotaPolicy.is_active.is_(True),
                     )
@@ -125,8 +125,8 @@ class UsageQuotaService:
             if row is None:
                 return None
             return _ScopePolicy(
-                scope_type=UsageQuotaScopeType.tenant,
-                scope_id=tenant_id,
+                scope_type=UsageQuotaScopeType.organization,
+                scope_id=organization_id,
                 limit_tokens=max(0, int(row.limit_tokens or 0)),
                 timezone=str(row.timezone or "UTC"),
             )
@@ -137,7 +137,7 @@ class UsageQuotaService:
             select(UsageQuotaPolicy)
             .where(
                 and_(
-                    UsageQuotaPolicy.tenant_id == tenant_id,
+                    UsageQuotaPolicy.organization_id == organization_id,
                     UsageQuotaPolicy.user_id == user_id,
                     UsageQuotaPolicy.scope_type == UsageQuotaScopeType.user,
                     UsageQuotaPolicy.period_type == UsageQuotaPeriodType.monthly,
@@ -196,7 +196,7 @@ class UsageQuotaService:
         self,
         *,
         run_id: UUID,
-        tenant_id: UUID,
+        organization_id: UUID,
         user_id: Optional[UUID],
         input_params: dict[str, Any],
     ) -> dict[str, Any]:
@@ -208,10 +208,10 @@ class UsageQuotaService:
                 "period_end": None,
             }
 
-        tenant_policy = await self._resolve_policy(tenant_id=tenant_id, user_id=user_id, scope=UsageQuotaScopeType.tenant)
-        user_policy = await self._resolve_policy(tenant_id=tenant_id, user_id=user_id, scope=UsageQuotaScopeType.user)
+        organization_policy = await self._resolve_policy(organization_id=organization_id, user_id=user_id, scope=UsageQuotaScopeType.organization)
+        user_policy = await self._resolve_policy(organization_id=organization_id, user_id=user_id, scope=UsageQuotaScopeType.user)
 
-        if tenant_policy is None and user_policy is None:
+        if organization_policy is None and user_policy is None:
             return {
                 "reserved_tokens": 0,
                 "max_output_cap": self._resolve_cap(input_params),
@@ -219,7 +219,7 @@ class UsageQuotaService:
                 "period_end": None,
             }
 
-        active_policies = [p for p in (tenant_policy, user_policy) if p is not None]
+        active_policies = [p for p in (organization_policy, user_policy) if p is not None]
         tz_name = active_policies[0].timezone if active_policies else "UTC"
         period_start, period_end = self._month_bounds_utc(tz_name=tz_name)
 
@@ -228,25 +228,25 @@ class UsageQuotaService:
         requested_reserve = max(1, int(prompt_tokens + max_output_cap))
 
         failures: list[dict[str, Any]] = []
-        tenant_counter: Optional[UsageQuotaCounter] = None
+        organization_counter: Optional[UsageQuotaCounter] = None
         user_counter: Optional[UsageQuotaCounter] = None
 
-        if tenant_policy is not None:
-            tenant_counter = await self._lock_counter(
-                scope_type=UsageQuotaScopeType.tenant,
-                scope_id=tenant_policy.scope_id,
+        if organization_policy is not None:
+            organization_counter = await self._lock_counter(
+                scope_type=UsageQuotaScopeType.organization,
+                scope_id=organization_policy.scope_id,
                 period_start=period_start,
                 period_end=period_end,
             )
-            projected = int(tenant_counter.used_tokens or 0) + int(tenant_counter.reserved_tokens or 0) + requested_reserve
-            if projected > tenant_policy.limit_tokens:
+            projected = int(organization_counter.used_tokens or 0) + int(organization_counter.reserved_tokens or 0) + requested_reserve
+            if projected > organization_policy.limit_tokens:
                 failures.append(
                     {
-                        "scope_type": "tenant",
-                        "scope_id": str(tenant_policy.scope_id),
-                        "limit_tokens": int(tenant_policy.limit_tokens),
-                        "used_tokens": int(tenant_counter.used_tokens or 0),
-                        "reserved_tokens": int(tenant_counter.reserved_tokens or 0),
+                        "scope_type": "organization",
+                        "scope_id": str(organization_policy.scope_id),
+                        "limit_tokens": int(organization_policy.limit_tokens),
+                        "used_tokens": int(organization_counter.used_tokens or 0),
+                        "reserved_tokens": int(organization_counter.reserved_tokens or 0),
                         "requested_reserve": requested_reserve,
                     }
                 )
@@ -278,18 +278,18 @@ class UsageQuotaService:
                 period_end=period_end,
             )
 
-        if tenant_counter is not None:
-            tenant_counter.reserved_tokens = int(tenant_counter.reserved_tokens or 0) + requested_reserve
+        if organization_counter is not None:
+            organization_counter.reserved_tokens = int(organization_counter.reserved_tokens or 0) + requested_reserve
         if user_counter is not None:
             user_counter.reserved_tokens = int(user_counter.reserved_tokens or 0) + requested_reserve
 
         reservation = UsageQuotaReservation(
             run_id=run_id,
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             user_id=user_id,
             period_start=period_start,
             reserved_tokens_user=requested_reserve if user_counter is not None else 0,
-            reserved_tokens_tenant=requested_reserve if tenant_counter is not None else 0,
+            reserved_tokens_organization=requested_reserve if organization_counter is not None else 0,
             status=UsageQuotaReservationStatus.active,
         )
         self.db.add(reservation)
@@ -321,13 +321,13 @@ class UsageQuotaService:
 
         usage_to_apply = max(0, int(actual_usage_tokens or 0))
 
-        if reservation.reserved_tokens_tenant > 0:
+        if reservation.reserved_tokens_organization > 0:
             counter_result = await self.db.execute(
                 select(UsageQuotaCounter)
                 .where(
                     and_(
-                        UsageQuotaCounter.scope_type == UsageQuotaScopeType.tenant,
-                        UsageQuotaCounter.scope_id == reservation.tenant_id,
+                        UsageQuotaCounter.scope_type == UsageQuotaScopeType.organization,
+                        UsageQuotaCounter.scope_id == reservation.organization_id,
                         UsageQuotaCounter.period_start == reservation.period_start,
                     )
                 )
@@ -336,7 +336,7 @@ class UsageQuotaService:
             )
             counter = counter_result.scalar_one_or_none()
             if counter is not None:
-                counter.reserved_tokens = max(0, int(counter.reserved_tokens or 0) - int(reservation.reserved_tokens_tenant or 0))
+                counter.reserved_tokens = max(0, int(counter.reserved_tokens or 0) - int(reservation.reserved_tokens_organization or 0))
                 counter.used_tokens = int(counter.used_tokens or 0) + usage_to_apply
 
         if reservation.user_id is not None and reservation.reserved_tokens_user > 0:
@@ -378,13 +378,13 @@ class UsageQuotaService:
         }:
             return False
 
-        if reservation.reserved_tokens_tenant > 0:
+        if reservation.reserved_tokens_organization > 0:
             counter_result = await self.db.execute(
                 select(UsageQuotaCounter)
                 .where(
                     and_(
-                        UsageQuotaCounter.scope_type == UsageQuotaScopeType.tenant,
-                        UsageQuotaCounter.scope_id == reservation.tenant_id,
+                        UsageQuotaCounter.scope_type == UsageQuotaScopeType.organization,
+                        UsageQuotaCounter.scope_id == reservation.organization_id,
                         UsageQuotaCounter.period_start == reservation.period_start,
                     )
                 )
@@ -393,7 +393,7 @@ class UsageQuotaService:
             )
             counter = counter_result.scalar_one_or_none()
             if counter is not None:
-                counter.reserved_tokens = max(0, int(counter.reserved_tokens or 0) - int(reservation.reserved_tokens_tenant or 0))
+                counter.reserved_tokens = max(0, int(counter.reserved_tokens or 0) - int(reservation.reserved_tokens_organization or 0))
 
         if reservation.user_id is not None and reservation.reserved_tokens_user > 0:
             counter_result = await self.db.execute(
@@ -444,8 +444,8 @@ class UsageQuotaService:
         period_end: datetime,
     ) -> int:
         run_filter = [AgentRun.created_at >= period_start, AgentRun.created_at < period_end]
-        if scope_type == UsageQuotaScopeType.tenant:
-            run_filter.append(AgentRun.tenant_id == scope_id)
+        if scope_type == UsageQuotaScopeType.organization:
+            run_filter.append(AgentRun.organization_id == scope_id)
         else:
             run_filter.append(AgentRun.user_id == scope_id)
 

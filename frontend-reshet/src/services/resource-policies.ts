@@ -5,7 +5,7 @@ import { httpClient } from "./http"
 // ============================================================================
 
 export type ResourcePolicyPrincipalType =
-  | "tenant_user"
+  | "organization_user"
   | "published_app_account"
   | "embedded_external_user"
 

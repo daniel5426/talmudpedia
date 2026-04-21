@@ -32,7 +32,7 @@ class RuntimePreparedSource:
 async def validate_and_collect_runtime_credential_refs(
     *,
     db: AsyncSession,
-    tenant_id: UUID | None,
+    organization_id: UUID | None,
     language: str,
     source_files: list[dict[str, Any]] | None,
 ) -> list[str]:
@@ -41,7 +41,7 @@ async def validate_and_collect_runtime_credential_refs(
         return []
     await _resolve_scalar_secret_values(
         db=db,
-        tenant_id=tenant_id,
+        organization_id=organization_id,
         credential_ids=[UUID(item) for item in credential_ids],
     )
     return credential_ids
@@ -124,13 +124,13 @@ def prepare_deployable_source_files(
 async def resolve_runtime_credentials(
     *,
     db: AsyncSession,
-    tenant_id: UUID | None,
+    organization_id: UUID | None,
     revision: ArtifactRevision,
 ) -> dict[str, str]:
     credential_ids = [UUID(item) for item in list(((revision.manifest_json or {}).get("credential_refs") or []))]
     return await _resolve_scalar_secret_values(
         db=db,
-        tenant_id=tenant_id,
+        organization_id=organization_id,
         credential_ids=credential_ids,
     )
 
@@ -162,10 +162,10 @@ def rewrite_source_files_for_context_credentials(
 async def _resolve_scalar_secret_values(
     *,
     db: AsyncSession,
-    tenant_id: UUID | None,
+    organization_id: UUID | None,
     credential_ids: list[UUID],
 ) -> dict[str, str]:
-    credentials = CredentialsService(db, tenant_id)
+    credentials = CredentialsService(db, organization_id)
     resolved: dict[str, str] = {}
     for credential_id in credential_ids:
         credential = await credentials.get_by_id(credential_id)

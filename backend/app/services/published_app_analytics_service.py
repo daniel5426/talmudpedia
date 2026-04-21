@@ -165,7 +165,7 @@ class PublishedAppAnalyticsService:
             "auth_state": "authenticated" if app_account_id else "anonymous",
         }
         common = dict(
-            tenant_id=app.tenant_id,
+            organization_id=app.organization_id,
             published_app_id=app.id,
             app_account_id=app_account_id,
             session_id=session_id,
@@ -203,12 +203,12 @@ class PublishedAppAnalyticsService:
     async def build_stats_for_tenant(
         self,
         *,
-        tenant_id: UUID,
+        organization_id: UUID,
         start: datetime,
         end: datetime,
         app_id: UUID | None = None,
     ) -> list[PublishedAppStatsSummary]:
-        apps_query = select(PublishedApp).where(PublishedApp.tenant_id == tenant_id).order_by(PublishedApp.updated_at.desc())
+        apps_query = select(PublishedApp).where(PublishedApp.organization_id == organization_id).order_by(PublishedApp.updated_at.desc())
         if app_id is not None:
             apps_query = apps_query.where(PublishedApp.id == app_id)
         apps = list((await self.db.execute(apps_query)).scalars().all())
@@ -221,7 +221,7 @@ class PublishedAppAnalyticsService:
                 await self.db.execute(
                     select(PublishedAppAnalyticsEvent).where(
                         and_(
-                            PublishedAppAnalyticsEvent.tenant_id == tenant_id,
+                            PublishedAppAnalyticsEvent.organization_id == organization_id,
                             PublishedAppAnalyticsEvent.published_app_id.in_(app_ids),
                             PublishedAppAnalyticsEvent.occurred_at >= start,
                             PublishedAppAnalyticsEvent.occurred_at <= end,
@@ -236,7 +236,7 @@ class PublishedAppAnalyticsService:
                 await self.db.execute(
                     select(AgentRun).where(
                         and_(
-                            AgentRun.tenant_id == tenant_id,
+                            AgentRun.organization_id == organization_id,
                             AgentRun.published_app_id.in_(app_ids),
                             AgentRun.created_at >= start,
                             AgentRun.created_at <= end,
@@ -251,7 +251,7 @@ class PublishedAppAnalyticsService:
                 await self.db.execute(
                     select(AgentThread).where(
                         and_(
-                            AgentThread.tenant_id == tenant_id,
+                            AgentThread.organization_id == organization_id,
                             AgentThread.published_app_id.in_(app_ids),
                             AgentThread.created_at >= start,
                             AgentThread.created_at <= end,

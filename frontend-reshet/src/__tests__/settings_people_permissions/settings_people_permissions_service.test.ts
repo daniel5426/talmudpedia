@@ -26,8 +26,8 @@ describe("settings people permissions service", () => {
     deleteMock.mockResolvedValue(undefined)
 
     await settingsPeoplePermissionsService.listMembers()
-    await settingsPeoplePermissionsService.createInvitation({ email: "new@example.com", project_ids: ["p1"] })
-    await settingsPeoplePermissionsService.createGroup({ name: "Ops", slug: "ops", type: "team" })
+    await settingsPeoplePermissionsService.createInvitation({ email: "new@example.com", project_ids: ["p1"], project_role_id: "pr1" })
+    await settingsPeoplePermissionsService.createGroup({ name: "Ops", type: "team" })
     await settingsPeoplePermissionsService.createRole({
       family: "organization",
       name: "Support Admin",
@@ -35,11 +35,18 @@ describe("settings people permissions service", () => {
       permissions: ["organizations.read"],
     })
     await settingsPeoplePermissionsService.updateRole("r1", { family: "project", name: "Workflow Builder" })
+    await settingsPeoplePermissionsService.listRoleAssignments({ assignment_kind: "project", project_id: "p1" })
+    await settingsPeoplePermissionsService.createRoleAssignment({
+      user_id: "u1",
+      role_id: "r-project",
+      assignment_kind: "project",
+      project_id: "p1",
+    })
     await settingsPeoplePermissionsService.deleteRoleAssignment("a1")
 
     expect(getMock).toHaveBeenCalledWith("/api/settings/people/members")
-    expect(postMock).toHaveBeenNthCalledWith(1, "/api/settings/people/invitations", { email: "new@example.com", project_ids: ["p1"] })
-    expect(postMock).toHaveBeenNthCalledWith(2, "/api/settings/people/groups", { name: "Ops", slug: "ops", type: "team" })
+    expect(postMock).toHaveBeenNthCalledWith(1, "/api/settings/people/invitations", { email: "new@example.com", project_ids: ["p1"], project_role_id: "pr1" })
+    expect(postMock).toHaveBeenNthCalledWith(2, "/api/settings/people/groups", { name: "Ops", type: "team" })
     expect(postMock).toHaveBeenNthCalledWith(3, "/api/settings/people/roles", {
       family: "organization",
       name: "Support Admin",
@@ -47,6 +54,13 @@ describe("settings people permissions service", () => {
       permissions: ["organizations.read"],
     })
     expect(patchMock).toHaveBeenCalledWith("/api/settings/people/roles/r1", { family: "project", name: "Workflow Builder" })
+    expect(getMock).toHaveBeenCalledWith("/api/settings/people/role-assignments?assignment_kind=project&project_id=p1")
+    expect(postMock).toHaveBeenNthCalledWith(4, "/api/settings/people/role-assignments", {
+      user_id: "u1",
+      role_id: "r-project",
+      assignment_kind: "project",
+      project_id: "p1",
+    })
     expect(deleteMock).toHaveBeenCalledWith("/api/settings/people/role-assignments/a1")
   })
 })

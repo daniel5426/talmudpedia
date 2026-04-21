@@ -228,7 +228,7 @@ class PublishedAppCodingRunMonitor:
                 files=files,
                 runtime_context=TemplateRuntimeContext(
                     app_id=str(app.id),
-                    app_slug=str(app.slug or ""),
+                    app_public_id=str(app.public_id or ""),
                     agent_id=str(app.agent_id or ""),
                 ),
             )

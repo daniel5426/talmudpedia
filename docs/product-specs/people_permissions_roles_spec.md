@@ -176,14 +176,15 @@ Default invite behavior:
 
 - the invite always creates organization membership
 - the default organization role is `Reader`
-- the invite modal includes a role select for project access
-- that role select defaults to `Member`
-- if one or more projects are selected, the chosen project role is applied to each selected project
+- the invite modal includes an optional single-project picker
+- the invite modal includes a project-role select for that project access
+- the project-role select defaults to `Member`
+- if a project is selected, the chosen project role is applied to that project
 
 V1 invite simplification:
 
-- one shared project-role selection may be applied to all selected projects
-- per-project role overrides are out of scope for V1
+- only one optional project may be selected in the invite modal
+- multi-project invite assignment is out of scope for the current V1 implementation
 
 If no project is selected:
 

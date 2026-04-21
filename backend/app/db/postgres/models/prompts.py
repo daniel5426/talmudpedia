@@ -16,7 +16,7 @@ def _enum_values(enum_cls):
 
 
 class PromptScope(str, enum.Enum):
-    TENANT = "tenant"
+    TENANT = "organization"
     GLOBAL = "global"
 
 
@@ -34,7 +34,7 @@ class PromptLibrary(Base):
     __tablename__ = "prompt_library"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=True, index=True)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=True, index=True)
 
     name = Column(String, nullable=False, index=True)
     description = Column(Text, nullable=True)
@@ -65,11 +65,11 @@ class PromptLibrary(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
-    tenant = relationship("Tenant")
+    organization = relationship("Organization")
     versions = relationship("PromptLibraryVersion", back_populates="prompt", cascade="all, delete-orphan")
 
     __table_args__ = (
-        Index("ix_prompt_library_tenant_name", "tenant_id", "name"),
+        Index("ix_prompt_library_organization_name", "organization_id", "name"),
     )
 
 

@@ -17,10 +17,10 @@ from app.api.routers.artifact_coding_agent import (
 )
 from app.db.postgres.models.agent_threads import AgentThreadTurn, AgentThreadTurnStatus
 from app.db.postgres.models.agents import AgentRun, RunStatus
-from app.db.postgres.models.artifact_runtime import ArtifactCodingMessage, ArtifactCodingSession, ArtifactCodingSharedDraft, ArtifactRun, ArtifactRunDomain, ArtifactRunEvent, ArtifactRunStatus
+from app.db.postgres.models.artifact_runtime import ArtifactCodingMessage, ArtifactCodingSession, ArtifactCodingSharedDraft, ArtifactRevision, ArtifactRun, ArtifactRunDomain, ArtifactRunEvent, ArtifactRunStatus
 from app.db.postgres.models.registry import IntegrationCredential, IntegrationCredentialCategory, ToolRegistry
 from app.services.artifact_coding_shared_draft_service import ArtifactCodingSharedDraftService
-from app.db.postgres.models.identity import Tenant, User
+from app.db.postgres.models.identity import Organization, User
 from app.services.artifact_coding_chat_history_service import ArtifactCodingChatHistoryService
 from app.services.artifact_coding_agent_profile import ensure_artifact_coding_agent_profile
 from app.services.artifact_coding_agent_test_tools import (
@@ -49,7 +49,7 @@ from app.services.platform_architect_worker_tools import (
 
 async def _seed_tenant_and_user(db_session):
     suffix = uuid4().hex[:8]
-    tenant = Tenant(name=f"Artifact Tenant {suffix}", slug=f"artifact-tenant-{suffix}")
+    tenant = Organization(name=f"Artifact Organization {suffix}", slug=f"artifact-tenant-{suffix}")
     user = User(email=f"artifact-owner-{suffix}@example.com", role="admin")
     db_session.add_all([tenant, user])
     await db_session.commit()
@@ -81,10 +81,10 @@ def _tool_impl_create_payload(name: str) -> dict[str, object]:
     }
 
 
-async def _create_artifact_from_payload(db_session, *, tenant_id, user_id, payload: dict[str, object]):
+async def _create_artifact_from_payload(db_session, *, organization_id, user_id, payload: dict[str, object]):
     service = ArtifactRevisionService(db_session)
     artifact = await service.create_artifact(
-        tenant_id=tenant_id,
+        organization_id=organization_id,
         created_by=user_id,
         display_name=str(payload["display_name"]),
         description=str(payload.get("description") or ""),
@@ -111,7 +111,7 @@ async def _create_artifact_coding_worker_run(
     shared_draft,
 ):
     run = AgentRun(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         agent_id=agent.id,
         user_id=user.id,
         initiator_user_id=user.id,
@@ -130,6 +130,33 @@ async def _create_artifact_coding_worker_run(
     db_session.add(run)
     await db_session.flush()
     return run
+
+
+async def _create_artifact_revision(
+    db_session,
+    *,
+    organization_id,
+    user_id=None,
+    artifact_id=None,
+    display_name="Artifact Revision",
+):
+    revision = ArtifactRevision(
+        organization_id=organization_id,
+        artifact_id=artifact_id,
+        display_name=display_name,
+        description="",
+        source_files=[{"path": "main.py", "content": "def execute(inputs, config, context):\n    return inputs\n"}],
+        entry_module_path="main.py",
+        manifest_json={},
+        python_dependencies=[],
+        runtime_target="cloudflare_workers",
+        capabilities={},
+        config_schema={},
+        created_by=user_id,
+    )
+    db_session.add(revision)
+    await db_session.flush()
+    return revision
 
 
 @pytest.mark.asyncio
@@ -182,7 +209,7 @@ async def test_runtime_service_relinks_draft_key_to_saved_artifact_without_new_s
     }
 
     prepared = await runtime.prepare_session(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         agent_id=agent.id,
         title_prompt="Create a delegated tool artifact",
@@ -206,13 +233,13 @@ async def test_runtime_service_relinks_draft_key_to_saved_artifact_without_new_s
     assert create_input["action"] == "artifacts.create"
     artifact = await _create_artifact_from_payload(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         payload=create_input["payload"],
     )
 
     relinked = await runtime.prepare_session(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         agent_id=agent.id,
         title_prompt="Persist delegated tool artifact",
@@ -226,7 +253,7 @@ async def test_runtime_service_relinks_draft_key_to_saved_artifact_without_new_s
 
     shared_drafts = (
         await db_session.execute(
-            select(ArtifactCodingSharedDraft).where(ArtifactCodingSharedDraft.tenant_id == tenant.id)
+            select(ArtifactCodingSharedDraft).where(ArtifactCodingSharedDraft.organization_id == tenant.id)
         )
     ).scalars().all()
 
@@ -296,7 +323,7 @@ async def test_prepare_session_without_scope_keeps_direct_shared_draft_link(db_s
 
     runtime = ArtifactCodingRuntimeService(db_session)
     prepared = await runtime.prepare_session(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         agent_id=agent.id,
         title_prompt="Create a scope-free delegated draft",
@@ -316,7 +343,7 @@ async def test_prepare_session_without_scope_keeps_direct_shared_draft_link(db_s
 
     shared_drafts_before = (
         await db_session.execute(
-            select(ArtifactCodingSharedDraft).where(ArtifactCodingSharedDraft.tenant_id == tenant.id)
+            select(ArtifactCodingSharedDraft).where(ArtifactCodingSharedDraft.organization_id == tenant.id)
         )
     ).scalars().all()
 
@@ -325,13 +352,13 @@ async def test_prepare_session_without_scope_keeps_direct_shared_draft_link(db_s
 
     resolved = await ArtifactCodingSharedDraftService(db_session).resolve_for_session(session=prepared.session)
     state_session, state_shared_draft, _artifact, _run, _last_test_run = await runtime.get_session_state_for_user(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         session_id=prepared.session.id,
     )
     shared_drafts_after = (
         await db_session.execute(
-            select(ArtifactCodingSharedDraft).where(ArtifactCodingSharedDraft.tenant_id == tenant.id)
+            select(ArtifactCodingSharedDraft).where(ArtifactCodingSharedDraft.organization_id == tenant.id)
         )
     ).scalars().all()
 
@@ -349,7 +376,7 @@ async def test_artifact_tools_use_run_pinned_shared_draft_when_session_binding_c
     runtime = ArtifactCodingRuntimeService(db_session)
     agent = await ensure_artifact_coding_agent_profile(db_session, tenant.id, actor_user_id=user.id)
     prepared = await runtime.prepare_session(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         agent_id=agent.id,
         title_prompt="Use the pinned draft",
@@ -365,7 +392,7 @@ async def test_artifact_tools_use_run_pinned_shared_draft_when_session_binding_c
         replace_snapshot=True,
     )
     alternate_shared_draft = await ArtifactCodingSharedDraftService(db_session).get_or_create_for_scope(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         artifact_id=None,
         draft_key=f"draft-{uuid4().hex[:8]}",
         initial_snapshot=runtime.build_initial_snapshot_from_seed(
@@ -379,7 +406,7 @@ async def test_artifact_tools_use_run_pinned_shared_draft_when_session_binding_c
     prepared.shared_draft.working_draft_snapshot["display_name"] = "Pinned Draft"
     alternate_shared_draft.working_draft_snapshot["display_name"] = "Rebound Draft"
     run = AgentRun(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         agent_id=agent.id,
         user_id=user.id,
         initiator_user_id=user.id,
@@ -414,7 +441,7 @@ async def test_artifact_tools_ignore_payload_scope_overrides_and_use_run_bound_c
     runtime = ArtifactCodingRuntimeService(db_session)
     agent = await ensure_artifact_coding_agent_profile(db_session, tenant.id, actor_user_id=user.id)
     prepared = await runtime.prepare_session(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         agent_id=agent.id,
         title_prompt="Use the real run scope",
@@ -425,7 +452,7 @@ async def test_artifact_tools_ignore_payload_scope_overrides_and_use_run_bound_c
         replace_snapshot=True,
     )
     other = await runtime.prepare_session(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         agent_id=agent.id,
         title_prompt="Other scope",
@@ -469,7 +496,7 @@ async def test_prepare_session_rejects_mismatched_draft_key_for_existing_chat(db
     runtime = ArtifactCodingRuntimeService(db_session)
     agent = await ensure_artifact_coding_agent_profile(db_session, tenant.id, actor_user_id=user.id)
     prepared = await runtime.prepare_session(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         agent_id=agent.id,
         title_prompt="Locked draft scope",
@@ -483,7 +510,7 @@ async def test_prepare_session_rejects_mismatched_draft_key_for_existing_chat(db
 
     with pytest.raises(ValueError, match="already bound to a different draft"):
         await runtime.prepare_session(
-            tenant_id=tenant.id,
+            organization_id=tenant.id,
             user_id=user.id,
             agent_id=agent.id,
             title_prompt="Try to rebind scope",
@@ -506,7 +533,7 @@ async def test_require_run_owner_uses_bound_session_and_enforces_user_ownership(
     runtime = ArtifactCodingRuntimeService(db_session)
     agent = await ensure_artifact_coding_agent_profile(db_session, tenant.id, actor_user_id=owner.id)
     prepared = await runtime.prepare_session(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=owner.id,
         agent_id=agent.id,
         title_prompt="Owner-bound chat",
@@ -525,7 +552,7 @@ async def test_require_run_owner_uses_bound_session_and_enforces_user_ownership(
         shared_draft=prepared.shared_draft,
     )
     newer_run = AgentRun(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         agent_id=agent.id,
         user_id=owner.id,
         initiator_user_id=owner.id,
@@ -548,7 +575,7 @@ async def test_require_run_owner_uses_bound_session_and_enforces_user_ownership(
 
     resolved_run, resolved_session = await _require_run_owner(
         db=db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=owner.id,
         run_id=run.id,
     )
@@ -559,7 +586,7 @@ async def test_require_run_owner_uses_bound_session_and_enforces_user_ownership(
     with pytest.raises(HTTPException, match="Artifact coding chat session not found"):
         await _require_run_owner(
             db=db_session,
-            tenant_id=tenant.id,
+            organization_id=tenant.id,
             user_id=other_user.id,
             run_id=run.id,
         )
@@ -571,7 +598,7 @@ async def test_reconcile_session_run_marks_completed_run_failed_after_tool_failu
     runtime = ArtifactCodingRuntimeService(db_session)
     agent = await ensure_artifact_coding_agent_profile(db_session, tenant.id, actor_user_id=user.id)
     prepared = await runtime.prepare_session(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         agent_id=agent.id,
         title_prompt="Trigger tool failure reconciliation",
@@ -582,7 +609,7 @@ async def test_reconcile_session_run_marks_completed_run_failed_after_tool_failu
         replace_snapshot=True,
     )
     run = AgentRun(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         agent_id=agent.id,
         user_id=user.id,
         initiator_user_id=user.id,
@@ -649,7 +676,7 @@ async def test_start_prompt_run_creates_thread_turn_immediately(db_session, monk
         del self, background, mode, requested_scopes, kwargs
         run = AgentRun(
             id=created_run_id,
-            tenant_id=tenant.id,
+            organization_id=tenant.id,
             agent_id=agent_id,
             user_id=user_id,
             initiator_user_id=user_id,
@@ -666,7 +693,7 @@ async def test_start_prompt_run_creates_thread_turn_immediately(db_session, monk
     monkeypatch.setattr("app.services.artifact_coding_runtime_service.AgentExecutorService.start_run", fake_start_run)
 
     session, _shared_draft, run = await runtime.start_prompt_run(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         user_prompt="Create the artifact",
         artifact_id=None,
@@ -694,7 +721,7 @@ async def test_cancel_run_persists_partial_assistant_text_and_cancelled_turn(db_
     agent = await ensure_artifact_coding_agent_profile(db_session, tenant.id, actor_user_id=user.id)
     runtime = ArtifactCodingRuntimeService(db_session)
     prepared = await runtime.prepare_session(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         agent_id=agent.id,
         title_prompt="Cancel the run",
@@ -706,7 +733,7 @@ async def test_cancel_run_persists_partial_assistant_text_and_cancelled_turn(db_
     )
 
     run = AgentRun(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         agent_id=agent.id,
         user_id=user.id,
         initiator_user_id=user.id,
@@ -770,7 +797,7 @@ async def test_build_run_messages_maps_orchestrator_role_to_system(db_session):
     agent = await ensure_artifact_coding_agent_profile(db_session, tenant.id, actor_user_id=user.id)
     runtime = ArtifactCodingRuntimeService(db_session)
     prepared = await runtime.prepare_session(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         agent_id=agent.id,
         title_prompt="Start orchestrator history mapping test",
@@ -780,20 +807,27 @@ async def test_build_run_messages_maps_orchestrator_role_to_system(db_session):
         draft_snapshot=runtime.build_initial_snapshot_from_seed({"kind": "tool_impl"}),
         replace_snapshot=True,
     )
-    run_id = uuid4()
+    history_run = await _create_artifact_coding_worker_run(
+        db_session,
+        tenant=tenant,
+        user=user,
+        agent=agent,
+        session=prepared.session,
+        shared_draft=prepared.shared_draft,
+    )
     await runtime.history.persist_user_message(
         session_id=prepared.session.id,
-        run_id=run_id,
+        run_id=history_run.id,
         content="Initial human request",
     )
     await runtime.history.persist_assistant_message(
         session_id=prepared.session.id,
-        run_id=run_id,
+        run_id=history_run.id,
         content="Initial assistant reply",
     )
     await runtime.history.persist_orchestrator_message(
         session_id=prepared.session.id,
-        run_id=run_id,
+        run_id=history_run.id,
         content="Apply the requested changes without re-asking.",
     )
     await db_session.commit()
@@ -818,7 +852,7 @@ async def test_session_detail_includes_run_events_for_failed_run_without_assista
     agent = await ensure_artifact_coding_agent_profile(db_session, tenant.id, actor_user_id=user.id)
     runtime = ArtifactCodingRuntimeService(db_session)
     prepared = await runtime.prepare_session(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         agent_id=agent.id,
         title_prompt="Show failed partial history",
@@ -829,7 +863,7 @@ async def test_session_detail_includes_run_events_for_failed_run_without_assista
         replace_snapshot=True,
     )
     run = AgentRun(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         agent_id=agent.id,
         user_id=user.id,
         initiator_user_id=user.id,
@@ -884,7 +918,7 @@ async def test_session_detail_includes_run_events_for_failed_run_without_assista
 
     detail = await _build_session_detail_response(
         db=db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         session=session,
         before_message_id=None,
         limit=10,
@@ -901,7 +935,7 @@ async def test_prepare_session_run_input_uses_native_session_thread_and_orchestr
     runtime = ArtifactCodingRuntimeService(db_session)
     agent = await ensure_artifact_coding_agent_profile(db_session, tenant.id, actor_user_id=user.id)
     prepared = await runtime.prepare_session(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         agent_id=agent.id,
         title_prompt="Prepare native session input",
@@ -911,21 +945,28 @@ async def test_prepare_session_run_input_uses_native_session_thread_and_orchestr
         draft_snapshot=runtime.build_initial_snapshot_from_seed({"kind": "tool_impl"}),
         replace_snapshot=True,
     )
-    run_id = uuid4()
+    history_run = await _create_artifact_coding_worker_run(
+        db_session,
+        tenant=tenant,
+        user=user,
+        agent=agent,
+        session=prepared.session,
+        shared_draft=prepared.shared_draft,
+    )
     await runtime.history.persist_user_message(
         session_id=prepared.session.id,
-        run_id=run_id,
+        run_id=history_run.id,
         content="Initial human request",
     )
     await runtime.history.persist_assistant_message(
         session_id=prepared.session.id,
-        run_id=run_id,
+        run_id=history_run.id,
         content="Initial assistant reply",
     )
     await db_session.commit()
 
     prepared_input = await runtime.prepare_session_run_input(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         session=prepared.session,
         shared_draft=prepared.shared_draft,
@@ -951,7 +992,7 @@ async def test_serialize_runtime_state_separates_verification_state_from_persist
     runtime = ArtifactCodingRuntimeService(db_session)
     agent = await ensure_artifact_coding_agent_profile(db_session, tenant.id, actor_user_id=user.id)
     prepared = await runtime.prepare_session(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         agent_id=agent.id,
         title_prompt="Prepare verification state split test",
@@ -969,8 +1010,8 @@ async def test_serialize_runtime_state_separates_verification_state_from_persist
 
     last_test_run = ArtifactRun(
         id=uuid4(),
-        revision_id=uuid4(),
-        tenant_id=tenant.id,
+        revision_id=(await _create_artifact_revision(db_session, organization_id=tenant.id, user_id=user.id)).id,
+        organization_id=tenant.id,
         domain=ArtifactRunDomain.TEST,
         status=ArtifactRunStatus.COMPLETED,
         queue_class="artifact_test",
@@ -1010,7 +1051,7 @@ async def test_continue_prompt_run_uses_session_history_and_persists_orchestrato
     runtime = ArtifactCodingRuntimeService(db_session)
     agent = await ensure_artifact_coding_agent_profile(db_session, tenant.id, actor_user_id=user.id)
     prepared = await runtime.prepare_session(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         agent_id=agent.id,
         title_prompt="Start native continuation test",
@@ -1021,7 +1062,7 @@ async def test_continue_prompt_run_uses_session_history_and_persists_orchestrato
         replace_snapshot=True,
     )
     initial_run = AgentRun(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         agent_id=agent.id,
         user_id=user.id,
         initiator_user_id=user.id,
@@ -1056,7 +1097,7 @@ async def test_continue_prompt_run_uses_session_history_and_persists_orchestrato
         captured["thread_id"] = str(thread_id)
         run = AgentRun(
             id=continued_run_id,
-            tenant_id=tenant.id,
+            organization_id=tenant.id,
             agent_id=agent_id,
             user_id=user_id,
             initiator_user_id=user_id,
@@ -1072,7 +1113,7 @@ async def test_continue_prompt_run_uses_session_history_and_persists_orchestrato
     monkeypatch.setattr("app.services.artifact_coding_runtime_service.AgentExecutorService.start_run", fake_start_run)
 
     session, shared_draft, run = await runtime.continue_prompt_run(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         chat_session_id=prepared.session.id,
         orchestrator_prompt="Set slug to native-continuation and add README.md",
@@ -1101,7 +1142,7 @@ async def test_prepare_session_run_input_does_not_duplicate_current_prompt_in_hi
     runtime = ArtifactCodingRuntimeService(db_session)
     agent = await ensure_artifact_coding_agent_profile(db_session, tenant.id, actor_user_id=user.id)
     prepared = await runtime.prepare_session(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         agent_id=agent.id,
         title_prompt="Prepare no-dup run input",
@@ -1111,22 +1152,29 @@ async def test_prepare_session_run_input_does_not_duplicate_current_prompt_in_hi
         draft_snapshot=runtime.build_initial_snapshot_from_seed({"kind": "tool_impl"}),
         replace_snapshot=True,
     )
-    initial_run_id = uuid4()
+    initial_run = await _create_artifact_coding_worker_run(
+        db_session,
+        tenant=tenant,
+        user=user,
+        agent=agent,
+        session=prepared.session,
+        shared_draft=prepared.shared_draft,
+    )
     await runtime.history.persist_user_message(
         session_id=prepared.session.id,
-        run_id=initial_run_id,
+        run_id=initial_run.id,
         content="Initial human request",
     )
     await runtime.history.persist_assistant_message(
         session_id=prepared.session.id,
-        run_id=initial_run_id,
+        run_id=initial_run.id,
         content="Initial assistant reply",
     )
     await db_session.commit()
 
     prompt = "implement the all thing in one run, dont stop anymore"
     prepared_input = await runtime.prepare_session_run_input(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         session=prepared.session,
         shared_draft=prepared.shared_draft,
@@ -1233,7 +1281,7 @@ async def test_artifact_coding_set_tool_contract_accepts_inner_contract_object(d
     agent = await ensure_artifact_coding_agent_profile(db_session, tenant.id, actor_user_id=user.id)
     runtime = ArtifactCodingRuntimeService(db_session)
     prepared = await runtime.prepare_session(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         agent_id=agent.id,
         title_prompt="Set tool contract",
@@ -1289,7 +1337,7 @@ async def test_artifact_coding_set_tool_contract_normalizes_stringified_nested_o
     agent = await ensure_artifact_coding_agent_profile(db_session, tenant.id, actor_user_id=user.id)
     runtime = ArtifactCodingRuntimeService(db_session)
     prepared = await runtime.prepare_session(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         agent_id=agent.id,
         title_prompt="Set tool contract with nested JSON strings",
@@ -1346,7 +1394,7 @@ async def test_artifact_coding_read_file_can_return_numbered_range_and_exact_rep
     agent = await ensure_artifact_coding_agent_profile(db_session, tenant.id, actor_user_id=user.id)
     runtime = ArtifactCodingRuntimeService(db_session)
     prepared = await runtime.prepare_session(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         agent_id=agent.id,
         title_prompt="Replace bounded text",
@@ -1413,7 +1461,7 @@ async def test_artifact_coding_read_file_accepts_start_only_with_bounded_window(
     agent = await ensure_artifact_coding_agent_profile(db_session, tenant.id, actor_user_id=user.id)
     runtime = ArtifactCodingRuntimeService(db_session)
     prepared = await runtime.prepare_session(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         agent_id=agent.id,
         title_prompt="Read bounded forward window",
@@ -1469,7 +1517,7 @@ async def test_artifact_coding_read_file_accepts_end_only_with_bounded_window(db
     agent = await ensure_artifact_coding_agent_profile(db_session, tenant.id, actor_user_id=user.id)
     runtime = ArtifactCodingRuntimeService(db_session)
     prepared = await runtime.prepare_session(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         agent_id=agent.id,
         title_prompt="Read bounded backward window",
@@ -1525,7 +1573,7 @@ async def test_artifact_coding_read_file_caps_large_default_read(db_session):
     agent = await ensure_artifact_coding_agent_profile(db_session, tenant.id, actor_user_id=user.id)
     runtime = ArtifactCodingRuntimeService(db_session)
     prepared = await runtime.prepare_session(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         agent_id=agent.id,
         title_prompt="Cap large default read",
@@ -1580,7 +1628,7 @@ async def test_artifact_coding_replace_text_in_file_rejects_ambiguous_global_mat
     agent = await ensure_artifact_coding_agent_profile(db_session, tenant.id, actor_user_id=user.id)
     runtime = ArtifactCodingRuntimeService(db_session)
     prepared = await runtime.prepare_session(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         agent_id=agent.id,
         title_prompt="Reject ambiguous exact replace",
@@ -1631,7 +1679,7 @@ async def test_artifact_coding_list_credentials_returns_safe_metadata_only(db_se
     agent = await ensure_artifact_coding_agent_profile(db_session, tenant.id, actor_user_id=user.id)
     runtime = ArtifactCodingRuntimeService(db_session)
     prepared = await runtime.prepare_session(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         agent_id=agent.id,
         title_prompt="Credential listing",
@@ -1651,7 +1699,7 @@ async def test_artifact_coding_list_credentials_returns_safe_metadata_only(db_se
     )
     db_session.add(
         IntegrationCredential(
-            tenant_id=tenant.id,
+            organization_id=tenant.id,
             category=IntegrationCredentialCategory.TOOL_PROVIDER,
             provider_key="search_api",
             provider_variant=None,
@@ -1693,7 +1741,7 @@ async def test_artifact_coding_set_entry_module_rejects_language_mismatch(db_ses
     agent = await ensure_artifact_coding_agent_profile(db_session, tenant.id, actor_user_id=user.id)
     runtime = ArtifactCodingRuntimeService(db_session)
     prepared = await runtime.prepare_session(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         agent_id=agent.id,
         title_prompt="Reject mismatched entry module",
@@ -1736,7 +1784,7 @@ async def test_artifact_coding_run_test_rejects_duplicate_active_test_run(db_ses
     agent = await ensure_artifact_coding_agent_profile(db_session, tenant.id, actor_user_id=user.id)
     runtime = ArtifactCodingRuntimeService(db_session)
     prepared = await runtime.prepare_session(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         agent_id=agent.id,
         title_prompt="Duplicate active test run guard",
@@ -1755,8 +1803,8 @@ async def test_artifact_coding_run_test_rejects_duplicate_active_test_run(db_ses
         shared_draft=prepared.shared_draft,
     )
     active_test_run = ArtifactRun(
-        tenant_id=tenant.id,
-        revision_id=uuid4(),
+        organization_id=tenant.id,
+        revision_id=(await _create_artifact_revision(db_session, organization_id=tenant.id, user_id=user.id)).id,
         artifact_id=None,
         domain=ArtifactRunDomain.TEST,
         status=ArtifactRunStatus.QUEUED,
@@ -1791,7 +1839,7 @@ async def test_artifact_coding_validate_runtime_contract_reports_missing_execute
     agent = await ensure_artifact_coding_agent_profile(db_session, tenant.id, actor_user_id=user.id)
     runtime = ArtifactCodingRuntimeService(db_session)
     prepared = await runtime.prepare_session(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         agent_id=agent.id,
         title_prompt="Validate runtime contract",
@@ -1836,7 +1884,7 @@ async def test_artifact_coding_run_test_surfaces_clean_execute_contract_error(db
     agent = await ensure_artifact_coding_agent_profile(db_session, tenant.id, actor_user_id=user.id)
     runtime = ArtifactCodingRuntimeService(db_session)
     prepared = await runtime.prepare_session(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         agent_id=agent.id,
         title_prompt="Run test with broken entrypoint",
@@ -1878,7 +1926,7 @@ async def test_artifact_coding_await_last_test_result_waits_for_terminal_state(d
     agent = await ensure_artifact_coding_agent_profile(db_session, tenant.id, actor_user_id=user.id)
     runtime = ArtifactCodingRuntimeService(db_session)
     prepared = await runtime.prepare_session(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         agent_id=agent.id,
         title_prompt="Await terminal artifact test result",
@@ -1897,8 +1945,8 @@ async def test_artifact_coding_await_last_test_result_waits_for_terminal_state(d
         shared_draft=prepared.shared_draft,
     )
     queued_test_run = ArtifactRun(
-        tenant_id=tenant.id,
-        revision_id=uuid4(),
+        organization_id=tenant.id,
+        revision_id=(await _create_artifact_revision(db_session, organization_id=tenant.id, user_id=user.id)).id,
         artifact_id=None,
         domain=ArtifactRunDomain.TEST,
         status=ArtifactRunStatus.QUEUED,
@@ -1954,7 +2002,7 @@ async def test_artifact_coding_get_last_test_result_includes_ordered_events(db_s
     agent = await ensure_artifact_coding_agent_profile(db_session, tenant.id, actor_user_id=user.id)
     runtime = ArtifactCodingRuntimeService(db_session)
     prepared = await runtime.prepare_session(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         agent_id=agent.id,
         title_prompt="Get artifact test event trail",
@@ -1973,8 +2021,8 @@ async def test_artifact_coding_get_last_test_result_includes_ordered_events(db_s
         shared_draft=prepared.shared_draft,
     )
     failed_test_run = ArtifactRun(
-        tenant_id=tenant.id,
-        revision_id=uuid4(),
+        organization_id=tenant.id,
+        revision_id=(await _create_artifact_revision(db_session, organization_id=tenant.id, user_id=user.id)).id,
         artifact_id=None,
         domain=ArtifactRunDomain.TEST,
         status=ArtifactRunStatus.FAILED,
@@ -2035,7 +2083,7 @@ async def test_architect_artifact_coding_tools_return_hydrated_state_and_canonic
     tenant, user = await _seed_tenant_and_user(db_session)
     artifact = await _create_artifact_from_payload(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         payload=_tool_impl_create_payload("hydrated-tool"),
     )
@@ -2064,7 +2112,7 @@ async def test_architect_artifact_coding_tools_return_hydrated_state_and_canonic
             "prepare_mode": "attach_existing_artifact",
             "artifact_id": str(artifact.id),
             "__tool_runtime_context__": {
-                "tenant_id": str(tenant.id),
+                "organization_id": str(tenant.id),
                 "user_id": str(user.id),
                 "run_id": str(uuid4()),
             },
@@ -2081,7 +2129,7 @@ async def test_architect_artifact_coding_tools_return_hydrated_state_and_canonic
         {
             "binding_ref": prepared["binding_ref"],
             "__tool_runtime_context__": {
-                "tenant_id": str(tenant.id),
+                "organization_id": str(tenant.id),
                 "user_id": str(user.id),
                 "run_id": str(uuid4()),
             },

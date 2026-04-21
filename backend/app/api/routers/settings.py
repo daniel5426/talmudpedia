@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, update
 
 from app.db.postgres.session import get_db
-from app.api.dependencies import get_tenant_context
+from app.api.dependencies import get_organization_context
 from app.api.routers.auth import get_current_user
 from app.db.postgres.models.registry import (
     IntegrationCredential,
@@ -35,7 +35,7 @@ router = APIRouter()
 
 class CredentialResponse(BaseModel):
     id: uuid.UUID
-    tenant_id: Optional[uuid.UUID]
+    organization_id: Optional[uuid.UUID]
     category: IntegrationCredentialCategory
     provider_key: str
     provider_variant: Optional[str]
@@ -94,7 +94,7 @@ class CredentialUsageKnowledgeStore(BaseModel):
 class CredentialUsageTool(BaseModel):
     tool_id: uuid.UUID
     tool_name: str
-    tool_slug: str
+    builtin_key: Optional[str] = None
     implementation_type: Optional[str] = None
 
 
@@ -117,7 +117,7 @@ def _credential_to_response(credential: IntegrationCredential) -> CredentialResp
     keys = list((credential.credentials or {}).keys())
     return CredentialResponse(
         id=credential.id,
-        tenant_id=credential.tenant_id,
+        organization_id=credential.organization_id,
         category=credential.category,
         provider_key=credential.provider_key,
         provider_variant=credential.provider_variant,
@@ -139,9 +139,12 @@ def _normalize_provider_key(category: IntegrationCredentialCategory, provider_ke
     return key
 
 
-def _service_context(*, tenant_ctx: Dict[str, Any], current_user: Any) -> ControlPlaneContext:
-    return ControlPlaneContext.from_tenant_context(
-        tenant_ctx,
+def _service_context(*, organization_ctx: Dict[str, Any], current_user: Any) -> ControlPlaneContext:
+    return ControlPlaneContext.from_organization_context(
+        {
+            "organization_id": organization_ctx.get("organization_id") or organization_ctx.get("organization_id"),
+            "project_id": organization_ctx.get("project_id"),
+        },
         user=current_user,
         user_id=getattr(current_user, "id", None),
     )
@@ -149,7 +152,7 @@ def _service_context(*, tenant_ctx: Dict[str, Any], current_user: Any) -> Contro
 
 async def _get_credential_usage(
     db: AsyncSession,
-    tenant_id: uuid.UUID,
+    organization_id: uuid.UUID,
     credential_id: uuid.UUID,
 ) -> CredentialUsageResponse:
     model_rows = (
@@ -163,7 +166,7 @@ async def _get_credential_usage(
             )
             .join(ModelRegistry, ModelRegistry.id == ModelProviderBinding.model_id)
             .where(
-                ModelProviderBinding.tenant_id == tenant_id,
+                ModelProviderBinding.organization_id == organization_id,
                 ModelProviderBinding.credentials_ref == credential_id,
             )
             .order_by(ModelRegistry.name.asc(), ModelProviderBinding.provider_model_id.asc())
@@ -174,7 +177,7 @@ async def _get_credential_usage(
         await db.execute(
             select(KnowledgeStore.id, KnowledgeStore.name, KnowledgeStore.backend)
             .where(
-                KnowledgeStore.tenant_id == tenant_id,
+                KnowledgeStore.organization_id == organization_id,
                 KnowledgeStore.credentials_ref == credential_id,
             )
             .order_by(KnowledgeStore.name.asc())
@@ -183,15 +186,15 @@ async def _get_credential_usage(
 
     tool_rows = (
         await db.execute(
-            select(ToolRegistry.id, ToolRegistry.name, ToolRegistry.slug, ToolRegistry.implementation_type, ToolRegistry.config_schema)
-            .where(ToolRegistry.tenant_id == tenant_id)
+            select(ToolRegistry.id, ToolRegistry.name, ToolRegistry.builtin_key, ToolRegistry.implementation_type, ToolRegistry.config_schema)
+            .where(ToolRegistry.organization_id == organization_id)
             .order_by(ToolRegistry.name.asc())
         )
     ).all()
 
     tool_usage: List[CredentialUsageTool] = []
     credential_id_str = str(credential_id)
-    for tool_id, tool_name, tool_slug, implementation_type, config_schema in tool_rows:
+    for tool_id, tool_name, builtin_key, implementation_type, config_schema in tool_rows:
         schema_dict = config_schema if isinstance(config_schema, dict) else {}
         impl = schema_dict.get("implementation")
         impl_dict = impl if isinstance(impl, dict) else {}
@@ -202,7 +205,7 @@ async def _get_credential_usage(
             CredentialUsageTool(
                 tool_id=tool_id,
                 tool_name=tool_name,
-                tool_slug=tool_slug,
+                builtin_key=builtin_key,
                 implementation_type=str(getattr(implementation_type, "value", implementation_type)) if implementation_type else None,
             )
         )
@@ -242,13 +245,13 @@ async def list_credentials(
     limit: int = 20,
     view: str = "summary",
     db: AsyncSession = Depends(get_db),
-    tenant_ctx=Depends(get_tenant_context),
+    organization_ctx=Depends(get_organization_context),
     current_user=Depends(get_current_user),
 ):
     try:
         query = ListQuery.from_payload({"skip": skip, "limit": limit, "view": view})
         credentials = await CredentialsAdminService(db).list_credentials(
-            ctx=_service_context(tenant_ctx=tenant_ctx, current_user=current_user),
+            ctx=_service_context(organization_ctx=organization_ctx, current_user=current_user),
             category=category,
         )
         sliced = credentials[query.skip: query.skip + query.limit]
@@ -268,12 +271,12 @@ async def list_credentials(
 async def create_credential(
     request: CreateCredentialRequest,
     db: AsyncSession = Depends(get_db),
-    tenant_ctx=Depends(get_tenant_context),
+    organization_ctx=Depends(get_organization_context),
     current_user=Depends(get_current_user),
 ):
     try:
         credential = await CredentialsAdminService(db).create_credential(
-            ctx=_service_context(tenant_ctx=tenant_ctx, current_user=current_user),
+            ctx=_service_context(organization_ctx=organization_ctx, current_user=current_user),
             category=request.category,
             provider_key=request.provider_key,
             provider_variant=request.provider_variant,
@@ -292,13 +295,13 @@ async def update_credential(
     credential_id: uuid.UUID,
     request: UpdateCredentialRequest,
     db: AsyncSession = Depends(get_db),
-    tenant_ctx=Depends(get_tenant_context),
+    organization_ctx=Depends(get_organization_context),
     current_user=Depends(get_current_user),
 ):
     try:
         patch = request.model_dump(exclude_unset=True)
         credential = await CredentialsAdminService(db).update_credential(
-            ctx=_service_context(tenant_ctx=tenant_ctx, current_user=current_user),
+            ctx=_service_context(organization_ctx=organization_ctx, current_user=current_user),
             credential_id=credential_id,
             patch=patch,
         )
@@ -312,13 +315,13 @@ async def delete_credential(
     credential_id: uuid.UUID,
     force_disconnect: bool = Query(False),
     db: AsyncSession = Depends(get_db),
-    tenant_ctx=Depends(get_tenant_context),
+    organization_ctx=Depends(get_organization_context),
     current_user=Depends(get_current_user),
 ):
-    tid = uuid.UUID(tenant_ctx["tenant_id"])
+    tid = uuid.UUID(organization_ctx["organization_id"])
 
     stmt = select(IntegrationCredential).where(
-        and_(IntegrationCredential.id == credential_id, IntegrationCredential.tenant_id == tid)
+        and_(IntegrationCredential.id == credential_id, IntegrationCredential.organization_id == tid)
     )
     res = await db.execute(stmt)
     credential = res.scalar_one_or_none()
@@ -340,7 +343,7 @@ async def delete_credential(
         await db.execute(
             update(ModelProviderBinding)
             .where(
-                ModelProviderBinding.tenant_id == tid,
+                ModelProviderBinding.organization_id == tid,
                 ModelProviderBinding.credentials_ref == credential_id,
             )
             .values(credentials_ref=None)
@@ -348,13 +351,13 @@ async def delete_credential(
         await db.execute(
             update(KnowledgeStore)
             .where(
-                KnowledgeStore.tenant_id == tid,
+                KnowledgeStore.organization_id == tid,
                 KnowledgeStore.credentials_ref == credential_id,
             )
             .values(credentials_ref=None)
         )
 
-        tools_stmt = select(ToolRegistry).where(ToolRegistry.tenant_id == tid)
+        tools_stmt = select(ToolRegistry).where(ToolRegistry.organization_id == tid)
         tools = (await db.execute(tools_stmt)).scalars().all()
         credential_id_str = str(credential_id)
         for tool in tools:
@@ -379,12 +382,12 @@ async def delete_credential(
 async def get_credential_usage(
     credential_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    tenant_ctx=Depends(get_tenant_context),
+    organization_ctx=Depends(get_organization_context),
     current_user=Depends(get_current_user),
 ):
-    tid = uuid.UUID(tenant_ctx["tenant_id"])
+    tid = uuid.UUID(organization_ctx["organization_id"])
     stmt = select(IntegrationCredential).where(
-        and_(IntegrationCredential.id == credential_id, IntegrationCredential.tenant_id == tid)
+        and_(IntegrationCredential.id == credential_id, IntegrationCredential.organization_id == tid)
     )
     res = await db.execute(stmt)
     credential = res.scalar_one_or_none()
@@ -396,11 +399,11 @@ async def get_credential_usage(
 @router.get("/credentials/status", response_model=List[CredentialStatus])
 async def credentials_status(
     db: AsyncSession = Depends(get_db),
-    tenant_ctx=Depends(get_tenant_context),
+    organization_ctx=Depends(get_organization_context),
     current_user=Depends(get_current_user),
 ):
-    tid = uuid.UUID(tenant_ctx["tenant_id"])
-    stmt = select(IntegrationCredential).where(IntegrationCredential.tenant_id == tid)
+    tid = uuid.UUID(organization_ctx["organization_id"])
+    stmt = select(IntegrationCredential).where(IntegrationCredential.organization_id == tid)
     res = await db.execute(stmt)
     credentials = res.scalars().all()
     return [

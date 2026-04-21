@@ -33,7 +33,7 @@ import {
 import { ThemeCustomizer } from "@/components/theme-customizer";
 import { useDirection } from "@/components/direction-provider";
 import { LibraryMenu } from "@/components/library-menu";
-import { TenantSwitcher } from "@/components/navigation/tenant-switcher";
+import { OrganizationSwitcher } from "@/components/navigation/organization-switcher";
 import { useAuthStore } from "@/lib/store/useAuthStore";
 import { usePathname, useRouter } from "next/navigation";
 
@@ -322,7 +322,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
           <>
             {user && (user.role === "admin" || isAdminPath) && (
               <div className="px-2 pt-2">
-                <TenantSwitcher />
+                <OrganizationSwitcher />
               </div>
             )}
             <div className=" ">

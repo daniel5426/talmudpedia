@@ -44,29 +44,29 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
                 "mutation": False,
                 "payload_schema": _list_payload_schema(),
                 "contract": {
-                    "summary": "List visual pipelines for a tenant scope.",
+                    "summary": "List visual pipelines for an organization scope.",
                     "required_fields": [],
                     "example_payload": {"limit": 20, "skip": 0, "view": "summary"},
-                    "failure_codes": ["UNAUTHORIZED", "TENANT_MISMATCH"],
+                    "failure_codes": ["UNAUTHORIZED", "ORGANIZATION_MISMATCH"],
                 },
             },
             "rag.operators.catalog": {
                 "mutation": False,
                 "payload_schema": _payload_schema(
-                    properties={"tenant_slug": {"type": "string"}},
+                    properties={"organization_id": {"type": "string"}},
                 ),
                 "contract": {
                     "summary": "List available RAG operators with categories, summaries, and required fields.",
                     "required_fields": [],
-                    "example_payload": {"tenant_slug": "acme"},
-                    "failure_codes": ["UNAUTHORIZED", "TENANT_MISMATCH"],
+                    "example_payload": {"organization_id": "acme"},
+                    "failure_codes": ["UNAUTHORIZED", "ORGANIZATION_MISMATCH"],
                 },
             },
             "rag.operators.schema": {
                 "mutation": False,
                 "payload_schema": _payload_schema(
                     properties={
-                        "tenant_slug": {"type": "string"},
+                        "organization_id": {"type": "string"},
                         "operator_ids": {"type": "array", "items": {"type": "string"}},
                     },
                     required=["operator_ids"],
@@ -75,15 +75,15 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
                 "contract": {
                     "summary": "Resolve schemas/contracts for multiple RAG operators in one call, including config schema and exact visual-node/create contract shape.",
                     "required_fields": ["operator_ids"],
-                    "example_payload": {"tenant_slug": "acme", "operator_ids": ["query_input", "knowledge_store_lookup"]},
-                    "failure_codes": ["UNAUTHORIZED", "TENANT_MISMATCH", "VALIDATION_ERROR"],
+                    "example_payload": {"organization_id": "acme", "operator_ids": ["query_input", "knowledge_store_lookup"]},
+                    "failure_codes": ["UNAUTHORIZED", "ORGANIZATION_MISMATCH", "VALIDATION_ERROR"],
                 },
             },
             "rag.create_pipeline_shell": {
                 "mutation": True,
                 "payload_schema": _payload_schema(
                     properties={
-                        "tenant_slug": {"type": "string"},
+                        "organization_id": {"type": "string"},
                         "name": {"type": "string"},
                         "description": {"type": "string"},
                         "pipeline_type": {"type": "string", "enum": ["retrieval"]},
@@ -95,7 +95,7 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
                     "summary": "Create a draft retrieval pipeline shell with a minimal valid graph skeleton.",
                     "required_fields": ["name"],
                     "example_payload": {
-                        "tenant_slug": "acme",
+                        "organization_id": "acme",
                         "name": "FAQ Pipeline",
                         "description": "Initial retrieval shell for FAQ search",
                         "pipeline_type": "retrieval",
@@ -111,7 +111,7 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
                 "mutation": True,
                 "payload_schema": _payload_schema(
                     properties={
-                        "tenant_slug": {"type": "string"},
+                        "organization_id": {"type": "string"},
                         "name": {"type": "string"},
                         "description": {"type": "string"},
                         "pipeline_type": {"type": "string", "enum": ["ingestion", "retrieval"]},
@@ -127,7 +127,7 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
                     "summary": "Create a draft visual RAG pipeline.",
                     "required_fields": ["name", "nodes|graph_definition"],
                     "example_payload": {
-                        "tenant_slug": "acme",
+                        "organization_id": "acme",
                         "name": "FAQ Pipeline",
                         "pipeline_type": "retrieval",
                         "nodes": [
@@ -149,7 +149,7 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
                     properties={
                         "pipeline_id": {"type": "string"},
                         "id": {"type": "string"},
-                        "tenant_slug": {"type": "string"},
+                        "organization_id": {"type": "string"},
                         "patch": {"type": "object"},
                     },
                     additional_properties=True,
@@ -159,7 +159,7 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
                     "required_fields": ["pipeline_id|id", "patch"],
                     "example_payload": {
                         "pipeline_id": "pipe-123",
-                        "tenant_slug": "acme",
+                        "organization_id": "acme",
                         "patch": {"description": "patched"},
                     },
                     "failure_codes": ["NOT_FOUND", "VALIDATION_ERROR"],
@@ -171,14 +171,14 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
                     properties={
                         "pipeline_id": {"type": "string"},
                         "id": {"type": "string"},
-                        "tenant_slug": {"type": "string"},
+                        "organization_id": {"type": "string"},
                     },
                     additional_properties=False,
                 ),
                 "contract": {
                     "summary": "Get the persisted graph for a visual pipeline.",
                     "required_fields": ["pipeline_id|id"],
-                    "example_payload": {"pipeline_id": "pipe-123", "tenant_slug": "acme"},
+                    "example_payload": {"pipeline_id": "pipe-123", "organization_id": "acme"},
                     "failure_codes": ["NOT_FOUND"],
                 },
             },
@@ -188,7 +188,7 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
                     properties={
                         "pipeline_id": {"type": "string"},
                         "id": {"type": "string"},
-                        "tenant_slug": {"type": "string"},
+                        "organization_id": {"type": "string"},
                         "operations": {"type": "array", "items": {"type": "object"}},
                     },
                     required=["operations"],
@@ -199,7 +199,7 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
                     "required_fields": ["pipeline_id|id", "operations"],
                     "example_payload": {
                         "pipeline_id": "pipe-123",
-                        "tenant_slug": "acme",
+                        "organization_id": "acme",
                         "operations": [{"op": "set_node_config_value", "node_id": "lookup_1", "path": "top_k", "value": 8}],
                     },
                     "failure_codes": ["NOT_FOUND", "GRAPH_MUTATION_ERROR"],
@@ -211,7 +211,7 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
                     properties={
                         "pipeline_id": {"type": "string"},
                         "id": {"type": "string"},
-                        "tenant_slug": {"type": "string"},
+                        "organization_id": {"type": "string"},
                         "operations": {"type": "array", "items": {"type": "object"}},
                     },
                     required=["operations"],
@@ -222,7 +222,7 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
                     "required_fields": ["pipeline_id|id", "operations"],
                     "example_payload": {
                         "pipeline_id": "pipe-123",
-                        "tenant_slug": "acme",
+                        "organization_id": "acme",
                         "operations": [{"op": "rewire_edge", "edge_id": "e1", "target": "answer_1"}],
                     },
                     "failure_codes": ["NOT_FOUND", "GRAPH_MUTATION_ERROR"],
@@ -234,7 +234,7 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
                     properties={
                         "pipeline_id": {"type": "string"},
                         "id": {"type": "string"},
-                        "tenant_slug": {"type": "string"},
+                        "organization_id": {"type": "string"},
                         "node_id": {"type": "string"},
                         "knowledge_store_id": {"type": "string"},
                     },
@@ -244,7 +244,7 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
                 "contract": {
                     "summary": "Attach a knowledge store to an existing pipeline node without rebuilding the whole graph.",
                     "required_fields": ["pipeline_id|id", "node_id", "knowledge_store_id"],
-                    "example_payload": {"pipeline_id": "pipe-123", "node_id": "lookup_1", "knowledge_store_id": "ks-123", "tenant_slug": "acme"},
+                    "example_payload": {"pipeline_id": "pipe-123", "node_id": "lookup_1", "knowledge_store_id": "ks-123", "organization_id": "acme"},
                     "failure_codes": ["NOT_FOUND", "GRAPH_MUTATION_ERROR"],
                 },
             },
@@ -254,7 +254,7 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
                     properties={
                         "pipeline_id": {"type": "string"},
                         "id": {"type": "string"},
-                        "tenant_slug": {"type": "string"},
+                        "organization_id": {"type": "string"},
                         "node_id": {"type": "string"},
                         "path": {"type": "string"},
                         "value": {},
@@ -265,7 +265,7 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
                 "contract": {
                     "summary": "Set one config field on an existing pipeline node through the graph mutation layer.",
                     "required_fields": ["pipeline_id|id", "node_id", "path", "value"],
-                    "example_payload": {"pipeline_id": "pipe-123", "node_id": "lookup_1", "path": "top_k", "value": 8, "tenant_slug": "acme"},
+                    "example_payload": {"pipeline_id": "pipe-123", "node_id": "lookup_1", "path": "top_k", "value": 8, "organization_id": "acme"},
                     "failure_codes": ["NOT_FOUND", "GRAPH_MUTATION_ERROR"],
                 },
             },
@@ -275,14 +275,14 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
                     properties={
                         "pipeline_id": {"type": "string"},
                         "id": {"type": "string"},
-                        "tenant_slug": {"type": "string"},
+                        "organization_id": {"type": "string"},
                     },
                     additional_properties=False,
                 ),
                 "contract": {
                     "summary": "Compile a visual pipeline and return validation results.",
                     "required_fields": ["pipeline_id|id"],
-                    "example_payload": {"pipeline_id": "pipe-123", "tenant_slug": "acme"},
+                    "example_payload": {"pipeline_id": "pipe-123", "organization_id": "acme"},
                     "failure_codes": ["VALIDATION_ERROR", "INTERNAL_ERROR"],
                 },
             },
@@ -293,14 +293,14 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
                         "exec_id": {"type": "string"},
                         "executable_pipeline_id": {"type": "string"},
                         "id": {"type": "string"},
-                        "tenant_slug": {"type": "string"},
+                        "organization_id": {"type": "string"},
                     },
                     additional_properties=False,
                 ),
                 "contract": {
                     "summary": "Get compiled executable pipeline metadata.",
                     "required_fields": ["exec_id|executable_pipeline_id|id"],
-                    "example_payload": {"exec_id": "exec-123", "tenant_slug": "acme"},
+                    "example_payload": {"exec_id": "exec-123", "organization_id": "acme"},
                     "failure_codes": ["NOT_FOUND"],
                 },
             },
@@ -311,14 +311,14 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
                         "exec_id": {"type": "string"},
                         "executable_pipeline_id": {"type": "string"},
                         "id": {"type": "string"},
-                        "tenant_slug": {"type": "string"},
+                        "organization_id": {"type": "string"},
                     },
                     additional_properties=False,
                 ),
                 "contract": {
                     "summary": "Get executable pipeline input schema.",
                     "required_fields": ["exec_id|executable_pipeline_id|id"],
-                    "example_payload": {"exec_id": "exec-123", "tenant_slug": "acme"},
+                    "example_payload": {"exec_id": "exec-123", "organization_id": "acme"},
                     "failure_codes": ["NOT_FOUND"],
                 },
             },
@@ -348,14 +348,14 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
                     properties={
                         "job_id": {"type": "string"},
                         "id": {"type": "string"},
-                        "tenant_slug": {"type": "string"},
+                        "organization_id": {"type": "string"},
                     },
                     additional_properties=False,
                 ),
                 "contract": {
                     "summary": "Get pipeline job execution state.",
                     "required_fields": ["job_id|id"],
-                    "example_payload": {"job_id": "job-123", "tenant_slug": "acme"},
+                    "example_payload": {"job_id": "job-123", "organization_id": "acme"},
                     "failure_codes": ["NOT_FOUND"],
                 },
             },
@@ -396,18 +396,16 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
                 "payload_schema": _payload_schema(
                     properties={
                         "name": {"type": "string"},
-                        "slug": {"type": "string"},
                         "description": {"type": "string"},
                     },
-                    required=["name", "slug"],
+                    required=["name"],
                     additional_properties=False,
                 ),
                 "contract": {
                     "summary": "Create a draft agent shell with the minimal valid graph skeleton.",
-                    "required_fields": ["name", "slug"],
+                    "required_fields": ["name"],
                     "example_payload": {
                         "name": "FAQ Agent",
-                        "slug": "faq-agent",
                         "description": "Initial draft shell for FAQ routing",
                     },
                     "failure_codes": ["VALIDATION_ERROR", "SENSITIVE_ACTION_APPROVAL_REQUIRED"],
@@ -418,19 +416,17 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
                 "payload_schema": _payload_schema(
                     properties={
                         "name": {"type": "string"},
-                        "slug": {"type": "string"},
                         "graph_definition": {"type": "object"},
                         "description": {"type": "string"},
                     },
-                    required=["name", "slug", "graph_definition"],
+                    required=["name", "graph_definition"],
                     additional_properties=True,
                 ),
                 "contract": {
                     "summary": "Create a draft agent with a valid non-empty graph_definition.",
-                    "required_fields": ["name", "slug", "graph_definition"],
+                    "required_fields": ["name", "graph_definition"],
                     "example_payload": {
                         "name": "FAQ Agent",
-                        "slug": "faq-agent",
                         "graph_definition": {
                             "spec_version": "2.0",
                             "nodes": [
@@ -668,8 +664,6 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
                     properties={
                         "agent_id": {"type": "string"},
                         "id": {"type": "string"},
-                        "agent_slug": {"type": "string"},
-                        "slug": {"type": "string"},
                         "input": {"type": "string"},
                         "messages": {"type": "array"},
                         "context": {"type": "object"},
@@ -678,7 +672,7 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
                 ),
                 "contract": {
                     "summary": "Execute an agent run.",
-                    "required_fields": ["agent_id|id|agent_slug|slug"],
+                    "required_fields": ["agent_id|id"],
                     "example_payload": {"agent_id": "agent-123", "input": "health-check"},
                     "failure_codes": ["NOT_FOUND", "VALIDATION_ERROR"],
                 },
@@ -725,7 +719,6 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
                 "mutation": False,
                 "payload_schema": _list_payload_schema(
                     properties={
-                        "slug": {"type": "string"},
                         "name": {"type": "string"},
                         "scope": {"type": "string"},
                         "is_active": {"type": "boolean"},
@@ -737,22 +730,22 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
                 "contract": {
                     "summary": "List tools.",
                     "required_fields": [],
-                    "example_payload": {"slug": "faq-tool", "limit": 20, "skip": 0, "view": "summary", "is_active": True},
+                    "example_payload": {"name": "FAQ Tool", "limit": 20, "skip": 0, "view": "summary", "is_active": True},
                     "failure_codes": [],
                 },
             },
             "tools.get": {
                 "mutation": False,
-                "payload_schema": _payload_schema(properties={"tool_id": {"type": "string"}, "id": {"type": "string"}, "slug": {"type": "string"}}),
-                "contract": {"summary": "Get tool.", "required_fields": ["tool_id|id|slug"], "example_payload": {"slug": "faq-tool"}, "failure_codes": ["NOT_FOUND"]},
+                "payload_schema": _payload_schema(properties={"tool_id": {"type": "string"}, "id": {"type": "string"}}),
+                "contract": {"summary": "Get tool.", "required_fields": ["tool_id|id"], "example_payload": {"tool_id": "tool-123"}, "failure_codes": ["NOT_FOUND"]},
             },
             "tools.create_or_update": {
                 "mutation": True,
                 "payload_schema": _payload_schema(
-                    properties={"tool_id": {"type": "string"}, "id": {"type": "string"}, "name": {"type": "string"}, "slug": {"type": "string"}, "schema": {"type": "object"}, "config_schema": {"type": "object"}},
+                    properties={"tool_id": {"type": "string"}, "id": {"type": "string"}, "name": {"type": "string"}, "schema": {"type": "object"}, "config_schema": {"type": "object"}},
                     additional_properties=True,
                 ),
-                "contract": {"summary": "Create or update tool draft.", "required_fields": ["name|tool_id"], "example_payload": {"name": "My Tool", "slug": "my-tool"}, "failure_codes": ["VALIDATION_ERROR"]},
+                "contract": {"summary": "Create or update tool draft.", "required_fields": ["name|tool_id"], "example_payload": {"name": "My Tool"}, "failure_codes": ["VALIDATION_ERROR"]},
             },
             "tools.publish": {
                 "mutation": True,
@@ -944,8 +937,8 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
             },
             "models.create_or_update": {
                 "mutation": True,
-                "payload_schema": _payload_schema(properties={"model_id": {"type": "string"}, "id": {"type": "string"}, "name": {"type": "string"}, "slug": {"type": "string"}}, additional_properties=True),
-                "contract": {"summary": "Create or update model.", "required_fields": ["name|model_id"], "example_payload": {"name": "Model A", "slug": "model-a"}, "failure_codes": ["VALIDATION_ERROR"]},
+                "payload_schema": _payload_schema(properties={"model_id": {"type": "string"}, "id": {"type": "string"}, "name": {"type": "string"}}, additional_properties=True),
+                "contract": {"summary": "Create or update model.", "required_fields": ["name|model_id"], "example_payload": {"name": "Model A"}, "failure_codes": ["VALIDATION_ERROR"]},
             },
             "prompts.list": {
                 "mutation": False,
@@ -956,7 +949,7 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
                     },
                 ),
                 "contract": {
-                    "summary": "List prompt library records visible in the current tenant scope.",
+                    "summary": "List prompt library records visible in the current organization scope.",
                     "required_fields": [],
                     "example_payload": {"limit": 20, "skip": 0, "view": "summary", "status": "active"},
                     "failure_codes": [],
@@ -979,18 +972,18 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
             },
             "knowledge_stores.list": {
                 "mutation": False,
-                "payload_schema": _list_payload_schema(properties={"tenant_slug": {"type": "string"}}, required=["tenant_slug"]),
+                "payload_schema": _list_payload_schema(properties={"organization_id": {"type": "string"}}, required=["organization_id"]),
                 "contract": {
                     "summary": "List knowledge stores.",
-                    "required_fields": ["tenant_slug"],
-                    "example_payload": {"tenant_slug": "acme", "limit": 20, "skip": 0, "view": "summary"},
+                    "required_fields": ["organization_id"],
+                    "example_payload": {"organization_id": "acme", "limit": 20, "skip": 0, "view": "summary"},
                     "failure_codes": [],
                 },
             },
             "knowledge_stores.create_or_update": {
                 "mutation": True,
-                "payload_schema": _payload_schema(properties={"store_id": {"type": "string"}, "id": {"type": "string"}, "tenant_slug": {"type": "string"}, "name": {"type": "string"}}, additional_properties=True),
-                "contract": {"summary": "Create or update knowledge store.", "required_fields": ["tenant_slug", "name|store_id"], "example_payload": {"tenant_slug": "acme", "name": "kb"}, "failure_codes": ["VALIDATION_ERROR"]},
+                "payload_schema": _payload_schema(properties={"store_id": {"type": "string"}, "id": {"type": "string"}, "organization_id": {"type": "string"}, "name": {"type": "string"}}, additional_properties=True),
+                "contract": {"summary": "Create or update knowledge store.", "required_fields": ["organization_id", "name|store_id"], "example_payload": {"organization_id": "acme", "name": "kb"}, "failure_codes": ["VALIDATION_ERROR"]},
             },
         },
     },
@@ -1007,7 +1000,7 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
 }
 
 
-def build_platform_domain_tool_schema(tool_slug: str, tool_spec: Dict[str, Any]) -> Dict[str, Any]:
+def build_platform_domain_tool_schema(builtin_key: str, tool_spec: Dict[str, Any]) -> Dict[str, Any]:
     actions = tool_spec["actions"]
     action_names = list(actions.keys())
     one_of_variants: list[Dict[str, Any]] = []
@@ -1031,8 +1024,8 @@ def build_platform_domain_tool_schema(tool_slug: str, tool_spec: Dict[str, Any])
                     },
                     "additionalProperties": True,
                 },
-                "tool_slug": {"const": tool_slug},
-                "tenant_id": {"type": "string"},
+                "builtin_key": {"const": builtin_key},
+                "organization_id": {"type": "string"},
             },
             "required": ["action", "payload"],
             "additionalProperties": False,
@@ -1053,8 +1046,8 @@ def build_platform_domain_tool_schema(tool_slug: str, tool_spec: Dict[str, Any])
             "validate_only": {"type": "boolean"},
             "idempotency_key": {"type": "string"},
             "request_metadata": {"type": "object"},
-            "tool_slug": {"type": "string", "const": tool_slug},
-            "tenant_id": {"type": "string"},
+            "builtin_key": {"type": "string", "const": builtin_key},
+            "organization_id": {"type": "string"},
         },
         "required": ["action", "payload"],
         "additionalProperties": False,
@@ -1074,7 +1067,7 @@ def build_platform_domain_tool_schema(tool_slug: str, tool_spec: Dict[str, Any])
                     "request_id": {"type": ["string", "null"]},
                     "idempotency_key": {"type": ["string", "null"]},
                     "idempotency_provided": {"type": "boolean"},
-                    "tool_slug": {"type": ["string", "null"]},
+                    "builtin_key": {"type": ["string", "null"]},
                 },
                 "additionalProperties": True,
             },
@@ -1091,16 +1084,16 @@ def build_architect_graph_definition(model_id: str, tool_ids: list[str] | None =
         "platform-assets, platform-governance, architect-worker-binding-prepare, architect-worker-binding-get-state, architect-worker-binding-persist-artifact, "
         "architect-worker-spawn, architect-worker-spawn-group, architect-worker-get-run, architect-worker-await, "
         "architect-worker-respond, architect-worker-join, architect-worker-cancel. "
-        "The platform domain tool slugs are containers, not the user-facing tool inventory. "
+        "The platform domain builtin keys are containers, not the user-facing tool inventory. "
         "When the user asks what platform tools are available, answer with canonical action ids under each domain, not just platform-rag/platform-agents/platform-assets/platform-governance. "
         "Never call architect.run or any meta action. "
         "Use only exact canonical action IDs from tool schemas (for example: agents.create_shell, rag.create_pipeline_shell, "
         "artifacts.create, artifacts.update, artifacts.create_test_run). Never invent aliases like create_agent/register_asset. "
         "Every Platform SDK call must use canonical top-level action and payload fields. "
         "For new resource creation, prefer canonical shell/create_or_update actions over invented *.create aliases. "
-        "For new agent shells, RAG pipeline shells, tenant tool rows, and knowledge stores, default the resource label field to payload.name unless the schema explicitly requires another field. "
+        "For new agent shells, RAG pipeline shells, organization tool rows, and knowledge stores, default the resource label field to payload.name unless the schema explicitly requires another field. "
         "Do not default to display_name for these canonical create actions. "
-        "For agents.create_shell, payload.slug is required alongside payload.name; if the user only gives a name, derive a slug from that name and send both fields together. "
+        "For agents.create_shell, payload.name is sufficient; the platform generates the internal identity automatically. "
         "For rag.create_pipeline_shell, use payload.name and optional payload.pipeline_type=retrieval only; do not send kind, template, display_name, nodes, edges, or graph_definition on the shell action. "
         "For knowledge_stores.create_or_update create flows, payload.name and payload.embedding_model_id are required; if embedding_model_id is missing, call models.list and choose an active embedding-capable model before creating the store. "
         "For new artifact draft bindings, create_new_draft requires title_prompt plus draft_seed; do not send null draft_snapshot or omit draft_seed. "
@@ -1112,7 +1105,7 @@ def build_architect_graph_definition(model_id: str, tool_ids: list[str] | None =
         "agents.graph.set_agent_instructions, rag.graph.attach_knowledge_store_to_node, "
         "rag.graph.set_pipeline_node_config). Use agents.graph.apply_patch or rag.graph.apply_patch only when a helper "
         "does not cover the requested mutation. "
-        "For agents.graph.add_tool_to_agent_node, payload.tool_id must be the actual tool row UUID, not a slug or display name; if the user references a tool by slug or name, resolve the row first with tools.list or tools.get and then attach by id. "
+        "For agents.graph.add_tool_to_agent_node, payload.tool_id must be the actual tool row UUID, not a display label; if the user references a tool by name, resolve the row first with tools.list or tools.get and then attach by id. "
         "For agents.graph.set_agent_model, send payload.node_id plus a concrete payload.model_id chosen from models.list. "
         "For agents.graph.apply_patch and rag.graph.apply_patch, the array field is payload.operations, not payload.patch. "
         "For runtime agent execution, use canonical agents.execute or agents.start_run, never invented aliases like agents.runs.create or agents.create_run. "
@@ -1129,7 +1122,7 @@ def build_architect_graph_definition(model_id: str, tool_ids: list[str] | None =
         "For RAG pipeline operator discovery use rag.operators.catalog and rag.operators.schema only. "
         "For platform tool inventory questions, treat platform tools as canonical action ids, not just the domain container slugs. "
         "If the user asks to list platform tools available right now or tool names grouped by domain, return canonical action ids grouped under each platform domain from the seeded tool schemas already in context. "
-        "Do not answer with only domain slugs, and do not include architect-worker tools unless the user explicitly asks about worker or orchestration tools. "
+        "Do not answer with only domain builtin keys, and do not include architect-worker tools unless the user explicitly asks about worker or orchestration tools. "
         "Do not invent help/list-schema actions against platform domains just to describe available actions. "
         "Never use agents.nodes.* to discover RAG operators and never invent unsupported actions like rag.nodes.catalog. "
         "Never create empty graphs: agents and pipelines must include a minimal working node/edge skeleton. "
@@ -1190,8 +1183,8 @@ def build_architect_graph_definition(model_id: str, tool_ids: list[str] | None =
         "returns no usable models. "
         "Draft-first is mandatory: do not call publish/promote actions unless objective_flags.allow_publish=true "
         "in user-provided input. "
-        "Runtime tenant context is authoritative for platform mutations. Never ask the user for tenant_id, "
-        "never rely on a user-supplied tenant override, and operate only inside the current runtime tenant. "
+        "Runtime organization context is authoritative for platform mutations. Never ask the user for organization_id, "
+        "never rely on a user-supplied organization override, and operate only inside the current runtime organization. "
         "Idempotency keys and request metadata should be autogenerated from runtime context when absent; "
         "do not block on asking the user for them unless a caller explicitly requires custom values. "
     )

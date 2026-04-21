@@ -39,7 +39,7 @@ class FileSpace(Base):
     __tablename__ = "file_spaces"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
     project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
     name = Column(String, nullable=False)
     description = Column(Text, nullable=True)
@@ -48,7 +48,7 @@ class FileSpace(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
-    tenant = relationship("Tenant")
+    organization = relationship("Organization")
     project = relationship("Project")
     creator = relationship("User")
     entries = relationship("FileSpaceEntry", back_populates="space", cascade="all, delete-orphan")
@@ -123,7 +123,7 @@ class AgentFileSpaceLink(Base):
     __tablename__ = "agent_file_space_links"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
     project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
     agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id", ondelete="CASCADE"), nullable=False, index=True)
     file_space_id = Column(UUID(as_uuid=True), ForeignKey("file_spaces.id", ondelete="CASCADE"), nullable=False, index=True)
@@ -132,7 +132,7 @@ class AgentFileSpaceLink(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
-    tenant = relationship("Tenant")
+    organization = relationship("Organization")
     project = relationship("Project")
     agent = relationship("Agent")
     space = relationship("FileSpace", back_populates="agent_links")

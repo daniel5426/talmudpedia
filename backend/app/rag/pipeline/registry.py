@@ -1209,7 +1209,7 @@ class OperatorRegistry:
 
     def __init__(self):
         self._operators: Dict[str, OperatorSpec] = {}
-        self._custom_operators: Dict[str, OperatorSpec] = {}  # Tenant-specific custom operators
+        self._custom_operators: Dict[str, OperatorSpec] = {}  # Organization-specific custom operators
         self._register_defaults()
 
     @classmethod
@@ -1255,45 +1255,45 @@ class OperatorRegistry:
         """Register a new operator."""
         self._operators[spec.operator_id] = spec
 
-    def register_custom(self, spec: OperatorSpec, tenant_id: str):
-        """Register a custom operator for a specific tenant."""
-        key = f"{tenant_id}:{spec.operator_id}"
+    def register_custom(self, spec: OperatorSpec, organization_id: str):
+        """Register a custom operator for a specific organization."""
+        key = f"{organization_id}:{spec.operator_id}"
         spec.is_custom = True
         self._custom_operators[key] = spec
 
-    def load_custom_operators(self, specs: List[OperatorSpec], tenant_id: str):
-        """Batch load custom operators for a tenant."""
+    def load_custom_operators(self, specs: List[OperatorSpec], organization_id: str):
+        """Batch load custom operators for a organization."""
         for spec in specs:
-             self.register_custom(spec, tenant_id)
+             self.register_custom(spec, organization_id)
 
 
-    def get(self, operator_id: str, tenant_id: Optional[str] = None) -> Optional[OperatorSpec]:
-        """Get an operator by ID, checking custom operators first if tenant_id provided."""
-        if tenant_id:
-            custom_key = f"{tenant_id}:{operator_id}"
+    def get(self, operator_id: str, organization_id: Optional[str] = None) -> Optional[OperatorSpec]:
+        """Get an operator by ID, checking custom operators first if organization_id provided."""
+        if organization_id:
+            custom_key = f"{organization_id}:{operator_id}"
             if custom_key in self._custom_operators:
                 return self._custom_operators[custom_key]
         return self._operators.get(operator_id)
 
-    def get_by_category(self, category: str, tenant_id: Optional[str] = None) -> List[OperatorSpec]:
+    def get_by_category(self, category: str, organization_id: Optional[str] = None) -> List[OperatorSpec]:
         """Get all operators in a category."""
         result = [op for op in self._operators.values() if op.category.value == category]
-        if tenant_id:
+        if organization_id:
             for key, op in self._custom_operators.items():
-                if key.startswith(f"{tenant_id}:") and op.category.value == category:
+                if key.startswith(f"{organization_id}:") and op.category.value == category:
                     result.append(op)
         return result
 
-    def list_all(self, tenant_id: Optional[str] = None) -> List[OperatorSpec]:
+    def list_all(self, organization_id: Optional[str] = None) -> List[OperatorSpec]:
         """List all available operators."""
         result = list(self._operators.values())
-        if tenant_id:
+        if organization_id:
             for key, op in self._custom_operators.items():
-                if key.startswith(f"{tenant_id}:"):
+                if key.startswith(f"{organization_id}:"):
                     result.append(op)
         return result
 
-    def get_catalog(self, tenant_id: Optional[str] = None) -> Dict[str, List[Dict[str, Any]]]:
+    def get_catalog(self, organization_id: Optional[str] = None) -> Dict[str, List[Dict[str, Any]]]:
         """Get the full operator catalog grouped by category."""
         catalog: Dict[str, List[Dict[str, Any]]] = {
             "source": [],
@@ -1309,17 +1309,17 @@ class OperatorRegistry:
             "output": [],
             "custom": [],
         }
-        for op in self.list_all(tenant_id):
+        for op in self.list_all(organization_id):
             category = op.category.value
             if category not in catalog:
                 catalog[category] = []
             catalog[category].append(op.to_catalog_entry())
         return catalog
 
-    def check_compatibility(self, source_op_id: str, target_op_id: str, tenant_id: Optional[str] = None) -> tuple[bool, Optional[str]]:
+    def check_compatibility(self, source_op_id: str, target_op_id: str, organization_id: Optional[str] = None) -> tuple[bool, Optional[str]]:
         """Check if two operators can be connected."""
-        source_spec = self.get(source_op_id, tenant_id)
-        target_spec = self.get(target_op_id, tenant_id)
+        source_spec = self.get(source_op_id, organization_id)
+        target_spec = self.get(target_op_id, organization_id)
 
         if not source_spec:
             return False, f"Unknown operator: {source_op_id}"
@@ -1358,9 +1358,9 @@ class OperatorRegistry:
             f"but {target_op_id} expects {target_spec.input_type.value}"
         )
 
-    def get_operator_spec(self, operator_id: str, tenant_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    def get_operator_spec(self, operator_id: str, organization_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Get full operator specification as dict (for API responses)."""
-        spec = self.get(operator_id, tenant_id)
+        spec = self.get(operator_id, organization_id)
         if not spec:
             return None
         return spec.model_dump()

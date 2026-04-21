@@ -1,6 +1,6 @@
 # Architecture Tree (Curated)
 
-Last Updated: 2026-04-19
+Last Updated: 2026-04-21
 
 This file is a backend-only architecture map optimized for agent context efficiency.
 
@@ -29,7 +29,7 @@ backend/app/api/routers/published_apps_host_runtime.py
 backend/app/api/routers/published_apps_external_runtime.py
 backend/app/api/routers/embedded_agents_public.py
 backend/app/api/routers/stt.py
-backend/app/api/routers/tenant_api_keys.py
+backend/app/api/routers/organization_api_keys.py
 backend/app/api/routers/agent_graph_mutations.py
 backend/app/api/routers/agent_tool_exports.py
 backend/app/api/routers/resource_policies.py
@@ -49,7 +49,6 @@ backend/app/api/schemas/run_usage.py
 
 backend/app/core/
 backend/app/core/security.py
-backend/app/core/rbac.py
 backend/app/core/scope_registry.py
 backend/app/core/audit.py
 backend/app/core/env_loader.py
@@ -157,6 +156,11 @@ backend/app/services/model_runtime/interfaces.py
 backend/app/services/model_runtime/registry.py
 backend/app/services/model_runtime/adapters.py
 backend/app/services/model_runtime/types.py
+backend/app/services/runtime_surface/
+backend/app/services/runtime_surface/contracts.py
+backend/app/services/runtime_surface/events.py
+backend/app/services/runtime_surface/threads.py
+backend/app/services/runtime_surface/service.py
 backend/app/services/control_plane/
 backend/app/services/control_plane/contracts.py
 backend/app/services/control_plane/errors.py
@@ -230,7 +234,7 @@ backend/app/services/artifact_runtime/handler_runner.py
 backend/app/services/published_app_live_preview.py
 backend/app/services/builtin_tools.py
 backend/app/services/architect_mode_service.py
-backend/app/services/tenant_api_key_service.py
+backend/app/services/organization_api_key_service.py
 backend/app/services/project_api_key_service.py
 backend/app/services/embedded_agent_runtime_service.py
 backend/app/services/runtime_attachment_service.py

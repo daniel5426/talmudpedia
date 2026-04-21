@@ -29,7 +29,7 @@ async def test_spawn_run_emits_spawn_decision_and_child_lifecycle(monkeypatch):
 
     queue: asyncio.Queue = asyncio.Queue()
     emitter = EventEmitter(queue, run_id="run-1", mode="debug")
-    executor = SpawnRunNodeExecutor(tenant_id=None, db=object())
+    executor = SpawnRunNodeExecutor(organization_id=None, db=object())
 
     await executor.execute(
         state={},
@@ -41,7 +41,7 @@ async def test_spawn_run_emits_spawn_decision_and_child_lifecycle(monkeypatch):
         context={
             "run_id": "22222222-2222-2222-2222-222222222222",
             "node_id": "spawn_node",
-            "tenant_id": "tenant-1",
+            "organization_id": "tenant-1",
             "emitter": emitter,
         },
     )
@@ -63,7 +63,7 @@ async def test_spawn_run_policy_deny_emits_policy_event(monkeypatch):
 
     queue: asyncio.Queue = asyncio.Queue()
     emitter = EventEmitter(queue, run_id="run-2", mode="debug")
-    executor = SpawnRunNodeExecutor(tenant_id=None, db=object())
+    executor = SpawnRunNodeExecutor(organization_id=None, db=object())
 
     with pytest.raises(PermissionError):
         await executor.execute(
@@ -75,7 +75,7 @@ async def test_spawn_run_policy_deny_emits_policy_event(monkeypatch):
             context={
                 "run_id": "22222222-2222-2222-2222-222222222223",
                 "node_id": "spawn_node",
-                "tenant_id": "tenant-1",
+                "organization_id": "tenant-1",
                 "emitter": emitter,
             },
         )
@@ -109,7 +109,7 @@ async def test_join_emits_join_decision_and_cancellation_event(monkeypatch):
 
     queue: asyncio.Queue = asyncio.Queue()
     emitter = EventEmitter(queue, run_id="run-3", mode="debug")
-    executor = JoinNodeExecutor(tenant_id=None, db=object())
+    executor = JoinNodeExecutor(organization_id=None, db=object())
 
     await executor.execute(
         state={},
@@ -117,7 +117,7 @@ async def test_join_emits_join_decision_and_cancellation_event(monkeypatch):
         context={
             "run_id": "22222222-2222-2222-2222-222222222224",
             "node_id": "join_node",
-            "tenant_id": "tenant-1",
+            "organization_id": "tenant-1",
             "emitter": emitter,
         },
     )
@@ -133,7 +133,7 @@ async def test_option_a_flag_blocks_graph_orchestration(monkeypatch):
 
     queue: asyncio.Queue = asyncio.Queue()
     emitter = EventEmitter(queue, run_id="run-4", mode="debug")
-    executor = SpawnRunNodeExecutor(tenant_id=None, db=object())
+    executor = SpawnRunNodeExecutor(organization_id=None, db=object())
 
     with pytest.raises(PermissionError):
         await executor.execute(
@@ -142,7 +142,7 @@ async def test_option_a_flag_blocks_graph_orchestration(monkeypatch):
             context={
                 "run_id": "22222222-2222-2222-2222-222222222225",
                 "node_id": "spawn_node",
-                "tenant_id": "tenant-1",
+                "organization_id": "tenant-1",
                 "emitter": emitter,
             },
         )
@@ -161,7 +161,7 @@ async def test_option_b_flag_blocks_runtime_primitives_in_platform_sdk(monkeypat
         context={
             "inputs": {
                 "action": "spawn_run",
-                "tenant_id": "tenant-1",
+                "organization_id": "tenant-1",
                 "caller_run_id": "run-1",
             }
         },

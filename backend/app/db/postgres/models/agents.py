@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Enum as SQLEnum, Integer, Float, UniqueConstraint, Index, text
+from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Enum as SQLEnum, Integer, Float, UniqueConstraint, Index, and_, text
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -21,10 +21,11 @@ class Agent(Base):
     __tablename__ = "agents"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
     
     name = Column(String, nullable=False)
-    slug = Column(String, nullable=False, index=True)
+    system_key = Column(String, nullable=True, index=True)
+    slug = Column(String, nullable=False, index=True)  # Opaque internal row key; not a canonical identity surface.
     description = Column(String, nullable=True)
     
     # Graph Definition (DAG nodes and edges for visual builder)
@@ -36,7 +37,7 @@ class Agent(Base):
     temperature = Column(Float, default=0.7)
     system_prompt = Column(String, nullable=True)
     
-    # Tool references (list of tool IDs/slugs)
+    # Tool references (list of tool UUIDs)
     tools = Column(JSONB, default=[], nullable=False)
     
     # Referenced resources from graph (auto-populated on save)
@@ -77,13 +78,20 @@ class Agent(Base):
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
 
     # Relationships
-    tenant = relationship("Tenant")
+    organization = relationship("Organization")
     creator = relationship("User")
     default_embed_policy_set = relationship("ResourcePolicySet", foreign_keys=[default_embed_policy_set_id])
     runs = relationship("AgentRun", back_populates="agent", cascade="all, delete-orphan")
 
     __table_args__ = (
-        UniqueConstraint("tenant_id", "slug", name="uq_agent_tenant_slug"),
+        Index(
+            "uq_agents_organization_system_key",
+            "organization_id",
+            "system_key",
+            unique=True,
+            postgresql_where=and_(organization_id != None, system_key != None),
+            sqlite_where=and_(organization_id != None, system_key != None),
+        ),
     )
 
 
@@ -116,7 +124,7 @@ class AgentRun(Base):
     __tablename__ = "agent_runs"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
     agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id", ondelete="CASCADE"), nullable=False, index=True)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     
@@ -181,7 +189,7 @@ class AgentRun(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     # Relationships
-    tenant = relationship("Tenant")
+    organization = relationship("Organization")
     agent = relationship("Agent", back_populates="runs")
     user = relationship("User", foreign_keys=[user_id])
     initiator_user = relationship("User", foreign_keys=[initiator_user_id])

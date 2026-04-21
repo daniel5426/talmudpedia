@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 
-import { useTenant } from "@/contexts/TenantContext"
+import { useOrganization } from "@/contexts/OrganizationContext"
 import { useSidebar } from "@/components/ui/sidebar"
 import { ArtifactEditorHeader } from "@/components/admin/artifacts/ArtifactEditorHeader"
 import { ArtifactListView } from "@/components/admin/artifacts/ArtifactListView"
@@ -36,7 +36,7 @@ function downloadArtifactTransferFile(filename: string, payload: unknown) {
 }
 
 export default function ArtifactsPage() {
-  const { currentTenant } = useTenant()
+  const { currentOrganization } = useOrganization()
   const { open: appSidebarOpen, openMobile: appSidebarOpenMobile, isMobile } = useSidebar()
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -66,14 +66,14 @@ export default function ArtifactsPage() {
   const fetchArtifacts = useCallback(async () => {
     setLoading(true)
     try {
-      const data = await artifactsService.list(currentTenant?.slug, { limit: 100, view: "summary" })
+      const data = await artifactsService.list(currentOrganization?.id, { limit: 100, view: "summary" })
       setArtifacts(data.items)
     } catch (error) {
       console.error("Failed to fetch artifacts", error)
     } finally {
       setLoading(false)
     }
-  }, [currentTenant?.slug])
+  }, [currentOrganization?.id])
 
   useEffect(() => {
     void fetchArtifacts()
@@ -100,7 +100,7 @@ export default function ArtifactsPage() {
 
   const handleDuplicate = useCallback(async (artifact: Artifact) => {
     try {
-      const duplicated = await artifactsService.duplicate(artifact.id, currentTenant?.slug)
+      const duplicated = await artifactsService.duplicate(artifact.id, currentOrganization?.id)
       await fetchArtifacts()
       markNextEditorEntryShouldAutoCollapseSidebar()
       router.push(buildArtifactDetailHref(duplicated.id))
@@ -108,24 +108,24 @@ export default function ArtifactsPage() {
       console.error("Failed to duplicate artifact", error)
       alert(error instanceof Error ? error.message : "Failed to duplicate artifact")
     }
-  }, [currentTenant?.slug, fetchArtifacts, markNextEditorEntryShouldAutoCollapseSidebar, router])
+  }, [currentOrganization?.id, fetchArtifacts, markNextEditorEntryShouldAutoCollapseSidebar, router])
 
   const handleDelete = useCallback(async (artifact: Artifact) => {
     if (!confirm(`Delete "${artifact.display_name}"?`)) return
     try {
-      await artifactsService.delete(artifact.id, currentTenant?.slug)
+      await artifactsService.delete(artifact.id, currentOrganization?.id)
       await fetchArtifacts()
     } catch (error) {
       console.error("Failed to delete artifact", error)
       alert("Failed to delete artifact")
     }
-  }, [currentTenant?.slug, fetchArtifacts])
+  }, [currentOrganization?.id, fetchArtifacts])
 
   const handlePublish = useCallback(async (artifact: Artifact) => {
     if (!confirm(`Publish "${artifact.display_name}"?`)) return
     setPublishingId(artifact.id)
     try {
-      await artifactsService.publish(artifact.id, currentTenant?.slug)
+      await artifactsService.publish(artifact.id, currentOrganization?.id)
       await fetchArtifacts()
     } catch (error) {
       console.error("Failed to publish artifact", error)
@@ -133,14 +133,14 @@ export default function ArtifactsPage() {
     } finally {
       setPublishingId(null)
     }
-  }, [currentTenant?.slug, fetchArtifacts])
+  }, [currentOrganization?.id, fetchArtifacts])
 
   const handleBulkDuplicate = useCallback(async (selectedArtifacts: Artifact[]) => {
     if (selectedArtifacts.length === 0) return
     setBulkAction("duplicate")
     try {
       for (const artifact of selectedArtifacts) {
-        await artifactsService.duplicate(artifact.id, currentTenant?.slug)
+        await artifactsService.duplicate(artifact.id, currentOrganization?.id)
       }
       await fetchArtifacts()
     } catch (error) {
@@ -149,7 +149,7 @@ export default function ArtifactsPage() {
     } finally {
       setBulkAction(null)
     }
-  }, [currentTenant?.slug, fetchArtifacts])
+  }, [currentOrganization?.id, fetchArtifacts])
 
   const handleBulkDelete = useCallback(async (selectedArtifacts: Artifact[]) => {
     if (selectedArtifacts.length === 0) return
@@ -157,7 +157,7 @@ export default function ArtifactsPage() {
     setBulkAction("delete")
     try {
       for (const artifact of selectedArtifacts) {
-        await artifactsService.delete(artifact.id, currentTenant?.slug)
+        await artifactsService.delete(artifact.id, currentOrganization?.id)
       }
       await fetchArtifacts()
     } catch (error) {
@@ -166,7 +166,7 @@ export default function ArtifactsPage() {
     } finally {
       setBulkAction(null)
     }
-  }, [currentTenant?.slug, fetchArtifacts])
+  }, [currentOrganization?.id, fetchArtifacts])
 
   const handleBulkPublish = useCallback(async (selectedArtifacts: Artifact[]) => {
     if (selectedArtifacts.length === 0) return
@@ -174,7 +174,7 @@ export default function ArtifactsPage() {
     setBulkAction("publish")
     try {
       for (const artifact of selectedArtifacts) {
-        await artifactsService.publish(artifact.id, currentTenant?.slug)
+        await artifactsService.publish(artifact.id, currentOrganization?.id)
       }
       await fetchArtifacts()
     } catch (error) {
@@ -183,24 +183,24 @@ export default function ArtifactsPage() {
     } finally {
       setBulkAction(null)
     }
-  }, [currentTenant?.slug, fetchArtifacts])
+  }, [currentOrganization?.id, fetchArtifacts])
 
   const handleDownloadArtifact = useCallback(async (artifact: Artifact) => {
     try {
-      const transfer = await artifactsService.exportArtifact(artifact.id, currentTenant?.slug)
+      const transfer = await artifactsService.exportArtifact(artifact.id, currentOrganization?.id)
       downloadArtifactTransferFile(artifactTransferFilename(artifact.display_name), transfer)
     } catch (error) {
       console.error("Failed to export artifact", error)
       alert(error instanceof Error ? error.message : "Failed to export artifact")
     }
-  }, [currentTenant?.slug])
+  }, [currentOrganization?.id])
 
   const handleBulkDownload = useCallback(async (selectedArtifacts: Artifact[]) => {
     if (selectedArtifacts.length === 0) return
     setBulkAction("export")
     try {
       for (const artifact of selectedArtifacts) {
-        const transfer = await artifactsService.exportArtifact(artifact.id, currentTenant?.slug)
+        const transfer = await artifactsService.exportArtifact(artifact.id, currentOrganization?.id)
         downloadArtifactTransferFile(artifactTransferFilename(artifact.display_name), transfer)
       }
     } catch (error) {
@@ -209,7 +209,7 @@ export default function ArtifactsPage() {
     } finally {
       setBulkAction(null)
     }
-  }, [currentTenant?.slug])
+  }, [currentOrganization?.id])
 
   const handleUploadFiles = useCallback(async (files: File[]) => {
     if (files.length === 0) return
@@ -218,7 +218,7 @@ export default function ArtifactsPage() {
       for (const file of files) {
         const text = await file.text()
         const payload = JSON.parse(text)
-        await artifactsService.importArtifact(payload, currentTenant?.slug)
+        await artifactsService.importArtifact(payload, currentOrganization?.id)
       }
       await fetchArtifacts()
     } catch (error) {
@@ -227,7 +227,7 @@ export default function ArtifactsPage() {
     } finally {
       setBulkAction(null)
     }
-  }, [currentTenant?.slug, fetchArtifacts])
+  }, [currentOrganization?.id, fetchArtifacts])
 
   if (shouldRedirectLegacyRoute) {
     return (

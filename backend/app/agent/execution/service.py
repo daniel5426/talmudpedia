@@ -282,7 +282,7 @@ class AgentExecutorService:
 
     @staticmethod
     def _is_platform_architect(agent: Agent) -> bool:
-        return str(getattr(agent, "slug", "") or "").strip() == "platform-architect"
+        return str(getattr(agent, "system_key", "") or "").strip() == "platform_architect"
 
     @staticmethod
     def _extract_usage_candidate(event: ExecutionEvent) -> tuple[NormalizedUsage | None, str | None]:
@@ -423,7 +423,7 @@ class AgentExecutorService:
 
         try:
             policy_snapshot = self._safe_policy_snapshot_from_context(runtime_context)
-            execution = await ModelResolver(db, agent.tenant_id).resolve_receipt(
+            execution = await ModelResolver(db, agent.organization_id).resolve_receipt(
                 str(raw_requested_model_id),
                 policy_snapshot=policy_snapshot,
             )
@@ -881,12 +881,12 @@ class AgentExecutorService:
         except Exception:
             published_app_account_id = None
 
-        tenant_api_key_id: Optional[UUID] = None
-        raw_tenant_api_key_id = runtime_context.get("tenant_api_key_id")
+        organization_api_key_id: Optional[UUID] = None
+        raw_organization_api_key_id = runtime_context.get("organization_api_key_id")
         try:
-            tenant_api_key_id = UUID(str(raw_tenant_api_key_id)) if raw_tenant_api_key_id else None
+            organization_api_key_id = UUID(str(raw_organization_api_key_id)) if raw_organization_api_key_id else None
         except Exception:
-            tenant_api_key_id = None
+            organization_api_key_id = None
 
         external_user_id = str(runtime_context.get("external_user_id") or "").strip() or None
         external_session_id = str(runtime_context.get("external_session_id") or "").strip() or None
@@ -894,10 +894,10 @@ class AgentExecutorService:
         thread_service = ThreadService(self.db)
         try:
             thread_result = await thread_service.resolve_or_create_thread(
-                tenant_id=agent.tenant_id,
+                organization_id=agent.organization_id,
                 user_id=effective_initiator_id,
                 app_account_id=published_app_account_id,
-                tenant_api_key_id=tenant_api_key_id,
+                organization_api_key_id=organization_api_key_id,
                 agent_id=agent_id,
                 published_app_id=published_app_id,
                 external_user_id=external_user_id,
@@ -912,11 +912,11 @@ class AgentExecutorService:
 
         attachment_service = RuntimeAttachmentService(self.db)
         attachment_owner = RuntimeAttachmentOwner(
-            tenant_id=agent.tenant_id,
+            organization_id=agent.organization_id,
             surface=surface,
             user_id=effective_initiator_id,
             app_account_id=published_app_account_id,
-            tenant_api_key_id=tenant_api_key_id,
+            organization_api_key_id=organization_api_key_id,
             agent_id=agent_id,
             published_app_id=published_app_id,
             external_user_id=external_user_id,
@@ -926,7 +926,7 @@ class AgentExecutorService:
         attachment_ids = input_params.get("attachment_ids") if isinstance(input_params.get("attachment_ids"), list) else []
         input_preparation_service = RuntimeInputPreparationService(
             attachment_service,
-            stt_service=SpeechToTextService(self.db, agent.tenant_id),
+            stt_service=SpeechToTextService(self.db, agent.organization_id),
         )
         prepared_message = await input_preparation_service.prepare_for_run(
             owner=attachment_owner,
@@ -961,7 +961,7 @@ class AgentExecutorService:
         policy_snapshot = self._safe_policy_snapshot_from_context(runtime_context)
         if policy_snapshot is None:
             policy_snapshot = await policy_service.resolve_execution_snapshot(
-                tenant_id=agent.tenant_id,
+                organization_id=agent.organization_id,
                 agent_id=agent.id,
                 user_id=effective_initiator_id,
                 published_app_id=published_app_id,
@@ -977,7 +977,7 @@ class AgentExecutorService:
             architect_mode_service = ArchitectModeService(self.db)
             try:
                 effective_mode = await architect_mode_service.resolve_effective_mode(
-                    tenant_id=agent.tenant_id,
+                    organization_id=agent.organization_id,
                     user_id=effective_initiator_id,
                     requested_mode=runtime_context.get("architect_mode"),
                 )
@@ -995,13 +995,13 @@ class AgentExecutorService:
                 quota_service = UsageQuotaService(self.db)
                 quota_metadata = await quota_service.reserve_for_run(
                     run_id=run_id,
-                    tenant_id=agent.tenant_id,
+                    organization_id=agent.organization_id,
                     user_id=effective_initiator_id,
                     input_params=input_params,
                 )
                 resource_policy_quota = await ResourcePolicyQuotaService(self.db).reserve_for_run(
                     run_id=run_id,
-                    tenant_id=agent.tenant_id,
+                    organization_id=agent.organization_id,
                     snapshot=policy_snapshot,
                     model_id=requested_model_id,
                     input_params=input_params,
@@ -1040,14 +1040,14 @@ class AgentExecutorService:
         pre_run_receipt: ResolvedModelBindingReceipt | None = None
         if requested_model_ref and not self._should_skip_model_registry_resolution(context_payload):
             try:
-                pre_run_receipt = await ModelResolver(self.db, agent.tenant_id).resolve_receipt(
+                pre_run_receipt = await ModelResolver(self.db, agent.organization_id).resolve_receipt(
                     requested_model_ref,
                     policy_snapshot=policy_snapshot,
                 )
             except ModelResolverError:
                 logger.warning("Failed to resolve pre-run context receipt for run %s", run_id, exc_info=True)
         context_window = await ContextWindowService(self.db).build_pre_run_window(
-            tenant_id=agent.tenant_id,
+            organization_id=agent.organization_id,
             model_id=(
                 str(pre_run_receipt.logical_model.id)
                 if pre_run_receipt is not None
@@ -1061,7 +1061,7 @@ class AgentExecutorService:
         )
         if not isinstance(context_payload.get("file_spaces"), list):
             grants = await FileSpaceService(self.db).resolve_agent_file_space_grants(
-                tenant_id=agent.tenant_id,
+                organization_id=agent.organization_id,
                 project_id=parsed_project_id,
                 agent_id=agent.id,
             )
@@ -1072,7 +1072,7 @@ class AgentExecutorService:
         run = AgentRun(
             id=run_id,
             agent_id=agent_id,
-            tenant_id=agent.tenant_id,
+            organization_id=agent.organization_id,
             user_id=effective_initiator_id,
             thread_id=thread_result.thread.id,
             initiator_user_id=effective_initiator_id,
@@ -1333,11 +1333,11 @@ class AgentExecutorService:
                 runtime_context["spawn_key"] = run.spawn_key
             if run.orchestration_group_id:
                 runtime_context["orchestration_group_id"] = str(run.orchestration_group_id)
-            if run.tenant_id:
-                runtime_context["tenant_id"] = str(run.tenant_id)
+            if run.organization_id:
+                runtime_context["organization_id"] = str(run.organization_id)
             runtime_context["agent_id"] = str(agent.id)
-            if getattr(agent, "slug", None):
-                runtime_context["agent_slug"] = str(agent.slug)
+            if getattr(agent, "system_key", None):
+                runtime_context["agent_system_key"] = str(agent.system_key)
             if run.resolved_model_id:
                 runtime_context["resolved_model_id"] = str(run.resolved_model_id)
             runtime_context["orchestration_surface"] = "option_a_graphspec_v2"
@@ -1396,7 +1396,7 @@ class AgentExecutorService:
                     data={
                         "phase": "started",
                         "agent_id": str(agent.id),
-                        "agent_slug": getattr(agent, "slug", None),
+                        "agent_system_key": getattr(agent, "system_key", None),
                         "mode": mode.value,
                     },
                     run_id=str(run_id),
@@ -1419,7 +1419,7 @@ class AgentExecutorService:
                         metadata={"category": "lifecycle"},
                     )
                 )
-                compiler = AgentCompiler(db=db, tenant_id=agent.tenant_id)
+                compiler = AgentCompiler(db=db, organization_id=agent.organization_id)
                 resolved_model_id = str(run.resolved_model_id) if run.resolved_model_id else None
                 if not resolved_model_id:
                     candidate = runtime_context.get("resolved_model_id")
@@ -1427,7 +1427,7 @@ class AgentExecutorService:
                         resolved_model_id = str(candidate)
                 graph_payload = agent.graph_definition if isinstance(agent.graph_definition, dict) else {}
                 graph_payload = self._apply_run_scoped_model_override(graph_payload, resolved_model_id)
-                graph_payload = await PromptReferenceResolver(db, agent.tenant_id).resolve_graph_definition(graph_payload)
+                graph_payload = await PromptReferenceResolver(db, agent.organization_id).resolve_graph_definition(graph_payload)
                 graph_def = AgentGraph(**graph_payload)
                 compile_input_params = run_input_params
                 if resume_payload and isinstance(resume_payload, dict) and "approval" in resume_payload:
@@ -1474,7 +1474,7 @@ class AgentExecutorService:
                 )
 
                 adapter_cls = RuntimeAdapterRegistry.get_default()
-                adapter = adapter_cls(tenant_id=agent.tenant_id, db=db)
+                adapter = adapter_cls(organization_id=agent.organization_id, db=db)
                 executable = await adapter.compile(graph_ir, checkpointer=self._checkpointer)
                 persist_event(
                     ExecutionEvent(
@@ -1495,10 +1495,10 @@ class AgentExecutorService:
                     "resume_payload": resume_payload,
                     "architect_mode": runtime_context.get("architect_mode"),
                     "initiator_user_id": str(run.initiator_user_id) if run.initiator_user_id else None,
-                    "tenant_id": str(run.tenant_id) if run.tenant_id else None,
+                    "organization_id": str(run.organization_id) if run.organization_id else None,
                     "user_id": str(run.user_id) if run.user_id else None,
                     "agent_id": str(agent.id),
-                    "agent_slug": str(getattr(agent, "slug", "")) or None,
+                    "agent_system_key": str(getattr(agent, "system_key", "")) or None,
                     "auth_token": runtime_context.get("token"),
                     "root_run_id": str(run.root_run_id) if run.root_run_id else None,
                     "parent_run_id": str(run.parent_run_id) if run.parent_run_id else None,

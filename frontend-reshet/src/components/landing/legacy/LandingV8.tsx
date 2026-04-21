@@ -245,7 +245,7 @@ export function LandingV8() {
               Ship with confidence.
             </h2>
             <p className="text-[16px] text-white/50 leading-relaxed font-sans-ui mb-10 max-w-md">
-              Publish agent applications securely with built-in revision tracking, instant rollbacks, and multi-tenant data segregation natively isolated at the edge.
+              Publish agent applications securely with built-in revision tracking, instant rollbacks, and multi-organization data segregation natively isolated at the edge.
             </p>
 
             <div className="space-y-5">

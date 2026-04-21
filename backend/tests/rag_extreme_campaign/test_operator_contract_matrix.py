@@ -198,7 +198,7 @@ async def test_web_crawler_executor_accepts_list_start_urls(monkeypatch):
 async def test_knowledge_store_sink_rejects_documents_without_vectors(db_session, test_tenant_id, test_user_id, run_prefix):
     executor = KnowledgeStoreSinkExecutor(_spec("knowledge_store_sink"))
     store = KnowledgeStore(
-        tenant_id=test_tenant_id,
+        organization_id=test_tenant_id,
         name=f"{run_prefix}-empty-vector-store",
         description="empty vector validation",
         embedding_model_id="manual-vector-test",

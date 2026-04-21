@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+
 import json
 import os
 import re
@@ -978,7 +980,7 @@ async def coding_agent_describe_selected_agent_contract(payload: Any) -> dict[st
             tool_summaries.append(
                 {
                     "id": str(tool.get("id") or ""),
-                    "slug": str(tool.get("slug") or ""),
+                    "builtin_key": str(tool.get("builtin_key") or "") or None,
                     "name": str(tool.get("name") or ""),
                     "description": str(tool.get("description") or "") or None,
                     "runtime_readiness": tool.get("runtime_readiness") if isinstance(tool.get("runtime_readiness"), dict) else {"ready": False},
@@ -1280,7 +1282,7 @@ async def coding_agent_build_worker_precheck(payload: Any) -> dict[str, Any]:
 CODING_AGENT_TOOL_SPECS: list[dict[str, Any]] = [
     {
         "name": "List Files",
-        "slug": "list_files",
+        "builtin_key": "list_files",
         "function_name": "coding_agent_list_files",
         "description": "List editable files in the app coding sandbox.",
         "timeout_s": 15,
@@ -1298,7 +1300,7 @@ CODING_AGENT_TOOL_SPECS: list[dict[str, Any]] = [
     },
     {
         "name": "Read File",
-        "slug": "read_file",
+        "builtin_key": "read_file",
         "function_name": "coding_agent_read_file",
         "description": "Read a file from the app coding sandbox.",
         "timeout_s": 20,
@@ -1315,7 +1317,7 @@ CODING_AGENT_TOOL_SPECS: list[dict[str, Any]] = [
     },
     {
         "name": "Read File Range",
-        "slug": "read_file_range",
+        "builtin_key": "read_file_range",
         "function_name": "coding_agent_read_file_range",
         "description": "Read a focused line range from a file (with optional context lines).",
         "timeout_s": 20,
@@ -1340,7 +1342,7 @@ CODING_AGENT_TOOL_SPECS: list[dict[str, Any]] = [
     },
     {
         "name": "Workspace Index",
-        "slug": "workspace_index",
+        "builtin_key": "workspace_index",
         "function_name": "coding_agent_workspace_index",
         "description": "Return file metadata index (size, hash, language, symbol outline) for search-first planning.",
         "timeout_s": 30,
@@ -1360,7 +1362,7 @@ CODING_AGENT_TOOL_SPECS: list[dict[str, Any]] = [
     },
     {
         "name": "Collect Context",
-        "slug": "collect_context",
+        "builtin_key": "collect_context",
         "function_name": "coding_agent_collect_context",
         "description": "Rank and compact query-relevant snippets within a byte budget.",
         "timeout_s": 30,
@@ -1383,7 +1385,7 @@ CODING_AGENT_TOOL_SPECS: list[dict[str, Any]] = [
     },
     {
         "name": "Search Code",
-        "slug": "search_code",
+        "builtin_key": "search_code",
         "function_name": "coding_agent_search_code",
         "description": "Search for text across sandbox files.",
         "timeout_s": 20,
@@ -1403,7 +1405,7 @@ CODING_AGENT_TOOL_SPECS: list[dict[str, Any]] = [
     },
     {
         "name": "Get Agent Integration Contract",
-        "slug": "agent_integration_contract",
+        "builtin_key": "agent_integration_contract",
         "function_name": "coding_agent_get_agent_integration_contract",
         "description": (
             "Return selected runtime-agent contract (resolved tools, input/output schemas, "
@@ -1418,7 +1420,7 @@ CODING_AGENT_TOOL_SPECS: list[dict[str, Any]] = [
     },
     {
         "name": "Describe Selected Agent Contract",
-        "slug": "describe_selected_agent_contract",
+        "builtin_key": "describe_selected_agent_contract",
         "function_name": "coding_agent_describe_selected_agent_contract",
         "description": (
             "Return a compact summary of the selected app-agent contract "
@@ -1441,7 +1443,7 @@ CODING_AGENT_TOOL_SPECS: list[dict[str, Any]] = [
     },
     {
         "name": "Write File (Deprecated)",
-        "slug": "write_file",
+        "builtin_key": "write_file",
         "function_name": "coding_agent_write_file",
         "description": "Legacy full overwrite tool. Disabled by default; use Apply Patch.",
         "timeout_s": 25,
@@ -1461,7 +1463,7 @@ CODING_AGENT_TOOL_SPECS: list[dict[str, Any]] = [
     },
     {
         "name": "Apply Patch",
-        "slug": "apply_patch",
+        "builtin_key": "apply_patch",
         "function_name": "coding_agent_apply_patch",
         "description": "Apply unified diff patch with strict context matching and atomic semantics.",
         "timeout_s": 45,
@@ -1491,7 +1493,7 @@ CODING_AGENT_TOOL_SPECS: list[dict[str, Any]] = [
     },
     {
         "name": "Rename File",
-        "slug": "rename_file",
+        "builtin_key": "rename_file",
         "function_name": "coding_agent_rename_file",
         "description": "Rename a file in the sandbox.",
         "timeout_s": 25,
@@ -1511,7 +1513,7 @@ CODING_AGENT_TOOL_SPECS: list[dict[str, Any]] = [
     },
     {
         "name": "Delete File",
-        "slug": "delete_file",
+        "builtin_key": "delete_file",
         "function_name": "coding_agent_delete_file",
         "description": "Delete a file from the sandbox.",
         "timeout_s": 20,
@@ -1528,7 +1530,7 @@ CODING_AGENT_TOOL_SPECS: list[dict[str, Any]] = [
     },
     {
         "name": "Snapshot Files",
-        "slug": "snapshot_files",
+        "builtin_key": "snapshot_files",
         "function_name": "coding_agent_snapshot_files",
         "description": "Snapshot all sandbox files.",
         "timeout_s": 30,
@@ -1540,7 +1542,7 @@ CODING_AGENT_TOOL_SPECS: list[dict[str, Any]] = [
     },
     {
         "name": "Run Targeted Tests",
-        "slug": "run_targeted_tests",
+        "builtin_key": "run_targeted_tests",
         "function_name": "coding_agent_run_targeted_tests",
         "description": "Run allowlisted test commands inside sandbox.",
         "timeout_s": 300,
@@ -1558,7 +1560,7 @@ CODING_AGENT_TOOL_SPECS: list[dict[str, Any]] = [
     },
     {
         "name": "Build Worker Precheck",
-        "slug": "build_worker_precheck",
+        "builtin_key": "build_worker_precheck",
         "function_name": "coding_agent_build_worker_precheck",
         "description": "Run allowlisted build precheck command in sandbox.",
         "timeout_s": 360,
@@ -1571,14 +1573,19 @@ CODING_AGENT_TOOL_SPECS: list[dict[str, Any]] = [
 ]
 
 
+def _system_tool_row_key(builtin_key: str) -> str:
+    digest = hashlib.sha1(builtin_key.encode("utf-8")).hexdigest()[:24]
+    return f"sys-tool-{digest}"
+
+
 async def ensure_coding_agent_tools(db: AsyncSession) -> list[str]:
     tool_ids: list[str] = []
     for spec in CODING_AGENT_TOOL_SPECS:
         result = await db.execute(
             select(ToolRegistry).where(
                 and_(
-                    ToolRegistry.tenant_id.is_(None),
-                    ToolRegistry.slug == spec["slug"],
+                    ToolRegistry.organization_id.is_(None),
+                    ToolRegistry.builtin_key == spec["builtin_key"],
                 )
             )
         )
@@ -1597,9 +1604,9 @@ async def ensure_coding_agent_tools(db: AsyncSession) -> list[str]:
         }
         if tool is None:
             tool = ToolRegistry(
-                tenant_id=None,
+                organization_id=None,
                 name=spec["name"],
-                slug=spec["slug"],
+                slug=_system_tool_row_key(spec["builtin_key"]),
                 description=spec["description"],
                 scope=ToolDefinitionScope.GLOBAL,
                 schema=spec["schema"],
@@ -1609,7 +1616,7 @@ async def ensure_coding_agent_tools(db: AsyncSession) -> list[str]:
                 implementation_type=ToolImplementationType.FUNCTION,
                 artifact_id=None,
                 artifact_version=None,
-                builtin_key=None,
+                builtin_key=spec["builtin_key"],
                 builtin_template_id=None,
                 is_builtin_template=False,
                 is_active=True,

@@ -109,7 +109,7 @@ class PublishedAppDraftRevisionMaterializerService:
 
         template_runtime_context = TemplateRuntimeContext(
             app_id=str(app.id),
-            app_slug=str(app.slug or ""),
+            app_public_id=str(app.public_id or ""),
             agent_id=str(app.agent_id or ""),
         )
         revision_files = apply_runtime_bootstrap_overlay(

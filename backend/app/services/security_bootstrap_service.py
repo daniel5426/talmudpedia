@@ -18,11 +18,11 @@ from app.core.scope_registry import (
     ROLE_FAMILY_PROJECT,
     normalize_scope_list,
 )
-from app.db.postgres.models.rbac import ActorType, Role, RoleAssignment, RolePermission
+from app.db.postgres.models.rbac import Role, RoleAssignment, RolePermission
 
 
 class SecurityBootstrapService:
-    """Seeds immutable default RBAC roles and baseline assignments for a tenant."""
+    """Seeds immutable default RBAC roles and baseline assignments for a organization."""
 
     SYSTEM_ROLE_ORDER = (
         (ROLE_FAMILY_ORGANIZATION, ORGANIZATION_OWNER_ROLE),
@@ -35,11 +35,11 @@ class SecurityBootstrapService:
     def __init__(self, db: AsyncSession):
         self.db = db
 
-    async def ensure_default_roles(self, tenant_id: UUID) -> dict[str, Role]:
+    async def ensure_default_roles(self, organization_id: UUID) -> dict[str, Role]:
         roles_by_name: dict[str, Role] = {}
 
         existing = (
-            await self.db.execute(select(Role).where(Role.tenant_id == tenant_id))
+            await self.db.execute(select(Role).where(Role.organization_id == organization_id))
         ).scalars().all()
         for role in existing:
             key = self._role_key(role.family, role.name)
@@ -51,7 +51,7 @@ class SecurityBootstrapService:
             role = roles_by_name.get(key)
             if role is None:
                 role = Role(
-                    tenant_id=tenant_id,
+                    organization_id=organization_id,
                     family=family,
                     name=role_name,
                     description=f"System default {role_name} role",
@@ -98,8 +98,7 @@ class SecurityBootstrapService:
             organization_id=organization_id,
             user_id=user_id,
             role_id=owner_role.id,
-            scope_id=organization_id,
-            scope_type=ROLE_FAMILY_ORGANIZATION,
+            project_id=None,
             family=ROLE_FAMILY_ORGANIZATION,
             assigned_by=assigned_by or user_id,
         )
@@ -118,8 +117,7 @@ class SecurityBootstrapService:
             organization_id=organization_id,
             user_id=user_id,
             role_id=reader_role.id,
-            scope_id=organization_id,
-            scope_type=ROLE_FAMILY_ORGANIZATION,
+            project_id=None,
             family=ROLE_FAMILY_ORGANIZATION,
             assigned_by=assigned_by or user_id,
         )
@@ -156,6 +154,35 @@ class SecurityBootstrapService:
             assigned_by=assigned_by,
         )
 
+    async def ensure_project_role_assignment(
+        self,
+        *,
+        organization_id: UUID,
+        project_id: UUID,
+        user_id: UUID,
+        role_id: UUID,
+        assigned_by: UUID | None = None,
+    ) -> None:
+        role = (
+            await self.db.execute(
+                select(Role).where(
+                    Role.id == role_id,
+                    Role.organization_id == organization_id,
+                    Role.family == ROLE_FAMILY_PROJECT,
+                )
+            )
+        ).scalar_one_or_none()
+        if role is None:
+            raise ValueError("Project role not found")
+        await self._replace_assignment(
+            organization_id=organization_id,
+            user_id=user_id,
+            role_id=role.id,
+            project_id=project_id,
+            family=ROLE_FAMILY_PROJECT,
+            assigned_by=assigned_by or user_id,
+        )
+
     async def ensure_project_viewer_assignment(
         self,
         *,
@@ -187,30 +214,14 @@ class SecurityBootstrapService:
             organization_id=organization_id,
             user_id=user_id,
             role_id=role.id,
-            scope_id=project_id,
-            scope_type=ROLE_FAMILY_PROJECT,
+            project_id=project_id,
             family=ROLE_FAMILY_PROJECT,
             assigned_by=assigned_by or user_id,
         )
 
-    # Legacy wrappers kept for still-unmigrated code paths.
-    async def ensure_owner_assignment(self, *, tenant_id: UUID, user_id: UUID, assigned_by: UUID | None = None) -> None:
-        await self.ensure_organization_owner_assignment(
-            organization_id=tenant_id,
-            user_id=user_id,
-            assigned_by=assigned_by,
-        )
-
-    async def ensure_member_assignment(self, *, tenant_id: UUID, user_id: UUID, assigned_by: UUID | None = None) -> None:
-        await self.ensure_organization_reader_assignment(
-            organization_id=tenant_id,
-            user_id=user_id,
-            assigned_by=assigned_by,
-        )
-
-    async def reset_tenant_roles(self, tenant_id: UUID) -> None:
+    async def reset_organization_roles(self, organization_id: UUID) -> None:
         role_ids = (
-            await self.db.execute(select(Role.id).where(Role.tenant_id == tenant_id))
+            await self.db.execute(select(Role.id).where(Role.organization_id == organization_id))
         ).scalars().all()
         if role_ids:
             await self.db.execute(delete(RoleAssignment).where(RoleAssignment.role_id.in_(list(role_ids))))
@@ -231,21 +242,20 @@ class SecurityBootstrapService:
         organization_id: UUID,
         user_id: UUID,
         role_id: UUID,
-        scope_id: UUID,
-        scope_type: str,
+        project_id: UUID | None,
         family: str,
         assigned_by: UUID,
     ) -> None:
+        project_filter = RoleAssignment.project_id.is_(None) if project_id is None else RoleAssignment.project_id == project_id
         existing = (
             await self.db.execute(
                 select(RoleAssignment)
                 .join(Role, Role.id == RoleAssignment.role_id)
                 .where(
                     and_(
-                        RoleAssignment.tenant_id == organization_id,
+                        RoleAssignment.organization_id == organization_id,
                         RoleAssignment.user_id == user_id,
-                        RoleAssignment.scope_id == scope_id,
-                        RoleAssignment.scope_type == scope_type,
+                        project_filter,
                         Role.family == family,
                     )
                 )
@@ -256,14 +266,15 @@ class SecurityBootstrapService:
                 return
             await self.db.delete(assignment)
 
+        if existing:
+            await self.db.flush()
+
         self.db.add(
             RoleAssignment(
-                tenant_id=organization_id,
+                organization_id=organization_id,
                 role_id=role_id,
                 user_id=user_id,
-                actor_type=ActorType.USER,
-                scope_id=scope_id,
-                scope_type=scope_type,
+                project_id=project_id,
                 assigned_by=assigned_by,
             )
         )

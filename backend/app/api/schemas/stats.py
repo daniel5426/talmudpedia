@@ -75,7 +75,7 @@ class AgentUsageSummary(BaseModel):
     """Usage summary for an agent."""
     id: UUID
     name: str
-    slug: str
+    system_key: Optional[str] = None
     run_count: int
     tokens_used: int
 
@@ -212,7 +212,7 @@ class AgentSummary(BaseModel):
     """Summary of an agent."""
     id: UUID
     name: str
-    slug: str
+    system_key: Optional[str] = None
     status: str
     thread_count: int
     threads_by_day: list[DailyDataPoint]

@@ -13,7 +13,7 @@ from app.db.postgres.models.identity import (
     OrgRole,
     OrgUnit,
     OrgUnitType,
-    Tenant,
+    Organization,
     User,
 )
 from app.db.postgres.models.registry import (
@@ -144,13 +144,13 @@ def _parse_sse_events(payload: str) -> list[dict]:
 
 async def _seed_execution_panel_user(db_session):
     suffix = uuid4().hex[:8]
-    tenant = Tenant(name=f"Panel Tenant {suffix}", slug=f"panel-tenant-{suffix}")
+    tenant = Organization(name=f"Panel Organization {suffix}", slug=f"panel-tenant-{suffix}")
     user = User(email=f"panel-user-{suffix}@example.com", hashed_password="x", role="admin")
     db_session.add_all([tenant, user])
     await db_session.flush()
 
     root = OrgUnit(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         parent_id=None,
         name=f"Root {suffix}",
         slug=f"root-{suffix}",
@@ -160,7 +160,7 @@ async def _seed_execution_panel_user(db_session):
     await db_session.flush()
 
     membership = OrgMembership(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         org_unit_id=root.id,
         role=OrgRole.owner,
@@ -173,20 +173,20 @@ async def _seed_execution_panel_user(db_session):
 
     token = create_access_token(
         subject=str(user.id),
-        tenant_id=str(tenant.id),
+        organization_id=str(tenant.id),
         org_unit_id=str(root.id),
         org_role="owner",
     )
     headers = {
         "Authorization": f"Bearer {token}",
-        "X-Tenant-ID": str(tenant.id),
+        "X-Organization-ID": str(tenant.id),
     }
     return tenant, user, headers
 
 
-async def _create_web_search_tool(db_session, *, tenant_id: UUID, suffix: str) -> ToolRegistry:
+async def _create_web_search_tool(db_session, *, organization_id: UUID, suffix: str) -> ToolRegistry:
     tool = ToolRegistry(
-        tenant_id=tenant_id,
+        organization_id=organization_id,
         name="Web Search",
         slug=f"panel-web-search-{suffix}",
         description="execution panel web search tool",
@@ -222,7 +222,7 @@ async def _create_web_search_tool(db_session, *, tenant_id: UUID, suffix: str) -
 async def _create_panel_agent(
     db_session,
     *,
-    tenant_id: UUID,
+    organization_id: UUID,
     user_id: UUID,
     tool_id: UUID,
     suffix: str,
@@ -251,7 +251,7 @@ async def _create_panel_agent(
             {"id": f"e2-{suffix}", "source": "agent", "target": "end"},
         ],
     }
-    service = AgentService(db=db_session, tenant_id=tenant_id)
+    service = AgentService(db=db_session, organization_id=organization_id)
     return await service.create_agent(
         CreateAgentData(
             name=f"panel-agent-{suffix}",
@@ -267,10 +267,10 @@ async def _create_panel_agent(
 async def test_execution_panel_stream_user_path_web_search_success(client, db_session, monkeypatch):
     suffix = uuid4().hex[:8]
     tenant, user, headers = await _seed_execution_panel_user(db_session)
-    tool = await _create_web_search_tool(db_session, tenant_id=tenant.id, suffix=suffix)
+    tool = await _create_web_search_tool(db_session, organization_id=tenant.id, suffix=suffix)
     agent = await _create_panel_agent(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         tool_id=tool.id,
         suffix=suffix,
@@ -325,10 +325,10 @@ async def test_execution_panel_stream_user_path_web_search_success(client, db_se
 async def test_execution_panel_stream_user_path_web_search_can_fail_when_model_omits_query(client, db_session, monkeypatch):
     suffix = uuid4().hex[:8]
     tenant, user, headers = await _seed_execution_panel_user(db_session)
-    tool = await _create_web_search_tool(db_session, tenant_id=tenant.id, suffix=suffix)
+    tool = await _create_web_search_tool(db_session, organization_id=tenant.id, suffix=suffix)
     agent = await _create_panel_agent(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         tool_id=tool.id,
         suffix=suffix,

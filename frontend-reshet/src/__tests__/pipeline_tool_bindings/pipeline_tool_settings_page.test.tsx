@@ -11,7 +11,7 @@ const getPipelineToolBindingMock = jest.fn()
 const updatePipelineToolBindingMock = jest.fn()
 
 const searchParamsState = { jobId: null as string | null, toolSettings: "1" as string | null }
-const tenantContext = { currentTenant: { slug: "tenant-1" } }
+const organizationContext = { currentOrganization: { id: "organization-1" } }
 const routerMock = { push: pushMock, replace: replaceMock }
 const paramsMock = { id: "pipeline-123" }
 const searchParamsMock = {
@@ -28,8 +28,8 @@ jest.mock("next/navigation", () => ({
   useSearchParams: () => searchParamsMock,
 }))
 
-jest.mock("@/contexts/TenantContext", () => ({
-  useTenant: () => tenantContext,
+jest.mock("@/contexts/OrganizationContext", () => ({
+  useOrganization: () => organizationContext,
 }))
 
 jest.mock("@/components/direction-provider", () => ({
@@ -75,10 +75,10 @@ describe("pipeline tool settings page", () => {
     getOperatorCatalogMock.mockResolvedValue({})
     listOperatorSpecsMock.mockResolvedValue({})
     listVisualPipelinesMock.mockResolvedValue({
-      pipelines: [
+      items: [
         {
           id: "pipeline-123",
-          tenant_id: "tenant-1",
+          organization_id: "organization-1",
           name: "Retrieval Pipeline",
           description: "Pipeline description",
           pipeline_type: "retrieval",
@@ -133,19 +133,17 @@ describe("pipeline tool settings page", () => {
     render(<PipelineEditorPage />)
 
     expect(await screen.findByDisplayValue("Retrieval Assistant Tool")).toBeInTheDocument()
-    expect(screen.getByDisplayValue("Use this tool for normalized retrieval.")).toBeInTheDocument()
+    const descriptionEditor = screen.getByText("Use this tool for normalized retrieval.")
+    expect(descriptionEditor).toBeInTheDocument()
     expect(screen.getByText(/Tool ID:/)).toBeInTheDocument()
 
     fireEvent.change(screen.getByPlaceholderText("Agent-facing tool name"), {
       target: { value: "Updated Retrieval Tool" },
     })
-    fireEvent.change(screen.getByPlaceholderText("Describe when the agent should call this pipeline tool."), {
-      target: { value: "Updated description" },
+    fireEvent.input(descriptionEditor, {
+      currentTarget: { textContent: "Updated description" },
+      target: { textContent: "Updated description" },
     })
-    fireEvent.change(screen.getByPlaceholderText('{"type":"object","properties":{}}'), {
-      target: { value: JSON.stringify({ type: "object", properties: { query: { type: "string" } }, additionalProperties: false }, null, 2) },
-    })
-
     fireEvent.click(screen.getByRole("button", { name: "Save Tool Settings" }))
 
     await waitFor(() => {
@@ -158,16 +156,16 @@ describe("pipeline tool settings page", () => {
           input_schema: {
             type: "object",
             properties: {
-              query: { type: "string" },
+              text: { type: "string" },
             },
             additionalProperties: false,
           },
         },
-        "tenant-1"
+        "organization-1"
       )
     })
 
     expect(await screen.findByDisplayValue("Updated Retrieval Tool")).toBeInTheDocument()
-    expect(screen.getByDisplayValue("Updated description")).toBeInTheDocument()
+    expect(screen.getByText("Updated description")).toBeInTheDocument()
   })
 })

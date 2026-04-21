@@ -26,11 +26,11 @@ class RuntimeAttachment(Base):
     __tablename__ = "runtime_attachments"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
     thread_id = Column(UUID(as_uuid=True), ForeignKey("agent_threads.id", ondelete="CASCADE"), nullable=True, index=True)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     app_account_id = Column(UUID(as_uuid=True), ForeignKey("published_app_accounts.id", ondelete="SET NULL"), nullable=True, index=True)
-    tenant_api_key_id = Column(UUID(as_uuid=True), ForeignKey("tenant_api_keys.id", ondelete="SET NULL"), nullable=True, index=True)
+    organization_api_key_id = Column(UUID(as_uuid=True), ForeignKey("organization_api_keys.id", ondelete="SET NULL"), nullable=True, index=True)
     agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id", ondelete="SET NULL"), nullable=True, index=True)
     published_app_id = Column(UUID(as_uuid=True), ForeignKey("published_apps.id", ondelete="SET NULL"), nullable=True, index=True)
     external_user_id = Column(String(255), nullable=True, index=True)
@@ -49,11 +49,11 @@ class RuntimeAttachment(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
-    tenant = relationship("Tenant")
+    organization = relationship("Organization")
     thread = relationship("AgentThread", back_populates="attachments")
     user = relationship("User")
     app_account = relationship("PublishedAppAccount")
-    tenant_api_key = relationship("TenantAPIKey")
+    organization_api_key = relationship("OrganizationAPIKey")
     agent = relationship("Agent")
     published_app = relationship("PublishedApp")
     turn_links = relationship(
@@ -63,8 +63,8 @@ class RuntimeAttachment(Base):
     )
 
     __table_args__ = (
-        Index("ix_runtime_attachments_scope_lookup", "tenant_id", "surface", "thread_id", "created_at"),
-        Index("ix_runtime_attachments_embed_lookup", "tenant_id", "agent_id", "external_user_id", "created_at"),
+        Index("ix_runtime_attachments_scope_lookup", "organization_id", "surface", "thread_id", "created_at"),
+        Index("ix_runtime_attachments_embed_lookup", "organization_id", "agent_id", "external_user_id", "created_at"),
     )
 
 

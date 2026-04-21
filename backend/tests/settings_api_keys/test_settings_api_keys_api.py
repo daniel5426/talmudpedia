@@ -34,13 +34,13 @@ async def test_settings_api_keys_for_organization_and_project(client, db_session
     project_create = await client.post(
         "/api/settings/api-keys",
         headers=headers,
-        json={"owner_scope": "project", "project_slug": "build", "name": "Project Key", "scopes": ["agents.embed"]},
+        json={"owner_scope": "project", "project_id": str(project.id), "name": "Project Key", "scopes": ["agents.embed"]},
     )
     assert project_create.status_code == 201
     project_id = project_create.json()["api_key"]["id"]
 
     project_revoke = await client.post(
-        f"/api/settings/api-keys/{project_id}/revoke?owner_scope=project&project_slug=build",
+        f"/api/settings/api-keys/{project_id}/revoke?owner_scope=project&project_id={project.id}",
         headers=headers,
     )
     assert project_revoke.status_code == 200

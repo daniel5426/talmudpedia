@@ -52,8 +52,8 @@ class AgentCompiler:
     Handles validation and normalization.
     """
     
-    def __init__(self, tenant_id: Optional[UUID] = None, db: Any = None):
-        self.tenant_id = tenant_id
+    def __init__(self, organization_id: Optional[UUID] = None, db: Any = None):
+        self.organization_id = organization_id
         self.db = db
 
     async def validate(self, graph: AgentGraph, *, agent_id: Optional[UUID] = None) -> list[ValidationError]:
@@ -327,11 +327,11 @@ class AgentCompiler:
             )
         if has_v2_orchestration_nodes and not is_orchestration_surface_enabled(
             surface=ORCHESTRATION_SURFACE_OPTION_A,
-            tenant_id=self.tenant_id,
+            organization_id=self.organization_id,
         ):
             errors.append(
                 ValidationError(
-                    message="GraphSpec v2 orchestration is disabled by feature flag for this tenant"
+                    message="GraphSpec v2 orchestration is disabled by feature flag for this organization"
                 )
             )
         return errors
@@ -460,15 +460,15 @@ class AgentCompiler:
         allowlist_slugs: set[str] = set()
         policy_targets_loaded = False
 
-        if self.db is not None and self.tenant_id is not None and agent_id is not None:
-            policy = await OrchestrationPolicyService(self.db).get_policy(self.tenant_id, agent_id)
+        if self.db is not None and self.organization_id is not None and agent_id is not None:
+            policy = await OrchestrationPolicyService(self.db).get_policy(self.organization_id, agent_id)
             max_depth = int(policy.max_depth or DEFAULT_MAX_DEPTH)
             max_fanout = int(policy.max_fanout or DEFAULT_MAX_FANOUT)
             max_children_total = int(policy.max_children_total or DEFAULT_MAX_CHILDREN_TOTAL)
 
             allowlist_res = await self.db.execute(
                 select(OrchestratorTargetAllowlist).where(
-                    OrchestratorTargetAllowlist.tenant_id == self.tenant_id,
+                    OrchestratorTargetAllowlist.organization_id == self.organization_id,
                     OrchestratorTargetAllowlist.orchestrator_agent_id == agent_id,
                     OrchestratorTargetAllowlist.is_active.is_(True),
                 )
@@ -480,17 +480,11 @@ class AgentCompiler:
                 for item in allowlist
                 if item.target_agent_id is not None
             }
-            allowlist_slugs = {
-                str(item.target_agent_slug)
-                for item in allowlist
-                if item.target_agent_slug
-            }
-
         incoming_by_target: Dict[str, List[AgentEdge]] = {}
         for edge in graph.edges:
             incoming_by_target.setdefault(edge.target, []).append(edge)
 
-        target_refs: list[tuple[str, Optional[str], Optional[str]]] = []
+        target_refs: list[tuple[str, Optional[str]]] = []
         static_children_total = 0
         for node in orchestration_nodes:
             node_type = self._normalize_node_type(node.type)
@@ -518,16 +512,15 @@ class AgentCompiler:
             if node_type == "spawn_run":
                 static_children_total += 1
                 target_agent_id = self._as_text(node_cfg.get("target_agent_id"))
-                target_agent_slug = self._as_text(node_cfg.get("target_agent_slug"))
-                if not target_agent_id and not target_agent_slug:
+                if not target_agent_id:
                     errors.append(
                         ValidationError(
                             node_id=node.id,
-                            message="spawn_run requires target_agent_id or target_agent_slug",
+                            message="spawn_run requires target_agent_id",
                         )
                     )
                 else:
-                    target_refs.append((node.id, target_agent_id, target_agent_slug))
+                    target_refs.append((node.id, target_agent_id))
 
             if node_type == "spawn_group":
                 targets = node_cfg.get("targets", [])
@@ -550,16 +543,15 @@ class AgentCompiler:
                     for idx, item in enumerate(targets):
                         item = item if isinstance(item, dict) else {}
                         target_agent_id = self._as_text(item.get("target_agent_id"))
-                        target_agent_slug = self._as_text(item.get("target_agent_slug"))
-                        if not target_agent_id and not target_agent_slug:
+                        if not target_agent_id:
                             errors.append(
                                 ValidationError(
                                     node_id=node.id,
-                                    message=f"spawn_group target at index {idx} requires target_agent_id or target_agent_slug",
+                                    message=f"spawn_group target at index {idx} requires target_agent_id",
                                 )
                             )
                         else:
-                            target_refs.append((node.id, target_agent_id, target_agent_slug))
+                            target_refs.append((node.id, target_agent_id))
 
                 join_mode = str(node_cfg.get("join_mode") or "all")
                 if join_mode not in {"all", "best_effort", "fail_fast", "quorum", "first_success"}:
@@ -664,7 +656,7 @@ class AgentCompiler:
         if not target_refs:
             return errors
 
-        if policy_targets_loaded and not allowlist_ids and not allowlist_slugs:
+        if policy_targets_loaded and not allowlist_ids:
             errors.append(
                 ValidationError(
                     message="Orchestrator has no target allowlist entries",
@@ -672,61 +664,47 @@ class AgentCompiler:
             )
             return errors
 
-        if self.db is None or self.tenant_id is None:
+        if self.db is None or self.organization_id is None:
             errors.append(
                 ValidationError(
-                    message="Skipping compile-time target eligibility checks (no DB/tenant context available)",
+                    message="Skipping compile-time target eligibility checks (no DB/organization context available)",
                     severity="warning",
                 )
             )
             return errors
 
-        by_id = {target_id for _node_id, target_id, _slug in target_refs if target_id}
-        by_slug = {slug for _node_id, _target_id, slug in target_refs if slug}
+        by_id = {target_id for _node_id, target_id in target_refs if target_id}
         resolved_by_id: Dict[str, Agent] = {}
-        resolved_by_slug: Dict[str, Agent] = {}
 
         if by_id:
             target_rows = await self.db.execute(
                 select(Agent).where(
-                    Agent.tenant_id == self.tenant_id,
+                    Agent.organization_id == self.organization_id,
                     Agent.id.in_(list(by_id)),
                 )
             )
             for item in target_rows.scalars().all():
                 resolved_by_id[str(item.id)] = item
 
-        if by_slug:
-            target_rows = await self.db.execute(
-                select(Agent).where(
-                    Agent.tenant_id == self.tenant_id,
-                    Agent.slug.in_(list(by_slug)),
-                )
-            )
-            for item in target_rows.scalars().all():
-                resolved_by_slug[str(item.slug)] = item
-
-        for node_id, target_id, target_slug in target_refs:
+        for node_id, target_id in target_refs:
             target = resolved_by_id.get(target_id) if target_id else None
-            if target is None and target_slug:
-                target = resolved_by_slug.get(target_slug)
 
             if target is None:
                 errors.append(
                     ValidationError(
                         node_id=node_id,
-                        message=f"Orchestration target not found for tenant (id={target_id}, slug={target_slug})",
+                        message=f"Orchestration target not found for organization (id={target_id})",
                     )
                 )
                 continue
 
             if policy_targets_loaded:
-                allowed = str(target.id) in allowlist_ids or str(target.slug) in allowlist_slugs
+                allowed = str(target.id) in allowlist_ids
                 if not allowed:
                     errors.append(
                         ValidationError(
                             node_id=node_id,
-                            message=f"Target '{target.slug}' is not allowlisted for this orchestrator",
+                            message=f"Target '{target.name}' is not allowlisted for this orchestrator",
                         )
                     )
 
@@ -736,7 +714,7 @@ class AgentCompiler:
                     errors.append(
                         ValidationError(
                             node_id=node_id,
-                            message=f"Target '{target.slug}' is not published",
+                            message=f"Target '{target.name}' is not published",
                         )
                     )
 
@@ -828,9 +806,9 @@ class AgentCompiler:
         from app.agent.resolution import ArtifactResolver, ToolResolver, RAGPipelineResolver, ResolutionError
 
         resolved_graph = self._clone_graph(graph)
-        tool_resolver = ToolResolver(self.db, self.tenant_id)
-        rag_resolver = RAGPipelineResolver(self.db, self.tenant_id)
-        artifact_resolver = ArtifactResolver(self.db, self.tenant_id)
+        tool_resolver = ToolResolver(self.db, self.organization_id)
+        rag_resolver = RAGPipelineResolver(self.db, self.organization_id)
+        artifact_resolver = ArtifactResolver(self.db, self.organization_id)
         require_published_tools = str(execution_mode or "debug").strip().lower() == "production"
 
         for node in resolved_graph.nodes:
@@ -909,7 +887,7 @@ class AgentCompiler:
                 else {}
             )
             node.config["_artifact_node_ui"] = node_ui
-            if resolved_artifact.get("artifact_kind") == "tenant":
+            if resolved_artifact.get("artifact_kind") == "organization":
                 node.config["_artifact_revision_id"] = resolved_artifact.get("artifact_revision_id")
             elif resolved_artifact.get("artifact_version"):
                 node.config["_artifact_version"] = resolved_artifact.get("artifact_version")

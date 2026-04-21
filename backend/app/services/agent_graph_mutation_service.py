@@ -17,10 +17,10 @@ logger = logging.getLogger(__name__)
 
 
 class AgentGraphMutationService:
-    def __init__(self, db: AsyncSession, tenant_id: UUID):
+    def __init__(self, db: AsyncSession, organization_id: UUID):
         self.db = db
-        self.tenant_id = tenant_id
-        self.agent_service = AgentService(db=db, tenant_id=tenant_id)
+        self.organization_id = organization_id
+        self.agent_service = AgentService(db=db, organization_id=organization_id)
 
     async def get_graph(self, agent_id: UUID) -> dict[str, Any]:
         agent = await self.agent_service.get_agent(agent_id)
@@ -28,7 +28,6 @@ class AgentGraphMutationService:
         analysis = await self.analyze_graph(agent_id, graph_definition=graph_definition)
         return {
             "agent_id": str(agent.id),
-            "agent_slug": agent.slug,
             "graph_definition": graph_definition,
             "analysis": analysis["analysis"],
         }
@@ -37,7 +36,7 @@ class AgentGraphMutationService:
         agent = await self.agent_service.get_agent(agent_id)
         register_standard_operators()
         graph = AgentGraph(**graph_definition)
-        compiler = AgentCompiler(db=self.db, tenant_id=self.tenant_id)
+        compiler = AgentCompiler(db=self.db, organization_id=self.organization_id)
         resolved_graph = await compiler.resolve_runtime_references(graph, execution_mode="debug")
         analysis = compiler.analyze(resolved_graph)
         return {
@@ -98,7 +97,7 @@ class AgentGraphMutationService:
                 "Agent graph patch failed",
                 extra={
                     "agent_id": str(agent_id),
-                    "tenant_id": str(getattr(self, "tenant_id", "") or ""),
+                    "organization_id": str(getattr(self, "organization_id", "") or ""),
                     "phase": phase,
                     "operation_count": len(operations or []),
                 },

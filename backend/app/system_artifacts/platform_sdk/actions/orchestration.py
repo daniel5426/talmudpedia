@@ -35,7 +35,6 @@ def spawn_run(
 ) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]]]:
     caller_run_id = resolve_caller_run_id(inputs, payload)
     target_agent_id = payload.get("target_agent_id") or inputs.get("target_agent_id")
-    target_agent_slug = payload.get("target_agent_slug") or payload.get("target_slug") or inputs.get("target_agent_slug")
     scope_subset = payload.get("scope_subset") or inputs.get("scope_subset") or payload.get("requested_scopes") or inputs.get("requested_scopes") or []
     if not isinstance(scope_subset, list):
         scope_subset = []
@@ -50,8 +49,8 @@ def spawn_run(
         missing.append("caller_run_id")
     if not idempotency_key:
         missing.append("idempotency_key")
-    if not target_agent_id and not target_agent_slug:
-        missing.append("target_agent_id or target_agent_slug")
+    if not target_agent_id:
+        missing.append("target_agent_id")
     if not scope_subset:
         missing.append("scope_subset")
     if missing:
@@ -61,7 +60,6 @@ def spawn_run(
         "caller_run_id": caller_run_id,
         "parent_node_id": payload.get("parent_node_id") or inputs.get("parent_node_id"),
         "target_agent_id": target_agent_id,
-        "target_agent_slug": target_agent_slug,
         "mapped_input_payload": mapped_input_payload,
         "failure_policy": payload.get("failure_policy"),
         "timeout_s": payload.get("timeout_s"),

@@ -135,7 +135,7 @@ export function CredentialDeleteDialog({ credential, disabled, onDeleted, onErro
                   <div className="space-y-1.5">
                     {usage.tools.map((row) => (
                       <p key={row.tool_id} className="text-xs text-muted-foreground">
-                        {row.tool_name} ({row.tool_slug}){row.implementation_type ? ` · ${row.implementation_type}` : ""}
+                        {row.tool_name}{row.builtin_key ? ` (${row.builtin_key})` : ""}{row.implementation_type ? ` · ${row.implementation_type}` : ""}
                       </p>
                     ))}
                   </div>

@@ -24,7 +24,7 @@ from app.agent.execution.types import ExecutionMode
 from app.db.postgres.models.agent_threads import AgentThreadSurface
 from app.db.postgres.models.agents import AgentRun, RunStatus
 from app.db.postgres.models.artifact_runtime import ArtifactCodingSession
-from app.db.postgres.models.identity import Tenant
+from app.db.postgres.models.identity import Organization
 from app.db.postgres.engine import sessionmaker as db_sessionmaker
 from app.db.postgres.session import get_db
 from app.services.artifact_coding_agent_tools import ARTIFACT_CODING_AGENT_SURFACE
@@ -179,25 +179,25 @@ def _run_response_from_snapshot(
     )
 
 
-async def _require_user_context(artifact_ctx) -> tuple[Tenant, Any, AsyncSession]:
-    tenant, user, db = artifact_ctx
-    if tenant is None:
-        raise HTTPException(status_code=400, detail="Tenant context required")
+async def _require_user_context(artifact_ctx) -> tuple[Organization, Any, AsyncSession]:
+    organization, user, db = artifact_ctx
+    if organization is None:
+        raise HTTPException(status_code=400, detail="Organization context required")
     if user is None:
         raise HTTPException(status_code=403, detail="User context is required for artifact coding chat")
-    return tenant, user, db
+    return organization, user, db
 
 
 async def _get_session_for_user_or_404(
     *,
     db: AsyncSession,
-    tenant_id: UUID,
+    organization_id: UUID,
     user_id: UUID,
     session_id: UUID,
 ) -> ArtifactCodingSession:
     history = ArtifactCodingChatHistoryService(db)
     session = await history.get_session_for_user(
-        tenant_id=tenant_id,
+        organization_id=organization_id,
         user_id=user_id,
         session_id=session_id,
     )
@@ -209,19 +209,19 @@ async def _get_session_for_user_or_404(
 async def _require_run_owner(
     *,
     db: AsyncSession,
-    tenant_id: UUID,
+    organization_id: UUID,
     user_id: UUID,
     run_id: UUID,
 ) -> tuple[AgentRun, ArtifactCodingSession]:
     run = await db.get(AgentRun, run_id)
-    if run is None or run.tenant_id != tenant_id or str(run.surface or "") != ARTIFACT_CODING_AGENT_SURFACE:
+    if run is None or run.organization_id != organization_id or str(run.surface or "") != ARTIFACT_CODING_AGENT_SURFACE:
         raise HTTPException(status_code=404, detail="Artifact coding run not found")
     session_id = _session_id_for_run(run)
     if session_id is None:
         raise HTTPException(status_code=404, detail="Artifact coding run is missing a bound chat session")
     session = await _get_session_for_user_or_404(
         db=db,
-        tenant_id=tenant_id,
+        organization_id=organization_id,
         user_id=user_id,
         session_id=session_id,
     )
@@ -269,7 +269,7 @@ async def _reconcile_session_run(
 async def _build_session_detail_response(
     *,
     db: AsyncSession,
-    tenant_id: UUID,
+    organization_id: UUID,
     session: ArtifactCodingSession,
     before_message_id: UUID | None,
     limit: int,
@@ -293,7 +293,7 @@ async def _build_session_detail_response(
         recorder = ExecutionTraceRecorder(serializer=lambda value: value)
         for run_id in run_ids:
             run = await db.get(AgentRun, run_id)
-            if run is None or run.tenant_id != tenant_id:
+            if run is None or run.organization_id != organization_id:
                 continue
             raw_events = await recorder.list_events(db, run_id)
             run_events.extend(_normalize_trace_events(run_id=run_id, raw_events=raw_events))
@@ -323,11 +323,11 @@ async def list_artifact_coding_sessions(
     _: Dict[str, Any] = Depends(require_scopes("artifacts.read")),
     artifact_ctx=Depends(get_artifact_context),
 ):
-    tenant, user, db = await _require_user_context(artifact_ctx)
+    organization, user, db = await _require_user_context(artifact_ctx)
     if artifact_id is None and not str(draft_key or "").strip():
         raise HTTPException(status_code=400, detail="artifact_id or draft_key is required")
     sessions = await ArtifactCodingChatHistoryService(db).list_sessions(
-        tenant_id=tenant.id,
+        organization_id=organization.id,
         user_id=user.id,
         artifact_id=artifact_id,
         draft_key=str(draft_key or "").strip() or None,
@@ -344,12 +344,12 @@ async def get_artifact_coding_session(
     _: Dict[str, Any] = Depends(require_scopes("artifacts.read")),
     artifact_ctx=Depends(get_artifact_context),
 ):
-    tenant, user, db = await _require_user_context(artifact_ctx)
+    organization, user, db = await _require_user_context(artifact_ctx)
     history = ArtifactCodingChatHistoryService(db)
     shared_drafts = ArtifactCodingSharedDraftService(db)
     session = await _get_session_for_user_or_404(
         db=db,
-        tenant_id=tenant.id,
+        organization_id=organization.id,
         user_id=user.id,
         session_id=session_id,
     )
@@ -360,7 +360,7 @@ async def get_artifact_coding_session(
             await db.refresh(session)
     return await _build_session_detail_response(
         db=db,
-        tenant_id=tenant.id,
+        organization_id=organization.id,
         session=session,
         before_message_id=before_message_id,
         limit=limit,
@@ -373,10 +373,10 @@ async def get_artifact_coding_session_draft_snapshot(
     _: Dict[str, Any] = Depends(require_scopes("artifacts.read")),
     artifact_ctx=Depends(get_artifact_context),
 ):
-    tenant, user, db = await _require_user_context(artifact_ctx)
+    organization, user, db = await _require_user_context(artifact_ctx)
     session = await _get_session_for_user_or_404(
         db=db,
-        tenant_id=tenant.id,
+        organization_id=organization.id,
         user_id=user.id,
         session_id=session_id,
     )
@@ -394,10 +394,10 @@ async def get_artifact_coding_session_active_run(
     _: Dict[str, Any] = Depends(require_scopes("artifacts.read")),
     artifact_ctx=Depends(get_artifact_context),
 ):
-    tenant, user, db = await _require_user_context(artifact_ctx)
+    organization, user, db = await _require_user_context(artifact_ctx)
     session = await _get_session_for_user_or_404(
         db=db,
-        tenant_id=tenant.id,
+        organization_id=organization.id,
         user_id=user.id,
         session_id=session_id,
     )
@@ -426,7 +426,7 @@ async def submit_artifact_coding_prompt(
     _: Dict[str, Any] = Depends(require_scopes("artifacts.write")),
     artifact_ctx=Depends(get_artifact_context),
 ):
-    tenant, user, db = await _require_user_context(artifact_ctx)
+    organization, user, db = await _require_user_context(artifact_ctx)
     user_prompt = str(payload.input or "").strip()
     if not user_prompt:
         raise HTTPException(status_code=400, detail="input is required")
@@ -434,7 +434,7 @@ async def submit_artifact_coding_prompt(
     runtime = ArtifactCodingRuntimeService(db)
     try:
         session, _shared_draft, run = await runtime.start_prompt_run(
-            tenant_id=tenant.id,
+            organization_id=organization.id,
             user_id=user.id,
             user_prompt=user_prompt,
             artifact_id=payload.artifact_id,
@@ -447,7 +447,7 @@ async def submit_artifact_coding_prompt(
         if str(exc) == "CODING_AGENT_RUN_ACTIVE":
             session = await _get_session_for_user_or_404(
                 db=db,
-                tenant_id=tenant.id,
+                organization_id=organization.id,
                 user_id=user.id,
                 session_id=payload.chat_session_id,
             )
@@ -475,10 +475,10 @@ async def get_artifact_coding_run(
     _: Dict[str, Any] = Depends(require_scopes("artifacts.read")),
     artifact_ctx=Depends(get_artifact_context),
 ):
-    tenant, user, db = await _require_user_context(artifact_ctx)
+    organization, user, db = await _require_user_context(artifact_ctx)
     run, session = await _require_run_owner(
         db=db,
-        tenant_id=tenant.id,
+        organization_id=organization.id,
         user_id=user.id,
         run_id=run_id,
     )
@@ -494,10 +494,10 @@ async def stream_artifact_coding_run(
     _: Dict[str, Any] = Depends(require_scopes("artifacts.write")),
     artifact_ctx=Depends(get_artifact_context),
 ):
-    tenant, user, db = await _require_user_context(artifact_ctx)
+    organization, user, db = await _require_user_context(artifact_ctx)
     run, session = await _require_run_owner(
         db=db,
-        tenant_id=tenant.id,
+        organization_id=organization.id,
         user_id=user.id,
         run_id=run_id,
     )
@@ -628,10 +628,10 @@ async def cancel_artifact_coding_run(
     _: Dict[str, Any] = Depends(require_scopes("artifacts.write")),
     artifact_ctx=Depends(get_artifact_context),
 ):
-    tenant, user, db = await _require_user_context(artifact_ctx)
+    organization, user, db = await _require_user_context(artifact_ctx)
     run, _session = await _require_run_owner(
         db=db,
-        tenant_id=tenant.id,
+        organization_id=organization.id,
         user_id=user.id,
         run_id=run_id,
     )
@@ -650,10 +650,10 @@ async def answer_artifact_coding_run_question(
     _: Dict[str, Any] = Depends(require_scopes("artifacts.write")),
     artifact_ctx=Depends(get_artifact_context),
 ):
-    tenant, user, db = await _require_user_context(artifact_ctx)
+    organization, user, db = await _require_user_context(artifact_ctx)
     run, session = await _require_run_owner(
         db=db,
-        tenant_id=tenant.id,
+        organization_id=organization.id,
         user_id=user.id,
         run_id=run_id,
     )
@@ -676,12 +676,12 @@ async def revert_artifact_coding_session_to_run(
     _: Dict[str, Any] = Depends(require_scopes("artifacts.write")),
     artifact_ctx=Depends(get_artifact_context),
 ):
-    tenant, user, db = await _require_user_context(artifact_ctx)
+    organization, user, db = await _require_user_context(artifact_ctx)
     history = ArtifactCodingChatHistoryService(db)
     shared_drafts = ArtifactCodingSharedDraftService(db)
     session = await _get_session_for_user_or_404(
         db=db,
-        tenant_id=tenant.id,
+        organization_id=organization.id,
         user_id=user.id,
         session_id=session_id,
     )
@@ -694,14 +694,14 @@ async def revert_artifact_coding_session_to_run(
         }:
             raise HTTPException(status_code=409, detail="Cannot revert while this chat has an active run")
     snapshot = await shared_drafts.get_run_snapshot(
-        tenant_id=tenant.id,
+        organization_id=organization.id,
         run_id=payload.run_id,
         snapshot_kind="pre_run",
     )
     if snapshot is None or snapshot.session_id != session.id:
         raise HTTPException(status_code=404, detail="Artifact coding snapshot not found for this chat message")
     await shared_drafts.restore_run_snapshot(
-        tenant_id=tenant.id,
+        organization_id=organization.id,
         run_id=payload.run_id,
         snapshot_kind="pre_run",
     )
@@ -714,7 +714,7 @@ async def revert_artifact_coding_session_to_run(
     await db.refresh(session)
     return await _build_session_detail_response(
         db=db,
-        tenant_id=tenant.id,
+        organization_id=organization.id,
         session=session,
         before_message_id=None,
         limit=10,

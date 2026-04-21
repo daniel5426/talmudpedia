@@ -27,7 +27,7 @@ def should_keep_agents() -> bool:
 
 async def create_tool(
     db_session,
-    tenant_id,
+    organization_id,
     run_prefix: str,
     slug_suffix: str,
     name: str,
@@ -40,7 +40,7 @@ async def create_tool(
         config_schema["execution"] = execution
 
     tool = ToolRegistry(
-        tenant_id=tenant_id,
+        organization_id=organization_id,
         name=f"{run_prefix}-{name}",
         slug=f"{run_prefix}-{slug_suffix}",
         description=description,

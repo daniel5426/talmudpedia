@@ -45,7 +45,7 @@ class AuditContext:
     
     def __init__(
         self,
-        tenant_id: Union[UUID, str, None],
+        organization_id: Union[UUID, str, None],
         org_unit_id: Union[UUID, str, None],
         actor_id: Union[UUID, str, None],
         actor_type: ActorType,
@@ -59,7 +59,7 @@ class AuditContext:
         scopes: Optional[list[str]] = None,
         request: Optional[Request] = None,
     ):
-        self.tenant_id = _to_uuid(tenant_id)
+        self.organization_id = _to_uuid(organization_id)
         self.org_unit_id = _to_uuid(org_unit_id)
         self.actor_id = _to_uuid(actor_id)
         self.actor_type = actor_type
@@ -99,7 +99,7 @@ class AuditContext:
 
 async def _save_audit_log_with_session(ctx: AuditContext, db: AsyncSession):
     """Save audit log entry using provided session."""
-    if not ctx.tenant_id or not ctx.actor_id:
+    if not ctx.organization_id or not ctx.actor_id:
         # Skip logging if essential IDs are missing
         return
         
@@ -113,7 +113,7 @@ async def _save_audit_log_with_session(ctx: AuditContext, db: AsyncSession):
         user_agent = ctx.request.headers.get("user-agent")
 
     log_entry = AuditLog(
-        tenant_id=ctx.tenant_id,
+        organization_id=ctx.organization_id,
         org_unit_id=ctx.org_unit_id,
         actor_id=ctx.actor_id,
         actor_type=ctx.actor_type,
@@ -148,7 +148,7 @@ async def _save_audit_log(ctx: AuditContext):
 
 @asynccontextmanager
 async def audit_action(
-    tenant_id: Union[UUID, str, None],
+    organization_id: Union[UUID, str, None],
     org_unit_id: Union[UUID, str, None],
     actor_id: Union[UUID, str, None],
     actor_type: ActorType,
@@ -164,7 +164,7 @@ async def audit_action(
 ):
     """Context manager for audit logging with automatic success/failure tracking."""
     ctx = AuditContext(
-        tenant_id=tenant_id,
+        organization_id=organization_id,
         org_unit_id=org_unit_id,
         actor_id=actor_id,
         actor_type=actor_type,
@@ -189,7 +189,7 @@ async def audit_action(
 
 
 async def log_permission_denied(
-    tenant_id: Union[UUID, str, None],
+    organization_id: Union[UUID, str, None],
     org_unit_id: Union[UUID, str, None],
     actor_id: Union[UUID, str, None],
     actor_type: ActorType,
@@ -199,11 +199,11 @@ async def log_permission_denied(
     request: Optional[Request] = None,
 ):
     """Log a permission denied event."""
-    tenant_uuid = _to_uuid(tenant_id)
+    organization_uuid = _to_uuid(organization_id)
     actor_uuid = _to_uuid(actor_id)
     org_unit_uuid = _to_uuid(org_unit_id)
     
-    if not tenant_uuid or not actor_uuid:
+    if not organization_uuid or not actor_uuid:
         return
 
     ip_address = None
@@ -214,7 +214,7 @@ async def log_permission_denied(
 
     async with async_sessionmaker() as db:
         log_entry = AuditLog(
-            tenant_id=tenant_uuid,
+            organization_id=organization_uuid,
             org_unit_id=org_unit_uuid,
             actor_id=actor_uuid,
             actor_type=actor_type,
@@ -233,7 +233,7 @@ async def log_permission_denied(
 
 
 async def log_simple_action(
-    tenant_id: Union[UUID, str, None],
+    organization_id: Union[UUID, str, None],
     org_unit_id: Union[UUID, str, None],
     actor_id: Union[UUID, str, None],
     actor_type: ActorType,
@@ -250,11 +250,11 @@ async def log_simple_action(
     request: Optional[Request] = None,
 ):
     """Log a simple action without context manager overhead."""
-    tenant_uuid = _to_uuid(tenant_id)
+    organization_uuid = _to_uuid(organization_id)
     actor_uuid = _to_uuid(actor_id)
     org_unit_uuid = _to_uuid(org_unit_id)
     
-    if not tenant_uuid or not actor_uuid:
+    if not organization_uuid or not actor_uuid:
         return
 
     ip_address = None
@@ -265,7 +265,7 @@ async def log_simple_action(
 
     async with async_sessionmaker() as db:
         log_entry = AuditLog(
-            tenant_id=tenant_uuid,
+            organization_id=organization_uuid,
             org_unit_id=org_unit_uuid,
             actor_id=actor_uuid,
             actor_type=actor_type,

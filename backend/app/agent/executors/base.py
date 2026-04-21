@@ -16,8 +16,8 @@ class BaseNodeExecutor(ABC):
     Each node type in the graph must have a corresponding executor.
     """
     
-    def __init__(self, tenant_id: UUID, db: Any):
-        self.tenant_id = tenant_id
+    def __init__(self, organization_id: UUID, db: Any):
+        self.organization_id = organization_id
         self.db = db
 
     @abstractmethod

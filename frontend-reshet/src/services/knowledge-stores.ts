@@ -4,7 +4,7 @@ import type { ControlPlaneListResponse, ControlPlaneListView } from "./types"
 // Types
 export interface KnowledgeStore {
   id: string
-  tenant_id: string
+  organization_id: string
   name: string
   description: string | null
   embedding_model_id: string
@@ -63,39 +63,39 @@ class KnowledgeStoresService {
   private basePath = '/admin/knowledge-stores'
 
   async list(
-    tenantSlug?: string,
+    organizationId?: string,
     params?: { skip?: number; limit?: number; view?: ControlPlaneListView }
   ): Promise<ControlPlaneListResponse<KnowledgeStore>> {
     const query = new URLSearchParams()
-    if (tenantSlug) query.set("tenant_slug", tenantSlug)
+    if (organizationId) query.set("organization_id", organizationId)
     query.set("skip", String(params?.skip ?? 0))
     query.set("limit", String(params?.limit ?? 20))
     query.set("view", params?.view ?? "summary")
     return httpClient.get<ControlPlaneListResponse<KnowledgeStore>>(`${this.basePath}?${query.toString()}`)
   }
 
-  async get(id: string, tenantSlug?: string): Promise<KnowledgeStore> {
-    const url = tenantSlug ? `${this.basePath}/${id}?tenant_slug=${tenantSlug}` : `${this.basePath}/${id}`
+  async get(id: string, organizationId?: string): Promise<KnowledgeStore> {
+    const url = organizationId ? `${this.basePath}/${id}?organization_id=${organizationId}` : `${this.basePath}/${id}`
     return httpClient.get<KnowledgeStore>(url)
   }
 
-  async create(data: CreateKnowledgeStoreRequest, tenantSlug?: string): Promise<KnowledgeStore> {
-    const url = tenantSlug ? `${this.basePath}?tenant_slug=${tenantSlug}` : this.basePath
+  async create(data: CreateKnowledgeStoreRequest, organizationId?: string): Promise<KnowledgeStore> {
+    const url = organizationId ? `${this.basePath}?organization_id=${organizationId}` : this.basePath
     return httpClient.post<KnowledgeStore>(url, data)
   }
 
-  async update(id: string, data: UpdateKnowledgeStoreRequest, tenantSlug?: string): Promise<KnowledgeStore> {
-    const url = tenantSlug ? `${this.basePath}/${id}?tenant_slug=${tenantSlug}` : `${this.basePath}/${id}`
+  async update(id: string, data: UpdateKnowledgeStoreRequest, organizationId?: string): Promise<KnowledgeStore> {
+    const url = organizationId ? `${this.basePath}/${id}?organization_id=${organizationId}` : `${this.basePath}/${id}`
     return httpClient.put<KnowledgeStore>(url, data)
   }
 
-  async delete(id: string, tenantSlug?: string): Promise<void> {
-    const url = tenantSlug ? `${this.basePath}/${id}?tenant_slug=${tenantSlug}` : `${this.basePath}/${id}`
+  async delete(id: string, organizationId?: string): Promise<void> {
+    const url = organizationId ? `${this.basePath}/${id}?organization_id=${organizationId}` : `${this.basePath}/${id}`
     return httpClient.delete(url)
   }
 
-  async getStats(id: string, tenantSlug?: string): Promise<KnowledgeStoreStats> {
-    const url = tenantSlug ? `${this.basePath}/${id}/stats?tenant_slug=${tenantSlug}` : `${this.basePath}/${id}/stats`
+  async getStats(id: string, organizationId?: string): Promise<KnowledgeStoreStats> {
+    const url = organizationId ? `${this.basePath}/${id}/stats?organization_id=${organizationId}` : `${this.basePath}/${id}/stats`
     return httpClient.get<KnowledgeStoreStats>(url)
   }
 }

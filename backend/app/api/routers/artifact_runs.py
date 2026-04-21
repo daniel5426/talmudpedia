@@ -41,16 +41,16 @@ def _serialize_run(run) -> ArtifactRunSchema:
 
 @router.get("/runtime-status", response_model=ArtifactRuntimeQueueStatusSchema)
 async def get_artifact_runtime_status(
-    tenant_slug: Optional[str] = None,
+    organization_id: Optional[str] = None,
     queue_class: str = "artifact_test",
     _: Dict[str, Any] = Depends(require_scopes("artifacts.write")),
     artifact_ctx=Depends(get_artifact_context),
 ):
-    tenant, _user, db = artifact_ctx
-    if tenant is None:
-        raise HTTPException(status_code=400, detail="Tenant context required")
+    organization, _user, db = artifact_ctx
+    if organization is None:
+        raise HTTPException(status_code=400, detail="Organization context required")
     status = await ArtifactRuntimePolicyService(db).get_queue_status(
-        tenant_id=tenant.id,
+        organization_id=organization.id,
         queue_class=queue_class,
     )
     return ArtifactRuntimeQueueStatusSchema(
@@ -63,33 +63,33 @@ async def get_artifact_runtime_status(
 @router.get("/{run_id}", response_model=ArtifactRunSchema)
 async def get_artifact_run(
     run_id: UUID,
-    tenant_slug: Optional[str] = None,
+    organization_id: Optional[str] = None,
     _: Dict[str, Any] = Depends(require_scopes("artifacts.write")),
     artifact_ctx=Depends(get_artifact_context),
 ):
-    tenant, _user, db = artifact_ctx
+    organization, _user, db = artifact_ctx
     run = await ArtifactRunService(db).get_run(run_id=run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="Artifact run not found")
-    if tenant is not None and str(run.tenant_id) != str(tenant.id):
-        raise HTTPException(status_code=403, detail="Tenant mismatch")
+    if organization is not None and str(run.organization_id) != str(organization.id):
+        raise HTTPException(status_code=403, detail="Organization mismatch")
     return _serialize_run(run)
 
 
 @router.get("/{run_id}/events")
 async def get_artifact_run_events(
     run_id: UUID,
-    tenant_slug: Optional[str] = None,
+    organization_id: Optional[str] = None,
     _: Dict[str, Any] = Depends(require_scopes("artifacts.write")),
     artifact_ctx=Depends(get_artifact_context),
 ):
-    tenant, _user, db = artifact_ctx
+    organization, _user, db = artifact_ctx
     run_service = ArtifactRunService(db)
     run = await run_service.get_run(run_id=run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="Artifact run not found")
-    if tenant is not None and str(run.tenant_id) != str(tenant.id):
-        raise HTTPException(status_code=403, detail="Tenant mismatch")
+    if organization is not None and str(run.organization_id) != str(organization.id):
+        raise HTTPException(status_code=403, detail="Organization mismatch")
     events = await run_service.list_events(run_id=run_id)
     return {
         "run_id": str(run_id),
@@ -116,16 +116,16 @@ async def get_artifact_run_events(
 @router.post("/{run_id}/cancel")
 async def cancel_artifact_run(
     run_id: UUID,
-    tenant_slug: Optional[str] = None,
+    organization_id: Optional[str] = None,
     _: Dict[str, Any] = Depends(require_scopes("artifacts.write")),
     artifact_ctx=Depends(get_artifact_context),
 ):
-    tenant, _user, db = artifact_ctx
-    if tenant is None:
-        raise HTTPException(status_code=400, detail="Tenant context required")
+    organization, _user, db = artifact_ctx
+    if organization is None:
+        raise HTTPException(status_code=400, detail="Organization context required")
     service = ArtifactExecutionService(db)
     try:
-        run = await service.cancel_run(run_id=run_id, tenant_id=tenant.id)
+        run = await service.cancel_run(run_id=run_id, organization_id=organization.id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     status_value = run.status.value if hasattr(run.status, "value") else str(run.status)

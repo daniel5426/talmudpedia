@@ -5,7 +5,7 @@ import pytest
 
 from app.api.dependencies import get_current_principal
 from app.db.postgres.models.artifact_runtime import ArtifactRun, ArtifactRunStatus
-from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Tenant, User
+from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Organization, User
 from app.services.artifact_runtime.revision_service import ArtifactRevisionService
 from app.services.artifact_runtime.cloudflare_dispatch_client import CloudflareDispatchHTTPError
 from app.services.artifact_runtime.policy_service import ArtifactConcurrencyLimitExceeded
@@ -23,18 +23,18 @@ ARTIFACT_CODE = """def execute(inputs, config, context):
 
 
 async def _seed_tenant_context(db_session):
-    tenant = Tenant(id=uuid.uuid4(), name="Artifact Tenant", slug=f"artifact-tenant-{uuid.uuid4().hex[:8]}")
+    tenant = Organization(id=uuid.uuid4(), name="Artifact Organization", slug=f"artifact-tenant-{uuid.uuid4().hex[:8]}")
     user = User(id=uuid.uuid4(), email=f"artifact-{uuid.uuid4().hex[:6]}@example.com", role="admin")
     org_unit = OrgUnit(
         id=uuid.uuid4(),
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name="Artifact Org",
         slug=f"artifact-org-{uuid.uuid4().hex[:6]}",
         type=OrgUnitType.org,
     )
     membership = OrgMembership(
         id=uuid.uuid4(),
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         org_unit_id=org_unit.id,
         role=OrgRole.owner,
@@ -45,13 +45,13 @@ async def _seed_tenant_context(db_session):
     return tenant, user
 
 
-def _override_principal(tenant_id, user):
+def _override_principal(organization_id, user):
     async def _inner():
         return {
             "type": "user",
             "user": user,
             "user_id": str(user.id),
-            "tenant_id": str(tenant_id),
+            "organization_id": str(organization_id),
             "scopes": ["artifacts.write"],
             "auth_token": "test-token",
         }
@@ -59,10 +59,10 @@ def _override_principal(tenant_id, user):
     return _inner
 
 
-async def _seed_artifact_revision(db_session, *, tenant_id, created_by):
+async def _seed_artifact_revision(db_session, *, organization_id, created_by):
     revisions = ArtifactRevisionService(db_session)
     artifact = await revisions.create_artifact(
-        tenant_id=tenant_id,
+        organization_id=organization_id,
         created_by=created_by,
         display_name="Runtime Fixture Artifact",
         description="fixture artifact revision",
@@ -114,7 +114,7 @@ async def test_artifact_test_run_endpoints_execute_and_persist_events(client, db
     tenant, user = await _seed_tenant_context(db_session)
     app.dependency_overrides[get_current_principal] = _override_principal(tenant.id, user)
 
-    async def fake_ensure_deployment(self, *, revision, namespace, tenant_id=None):
+    async def fake_ensure_deployment(self, *, revision, namespace, organization_id=None):
         return type(
             "_Deployment",
             (),
@@ -200,7 +200,7 @@ async def test_unsaved_artifact_test_run_uses_principal_tenant_context_without_t
     tenant, user = await _seed_tenant_context(db_session)
     app.dependency_overrides[get_current_principal] = _override_principal(tenant.id, user)
 
-    async def fake_ensure_deployment(self, *, revision, namespace, tenant_id=None):
+    async def fake_ensure_deployment(self, *, revision, namespace, organization_id=None):
         return type(
             "_Deployment",
             (),
@@ -358,10 +358,10 @@ async def test_artifact_runtime_status_endpoint_reports_active_count_and_limit(c
     app.dependency_overrides[get_current_principal] = _override_principal(tenant.id, user)
 
     try:
-        revision_id = await _seed_artifact_revision(db_session, tenant_id=tenant.id, created_by=user.id)
+        revision_id = await _seed_artifact_revision(db_session, organization_id=tenant.id, created_by=user.id)
         stale_safe_started_at = datetime.now(timezone.utc) - timedelta(minutes=1)
         run = ArtifactRun(
-            tenant_id=tenant.id,
+            organization_id=tenant.id,
             revision_id=revision_id,
             domain="test",
             status=ArtifactRunStatus.RUNNING,
@@ -391,7 +391,7 @@ async def test_unsaved_artifact_test_run_returns_429_when_capacity_is_exhausted(
     tenant, user = await _seed_tenant_context(db_session)
     app.dependency_overrides[get_current_principal] = _override_principal(tenant.id, user)
 
-    async def deny_capacity(self, *, tenant_id, queue_class):
+    async def deny_capacity(self, *, organization_id, queue_class):
         raise ArtifactConcurrencyLimitExceeded(
             queue_class=queue_class,
             active_count=10,
@@ -427,7 +427,7 @@ async def test_unsaved_artifact_test_run_returns_429_when_capacity_is_exhausted(
         assert response.status_code == 429, response.text
         assert response.json()["detail"] == {
             "code": "RATE_LIMITED",
-            "message": "Tenant concurrency limit reached for artifact_test: 10/10",
+            "message": "Organization concurrency limit reached for artifact_test: 10/10",
             "http_status": 429,
             "retryable": False,
         }
@@ -441,7 +441,7 @@ async def test_unsaved_artifact_test_run_returns_failed_run_payload_when_eager_d
     tenant, user = await _seed_tenant_context(db_session)
     app.dependency_overrides[get_current_principal] = _override_principal(tenant.id, user)
 
-    async def fake_ensure_deployment(self, *, revision, namespace, tenant_id=None):
+    async def fake_ensure_deployment(self, *, revision, namespace, organization_id=None):
         return type(
             "_Deployment",
             (),

@@ -120,7 +120,7 @@ Respond ONLY with the category name. Do not include any other text."""
         ]
         
         # 3. Call LLM (using resolver + adapter)
-        resolver = ModelResolver(self.db, self.tenant_id)
+        resolver = ModelResolver(self.db, self.organization_id)
         provider = await resolver.resolve(model_id, policy_snapshot=_policy_snapshot_from_state(state))
         adapter = LLMProviderAdapter(provider)
         

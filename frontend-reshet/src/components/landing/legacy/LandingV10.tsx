@@ -49,21 +49,21 @@ const prompts = [
   {
     name: "useful prompt",
     version: 2,
-    scope: "tenant",
+    scope: "organization",
     preview:
       "## Role and scope\nYou are a read-only treasury/copilot-style agent for exactly one selected PRICO...",
   },
   {
     name: "customer service instruction",
     version: 2,
-    scope: "tenant",
+    scope: "organization",
     preview:
       "## Preferred widget usage patterns\n- For bank or currency concentration, prefer pie or bar...",
   },
   {
     name: "prico poc agent",
     version: 13,
-    scope: "tenant",
+    scope: "organization",
     preview:
       "You are the PRICO Client Exposure Copilot demo agent.\n## Role and scope\nYou are a read-only...",
   },
@@ -455,7 +455,7 @@ export function LandingV10() {
             </h2>
             <p className="text-[16px] text-[#4b5563] max-w-xl mx-auto leading-relaxed">
               Write prompts once and reference them across agents. Version
-              history, tenant-scoped access, and inline previews keep your
+              history, organization-scoped access, and inline previews keep your
               instructions consistent and auditable.
             </p>
           </div>

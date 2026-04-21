@@ -9,7 +9,7 @@ from langchain_core.messages import AIMessageChunk
 from app.agent.execution.service import AgentExecutorService
 from app.agent.execution.types import ExecutionMode
 from app.db.postgres.models.agents import AgentRun, AgentStatus, RunStatus
-from app.db.postgres.models.identity import Tenant, User
+from app.db.postgres.models.identity import Organization, User
 from app.db.postgres.models.rag import (
     ExecutablePipeline,
     PipelineJob,
@@ -42,7 +42,7 @@ class _FakeProvider:
 
 async def _seed_tenant_and_user(db_session):
     suffix = uuid4().hex[:8]
-    tenant = Tenant(name=f"Tenant {suffix}", slug=f"tenant-{suffix}")
+    tenant = Organization(name=f"Organization {suffix}", slug=f"tenant-{suffix}")
     user = User(email=f"owner-{suffix}@example.com", role="admin")
     db_session.add_all([tenant, user])
     await db_session.commit()
@@ -53,7 +53,7 @@ async def _seed_tenant_and_user(db_session):
 
 async def _create_simple_agent_with_tools(
     db_session,
-    tenant_id: UUID,
+    organization_id: UUID,
     user_id: UUID,
     tool_ids: list[UUID],
     slug_suffix: str,
@@ -83,7 +83,7 @@ async def _create_simple_agent_with_tools(
         ],
     }
 
-    service = AgentService(db=db_session, tenant_id=tenant_id)
+    service = AgentService(db=db_session, organization_id=organization_id)
     return await service.create_agent(
         CreateAgentData(
             name=f"agent-{slug_suffix}",
@@ -95,10 +95,10 @@ async def _create_simple_agent_with_tools(
     )
 
 
-async def _create_simple_agent(db_session, tenant_id: UUID, user_id: UUID, tool_id: UUID, slug_suffix: str):
+async def _create_simple_agent(db_session, organization_id: UUID, user_id: UUID, tool_id: UUID, slug_suffix: str):
     return await _create_simple_agent_with_tools(
         db_session=db_session,
-        tenant_id=tenant_id,
+        organization_id=organization_id,
         user_id=user_id,
         tool_ids=[tool_id],
         slug_suffix=slug_suffix,
@@ -119,7 +119,7 @@ async def test_agent_web_search_full_flow_accepts_scalar_tool_args(db_session, m
     tenant, user = await _seed_tenant_and_user(db_session)
 
     tool = ToolRegistry(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name="Web Search",
         slug=f"web-search-{uuid4().hex[:8]}",
         description="search the web",
@@ -216,7 +216,7 @@ async def test_agent_retrieval_tool_full_flow_with_visual_pipeline(db_session, m
     tenant, user = await _seed_tenant_and_user(db_session)
 
     visual = VisualPipeline(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name=f"retrieval-{uuid4().hex[:8]}",
         description="retrieval",
         nodes=[],
@@ -232,7 +232,7 @@ async def test_agent_retrieval_tool_full_flow_with_visual_pipeline(db_session, m
 
     executable = ExecutablePipeline(
         visual_pipeline_id=visual.id,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         version=1,
         compiled_graph={"dag": []},
         pipeline_type=PipelineType.RETRIEVAL,
@@ -244,7 +244,7 @@ async def test_agent_retrieval_tool_full_flow_with_visual_pipeline(db_session, m
     await db_session.refresh(executable)
 
     tool = ToolRegistry(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name="Retrieval Pipeline",
         slug=f"retrieval-pipeline-{uuid4().hex[:8]}",
         description="retrieval tool",
@@ -343,7 +343,7 @@ async def test_agent_reasoning_loop_invokes_agent_call_tool_and_consumes_compact
 
     child_agent = await _create_simple_agent_with_tools(
         db_session=db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         tool_ids=[],
         slug_suffix=f"child-{uuid4().hex[:8]}",
@@ -354,7 +354,7 @@ async def test_agent_reasoning_loop_invokes_agent_call_tool_and_consumes_compact
     await db_session.refresh(child_agent)
 
     tool = ToolRegistry(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name="Agent Call Tool",
         slug=f"agent-call-{uuid4().hex[:8]}",
         description="call child agent",
@@ -379,7 +379,7 @@ async def test_agent_reasoning_loop_invokes_agent_call_tool_and_consumes_compact
 
     parent_agent = await _create_simple_agent(
         db_session=db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         tool_id=tool.id,
         slug_suffix=f"parent-{uuid4().hex[:8]}",

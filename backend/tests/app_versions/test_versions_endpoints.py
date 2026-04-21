@@ -328,7 +328,7 @@ async def test_publish_non_materialized_version_returns_revision_not_materialize
 async def test_get_active_publish_job_expires_stale_job(db_session, monkeypatch):
     tenant, user, _, agent = await seed_admin_tenant_and_agent(db_session)
     app = PublishedApp(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         agent_id=agent.id,
         name="Publish Stale Timeout App",
         slug=f"publish-stale-timeout-app-{uuid4().hex[:8]}",
@@ -339,7 +339,7 @@ async def test_get_active_publish_job_expires_stale_job(db_session, monkeypatch)
     stale_at = datetime.now(timezone.utc) - timedelta(hours=2)
     stale_job = PublishedAppPublishJob(
         published_app_id=app.id,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         requested_by=user.id,
         status=PublishedAppPublishJobStatus.running,
         stage="waiting_for_build",

@@ -5,7 +5,7 @@ import { ThemeProvider } from "@/components/theme-provider";
 import { PaletteInitializer } from "@/components/palette-initializer";
 import { PaletteScript } from "@/components/palette-script";
 import { DirectionProvider } from "@/components/direction-provider";
-import { TenantProvider } from "@/contexts/TenantContext";
+import { OrganizationProvider } from "@/contexts/OrganizationContext";
 import { AuthRefresher } from "@/components/auth-refresher";
 
 const geistSans = Geist({
@@ -54,10 +54,10 @@ export default function RootLayout({
         >
           <PaletteInitializer />
           <DirectionProvider>
-            <TenantProvider>
+            <OrganizationProvider>
               <AuthRefresher />
               {children}
-            </TenantProvider>
+            </OrganizationProvider>
           </DirectionProvider>
         </ThemeProvider>
       </body>

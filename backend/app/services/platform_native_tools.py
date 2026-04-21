@@ -15,11 +15,11 @@ PLATFORM_NATIVE_FUNCTIONS: dict[str, str] = {
 _ACTION_HANDLERS = ACTION_HANDLERS
 
 
-async def _dispatch(tool_slug: str, payload: dict) -> dict:
+async def _dispatch(builtin_key: str, payload: dict) -> dict:
     async with get_session() as db:
         return await dispatch_native_platform_tool(
             db=db,
-            tool_slug=tool_slug,
+            builtin_key=builtin_key,
             inputs=dict(payload or {}),
             handlers=_ACTION_HANDLERS,
         )

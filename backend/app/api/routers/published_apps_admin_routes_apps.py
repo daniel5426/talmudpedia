@@ -29,14 +29,13 @@ from app.services.published_app_auth_templates import list_auth_templates
 
 from .published_apps_admin_access import (
     _assert_can_manage_apps,
-    _generate_unique_slug,
     _get_app_for_tenant,
     _get_custom_domain_for_app,
-    _resolve_tenant_admin_context,
+    _resolve_organization_admin_context,
     _validate_agent,
+    _generate_public_id,
 )
 from .published_apps_admin_shared import (
-    APP_SLUG_PATTERN,
     CreatePublishedAppDomainRequest,
     CreatePublishedAppRequest,
     PublishedAppAuthTemplateResponse,
@@ -66,11 +65,11 @@ async def list_published_apps(
     principal: Dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ):
-    ctx = await _resolve_tenant_admin_context(request, principal, db)
+    ctx = await _resolve_organization_admin_context(request, principal, db)
     _assert_can_manage_apps(ctx)
     result = await db.execute(
         select(PublishedApp)
-        .where(PublishedApp.tenant_id == ctx["tenant_id"])
+        .where(PublishedApp.organization_id == ctx["organization_id"])
         .order_by(PublishedApp.updated_at.desc())
     )
     return [_app_to_response(app) for app in result.scalars().all()]
@@ -98,39 +97,33 @@ async def create_published_app(
     principal: Dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ):
-    ctx = await _resolve_tenant_admin_context(request, principal, db)
+    ctx = await _resolve_organization_admin_context(request, principal, db)
     _assert_can_manage_apps(ctx)
 
     template_key = _validate_template_key(payload.template_key)
     auth_template_key = _validate_auth_template_key(payload.auth_template_key)
     visibility = _validate_visibility(payload.visibility)
-    candidate_slug = (payload.slug or "").strip().lower()
-    if candidate_slug:
-        if not APP_SLUG_PATTERN.match(candidate_slug):
-            raise HTTPException(status_code=400, detail="Slug must be lowercase, 3-64 chars, and contain only letters, numbers, hyphens")
-        slug = await _generate_unique_slug(db, candidate_slug)
-    else:
-        slug = await _generate_unique_slug(db, payload.name)
+    public_id = await _generate_public_id(db)
 
     providers = _validate_providers(payload.auth_providers)
     allowed_origins = _validate_allowed_origins(payload.allowed_origins)
     external_auth_oidc = _validate_external_auth_oidc(payload.external_auth_oidc)
-    await _validate_agent(db, ctx["tenant_id"], payload.agent_id)
+    await _validate_agent(db, ctx["organization_id"], payload.agent_id)
 
     app = PublishedApp(
-        tenant_id=ctx["tenant_id"],
+        organization_id=ctx["organization_id"],
         agent_id=payload.agent_id,
         name=payload.name.strip(),
         description=(payload.description or "").strip() or None,
         logo_url=(payload.logo_url or "").strip() or None,
-        slug=slug,
+        public_id=public_id,
         template_key=template_key,
         visibility=PublishedAppVisibility(visibility),
-        auth_enabled=payload.auth_enabled,
-        auth_providers=providers,
+        auth_enabled=False,
+        auth_providers=[],
         auth_template_key=auth_template_key,
-        allowed_origins=allowed_origins,
-        external_auth_oidc=external_auth_oidc,
+        allowed_origins=[],
+        external_auth_oidc=None,
         created_by=ctx["user"].id if ctx["user"] else None,
         status=PublishedAppStatus.draft,
     )
@@ -144,7 +137,7 @@ async def create_published_app(
             template_key,
             runtime_context={
                 "app_id": str(app.id),
-                "app_slug": app.slug,
+                "app_public_id": app.public_id,
                 "agent_id": str(app.agent_id),
             },
         )
@@ -183,7 +176,7 @@ async def create_published_app(
         ) from exc
     except IntegrityError:
         await db.rollback()
-        raise HTTPException(status_code=409, detail="Published app slug or name already exists")
+        raise HTTPException(status_code=409, detail="Published app public id or name already exists")
 
     await db.refresh(app)
     return _app_to_response(app)
@@ -197,9 +190,9 @@ async def get_published_app(
     principal: Dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ):
-    ctx = await _resolve_tenant_admin_context(request, principal, db)
+    ctx = await _resolve_organization_admin_context(request, principal, db)
     _assert_can_manage_apps(ctx)
-    app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
+    app = await _get_app_for_tenant(db, ctx["organization_id"], app_id)
     return _app_to_response(app)
 
 
@@ -211,9 +204,9 @@ async def list_published_app_users(
     principal: Dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ):
-    ctx = await _resolve_tenant_admin_context(request, principal, db)
+    ctx = await _resolve_organization_admin_context(request, principal, db)
     _assert_can_manage_apps(ctx)
-    app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
+    app = await _get_app_for_tenant(db, ctx["organization_id"], app_id)
 
     result = await db.execute(
         select(PublishedAppAccount)
@@ -271,9 +264,9 @@ async def update_published_app_user_membership(
     principal: Dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ):
-    ctx = await _resolve_tenant_admin_context(request, principal, db)
+    ctx = await _resolve_organization_admin_context(request, principal, db)
     _assert_can_manage_apps(ctx)
-    app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
+    app = await _get_app_for_tenant(db, ctx["organization_id"], app_id)
 
     try:
         next_status = PublishedAppAccountStatus(payload.membership_status.strip().lower())
@@ -347,9 +340,9 @@ async def list_published_app_domains(
     principal: Dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ):
-    ctx = await _resolve_tenant_admin_context(request, principal, db)
+    ctx = await _resolve_organization_admin_context(request, principal, db)
     _assert_can_manage_apps(ctx)
-    app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
+    app = await _get_app_for_tenant(db, ctx["organization_id"], app_id)
     result = await db.execute(
         select(PublishedAppCustomDomain)
         .where(PublishedAppCustomDomain.published_app_id == app.id)
@@ -367,9 +360,9 @@ async def create_published_app_domain(
     principal: Dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ):
-    ctx = await _resolve_tenant_admin_context(request, principal, db)
+    ctx = await _resolve_organization_admin_context(request, principal, db)
     _assert_can_manage_apps(ctx)
-    app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
+    app = await _get_app_for_tenant(db, ctx["organization_id"], app_id)
 
     host = _normalize_domain_host(payload.host)
     existing_result = await db.execute(
@@ -401,9 +394,9 @@ async def delete_published_app_domain(
     principal: Dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ):
-    ctx = await _resolve_tenant_admin_context(request, principal, db)
+    ctx = await _resolve_organization_admin_context(request, principal, db)
     _assert_can_manage_apps(ctx)
-    app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
+    app = await _get_app_for_tenant(db, ctx["organization_id"], app_id)
     domain = await _get_custom_domain_for_app(db, app_id=app.id, domain_id=domain_id)
     if domain.status != PublishedAppCustomDomainStatus.pending:
         raise HTTPException(status_code=400, detail="Only pending custom domains can be removed")

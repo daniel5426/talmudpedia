@@ -90,7 +90,7 @@ async def test_dev_shim_session_lifecycle_and_file_routes(client, monkeypatch):
         headers=headers,
         json={
             "session_id": "sandbox-1",
-            "tenant_id": "tenant-1",
+            "organization_id": "tenant-1",
             "app_id": "app-1",
             "user_id": "user-1",
             "revision_id": "rev-1",

@@ -4,7 +4,7 @@ from uuid import uuid4
 from sqlalchemy import select
 
 from app.api.dependencies import get_current_principal, get_tenant_context
-from app.db.postgres.models.identity import Tenant, User
+from app.db.postgres.models.identity import Organization, User
 from app.db.postgres.models.registry import (
     ModelCapabilityType,
     ModelProviderBinding,
@@ -14,15 +14,15 @@ from app.db.postgres.models.registry import (
 )
 
 
-async def _override_model_registry_auth(app, *, tenant: Tenant, user: User) -> None:
+async def _override_model_registry_auth(app, *, tenant: Organization, user: User) -> None:
     async def override_get_tenant_context():
-        return {"tenant_id": str(tenant.id), "tenant": tenant}
+        return {"organization_id": str(tenant.id), "tenant": tenant}
 
     async def override_get_current_principal():
         return {
             "type": "user",
             "user_id": str(user.id),
-            "tenant_id": str(tenant.id),
+            "organization_id": str(tenant.id),
             "scopes": ["*"],
         }
 
@@ -32,7 +32,7 @@ async def _override_model_registry_auth(app, *, tenant: Tenant, user: User) -> N
 
 @pytest.mark.asyncio
 async def test_models_list_total_matches_filters_and_response_shape(client, db_session):
-    tenant = Tenant(name="Tenant A", slug=f"tenant-a-{uuid4().hex[:8]}")
+    tenant = Organization(name="Organization A", slug=f"tenant-a-{uuid4().hex[:8]}")
     user = User(email=f"owner-{uuid4().hex[:8]}@example.com", hashed_password="x", role="admin")
     db_session.add_all([tenant, user])
     await db_session.flush()
@@ -40,7 +40,7 @@ async def test_models_list_total_matches_filters_and_response_shape(client, db_s
     db_session.add_all(
         [
             ModelRegistry(
-                tenant_id=tenant.id,
+                organization_id=tenant.id,
                 name="Chat Active",
                 capability_type=ModelCapabilityType.CHAT,
                 status=ModelStatus.ACTIVE,
@@ -48,7 +48,7 @@ async def test_models_list_total_matches_filters_and_response_shape(client, db_s
                 metadata_={},
             ),
             ModelRegistry(
-                tenant_id=tenant.id,
+                organization_id=tenant.id,
                 name="Chat Disabled",
                 capability_type=ModelCapabilityType.CHAT,
                 status=ModelStatus.DISABLED,
@@ -56,7 +56,7 @@ async def test_models_list_total_matches_filters_and_response_shape(client, db_s
                 metadata_={},
             ),
             ModelRegistry(
-                tenant_id=tenant.id,
+                organization_id=tenant.id,
                 name="Embedding Active",
                 capability_type=ModelCapabilityType.EMBEDDING,
                 status=ModelStatus.ACTIVE,
@@ -70,14 +70,14 @@ async def test_models_list_total_matches_filters_and_response_shape(client, db_s
     from main import app
 
     await _override_model_registry_auth(app, tenant=tenant, user=user)
-    response = await client.get("/models?capability_type=chat&status=active&is_active=true")
+    response = await client.get("/models?capability_type=chat&status=active&is_active=true&limit=100")
     app.dependency_overrides.clear()
 
     assert response.status_code == 200
     payload = response.json()
     assert payload["view"] == "summary"
     assert payload["skip"] == 0
-    assert payload["limit"] == 20
+    assert payload["limit"] == 100
     assert payload["total"] >= len(payload["items"])
     assert payload["has_more"] is (payload["total"] > len(payload["items"]))
     assert "slug" not in payload["items"][0]
@@ -89,13 +89,13 @@ async def test_models_list_total_matches_filters_and_response_shape(client, db_s
 
 @pytest.mark.asyncio
 async def test_setting_default_model_clears_previous_default(client, db_session):
-    tenant = Tenant(name="Tenant B", slug=f"tenant-b-{uuid4().hex[:8]}")
+    tenant = Organization(name="Organization B", slug=f"tenant-b-{uuid4().hex[:8]}")
     user = User(email=f"owner-{uuid4().hex[:8]}@example.com", hashed_password="x", role="admin")
     db_session.add_all([tenant, user])
     await db_session.flush()
 
     first = ModelRegistry(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name="First Default",
         capability_type=ModelCapabilityType.CHAT,
         status=ModelStatus.ACTIVE,
@@ -104,7 +104,7 @@ async def test_setting_default_model_clears_previous_default(client, db_session)
         metadata_={},
     )
     second = ModelRegistry(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name="Second Default",
         capability_type=ModelCapabilityType.CHAT,
         status=ModelStatus.ACTIVE,
@@ -133,13 +133,13 @@ async def test_setting_default_model_clears_previous_default(client, db_session)
 
 @pytest.mark.asyncio
 async def test_add_provider_rejects_unsupported_capability_provider_pair(client, db_session):
-    tenant = Tenant(name="Tenant C", slug=f"tenant-c-{uuid4().hex[:8]}")
+    tenant = Organization(name="Organization C", slug=f"tenant-c-{uuid4().hex[:8]}")
     user = User(email=f"owner-{uuid4().hex[:8]}@example.com", hashed_password="x", role="admin")
     db_session.add_all([tenant, user])
     await db_session.flush()
 
     model = ModelRegistry(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name="Embed Model",
         capability_type=ModelCapabilityType.EMBEDDING,
         status=ModelStatus.ACTIVE,
@@ -168,7 +168,7 @@ async def test_add_provider_rejects_unsupported_capability_provider_pair(client,
 
 @pytest.mark.asyncio
 async def test_create_model_endpoint_does_not_accept_or_return_slug(client, db_session):
-    tenant = Tenant(name="Tenant D", slug=f"tenant-d-{uuid4().hex[:8]}")
+    tenant = Organization(name="Organization D", slug=f"tenant-d-{uuid4().hex[:8]}")
     user = User(email=f"owner-{uuid4().hex[:8]}@example.com", hashed_password="x", role="admin")
     db_session.add_all([tenant, user])
     await db_session.commit()
@@ -193,7 +193,7 @@ async def test_create_model_endpoint_does_not_accept_or_return_slug(client, db_s
 
     rows = (
         await db_session.execute(
-            select(ModelRegistry).where(ModelRegistry.tenant_id == tenant.id)
+            select(ModelRegistry).where(ModelRegistry.organization_id == tenant.id)
         )
     ).scalars().all()
     assert len(rows) == 1
@@ -202,13 +202,13 @@ async def test_create_model_endpoint_does_not_accept_or_return_slug(client, db_s
 
 @pytest.mark.asyncio
 async def test_add_provider_rejects_manual_pricing_config_in_public_registry_api(client, db_session):
-    tenant = Tenant(name="Tenant E", slug=f"tenant-e-{uuid4().hex[:8]}")
+    tenant = Organization(name="Organization E", slug=f"tenant-e-{uuid4().hex[:8]}")
     user = User(email=f"owner-{uuid4().hex[:8]}@example.com", hashed_password="x", role="admin")
     db_session.add_all([tenant, user])
     await db_session.flush()
 
     model = ModelRegistry(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name="Manual Pricing Model",
         capability_type=ModelCapabilityType.CHAT,
         status=ModelStatus.ACTIVE,
@@ -240,13 +240,13 @@ async def test_add_provider_rejects_manual_pricing_config_in_public_registry_api
 
 @pytest.mark.asyncio
 async def test_add_provider_rejects_tenant_pricing_for_platform_managed_provider(client, db_session):
-    tenant = Tenant(name="Tenant F", slug=f"tenant-f-{uuid4().hex[:8]}")
+    tenant = Organization(name="Organization F", slug=f"tenant-f-{uuid4().hex[:8]}")
     user = User(email=f"owner-{uuid4().hex[:8]}@example.com", hashed_password="x", role="admin")
     db_session.add_all([tenant, user])
     await db_session.flush()
 
     model = ModelRegistry(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name="Platform Priced Model",
         capability_type=ModelCapabilityType.CHAT,
         status=ModelStatus.ACTIVE,
@@ -280,13 +280,13 @@ async def test_add_provider_rejects_tenant_pricing_for_platform_managed_provider
 @pytest.mark.asyncio
 @pytest.mark.parametrize("provider_type", [ModelProviderType.CUSTOM, ModelProviderType.LOCAL])
 async def test_add_provider_allows_tenant_pricing_for_custom_and_local(client, db_session, provider_type):
-    tenant = Tenant(name="Tenant G", slug=f"tenant-g-{uuid4().hex[:8]}")
+    tenant = Organization(name="Organization G", slug=f"tenant-g-{uuid4().hex[:8]}")
     user = User(email=f"owner-{uuid4().hex[:8]}@example.com", hashed_password="x", role="admin")
     db_session.add_all([tenant, user])
     await db_session.flush()
 
     model = ModelRegistry(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name=f"{provider_type.value.title()} Model",
         capability_type=ModelCapabilityType.CHAT,
         status=ModelStatus.ACTIVE,
@@ -321,7 +321,7 @@ async def test_add_provider_allows_tenant_pricing_for_custom_and_local(client, d
 
 @pytest.mark.asyncio
 async def test_models_get_returns_seeded_global_binding_pricing_config(client, db_session):
-    tenant = Tenant(name="Tenant H", slug=f"tenant-h-{uuid4().hex[:8]}")
+    tenant = Organization(name="Organization H", slug=f"tenant-h-{uuid4().hex[:8]}")
     user = User(email=f"owner-{uuid4().hex[:8]}@example.com", hashed_password="x", role="admin")
     db_session.add_all([tenant, user])
     await db_session.flush()
@@ -330,7 +330,7 @@ async def test_models_get_returns_seeded_global_binding_pricing_config(client, d
         await db_session.execute(select(ModelRegistry).where(ModelRegistry.system_key == "gpt-5-4"))
     ).scalar_one_or_none()
     model = existing or ModelRegistry(
-        tenant_id=None,
+        organization_id=None,
         system_key="gpt-5-4",
         name="GPT-5.4",
         capability_type=ModelCapabilityType.CHAT,
@@ -354,7 +354,7 @@ async def test_models_get_returns_seeded_global_binding_pricing_config(client, d
         db_session.add(
             ModelProviderBinding(
                 model_id=model.id,
-                tenant_id=None,
+                organization_id=None,
                 provider=ModelProviderType.OPENAI,
                 provider_model_id="gpt-5.4",
                 priority=0,
@@ -377,5 +377,5 @@ async def test_models_get_returns_seeded_global_binding_pricing_config(client, d
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["tenant_id"] is None
+    assert payload["organization_id"] is None
     assert payload["providers"][0]["pricing_config"]["billing_mode"] == "per_1k_tokens"

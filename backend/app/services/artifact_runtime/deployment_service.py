@@ -27,15 +27,15 @@ class ArtifactDeploymentService:
         *,
         revision: ArtifactRevision,
         namespace: str,
-        tenant_id: UUID | None = None,
+        organization_id: UUID | None = None,
     ) -> ArtifactDeployment:
-        effective_tenant_id = revision.tenant_id or tenant_id
-        if effective_tenant_id is None:
-            raise ValueError("Artifact deployments require tenant_id for deployment ownership")
+        effective_organization_id = revision.organization_id or organization_id
+        if effective_organization_id is None:
+            raise ValueError("Artifact deployments require organization_id for deployment ownership")
         had_bundle_hash = bool(getattr(revision, "bundle_hash", None))
         package = self._builder.build_revision_package(revision, namespace=namespace)
         deployment = await self._get_deployment_by_build_hash(
-            tenant_id=effective_tenant_id,
+            organization_id=effective_organization_id,
             namespace=namespace,
             build_hash=package.build_hash,
         )
@@ -50,7 +50,7 @@ class ArtifactDeploymentService:
         if deployment is None:
             deployment = ArtifactDeployment(
                 id=uuid4(),
-                tenant_id=effective_tenant_id,
+                organization_id=effective_organization_id,
                 revision_id=revision.id,
                 namespace=namespace,
                 build_hash=package.build_hash,
@@ -65,7 +65,7 @@ class ArtifactDeploymentService:
             except IntegrityError:
                 await self._db.rollback()
                 deployment = await self._get_deployment_by_build_hash(
-                    tenant_id=effective_tenant_id,
+                    organization_id=effective_organization_id,
                     namespace=namespace,
                     build_hash=package.build_hash,
                 )
@@ -109,13 +109,13 @@ class ArtifactDeploymentService:
     async def _get_deployment_by_build_hash(
         self,
         *,
-        tenant_id: UUID,
+        organization_id: UUID,
         namespace: str,
         build_hash: str,
     ) -> ArtifactDeployment | None:
         return await self._db.scalar(
             select(ArtifactDeployment).where(
-                ArtifactDeployment.tenant_id == tenant_id,
+                ArtifactDeployment.organization_id == organization_id,
                 ArtifactDeployment.namespace == namespace,
                 ArtifactDeployment.build_hash == build_hash,
             )

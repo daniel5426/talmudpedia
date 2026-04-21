@@ -8,18 +8,22 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import (
-    require_tenant_api_key_scopes,
+    require_organization_api_key_scopes,
 )
 from app.db.postgres.models.agent_threads import AgentThreadSurface
 from app.db.postgres.session import get_db
 from app.services.embedded_agent_runtime_service import (
     ensure_published_embed_agent,
-    serialize_thread_detail,
-    serialize_thread_summary,
     stream_embedded_agent,
 )
 from app.services.runtime_attachment_service import RuntimeAttachmentOwner, RuntimeAttachmentService
-from app.services.thread_service import ThreadService
+from app.services.runtime_surface import (
+    RuntimeEventView,
+    RuntimeSurfaceContext,
+    RuntimeSurfaceService,
+    RuntimeThreadOptions,
+)
+from app.services.thread_detail_service import serialize_thread_summary
 
 
 router = APIRouter(prefix="/public/embed/agents", tags=["embedded-agents-public"])
@@ -40,11 +44,11 @@ class EmbeddedAgentChatStreamRequest(BaseModel):
 async def stream_embedded_agent_route(
     agent_id: UUID,
     request: EmbeddedAgentChatStreamRequest,
-    principal: dict[str, Any] = Depends(require_tenant_api_key_scopes("agents.embed")),
+    principal: dict[str, Any] = Depends(require_organization_api_key_scopes("agents.embed")),
     db: AsyncSession = Depends(get_db),
 ):
     agent = await ensure_published_embed_agent(db=db, agent_id=agent_id)
-    if str(agent.tenant_id) != str(principal["tenant_id"]):
+    if str(agent.organization_id) != str(principal["organization_id"]):
         raise HTTPException(status_code=404, detail="Published agent not found")
     response = await stream_embedded_agent(
         db=db,
@@ -69,16 +73,16 @@ async def upload_embedded_agent_attachments(
     external_user_id: str = Form(...),
     external_session_id: str | None = Form(default=None),
     thread_id: UUID | None = Form(default=None),
-    principal: dict[str, Any] = Depends(require_tenant_api_key_scopes("agents.embed")),
+    principal: dict[str, Any] = Depends(require_organization_api_key_scopes("agents.embed")),
     db: AsyncSession = Depends(get_db),
 ):
     agent = await ensure_published_embed_agent(db=db, agent_id=agent_id)
-    if str(agent.tenant_id) != str(principal["tenant_id"]):
+    if str(agent.organization_id) != str(principal["organization_id"]):
         raise HTTPException(status_code=404, detail="Published agent not found")
     owner = RuntimeAttachmentOwner(
-        tenant_id=agent.tenant_id,
+        organization_id=agent.organization_id,
         surface=AgentThreadSurface.embedded_runtime,
-        tenant_api_key_id=UUID(str(principal["api_key_id"])),
+        organization_api_key_id=UUID(str(principal["api_key_id"])),
         agent_id=agent.id,
         external_user_id=external_user_id,
         external_session_id=external_session_id,
@@ -104,18 +108,24 @@ async def list_embedded_agent_threads(
     external_session_id: str | None = Query(default=None, max_length=255),
     skip: int = Query(default=0, ge=0),
     limit: int = Query(default=20, ge=1, le=100),
-    principal: dict[str, Any] = Depends(require_tenant_api_key_scopes("agents.embed")),
+    principal: dict[str, Any] = Depends(require_organization_api_key_scopes("agents.embed")),
     db: AsyncSession = Depends(get_db),
 ):
     agent = await ensure_published_embed_agent(db=db, agent_id=agent_id)
-    if str(agent.tenant_id) != str(principal["tenant_id"]):
+    if str(agent.organization_id) != str(principal["organization_id"]):
         raise HTTPException(status_code=404, detail="Published agent not found")
 
-    items, total = await ThreadService(db).list_threads(
-        tenant_id=agent.tenant_id,
-        agent_id=agent.id,
-        external_user_id=external_user_id,
-        external_session_id=external_session_id,
+    items, total = await RuntimeSurfaceService(db).list_threads(
+        scope=(
+            RuntimeSurfaceContext(
+                organization_id=agent.organization_id,
+                surface=AgentThreadSurface.embedded_runtime,
+                event_view=RuntimeEventView.public_safe,
+                agent_id=agent.id,
+                external_user_id=external_user_id,
+                external_session_id=external_session_id,
+            ).thread_scope(agent_id=agent.id)
+        ),
         skip=skip,
         limit=limit,
     )
@@ -135,39 +145,33 @@ async def get_embedded_agent_thread(
     subthread_depth: int = Query(default=1, ge=1, le=5),
     subthread_turn_limit: int | None = Query(default=None, ge=1, le=100),
     subthread_child_limit: int = Query(default=20, ge=1, le=50),
-    principal: dict[str, Any] = Depends(require_tenant_api_key_scopes("agents.embed")),
+    principal: dict[str, Any] = Depends(require_organization_api_key_scopes("agents.embed")),
     db: AsyncSession = Depends(get_db),
 ):
     agent = await ensure_published_embed_agent(db=db, agent_id=agent_id)
-    if str(agent.tenant_id) != str(principal["tenant_id"]):
+    if str(agent.organization_id) != str(principal["organization_id"]):
         raise HTTPException(status_code=404, detail="Published agent not found")
 
-    service = ThreadService(db)
-    repaired = await service.repair_thread_turn_indices(thread_id=thread_id)
-    if repaired:
-        await db.commit()
-    page_result = await service.get_thread_turn_page(
-        tenant_id=agent.tenant_id,
+    return await RuntimeSurfaceService(db).get_thread_detail(
+        scope=RuntimeSurfaceContext(
+            organization_id=agent.organization_id,
+            surface=AgentThreadSurface.embedded_runtime,
+            event_view=RuntimeEventView.public_safe,
+            agent_id=agent.id,
+            external_user_id=external_user_id,
+            external_session_id=external_session_id,
+        ).thread_scope(agent_id=agent.id),
         thread_id=thread_id,
-        agent_id=agent.id,
-        external_user_id=external_user_id,
-        external_session_id=external_session_id,
-        before_turn_index=before_turn_index,
-        limit=limit,
+        options=RuntimeThreadOptions(
+            before_turn_index=before_turn_index,
+            limit=limit,
+            include_subthreads=include_subthreads,
+            subthread_depth=subthread_depth,
+            subthread_turn_limit=subthread_turn_limit,
+            subthread_child_limit=subthread_child_limit,
+        ),
+        event_view=RuntimeEventView.public_safe,
     )
-    if page_result is None:
-        raise HTTPException(status_code=404, detail="Thread not found")
-    await db.commit()
-    subtree = None
-    if include_subthreads:
-        subtree = await service.build_subthread_tree(
-            root_thread=page_result.thread,
-            root_page=page_result.page,
-            depth=subthread_depth,
-            turn_limit=subthread_turn_limit or limit,
-            child_limit=subthread_child_limit,
-        )
-    return await serialize_thread_detail(db=db, thread=page_result.thread, page=page_result.page, subthread_tree=subtree)
 
 
 @router.delete("/{agent_id}/threads/{thread_id}")
@@ -176,26 +180,23 @@ async def delete_embedded_agent_thread(
     thread_id: UUID,
     external_user_id: str = Query(..., min_length=1, max_length=255),
     external_session_id: str | None = Query(default=None, max_length=255),
-    principal: dict[str, Any] = Depends(require_tenant_api_key_scopes("agents.embed")),
+    principal: dict[str, Any] = Depends(require_organization_api_key_scopes("agents.embed")),
     db: AsyncSession = Depends(get_db),
 ):
     agent = await ensure_published_embed_agent(db=db, agent_id=agent_id)
-    if str(agent.tenant_id) != str(principal["tenant_id"]):
+    if str(agent.organization_id) != str(principal["organization_id"]):
         raise HTTPException(status_code=404, detail="Published agent not found")
 
-    thread = await ThreadService(db).get_thread_with_turns(
-        tenant_id=agent.tenant_id,
+    deleted = await RuntimeSurfaceService(db).delete_thread(
+        scope=RuntimeSurfaceContext(
+            organization_id=agent.organization_id,
+            surface=AgentThreadSurface.embedded_runtime,
+            event_view=RuntimeEventView.public_safe,
+            agent_id=agent.id,
+            external_user_id=external_user_id,
+            external_session_id=external_session_id,
+        ).thread_scope(agent_id=agent.id),
         thread_id=thread_id,
-        agent_id=agent.id,
-        external_user_id=external_user_id,
-        external_session_id=external_session_id,
-    )
-    if thread is None:
-        raise HTTPException(status_code=404, detail="Thread not found")
-
-    deleted = await ThreadService(db).delete_threads(
-        tenant_id=agent.tenant_id,
-        thread_ids=[thread.id],
     )
     await db.commit()
     return {"deleted": bool(deleted)}

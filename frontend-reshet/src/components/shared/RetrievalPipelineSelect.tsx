@@ -5,7 +5,7 @@ import { Check, Search, X, GitFork } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Input } from "@/components/ui/input"
 import { ragAdminService, VisualPipeline } from "@/services/rag-admin"
-import { useTenant } from "@/contexts/TenantContext"
+import { useOrganization } from "@/contexts/OrganizationContext"
 
 interface RetrievalPipelineSelectProps {
     value: string
@@ -27,13 +27,13 @@ export function RetrievalPipelineSelect({
     const [selectedIndex, setSelectedIndex] = useState(0)
     const [isFocused, setIsFocused] = useState(false)
 
-    const { currentTenant } = useTenant()
+    const { currentOrganization } = useOrganization()
 
     useEffect(() => {
         async function loadPipelines() {
             try {
                 setLoading(true)
-                const data = await ragAdminService.listVisualPipelines(currentTenant?.slug, { limit: 100, view: "summary" })
+                const data = await ragAdminService.listVisualPipelines(currentOrganization?.id, { limit: 100, view: "summary" })
                 // Filter for retrieval pipelines only
                 const retrievalPipelines = data.items.filter(p => p.pipeline_type === "retrieval")
                 setPipelines(retrievalPipelines)
@@ -44,7 +44,7 @@ export function RetrievalPipelineSelect({
             }
         }
         loadPipelines()
-    }, [currentTenant?.slug])
+    }, [currentOrganization?.id])
 
     // Get the label for the current value
     const selectedPipeline = pipelines.find(p => p.id === value)

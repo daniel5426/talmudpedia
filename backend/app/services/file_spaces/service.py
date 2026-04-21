@@ -173,16 +173,16 @@ class FileSpaceService:
     def _sha256(payload: bytes) -> str:
         return hashlib.sha256(payload).hexdigest()
 
-    async def _require_project(self, *, tenant_id: UUID, project_id: UUID) -> Project:
+    async def _require_project(self, *, organization_id: UUID, project_id: UUID) -> Project:
         project = await self.db.scalar(
-            select(Project).where(Project.id == project_id, Project.organization_id == tenant_id)
+            select(Project).where(Project.id == project_id, Project.organization_id == organization_id)
         )
         if project is None:
             raise FileSpaceNotFoundError("project not found")
         return project
 
-    async def list_spaces(self, *, tenant_id: UUID, project_id: UUID) -> list[tuple[FileSpace, int, int]]:
-        await self._require_project(tenant_id=tenant_id, project_id=project_id)
+    async def list_spaces(self, *, organization_id: UUID, project_id: UUID) -> list[tuple[FileSpace, int, int]]:
+        await self._require_project(organization_id=organization_id, project_id=project_id)
         result = await self.db.execute(
             select(
                 FileSpace,
@@ -198,7 +198,7 @@ class FileSpaceService:
                 ),
             )
             .where(
-                FileSpace.tenant_id == tenant_id,
+                FileSpace.organization_id == organization_id,
                 FileSpace.project_id == project_id,
                 FileSpace.status != FileSpaceStatus.archived,
             )
@@ -210,15 +210,15 @@ class FileSpaceService:
     async def create_space(
         self,
         *,
-        tenant_id: UUID,
+        organization_id: UUID,
         project_id: UUID,
         name: str,
         description: str | None,
         created_by: UUID | None,
     ) -> FileSpace:
-        await self._require_project(tenant_id=tenant_id, project_id=project_id)
+        await self._require_project(organization_id=organization_id, project_id=project_id)
         space = FileSpace(
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             project_id=project_id,
             name=self._normalize_name(name),
             description=str(description or "").strip() or None,
@@ -229,11 +229,11 @@ class FileSpaceService:
         await self.db.flush()
         return space
 
-    async def get_space(self, *, tenant_id: UUID, project_id: UUID, space_id: UUID) -> FileSpace:
+    async def get_space(self, *, organization_id: UUID, project_id: UUID, space_id: UUID) -> FileSpace:
         space = await self.db.scalar(
             select(FileSpace).where(
                 FileSpace.id == space_id,
-                FileSpace.tenant_id == tenant_id,
+                FileSpace.organization_id == organization_id,
                 FileSpace.project_id == project_id,
             )
         )
@@ -241,13 +241,13 @@ class FileSpaceService:
             raise FileSpaceNotFoundError("file space not found")
         return space
 
-    async def archive_space(self, *, tenant_id: UUID, project_id: UUID, space_id: UUID) -> FileSpace:
-        space = await self.get_space(tenant_id=tenant_id, project_id=project_id, space_id=space_id)
+    async def archive_space(self, *, organization_id: UUID, project_id: UUID, space_id: UUID) -> FileSpace:
+        space = await self.get_space(organization_id=organization_id, project_id=project_id, space_id=space_id)
         space.status = FileSpaceStatus.archived
         return space
 
-    async def list_entries(self, *, tenant_id: UUID, project_id: UUID, space_id: UUID) -> list[FileSpaceEntry]:
-        await self.get_space(tenant_id=tenant_id, project_id=project_id, space_id=space_id)
+    async def list_entries(self, *, organization_id: UUID, project_id: UUID, space_id: UUID) -> list[FileSpaceEntry]:
+        await self.get_space(organization_id=organization_id, project_id=project_id, space_id=space_id)
         result = await self.db.execute(
             select(FileSpaceEntry)
             .where(
@@ -302,13 +302,13 @@ class FileSpaceService:
     async def mkdir(
         self,
         *,
-        tenant_id: UUID,
+        organization_id: UUID,
         project_id: UUID,
         space_id: UUID,
         path: str,
         user_id: UUID | None,
     ) -> FileSpaceEntry:
-        space = await self.get_space(tenant_id=tenant_id, project_id=project_id, space_id=space_id)
+        space = await self.get_space(organization_id=organization_id, project_id=project_id, space_id=space_id)
         normalized = self._normalize_directory_path(path)
         await self._ensure_directory_chain(space=space, path=normalized, user_id=user_id)
         existing = await self._get_entry(space_id=space.id, path=normalized, include_deleted=True)
@@ -400,7 +400,7 @@ class FileSpaceService:
     async def write_text_file(
         self,
         *,
-        tenant_id: UUID,
+        organization_id: UUID,
         project_id: UUID,
         space_id: UUID,
         path: str,
@@ -409,7 +409,7 @@ class FileSpaceService:
         run_id: UUID | None = None,
         mime_type: str | None = None,
     ) -> tuple[FileSpaceEntry, FileEntryRevision]:
-        space = await self.get_space(tenant_id=tenant_id, project_id=project_id, space_id=space_id)
+        space = await self.get_space(organization_id=organization_id, project_id=project_id, space_id=space_id)
         normalized = self._normalize_file_path(path)
         payload = str(content or "").encode("utf-8")
         resolved_mime, _ = self._resolve_mime_type(filename=normalized, explicit=mime_type, payload=payload)
@@ -427,7 +427,7 @@ class FileSpaceService:
     async def upload_file(
         self,
         *,
-        tenant_id: UUID,
+        organization_id: UUID,
         project_id: UUID,
         space_id: UUID,
         path: str,
@@ -436,7 +436,7 @@ class FileSpaceService:
         user_id: UUID | None,
         run_id: UUID | None = None,
     ) -> tuple[FileSpaceEntry, FileEntryRevision]:
-        space = await self.get_space(tenant_id=tenant_id, project_id=project_id, space_id=space_id)
+        space = await self.get_space(organization_id=organization_id, project_id=project_id, space_id=space_id)
         normalized = self._normalize_file_path(path)
         mime_type, is_text = self._resolve_mime_type(filename=normalized, explicit=content_type, payload=payload)
         encoding = None
@@ -460,12 +460,12 @@ class FileSpaceService:
     async def read_entry(
         self,
         *,
-        tenant_id: UUID,
+        organization_id: UUID,
         project_id: UUID,
         space_id: UUID,
         path: str,
     ) -> tuple[FileSpaceEntry, FileEntryRevision | None]:
-        await self.get_space(tenant_id=tenant_id, project_id=project_id, space_id=space_id)
+        await self.get_space(organization_id=organization_id, project_id=project_id, space_id=space_id)
         normalized = self.normalize_path(path)
         entry = await self._get_entry(space_id=space_id, path=normalized)
         if entry is None:
@@ -478,13 +478,13 @@ class FileSpaceService:
     async def read_text_file(
         self,
         *,
-        tenant_id: UUID,
+        organization_id: UUID,
         project_id: UUID,
         space_id: UUID,
         path: str,
     ) -> tuple[FileSpaceEntry, FileEntryRevision, str]:
         entry, revision = await self.read_entry(
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             project_id=project_id,
             space_id=space_id,
             path=path,
@@ -499,13 +499,13 @@ class FileSpaceService:
     async def read_file_bytes(
         self,
         *,
-        tenant_id: UUID,
+        organization_id: UUID,
         project_id: UUID,
         space_id: UUID,
         path: str,
     ) -> tuple[FileSpaceEntry, FileEntryRevision, bytes]:
         entry, revision = await self.read_entry(
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             project_id=project_id,
             space_id=space_id,
             path=path,
@@ -517,7 +517,7 @@ class FileSpaceService:
     async def patch_text_file(
         self,
         *,
-        tenant_id: UUID,
+        organization_id: UUID,
         project_id: UUID,
         space_id: UUID,
         path: str,
@@ -527,7 +527,7 @@ class FileSpaceService:
         run_id: UUID | None = None,
     ) -> tuple[FileSpaceEntry, FileEntryRevision]:
         entry, _revision, content = await self.read_text_file(
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             project_id=project_id,
             space_id=space_id,
             path=path,
@@ -536,7 +536,7 @@ class FileSpaceService:
             raise FileSpaceValidationError("old_text was not found in file")
         updated = content.replace(old_text, new_text, 1)
         return await self.write_text_file(
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             project_id=project_id,
             space_id=space_id,
             path=entry.path,
@@ -549,14 +549,14 @@ class FileSpaceService:
     async def move_entry(
         self,
         *,
-        tenant_id: UUID,
+        organization_id: UUID,
         project_id: UUID,
         space_id: UUID,
         from_path: str,
         to_path: str,
         user_id: UUID | None,
     ) -> list[FileSpaceEntry]:
-        space = await self.get_space(tenant_id=tenant_id, project_id=project_id, space_id=space_id)
+        space = await self.get_space(organization_id=organization_id, project_id=project_id, space_id=space_id)
         source = self.normalize_path(from_path)
         target = self.normalize_path(to_path)
         entry = await self._get_entry(space_id=space.id, path=source)
@@ -593,13 +593,13 @@ class FileSpaceService:
     async def delete_entry(
         self,
         *,
-        tenant_id: UUID,
+        organization_id: UUID,
         project_id: UUID,
         space_id: UUID,
         path: str,
         user_id: UUID | None,
     ) -> list[FileSpaceEntry]:
-        await self.get_space(tenant_id=tenant_id, project_id=project_id, space_id=space_id)
+        await self.get_space(organization_id=organization_id, project_id=project_id, space_id=space_id)
         normalized = self.normalize_path(path)
         entry = await self._get_entry(space_id=space_id, path=normalized)
         if entry is None:
@@ -615,13 +615,13 @@ class FileSpaceService:
     async def list_revisions(
         self,
         *,
-        tenant_id: UUID,
+        organization_id: UUID,
         project_id: UUID,
         space_id: UUID,
         path: str,
     ) -> list[FileEntryRevision]:
         entry, _ = await self.read_entry(
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             project_id=project_id,
             space_id=space_id,
             path=path,
@@ -638,15 +638,15 @@ class FileSpaceService:
     async def list_agent_links(
         self,
         *,
-        tenant_id: UUID,
+        organization_id: UUID,
         project_id: UUID,
         space_id: UUID,
     ) -> list[AgentFileSpaceLink]:
-        await self.get_space(tenant_id=tenant_id, project_id=project_id, space_id=space_id)
+        await self.get_space(organization_id=organization_id, project_id=project_id, space_id=space_id)
         result = await self.db.execute(
             select(AgentFileSpaceLink)
             .where(
-                AgentFileSpaceLink.tenant_id == tenant_id,
+                AgentFileSpaceLink.organization_id == organization_id,
                 AgentFileSpaceLink.project_id == project_id,
                 AgentFileSpaceLink.file_space_id == space_id,
             )
@@ -657,15 +657,15 @@ class FileSpaceService:
     async def upsert_agent_link(
         self,
         *,
-        tenant_id: UUID,
+        organization_id: UUID,
         project_id: UUID,
         agent_id: UUID,
         space_id: UUID,
         access_mode: FileAccessMode,
         user_id: UUID | None,
     ) -> AgentFileSpaceLink:
-        await self.get_space(tenant_id=tenant_id, project_id=project_id, space_id=space_id)
-        agent = await self.db.scalar(select(Agent).where(Agent.id == agent_id, Agent.tenant_id == tenant_id))
+        await self.get_space(organization_id=organization_id, project_id=project_id, space_id=space_id)
+        agent = await self.db.scalar(select(Agent).where(Agent.id == agent_id, Agent.organization_id == organization_id))
         if agent is None:
             raise FileSpaceNotFoundError("agent not found")
         link = await self.db.scalar(
@@ -677,7 +677,7 @@ class FileSpaceService:
         )
         if link is None:
             link = AgentFileSpaceLink(
-                tenant_id=tenant_id,
+                organization_id=organization_id,
                 project_id=project_id,
                 agent_id=agent_id,
                 file_space_id=space_id,
@@ -693,14 +693,14 @@ class FileSpaceService:
     async def delete_agent_link(
         self,
         *,
-        tenant_id: UUID,
+        organization_id: UUID,
         project_id: UUID,
         agent_id: UUID,
         space_id: UUID,
     ) -> None:
         link = await self.db.scalar(
             select(AgentFileSpaceLink).where(
-                AgentFileSpaceLink.tenant_id == tenant_id,
+                AgentFileSpaceLink.organization_id == organization_id,
                 AgentFileSpaceLink.project_id == project_id,
                 AgentFileSpaceLink.agent_id == agent_id,
                 AgentFileSpaceLink.file_space_id == space_id,
@@ -714,7 +714,7 @@ class FileSpaceService:
     async def resolve_agent_file_space_grants(
         self,
         *,
-        tenant_id: UUID,
+        organization_id: UUID,
         project_id: UUID | None,
         agent_id: UUID,
     ) -> list[FileSpaceGrant]:
@@ -724,7 +724,7 @@ class FileSpaceService:
             select(AgentFileSpaceLink, FileSpace)
             .join(FileSpace, FileSpace.id == AgentFileSpaceLink.file_space_id)
             .where(
-                AgentFileSpaceLink.tenant_id == tenant_id,
+                AgentFileSpaceLink.organization_id == organization_id,
                 AgentFileSpaceLink.project_id == project_id,
                 AgentFileSpaceLink.agent_id == agent_id,
                 FileSpace.status == FileSpaceStatus.active,
@@ -752,7 +752,7 @@ class FileSpaceService:
     ) -> dict[str, Any]:
         payload = {
             "id": str(space.id),
-            "tenant_id": str(space.tenant_id),
+            "organization_id": str(space.organization_id),
             "project_id": str(space.project_id),
             "name": space.name,
             "status": getattr(space.status, "value", space.status),
@@ -805,7 +805,7 @@ class FileSpaceService:
     def serialize_link(link: AgentFileSpaceLink) -> dict[str, Any]:
         return {
             "id": str(link.id),
-            "tenant_id": str(link.tenant_id),
+            "organization_id": str(link.organization_id),
             "project_id": str(link.project_id),
             "agent_id": str(link.agent_id),
             "file_space_id": str(link.file_space_id),

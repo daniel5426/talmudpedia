@@ -56,7 +56,6 @@ export function useAppsBuilderVersions({
   const [selectedVersion, setSelectedVersion] = useState<PublishedAppRevision | null>(null);
   const [inspectedVersionId, setInspectedVersionId] = useState<string | null>(null);
   const [inspectedPreviewUrl, setInspectedPreviewUrl] = useState<string | null>(null);
-  const [inspectedRuntimeToken, setInspectedRuntimeToken] = useState<string | null>(null);
   const [isLoadingVersions, setIsLoadingVersions] = useState(false);
   const [isLoadingVersion, setIsLoadingVersion] = useState(false);
   const [isLoadingVersionPreview, setIsLoadingVersionPreview] = useState(false);
@@ -82,14 +81,12 @@ export function useAppsBuilderVersions({
           inspectedVersionIdRef.current = versionId;
           setInspectedVersionId(versionId);
           setInspectedPreviewUrl(previewRuntime.preview_url || null);
-          setInspectedRuntimeToken(previewRuntime.runtime_token || null);
         } catch (previewErr) {
           const notReadyMessage = parsePreviewBuildNotReadyMessage(previewErr);
           if (notReadyMessage) {
             inspectedVersionIdRef.current = versionId;
             setInspectedVersionId(versionId);
             setInspectedPreviewUrl(null);
-            setInspectedRuntimeToken(null);
             setInspectedPreviewNotice(notReadyMessage);
           } else {
             throw previewErr;
@@ -139,7 +136,6 @@ export function useAppsBuilderVersions({
     inspectedVersionIdRef.current = null;
     setInspectedVersionId(null);
     setInspectedPreviewUrl(null);
-    setInspectedRuntimeToken(null);
     setPublishStatus(null);
     lastMissingCurrentRevisionRefreshRef.current = null;
     void refreshVersions();
@@ -179,7 +175,6 @@ export function useAppsBuilderVersions({
     inspectedVersionIdRef.current = null;
     setInspectedVersionId(null);
     setInspectedPreviewUrl(null);
-    setInspectedRuntimeToken(null);
     setInspectedPreviewNotice(null);
   }, []);
 
@@ -286,7 +281,6 @@ export function useAppsBuilderVersions({
     selectedVersionMeta,
     inspectedVersionId,
     inspectedPreviewUrl,
-    inspectedRuntimeToken,
     inspectedPreviewNotice,
     isLoadingVersions,
     isLoadingVersion,

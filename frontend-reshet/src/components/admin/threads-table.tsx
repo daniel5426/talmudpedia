@@ -261,7 +261,7 @@ export function ThreadsTable({
       cell: ({ row }) => {
         const thread = row.original
         if (!thread.agent_id) return <span className="text-muted-foreground">—</span>
-        const agentLabel = thread.agent_name || thread.agent_slug || thread.agent_id
+        const agentLabel = thread.agent_name || thread.agent_system_key || thread.agent_id
         return (
           <div className="flex min-w-0 items-center gap-2">
             <div className="rounded-lg bg-muted p-2">

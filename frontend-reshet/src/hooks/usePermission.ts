@@ -1,14 +1,14 @@
 "use client"
 
-import { useTenant } from "@/contexts/TenantContext"
+import { useOrganization } from "@/contexts/OrganizationContext"
 
 export function usePermission(resourceType: string, action: string): boolean {
-  const { hasPermission } = useTenant()
+  const { hasPermission } = useOrganization()
   return hasPermission(resourceType, action)
 }
 
 export function usePermissions() {
-  const { permissions, hasPermission } = useTenant()
+  const { permissions, hasPermission } = useOrganization()
   
   return {
     permissions,

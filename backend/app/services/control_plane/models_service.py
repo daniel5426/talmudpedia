@@ -20,7 +20,7 @@ from app.services.control_plane.context import ControlPlaneContext
 from app.services.control_plane.errors import conflict, not_found, validation
 from app.services.integration_provider_catalog import (
     is_model_provider_supported,
-    is_tenant_managed_pricing_provider,
+    is_organization_managed_pricing_provider,
 )
 
 
@@ -59,7 +59,7 @@ class UpdateModelInput:
 def serialize_model(model: ModelRegistry, *, view: str = "full") -> dict[str, Any]:
     payload = {
         "id": str(model.id),
-        "tenant_id": str(model.tenant_id) if model.tenant_id else None,
+        "organization_id": str(model.organization_id) if model.organization_id else None,
         "name": model.name,
         "description": model.description,
         "capability_type": getattr(model.capability_type, "value", model.capability_type),
@@ -114,14 +114,14 @@ def enum_filter(column, value):
     )
 
 
-def model_scope_clause(tenant_id: UUID):
-    return or_(ModelRegistry.tenant_id == tenant_id, ModelRegistry.tenant_id.is_(None))
+def model_scope_clause(organization_id: UUID):
+    return or_(ModelRegistry.organization_id == organization_id, ModelRegistry.organization_id.is_(None))
 
 
 async def apply_default_invariant(
     *,
     db: AsyncSession,
-    tenant_id: UUID | None,
+    organization_id: UUID | None,
     capability_type: ModelCapabilityType,
     selected_model_id: UUID,
 ) -> None:
@@ -130,7 +130,7 @@ async def apply_default_invariant(
         .where(
             ModelRegistry.id != selected_model_id,
             ModelRegistry.capability_type == capability_type,
-            (ModelRegistry.tenant_id == tenant_id if tenant_id is not None else ModelRegistry.tenant_id.is_(None)),
+            (ModelRegistry.organization_id == organization_id if organization_id is not None else ModelRegistry.organization_id.is_(None)),
             ModelRegistry.is_default.is_(True),
         )
         .values(is_default=False)
@@ -149,7 +149,7 @@ class ModelRegistryService:
     async def list_models(self, *, ctx: ControlPlaneContext, params: ListModelsInput) -> tuple[list[ModelRegistry], int]:
         result = await self.db.execute(
             select(ModelRegistry)
-            .where(model_scope_clause(ctx.tenant_id))
+            .where(model_scope_clause(ctx.organization_id))
             .options(selectinload(ModelRegistry.providers))
             .order_by(ModelRegistry.name.asc())
         )
@@ -166,7 +166,7 @@ class ModelRegistryService:
     async def create_model(self, *, ctx: ControlPlaneContext, params: CreateModelInput) -> ModelRegistry:
         validate_default_state(is_default=params.is_default, is_active=params.is_active, status=params.status)
         model = ModelRegistry(
-            tenant_id=ctx.tenant_id,
+            organization_id=ctx.organization_id,
             name=params.name.strip(),
             description=params.description,
             capability_type=params.capability_type,
@@ -181,7 +181,7 @@ class ModelRegistryService:
         if params.is_default:
             await apply_default_invariant(
                 db=self.db,
-                tenant_id=ctx.tenant_id,
+                organization_id=ctx.organization_id,
                 capability_type=model.capability_type,
                 selected_model_id=model.id,
             )
@@ -196,7 +196,7 @@ class ModelRegistryService:
     async def get_model(self, *, ctx: ControlPlaneContext, model_id: UUID) -> ModelRegistry:
         result = await self.db.execute(
             select(ModelRegistry)
-            .where(and_(ModelRegistry.id == model_id, model_scope_clause(ctx.tenant_id)))
+            .where(and_(ModelRegistry.id == model_id, model_scope_clause(ctx.organization_id)))
             .options(selectinload(ModelRegistry.providers))
         )
         model = result.scalar_one_or_none()
@@ -207,7 +207,7 @@ class ModelRegistryService:
     async def update_model(self, *, ctx: ControlPlaneContext, model_id: UUID, params: UpdateModelInput) -> ModelRegistry:
         result = await self.db.execute(
             select(ModelRegistry)
-            .where(and_(ModelRegistry.id == model_id, ModelRegistry.tenant_id == ctx.tenant_id))
+            .where(and_(ModelRegistry.id == model_id, ModelRegistry.organization_id == ctx.organization_id))
             .options(selectinload(ModelRegistry.providers))
         )
         model = result.scalar_one_or_none()
@@ -233,7 +233,7 @@ class ModelRegistryService:
         if params.is_default is True:
             await apply_default_invariant(
                 db=self.db,
-                tenant_id=ctx.tenant_id,
+                organization_id=ctx.organization_id,
                 capability_type=model.capability_type,
                 selected_model_id=model.id,
             )
@@ -316,6 +316,6 @@ def validate_pricing_config(pricing_config: dict | None) -> dict:
 
 def validate_registry_pricing_policy(*, provider: ModelProviderType, pricing_config: dict | None) -> dict:
     normalized = validate_pricing_config(pricing_config)
-    if normalized and not is_tenant_managed_pricing_provider(provider):
+    if normalized and not is_organization_managed_pricing_provider(provider):
         raise validation(f"Pricing is platform-managed for provider '{provider.value}'")
     return normalized

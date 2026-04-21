@@ -12,7 +12,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.dependencies import get_current_principal, require_scopes
 from app.core.security import (
     PUBLISHED_APP_PREVIEW_TOKEN_EXPIRE_MINUTES,
-    create_published_app_preview_token,
 )
 from app.db.postgres.models.agents import AgentRun
 from app.db.postgres.models.published_apps import (
@@ -35,7 +34,7 @@ from .published_apps_admin_access import (
     _get_active_publish_job_for_app,
     _get_app_for_tenant,
     _get_revision_for_app,
-    _resolve_tenant_admin_context,
+    _resolve_organization_admin_context,
 )
 from .published_apps_admin_shared import (
     CreateBuilderRevisionRequest,
@@ -61,8 +60,6 @@ class VersionListItemResponse(PublishedAppRevisionResponse):
 class VersionPreviewRuntimeResponse(BaseModel):
     revision_id: str
     preview_url: str
-    runtime_token: str
-    expires_at: datetime
 
 def _revision_has_dist_assets(revision: PublishedAppRevision) -> bool:
     return bool(str(revision.dist_storage_prefix or "").strip()) and bool(revision.dist_manifest)
@@ -78,9 +75,9 @@ async def list_versions(
     principal: Dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ):
-    ctx = await _resolve_tenant_admin_context(request, principal, db)
+    ctx = await _resolve_organization_admin_context(request, principal, db)
     _assert_can_manage_apps(ctx)
-    app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
+    app = await _get_app_for_tenant(db, ctx["organization_id"], app_id)
 
     stmt = (
         select(PublishedAppRevision)
@@ -133,10 +130,16 @@ async def get_version(
     principal: Dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ):
-    ctx = await _resolve_tenant_admin_context(request, principal, db)
+    ctx = await _resolve_organization_admin_context(request, principal, db)
     _assert_can_manage_apps(ctx)
-    app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
+    app = await _get_app_for_tenant(db, ctx["organization_id"], app_id)
     revision = await _get_revision_for_app(db, app.id, version_id)
+    if not app.agent_id:
+        raise HTTPException(status_code=409, detail={"code": "APP_AGENT_REQUIRED", "message": "Publish requires an attached agent."})
+    agent = await _validate_agent(db, app.organization_id, app.agent_id)
+    agent_status = str(getattr(agent.status, "value", agent.status)).strip().lower()
+    if agent_status != "published":
+        raise HTTPException(status_code=409, detail={"code": "PUBLISH_DEPENDENCY_INCOMPATIBLE", "message": "Publish requires a published agent.", "dependencies": [{"kind": "agent", "id": str(agent.id), "status": agent_status, "reason": "agent_not_published"}]})
     return _revision_to_response(revision)
 
 
@@ -145,7 +148,7 @@ async def create_draft_version(
     app_id: UUID,
     payload: CreateBuilderRevisionRequest,
     request: Request,
-    _: Dict[str, Any] = Depends(require_scopes("apps.write")),
+    _: Dict[str, Any] = Depends(require_scopes("apps.publish")),
     principal: Dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ):
@@ -168,10 +171,10 @@ async def restore_version(
     principal: Dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ):
-    ctx = await _resolve_tenant_admin_context(request, principal, db)
+    ctx = await _resolve_organization_admin_context(request, principal, db)
     _assert_can_manage_apps(ctx)
 
-    app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
+    app = await _get_app_for_tenant(db, ctx["organization_id"], app_id)
     actor = ctx.get("user")
     actor_id = actor.id if actor else None
     target = await _get_revision_for_app(db, app.id, version_id)
@@ -244,10 +247,16 @@ async def get_version_preview_runtime(
     principal: Dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ):
-    ctx = await _resolve_tenant_admin_context(request, principal, db)
+    ctx = await _resolve_organization_admin_context(request, principal, db)
     _assert_can_manage_apps(ctx)
-    app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
+    app = await _get_app_for_tenant(db, ctx["organization_id"], app_id)
     revision = await _get_revision_for_app(db, app.id, version_id)
+    if not app.agent_id:
+        raise HTTPException(status_code=409, detail={"code": "APP_AGENT_REQUIRED", "message": "Publish requires an attached agent."})
+    agent = await _validate_agent(db, app.organization_id, app.agent_id)
+    agent_status = str(getattr(agent.status, "value", agent.status)).strip().lower()
+    if agent_status != "published":
+        raise HTTPException(status_code=409, detail={"code": "PUBLISH_DEPENDENCY_INCOMPATIBLE", "message": "Publish requires a published agent.", "dependencies": [{"kind": "agent", "id": str(agent.id), "status": agent_status, "reason": "agent_not_published"}]})
     if not _revision_has_dist_assets(revision):
         raise HTTPException(
             status_code=409,
@@ -259,17 +268,6 @@ async def get_version_preview_runtime(
                 "message": "Selected version preview is unavailable until build artifacts are ready.",
             },
         )
-
-    preview_subject = str(ctx.get("user").id) if ctx.get("user") else str(ctx.get("membership").user_id)
-    expires_at = datetime.now(timezone.utc) + timedelta(minutes=PUBLISHED_APP_PREVIEW_TOKEN_EXPIRE_MINUTES)
-    runtime_token = create_published_app_preview_token(
-        subject=preview_subject,
-        tenant_id=str(app.tenant_id),
-        app_id=str(app.id),
-        revision_id=str(revision.id),
-        scopes=["apps.preview"],
-        expires_delta=timedelta(minutes=PUBLISHED_APP_PREVIEW_TOKEN_EXPIRE_MINUTES),
-    )
 
     runtime_api_base = str(request.base_url).rstrip("/")
     asset_base_url = f"{runtime_api_base}/public/apps/preview/revisions/{revision.id}/assets/"
@@ -283,8 +281,6 @@ async def get_version_preview_runtime(
     return VersionPreviewRuntimeResponse(
         revision_id=str(revision.id),
         preview_url=preview_url,
-        runtime_token=runtime_token,
-        expires_at=expires_at,
     )
 
 
@@ -297,9 +293,9 @@ async def publish_version(
     principal: Dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ):
-    ctx = await _resolve_tenant_admin_context(request, principal, db)
+    ctx = await _resolve_organization_admin_context(request, principal, db)
     _assert_can_manage_apps(ctx)
-    app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
+    app = await _get_app_for_tenant(db, ctx["organization_id"], app_id)
     actor_id = ctx["user"].id if ctx.get("user") else None
     if actor_id is None:
         raise HTTPException(status_code=403, detail="Publish requires a user principal")
@@ -316,6 +312,12 @@ async def publish_version(
         )
 
     revision = await _get_revision_for_app(db, app.id, version_id)
+    if not app.agent_id:
+        raise HTTPException(status_code=409, detail={"code": "APP_AGENT_REQUIRED", "message": "Publish requires an attached agent."})
+    agent = await _validate_agent(db, app.organization_id, app.agent_id)
+    agent_status = str(getattr(agent.status, "value", agent.status)).strip().lower()
+    if agent_status != "published":
+        raise HTTPException(status_code=409, detail={"code": "PUBLISH_DEPENDENCY_INCOMPATIBLE", "message": "Publish requires a published agent.", "dependencies": [{"kind": "agent", "id": str(agent.id), "status": agent_status, "reason": "agent_not_published"}]})
     if not _revision_has_dist_assets(revision):
         raise HTTPException(
             status_code=409,
@@ -329,7 +331,7 @@ async def publish_version(
     now = datetime.now(timezone.utc)
     publish_job = PublishedAppPublishJob(
         published_app_id=app.id,
-        tenant_id=app.tenant_id,
+        organization_id=app.organization_id,
         requested_by=actor_id,
         source_revision_id=revision.id,
         saved_draft_revision_id=revision.id,
@@ -353,7 +355,7 @@ async def publish_version(
     app.current_published_revision_id = revision.id
     app.status = PublishedAppStatus.published
     app.published_at = now
-    app.published_url = _build_published_url(app.slug)
+    app.published_url = _build_published_url(app.public_id)
     await db.commit()
     await db.refresh(publish_job)
 

@@ -6,23 +6,23 @@ import pytest
 from app.agent.executors.artifact import ArtifactNodeExecutor
 from app.agent.graph.compiler import AgentCompiler
 from app.agent.graph.schema import AgentEdge, AgentGraph, AgentNode, AgentNodePosition
-from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Tenant, User
+from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Organization, User
 from app.services.artifact_runtime.revision_service import ArtifactRevisionService
 
 
 async def _seed_tenant_context(db_session):
-    tenant = Tenant(id=uuid.uuid4(), name="Agent Tenant", slug=f"agent-{uuid.uuid4().hex[:8]}")
+    tenant = Organization(id=uuid.uuid4(), name="Agent Organization", slug=f"agent-{uuid.uuid4().hex[:8]}")
     user = User(id=uuid.uuid4(), email=f"agent-{uuid.uuid4().hex[:6]}@example.com", role="admin")
     org_unit = OrgUnit(
         id=uuid.uuid4(),
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name="Agent Org",
         slug=f"agent-org-{uuid.uuid4().hex[:6]}",
         type=OrgUnitType.org,
     )
     membership = OrgMembership(
         id=uuid.uuid4(),
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         org_unit_id=org_unit.id,
         role=OrgRole.owner,
@@ -33,10 +33,10 @@ async def _seed_tenant_context(db_session):
     return tenant, user
 
 
-async def _create_artifact(db_session, tenant_id, created_by, *, publish: bool, output_schema: dict | None = None):
+async def _create_artifact(db_session, organization_id, created_by, *, publish: bool, output_schema: dict | None = None):
     revisions = ArtifactRevisionService(db_session)
     artifact = await revisions.create_artifact(
-        tenant_id=tenant_id,
+        organization_id=organization_id,
         created_by=created_by,
         display_name="Agent Artifact",
         description=None,
@@ -72,7 +72,7 @@ def _build_graph(artifact_type: str) -> AgentGraph:
                 id="artifact",
                 type=artifact_type,
                 position=AgentNodePosition(x=1, y=0),
-                config={"label": "Tenant Artifact"},
+                config={"label": "Organization Artifact"},
                 input_mappings={"query": "{{ input }}"},
             ),
             AgentNode(id="end", type="end", position=AgentNodePosition(x=2, y=0), config={}),
@@ -88,7 +88,7 @@ def _build_graph(artifact_type: str) -> AgentGraph:
 async def test_agent_compiler_pins_published_artifact_revision_in_production(db_session):
     tenant, user = await _seed_tenant_context(db_session)
     artifact = await _create_artifact(db_session, tenant.id, user.id, publish=True)
-    compiler = AgentCompiler(tenant_id=tenant.id, db=db_session)
+    compiler = AgentCompiler(organization_id=tenant.id, db=db_session)
 
     graph_ir = await compiler.compile(
         uuid.uuid4(),
@@ -107,7 +107,7 @@ async def test_agent_compiler_pins_published_artifact_revision_in_production(db_
 async def test_agent_compiler_rejects_draft_only_artifact_in_production(db_session):
     tenant, user = await _seed_tenant_context(db_session)
     artifact = await _create_artifact(db_session, tenant.id, user.id, publish=False)
-    compiler = AgentCompiler(tenant_id=tenant.id, db=db_session)
+    compiler = AgentCompiler(organization_id=tenant.id, db=db_session)
 
     with pytest.raises(ValueError, match="Artifact resolution failed"):
         await compiler.compile(
@@ -121,7 +121,7 @@ async def test_agent_compiler_rejects_draft_only_artifact_in_production(db_sessi
 
 @pytest.mark.asyncio
 async def test_artifact_node_executor_routes_tenant_artifacts_through_shared_runtime(monkeypatch):
-    tenant_id = uuid.uuid4()
+    organization_id = uuid.uuid4()
     revision_id = uuid.uuid4()
     captured = {}
 
@@ -152,7 +152,7 @@ async def test_artifact_node_executor_routes_tenant_artifacts_through_shared_run
         fake_execute_live_run,
     )
 
-    executor = ArtifactNodeExecutor(tenant_id=tenant_id, db=None)
+    executor = ArtifactNodeExecutor(organization_id=organization_id, db=None)
     result = await executor.execute(
         {"input": "hello"},
         {
@@ -187,7 +187,7 @@ async def test_artifact_analysis_uses_contract_output_schema(db_session):
             "required": ["answer"],
         },
     )
-    compiler = AgentCompiler(tenant_id=tenant.id, db=db_session)
+    compiler = AgentCompiler(organization_id=tenant.id, db=db_session)
 
     resolved = await compiler.resolve_runtime_references(_build_graph(str(artifact.id)), execution_mode="debug")
     analysis = compiler.analyze(resolved)

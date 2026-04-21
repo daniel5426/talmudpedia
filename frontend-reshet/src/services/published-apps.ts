@@ -61,12 +61,12 @@ export type PublishedAppRevisionKind = "draft" | "published";
 
 export interface PublishedApp {
   id: string;
-  tenant_id: string;
+  organization_id: string;
   agent_id: string;
   name: string;
   description?: string | null;
   logo_url?: string | null;
-  slug: string;
+  public_id: string;
   status: PublishedAppStatus;
   visibility: PublishedAppVisibility;
   auth_enabled: boolean;
@@ -202,7 +202,6 @@ export interface BuilderStateResponse {
   templates: PublishedAppTemplate[];
   current_draft_revision?: PublishedAppRevision | null;
   current_published_revision?: PublishedAppRevision | null;
-  preview_token?: string | null;
   draft_dev?: DraftDevSessionResponse | null;
 }
 
@@ -238,8 +237,6 @@ export interface DraftDevSessionResponse {
   active_coding_run_count: number;
   preview_url?: string | null;
   preview_transport_generation?: number | null;
-  preview_auth_token?: string | null;
-  preview_auth_expires_at?: string | null;
   workspace_revision_token?: string | null;
   expires_at?: string | null;
   idle_timeout_seconds: number;
@@ -308,15 +305,12 @@ export type PublishJobStatusResponse = PublishJobResponse;
 export interface VersionPreviewRuntimeResponse {
   revision_id: string;
   preview_url: string;
-  runtime_token: string;
-  expires_at: string;
 }
 
 export interface CreatePublishedAppRequest {
   name: string;
   description?: string;
   logo_url?: string;
-  slug?: string;
   agent_id: string;
   template_key: string;
   visibility?: PublishedAppVisibility;
@@ -329,7 +323,6 @@ export interface UpdatePublishedAppRequest {
   name?: string;
   description?: string | null;
   logo_url?: string | null;
-  slug?: string;
   agent_id?: string;
   visibility?: PublishedAppVisibility;
   auth_enabled?: boolean;
@@ -545,8 +538,8 @@ export const publishedAppsService = {
     return httpClient.post<PublishedApp>(`/admin/apps/${appId}/unpublish`, {});
   },
 
-  async runtimePreview(appId: string): Promise<{ app_id: string; slug: string; status: string; runtime_url: string }> {
-    return httpClient.get<{ app_id: string; slug: string; status: string; runtime_url: string }>(`/admin/apps/${appId}/runtime-preview`);
+  async runtimePreview(appId: string): Promise<{ app_id: string; public_id: string; status: string; runtime_url: string }> {
+    return httpClient.get<{ app_id: string; public_id: string; status: string; runtime_url: string }>(`/admin/apps/${appId}/runtime-preview`);
   },
 
   async listVersions(
@@ -645,13 +638,8 @@ export const publishedAppsService = {
 
   async getDraftDevPreviewStatus(
     previewUrl: string,
-    options?: { previewAuthToken?: string | null },
   ): Promise<NonNullable<DraftDevSessionResponse["live_preview"]>> {
     const statusUrl = new URL("_talmudpedia/status", previewUrl);
-    const previewAuthToken = String(options?.previewAuthToken || "").trim();
-    if (previewAuthToken) {
-      statusUrl.searchParams.set("runtime_token", previewAuthToken);
-    }
     const response = await fetch(statusUrl, {
       method: "GET",
       credentials: "include",

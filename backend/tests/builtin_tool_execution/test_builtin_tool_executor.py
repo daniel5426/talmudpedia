@@ -64,7 +64,7 @@ async def test_builtin_retrieval_pipeline_executes_runtime(monkeypatch):
     monkeypatch.setattr(ToolNodeExecutor, "_load_tool", fake_load_tool)
     monkeypatch.setattr(RetrievalPipelineRuntime, "run_query", fake_run_query)
 
-    executor = ToolNodeExecutor(tenant_id=uuid4(), db=DummyDB())
+    executor = ToolNodeExecutor(organization_id=uuid4(), db=DummyDB())
     result = await executor.execute(
         state={"context": {"query": "where is this text", "top_k": 3, "filters": {"tractate": "Berakhot"}}},
         config={"tool_id": str(tool.id)},
@@ -94,7 +94,7 @@ async def test_builtin_retrieval_pipeline_accepts_input_string_alias(monkeypatch
     monkeypatch.setattr(ToolNodeExecutor, "_load_tool", fake_load_tool)
     monkeypatch.setattr(RetrievalPipelineRuntime, "run_query", fake_run_query)
 
-    executor = ToolNodeExecutor(tenant_id=uuid4(), db=DummyDB())
+    executor = ToolNodeExecutor(organization_id=uuid4(), db=DummyDB())
     result = await executor.execute(
         state={"context": {"input": "where is this text"}},
         config={"tool_id": str(tool.id)},
@@ -118,7 +118,7 @@ async def test_unknown_implementation_type_returns_explicit_error(monkeypatch):
 
     monkeypatch.setattr(ToolNodeExecutor, "_load_tool", fake_load_tool)
 
-    executor = ToolNodeExecutor(tenant_id=uuid4(), db=DummyDB())
+    executor = ToolNodeExecutor(organization_id=uuid4(), db=DummyDB())
     with pytest.raises(NotImplementedError, match="Unsupported tool implementation type"):
         await executor.execute(
             state={"context": {"x": 1}},
@@ -144,7 +144,7 @@ async def test_production_blocks_draft_but_debug_allows(monkeypatch):
     monkeypatch.setattr(ToolNodeExecutor, "_load_tool", fake_load_tool)
     monkeypatch.setattr(ToolNodeExecutor, "_execute_http_tool", fake_http)
 
-    executor = ToolNodeExecutor(tenant_id=uuid4(), db=DummyDB())
+    executor = ToolNodeExecutor(organization_id=uuid4(), db=DummyDB())
 
     with pytest.raises(PermissionError, match="published"):
         await executor.execute(
@@ -185,7 +185,7 @@ async def test_web_fetch_happy_path_and_invalid_scheme(monkeypatch):
     monkeypatch.setattr(ToolNodeExecutor, "_load_tool", fake_load_tool)
     monkeypatch.setattr(httpx, "AsyncClient", client_factory)
 
-    executor = ToolNodeExecutor(tenant_id=uuid4(), db=DummyDB())
+    executor = ToolNodeExecutor(organization_id=uuid4(), db=DummyDB())
 
     ok = await executor.execute(
         state={"context": {"url": "https://example.com"}},
@@ -245,7 +245,7 @@ async def test_web_search_uses_provider_dispatch(monkeypatch, provider_name: str
     monkeypatch.setattr(ToolNodeExecutor, "_load_tool", fake_load_tool)
     monkeypatch.setattr("app.agent.executors.tool.create_web_search_provider", fake_provider_factory)
 
-    executor = ToolNodeExecutor(tenant_id=uuid4(), db=DummyDB())
+    executor = ToolNodeExecutor(organization_id=uuid4(), db=DummyDB())
     result = await executor.execute(
         state={"context": {"query": "latest halacha", "top_k": 3}},
         config={"tool_id": str(tool.id)},
@@ -286,7 +286,7 @@ async def test_web_search_accepts_q_alias(monkeypatch):
     monkeypatch.setattr(ToolNodeExecutor, "_load_tool", fake_load_tool)
     monkeypatch.setattr("app.agent.executors.tool.create_web_search_provider", fake_provider_factory)
 
-    executor = ToolNodeExecutor(tenant_id=uuid4(), db=DummyDB())
+    executor = ToolNodeExecutor(organization_id=uuid4(), db=DummyDB())
     result = await executor.execute(
         state={"context": {"q": "shabbat candle lighting", "top_k": 2}},
         config={"tool_id": str(tool.id)},
@@ -338,7 +338,7 @@ async def test_web_search_uses_tenant_settings_credentials_when_tool_has_no_key(
         fake_get_default_provider_credential,
     )
 
-    executor = ToolNodeExecutor(tenant_id=uuid4(), db=DummyDB())
+    executor = ToolNodeExecutor(organization_id=uuid4(), db=DummyDB())
     result = await executor.execute(
         state={"context": {"query": "amud yomi", "top_k": 1}},
         config={"tool_id": str(tool.id)},
@@ -395,7 +395,7 @@ async def test_web_search_falls_back_to_env_key_when_no_tenant_credential(monkey
     )
     monkeypatch.setenv(env_var, "env-default-key")
 
-    executor = ToolNodeExecutor(tenant_id=uuid4(), db=DummyDB())
+    executor = ToolNodeExecutor(organization_id=uuid4(), db=DummyDB())
     result = await executor.execute(
         state={"context": {"query": "daf yomi news", "top_k": 2}},
         config={"tool_id": str(tool.id)},
@@ -424,7 +424,7 @@ async def test_json_transform_and_datetime_utils(monkeypatch):
 
     monkeypatch.setattr(ToolNodeExecutor, "_load_tool", fake_load_tool)
 
-    executor = ToolNodeExecutor(tenant_id=uuid4(), db=DummyDB())
+    executor = ToolNodeExecutor(organization_id=uuid4(), db=DummyDB())
 
     transformed = await executor.execute(
         state={
@@ -467,7 +467,7 @@ async def test_ui_blocks_builtin_normalizes_valid_bundle(monkeypatch):
 
     monkeypatch.setattr(ToolNodeExecutor, "_load_tool", fake_load_tool)
 
-    executor = ToolNodeExecutor(tenant_id=uuid4(), db=DummyDB())
+    executor = ToolNodeExecutor(organization_id=uuid4(), db=DummyDB())
     result = await executor.execute(
         state={
             "context": {
@@ -502,7 +502,7 @@ async def test_ui_blocks_builtin_rejects_invalid_bundle(monkeypatch):
 
     monkeypatch.setattr(ToolNodeExecutor, "_load_tool", fake_load_tool)
 
-    executor = ToolNodeExecutor(tenant_id=uuid4(), db=DummyDB())
+    executor = ToolNodeExecutor(organization_id=uuid4(), db=DummyDB())
 
     with pytest.raises(ValueError, match="At least one row is required"):
         await executor.execute(

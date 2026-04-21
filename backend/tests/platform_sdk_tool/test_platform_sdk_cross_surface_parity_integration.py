@@ -14,15 +14,15 @@ from talmudpedia_control_sdk import ControlPlaneClient
 def _require_env() -> tuple[str, Dict[str, str], str, str]:
     base_url = os.getenv("TEST_BASE_URL")
     api_key = os.getenv("TEST_API_KEY")
-    tenant_id = os.getenv("TEST_TENANT_ID")
-    if not base_url or not api_key or not tenant_id:
+    organization_id = os.getenv("TEST_TENANT_ID")
+    if not base_url or not api_key or not organization_id:
         pytest.skip("Set TEST_BASE_URL, TEST_API_KEY, and TEST_TENANT_ID to run integration tests.")
 
     headers = {
         "Authorization": f"Bearer {api_key}",
-        "X-Tenant-ID": tenant_id,
+        "X-Organization-ID": organization_id,
     }
-    return base_url.rstrip("/"), headers, tenant_id, api_key
+    return base_url.rstrip("/"), headers, organization_id, api_key
 
 
 def _unwrap_data(payload: Any) -> Dict[str, Any]:
@@ -204,7 +204,7 @@ def _delete_agent(base_url: str, headers: Dict[str, str], agent_id: str) -> None
 
 @pytest.mark.real_db
 def test_cross_surface_artifacts_create_parity() -> None:
-    base_url, headers, tenant_id, api_key = _require_env()
+    base_url, headers, organization_id, api_key = _require_env()
 
     artifact_name = f"sdk-parity-{uuid.uuid4().hex[:8]}"
     payload = {
@@ -248,7 +248,7 @@ def test_cross_surface_artifacts_create_parity() -> None:
         sdk_client = ControlPlaneClient(
             base_url=base_url,
             token=api_key,
-            tenant_id=tenant_id,
+            organization_id=organization_id,
         )
         sdk_result = sdk_client.artifacts.create(payload)
         sdk_entity = _unwrap_data(sdk_result)
@@ -261,7 +261,7 @@ def test_cross_surface_artifacts_create_parity() -> None:
             context={
                 "inputs": {
                     "action": "artifacts.create",
-                    "tenant_id": tenant_id,
+                    "organization_id": organization_id,
                     "token": api_key,
                     "base_url": base_url,
                     "payload": payload,
@@ -292,8 +292,8 @@ def test_cross_surface_artifacts_create_parity() -> None:
 
 @pytest.mark.real_db
 def test_cross_surface_tools_create_or_update_create_parity() -> None:
-    base_url, headers, tenant_id, api_key = _require_env()
-    sdk_client = ControlPlaneClient(base_url=base_url, token=api_key, tenant_id=tenant_id)
+    base_url, headers, organization_id, api_key = _require_env()
+    sdk_client = ControlPlaneClient(base_url=base_url, token=api_key, organization_id=organization_id)
 
     unique = uuid.uuid4().hex[:8]
     backing_artifact_id = None
@@ -329,7 +329,7 @@ def test_cross_surface_tools_create_or_update_create_parity() -> None:
             context={
                 "inputs": {
                     "action": "tools.create_or_update",
-                    "tenant_id": tenant_id,
+                    "organization_id": organization_id,
                     "token": api_key,
                     "base_url": base_url,
                     "payload": payload,
@@ -357,8 +357,8 @@ def test_cross_surface_tools_create_or_update_create_parity() -> None:
 
 @pytest.mark.real_db
 def test_cross_surface_tools_create_or_update_update_parity() -> None:
-    base_url, headers, tenant_id, api_key = _require_env()
-    sdk_client = ControlPlaneClient(base_url=base_url, token=api_key, tenant_id=tenant_id)
+    base_url, headers, organization_id, api_key = _require_env()
+    sdk_client = ControlPlaneClient(base_url=base_url, token=api_key, organization_id=organization_id)
 
     unique = uuid.uuid4().hex[:8]
     backing_artifact_id = None
@@ -387,7 +387,7 @@ def test_cross_surface_tools_create_or_update_update_parity() -> None:
             context={
                 "inputs": {
                     "action": "tools.create_or_update",
-                    "tenant_id": tenant_id,
+                    "organization_id": organization_id,
                     "token": api_key,
                     "base_url": base_url,
                     "payload": {**seed_payload, "slug": f"tool-update-tool-{unique}"},
@@ -413,7 +413,7 @@ def test_cross_surface_tools_create_or_update_update_parity() -> None:
             context={
                 "inputs": {
                     "action": "tools.create_or_update",
-                    "tenant_id": tenant_id,
+                    "organization_id": organization_id,
                     "token": api_key,
                     "base_url": base_url,
                     "payload": {
@@ -441,9 +441,9 @@ def test_cross_surface_tools_create_or_update_update_parity() -> None:
 
 @pytest.mark.real_db
 def test_cross_surface_agents_create_or_update_create_parity() -> None:
-    base_url, headers, tenant_id, api_key = _require_env()
+    base_url, headers, organization_id, api_key = _require_env()
     model_id = _require_chat_model()
-    sdk_client = ControlPlaneClient(base_url=base_url, token=api_key, tenant_id=tenant_id)
+    sdk_client = ControlPlaneClient(base_url=base_url, token=api_key, organization_id=organization_id)
 
     unique = uuid.uuid4().hex[:8]
     ui_agent_id = None
@@ -470,7 +470,7 @@ def test_cross_surface_agents_create_or_update_create_parity() -> None:
             context={
                 "inputs": {
                     "action": "agents.create_or_update",
-                    "tenant_id": tenant_id,
+                    "organization_id": organization_id,
                     "token": api_key,
                     "base_url": base_url,
                     "payload": tool_payload,
@@ -495,9 +495,9 @@ def test_cross_surface_agents_create_or_update_create_parity() -> None:
 
 @pytest.mark.real_db
 def test_cross_surface_agents_publish_parity() -> None:
-    base_url, headers, tenant_id, api_key = _require_env()
+    base_url, headers, organization_id, api_key = _require_env()
     model_id = _require_chat_model()
-    sdk_client = ControlPlaneClient(base_url=base_url, token=api_key, tenant_id=tenant_id)
+    sdk_client = ControlPlaneClient(base_url=base_url, token=api_key, organization_id=organization_id)
 
     unique = uuid.uuid4().hex[:8]
     ui_agent_id = None
@@ -538,7 +538,7 @@ def test_cross_surface_agents_publish_parity() -> None:
             context={
                 "inputs": {
                     "action": "agents.publish",
-                    "tenant_id": tenant_id,
+                    "organization_id": organization_id,
                     "token": api_key,
                     "base_url": base_url,
                     "payload": {"agent_id": tool_agent_id},
@@ -564,8 +564,8 @@ def test_cross_surface_agents_publish_parity() -> None:
 
 @pytest.mark.real_db
 def test_cross_surface_tools_publish_parity() -> None:
-    base_url, headers, tenant_id, api_key = _require_env()
-    sdk_client = ControlPlaneClient(base_url=base_url, token=api_key, tenant_id=tenant_id)
+    base_url, headers, organization_id, api_key = _require_env()
+    sdk_client = ControlPlaneClient(base_url=base_url, token=api_key, organization_id=organization_id)
 
     unique = uuid.uuid4().hex[:8]
     backing_artifact_id = None
@@ -601,7 +601,7 @@ def test_cross_surface_tools_publish_parity() -> None:
             context={
                 "inputs": {
                     "action": "tools.create_or_update",
-                    "tenant_id": tenant_id,
+                    "organization_id": organization_id,
                     "token": api_key,
                     "base_url": base_url,
                     "payload": _tool_seed(f"tool-publish-tool-{unique}"),
@@ -620,7 +620,7 @@ def test_cross_surface_tools_publish_parity() -> None:
             context={
                 "inputs": {
                     "action": "tools.publish",
-                    "tenant_id": tenant_id,
+                    "organization_id": organization_id,
                     "token": api_key,
                     "base_url": base_url,
                     "payload": {"tool_id": tool_tool_id},
@@ -645,8 +645,8 @@ def test_cross_surface_tools_publish_parity() -> None:
 
 @pytest.mark.real_db
 def test_cross_surface_artifacts_publish_parity() -> None:
-    base_url, headers, tenant_id, api_key = _require_env()
-    sdk_client = ControlPlaneClient(base_url=base_url, token=api_key, tenant_id=tenant_id)
+    base_url, headers, organization_id, api_key = _require_env()
+    sdk_client = ControlPlaneClient(base_url=base_url, token=api_key, organization_id=organization_id)
 
     unique = uuid.uuid4().hex[:8]
     ui_artifact_id = None
@@ -690,7 +690,7 @@ def test_cross_surface_artifacts_publish_parity() -> None:
             context={
                 "inputs": {
                     "action": "artifacts.create",
-                    "tenant_id": tenant_id,
+                    "organization_id": organization_id,
                     "token": api_key,
                     "base_url": base_url,
                     "payload": _draft_payload(f"publish-tool-{unique}"),
@@ -714,7 +714,7 @@ def test_cross_surface_artifacts_publish_parity() -> None:
             context={
                 "inputs": {
                     "action": "artifacts.publish",
-                    "tenant_id": tenant_id,
+                    "organization_id": organization_id,
                     "token": api_key,
                     "base_url": base_url,
                     "payload": {"artifact_id": tool_artifact_id},

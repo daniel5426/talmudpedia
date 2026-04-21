@@ -40,7 +40,7 @@ def test_mutation_headers_include_contract_tenant_auth_and_idempotency() -> None
     client = ControlPlaneClient(
         base_url="http://localhost:8000",
         token="token-123",
-        tenant_id="tenant-1",
+        organization_id="tenant-1",
         session=session,
     )
 
@@ -56,14 +56,14 @@ def test_mutation_headers_include_contract_tenant_auth_and_idempotency() -> None
     assert call["url"] == "http://localhost:8000/tools"
     assert call["params"]["dry_run"] is True
     assert call["headers"]["Authorization"] == "Bearer token-123"
-    assert call["headers"]["X-Tenant-ID"] == "tenant-1"
+    assert call["headers"]["X-Organization-ID"] == "tenant-1"
     assert call["headers"]["X-SDK-Contract"] == "1"
     assert call["headers"]["X-Idempotency-Key"] == "idem-1"
 
 
 def test_envelope_wraps_non_standard_json_response() -> None:
     session = _RecordingSession(_FakeResponse(payload=[{"id": "a1"}], headers={"X-Request-ID": "req-1"}))
-    client = ControlPlaneClient(base_url="http://localhost:8000", token="token-123", tenant_id="tenant-1", session=session)
+    client = ControlPlaneClient(base_url="http://localhost:8000", token="token-123", organization_id="tenant-1", session=session)
     envelope = client.agents.list()
 
     assert envelope["data"] == [{"id": "a1"}]
@@ -74,7 +74,7 @@ def test_envelope_wraps_non_standard_json_response() -> None:
 def test_error_mapping_uses_structured_body() -> None:
     payload = {"code": "VALIDATION_ERROR", "message": "bad input", "retryable": False}
     session = _RecordingSession(_FakeResponse(status_code=422, payload=payload, text="bad input"))
-    client = ControlPlaneClient(base_url="http://localhost:8000", token="token-123", tenant_id="tenant-1", session=session)
+    client = ControlPlaneClient(base_url="http://localhost:8000", token="token-123", organization_id="tenant-1", session=session)
 
     with pytest.raises(ControlPlaneSDKError) as excinfo:
         client.tools.create({"name": "x"})
@@ -103,7 +103,7 @@ def test_error_mapping_preserves_structured_detail_and_request_id() -> None:
             text="Internal Server Error",
         )
     )
-    client = ControlPlaneClient(base_url="http://localhost:8000", token="token-123", tenant_id="tenant-1", session=session)
+    client = ControlPlaneClient(base_url="http://localhost:8000", token="token-123", organization_id="tenant-1", session=session)
 
     with pytest.raises(ControlPlaneSDKError) as excinfo:
         client.agents.apply_graph_patch("agent-1", [{"op": "set_node_config_value"}])
@@ -119,7 +119,7 @@ def test_error_mapping_preserves_structured_detail_and_request_id() -> None:
 
 def test_agents_update_uses_patch_route_by_default() -> None:
     session = _RecordingSession(_FakeResponse(payload={"id": "agent-1"}))
-    client = ControlPlaneClient(base_url="http://localhost:8000", token="token-123", tenant_id="tenant-1", session=session)
+    client = ControlPlaneClient(base_url="http://localhost:8000", token="token-123", organization_id="tenant-1", session=session)
 
     client.agents.update("agent-1", {"description": "updated"})
 
@@ -130,7 +130,7 @@ def test_agents_update_uses_patch_route_by_default() -> None:
 
 def test_artifact_publish_serialization_includes_tenant_slug() -> None:
     session = _RecordingSession(_FakeResponse(payload={"artifact_id": "draft-1"}))
-    client = ControlPlaneClient(base_url="http://localhost:8000", token="token-123", tenant_id="tenant-1", session=session)
+    client = ControlPlaneClient(base_url="http://localhost:8000", token="token-123", organization_id="tenant-1", session=session)
 
     client.artifacts.publish(
         "draft-1",
@@ -147,7 +147,7 @@ def test_artifact_publish_serialization_includes_tenant_slug() -> None:
 
 def test_artifact_create_serialization_uses_canonical_endpoint() -> None:
     session = _RecordingSession(_FakeResponse(payload={"id": "artifact-1"}))
-    client = ControlPlaneClient(base_url="http://localhost:8000", token="token-123", tenant_id="tenant-1", session=session)
+    client = ControlPlaneClient(base_url="http://localhost:8000", token="token-123", organization_id="tenant-1", session=session)
 
     client.artifacts.create(
         {
@@ -173,7 +173,7 @@ def test_artifact_create_serialization_uses_canonical_endpoint() -> None:
 
 def test_artifact_convert_kind_serialization_uses_convert_endpoint() -> None:
     session = _RecordingSession(_FakeResponse(payload={"id": "artifact-1", "kind": "agent_node"}))
-    client = ControlPlaneClient(base_url="http://localhost:8000", token="token-123", tenant_id="tenant-1", session=session)
+    client = ControlPlaneClient(base_url="http://localhost:8000", token="token-123", organization_id="tenant-1", session=session)
 
     client.artifacts.convert_kind(
         "artifact-1",
@@ -206,8 +206,8 @@ def test_tenant_resolver_sets_header_per_request() -> None:
     client.agents.get("agent-1")
     client.agents.get("agent-1")
 
-    first = session.calls[0]["headers"]["X-Tenant-ID"]
-    second = session.calls[1]["headers"]["X-Tenant-ID"]
+    first = session.calls[0]["headers"]["X-Organization-ID"]
+    second = session.calls[1]["headers"]["X-Organization-ID"]
     assert first == "tenant-a"
     assert second == "tenant-b"
 
@@ -224,4 +224,4 @@ def test_from_env_uses_default_test_variables(monkeypatch: pytest.MonkeyPatch) -
     call = session.calls[0]
     assert call["url"].startswith("http://env-host/")
     assert call["headers"]["Authorization"] == "Bearer env-token"
-    assert call["headers"]["X-Tenant-ID"] == "env-tenant"
+    assert call["headers"]["X-Organization-ID"] == "env-tenant"

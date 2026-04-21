@@ -171,7 +171,7 @@ def test_graph_v4_normalizes_branch_configs_to_opaque_ids():
 
 @pytest.mark.asyncio
 async def test_set_state_executor_writes_typed_value_ref_assignment():
-    executor = SetStateNodeExecutor(tenant_id=uuid4(), db=None)
+    executor = SetStateNodeExecutor(organization_id=uuid4(), db=None)
 
     payload = await executor.execute(
         state={

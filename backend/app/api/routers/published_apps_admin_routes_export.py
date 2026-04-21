@@ -13,7 +13,7 @@ from app.services.published_app_export_service import PublishedAppExportService
 from .published_apps_admin_access import (
     _assert_can_manage_apps,
     _get_app_for_tenant,
-    _resolve_tenant_admin_context,
+    _resolve_organization_admin_context,
 )
 from .published_apps_admin_shared import router
 
@@ -35,9 +35,9 @@ async def get_export_options(
     principal: Dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ):
-    ctx = await _resolve_tenant_admin_context(request, principal, db)
+    ctx = await _resolve_organization_admin_context(request, principal, db)
     _assert_can_manage_apps(ctx)
-    app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
+    app = await _get_app_for_tenant(db, ctx["organization_id"], app_id)
     options = await PublishedAppExportService(db).resolve_options(app=app)
     return ExportOptionsResponse(**options.__dict__)
 
@@ -50,9 +50,9 @@ async def download_export_archive(
     principal: Dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ):
-    ctx = await _resolve_tenant_admin_context(request, principal, db)
+    ctx = await _resolve_organization_admin_context(request, principal, db)
     _assert_can_manage_apps(ctx)
-    app = await _get_app_for_tenant(db, ctx["tenant_id"], app_id)
+    app = await _get_app_for_tenant(db, ctx["organization_id"], app_id)
     try:
         archive = await PublishedAppExportService(db).build_archive(app=app)
     except ValueError as exc:

@@ -90,10 +90,10 @@ class ThreadService:
     async def resolve_or_create_thread(
         self,
         *,
-        tenant_id: UUID,
+        organization_id: UUID,
         user_id: Optional[UUID],
         app_account_id: Optional[UUID] = None,
-        tenant_api_key_id: Optional[UUID] = None,
+        organization_api_key_id: Optional[UUID] = None,
         agent_id: Optional[UUID],
         published_app_id: Optional[UUID],
         external_user_id: Optional[str] = None,
@@ -104,12 +104,12 @@ class ThreadService:
         parent_run_id: Optional[UUID] = None,
     ) -> ThreadResolveResult:
         lineage_context = await self._build_lineage_context(
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             parent_run_id=parent_run_id,
         )
         if thread_id is not None:
             thread = await self.db.get(AgentThread, thread_id)
-            if thread is None or thread.tenant_id != tenant_id:
+            if thread is None or thread.organization_id != organization_id:
                 raise ThreadAccessError("Thread not found")
             if thread.status == AgentThreadStatus.archived:
                 raise ThreadAccessError("Thread is archived")
@@ -132,10 +132,10 @@ class ThreadService:
             return ThreadResolveResult(thread=thread, created=False)
 
         thread = AgentThread(
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             user_id=user_id,
             app_account_id=app_account_id,
-            tenant_api_key_id=tenant_api_key_id,
+            organization_api_key_id=organization_api_key_id,
             agent_id=agent_id,
             published_app_id=published_app_id,
             external_user_id=external_user_id,
@@ -258,7 +258,7 @@ class ThreadService:
     async def list_threads(
         self,
         *,
-        tenant_id: UUID,
+        organization_id: UUID,
         user_id: Optional[UUID] = None,
         app_account_id: Optional[UUID] = None,
         published_app_id: Optional[UUID] = None,
@@ -268,7 +268,7 @@ class ThreadService:
         skip: int = 0,
         limit: int = 20,
     ) -> tuple[list[AgentThread], int]:
-        base = select(AgentThread).where(AgentThread.tenant_id == tenant_id)
+        base = select(AgentThread).where(AgentThread.organization_id == organization_id)
         if user_id is not None:
             base = base.where(AgentThread.user_id == user_id)
         if app_account_id is not None:
@@ -298,7 +298,7 @@ class ThreadService:
     async def get_thread_with_turns(
         self,
         *,
-        tenant_id: Optional[UUID],
+        organization_id: Optional[UUID],
         thread_id: UUID,
         user_id: Optional[UUID] = None,
         app_account_id: Optional[UUID] = None,
@@ -308,7 +308,7 @@ class ThreadService:
         external_session_id: Optional[str] = None,
     ) -> Optional[AgentThread]:
         thread = await self._get_accessible_thread(
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             thread_id=thread_id,
             user_id=user_id,
             app_account_id=app_account_id,
@@ -327,7 +327,7 @@ class ThreadService:
     async def _get_accessible_thread(
         self,
         *,
-        tenant_id: Optional[UUID],
+        organization_id: Optional[UUID],
         thread_id: UUID,
         user_id: Optional[UUID] = None,
         app_account_id: Optional[UUID] = None,
@@ -345,8 +345,8 @@ class ThreadService:
                 .selectinload(AgentThreadTurn.attachment_links)
                 .selectinload(AgentThreadTurnAttachment.attachment),
             )
-        if tenant_id is not None:
-            query = query.where(AgentThread.tenant_id == tenant_id)
+        if organization_id is not None:
+            query = query.where(AgentThread.organization_id == organization_id)
         thread = (await self.db.execute(query)).scalar_one_or_none()
         if thread is None:
             return None
@@ -369,7 +369,7 @@ class ThreadService:
     async def get_thread_turn_page(
         self,
         *,
-        tenant_id: Optional[UUID],
+        organization_id: Optional[UUID],
         thread_id: UUID,
         user_id: Optional[UUID] = None,
         app_account_id: Optional[UUID] = None,
@@ -381,7 +381,7 @@ class ThreadService:
         limit: int = 20,
     ) -> Optional[ThreadTurnPageResult]:
         thread = await self._get_accessible_thread(
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             thread_id=thread_id,
             user_id=user_id,
             app_account_id=app_account_id,
@@ -448,13 +448,13 @@ class ThreadService:
             child_limit=max(1, int(child_limit)),
         )
 
-    async def delete_threads(self, *, tenant_id: UUID, thread_ids: list[UUID]) -> int:
+    async def delete_threads(self, *, organization_id: UUID, thread_ids: list[UUID]) -> int:
         if not thread_ids:
             return 0
         result = await self.db.execute(
             select(AgentThread)
             .where(
-                and_(AgentThread.tenant_id == tenant_id, AgentThread.id.in_(thread_ids))
+                and_(AgentThread.organization_id == organization_id, AgentThread.id.in_(thread_ids))
             )
             .options(selectinload(AgentThread.attachments))
         )
@@ -462,7 +462,7 @@ class ThreadService:
         all_thread_ids = {row.id for row in rows}
         if all_thread_ids:
             descendants = await self._collect_descendant_thread_ids(
-                tenant_id=tenant_id,
+                organization_id=organization_id,
                 parent_thread_ids=all_thread_ids,
             )
             all_thread_ids.update(descendants)
@@ -470,7 +470,7 @@ class ThreadService:
             result = await self.db.execute(
                 select(AgentThread)
                 .where(
-                    and_(AgentThread.tenant_id == tenant_id, AgentThread.id.in_(all_thread_ids))
+                    and_(AgentThread.organization_id == organization_id, AgentThread.id.in_(all_thread_ids))
                 )
                 .options(selectinload(AgentThread.attachments))
             )
@@ -499,16 +499,16 @@ class ThreadService:
     async def _build_lineage_context(
         self,
         *,
-        tenant_id: UUID,
+        organization_id: UUID,
         parent_run_id: UUID | None,
     ) -> ThreadLineageResolveContext | None:
         if parent_run_id is None:
             return None
         parent_run = await self.db.get(AgentRun, parent_run_id)
-        if parent_run is None or parent_run.tenant_id != tenant_id or parent_run.thread_id is None:
+        if parent_run is None or parent_run.organization_id != organization_id or parent_run.thread_id is None:
             raise ThreadAccessError("Parent run thread not found")
         parent_thread = await self.db.get(AgentThread, parent_run.thread_id)
-        if parent_thread is None or parent_thread.tenant_id != tenant_id:
+        if parent_thread is None or parent_thread.organization_id != organization_id:
             raise ThreadAccessError("Parent run thread not found")
         await self._ensure_thread_lineage(parent_thread)
         parent_turn_id = await self.db.scalar(
@@ -555,7 +555,7 @@ class ThreadService:
         child_limit: int,
     ) -> ThreadSubtreeNode:
         child_threads = await self._load_direct_child_threads(
-            tenant_id=thread.tenant_id,
+            organization_id=thread.organization_id,
             parent_thread_id=thread.id,
             child_limit=child_limit,
         )
@@ -585,7 +585,7 @@ class ThreadService:
     async def _load_direct_child_threads(
         self,
         *,
-        tenant_id: UUID,
+        organization_id: UUID,
         parent_thread_id: UUID,
         child_limit: int,
     ) -> list[AgentThread]:
@@ -593,7 +593,7 @@ class ThreadService:
             await self.db.execute(
                 select(AgentThread)
                 .where(
-                    AgentThread.tenant_id == tenant_id,
+                    AgentThread.organization_id == organization_id,
                     AgentThread.parent_thread_id == parent_thread_id,
                 )
                 .options(selectinload(AgentThread.agent))
@@ -650,7 +650,7 @@ class ThreadService:
     async def _collect_descendant_thread_ids(
         self,
         *,
-        tenant_id: UUID,
+        organization_id: UUID,
         parent_thread_ids: set[UUID],
     ) -> set[UUID]:
         collected: set[UUID] = set()
@@ -660,7 +660,7 @@ class ThreadService:
                 await self.db.execute(
                     select(AgentThread.id)
                     .where(
-                        AgentThread.tenant_id == tenant_id,
+                        AgentThread.organization_id == organization_id,
                         AgentThread.parent_thread_id.in_(frontier),
                     )
                 )

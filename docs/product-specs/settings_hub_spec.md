@@ -73,7 +73,6 @@ The `Projects` tab provides:
 
 The project detail panel covers:
 - name
-- slug
 - description
 - status
 - project members
@@ -131,17 +130,17 @@ Settings governance APIs:
 - `POST /api/settings/people/role-assignments`
 - `DELETE /api/settings/people/role-assignments/{assignment_id}`
 - `GET /api/settings/projects`
-- `GET /api/settings/projects/{project_slug}`
-- `PATCH /api/settings/projects/{project_slug}`
-- `GET /api/settings/projects/{project_slug}/members`
+- `GET /api/settings/projects/{project_id}`
+- `PATCH /api/settings/projects/{project_id}`
+- `GET /api/settings/projects/{project_id}/members`
 - `GET /api/settings/api-keys`
 - `POST /api/settings/api-keys`
 - `POST /api/settings/api-keys/{key_id}/revoke`
 - `DELETE /api/settings/api-keys/{key_id}`
 - `GET /api/settings/limits/organization`
 - `PATCH /api/settings/limits/organization`
-- `GET /api/settings/limits/projects/{project_slug}`
-- `PATCH /api/settings/limits/projects/{project_slug}`
+- `GET /api/settings/limits/projects/{project_id}`
+- `PATCH /api/settings/limits/projects/{project_id}`
 - `GET /api/settings/audit-logs`
 - `GET /api/settings/audit-logs/count`
 - `GET /api/settings/audit-logs/{log_id}`

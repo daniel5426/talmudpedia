@@ -41,7 +41,7 @@ class OperatorOutput(BaseModel):
 
 class ExecutionContext(BaseModel):
     """Context passed to operators during execution."""
-    tenant_id: Optional[str] = None
+    organization_id: Optional[str] = None
     pipeline_id: Optional[str] = None
     job_id: Optional[str] = None
     step_id: str
@@ -436,7 +436,7 @@ class ArtifactExecutor(OperatorExecutor):
 
 
 class ArtifactRuntimeExecutor(OperatorExecutor):
-    """Execute tenant artifact-backed operators through the shared artifact runtime."""
+    """Execute organization artifact-backed operators through the shared artifact runtime."""
 
     async def execute(
         self,
@@ -463,7 +463,7 @@ class ArtifactRuntimeExecutor(OperatorExecutor):
             )
 
         run = await ArtifactExecutionService(db).execute_live_run(
-            tenant_id=uuid.UUID(str(context.tenant_id)),
+            organization_id=uuid.UUID(str(context.organization_id)),
             created_by=uuid.UUID(str(context.triggered_by)) if getattr(context, "triggered_by", None) else None,
             revision_id=uuid.UUID(str(self.spec.artifact_revision_id)),
             domain=ArtifactRunDomain.RAG,
@@ -474,7 +474,7 @@ class ArtifactRuntimeExecutor(OperatorExecutor):
                 "pipeline_id": context.pipeline_id,
                 "job_id": context.job_id,
                 "step_id": context.step_id,
-                "tenant_id": context.tenant_id,
+                "organization_id": context.organization_id,
                 "operator_id": self.operator_id,
             },
             require_published=True,
@@ -1207,11 +1207,11 @@ class LLMTransformExecutor(OperatorExecutor):
             raise ValueError("prompt_template is required for llm")
 
         db = getattr(context, "db", None)
-        tenant_id = context.tenant_id
+        organization_id= context.organization_id
         if not db:
             raise ValueError("Database session is required in execution context for llm")
 
-        resolver = ModelResolver(db, uuid.UUID(str(tenant_id)) if tenant_id else None)
+        resolver = ModelResolver(db, uuid.UUID(str(organization_id)) if organization_id else None)
         runtime = (await resolver.resolve_for_execution(model_id)).provider_instance
 
         input_field = str(context.config.get("input_field") or "text").strip() or "text"
@@ -1333,12 +1333,12 @@ class EmbedderExecutor(OperatorExecutor):
             
         # Get DB from context (passed by PipelineExecutor)
         db = getattr(context, "db", None)
-        tenant_id = context.tenant_id
+        organization_id= context.organization_id
         
         if not db:
             raise ValueError("Database session is required in execution context for model resolution")
             
-        resolver = ModelResolver(db, UUID(tenant_id) if isinstance(tenant_id, str) else tenant_id)
+        resolver = ModelResolver(db, UUID(organization_id) if isinstance(organization_id, str) else organization_id)
         embedder = await resolver.resolve_embedding(model_id)
         
         all_embeddings = []
@@ -1493,7 +1493,7 @@ class KnowledgeStoreSinkExecutor(OperatorExecutor):
             raise ValueError(f"Knowledge store not found: {knowledge_store_id}")
         
         # Create the adapter based on backend with merged credentials
-        credentials_service = CredentialsService(db, store.tenant_id)
+        credentials_service = CredentialsService(db, store.organization_id)
         backend_config = await credentials_service.resolve_backend_config(
             store.backend_config or {},
             store.credentials_ref,
@@ -1613,7 +1613,7 @@ class VectorSearchExecutor(OperatorExecutor):
             store = await db.get(KnowledgeStore, UUID(knowledge_store_id))
             if not store:
                 raise ValueError(f"Knowledge store not found: {knowledge_store_id}")
-            credentials_service = CredentialsService(db, store.tenant_id)
+            credentials_service = CredentialsService(db, store.organization_id)
             backend_config = await credentials_service.resolve_backend_config(
                 store.backend_config or {},
                 store.credentials_ref,
@@ -1671,7 +1671,7 @@ class VectorSearchExecutor(OperatorExecutor):
             # Fallback for query-first payloads: embed on-demand using store's embedding model.
             from app.services.model_resolver import ModelResolver
 
-            resolver = ModelResolver(db, store.tenant_id)
+            resolver = ModelResolver(db, store.organization_id)
             embedder = await resolver.resolve_embedding(store.embedding_model_id)
             embed_results = await embedder.embed_batch([query_text.strip()])
             if embed_results and embed_results[0].values:

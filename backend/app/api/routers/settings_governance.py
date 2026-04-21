@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import sqlalchemy as sa
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
@@ -12,8 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_current_principal
 from app.api.routers.auth import get_current_user
-from app.api.routers.org_units import _normalize_tenant_settings, _validate_default_model_id
-from app.api.routers.rbac import _role_permissions
+from app.api.routers.org_units import _normalize_organization_settings, _validate_default_model_id
 from app.core.scope_registry import (
     ORGANIZATION_READER_ROLE,
     PROJECT_MEMBER_ROLE,
@@ -24,16 +23,17 @@ from app.core.scope_registry import (
     normalize_scope_list,
 )
 from app.db.postgres.models.audit import AuditLog, AuditResult
-from app.db.postgres.models.identity import MembershipStatus, OrgInvite, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Tenant, TenantStatus, User
+from app.db.postgres.models.identity import MembershipStatus, OrgInvite, OrgMembership, OrgUnit, OrgUnitType, Organization, OrganizationStatus, User
 from app.db.postgres.models.registry import ModelCapabilityType
-from app.db.postgres.models.rbac import Action, ActorType, ResourceType, Role, RoleAssignment, RolePermission
-from app.db.postgres.models.security import ProjectAPIKey, ProjectAPIKeyStatus, TenantAPIKey, TenantAPIKeyStatus
+from app.db.postgres.models.rbac import Action, ResourceType, Role, RoleAssignment, RolePermission
+from app.db.postgres.models.security import ProjectAPIKey, ProjectAPIKeyStatus, OrganizationAPIKey, OrganizationAPIKeyStatus
 from app.db.postgres.models.usage_quota import UsageQuotaPolicy, UsageQuotaScopeType
 from app.db.postgres.models.workspace import Project, ProjectStatus
 from app.db.postgres.session import get_db
-from app.services.auth_context_service import serialize_project_summary, serialize_user_summary
+from app.services.auth_context_service import resolve_effective_scopes, serialize_project_summary, serialize_user_summary
+from app.services.organization_bootstrap_service import OrganizationBootstrapService
 from app.services.project_api_key_service import ProjectAPIKeyNotFoundError, ProjectAPIKeyService
-from app.services.tenant_api_key_service import TenantAPIKeyNotFoundError, TenantAPIKeyService
+from app.services.organization_api_key_service import OrganizationAPIKeyNotFoundError, OrganizationAPIKeyService
 from app.services.workos_auth_service import WorkOSAuthService
 
 router = APIRouter(prefix="/api/settings", tags=["settings-governance"])
@@ -55,7 +55,6 @@ class UpdateProfileRequest(BaseModel):
 class OrganizationSettingsResponse(BaseModel):
     id: str
     name: str
-    slug: str
     status: str
     default_chat_model_id: str | None = None
     default_embedding_model_id: str | None = None
@@ -64,7 +63,6 @@ class OrganizationSettingsResponse(BaseModel):
 
 class UpdateOrganizationSettingsRequest(BaseModel):
     name: str | None = None
-    slug: str | None = None
     status: str | None = None
     default_chat_model_id: str | None = None
     default_embedding_model_id: str | None = None
@@ -87,6 +85,7 @@ class InviteResponse(BaseModel):
     id: str
     email: str | None = None
     project_ids: list[str] = Field(default_factory=list)
+    project_role_id: str | None = None
     organization_role: str = ORGANIZATION_READER_ROLE
     project_role: str | None = None
     accepted_at: datetime | None = None
@@ -97,28 +96,26 @@ class InviteResponse(BaseModel):
 class CreateInviteRequest(BaseModel):
     email: EmailStr
     project_ids: list[str] = Field(default_factory=list)
+    project_role_id: str | None = None
 
 
 class GroupResponse(BaseModel):
     id: str
-    tenant_id: str
+    organization_id: str
     parent_id: str | None = None
     name: str
-    slug: str
     type: str
     created_at: datetime
 
 
 class CreateGroupRequest(BaseModel):
     name: str
-    slug: str
     type: OrgUnitType
     parent_id: str | None = None
 
 
 class UpdateGroupRequest(BaseModel):
     name: str | None = None
-    slug: str | None = None
     parent_id: str | None = None
 
 
@@ -140,8 +137,8 @@ class RoleAssignmentResponse(BaseModel):
     role_id: str
     role_family: str
     role_name: str
-    scope_id: str
-    scope_type: str
+    assignment_kind: str
+    project_id: str | None = None
     assigned_at: datetime
 
 
@@ -162,16 +159,14 @@ class UpdateRoleRequest(BaseModel):
 class CreateRoleAssignmentRequest(BaseModel):
     user_id: str
     role_id: str
-    scope_id: str
-    scope_type: str
-    actor_type: ActorType = ActorType.USER
+    assignment_kind: str
+    project_id: str | None = None
 
 
 class ProjectSummaryResponse(BaseModel):
     id: str
     organization_id: str
     name: str
-    slug: str
     description: str | None = None
     status: str
     is_default: bool
@@ -179,9 +174,13 @@ class ProjectSummaryResponse(BaseModel):
     member_count: int
 
 
+class CreateProjectRequest(BaseModel):
+    name: str
+    description: str | None = None
+
+
 class UpdateProjectRequest(BaseModel):
     name: str | None = None
-    slug: str | None = None
     description: str | None = None
     status: ProjectStatus | None = None
 
@@ -202,7 +201,7 @@ class SettingsApiKeyResponse(BaseModel):
 
 class CreateSettingsApiKeyRequest(BaseModel):
     owner_scope: str
-    project_slug: str | None = None
+    project_id: UUID | None = None
     name: str = Field(min_length=1, max_length=120)
     scopes: list[str] = Field(default_factory=lambda: ["agents.embed"])
 
@@ -255,15 +254,6 @@ def _normalize_role_family(value: str) -> str:
     return normalized
 
 
-def _normalize_assignment_scope_type(value: str) -> str:
-    normalized = str(value or "").strip().lower()
-    if normalized in {"organization", "tenant", "org", "org_unit"}:
-        return ROLE_FAMILY_ORGANIZATION
-    if normalized == "project":
-        return ROLE_FAMILY_PROJECT
-    raise HTTPException(status_code=400, detail="Role assignments must target organization or project scope")
-
-
 def _validate_role_permissions(*, family: str, permissions: list[str]) -> list[str]:
     normalized = normalize_scope_list(permissions)
     allowed = allowed_scopes_for_role_family(family)
@@ -273,22 +263,33 @@ def _validate_role_permissions(*, family: str, permissions: list[str]) -> list[s
     return normalized
 
 
-async def _active_organization(db: AsyncSession, principal: dict[str, Any]) -> Tenant:
-    organization_id = principal.get("organization_id") or principal.get("tenant_id")
+async def _role_permissions(db: AsyncSession, role_id: UUID) -> list[str]:
+    rows = (
+        await db.execute(select(RolePermission).where(RolePermission.role_id == role_id))
+    ).scalars().all()
+    return normalize_scope_list([str(row.scope_key) for row in rows if getattr(row, "scope_key", None)])
+
+
+async def _active_organization(db: AsyncSession, principal: dict[str, Any]) -> Organization:
+    organization_id = principal.get("organization_id") or principal.get("organization_id")
     if not organization_id:
         raise HTTPException(status_code=400, detail="Active organization context is required")
-    organization = await db.get(Tenant, UUID(str(organization_id)))
+    organization = await db.get(Organization, UUID(str(organization_id)))
     if organization is None:
         raise HTTPException(status_code=404, detail="Organization not found")
     return organization
 
 
-async def _project_or_404(db: AsyncSession, organization_id: UUID, project_slug: str) -> Project:
+def _internal_org_unit_row_key() -> str:
+    return f"org-unit-{uuid4().hex}"
+
+
+async def _project_or_404(db: AsyncSession, organization_id: UUID, project_id: UUID) -> Project:
     project = (
         await db.execute(
             select(Project).where(
                 Project.organization_id == organization_id,
-                Project.slug == project_slug,
+                Project.id == project_id,
             )
         )
     ).scalar_one_or_none()
@@ -300,17 +301,16 @@ async def _project_or_404(db: AsyncSession, organization_id: UUID, project_slug:
 def _serialize_group(group: OrgUnit) -> GroupResponse:
     return GroupResponse(
         id=str(group.id),
-        tenant_id=str(group.tenant_id),
+        organization_id=str(group.organization_id),
         parent_id=str(group.parent_id) if group.parent_id else None,
         name=group.name,
-        slug=group.slug,
         type=group.type.value if hasattr(group.type, "value") else str(group.type),
         created_at=group.created_at,
     )
 
 
 def _serialize_api_key_row(
-    row: TenantAPIKey | ProjectAPIKey,
+    row: OrganizationAPIKey | ProjectAPIKey,
     *,
     owner_scope: str,
     owner_scope_id: UUID,
@@ -330,14 +330,14 @@ def _serialize_api_key_row(
     )
 
 
-async def _tenant_usage_quota_policy(db: AsyncSession, tenant_id: UUID) -> UsageQuotaPolicy | None:
+async def _organization_usage_quota_policy(db: AsyncSession, organization_id: UUID) -> UsageQuotaPolicy | None:
     return (
         await db.execute(
             select(UsageQuotaPolicy)
             .where(
-                UsageQuotaPolicy.tenant_id == tenant_id,
+                UsageQuotaPolicy.organization_id == organization_id,
                 UsageQuotaPolicy.user_id.is_(None),
-                UsageQuotaPolicy.scope_type == UsageQuotaScopeType.tenant,
+                UsageQuotaPolicy.scope_type == UsageQuotaScopeType.organization,
                 UsageQuotaPolicy.is_active.is_(True),
             )
             .order_by(UsageQuotaPolicy.updated_at.desc(), UsageQuotaPolicy.created_at.desc())
@@ -346,16 +346,100 @@ async def _tenant_usage_quota_policy(db: AsyncSession, tenant_id: UUID) -> Usage
     ).scalar_one_or_none()
 
 
-async def _project_member_count(db: AsyncSession, tenant_id: UUID, project_id: UUID) -> int:
+async def _project_member_count(db: AsyncSession, organization_id: UUID, project_id: UUID) -> int:
     result = await db.execute(
         select(func.count(sa.distinct(RoleAssignment.user_id)))
+        .join(
+            OrgMembership,
+            and_(
+                OrgMembership.organization_id == RoleAssignment.organization_id,
+                OrgMembership.user_id == RoleAssignment.user_id,
+                OrgMembership.status == MembershipStatus.active,
+            ),
+        )
         .where(
-            RoleAssignment.tenant_id == tenant_id,
-            RoleAssignment.scope_type == "project",
-            RoleAssignment.scope_id == project_id,
+            RoleAssignment.organization_id == organization_id,
+            RoleAssignment.project_id == project_id,
         )
     )
     return int(result.scalar() or 0)
+
+
+async def _organization_role_name_by_user_id(
+    db: AsyncSession,
+    *,
+    organization_id: UUID,
+    user_ids: list[UUID],
+) -> dict[str, str]:
+    if not user_ids:
+        return {}
+    rows = await db.execute(
+        select(RoleAssignment.user_id, Role.name)
+        .join(Role, Role.id == RoleAssignment.role_id)
+        .where(
+            RoleAssignment.organization_id == organization_id,
+            RoleAssignment.project_id.is_(None),
+            RoleAssignment.user_id.in_(user_ids),
+            Role.family == ROLE_FAMILY_ORGANIZATION,
+        )
+    )
+    return {str(user_id): role_name for user_id, role_name in rows.all()}
+
+
+async def _active_membership_for_user(
+    db: AsyncSession,
+    *,
+    organization_id: UUID,
+    user_id: UUID,
+) -> OrgMembership | None:
+    return (
+        await db.execute(
+            select(OrgMembership).where(
+                OrgMembership.organization_id == organization_id,
+                OrgMembership.user_id == user_id,
+                OrgMembership.status == MembershipStatus.active,
+            )
+        )
+    ).scalar_one_or_none()
+
+
+async def _delete_organization_member_assignments(
+    db: AsyncSession,
+    *,
+    organization_id: UUID,
+    user_id: UUID,
+) -> None:
+    await db.execute(
+        delete(RoleAssignment).where(
+            RoleAssignment.organization_id == organization_id,
+            RoleAssignment.user_id == user_id,
+        )
+    )
+
+
+async def _require_project_scope(
+    principal: dict[str, Any],
+    *,
+    db: AsyncSession,
+    organization_id: UUID,
+    project_id: UUID,
+    required_scopes: tuple[str, ...],
+) -> None:
+    current_scopes = set(principal.get("scopes") or [])
+    if "*" in current_scopes or current_scopes.intersection(required_scopes):
+        return
+    user = principal.get("user")
+    if user is None:
+        raise HTTPException(status_code=403, detail=f"Missing required scope: {' or '.join(required_scopes)}")
+    effective_scopes = await resolve_effective_scopes(
+        db=db,
+        user=user,
+        organization_id=organization_id,
+        project_id=project_id,
+    )
+    if set(effective_scopes).intersection(required_scopes):
+        return
+    raise HTTPException(status_code=403, detail=f"Missing required scope: {' or '.join(required_scopes)}")
 
 
 @router.get("/profile", response_model=ProfileResponse)
@@ -391,11 +475,10 @@ async def get_organization_settings(
 ) -> OrganizationSettingsResponse:
     _require_scope(principal, "organizations.read", "organizations.write")
     organization = await _active_organization(db, principal)
-    defaults = _normalize_tenant_settings(organization.settings)
+    defaults = _normalize_organization_settings(organization.settings)
     return OrganizationSettingsResponse(
         id=str(organization.id),
         name=organization.name,
-        slug=organization.slug,
         status=organization.status.value if hasattr(organization.status, "value") else str(organization.status),
         default_chat_model_id=defaults.default_chat_model_id,
         default_embedding_model_id=defaults.default_embedding_model_id,
@@ -418,31 +501,22 @@ async def update_organization_settings(
 
     if "name" in payload.model_fields_set and payload.name is not None:
         organization.name = payload.name
-    if "slug" in payload.model_fields_set and payload.slug and payload.slug != organization.slug:
-        duplicate = (
-            await db.execute(
-                select(Tenant).where(Tenant.slug == payload.slug, Tenant.id != organization.id)
-            )
-        ).scalar_one_or_none()
-        if duplicate is not None:
-            raise HTTPException(status_code=400, detail="Organization slug already exists")
-        organization.slug = payload.slug
     if "status" in payload.model_fields_set and payload.status is not None:
-        organization.status = TenantStatus(payload.status)
+        organization.status = OrganizationStatus(payload.status)
 
     settings = dict(organization.settings or {})
     if "default_chat_model_id" in payload.model_fields_set:
         settings["default_chat_model_id"] = await _validate_default_model_id(
             model_id=payload.default_chat_model_id,
             capability=ModelCapabilityType.CHAT,
-            tenant=organization,
+            organization=organization,
             db=db,
         )
     if "default_embedding_model_id" in payload.model_fields_set:
         settings["default_embedding_model_id"] = await _validate_default_model_id(
             model_id=payload.default_embedding_model_id,
             capability=ModelCapabilityType.EMBEDDING,
-            tenant=organization,
+            organization=organization,
             db=db,
         )
     if "default_retrieval_policy" in payload.model_fields_set:
@@ -468,12 +542,17 @@ async def list_members(
             .join(User, User.id == OrgMembership.user_id)
             .join(OrgUnit, OrgUnit.id == OrgMembership.org_unit_id)
             .where(
-                OrgMembership.tenant_id == organization.id,
+                OrgMembership.organization_id == organization.id,
                 OrgMembership.status == MembershipStatus.active,
             )
             .order_by(User.email.asc())
         )
     ).all()
+    org_role_names = await _organization_role_name_by_user_id(
+        db,
+        organization_id=organization.id,
+        user_ids=[membership.user_id for membership, _, _ in memberships],
+    )
     return [
         MemberResponse(
             membership_id=str(membership.id),
@@ -481,7 +560,7 @@ async def list_members(
             email=user.email,
             full_name=user.full_name,
             avatar=user.avatar,
-            organization_role=membership.role.value if hasattr(membership.role, "value") else str(membership.role),
+            organization_role=org_role_names.get(str(user.id), "Unassigned"),
             org_unit_id=str(org_unit.id),
             org_unit_name=org_unit.name,
             joined_at=membership.joined_at,
@@ -502,12 +581,17 @@ async def remove_member(
         await db.execute(
             select(OrgMembership).where(
                 OrgMembership.id == membership_id,
-                OrgMembership.tenant_id == organization.id,
+                OrgMembership.organization_id == organization.id,
             )
         )
     ).scalar_one_or_none()
     if membership is None:
         raise HTTPException(status_code=404, detail="Membership not found")
+    await _delete_organization_member_assignments(
+        db,
+        organization_id=organization.id,
+        user_id=membership.user_id,
+    )
     await db.delete(membership)
     await db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -523,9 +607,15 @@ async def list_invitations(
     if not organization.workos_organization_id:
         return []
     local_invites = (
-        await db.execute(select(OrgInvite).where(OrgInvite.tenant_id == organization.id, OrgInvite.accepted_at.is_(None)))
+        await db.execute(select(OrgInvite).where(OrgInvite.organization_id == organization.id, OrgInvite.accepted_at.is_(None)))
     ).scalars().all()
     local_by_token = {invite.token: invite for invite in local_invites}
+    role_name_by_id = {
+        str(role.id): role.name
+        for role in (
+            await db.execute(select(Role).where(Role.organization_id == organization.id, Role.family == ROLE_FAMILY_PROJECT))
+        ).scalars().all()
+    }
     invites = WorkOSAuthService(db).client.user_management.list_invitations(
         organization_id=organization.workos_organization_id,
     )
@@ -534,8 +624,17 @@ async def list_invitations(
             id=str(getattr(invite, "id", "")),
             email=getattr(invite, "email", None),
             project_ids=list(local_by_token.get(str(getattr(invite, "id", "")), None).project_ids if local_by_token.get(str(getattr(invite, "id", "")), None) else []),
+            project_role_id=(
+                str(local_by_token.get(str(getattr(invite, "id", "")), None).project_role_id)
+                if local_by_token.get(str(getattr(invite, "id", "")), None) and local_by_token.get(str(getattr(invite, "id", "")), None).project_role_id
+                else None
+            ),
             organization_role=ORGANIZATION_READER_ROLE,
-            project_role=PROJECT_MEMBER_ROLE if local_by_token.get(str(getattr(invite, "id", "")), None) and local_by_token.get(str(getattr(invite, "id", "")), None).project_ids else None,
+            project_role=(
+                role_name_by_id.get(str(local_by_token.get(str(getattr(invite, "id", "")), None).project_role_id))
+                if local_by_token.get(str(getattr(invite, "id", "")), None) and local_by_token.get(str(getattr(invite, "id", "")), None).project_role_id
+                else None
+            ),
             accepted_at=getattr(invite, "accepted_at", None) or getattr(invite, "acceptedAt", None),
             created_at=getattr(invite, "created_at", None) or getattr(invite, "createdAt", None),
             expires_at=getattr(invite, "expires_at", None) or getattr(invite, "expiresAt", None),
@@ -565,6 +664,32 @@ async def create_invitation(
         invalid = [project_id for project_id in payload.project_ids if project_id not in allowed_ids]
         if invalid:
             raise HTTPException(status_code=400, detail=f"Unknown project ids: {', '.join(invalid)}")
+    selected_project_role: Role | None = None
+    if payload.project_ids:
+        if payload.project_role_id:
+            selected_project_role = (
+                await db.execute(
+                    select(Role).where(
+                        Role.id == UUID(payload.project_role_id),
+                        Role.organization_id == organization.id,
+                        Role.family == ROLE_FAMILY_PROJECT,
+                    )
+                )
+            ).scalar_one_or_none()
+            if selected_project_role is None:
+                raise HTTPException(status_code=400, detail="Project role must resolve to a project-family role in this organization")
+        else:
+            selected_project_role = (
+                await db.execute(
+                    select(Role).where(
+                        Role.organization_id == organization.id,
+                        Role.family == ROLE_FAMILY_PROJECT,
+                        Role.name == PROJECT_MEMBER_ROLE,
+                    )
+                )
+            ).scalar_one_or_none()
+            if selected_project_role is None:
+                raise HTTPException(status_code=400, detail="Default project Member role not found")
 
     current_user = await db.get(User, UUID(str(principal["user_id"])))
     invite = WorkOSAuthService(db).client.user_management.send_invitation(
@@ -575,9 +700,9 @@ async def create_invitation(
     db.add(
         OrgInvite(
             email=str(payload.email),
-            tenant_id=organization.id,
-            role=OrgRole.member,
+            organization_id=organization.id,
             project_ids=payload.project_ids,
+            project_role_id=selected_project_role.id if selected_project_role else None,
             token=str(getattr(invite, "id", "")),
             expires_at=(getattr(invite, "expires_at", None) or getattr(invite, "expiresAt", None) or datetime.now(timezone.utc)),
             created_by=UUID(str(principal["user_id"])),
@@ -588,8 +713,9 @@ async def create_invitation(
         id=str(getattr(invite, "id", "")),
         email=getattr(invite, "email", None),
         project_ids=payload.project_ids,
+        project_role_id=str(selected_project_role.id) if selected_project_role else None,
         organization_role=ORGANIZATION_READER_ROLE,
-        project_role=PROJECT_MEMBER_ROLE if payload.project_ids else None,
+        project_role=selected_project_role.name if selected_project_role else None,
         accepted_at=getattr(invite, "accepted_at", None) or getattr(invite, "acceptedAt", None),
         created_at=getattr(invite, "created_at", None) or getattr(invite, "createdAt", None),
         expires_at=getattr(invite, "expires_at", None) or getattr(invite, "expiresAt", None),
@@ -610,7 +736,7 @@ async def revoke_invitation(
     local_invite = (
         await db.execute(
             select(OrgInvite).where(
-                OrgInvite.tenant_id == organization.id,
+                OrgInvite.organization_id == organization.id,
                 OrgInvite.token == invite_id,
                 OrgInvite.accepted_at.is_(None),
             )
@@ -630,7 +756,7 @@ async def list_groups(
     _require_scope(principal, "organization_units.read")
     organization = await _active_organization(db, principal)
     groups = (
-        await db.execute(select(OrgUnit).where(OrgUnit.tenant_id == organization.id).order_by(OrgUnit.created_at.asc()))
+        await db.execute(select(OrgUnit).where(OrgUnit.organization_id == organization.id).order_by(OrgUnit.created_at.asc()))
     ).scalars().all()
     return [_serialize_group(group) for group in groups]
 
@@ -646,13 +772,13 @@ async def create_group(
     parent_id = UUID(payload.parent_id) if payload.parent_id else None
     if parent_id:
         parent = await db.get(OrgUnit, parent_id)
-        if parent is None or parent.tenant_id != organization.id:
+        if parent is None or parent.organization_id != organization.id:
             raise HTTPException(status_code=404, detail="Parent group not found")
     group = OrgUnit(
-        tenant_id=organization.id,
+        organization_id=organization.id,
         parent_id=parent_id,
         name=payload.name,
-        slug=payload.slug,
+        slug=_internal_org_unit_row_key(),
         type=payload.type,
     )
     db.add(group)
@@ -671,14 +797,12 @@ async def update_group(
     _require_scope(principal, "organization_units.write")
     organization = await _active_organization(db, principal)
     group = (
-        await db.execute(select(OrgUnit).where(OrgUnit.id == group_id, OrgUnit.tenant_id == organization.id))
+        await db.execute(select(OrgUnit).where(OrgUnit.id == group_id, OrgUnit.organization_id == organization.id))
     ).scalar_one_or_none()
     if group is None:
         raise HTTPException(status_code=404, detail="Group not found")
     if "name" in payload.model_fields_set and payload.name is not None:
         group.name = payload.name
-    if "slug" in payload.model_fields_set and payload.slug is not None:
-        group.slug = payload.slug
     if "parent_id" in payload.model_fields_set:
         group.parent_id = UUID(payload.parent_id) if payload.parent_id else None
     await db.commit()
@@ -695,7 +819,7 @@ async def delete_group(
     _require_scope(principal, "organization_units.delete")
     organization = await _active_organization(db, principal)
     group = (
-        await db.execute(select(OrgUnit).where(OrgUnit.id == group_id, OrgUnit.tenant_id == organization.id))
+        await db.execute(select(OrgUnit).where(OrgUnit.id == group_id, OrgUnit.organization_id == organization.id))
     ).scalar_one_or_none()
     if group is None:
         raise HTTPException(status_code=404, detail="Group not found")
@@ -722,7 +846,7 @@ async def list_roles(
     _require_scope(principal, "roles.read")
     organization = await _active_organization(db, principal)
     roles = (
-        await db.execute(select(Role).where(Role.tenant_id == organization.id).order_by(Role.name.asc()))
+        await db.execute(select(Role).where(Role.organization_id == organization.id).order_by(Role.name.asc()))
     ).scalars().all()
     return [
         RoleResponse(
@@ -752,7 +876,7 @@ async def create_role(
     existing = (
         await db.execute(
             select(Role).where(
-                Role.tenant_id == organization.id,
+                Role.organization_id == organization.id,
                 Role.family == family,
                 Role.name == payload.name,
             )
@@ -761,7 +885,7 @@ async def create_role(
     if existing is not None:
         raise HTTPException(status_code=400, detail="Role with this name already exists")
     role = Role(
-        tenant_id=organization.id,
+        organization_id=organization.id,
         family=family,
         name=payload.name,
         description=payload.description,
@@ -795,7 +919,7 @@ async def update_role(
     _require_scope(principal, "roles.write")
     organization = await _active_organization(db, principal)
     role = (
-        await db.execute(select(Role).where(Role.id == role_id, Role.tenant_id == organization.id))
+        await db.execute(select(Role).where(Role.id == role_id, Role.organization_id == organization.id))
     ).scalar_one_or_none()
     if role is None:
         raise HTTPException(status_code=404, detail="Role not found")
@@ -837,7 +961,7 @@ async def delete_role(
     _require_scope(principal, "roles.write")
     organization = await _active_organization(db, principal)
     role = (
-        await db.execute(select(Role).where(Role.id == role_id, Role.tenant_id == organization.id))
+        await db.execute(select(Role).where(Role.id == role_id, Role.organization_id == organization.id))
     ).scalar_one_or_none()
     if role is None:
         raise HTTPException(status_code=404, detail="Role not found")
@@ -848,6 +972,17 @@ async def delete_role(
     ).scalar_one_or_none()
     if active_assignment is not None:
         raise HTTPException(status_code=400, detail="Cannot delete role with active assignments")
+    pending_invite = (
+        await db.execute(
+            select(OrgInvite).where(
+                OrgInvite.organization_id == organization.id,
+                OrgInvite.project_role_id == role.id,
+                OrgInvite.accepted_at.is_(None),
+            ).limit(1)
+        )
+    ).scalar_one_or_none()
+    if pending_invite is not None:
+        raise HTTPException(status_code=400, detail="Cannot delete role referenced by pending invitations")
     await db.delete(role)
     await db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -855,18 +990,22 @@ async def delete_role(
 
 @router.get("/people/role-assignments", response_model=list[RoleAssignmentResponse])
 async def list_role_assignments(
-    scope_type: str | None = None,
-    scope_id: str | None = None,
+    assignment_kind: str | None = None,
+    project_id: str | None = None,
     principal: dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ) -> list[RoleAssignmentResponse]:
     _require_scope(principal, "roles.read")
     organization = await _active_organization(db, principal)
-    conditions: list[Any] = [RoleAssignment.tenant_id == organization.id]
-    if scope_type:
-        conditions.append(RoleAssignment.scope_type == scope_type)
-    if scope_id:
-        conditions.append(RoleAssignment.scope_id == UUID(scope_id))
+    conditions: list[Any] = [RoleAssignment.organization_id == organization.id]
+    if assignment_kind == ROLE_FAMILY_ORGANIZATION:
+        conditions.append(RoleAssignment.project_id.is_(None))
+    elif assignment_kind == ROLE_FAMILY_PROJECT:
+        conditions.append(RoleAssignment.project_id.is_not(None))
+    elif assignment_kind:
+        raise HTTPException(status_code=400, detail="assignment_kind must be organization or project")
+    if project_id:
+        conditions.append(RoleAssignment.project_id == UUID(project_id))
 
     rows = (
         await db.execute(
@@ -885,8 +1024,8 @@ async def list_role_assignments(
             role_id=str(role.id),
             role_family=role.family,
             role_name=role.name,
-            scope_id=str(assignment.scope_id),
-            scope_type=assignment.scope_type,
+            assignment_kind=ROLE_FAMILY_PROJECT if assignment.project_id else ROLE_FAMILY_ORGANIZATION,
+            project_id=str(assignment.project_id) if assignment.project_id else None,
             assigned_at=assignment.assigned_at,
         )
         for assignment, role, user in rows
@@ -903,25 +1042,42 @@ async def create_role_assignment(
     organization = await _active_organization(db, principal)
     role_id = UUID(payload.role_id)
     user_id = UUID(payload.user_id)
-    scope_id = UUID(payload.scope_id)
-    scope_type = _normalize_assignment_scope_type(payload.scope_type)
+    assignment_kind = str(payload.assignment_kind or "").strip().lower()
+    if assignment_kind not in {ROLE_FAMILY_ORGANIZATION, ROLE_FAMILY_PROJECT}:
+        raise HTTPException(status_code=400, detail="assignment_kind must be organization or project")
+    project_id = UUID(payload.project_id) if payload.project_id else None
+    if assignment_kind == ROLE_FAMILY_ORGANIZATION and project_id is not None:
+        raise HTTPException(status_code=400, detail="Organization assignments cannot target a project")
+    if assignment_kind == ROLE_FAMILY_PROJECT and project_id is None:
+        raise HTTPException(status_code=400, detail="Project assignments require project_id")
     role = (
-        await db.execute(select(Role).where(Role.id == role_id, Role.tenant_id == organization.id))
+        await db.execute(select(Role).where(Role.id == role_id, Role.organization_id == organization.id))
     ).scalar_one_or_none()
     if role is None:
         raise HTTPException(status_code=404, detail="Role not found")
-    if role.family != scope_type:
-        raise HTTPException(status_code=400, detail="Role family does not match assignment scope")
+    if role.family != assignment_kind:
+        raise HTTPException(status_code=400, detail="Role family does not match assignment kind")
     user = await db.get(User, user_id)
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
+    membership = await _active_membership_for_user(
+        db,
+        organization_id=organization.id,
+        user_id=user_id,
+    )
+    if membership is None:
+        raise HTTPException(status_code=400, detail="User must be an active organization member")
+    if project_id is not None:
+        project = await db.get(Project, project_id)
+        if project is None or project.organization_id != organization.id:
+            raise HTTPException(status_code=404, detail="Project not found")
+    project_filter = RoleAssignment.project_id.is_(None) if project_id is None else RoleAssignment.project_id == project_id
     replacements = (
         await db.execute(
             select(RoleAssignment).where(
-                RoleAssignment.tenant_id == organization.id,
+                RoleAssignment.organization_id == organization.id,
                 RoleAssignment.user_id == user_id,
-                RoleAssignment.scope_id == scope_id,
-                RoleAssignment.scope_type == scope_type,
+                project_filter,
             )
         )
     ).scalars().all()
@@ -937,18 +1093,18 @@ async def create_role_assignment(
                 role_id=str(role.id),
                 role_family=role.family,
                 role_name=role.name,
-                scope_id=str(existing.scope_id),
-                scope_type=existing.scope_type,
+                assignment_kind=ROLE_FAMILY_PROJECT if existing.project_id else ROLE_FAMILY_ORGANIZATION,
+                project_id=str(existing.project_id) if existing.project_id else None,
                 assigned_at=existing.assigned_at,
             )
         await db.delete(existing)
+    if replacements:
+        await db.flush()
     assignment = RoleAssignment(
-        tenant_id=organization.id,
+        organization_id=organization.id,
         user_id=user_id,
         role_id=role_id,
-        scope_id=scope_id,
-        scope_type=scope_type,
-        actor_type=payload.actor_type,
+        project_id=project_id,
         assigned_by=UUID(str(principal["user_id"])),
     )
     db.add(assignment)
@@ -961,8 +1117,8 @@ async def create_role_assignment(
         role_id=str(role.id),
         role_family=role.family,
         role_name=role.name,
-        scope_id=str(assignment.scope_id),
-        scope_type=assignment.scope_type,
+        assignment_kind=ROLE_FAMILY_PROJECT if assignment.project_id else ROLE_FAMILY_ORGANIZATION,
+        project_id=str(assignment.project_id) if assignment.project_id else None,
         assigned_at=assignment.assigned_at,
     )
 
@@ -979,12 +1135,15 @@ async def delete_role_assignment(
         await db.execute(
             select(RoleAssignment).where(
                 RoleAssignment.id == assignment_id,
-                RoleAssignment.tenant_id == organization.id,
+                RoleAssignment.organization_id == organization.id,
             )
         )
     ).scalar_one_or_none()
     if assignment is None:
         raise HTTPException(status_code=404, detail="Role assignment not found")
+    role = await db.get(Role, assignment.role_id)
+    if assignment.project_id is None and role is not None and role.family == ROLE_FAMILY_ORGANIZATION:
+        raise HTTPException(status_code=400, detail="Organization role assignments cannot be deleted directly")
     await db.delete(assignment)
     await db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -1007,7 +1166,6 @@ async def list_projects(
             id=str(project.id),
             organization_id=str(project.organization_id),
             name=project.name,
-            slug=project.slug,
             description=project.description,
             status=project.status.value if hasattr(project.status, "value") else str(project.status),
             is_default=bool(project.is_default),
@@ -1018,20 +1176,19 @@ async def list_projects(
     ]
 
 
-@router.get("/projects/{project_slug}", response_model=ProjectSummaryResponse)
+@router.get("/projects/{project_id}", response_model=ProjectSummaryResponse)
 async def get_project(
-    project_slug: str,
+    project_id: UUID,
     principal: dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ) -> ProjectSummaryResponse:
     _require_scope(principal, "projects.read", "organizations.read")
     organization = await _active_organization(db, principal)
-    project = await _project_or_404(db, organization.id, project_slug)
+    project = await _project_or_404(db, organization.id, project_id)
     return ProjectSummaryResponse(
         id=str(project.id),
         organization_id=str(project.organization_id),
         name=project.name,
-        slug=project.slug,
         description=project.description,
         status=project.status.value if hasattr(project.status, "value") else str(project.status),
         is_default=bool(project.is_default),
@@ -1040,66 +1197,93 @@ async def get_project(
     )
 
 
-@router.patch("/projects/{project_slug}", response_model=ProjectSummaryResponse)
-async def update_project(
-    project_slug: str,
-    payload: UpdateProjectRequest,
+@router.post("/projects", response_model=ProjectSummaryResponse, status_code=status.HTTP_201_CREATED)
+async def create_project(
+    payload: CreateProjectRequest,
     principal: dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ) -> ProjectSummaryResponse:
     _require_scope(principal, "projects.write")
     organization = await _active_organization(db, principal)
-    project = await _project_or_404(db, organization.id, project_slug)
+    actor_user_id = UUID(str(principal["user_id"])) if principal.get("user_id") else None
+    project = await OrganizationBootstrapService(db).create_project(
+        organization=organization,
+        created_by=actor_user_id,
+        name=payload.name,
+        description=payload.description,
+        owner_user_id=actor_user_id,
+    )
+    await db.commit()
+    return await get_project(project.id, principal=principal, db=db)
+
+
+@router.patch("/projects/{project_id}", response_model=ProjectSummaryResponse)
+async def update_project(
+    project_id: UUID,
+    payload: UpdateProjectRequest,
+    principal: dict[str, Any] = Depends(get_current_principal),
+    db: AsyncSession = Depends(get_db),
+) -> ProjectSummaryResponse:
+    organization = await _active_organization(db, principal)
+    project = await _project_or_404(db, organization.id, project_id)
+    await _require_project_scope(
+        principal,
+        db=db,
+        organization_id=organization.id,
+        project_id=project.id,
+        required_scopes=("project_settings.write",),
+    )
     if "name" in payload.model_fields_set and payload.name is not None:
         project.name = payload.name
-    if "slug" in payload.model_fields_set and payload.slug is not None:
-        duplicate = (
-            await db.execute(
-                select(Project).where(
-                    Project.organization_id == organization.id,
-                    Project.slug == payload.slug,
-                    Project.id != project.id,
-                )
-            )
-        ).scalar_one_or_none()
-        if duplicate is not None:
-            raise HTTPException(status_code=400, detail="Project slug already exists in organization")
-        project.slug = payload.slug
     if "description" in payload.model_fields_set:
         project.description = payload.description
     if "status" in payload.model_fields_set and payload.status is not None:
         project.status = payload.status
     await db.commit()
     await db.refresh(project)
-    return await get_project(project.slug, principal=principal, db=db)
+    return await get_project(project.id, principal=principal, db=db)
 
 
-@router.get("/projects/{project_slug}/members", response_model=list[MemberResponse])
+@router.get("/projects/{project_id}/members", response_model=list[MemberResponse])
 async def list_project_members(
-    project_slug: str,
+    project_id: UUID,
     principal: dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ) -> list[MemberResponse]:
-    _require_scope(principal, "projects.read", "roles.read")
     organization = await _active_organization(db, principal)
-    project = await _project_or_404(db, organization.id, project_slug)
+    project = await _project_or_404(db, organization.id, project_id)
+    await _require_project_scope(
+        principal,
+        db=db,
+        organization_id=organization.id,
+        project_id=project.id,
+        required_scopes=("project_members.read",),
+    )
     rows = (
         await db.execute(
             select(RoleAssignment, User, OrgMembership, OrgUnit)
             .join(User, User.id == RoleAssignment.user_id)
-            .outerjoin(
+            .join(
                 OrgMembership,
-                and_(OrgMembership.user_id == User.id, OrgMembership.tenant_id == organization.id),
+                and_(
+                    OrgMembership.user_id == User.id,
+                    OrgMembership.organization_id == organization.id,
+                    OrgMembership.status == MembershipStatus.active,
+                ),
             )
-            .outerjoin(OrgUnit, OrgUnit.id == OrgMembership.org_unit_id)
+            .join(OrgUnit, OrgUnit.id == OrgMembership.org_unit_id)
             .where(
-                RoleAssignment.tenant_id == organization.id,
-                RoleAssignment.scope_type == "project",
-                RoleAssignment.scope_id == project.id,
+                RoleAssignment.organization_id == organization.id,
+                RoleAssignment.project_id == project.id,
             )
             .order_by(User.email.asc())
         )
     ).all()
+    org_role_names = await _organization_role_name_by_user_id(
+        db,
+        organization_id=organization.id,
+        user_ids=[user.id for _, user, _, _ in rows],
+    )
     seen: set[str] = set()
     members: list[MemberResponse] = []
     for _, user, membership, org_unit in rows:
@@ -1113,12 +1297,10 @@ async def list_project_members(
                 email=user.email,
                 full_name=user.full_name,
                 avatar=user.avatar,
-                organization_role=(
-                    membership.role.value if membership and hasattr(membership.role, "value") else str(membership.role) if membership else "member"
-                ),
-                org_unit_id=str(org_unit.id) if org_unit else "",
-                org_unit_name=org_unit.name if org_unit else "",
-                joined_at=membership.joined_at if membership else project.created_at,
+                organization_role=org_role_names.get(str(user.id), "Unassigned"),
+                org_unit_id=str(org_unit.id),
+                org_unit_name=org_unit.name,
+                joined_at=membership.joined_at,
             )
         )
     return members
@@ -1127,20 +1309,29 @@ async def list_project_members(
 @router.get("/api-keys", response_model=list[SettingsApiKeyResponse])
 async def list_api_keys(
     owner_scope: str = Query(...),
-    project_slug: str | None = Query(None),
+    project_id: UUID | None = Query(None),
     principal: dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ) -> list[SettingsApiKeyResponse]:
-    _require_scope(principal, "api_keys.read")
     organization = await _active_organization(db, principal)
     if owner_scope == "organization":
-        rows = await TenantAPIKeyService(db).list_api_keys(tenant_id=organization.id)
+        _require_scope(principal, "api_keys.read")
+        rows = await OrganizationAPIKeyService(db).list_api_keys(organization_id=organization.id)
         return [_serialize_api_key_row(row, owner_scope="organization", owner_scope_id=organization.id) for row in rows]
     if owner_scope == "project":
-        if not project_slug:
-            raise HTTPException(status_code=400, detail="project_slug is required for project API keys")
-        project = await _project_or_404(db, organization.id, project_slug)
-        rows = await ProjectAPIKeyService(db).list_api_keys(tenant_id=organization.id, project_id=project.id)
+        if not project_id:
+            raise HTTPException(status_code=400, detail="project_id is required for project API keys")
+        project = await db.get(Project, project_id)
+        if project is None or str(project.organization_id) != str(organization.id):
+            raise HTTPException(status_code=404, detail="Project not found")
+        await _require_project_scope(
+            principal,
+            db=db,
+            organization_id=organization.id,
+            project_id=project.id,
+            required_scopes=("project_api_keys.read",),
+        )
+        rows = await ProjectAPIKeyService(db).list_api_keys(organization_id=organization.id, project_id=project.id)
         return [_serialize_api_key_row(row, owner_scope="project", owner_scope_id=project.id) for row in rows]
     raise HTTPException(status_code=400, detail="owner_scope must be 'organization' or 'project'")
 
@@ -1151,12 +1342,12 @@ async def create_api_key(
     principal: dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    _require_scope(principal, "api_keys.write")
     organization = await _active_organization(db, principal)
     created_by = UUID(str(principal["user_id"])) if principal.get("user_id") else None
     if payload.owner_scope == "organization":
-        api_key, token = await TenantAPIKeyService(db).create_api_key(
-            tenant_id=organization.id,
+        _require_scope(principal, "api_keys.write")
+        api_key, token = await OrganizationAPIKeyService(db).create_api_key(
+            organization_id=organization.id,
             name=payload.name,
             scopes=payload.scopes,
             created_by=created_by,
@@ -1168,11 +1359,20 @@ async def create_api_key(
             "token_type": "bearer",
         }
     if payload.owner_scope == "project":
-        if not payload.project_slug:
-            raise HTTPException(status_code=400, detail="project_slug is required for project API keys")
-        project = await _project_or_404(db, organization.id, payload.project_slug)
+        if not payload.project_id:
+            raise HTTPException(status_code=400, detail="project_id is required for project API keys")
+        project = await db.get(Project, payload.project_id)
+        if project is None or str(project.organization_id) != str(organization.id):
+            raise HTTPException(status_code=404, detail="Project not found")
+        await _require_project_scope(
+            principal,
+            db=db,
+            organization_id=organization.id,
+            project_id=project.id,
+            required_scopes=("project_api_keys.write",),
+        )
         api_key, token = await ProjectAPIKeyService(db).create_api_key(
-            tenant_id=organization.id,
+            organization_id=organization.id,
             project_id=project.id,
             name=payload.name,
             scopes=payload.scopes,
@@ -1191,26 +1391,35 @@ async def create_api_key(
 async def revoke_api_key(
     key_id: UUID,
     owner_scope: str = Query(...),
-    project_slug: str | None = Query(None),
+    project_id: UUID | None = Query(None),
     principal: dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    _require_scope(principal, "api_keys.write")
     organization = await _active_organization(db, principal)
     if owner_scope == "organization":
+        _require_scope(principal, "api_keys.write")
         try:
-            api_key = await TenantAPIKeyService(db).revoke_api_key(tenant_id=organization.id, key_id=key_id)
-        except TenantAPIKeyNotFoundError as exc:
+            api_key = await OrganizationAPIKeyService(db).revoke_api_key(organization_id=organization.id, key_id=key_id)
+        except OrganizationAPIKeyNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         await db.commit()
         return {"api_key": _serialize_api_key_row(api_key, owner_scope="organization", owner_scope_id=organization.id)}
     if owner_scope == "project":
-        if not project_slug:
-            raise HTTPException(status_code=400, detail="project_slug is required for project API keys")
-        project = await _project_or_404(db, organization.id, project_slug)
+        if not project_id:
+            raise HTTPException(status_code=400, detail="project_id is required for project API keys")
+        project = await db.get(Project, project_id)
+        if project is None or str(project.organization_id) != str(organization.id):
+            raise HTTPException(status_code=404, detail="Project not found")
+        await _require_project_scope(
+            principal,
+            db=db,
+            organization_id=organization.id,
+            project_id=project.id,
+            required_scopes=("project_api_keys.write",),
+        )
         try:
             api_key = await ProjectAPIKeyService(db).revoke_api_key(
-                tenant_id=organization.id,
+                organization_id=organization.id,
                 project_id=project.id,
                 key_id=key_id,
             )
@@ -1225,26 +1434,35 @@ async def revoke_api_key(
 async def delete_api_key(
     key_id: UUID,
     owner_scope: str = Query(...),
-    project_slug: str | None = Query(None),
+    project_id: UUID | None = Query(None),
     principal: dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ) -> Response:
-    _require_scope(principal, "api_keys.write")
     organization = await _active_organization(db, principal)
     if owner_scope == "organization":
+        _require_scope(principal, "api_keys.write")
         try:
-            await TenantAPIKeyService(db).delete_api_key(tenant_id=organization.id, key_id=key_id)
-        except TenantAPIKeyNotFoundError as exc:
+            await OrganizationAPIKeyService(db).delete_api_key(organization_id=organization.id, key_id=key_id)
+        except OrganizationAPIKeyNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         await db.commit()
         return Response(status_code=status.HTTP_204_NO_CONTENT)
     if owner_scope == "project":
-        if not project_slug:
-            raise HTTPException(status_code=400, detail="project_slug is required for project API keys")
-        project = await _project_or_404(db, organization.id, project_slug)
+        if not project_id:
+            raise HTTPException(status_code=400, detail="project_id is required for project API keys")
+        project = await db.get(Project, project_id)
+        if project is None or str(project.organization_id) != str(organization.id):
+            raise HTTPException(status_code=404, detail="Project not found")
+        await _require_project_scope(
+            principal,
+            db=db,
+            organization_id=organization.id,
+            project_id=project.id,
+            required_scopes=("project_api_keys.write",),
+        )
         try:
             await ProjectAPIKeyService(db).delete_api_key(
-                tenant_id=organization.id,
+                organization_id=organization.id,
                 project_id=project.id,
                 key_id=key_id,
             )
@@ -1262,7 +1480,7 @@ async def get_organization_limits(
 ) -> LimitResponse:
     _require_scope(principal, "organizations.read", "organizations.write")
     organization = await _active_organization(db, principal)
-    policy = await _tenant_usage_quota_policy(db, organization.id)
+    policy = await _organization_usage_quota_policy(db, organization.id)
     limit_tokens = int(policy.limit_tokens) if policy is not None else None
     return LimitResponse(
         owner_scope="organization",
@@ -1281,7 +1499,7 @@ async def update_organization_limits(
 ) -> LimitResponse:
     _require_scope(principal, "organizations.write")
     organization = await _active_organization(db, principal)
-    policy = await _tenant_usage_quota_policy(db, organization.id)
+    policy = await _organization_usage_quota_policy(db, organization.id)
     if payload.monthly_token_limit is None:
         if policy is not None:
             policy.is_active = False
@@ -1290,9 +1508,9 @@ async def update_organization_limits(
             raise HTTPException(status_code=400, detail="monthly_token_limit must be positive")
         if policy is None:
             policy = UsageQuotaPolicy(
-                tenant_id=organization.id,
+                organization_id=organization.id,
                 user_id=None,
-                scope_type=UsageQuotaScopeType.tenant,
+                scope_type=UsageQuotaScopeType.organization,
                 limit_tokens=payload.monthly_token_limit,
                 timezone="UTC",
                 is_active=True,
@@ -1305,16 +1523,16 @@ async def update_organization_limits(
     return await get_organization_limits(principal=principal, db=db)
 
 
-@router.get("/limits/projects/{project_slug}", response_model=LimitResponse)
+@router.get("/limits/projects/{project_id}", response_model=LimitResponse)
 async def get_project_limits(
-    project_slug: str,
+    project_id: UUID,
     principal: dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ) -> LimitResponse:
     _require_scope(principal, "projects.read", "organizations.read")
     organization = await _active_organization(db, principal)
-    project = await _project_or_404(db, organization.id, project_slug)
-    policy = await _tenant_usage_quota_policy(db, organization.id)
+    project = await _project_or_404(db, organization.id, project_id)
+    policy = await _organization_usage_quota_policy(db, organization.id)
     inherited = int(policy.limit_tokens) if policy is not None else None
     monthly_token_limit = (project.settings or {}).get("monthly_token_limit")
     effective = monthly_token_limit if monthly_token_limit is not None else inherited
@@ -1327,16 +1545,16 @@ async def get_project_limits(
     )
 
 
-@router.patch("/limits/projects/{project_slug}", response_model=LimitResponse)
+@router.patch("/limits/projects/{project_id}", response_model=LimitResponse)
 async def update_project_limits(
-    project_slug: str,
+    project_id: UUID,
     payload: UpdateLimitRequest,
     principal: dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ) -> LimitResponse:
     _require_scope(principal, "projects.write")
     organization = await _active_organization(db, principal)
-    project = await _project_or_404(db, organization.id, project_slug)
+    project = await _project_or_404(db, organization.id, project_id)
     settings = dict(project.settings or {})
     if payload.monthly_token_limit is not None and payload.monthly_token_limit <= 0:
         raise HTTPException(status_code=400, detail="monthly_token_limit must be positive")
@@ -1344,7 +1562,7 @@ async def update_project_limits(
     project.settings = settings
     await db.commit()
     await db.refresh(project)
-    return await get_project_limits(project_slug=project.slug, principal=principal, db=db)
+    return await get_project_limits(project_id=project.id, principal=principal, db=db)
 
 
 @router.get("/audit-logs", response_model=list[AuditLogResponse])
@@ -1361,7 +1579,7 @@ async def list_audit_logs(
 ) -> list[AuditLogResponse]:
     _require_scope(principal, "audit.read")
     organization = await _active_organization(db, principal)
-    conditions: list[Any] = [AuditLog.tenant_id == organization.id]
+    conditions: list[Any] = [AuditLog.organization_id == organization.id]
     if actor_email:
         conditions.append(AuditLog.actor_email.ilike(f"%{actor_email}%"))
     if action:
@@ -1410,7 +1628,7 @@ async def count_audit_logs(
 ) -> dict[str, int]:
     _require_scope(principal, "audit.read")
     organization = await _active_organization(db, principal)
-    conditions: list[Any] = [AuditLog.tenant_id == organization.id]
+    conditions: list[Any] = [AuditLog.organization_id == organization.id]
     if actor_email:
         conditions.append(AuditLog.actor_email.ilike(f"%{actor_email}%"))
     if action:
@@ -1434,7 +1652,7 @@ async def get_audit_log(
     _require_scope(principal, "audit.read")
     organization = await _active_organization(db, principal)
     row = (
-        await db.execute(select(AuditLog).where(AuditLog.id == log_id, AuditLog.tenant_id == organization.id))
+        await db.execute(select(AuditLog).where(AuditLog.id == log_id, AuditLog.organization_id == organization.id))
     ).scalar_one_or_none()
     if row is None:
         raise HTTPException(status_code=404, detail="Audit log not found")

@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.postgres.models.artifact_runtime import (
     ArtifactRun,
     ArtifactRunStatus,
-    ArtifactTenantRuntimePolicy,
+    ArtifactOrganizationRuntimePolicy,
 )
 
 
@@ -21,7 +21,7 @@ class ArtifactConcurrencyLimitExceeded(RuntimeError):
         self.active_count = active_count
         self.concurrency_limit = concurrency_limit
         super().__init__(
-            f"Tenant concurrency limit reached for {queue_class}: {active_count}/{concurrency_limit}"
+            f"Organization concurrency limit reached for {queue_class}: {active_count}/{concurrency_limit}"
         )
 
 
@@ -44,10 +44,10 @@ class ArtifactRuntimePolicyService:
     def __init__(self, db: AsyncSession):
         self._db = db
 
-    async def get_snapshot(self, *, tenant_id: UUID, queue_class: str) -> ArtifactRuntimePolicySnapshot:
-        policy = await self._db.get(ArtifactTenantRuntimePolicy, tenant_id)
+    async def get_snapshot(self, *, organization_id: UUID, queue_class: str) -> ArtifactRuntimePolicySnapshot:
+        policy = await self._db.get(ArtifactOrganizationRuntimePolicy, organization_id)
         if policy is None:
-            policy = ArtifactTenantRuntimePolicy(tenant_id=tenant_id)
+            policy = ArtifactOrganizationRuntimePolicy(organization_id=organization_id)
             self._db.add(policy)
             await self._db.flush()
         return ArtifactRuntimePolicySnapshot(
@@ -57,33 +57,33 @@ class ArtifactRuntimePolicyService:
             subrequests=self._subrequests(policy, queue_class),
         )
 
-    async def reconcile_stale_test_runs(self, *, tenant_id: UUID) -> None:
-        await self._reconcile_stale_active_runs(tenant_id=tenant_id, queue_class="artifact_test")
+    async def reconcile_stale_test_runs(self, *, organization_id: UUID) -> None:
+        await self._reconcile_stale_active_runs(organization_id=organization_id, queue_class="artifact_test")
 
-    async def get_queue_status(self, *, tenant_id: UUID, queue_class: str) -> ArtifactRuntimeQueueStatus:
-        snapshot = await self.get_snapshot(tenant_id=tenant_id, queue_class=queue_class)
-        active = await self._active_runs(tenant_id=tenant_id, queue_class=queue_class)
+    async def get_queue_status(self, *, organization_id: UUID, queue_class: str) -> ArtifactRuntimeQueueStatus:
+        snapshot = await self.get_snapshot(organization_id=organization_id, queue_class=queue_class)
+        active = await self._active_runs(organization_id=organization_id, queue_class=queue_class)
         return ArtifactRuntimeQueueStatus(
             queue_class=queue_class,
             active_count=active,
             concurrency_limit=snapshot.concurrency_limit,
         )
 
-    async def assert_capacity(self, *, tenant_id: UUID, queue_class: str) -> ArtifactRuntimePolicySnapshot:
-        status = await self.get_queue_status(tenant_id=tenant_id, queue_class=queue_class)
+    async def assert_capacity(self, *, organization_id: UUID, queue_class: str) -> ArtifactRuntimePolicySnapshot:
+        status = await self.get_queue_status(organization_id=organization_id, queue_class=queue_class)
         if status.active_count >= status.concurrency_limit:
             raise ArtifactConcurrencyLimitExceeded(
                 queue_class=queue_class,
                 active_count=status.active_count,
                 concurrency_limit=status.concurrency_limit,
             )
-        return await self.get_snapshot(tenant_id=tenant_id, queue_class=queue_class)
+        return await self.get_snapshot(organization_id=organization_id, queue_class=queue_class)
 
-    async def _active_runs(self, *, tenant_id: UUID, queue_class: str) -> int:
-        await self._reconcile_stale_active_runs(tenant_id=tenant_id, queue_class=queue_class)
+    async def _active_runs(self, *, organization_id: UUID, queue_class: str) -> int:
+        await self._reconcile_stale_active_runs(organization_id=organization_id, queue_class=queue_class)
         result = await self._db.scalar(
             select(func.count(ArtifactRun.id)).where(
-                ArtifactRun.tenant_id == tenant_id,
+                ArtifactRun.organization_id == organization_id,
                 ArtifactRun.queue_class == queue_class,
                 ArtifactRun.status.in_([ArtifactRunStatus.RUNNING, ArtifactRunStatus.CANCEL_REQUESTED]),
             )
@@ -91,7 +91,7 @@ class ArtifactRuntimePolicyService:
         return int(result or 0)
 
     @staticmethod
-    def _concurrency_limit(policy: ArtifactTenantRuntimePolicy, queue_class: str) -> int:
+    def _concurrency_limit(policy: ArtifactOrganizationRuntimePolicy, queue_class: str) -> int:
         if queue_class == "artifact_prod_interactive":
             return int(policy.interactive_concurrency_limit or 1)
         if queue_class == "artifact_prod_background":
@@ -99,7 +99,7 @@ class ArtifactRuntimePolicyService:
         return int(policy.test_concurrency_limit or 10)
 
     @staticmethod
-    def _cpu_ms(policy: ArtifactTenantRuntimePolicy, queue_class: str) -> int:
+    def _cpu_ms(policy: ArtifactOrganizationRuntimePolicy, queue_class: str) -> int:
         if queue_class == "artifact_prod_interactive":
             return int(policy.interactive_cpu_ms or 30000)
         if queue_class == "artifact_prod_background":
@@ -107,20 +107,20 @@ class ArtifactRuntimePolicyService:
         return int(policy.test_cpu_ms or 30000)
 
     @staticmethod
-    def _subrequests(policy: ArtifactTenantRuntimePolicy, queue_class: str) -> int:
+    def _subrequests(policy: ArtifactOrganizationRuntimePolicy, queue_class: str) -> int:
         if queue_class == "artifact_prod_interactive":
             return int(policy.interactive_subrequests or 50)
         if queue_class == "artifact_prod_background":
             return int(policy.background_subrequests or 100)
         return int(policy.test_subrequests or 50)
 
-    async def _reconcile_stale_active_runs(self, *, tenant_id: UUID, queue_class: str) -> None:
+    async def _reconcile_stale_active_runs(self, *, organization_id: UUID, queue_class: str) -> None:
         if queue_class != "artifact_test":
             return
         cutoff = datetime.now(timezone.utc) - timedelta(seconds=self._stale_test_run_timeout_seconds())
         result = await self._db.execute(
             select(ArtifactRun).where(
-                ArtifactRun.tenant_id == tenant_id,
+                ArtifactRun.organization_id == organization_id,
                 ArtifactRun.queue_class == queue_class,
                 ArtifactRun.status.in_([ArtifactRunStatus.QUEUED, ArtifactRunStatus.RUNNING, ArtifactRunStatus.CANCEL_REQUESTED]),
                 or_(

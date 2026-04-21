@@ -20,7 +20,7 @@ def _normalize_origin(origin: str) -> str:
     return f"{parsed.scheme.lower()}://{parsed.netloc.lower()}".rstrip("/")
 
 
-def _match_public_app_slug(path: str) -> Optional[str]:
+def _match_public_app_public_id(path: str) -> Optional[str]:
     normalized = (path or "").strip()
     for prefix in ("/public/apps/", "/public/external/apps/"):
         if not normalized.startswith(prefix):
@@ -28,10 +28,10 @@ def _match_public_app_slug(path: str) -> Optional[str]:
         suffix = normalized[len(prefix) :]
         if not suffix:
             return None
-        slug = suffix.split("/", 1)[0].strip().lower()
-        if prefix == "/public/apps/" and slug in {"preview", "resolve"}:
+        public_id = suffix.split("/", 1)[0].strip().lower()
+        if prefix == "/public/apps/" and public_id in {"preview", "resolve"}:
             return None
-        return slug or None
+        return public_id or None
     return None
 
 
@@ -44,11 +44,11 @@ class PublishedAppsCORSMiddleware(BaseHTTPMiddleware):
         if not origin:
             return await call_next(request)
 
-        slug = _match_public_app_slug(request.url.path)
-        if not slug:
+        public_id = _match_public_app_public_id(request.url.path)
+        if not public_id:
             return await call_next(request)
 
-        allowed = await self._is_allowed_origin(slug=slug, origin=origin, request=request)
+        allowed = await self._is_allowed_origin(public_id=public_id, origin=origin, request=request)
 
         is_preflight = (
             request.method.upper() == "OPTIONS"
@@ -73,13 +73,13 @@ class PublishedAppsCORSMiddleware(BaseHTTPMiddleware):
         self._apply_cors_headers(response=response, origin=origin)
         return response
 
-    async def _is_allowed_origin(self, *, slug: str, origin: str, request: Request) -> bool:
+    async def _is_allowed_origin(self, *, public_id: str, origin: str, request: Request) -> bool:
         request_origin = _normalize_origin(str(request.base_url).rstrip("/"))
         if request_origin and request_origin == origin:
             return True
 
         async with sessionmaker() as db:
-            result = await db.execute(select(PublishedApp).where(PublishedApp.slug == slug).limit(1))
+            result = await db.execute(select(PublishedApp).where(PublishedApp.public_id == public_id).limit(1))
             app = result.scalar_one_or_none()
         if app is None:
             return False

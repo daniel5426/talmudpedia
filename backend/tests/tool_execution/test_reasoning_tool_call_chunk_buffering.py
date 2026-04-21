@@ -7,7 +7,7 @@ from app.agent.executors.standard import (
 
 
 def _make_executor() -> ReasoningNodeExecutor:
-    return ReasoningNodeExecutor(tenant_id=None, db=None)
+    return ReasoningNodeExecutor(organization_id=None, db=None)
 
 
 def test_tool_call_chunk_buffer_merges_dict_fragments() -> None:

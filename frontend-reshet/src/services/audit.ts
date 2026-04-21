@@ -2,7 +2,7 @@ import { httpClient } from "./http"
 
 export interface AuditLog {
   id: string
-  tenant_id: string
+  organization_id: string
   org_unit_id: string | null
   actor_id: string
   actor_type: string
@@ -52,9 +52,9 @@ export interface ActorStats {
   last_action: string
 }
 
-class AuditService {
+class OrganizationAuditService {
   async listAuditLogs(
-    tenantSlug: string,
+    organizationId: string,
     filters?: AuditFilters
   ): Promise<AuditLog[]> {
     const params = new URLSearchParams()
@@ -66,11 +66,11 @@ class AuditService {
       })
     }
     const query = params.toString() ? `?${params.toString()}` : ""
-    return httpClient.get(`/api/tenants/${tenantSlug}/audit-logs${query}`)
+    return httpClient.get(`/api/organizations/${organizationId}/audit-logs${query}`)
   }
 
   async countAuditLogs(
-    tenantSlug: string,
+    organizationId: string,
     filters?: Omit<AuditFilters, "skip" | "limit">
   ): Promise<{ count: number }> {
     const params = new URLSearchParams()
@@ -82,26 +82,26 @@ class AuditService {
       })
     }
     const query = params.toString() ? `?${params.toString()}` : ""
-    return httpClient.get(`/api/tenants/${tenantSlug}/audit-logs/count${query}`)
+    return httpClient.get(`/api/organizations/${organizationId}/audit-logs/count${query}`)
   }
 
-  async getAuditLog(tenantSlug: string, logId: string): Promise<AuditLogDetail> {
-    return httpClient.get(`/api/tenants/${tenantSlug}/audit-logs/${logId}`)
+  async getAuditLog(organizationId: string, logId: string): Promise<AuditLogDetail> {
+    return httpClient.get(`/api/organizations/${organizationId}/audit-logs/${logId}`)
   }
 
   async getActionStats(
-    tenantSlug: string,
+    organizationId: string,
     filters?: { start_date?: string; end_date?: string }
   ): Promise<{ stats: ActionStats }> {
     const params = new URLSearchParams()
     if (filters?.start_date) params.set("start_date", filters.start_date)
     if (filters?.end_date) params.set("end_date", filters.end_date)
     const query = params.toString() ? `?${params.toString()}` : ""
-    return httpClient.get(`/api/tenants/${tenantSlug}/audit-logs/stats/actions${query}`)
+    return httpClient.get(`/api/organizations/${organizationId}/audit-logs/stats/actions${query}`)
   }
 
   async getActorStats(
-    tenantSlug: string,
+    organizationId: string,
     filters?: { start_date?: string; end_date?: string; limit?: number }
   ): Promise<{ actors: ActorStats[] }> {
     const params = new URLSearchParams()
@@ -109,8 +109,8 @@ class AuditService {
     if (filters?.end_date) params.set("end_date", filters.end_date)
     if (filters?.limit) params.set("limit", String(filters.limit))
     const query = params.toString() ? `?${params.toString()}` : ""
-    return httpClient.get(`/api/tenants/${tenantSlug}/audit-logs/stats/actors${query}`)
+    return httpClient.get(`/api/organizations/${organizationId}/audit-logs/stats/actors${query}`)
   }
 }
 
-export const auditService = new AuditService()
+export const organizationAuditService = new OrganizationAuditService()

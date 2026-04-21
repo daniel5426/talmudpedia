@@ -42,7 +42,7 @@ class McpServer(Base):
     __tablename__ = "mcp_servers"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
 
     name = Column(String, nullable=False)
@@ -79,15 +79,15 @@ class McpServer(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
-    tenant = relationship("Tenant")
+    organization = relationship("Organization")
     creator = relationship("User")
     discovered_tools = relationship("McpDiscoveredTool", back_populates="server", cascade="all, delete-orphan")
     agent_mounts = relationship("McpAgentMount", back_populates="server", cascade="all, delete-orphan")
     account_connections = relationship("McpUserAccountConnection", back_populates="server", cascade="all, delete-orphan")
 
     __table_args__ = (
-        UniqueConstraint("tenant_id", "name", name="uq_mcp_servers_tenant_name"),
-        Index("ix_mcp_servers_tenant_active", "tenant_id", "is_active"),
+        UniqueConstraint("organization_id", "name", name="uq_mcp_servers_organization_name"),
+        Index("ix_mcp_servers_organization_active", "organization_id", "is_active"),
     )
 
 
@@ -95,7 +95,7 @@ class McpDiscoveredTool(Base):
     __tablename__ = "mcp_discovered_tools"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
     server_id = Column(UUID(as_uuid=True), ForeignKey("mcp_servers.id", ondelete="CASCADE"), nullable=False, index=True)
 
     snapshot_version = Column(Integer, nullable=False, index=True)
@@ -108,7 +108,7 @@ class McpDiscoveredTool(Base):
 
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
-    tenant = relationship("Tenant")
+    organization = relationship("Organization")
     server = relationship("McpServer", back_populates="discovered_tools")
 
     __table_args__ = (
@@ -130,7 +130,7 @@ class McpAgentMount(Base):
     __tablename__ = "mcp_agent_mounts"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
     agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id", ondelete="CASCADE"), nullable=False, index=True)
     server_id = Column(UUID(as_uuid=True), ForeignKey("mcp_servers.id", ondelete="CASCADE"), nullable=False, index=True)
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
@@ -148,7 +148,7 @@ class McpAgentMount(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
-    tenant = relationship("Tenant")
+    organization = relationship("Organization")
     agent = relationship("Agent")
     server = relationship("McpServer", back_populates="agent_mounts")
     creator = relationship("User")
@@ -163,7 +163,7 @@ class McpUserAccountConnection(Base):
     __tablename__ = "mcp_user_account_connections"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
     server_id = Column(UUID(as_uuid=True), ForeignKey("mcp_servers.id", ondelete="CASCADE"), nullable=False, index=True)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
 
@@ -186,7 +186,7 @@ class McpUserAccountConnection(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
-    tenant = relationship("Tenant")
+    organization = relationship("Organization")
     server = relationship("McpServer", back_populates="account_connections")
     user = relationship("User")
 
@@ -200,7 +200,7 @@ class McpOauthState(Base):
     __tablename__ = "mcp_oauth_states"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
     server_id = Column(UUID(as_uuid=True), ForeignKey("mcp_servers.id", ondelete="CASCADE"), nullable=False, index=True)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
 
@@ -216,7 +216,7 @@ class McpOauthState(Base):
 
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
-    tenant = relationship("Tenant")
+    organization = relationship("Organization")
     server = relationship("McpServer")
     user = relationship("User")
 

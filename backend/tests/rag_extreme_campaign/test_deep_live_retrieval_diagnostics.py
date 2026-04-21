@@ -47,7 +47,7 @@ async def _resolve_tenant_context(db_session) -> tuple[UUID, UUID]:
         )
     )
     assert membership is not None, f"Expected active membership for {email}"
-    return membership.tenant_id, user.id
+    return membership.organization_id, user.id
 
 
 @pytest.mark.asyncio
@@ -55,14 +55,14 @@ async def _resolve_tenant_context(db_session) -> tuple[UUID, UUID]:
 async def test_live_embedding_resolution_and_call_complete_within_budget(db_session):
     _require_enabled()
 
-    tenant_id, _user_id = await _resolve_tenant_context(db_session)
+    organization_id, _user_id = await _resolve_tenant_context(db_session)
     model_id = os.getenv("TEST_EMBED_MODEL_SLUG")
     assert model_id, "TEST_EMBED_MODEL_SLUG must be set"
 
     model = await db_session.get(ModelRegistry, model_id)
     assert model is not None
 
-    resolver = ModelResolver(db_session, tenant_id)
+    resolver = ModelResolver(db_session, organization_id)
 
     start = time.perf_counter()
     embedder = await asyncio.wait_for(resolver.resolve_embedding(model_id), timeout=15)
@@ -86,10 +86,10 @@ async def test_live_embedding_resolution_and_call_complete_within_budget(db_sess
 async def test_live_retrieval_pipeline_job_completes_within_budget(db_session):
     _require_enabled()
 
-    tenant_id, user_id = await _resolve_tenant_context(db_session)
+    organization_id, user_id = await _resolve_tenant_context(db_session)
     run_prefix = f"diag-{uuid.uuid4().hex[:8]}"
     pipeline_id, _store_id, collection_name = await create_retrieval_setup(
-        db_session, tenant_id, user_id, run_prefix
+        db_session, organization_id, user_id, run_prefix
     )
 
     try:
@@ -99,7 +99,7 @@ async def test_live_retrieval_pipeline_job_completes_within_budget(db_session):
         assert executable is not None
 
         job = PipelineJob(
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             executable_pipeline_id=executable.id,
             status=PipelineJobStatus.QUEUED,
             input_params={"text": "hello retrieval", "top_k": 3},

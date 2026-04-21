@@ -5,10 +5,10 @@ from typing import Any, Dict, Optional
 from .types import RequestOptions, ResponseEnvelope
 
 
-def _tenant_params(tenant_slug: Optional[str]) -> Dict[str, Any]:
-    if not tenant_slug:
+def _organization_params(organization_id: Optional[str]) -> Dict[str, Any]:
+    if not organization_id:
         return {}
-    return {"tenant_slug": tenant_slug}
+    return {"organization_id": organization_id}
 
 
 class KnowledgeStoresAPI:
@@ -17,7 +17,7 @@ class KnowledgeStoresAPI:
 
     def list(
         self,
-        tenant_slug: str,
+        organization_id: str,
         *,
         skip: int = 0,
         limit: int = 20,
@@ -26,42 +26,42 @@ class KnowledgeStoresAPI:
         return self._client.request(
             "GET",
             "/admin/knowledge-stores",
-            params={"tenant_slug": tenant_slug, "skip": skip, "limit": limit, "view": view},
+            params={"organization_id": organization_id, "skip": skip, "limit": limit, "view": view},
         )
 
     def create(
         self,
         spec: Dict[str, Any],
-        tenant_slug: str,
+        organization_id: str,
         options: Optional[RequestOptions] = None,
     ) -> ResponseEnvelope:
         return self._client.request(
             "POST",
             "/admin/knowledge-stores",
-            params={"tenant_slug": tenant_slug},
+            params={"organization_id": organization_id},
             json_body=spec,
             options=options,
             mutation=True,
         )
 
-    def get(self, store_id: str, tenant_slug: Optional[str] = None) -> ResponseEnvelope:
+    def get(self, store_id: str, organization_id: Optional[str] = None) -> ResponseEnvelope:
         return self._client.request(
             "GET",
             f"/admin/knowledge-stores/{store_id}",
-            params=_tenant_params(tenant_slug),
+            params=_organization_params(organization_id),
         )
 
     def update(
         self,
         store_id: str,
         patch: Dict[str, Any],
-        tenant_slug: Optional[str] = None,
+        organization_id: Optional[str] = None,
         options: Optional[RequestOptions] = None,
     ) -> ResponseEnvelope:
         return self._client.request(
             "PATCH",
             f"/admin/knowledge-stores/{store_id}",
-            params=_tenant_params(tenant_slug),
+            params=_organization_params(organization_id),
             json_body=patch,
             options=options,
             mutation=True,
@@ -70,20 +70,20 @@ class KnowledgeStoresAPI:
     def delete(
         self,
         store_id: str,
-        tenant_slug: Optional[str] = None,
+        organization_id: Optional[str] = None,
         options: Optional[RequestOptions] = None,
     ) -> ResponseEnvelope:
         return self._client.request(
             "DELETE",
             f"/admin/knowledge-stores/{store_id}",
-            params=_tenant_params(tenant_slug),
+            params=_organization_params(organization_id),
             options=options,
             mutation=True,
         )
 
-    def stats(self, store_id: str, tenant_slug: Optional[str] = None) -> ResponseEnvelope:
+    def stats(self, store_id: str, organization_id: Optional[str] = None) -> ResponseEnvelope:
         return self._client.request(
             "GET",
             f"/admin/knowledge-stores/{store_id}/stats",
-            params=_tenant_params(tenant_slug),
+            params=_organization_params(organization_id),
         )

@@ -52,7 +52,6 @@ export interface ChunkPreview {
 export interface RAGPipeline {
   id: string;
   name: string;
-  slug?: string;
   description?: string;
   embedding_provider: string;
   vector_store_provider: string;
@@ -81,7 +80,7 @@ export interface VisualPipelineEdge {
 
 export interface VisualPipeline {
   id: string;
-  tenant_id: string;
+  organization_id: string;
   org_unit_id?: string;
   name: string;
   description?: string;
@@ -120,7 +119,6 @@ export interface PipelineToolBinding {
   enabled: boolean;
   tool_id?: string | null;
   tool_name: string;
-  tool_slug?: string | null;
   status?: string | null;
   description?: string | null;
   input_schema: Record<string, unknown>;
@@ -131,7 +129,7 @@ export interface PipelineToolBinding {
 
 export interface PipelineJob {
   id: string;
-  tenant_id: string;
+  organization_id: string;
   executable_pipeline_id: string;
   status: string;
   input_params: Record<string, unknown>;
@@ -144,7 +142,7 @@ export interface PipelineJob {
 
 export interface CustomOperator {
   id: string;
-  tenant_id: string;
+  organization_id: string;
   name: string;
   display_name: string;
   category: string;
@@ -199,9 +197,9 @@ export interface StepFieldContent {
 }
 
 class RAGAdminService {
-  async getJobSteps(jobId: string, tenantSlug?: string, lite: boolean = true): Promise<{ steps: PipelineStepExecution[] }> {
+  async getJobSteps(jobId: string, organizationId?: string, lite: boolean = true): Promise<{ steps: PipelineStepExecution[] }> {
     const params = new URLSearchParams()
-    if (tenantSlug) params.set("tenant_slug", tenantSlug)
+    if (organizationId) params.set("organization_id", organizationId)
     params.set("lite", String(lite))
     
     return httpClient.get<{ steps: PipelineStepExecution[] }>(`/admin/pipelines/jobs/${jobId}/steps?${params.toString()}`);
@@ -213,13 +211,13 @@ class RAGAdminService {
     type: "input" | "output",
     page: number = 1,
     limit: number = 20,
-    tenantSlug?: string
+    organizationId?: string
   ): Promise<PipelineStepData> {
     const params = new URLSearchParams();
     params.set("type", type);
     params.set("page", String(page));
     params.set("limit", String(limit));
-    if (tenantSlug) params.set("tenant_slug", tenantSlug);
+    if (organizationId) params.set("organization_id", organizationId);
     
     return httpClient.get<PipelineStepData>(`/admin/pipelines/jobs/${jobId}/steps/${stepId}/data?${params.toString()}`);
   }
@@ -231,25 +229,25 @@ class RAGAdminService {
     path: string,
     offset: number = 0,
     limit: number = 100000,
-    tenantSlug?: string
+    organizationId?: string
   ): Promise<StepFieldContent> {
     const params = new URLSearchParams();
     params.set("type", type);
     params.set("path", path);
     params.set("offset", String(offset));
     params.set("limit", String(limit));
-    if (tenantSlug) params.set("tenant_slug", tenantSlug);
+    if (organizationId) params.set("organization_id", organizationId);
 
     return httpClient.get<StepFieldContent>(`/admin/pipelines/jobs/${jobId}/steps/${stepId}/field?${params.toString()}`);
   }
 
-  async getStats(tenantSlug?: string): Promise<RAGStats> {
-    const url = tenantSlug ? `/admin/rag/stats?tenant_slug=${tenantSlug}` : "/admin/rag/stats";
+  async getStats(organizationId?: string): Promise<RAGStats> {
+    const url = organizationId ? `/admin/rag/stats?organization_id=${organizationId}` : "/admin/rag/stats";
     return httpClient.get<RAGStats>(url);
   }
 
-  async listIndices(tenantSlug?: string): Promise<{ indices: RAGIndex[] }> {
-    const url = tenantSlug ? `/admin/rag/indices?tenant_slug=${tenantSlug}` : "/admin/rag/indices";
+  async listIndices(organizationId?: string): Promise<{ indices: RAGIndex[] }> {
+    const url = organizationId ? `/admin/rag/indices?organization_id=${organizationId}` : "/admin/rag/indices";
     return httpClient.get<{ indices: RAGIndex[] }>(url);
   }
 
@@ -259,18 +257,18 @@ class RAGAdminService {
     dimension?: number;
     namespace?: string;
     owner_id?: string;
-  }, tenantSlug?: string): Promise<{ status: string; name: string; dimension: number }> {
-    const url = tenantSlug ? `/admin/rag/indices?tenant_slug=${tenantSlug}` : "/admin/rag/indices";
+  }, organizationId?: string): Promise<{ status: string; name: string; dimension: number }> {
+    const url = organizationId ? `/admin/rag/indices?organization_id=${organizationId}` : "/admin/rag/indices";
     return httpClient.post(url, data);
   }
 
-  async getIndex(name: string, tenantSlug?: string): Promise<RAGIndex> {
-    const url = tenantSlug ? `/admin/rag/indices/${name}?tenant_slug=${tenantSlug}` : `/admin/rag/indices/${name}`;
+  async getIndex(name: string, organizationId?: string): Promise<RAGIndex> {
+    const url = organizationId ? `/admin/rag/indices/${name}?organization_id=${organizationId}` : `/admin/rag/indices/${name}`;
     return httpClient.get<RAGIndex>(url);
   }
 
-  async deleteIndex(name: string, tenantSlug?: string): Promise<{ status: string; name: string }> {
-    const url = tenantSlug ? `/admin/rag/indices/${name}?tenant_slug=${tenantSlug}` : `/admin/rag/indices/${name}`;
+  async deleteIndex(name: string, organizationId?: string): Promise<{ status: string; name: string }> {
+    const url = organizationId ? `/admin/rag/indices/${name}?organization_id=${organizationId}` : `/admin/rag/indices/${name}`;
     return httpClient.delete(url);
   }
 
@@ -283,8 +281,8 @@ class RAGAdminService {
   }
 
 
-  async listPipelines(tenantSlug?: string): Promise<{ pipelines: RAGPipeline[] }> {
-    const url = tenantSlug ? `/admin/rag/pipelines?tenant_slug=${tenantSlug}` : "/admin/rag/pipelines";
+  async listPipelines(organizationId?: string): Promise<{ pipelines: RAGPipeline[] }> {
+    const url = organizationId ? `/admin/rag/pipelines?organization_id=${organizationId}` : "/admin/rag/pipelines";
     return httpClient.get<{ pipelines: RAGPipeline[] }>(url);
   }
 
@@ -298,38 +296,38 @@ class RAGAdminService {
     chunk_overlap?: number;
     is_default?: boolean;
     owner_id?: string;
-  }, tenantSlug?: string): Promise<{ id: string; status: string }> {
-    const url = tenantSlug ? `/admin/rag/pipelines?tenant_slug=${tenantSlug}` : "/admin/rag/pipelines";
+  }, organizationId?: string): Promise<{ id: string; status: string }> {
+    const url = organizationId ? `/admin/rag/pipelines?organization_id=${organizationId}` : "/admin/rag/pipelines";
     return httpClient.post(url, data);
   }
 
-  async getOperatorCatalog(tenantSlug?: string): Promise<OperatorCatalog> {
-    const url = tenantSlug 
-      ? `/admin/pipelines/catalog?tenant_slug=${tenantSlug}` 
+  async getOperatorCatalog(organizationId?: string): Promise<OperatorCatalog> {
+    const url = organizationId 
+      ? `/admin/pipelines/catalog?organization_id=${organizationId}` 
       : "/admin/pipelines/catalog";
     return httpClient.get<OperatorCatalog>(url);
   }
 
-  async getOperatorSpec(operatorId: string, tenantSlug?: string): Promise<OperatorSpec> {
-    const url = tenantSlug
-      ? `/admin/pipelines/operators/${operatorId}?tenant_slug=${tenantSlug}`
+  async getOperatorSpec(operatorId: string, organizationId?: string): Promise<OperatorSpec> {
+    const url = organizationId
+      ? `/admin/pipelines/operators/${operatorId}?organization_id=${organizationId}`
       : `/admin/pipelines/operators/${operatorId}`;
     return httpClient.get<OperatorSpec>(url);
   }
 
-  async listOperatorSpecs(tenantSlug?: string): Promise<Record<string, OperatorSpec>> {
-    const url = tenantSlug
-      ? `/admin/pipelines/operators?tenant_slug=${tenantSlug}`
+  async listOperatorSpecs(organizationId?: string): Promise<Record<string, OperatorSpec>> {
+    const url = organizationId
+      ? `/admin/pipelines/operators?organization_id=${organizationId}`
       : "/admin/pipelines/operators";
     return httpClient.get<Record<string, OperatorSpec>>(url);
   }
 
   async listVisualPipelines(
-    tenantSlug?: string,
+    organizationId?: string,
     params?: { skip?: number; limit?: number; view?: ControlPlaneListView }
   ): Promise<ControlPlaneListResponse<VisualPipeline>> {
     const query = new URLSearchParams();
-    if (tenantSlug) query.set("tenant_slug", tenantSlug);
+    if (organizationId) query.set("organization_id", organizationId);
     query.set("skip", String(params?.skip ?? 0));
     query.set("limit", String(params?.limit ?? 20));
     query.set("view", params?.view ?? "summary");
@@ -345,17 +343,17 @@ class RAGAdminService {
       edges: VisualPipelineEdge[];
       org_unit_id?: string;
     },
-    tenantSlug?: string
+    organizationId?: string
   ): Promise<{ id: string; status: string }> {
-    const url = tenantSlug
-      ? `/admin/pipelines/visual-pipelines?tenant_slug=${tenantSlug}`
+    const url = organizationId
+      ? `/admin/pipelines/visual-pipelines?organization_id=${organizationId}`
       : "/admin/pipelines/visual-pipelines";
     return httpClient.post(url, data);
   }
 
-  async getVisualPipeline(pipelineId: string, tenantSlug?: string): Promise<VisualPipeline> {
-    const url = tenantSlug
-      ? `/admin/pipelines/visual-pipelines/${pipelineId}?tenant_slug=${tenantSlug}`
+  async getVisualPipeline(pipelineId: string, organizationId?: string): Promise<VisualPipeline> {
+    const url = organizationId
+      ? `/admin/pipelines/visual-pipelines/${pipelineId}?organization_id=${organizationId}`
       : `/admin/pipelines/visual-pipelines/${pipelineId}`;
     return httpClient.get<VisualPipeline>(url);
   }
@@ -369,64 +367,64 @@ class RAGAdminService {
       nodes?: VisualPipelineNode[];
       edges?: VisualPipelineEdge[];
     },
-    tenantSlug?: string
+    organizationId?: string
   ): Promise<{ status: string; version: number }> {
-    const url = tenantSlug
-      ? `/admin/pipelines/visual-pipelines/${pipelineId}?tenant_slug=${tenantSlug}`
+    const url = organizationId
+      ? `/admin/pipelines/visual-pipelines/${pipelineId}?organization_id=${organizationId}`
       : `/admin/pipelines/visual-pipelines/${pipelineId}`;
     return httpClient.put(url, data);
   }
 
-  async deleteVisualPipeline(pipelineId: string, tenantSlug?: string): Promise<{ status: string }> {
-    const url = tenantSlug
-      ? `/admin/pipelines/visual-pipelines/${pipelineId}?tenant_slug=${tenantSlug}`
+  async deleteVisualPipeline(pipelineId: string, organizationId?: string): Promise<{ status: string }> {
+    const url = organizationId
+      ? `/admin/pipelines/visual-pipelines/${pipelineId}?organization_id=${organizationId}`
       : `/admin/pipelines/visual-pipelines/${pipelineId}`;
     return httpClient.delete(url);
   }
 
-  async compilePipeline(pipelineId: string, tenantSlug?: string): Promise<CompileResult> {
-    const url = tenantSlug
-      ? `/admin/pipelines/visual-pipelines/${pipelineId}/compile?tenant_slug=${tenantSlug}`
+  async compilePipeline(pipelineId: string, organizationId?: string): Promise<CompileResult> {
+    const url = organizationId
+      ? `/admin/pipelines/visual-pipelines/${pipelineId}/compile?organization_id=${organizationId}`
       : `/admin/pipelines/visual-pipelines/${pipelineId}/compile`;
     return httpClient.post<CompileResult>(url, {});
   }
 
   async listPipelineVersions(
     pipelineId: string,
-    tenantSlug?: string
+    organizationId?: string
   ): Promise<{ versions: ExecutablePipelineVersion[] }> {
-    const url = tenantSlug
-      ? `/admin/pipelines/visual-pipelines/${pipelineId}/versions?tenant_slug=${tenantSlug}`
+    const url = organizationId
+      ? `/admin/pipelines/visual-pipelines/${pipelineId}/versions?organization_id=${organizationId}`
       : `/admin/pipelines/visual-pipelines/${pipelineId}/versions`;
     return httpClient.get<{ versions: ExecutablePipelineVersion[] }>(url);
   }
 
   async getExecutablePipeline(
     execId: string,
-    tenantSlug?: string
+    organizationId?: string
   ): Promise<any> {
-    const url = tenantSlug
-      ? `/admin/pipelines/executable-pipelines/${execId}?tenant_slug=${tenantSlug}`
+    const url = organizationId
+      ? `/admin/pipelines/executable-pipelines/${execId}?organization_id=${organizationId}`
       : `/admin/pipelines/executable-pipelines/${execId}`;
     return httpClient.get<any>(url);
   }
 
   async getExecutablePipelineInputSchema(
     execId: string,
-    tenantSlug?: string
+    organizationId?: string
   ): Promise<ExecutablePipelineInputSchema> {
-    const url = tenantSlug
-      ? `/admin/pipelines/executable-pipelines/${execId}/input-schema?tenant_slug=${tenantSlug}`
+    const url = organizationId
+      ? `/admin/pipelines/executable-pipelines/${execId}/input-schema?organization_id=${organizationId}`
       : `/admin/pipelines/executable-pipelines/${execId}/input-schema`;
     return httpClient.get<ExecutablePipelineInputSchema>(url);
   }
 
   async getPipelineToolBinding(
     pipelineId: string,
-    tenantSlug?: string
+    organizationId?: string
   ): Promise<PipelineToolBinding> {
-    const url = tenantSlug
-      ? `/admin/pipelines/visual-pipelines/${pipelineId}/tool-binding?tenant_slug=${tenantSlug}`
+    const url = organizationId
+      ? `/admin/pipelines/visual-pipelines/${pipelineId}/tool-binding?organization_id=${organizationId}`
       : `/admin/pipelines/visual-pipelines/${pipelineId}/tool-binding`;
     return httpClient.get<PipelineToolBinding>(url);
   }
@@ -439,22 +437,22 @@ class RAGAdminService {
       description?: string;
       input_schema?: Record<string, unknown>;
     },
-    tenantSlug?: string
+    organizationId?: string
   ): Promise<PipelineToolBinding> {
-    const url = tenantSlug
-      ? `/admin/pipelines/visual-pipelines/${pipelineId}/tool-binding?tenant_slug=${tenantSlug}`
+    const url = organizationId
+      ? `/admin/pipelines/visual-pipelines/${pipelineId}/tool-binding?organization_id=${organizationId}`
       : `/admin/pipelines/visual-pipelines/${pipelineId}/tool-binding`;
     return httpClient.put<PipelineToolBinding>(url, data);
   }
 
   async uploadPipelineInput(
     file: File,
-    tenantSlug?: string
+    organizationId?: string
   ): Promise<{ path: string; filename?: string; upload_id?: string }> {
     const formData = new FormData();
     formData.append("file", file);
-    const url = tenantSlug
-      ? `/admin/pipelines/pipeline-inputs/upload?tenant_slug=${tenantSlug}`
+    const url = organizationId
+      ? `/admin/pipelines/pipeline-inputs/upload?organization_id=${organizationId}`
       : "/admin/pipelines/pipeline-inputs/upload";
     return httpClient.post(url, formData);
   }
@@ -464,10 +462,10 @@ class RAGAdminService {
       executable_pipeline_id: string;
       input_params?: Record<string, Record<string, unknown>>;
     },
-    tenantSlug?: string
+    organizationId?: string
   ): Promise<{ job_id: string; status: string; executable_pipeline_id: string }> {
-    const url = tenantSlug
-      ? `/admin/pipelines/jobs?tenant_slug=${tenantSlug}`
+    const url = organizationId
+      ? `/admin/pipelines/jobs?organization_id=${organizationId}`
       : "/admin/pipelines/jobs";
     return httpClient.post(url, data);
   }
@@ -480,7 +478,7 @@ class RAGAdminService {
       page?: number;
       limit?: number;
     },
-    tenantSlug?: string
+    organizationId?: string
   ): Promise<{ jobs: PipelineJob[]; total: number; page: number; pages: number }> {
     const params = new URLSearchParams();
     if (options?.executable_pipeline_id) params.set("executable_pipeline_id", options.executable_pipeline_id);
@@ -488,13 +486,13 @@ class RAGAdminService {
     if (options?.status) params.set("status", options.status);
     if (options?.page) params.set("skip", String((options.page - 1) * (options?.limit || 20)));
     if (options?.limit) params.set("limit", String(options.limit));
-    if (tenantSlug) params.set("tenant_slug", tenantSlug);
+    if (organizationId) params.set("organization_id", organizationId);
     return httpClient.get(`/admin/pipelines/jobs?${params.toString()}`);
   }
 
-  async getPipelineJob(jobId: string, tenantSlug?: string): Promise<PipelineJob> {
-    const url = tenantSlug
-      ? `/admin/pipelines/jobs/${jobId}?tenant_slug=${tenantSlug}`
+  async getPipelineJob(jobId: string, organizationId?: string): Promise<PipelineJob> {
+    const url = organizationId
+      ? `/admin/pipelines/jobs/${jobId}?organization_id=${organizationId}`
       : `/admin/pipelines/jobs/${jobId}`;
     return httpClient.get<PipelineJob>(url);
   }
@@ -510,52 +508,52 @@ class RAGAdminService {
       output_type: string;
       config_schema?: any[];
     },
-    tenantSlug?: string
+    organizationId?: string
   ): Promise<CustomOperator> {
-    const url = tenantSlug
-      ? `/admin/rag/custom-operators?tenant_slug=${tenantSlug}`
+    const url = organizationId
+      ? `/admin/rag/custom-operators?organization_id=${organizationId}`
       : "/admin/rag/custom-operators";
     return httpClient.post(url, data);
   }
 
-  async listCustomOperators(tenantSlug?: string): Promise<CustomOperator[]> {
-    const url = tenantSlug
-      ? `/admin/rag/custom-operators?tenant_slug=${tenantSlug}`
+  async listCustomOperators(organizationId?: string): Promise<CustomOperator[]> {
+    const url = organizationId
+      ? `/admin/rag/custom-operators?organization_id=${organizationId}`
       : "/admin/rag/custom-operators";
     return httpClient.get<CustomOperator[]>(url);
   }
 
-  async getCustomOperator(id: string, tenantSlug?: string): Promise<CustomOperator> {
-    const url = tenantSlug
-      ? `/admin/rag/custom-operators/${id}?tenant_slug=${tenantSlug}`
+  async getCustomOperator(id: string, organizationId?: string): Promise<CustomOperator> {
+    const url = organizationId
+      ? `/admin/rag/custom-operators/${id}?organization_id=${organizationId}`
       : `/admin/rag/custom-operators/${id}`;
     return httpClient.get<CustomOperator>(url);
   }
 
   async updateCustomOperator(
     id: string,
-    data: Partial<Omit<CustomOperator, 'id' | 'tenant_id' | 'created_at' | 'updated_at' | 'created_by'>>,
-    tenantSlug?: string
+    data: Partial<Omit<CustomOperator, 'id' | 'organization_id' | 'created_at' | 'updated_at' | 'created_by'>>,
+    organizationId?: string
   ): Promise<CustomOperator> {
-    const url = tenantSlug
-      ? `/admin/rag/custom-operators/${id}?tenant_slug=${tenantSlug}`
+    const url = organizationId
+      ? `/admin/rag/custom-operators/${id}?organization_id=${organizationId}`
       : `/admin/rag/custom-operators/${id}`;
     return httpClient.put(url, data);
   }
 
-  async deleteCustomOperator(id: string, tenantSlug?: string): Promise<{ status: string }> {
-    const url = tenantSlug
-      ? `/admin/rag/custom-operators/${id}?tenant_slug=${tenantSlug}`
+  async deleteCustomOperator(id: string, organizationId?: string): Promise<{ status: string }> {
+    const url = organizationId
+      ? `/admin/rag/custom-operators/${id}?organization_id=${organizationId}`
       : `/admin/rag/custom-operators/${id}`;
     return httpClient.delete(url);
   }
 
   async testCustomOperator(
     data: CustomOperatorTestRequest,
-    tenantSlug?: string
+    organizationId?: string
   ): Promise<CustomOperatorTestResponse> {
-    const url = tenantSlug
-      ? `/admin/rag/custom-operators/test?tenant_slug=${tenantSlug}`
+    const url = organizationId
+      ? `/admin/rag/custom-operators/test?organization_id=${organizationId}`
       : "/admin/rag/custom-operators/test";
     return httpClient.post(url, data);
   }
@@ -563,10 +561,10 @@ class RAGAdminService {
   async promoteCustomOperator(
     id: string,
     namespace: string = "custom",
-    tenantSlug?: string
+    organizationId?: string
   ): Promise<{ status: string; artifact_id: string; path: string; version: string }> {
-    const url = tenantSlug
-      ? `/admin/rag/custom-operators/${id}/promote?tenant_slug=${tenantSlug}&namespace=${namespace}`
+    const url = organizationId
+      ? `/admin/rag/custom-operators/${id}/promote?organization_id=${organizationId}&namespace=${namespace}`
       : `/admin/rag/custom-operators/${id}/promote?namespace=${namespace}`;
     return httpClient.post(url, {});
   }

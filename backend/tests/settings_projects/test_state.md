@@ -1,6 +1,6 @@
 # Settings Projects Backend Test State
 
-Last Updated: 2026-04-19
+Last Updated: 2026-04-21
 
 ## Scope
 Canonical settings project list/detail/update endpoints.
@@ -20,3 +20,8 @@ Canonical settings project list/detail/update endpoints.
 
 ## Known Gaps
 - No project role-assignment-backed member case yet.
+
+## 2026-04-21 project-create route validation
+- Command: `cd backend && SECRET_KEY=explicit-test-secret .venv/bin/python -m pytest tests/settings_projects/test_settings_projects_api.py -q`
+- Result: PASS (`1 passed`)
+- Coverage: verifies `POST /api/settings/projects`, then list, patch, and members by canonical `project_id`.

@@ -4,7 +4,7 @@ import pytest
 
 from app.agent.executors.tool import ToolNodeExecutor
 from app.agent.resolution import ResolutionError, ToolResolver
-from app.db.postgres.models.identity import Tenant
+from app.db.postgres.models.identity import Organization
 from app.db.postgres.models.registry import (
     ToolDefinitionScope,
     ToolImplementationType,
@@ -13,18 +13,18 @@ from app.db.postgres.models.registry import (
 )
 
 
-async def _seed_tenant(db_session, prefix: str) -> Tenant:
-    tenant = Tenant(name=f"Tenant {prefix}", slug=f"tenant-{prefix}-{uuid4().hex[:6]}")
+async def _seed_tenant(db_session, prefix: str) -> Organization:
+    tenant = Organization(name=f"Organization {prefix}", slug=f"tenant-{prefix}-{uuid4().hex[:6]}")
     db_session.add(tenant)
     await db_session.commit()
     await db_session.refresh(tenant)
     return tenant
 
 
-async def _seed_tool(db_session, *, tenant_id, scope: ToolDefinitionScope, slug_prefix: str) -> ToolRegistry:
+async def _seed_tool(db_session, *, organization_id, scope: ToolDefinitionScope, slug_prefix: str) -> ToolRegistry:
     suffix = uuid4().hex[:8]
     tool = ToolRegistry(
-        tenant_id=tenant_id,
+        organization_id=organization_id,
         name=f"{slug_prefix}-tool-{suffix}",
         slug=f"{slug_prefix}-tool-{suffix}",
         description="tenant scoping test tool",
@@ -49,13 +49,13 @@ async def test_tool_resolver_enforces_tenant_scope(db_session):
 
     tenant_b_tool = await _seed_tool(
         db_session,
-        tenant_id=tenant_b.id,
+        organization_id=tenant_b.id,
         scope=ToolDefinitionScope.TENANT,
         slug_prefix="tenant-b",
     )
     global_tool = await _seed_tool(
         db_session,
-        tenant_id=None,
+        organization_id=None,
         scope=ToolDefinitionScope.GLOBAL,
         slug_prefix="global",
     )
@@ -76,13 +76,13 @@ async def test_tool_executor_enforces_tenant_scope(db_session, monkeypatch):
 
     tenant_b_tool = await _seed_tool(
         db_session,
-        tenant_id=tenant_b.id,
+        organization_id=tenant_b.id,
         scope=ToolDefinitionScope.TENANT,
         slug_prefix="exec-tenant-b",
     )
     global_tool = await _seed_tool(
         db_session,
-        tenant_id=None,
+        organization_id=None,
         scope=ToolDefinitionScope.GLOBAL,
         slug_prefix="exec-global",
     )
@@ -96,7 +96,7 @@ async def test_tool_executor_enforces_tenant_scope(db_session, monkeypatch):
     monkeypatch.setattr(ToolNodeExecutor, "_has_artifact_columns", has_columns)
     monkeypatch.setattr(ToolNodeExecutor, "_execute_http_tool", fake_http_tool)
 
-    executor = ToolNodeExecutor(tenant_id=tenant_a.id, db=db_session)
+    executor = ToolNodeExecutor(organization_id=tenant_a.id, db=db_session)
 
     with pytest.raises(ValueError, match="not found"):
         await executor.execute(

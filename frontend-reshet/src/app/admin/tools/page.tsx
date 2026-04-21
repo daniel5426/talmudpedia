@@ -69,7 +69,7 @@ import { PromptModal } from "@/components/shared/PromptModal"
 import { usePromptMentionModal } from "@/components/shared/usePromptMentionModal"
 import { buildArtifactDetailHref, buildArtifactNewHref } from "@/components/admin/artifacts/artifactRoutes"
 import { cn } from "@/lib/utils"
-import { TOOL_BUCKETS, TOOL_SUBTYPES, filterTools, getToolBucket, getSubtypeLabel } from "@/lib/tool-types"
+import { TOOL_BUCKETS, TOOL_SUBTYPES, filterTools, getToolBucket, getToolIdentifier, getSubtypeLabel } from "@/lib/tool-types"
 import { fillMentionInValue } from "@/lib/prompt-mentions"
 
 /* ───────────────────────────── Constants ───────────────────────────── */
@@ -217,7 +217,6 @@ function CreateToolDialog({
     >()
     const [form, setForm] = useState<CreateToolRequest>({
         name: "",
-        slug: "",
         description: "",
         input_schema: { type: "object", properties: {} },
         output_schema: { type: "object", properties: {} },
@@ -233,7 +232,6 @@ function CreateToolDialog({
         if (open) {
             setForm({
                 name: "",
-                slug: "",
                 description: "",
                 input_schema: { type: "object", properties: {} },
                 output_schema: { type: "object", properties: {} },
@@ -259,7 +257,7 @@ function CreateToolDialog({
             }
             if (type === "mcp") nextConfig = { type, server_url: "", tool_name: "" }
             if (type === "function") nextConfig = { type, function_name: "" }
-            if (type === "agent_call") nextConfig = { type, target_agent_slug: "", target_agent_id: "" }
+            if (type === "agent_call") nextConfig = { type, target_agent_id: "" }
 
             return {
                 ...prev,
@@ -272,7 +270,7 @@ function CreateToolDialog({
     }
 
     const handleCreate = async () => {
-        if (!form.name || !form.slug || !form.description) return
+        if (!form.name || !form.description) return
         setLoading(true)
         try {
             const inputSchema = JSON.parse(inputSchemaText)
@@ -329,15 +327,6 @@ function CreateToolDialog({
                                 value={form.name}
                                 onChange={(e) => setForm({ ...form, name: e.target.value })}
                                 className="h-9"
-                            />
-                        </div>
-                        <div className="space-y-2">
-                            <Label className="text-xs font-medium text-muted-foreground">Slug</Label>
-                            <Input
-                                placeholder="web-search"
-                                value={form.slug}
-                                onChange={(e) => setForm({ ...form, slug: e.target.value })}
-                                className="h-9 font-mono text-sm"
                             />
                         </div>
                         <div className="space-y-2">
@@ -478,19 +467,7 @@ function CreateToolDialog({
                             {form.implementation_type === "agent_call" && (
                                 <div className="space-y-3">
                                     <div className="space-y-2">
-                                        <Label className="text-xs font-medium text-muted-foreground">Target Agent Slug</Label>
-                                        <Input
-                                            placeholder="target_agent_slug"
-                                            value={String(implementationConfig.target_agent_slug || "")}
-                                            onChange={(e) => setForm({
-                                                ...form,
-                                                implementation_config: { ...implementationConfig, target_agent_slug: e.target.value }
-                                            })}
-                                            className="h-9 font-mono text-sm"
-                                        />
-                                    </div>
-                                    <div className="space-y-2">
-                                        <Label className="text-xs font-medium text-muted-foreground">Target Agent ID (optional)</Label>
+                                        <Label className="text-xs font-medium text-muted-foreground">Target Agent ID</Label>
                                         <Input
                                             placeholder="target_agent_id"
                                             value={String(implementationConfig.target_agent_id || "")}
@@ -557,10 +534,9 @@ function CreateToolDialog({
                         onClick={handleCreate}
                         disabled={
                             !form.name
-                            || !form.slug
                             || !form.description
                             || loading
-                            || (form.implementation_type === "agent_call" && !String((implementationConfig.target_agent_slug as string) || "").trim() && !String((implementationConfig.target_agent_id as string) || "").trim())
+                            || (form.implementation_type === "agent_call" && !String((implementationConfig.target_agent_id as string) || "").trim())
                         }
                     >
                         {loading && <Loader2 className="h-3.5 w-3.5 animate-spin mr-2" />}
@@ -639,8 +615,8 @@ function ToolDetailSheet({
                                 </span>
                             </div>
                             <div className="flex items-center justify-between px-4 py-2.5">
-                                <span className="text-xs text-muted-foreground/60">Slug</span>
-                                <span className="text-sm font-mono text-muted-foreground">{tool.slug}</span>
+                                <span className="text-xs text-muted-foreground/60">Identifier</span>
+                                <span className="text-sm font-mono text-muted-foreground">{getToolIdentifier(tool)}</span>
                             </div>
                             <div className="flex items-center justify-between px-4 py-2.5">
                                 <span className="text-xs text-muted-foreground/60">Type</span>
@@ -1043,7 +1019,7 @@ export default function ToolsPage() {
                                                 <Icon className="h-4 w-4" />
                                             </div>
 
-                                            {/* Name + slug */}
+                                            {/* Name + identifier */}
                                             <div className="flex-1 min-w-0">
                                                 <div className="flex items-center gap-2">
                                                     <span className="text-sm font-medium text-foreground truncate">
@@ -1058,7 +1034,7 @@ export default function ToolsPage() {
                                                 </div>
                                                 <div className="flex items-center gap-2 mt-0.5">
                                                     <span className="text-xs text-muted-foreground/60 font-mono truncate">
-                                                        {tool.slug}
+                                                        {getToolIdentifier(tool)}
                                                     </span>
                                                     {bucketMeta && (
                                                         <>

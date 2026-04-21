@@ -77,7 +77,7 @@ def _specs() -> list[BuiltinToolTemplateSpec]:
             key="retrieval_pipeline",
             name="Retrieval Pipeline",
             slug="builtin-retrieval-pipeline",
-            description="Query a tenant retrieval pipeline and return normalized results.",
+            description="Query a organization retrieval pipeline and return normalized results.",
             implementation_type=ToolImplementationType.RAG_PIPELINE,
             implementation={"type": "rag_pipeline", "pipeline_id": ""},
             execution={"timeout_s": 60, "is_pure": True, "concurrency_group": "retrieval", "max_concurrency": 2},

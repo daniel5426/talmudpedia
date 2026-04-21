@@ -2,9 +2,8 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import datetime
-import re
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import String, and_, cast, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -200,10 +199,8 @@ def compose_config_schema(
     return next_schema
 
 
-async def ensure_slug_available(db: AsyncSession, slug: str) -> None:
-    exists = await db.execute(select(ToolRegistry.id).where(ToolRegistry.slug == slug))
-    if exists.scalar_one_or_none() is not None:
-        raise validation(f"Tool with slug '{slug}' already exists")
+def internal_tool_key() -> str:
+    return f"tool-{uuid4().hex}"
 
 
 def enum_name(value: ToolImplementationType | ToolStatus | ToolDefinitionScope | str | None) -> str | None:
@@ -239,7 +236,7 @@ def resolve_artifact_binding(
     return None, None
 
 
-async def resolve_tool_artifact_revision_id(*, db: AsyncSession, tenant_id: UUID, tool: ToolRegistry) -> UUID | None:
+async def resolve_tool_artifact_revision_id(*, db: AsyncSession, organization_id: UUID, tool: ToolRegistry) -> UUID | None:
     artifact_id, _ = resolve_artifact_binding(
         artifact_id=getattr(tool, "artifact_id", None),
         artifact_version=getattr(tool, "artifact_version", None),
@@ -249,9 +246,9 @@ async def resolve_tool_artifact_revision_id(*, db: AsyncSession, tenant_id: UUID
     artifact_uuid = parse_uuid(artifact_id)
     if artifact_uuid is None:
         return None
-    artifact = await ArtifactRegistryService(db).get_tenant_artifact(artifact_id=artifact_uuid, tenant_id=tenant_id)
+    artifact = await ArtifactRegistryService(db).get_organization_artifact(artifact_id=artifact_uuid, organization_id=organization_id)
     if artifact is None:
-        raise validation("Artifact-backed tool references an artifact outside tenant scope")
+        raise validation("Artifact-backed tool references an artifact outside organization scope")
     if artifact.kind != ArtifactKind.TOOL_IMPL:
         raise validation("Artifact-backed tool requires a tool_impl artifact")
     if artifact.latest_published_revision_id is None:
@@ -270,22 +267,22 @@ async def publish_tool_record(
             "type": "user",
             "user": ctx.user,
             "user_id": str(ctx.user_id) if ctx.user_id else None,
-            "tenant_id": str(ctx.tenant_id),
+            "organization_id": str(ctx.organization_id),
             "auth_token": ctx.auth_token,
             "scopes": list(ctx.scopes),
         },
-        tenant_id=ctx.tenant_id,
+        organization_id=ctx.organization_id,
         subject_type="tool",
         subject_id=str(tool.id),
         action_scope="tools.publish",
         db=db,
     )
-    tool.artifact_revision_id = await resolve_tool_artifact_revision_id(db=db, tenant_id=ctx.tenant_id, tool=tool)
+    tool.artifact_revision_id = await resolve_tool_artifact_revision_id(db=db, organization_id=ctx.organization_id, tool=tool)
     if tool.artifact_revision_id:
-        revision = await ArtifactRegistryService(db).get_revision(revision_id=tool.artifact_revision_id, tenant_id=ctx.tenant_id)
+        revision = await ArtifactRegistryService(db).get_revision(revision_id=tool.artifact_revision_id, organization_id=ctx.organization_id)
         if revision is None:
             raise validation("Artifact-backed tool revision is unavailable")
-        await ArtifactDeploymentService(db).ensure_deployment(revision=revision, namespace="production", tenant_id=ctx.tenant_id)
+        await ArtifactDeploymentService(db).ensure_deployment(revision=revision, namespace="production", organization_id=ctx.organization_id)
     tool.status = ToolStatus.PUBLISHED
     tool.is_active = True
     tool.published_at = tool.published_at or datetime.utcnow()
@@ -304,19 +301,19 @@ async def publish_tool_record(
     return tool
 
 
-async def validate_pipeline_binding_for_tenant(db: AsyncSession, *, tenant_id: UUID, pipeline_id_raw: str | None) -> None:
+async def validate_pipeline_binding_for_tenant(db: AsyncSession, *, organization_id: UUID, pipeline_id_raw: str | None) -> None:
     if not pipeline_id_raw:
         raise validation("rag_pipeline tools require a pipeline binding")
     pipeline_uuid = parse_uuid(pipeline_id_raw)
     if pipeline_uuid is None:
         raise validation("Invalid pipeline id")
-    executable = await db.execute(select(ExecutablePipeline.id).where(ExecutablePipeline.id == pipeline_uuid, ExecutablePipeline.tenant_id == tenant_id))
+    executable = await db.execute(select(ExecutablePipeline.id).where(ExecutablePipeline.id == pipeline_uuid, ExecutablePipeline.organization_id == organization_id))
     if executable.scalar_one_or_none() is not None:
         return
-    visual = await db.execute(select(VisualPipeline.id).where(VisualPipeline.id == pipeline_uuid, VisualPipeline.tenant_id == tenant_id))
+    visual = await db.execute(select(VisualPipeline.id).where(VisualPipeline.id == pipeline_uuid, VisualPipeline.organization_id == organization_id))
     if visual.scalar_one_or_none() is not None:
         return
-    raise validation("Pipeline not found in tenant scope")
+    raise validation("Pipeline not found in organization scope")
 
 
 def maybe_validate_builtin_registry_status(requested_status: ToolStatus | None) -> None:
@@ -327,7 +324,7 @@ def maybe_validate_builtin_registry_status(requested_status: ToolStatus | None) 
 async def validate_pipeline_config_if_needed(
     *,
     db: AsyncSession,
-    tenant_id: UUID,
+    organization_id: UUID,
     implementation_type: ToolImplementationType,
     config_schema: dict | None,
     visual_pipeline_id: UUID | None = None,
@@ -339,7 +336,7 @@ async def validate_pipeline_config_if_needed(
     if pipeline_id is None:
         implementation = (config_schema or {}).get("implementation")
         pipeline_id = implementation.get("pipeline_id") if isinstance(implementation, dict) else None
-    await validate_pipeline_binding_for_tenant(db, tenant_id=tenant_id, pipeline_id_raw=pipeline_id)
+    await validate_pipeline_binding_for_tenant(db, organization_id=organization_id, pipeline_id_raw=pipeline_id)
 
 
 def resolve_toolset_payload(tool: ToolRegistry | object) -> dict[str, Any] | None:
@@ -392,9 +389,8 @@ def serialize_tool(tool: ToolRegistry | object, *, view: str = "full") -> dict[s
     execution_config = redact_sensitive_config((config_schema.get("execution") if isinstance(config_schema, dict) else {}) or {})
     payload = {
         "id": getattr(tool, "id"),
-        "tenant_id": getattr(tool, "tenant_id", None),
+        "organization_id": getattr(tool, "organization_id", None),
         "name": getattr(tool, "name"),
-        "slug": getattr(tool, "slug"),
         "description": getattr(tool, "description", None),
         "scope": serialize_scope(getattr(tool, "scope", None)),
         "status": getattr(tool, "status"),
@@ -448,7 +444,6 @@ class ToolRegistryAdminService:
         *,
         ctx: ControlPlaneContext,
         scope: ToolDefinitionScope | None = None,
-        slug: str | None = None,
         name: str | None = None,
         is_active: bool | None = True,
         status: ToolStatus | None = None,
@@ -457,12 +452,10 @@ class ToolRegistryAdminService:
         skip: int = 0,
         limit: int = 50,
     ) -> tuple[list[ToolRegistry], int]:
-        conditions = [or_(ToolRegistry.tenant_id == ctx.tenant_id, ToolRegistry.tenant_id == None)]
-        conditions.append(~and_(ToolRegistry.tenant_id != None, ToolRegistry.builtin_key != None, ToolRegistry.is_system == False))
+        conditions = [or_(ToolRegistry.organization_id == ctx.organization_id, ToolRegistry.organization_id == None)]
+        conditions.append(~and_(ToolRegistry.organization_id != None, ToolRegistry.builtin_key != None, ToolRegistry.is_system == False))
         if scope:
             conditions.append(ToolRegistry.scope == scope)
-        if slug is not None and str(slug).strip():
-            conditions.append(func.lower(ToolRegistry.slug) == str(slug).strip().lower())
         if name is not None and str(name).strip():
             conditions.append(func.lower(ToolRegistry.name) == str(name).strip().lower())
         if status is not None:
@@ -475,7 +468,7 @@ class ToolRegistryAdminService:
             built_in_pred = or_(
                 ToolRegistry.is_system == True,
                 ToolRegistry.builtin_key != None,
-                and_(ToolRegistry.tenant_id == None, ToolRegistry.implementation_type == ToolImplementationType.INTERNAL),
+                and_(ToolRegistry.organization_id == None, ToolRegistry.implementation_type == ToolImplementationType.INTERNAL),
             )
             mcp_pred = ToolRegistry.implementation_type == ToolImplementationType.MCP
             artifact_pred = or_(ToolRegistry.artifact_id != None, ToolRegistry.implementation_type == ToolImplementationType.ARTIFACT)
@@ -492,14 +485,12 @@ class ToolRegistryAdminService:
         total = (await self.db.execute(select(func.count(ToolRegistry.id)).where(and_(*conditions)))).scalar() or 0
         return tools, total
 
-    async def get_tool(self, *, ctx: ControlPlaneContext, tool_id: UUID | None = None, slug: str | None = None) -> ToolRegistry:
-        conditions = [or_(ToolRegistry.tenant_id == ctx.tenant_id, ToolRegistry.tenant_id == None)]
+    async def get_tool(self, *, ctx: ControlPlaneContext, tool_id: UUID | None = None) -> ToolRegistry:
+        conditions = [or_(ToolRegistry.organization_id == ctx.organization_id, ToolRegistry.organization_id == None)]
         if tool_id is not None:
             conditions.append(ToolRegistry.id == tool_id)
-        elif slug is not None and str(slug).strip():
-            conditions.append(func.lower(ToolRegistry.slug) == str(slug).strip().lower())
         else:
-            raise validation("tool_id or slug is required", field="tool_id")
+            raise validation("tool_id is required", field="tool_id")
         tool = (
             await self.db.execute(
                 select(ToolRegistry).where(and_(*conditions))
@@ -511,8 +502,8 @@ class ToolRegistryAdminService:
 
     async def create_tool(self, *, ctx: ControlPlaneContext, request: Any) -> ToolRegistry:
         if request.scope != ToolDefinitionScope.TENANT:
-            raise validation("Only tenant-scoped tools can be created via this endpoint")
-        await ensure_slug_available(self.db, request.slug)
+            raise validation("Only organization-scoped tools can be created via this endpoint")
+        slug = internal_tool_key()
         config_schema = compose_config_schema(
             current=request.config_schema,
             config_schema=request.config_schema,
@@ -523,9 +514,9 @@ class ToolRegistryAdminService:
         impl_type = request.implementation_type
         if impl_type is None:
             probe = ToolRegistry(
-                tenant_id=ctx.tenant_id,
+                organization_id=ctx.organization_id,
                 name=request.name,
-                slug=request.slug,
+                slug=slug,
                 description=request.description,
                 scope=request.scope,
                 schema={"input": request.input_schema, "output": request.output_schema},
@@ -541,7 +532,7 @@ class ToolRegistryAdminService:
         input_schema = deepcopy(request.input_schema or {})
         output_schema = deepcopy(request.output_schema or {})
         try:
-            await PromptReferenceResolver(self.db, ctx.tenant_id).validate_tool_payload(
+            await PromptReferenceResolver(self.db, ctx.organization_id).validate_tool_payload(
                 description=request.description,
                 input_schema=input_schema,
                 output_schema=output_schema,
@@ -552,14 +543,14 @@ class ToolRegistryAdminService:
         maybe_validate_builtin_registry_status(requested_status)
         await validate_pipeline_config_if_needed(
             db=self.db,
-            tenant_id=ctx.tenant_id,
+            organization_id=ctx.organization_id,
             implementation_type=impl_type,
             config_schema=config_schema,
         )
         tool = ToolRegistry(
-            tenant_id=ctx.tenant_id,
+            organization_id=ctx.organization_id,
             name=request.name,
-            slug=request.slug,
+            slug=slug,
             description=request.description,
             scope=request.scope,
             schema={"input": input_schema, "output": output_schema},
@@ -585,7 +576,7 @@ class ToolRegistryAdminService:
 
     async def update_tool(self, *, ctx: ControlPlaneContext, tool_id: UUID, request: Any) -> ToolRegistry:
         tool = (
-            await self.db.execute(select(ToolRegistry).where(ToolRegistry.id == tool_id, ToolRegistry.tenant_id == ctx.tenant_id))
+            await self.db.execute(select(ToolRegistry).where(ToolRegistry.id == tool_id, ToolRegistry.organization_id == ctx.organization_id))
         ).scalar_one_or_none()
         if tool is None:
             raise not_found("Tool not found")
@@ -608,7 +599,7 @@ class ToolRegistryAdminService:
                 schema["output"] = request.output_schema
             tool.schema = schema
         try:
-            await PromptReferenceResolver(self.db, ctx.tenant_id).validate_tool_payload(
+            await PromptReferenceResolver(self.db, ctx.organization_id).validate_tool_payload(
                 description=tool.description if request.description is None else request.description,
                 input_schema=((tool.schema or {}).get("input") if isinstance(tool.schema, dict) else {}),
                 output_schema=((tool.schema or {}).get("output") if isinstance(tool.schema, dict) else {}),
@@ -650,7 +641,7 @@ class ToolRegistryAdminService:
         effective_impl_type = get_tool_impl_type(tool)
         await validate_pipeline_config_if_needed(
             db=self.db,
-            tenant_id=ctx.tenant_id,
+            organization_id=ctx.organization_id,
             implementation_type=effective_impl_type,
             config_schema=tool.config_schema,
             visual_pipeline_id=getattr(tool, "visual_pipeline_id", None),
@@ -662,7 +653,7 @@ class ToolRegistryAdminService:
 
     async def publish_tool(self, *, ctx: ControlPlaneContext, tool_id: UUID) -> ToolRegistry:
         tool = (
-            await self.db.execute(select(ToolRegistry).where(ToolRegistry.id == tool_id, ToolRegistry.tenant_id == ctx.tenant_id))
+            await self.db.execute(select(ToolRegistry).where(ToolRegistry.id == tool_id, ToolRegistry.organization_id == ctx.organization_id))
         ).scalar_one_or_none()
         if tool is None:
             raise not_found("Tool not found")
@@ -675,7 +666,7 @@ class ToolRegistryAdminService:
             raise validation("Publish this tool from its owning domain")
         await validate_pipeline_config_if_needed(
             db=self.db,
-            tenant_id=ctx.tenant_id,
+            organization_id=ctx.organization_id,
             implementation_type=get_tool_impl_type(tool),
             config_schema=tool.config_schema,
             visual_pipeline_id=getattr(tool, "visual_pipeline_id", None),
@@ -687,7 +678,7 @@ class ToolRegistryAdminService:
         if not re.match(r"^\\d+\\.\\d+\\.\\d+$", new_version):
             raise validation("new_version must be valid semver (e.g. 1.0.0)")
         tool = (
-            await self.db.execute(select(ToolRegistry).where(ToolRegistry.id == tool_id, ToolRegistry.tenant_id == ctx.tenant_id))
+            await self.db.execute(select(ToolRegistry).where(ToolRegistry.id == tool_id, ToolRegistry.organization_id == ctx.organization_id))
         ).scalar_one_or_none()
         if tool is None:
             raise not_found("Tool not found")

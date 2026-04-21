@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_current_principal, require_scopes
 from app.api.routers.auth import get_current_user
-from app.db.postgres.models.identity import OrgMembership, OrgRole, Tenant, User
+from app.db.postgres.models.identity import OrgMembership, OrgRole, Organization, User
 from app.db.postgres.models.workspace import Project, ProjectStatus
 from app.db.postgres.session import get_db
 from app.services.auth_context_service import (
@@ -28,23 +28,19 @@ router = APIRouter(prefix="/api/organizations", tags=["organizations"])
 
 class CreateOrganizationRequest(BaseModel):
     name: str
-    slug: str
 
 
 class UpdateOrganizationRequest(BaseModel):
     name: Optional[str] = None
-    slug: Optional[str] = None
 
 
 class CreateProjectRequest(BaseModel):
     name: str
-    slug: str
     description: Optional[str] = None
 
 
 class UpdateProjectRequest(BaseModel):
     name: Optional[str] = None
-    slug: Optional[str] = None
     description: Optional[str] = None
     status: Optional[ProjectStatus] = None
 
@@ -69,8 +65,8 @@ def _require_org_scope(principal: dict, *scopes: str) -> None:
     raise HTTPException(status_code=403, detail=f"Missing required scope: {' or '.join(scopes)}")
 
 
-async def _get_org_or_404(db: AsyncSession, organization_slug: str) -> Tenant:
-    organization = (await db.execute(select(Tenant).where(Tenant.slug == organization_slug))).scalar_one_or_none()
+async def _get_org_or_404(db: AsyncSession, organization_id: UUID) -> Organization:
+    organization = await db.get(Organization, organization_id)
     if organization is None:
         raise HTTPException(status_code=404, detail="Organization not found")
     return organization
@@ -93,15 +89,11 @@ async def create_organization(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    existing = (await db.execute(select(Tenant).where(Tenant.slug == payload.slug))).scalar_one_or_none()
-    if existing is not None:
-        raise HTTPException(status_code=400, detail="Organization slug already exists")
     if not current_user.workos_user_id:
         raise HTTPException(status_code=400, detail="Current user is not linked to WorkOS")
     bundle = await WorkOSAuthService(db).create_organization_for_user(
         local_user=current_user,
         name=payload.name,
-        slug=payload.slug,
         request=request,
         response=response,
     )
@@ -114,71 +106,59 @@ async def create_organization(
     }
 
 
-@router.get("/{organization_slug}")
+@router.get("/{organization_id}")
 async def get_organization(
-    organization_slug: str,
+    organization_id: UUID,
     principal: dict = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ):
-    organization = await _get_org_or_404(db, organization_slug)
+    organization = await _get_org_or_404(db, organization_id)
     if str(organization.id) != str(principal.get("organization_id")) and "*" not in set(principal.get("scopes") or []):
         raise HTTPException(status_code=403, detail="Organization is outside active session context")
     return serialize_organization_summary(organization)
 
 
-@router.patch("/{organization_slug}")
+@router.patch("/{organization_id}")
 async def update_organization(
-    organization_slug: str,
+    organization_id: UUID,
     payload: UpdateOrganizationRequest,
     principal: dict = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ):
     _require_org_scope(principal, "organizations.write")
-    organization = await _get_org_or_404(db, organization_slug)
+    organization = await _get_org_or_404(db, organization_id)
     if payload.name is not None:
         organization.name = payload.name
-    if payload.slug is not None:
-        organization.slug = payload.slug
     await db.commit()
     return serialize_organization_summary(organization)
 
 
-@router.get("/{organization_slug}/projects")
+@router.get("/{organization_id}/projects")
 async def list_projects(
-    organization_slug: str,
+    organization_id: UUID,
     principal: dict = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ):
     _require_org_scope(principal, "projects.read", "organizations.read")
-    organization = await _get_org_or_404(db, organization_slug)
+    organization = await _get_org_or_404(db, organization_id)
     projects = await list_organization_projects(db=db, organization_id=organization.id)
     return [serialize_project_summary(item) for item in projects]
 
 
-@router.post("/{organization_slug}/projects", status_code=status.HTTP_201_CREATED)
+@router.post("/{organization_id}/projects", status_code=status.HTTP_201_CREATED)
 async def create_project(
-    organization_slug: str,
+    organization_id: UUID,
     payload: CreateProjectRequest,
     principal: dict = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ):
     _require_org_scope(principal, "projects.write")
-    organization = await _get_org_or_404(db, organization_slug)
-    existing = (
-        await db.execute(
-            select(Project).where(
-                and_(Project.organization_id == organization.id, Project.slug == payload.slug)
-            )
-        )
-    ).scalar_one_or_none()
-    if existing is not None:
-        raise HTTPException(status_code=400, detail="Project slug already exists in organization")
+    organization = await _get_org_or_404(db, organization_id)
     actor_user_id = UUID(str(principal["user_id"])) if principal.get("user_id") else None
     project = await OrganizationBootstrapService(db).create_project(
         organization=organization,
         created_by=actor_user_id,
         name=payload.name,
-        slug=payload.slug,
         description=payload.description,
         owner_user_id=actor_user_id,
     )
@@ -186,20 +166,20 @@ async def create_project(
     return serialize_project_summary(project)
 
 
-@router.patch("/{organization_slug}/projects/{project_slug}")
+@router.patch("/{organization_id}/projects/{project_id}")
 async def update_project(
-    organization_slug: str,
-    project_slug: str,
+    organization_id: UUID,
+    project_id: UUID,
     payload: UpdateProjectRequest,
     principal: dict = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ):
     _require_org_scope(principal, "projects.write")
-    organization = await _get_org_or_404(db, organization_slug)
+    organization = await _get_org_or_404(db, organization_id)
     project = (
         await db.execute(
             select(Project).where(
-                and_(Project.organization_id == organization.id, Project.slug == project_slug)
+                and_(Project.organization_id == organization.id, Project.id == project_id)
             )
         )
     ).scalar_one_or_none()
@@ -207,8 +187,6 @@ async def update_project(
         raise HTTPException(status_code=404, detail="Project not found")
     if payload.name is not None:
         project.name = payload.name
-    if payload.slug is not None:
-        project.slug = payload.slug
     if payload.description is not None:
         project.description = payload.description
     if payload.status is not None:
@@ -217,16 +195,16 @@ async def update_project(
     return serialize_project_summary(project)
 
 
-@router.get("/{organization_slug}/members")
+@router.get("/{organization_id}/members")
 async def list_members(
-    organization_slug: str,
+    organization_id: UUID,
     principal: dict = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ):
     _require_org_scope(principal, "organization_members.read")
-    organization = await _get_org_or_404(db, organization_slug)
+    organization = await _get_org_or_404(db, organization_id)
     memberships = (
-        await db.execute(select(OrgMembership).where(OrgMembership.tenant_id == organization.id))
+        await db.execute(select(OrgMembership).where(OrgMembership.organization_id == organization.id))
     ).scalars().all()
     users = {
         user.id: user
@@ -246,14 +224,14 @@ async def list_members(
     ]
 
 
-@router.get("/{organization_slug}/invites")
+@router.get("/{organization_id}/invites")
 async def list_invites(
-    organization_slug: str,
+    organization_id: UUID,
     principal: dict = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ):
     _require_org_scope(principal, "organization_invites.read")
-    organization = await _get_org_or_404(db, organization_slug)
+    organization = await _get_org_or_404(db, organization_id)
     if not organization.workos_organization_id:
         raise HTTPException(status_code=400, detail="Organization is not linked to WorkOS")
     service = WorkOSAuthService(db)
@@ -273,15 +251,15 @@ async def list_invites(
     ]
 
 
-@router.post("/{organization_slug}/invites", status_code=status.HTTP_201_CREATED)
+@router.post("/{organization_id}/invites", status_code=status.HTTP_201_CREATED)
 async def create_invite(
-    organization_slug: str,
+    organization_id: UUID,
     payload: CreateInviteRequest,
     principal: dict = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ):
     _require_org_scope(principal, "organization_invites.write")
-    organization = await _get_org_or_404(db, organization_slug)
+    organization = await _get_org_or_404(db, organization_id)
     if not organization.workos_organization_id:
         raise HTTPException(status_code=400, detail="Organization is not linked to WorkOS")
     service = WorkOSAuthService(db)
@@ -300,30 +278,30 @@ async def create_invite(
     }
 
 
-@router.delete("/{organization_slug}/invites/{invite_id}")
+@router.delete("/{organization_id}/invites/{invite_id}")
 async def revoke_invite(
-    organization_slug: str,
+    organization_id: UUID,
     invite_id: str,
     principal: dict = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ):
     _require_org_scope(principal, "organization_invites.delete")
-    organization = await _get_org_or_404(db, organization_slug)
+    organization = await _get_org_or_404(db, organization_id)
     if not organization.workos_organization_id:
         raise HTTPException(status_code=400, detail="Organization is not linked to WorkOS")
     WorkOSAuthService(db).client.user_management.revoke_invitation(invite_id)
     return {"status": "deleted"}
 
 
-@router.post("/{organization_slug}/workos/admin-portal-link")
+@router.post("/{organization_id}/workos/admin-portal-link")
 async def create_workos_admin_portal_link(
-    organization_slug: str,
+    organization_id: UUID,
     payload: WorkOSAdminPortalLinkRequest,
     principal: dict = Depends(require_scopes("organizations.write")),
     db: AsyncSession = Depends(get_db),
 ):
     del principal
-    organization = await _get_org_or_404(db, organization_slug)
+    organization = await _get_org_or_404(db, organization_id)
     if not organization.workos_organization_id:
         raise HTTPException(status_code=400, detail="Organization is not linked to WorkOS")
     service = WorkOSAuthService(db)

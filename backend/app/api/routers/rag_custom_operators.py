@@ -9,11 +9,10 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.postgres.session import get_db
-from app.db.postgres.models.identity import User, Tenant, OrgMembership
+from app.db.postgres.models.identity import User, Organization, OrgMembership
 from app.db.postgres.models.operators import CustomOperator, OperatorCategory
-from app.db.postgres.models.rbac import Action, ResourceType, ActorType
+from app.api.dependencies import get_current_principal, require_scopes
 from app.api.routers.auth import get_current_user
-from app.core.rbac import check_permission
 from app.core.audit import log_simple_action
 from app.api.schemas.rag import (
     CustomOperatorCreate, 
@@ -27,47 +26,51 @@ from app.rag.pipeline.registry import OperatorSpec, DataType, OperatorCategory a
 
 router = APIRouter()
 
-async def get_tenant_context(
-    tenant_slug: Optional[str] = None,
+async def get_organization_context(
+    organization_id: Optional[UUID] = None,
     current_user: User = Depends(get_current_user),
+    principal: dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ):
-    """Get tenant context with user info."""
-    if not tenant_slug:
+    """Get organization context with user info."""
+    if not organization_id:
         if current_user.role != "admin":
-            raise HTTPException(status_code=403, detail="Tenant context required")
+            raise HTTPException(status_code=403, detail="Organization context required")
         return None, current_user, db
 
-    result = await db.execute(select(Tenant).where(Tenant.slug == tenant_slug))
-    tenant = result.scalar_one_or_none()
-    if not tenant:
-        raise HTTPException(status_code=404, detail="Tenant not found")
+    organization = await db.get(Organization, organization_id)
+    if not organization:
+        raise HTTPException(status_code=404, detail="Organization not found")
         
     # Check membership
     membership_result = await db.execute(
         select(OrgMembership).where(
-            OrgMembership.tenant_id == tenant.id,
+            OrgMembership.organization_id == organization.id,
             OrgMembership.user_id == current_user.id
         )
     )
     membership = membership_result.scalar_one_or_none()
     if not membership and current_user.role != "admin":
-        raise HTTPException(status_code=403, detail="Not a member of this tenant")
+        raise HTTPException(status_code=403, detail="Not a member of this organization")
+    scopes = set(principal.get("scopes") or [])
+    if "*" not in scopes and str(organization.id) != str(principal.get("organization_id")):
+        raise HTTPException(status_code=403, detail="Active organization does not match requested organization")
         
-    return tenant, current_user, db
+    return organization, current_user, db
 
 @router.get("", response_model=List[CustomOperatorResponse])
 async def list_custom_operators(
-    tenant_slug: Optional[str] = None,
+    organization_id: Optional[UUID] = None,
     current_user: User = Depends(get_current_user),
+    _: dict = Depends(require_scopes("pipelines.catalog.read")),
     db: AsyncSession = Depends(get_db),
 ):
-    """List custom operators for the tenant."""
-    tenant, user, db = await get_tenant_context(tenant_slug, current_user, db)
+    """List custom operators for the organization."""
+    organization, user, db = await get_organization_context(organization_id, current_user, db)
     
     query = select(CustomOperator)
-    if tenant:
-        query = query.where(CustomOperator.tenant_id == tenant.id)
+    if organization:
+        query = query.where(CustomOperator.organization_id == organization.id)
     
     query = query.order_by(CustomOperator.updated_at.desc())
     result = await db.execute(query)
@@ -78,18 +81,19 @@ async def list_custom_operators(
 async def create_custom_operator(
     request: CustomOperatorCreate,
     http_request: Request,
-    tenant_slug: Optional[str] = None,
+    organization_id: Optional[UUID] = None,
     current_user: User = Depends(get_current_user),
+    _: dict = Depends(require_scopes("pipelines.write")),
     db: AsyncSession = Depends(get_db),
 ):
     """Create a new custom operator."""
-    tenant, user, db = await get_tenant_context(tenant_slug, current_user, db)
-    if not tenant:
-         raise HTTPException(status_code=400, detail="Tenant context required")
+    organization, user, db = await get_organization_context(organization_id, current_user, db)
+    if not organization:
+         raise HTTPException(status_code=400, detail="Organization context required")
     
-    # Check duplicate name in tenant
+    # Check duplicate name in organization
     stmt = select(CustomOperator).where(
-        CustomOperator.tenant_id == tenant.id,
+        CustomOperator.organization_id == organization.id,
         CustomOperator.name == request.name
     )
     existing = await db.scalar(stmt)
@@ -97,7 +101,7 @@ async def create_custom_operator(
         raise HTTPException(status_code=400, detail="Operator with this name already exists")
 
     operator = CustomOperator(
-        tenant_id=tenant.id,
+        organization_id=organization.id,
         name=request.name,
         display_name=request.display_name,
         category=OperatorCategory(request.category), # Ensure enum
@@ -118,16 +122,17 @@ async def create_custom_operator(
 @router.get("/{operator_id}", response_model=CustomOperatorResponse)
 async def get_custom_operator(
     operator_id: UUID,
-    tenant_slug: Optional[str] = None,
+    organization_id: Optional[UUID] = None,
     current_user: User = Depends(get_current_user),
+    _: dict = Depends(require_scopes("pipelines.catalog.read")),
     db: AsyncSession = Depends(get_db),
 ):
     """Get a custom operator by ID."""
-    tenant, user, db = await get_tenant_context(tenant_slug, current_user, db)
+    organization, user, db = await get_organization_context(organization_id, current_user, db)
     
     query = select(CustomOperator).where(CustomOperator.id == operator_id)
-    if tenant:
-        query = query.where(CustomOperator.tenant_id == tenant.id)
+    if organization:
+        query = query.where(CustomOperator.organization_id == organization.id)
         
     operator = await db.scalar(query)
     if not operator:
@@ -140,16 +145,17 @@ async def update_custom_operator(
     operator_id: UUID,
     update_data: CustomOperatorUpdate,
     http_request: Request,
-    tenant_slug: Optional[str] = None,
+    organization_id: Optional[UUID] = None,
     current_user: User = Depends(get_current_user),
+    _: dict = Depends(require_scopes("pipelines.write")),
     db: AsyncSession = Depends(get_db),
 ):
     """Update a custom operator."""
-    tenant, user, db = await get_tenant_context(tenant_slug, current_user, db)
+    organization, user, db = await get_organization_context(organization_id, current_user, db)
     
     query = select(CustomOperator).where(CustomOperator.id == operator_id)
-    if tenant:
-        query = query.where(CustomOperator.tenant_id == tenant.id)
+    if organization:
+        query = query.where(CustomOperator.organization_id == organization.id)
         
     operator = await db.scalar(query)
     if not operator:
@@ -176,16 +182,17 @@ async def update_custom_operator(
 async def delete_custom_operator(
     operator_id: UUID,
     http_request: Request,
-    tenant_slug: Optional[str] = None,
+    organization_id: Optional[UUID] = None,
     current_user: User = Depends(get_current_user),
+    _: dict = Depends(require_scopes("pipelines.write")),
     db: AsyncSession = Depends(get_db),
 ):
     """Delete a custom operator."""
-    tenant, user, db = await get_tenant_context(tenant_slug, current_user, db)
+    organization, user, db = await get_organization_context(organization_id, current_user, db)
     
     query = select(CustomOperator).where(CustomOperator.id == operator_id)
-    if tenant:
-        query = query.where(CustomOperator.tenant_id == tenant.id)
+    if organization:
+        query = query.where(CustomOperator.organization_id == organization.id)
         
     operator = await db.scalar(query)
     if not operator:
@@ -199,8 +206,9 @@ async def delete_custom_operator(
 @router.post("/test", response_model=CustomOperatorTestResponse)
 async def test_custom_operator(
     request: CustomOperatorTestRequest,
-    tenant_slug: Optional[str] = None,
+    organization_id: Optional[UUID] = None,
     current_user: User = Depends(get_current_user),
+    _: dict = Depends(require_scopes("pipelines.write")),
     db: AsyncSession = Depends(get_db),
 ):
     """Test a custom operator with provided code and input."""
@@ -224,15 +232,14 @@ async def test_custom_operator(
     context = ExecutionContext(
         step_id="test_step",
         config=request.config,
-        tenant_id=str(current_user.id) # Use user ID as tenant ID for testing if no tenant
+        organization_id=str(current_user.id) # Use user ID as organization ID for testing if no organization
     )
     
-    # Injected tenant if provided
-    if tenant_slug:
-        tenant_result = await db.execute(select(Tenant).where(Tenant.slug == tenant_slug))
-        tenant = tenant_result.scalar_one_or_none()
-        if tenant:
-            context.tenant_id = str(tenant.id)
+    # Injected organization if provided
+    if organization_id:
+        organization = await db.get(Organization, organization_id)
+        if organization:
+            context.organization_id = str(organization.id)
 
     output = await executor.safe_execute(input_obj, context)
     
@@ -247,7 +254,7 @@ async def test_custom_operator(
 async def promote_to_artifact(
     operator_id: UUID,
     namespace: str = "custom",
-    tenant_slug: Optional[str] = None,
+    organization_id: Optional[UUID] = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):

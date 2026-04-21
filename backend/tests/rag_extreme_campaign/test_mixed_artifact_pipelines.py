@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Tenant, User
+from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Organization, User
 from app.db.postgres.models.operators import CustomOperator, OperatorCategory
 from app.db.postgres.models.rag import ExecutablePipeline, PipelineJob, PipelineJobStatus, PipelineType, VisualPipeline
 from app.rag.pipeline.compiler import PipelineCompiler
@@ -16,18 +16,18 @@ from app.services.artifact_runtime.revision_service import ArtifactRevisionServi
 
 
 async def _seed_tenant_context(db_session):
-    tenant = Tenant(id=uuid.uuid4(), name="RAG Mixed Tenant", slug=f"rag-mixed-{uuid.uuid4().hex[:8]}")
+    tenant = Organization(id=uuid.uuid4(), name="RAG Mixed Organization", slug=f"rag-mixed-{uuid.uuid4().hex[:8]}")
     user = User(id=uuid.uuid4(), email=f"rag-mixed-{uuid.uuid4().hex[:6]}@example.com", role="admin")
     org_unit = OrgUnit(
         id=uuid.uuid4(),
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name="RAG Mixed Org",
         slug=f"rag-mixed-org-{uuid.uuid4().hex[:6]}",
         type=OrgUnitType.org,
     )
     membership = OrgMembership(
         id=uuid.uuid4(),
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         org_unit_id=org_unit.id,
         role=OrgRole.owner,
@@ -38,12 +38,12 @@ async def _seed_tenant_context(db_session):
     return tenant, user
 
 
-async def _create_custom_operator(db_session, tenant_id, created_by):
+async def _create_custom_operator(db_session, organization_id, created_by):
     operator = CustomOperator(
         id=uuid.uuid4(),
-        tenant_id=tenant_id,
+        organization_id=organization_id,
         name=f"tenant_mixed_custom_{uuid.uuid4().hex[:6]}",
-        display_name="Tenant Mixed Custom",
+        display_name="Organization Mixed Custom",
         category=OperatorCategory.CUSTOM,
         description="Mixed custom operator",
         python_code="def execute(inputs, config):\n    return {'items': [inputs], 'source': 'artifact'}\n",
@@ -60,10 +60,10 @@ async def _create_custom_operator(db_session, tenant_id, created_by):
     return operator
 
 
-async def _create_artifact_for_operator(db_session, tenant_id, created_by, operator_id):
+async def _create_artifact_for_operator(db_session, organization_id, created_by, operator_id):
     revisions = ArtifactRevisionService(db_session)
     artifact = await revisions.create_artifact(
-        tenant_id=tenant_id,
+        organization_id=organization_id,
         created_by=created_by,
         display_name="Mixed RAG Artifact",
         description=None,
@@ -96,10 +96,10 @@ async def _create_artifact_for_operator(db_session, tenant_id, created_by, opera
     return artifact
 
 
-def _build_mixed_pipeline(tenant_id, operator_name):
+def _build_mixed_pipeline(organization_id, operator_name):
     return VisualPipeline(
         id=uuid.uuid4(),
-        tenant_id=tenant_id,
+        organization_id=organization_id,
         name="Mixed Retrieval Pipeline",
         description=None,
         pipeline_type=PipelineType.RETRIEVAL,
@@ -146,7 +146,7 @@ async def test_mixed_builtin_plus_artifact_pipeline_compile_pins_artifact_revisi
     result = PipelineCompiler().compile(
         _build_mixed_pipeline(tenant.id, operator.name),
         compiled_by=str(user.id),
-        tenant_id=str(tenant.id),
+        organization_id=str(tenant.id),
         require_published_artifacts=True,
     )
 
@@ -172,13 +172,13 @@ async def test_mixed_builtin_plus_artifact_pipeline_executes_with_background_que
     compiled = PipelineCompiler().compile(
         visual,
         compiled_by=str(user.id),
-        tenant_id=str(tenant.id),
+        organization_id=str(tenant.id),
         require_published_artifacts=True,
     )
     executable = ExecutablePipeline(
         id=uuid.uuid4(),
         visual_pipeline_id=visual.id,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         version=1,
         compiled_graph=compiled.executable_pipeline.model_dump(mode="json"),
         pipeline_type=PipelineType.RETRIEVAL,
@@ -187,7 +187,7 @@ async def test_mixed_builtin_plus_artifact_pipeline_executes_with_background_que
     )
     job = PipelineJob(
         id=uuid.uuid4(),
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         executable_pipeline_id=executable.id,
         status=PipelineJobStatus.QUEUED,
         input_params={"text": "hello mixed artifact"},

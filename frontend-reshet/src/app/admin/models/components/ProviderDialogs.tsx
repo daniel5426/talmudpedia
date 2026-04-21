@@ -169,7 +169,7 @@ function PricingFields({
 function PlatformManagedPricingNotice() {
   return (
     <div className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">
-      Platform-managed pricing. Tenant pricing is only editable for custom and local providers.
+      Platform-managed pricing. Organization pricing is only editable for custom and local providers.
     </div>
   )
 }

@@ -1299,11 +1299,11 @@ print(json.dumps({{
         *,
         session_id: str,
         runtime_generation: int,
-        tenant_id: str,
+        organization_id: str,
         app_id: str,
         user_id: str,
         revision_id: str,
-        app_slug: str,
+        app_public_id: str,
         agent_id: str,
         entry_file: str,
         files: Dict[str, str],
@@ -1312,14 +1312,14 @@ print(json.dumps({{
         draft_dev_token: str,
         preview_base_path: str,
     ) -> Dict[str, Any]:
-        _ = tenant_id, user_id, revision_id, idle_timeout_seconds, draft_dev_token
+        _ = organization_id, user_id, revision_id, idle_timeout_seconds, draft_dev_token
         sprite_name = self._sprite_name(prefix=self.config.sprite_name_prefix, app_id=app_id)
         workspace_fingerprint = build_live_preview_overlay_workspace_fingerprint(
             entry_file=entry_file,
             files=files,
             runtime_context=TemplateRuntimeContext(
                 app_id=str(app_id or ""),
-                app_slug=str(app_slug or ""),
+                app_public_id=str(app_public_id or ""),
                 agent_id=str(agent_id or ""),
             ),
         )
@@ -1397,7 +1397,7 @@ print(json.dumps({{
         *,
         sandbox_id: str,
         app_id: str,
-        app_slug: str,
+        app_public_id: str,
         agent_id: str,
         entry_file: str,
         files: Dict[str, str],
@@ -1413,7 +1413,7 @@ print(json.dumps({{
             files=files,
             runtime_context=TemplateRuntimeContext(
                 app_id=str(app_id or ""),
-                app_slug=str(app_slug or ""),
+                app_public_id=str(app_public_id or ""),
                 agent_id=str(agent_id or ""),
             ),
         )

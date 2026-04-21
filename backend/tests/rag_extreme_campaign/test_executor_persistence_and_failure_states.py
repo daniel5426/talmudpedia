@@ -5,7 +5,7 @@ import uuid
 import pytest
 from sqlalchemy import select
 
-from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Tenant, User
+from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Organization, User
 from app.db.postgres.models.rag import (
     ExecutablePipeline,
     PipelineJob,
@@ -19,18 +19,18 @@ from app.rag.pipeline.executor import PipelineExecutor
 
 
 async def _seed_tenant_context(db_session):
-    tenant = Tenant(id=uuid.uuid4(), name="RAG Executor Tenant", slug=f"rag-exec-{uuid.uuid4().hex[:8]}")
+    tenant = Organization(id=uuid.uuid4(), name="RAG Executor Organization", slug=f"rag-exec-{uuid.uuid4().hex[:8]}")
     user = User(id=uuid.uuid4(), email=f"rag-exec-{uuid.uuid4().hex[:6]}@example.com", role="admin")
     org_unit = OrgUnit(
         id=uuid.uuid4(),
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name="RAG Executor Org",
         slug=f"rag-exec-org-{uuid.uuid4().hex[:6]}",
         type=OrgUnitType.org,
     )
     membership = OrgMembership(
         id=uuid.uuid4(),
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         org_unit_id=org_unit.id,
         role=OrgRole.owner,
@@ -41,10 +41,10 @@ async def _seed_tenant_context(db_session):
     return tenant, user
 
 
-async def _create_executable(db_session, tenant_id, user_id, dag):
+async def _create_executable(db_session, organization_id, user_id, dag):
     visual = VisualPipeline(
         id=uuid.uuid4(),
-        tenant_id=tenant_id,
+        organization_id=organization_id,
         name="Executor Campaign Pipeline",
         description=None,
         nodes=[],
@@ -57,7 +57,7 @@ async def _create_executable(db_session, tenant_id, user_id, dag):
     executable = ExecutablePipeline(
         id=uuid.uuid4(),
         visual_pipeline_id=visual.id,
-        tenant_id=tenant_id,
+        organization_id=organization_id,
         version=1,
         compiled_graph={"dag": dag},
         pipeline_type=PipelineType.RETRIEVAL,
@@ -82,7 +82,7 @@ async def test_pipeline_executor_persists_step_inputs_outputs_and_terminal_paylo
     )
     job = PipelineJob(
         id=uuid.uuid4(),
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         executable_pipeline_id=executable.id,
         status=PipelineJobStatus.QUEUED,
         input_params=[{"id": "doc-1", "text": "hello persistence"}],
@@ -126,7 +126,7 @@ async def test_pipeline_executor_marks_job_failed_and_persists_step_error(db_ses
     )
     job = PipelineJob(
         id=uuid.uuid4(),
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         executable_pipeline_id=executable.id,
         status=PipelineJobStatus.QUEUED,
         input_params={"text": "hello failure"},

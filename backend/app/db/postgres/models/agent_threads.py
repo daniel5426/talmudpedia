@@ -34,10 +34,10 @@ class AgentThread(Base):
     __tablename__ = "agent_threads"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     app_account_id = Column(UUID(as_uuid=True), ForeignKey("published_app_accounts.id", ondelete="SET NULL"), nullable=True, index=True)
-    tenant_api_key_id = Column(UUID(as_uuid=True), ForeignKey("tenant_api_keys.id", ondelete="SET NULL"), nullable=True, index=True)
+    organization_api_key_id = Column(UUID(as_uuid=True), ForeignKey("organization_api_keys.id", ondelete="SET NULL"), nullable=True, index=True)
     agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id", ondelete="SET NULL"), nullable=True, index=True)
     published_app_id = Column(UUID(as_uuid=True), ForeignKey("published_apps.id", ondelete="SET NULL"), nullable=True, index=True)
     external_user_id = Column(String(255), nullable=True, index=True)
@@ -64,10 +64,10 @@ class AgentThread(Base):
             kwargs["lineage_depth"] = 0
         super().__init__(**kwargs)
 
-    tenant = relationship("Tenant")
+    organization = relationship("Organization")
     user = relationship("User")
     app_account = relationship("PublishedAppAccount")
-    tenant_api_key = relationship("TenantAPIKey")
+    organization_api_key = relationship("OrganizationAPIKey")
     agent = relationship("Agent")
     published_app = relationship("PublishedApp")
     parent_thread = relationship("AgentThread", remote_side=[id], foreign_keys=[parent_thread_id], backref="child_threads")
@@ -88,9 +88,9 @@ class AgentThread(Base):
     )
 
     __table_args__ = (
-        Index("ix_agent_threads_scope_activity", "tenant_id", "user_id", "last_activity_at"),
-        Index("ix_agent_threads_app_account_activity", "tenant_id", "app_account_id", "last_activity_at"),
-        Index("ix_agent_threads_embed_activity", "tenant_id", "agent_id", "external_user_id", "last_activity_at"),
+        Index("ix_agent_threads_scope_activity", "organization_id", "user_id", "last_activity_at"),
+        Index("ix_agent_threads_app_account_activity", "organization_id", "app_account_id", "last_activity_at"),
+        Index("ix_agent_threads_embed_activity", "organization_id", "agent_id", "external_user_id", "last_activity_at"),
     )
 
 

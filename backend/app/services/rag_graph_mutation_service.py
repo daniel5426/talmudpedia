@@ -17,9 +17,9 @@ logger = logging.getLogger(__name__)
 
 
 class RagGraphMutationService:
-    def __init__(self, db: AsyncSession, tenant_id: UUID):
+    def __init__(self, db: AsyncSession, organization_id: UUID):
         self.db = db
-        self.tenant_id = tenant_id
+        self.organization_id = organization_id
         self.registry = OperatorRegistry.get_instance()
 
     async def get_graph(self, pipeline_id: UUID) -> dict[str, Any]:
@@ -83,7 +83,7 @@ class RagGraphMutationService:
                 "RAG graph patch failed",
                 extra={
                     "pipeline_id": str(pipeline_id),
-                    "tenant_id": str(getattr(self, "tenant_id", "") or ""),
+                    "organization_id": str(getattr(self, "organization_id", "") or ""),
                     "phase": phase,
                     "operation_count": len(operations or []),
                 },
@@ -133,7 +133,7 @@ class RagGraphMutationService:
         result = await self.db.execute(
             select(VisualPipeline).where(
                 VisualPipeline.id == pipeline_id,
-                VisualPipeline.tenant_id == self.tenant_id,
+                VisualPipeline.organization_id == self.organization_id,
             )
         )
         pipeline = result.scalar_one_or_none()
@@ -147,7 +147,7 @@ class RagGraphMutationService:
         compiler = PipelineCompiler()
         visual_pipeline = CompilerVisualPipeline(
             id=pipeline.id,
-            tenant_id=pipeline.tenant_id,
+            organization_id=pipeline.organization_id,
             org_unit_id=pipeline.org_unit_id,
             name=pipeline.name,
             description=pipeline.description,
@@ -160,12 +160,12 @@ class RagGraphMutationService:
         return compiler.compile(
             visual_pipeline,
             compiled_by=None,
-            tenant_id=str(self.tenant_id),
+            organization_id=str(self.organization_id),
         )
 
     def _validate_node_config_path(self, node: dict[str, Any], segments: list[str | int]) -> None:
         operator_id = str(node.get("operator") or "").strip()
-        spec = self.registry.get(operator_id, tenant_id=str(self.tenant_id))
+        spec = self.registry.get(operator_id, organization_id=str(self.organization_id))
         if spec is None or not segments:
             return
         first_segment = segments[0]

@@ -16,7 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import ALGORITHM, SECRET_KEY, create_access_token, verify_password
-from app.db.postgres.models.identity import OrgMembership, Tenant, User
+from app.db.postgres.models.identity import OrgMembership, Organization, User
 from app.db.postgres.models.workspace import Project
 from app.db.postgres.session import get_db
 from app.services.auth_context_service import (
@@ -46,7 +46,6 @@ class SessionUserResponse(BaseModel):
 class OrganizationSummaryResponse(BaseModel):
     id: str
     name: str
-    slug: str
     status: str
 
 
@@ -54,7 +53,6 @@ class ProjectSummaryResponse(BaseModel):
     id: str
     organization_id: str
     name: str
-    slug: str
     description: str | None = None
     status: str
     is_default: bool = False
@@ -72,12 +70,12 @@ class SessionResponse(BaseModel):
 
 
 class SwitchOrganizationRequest(BaseModel):
-    organization_slug: str
+    organization_id: UUID
     return_to: str | None = None
 
 
 class SwitchProjectRequest(BaseModel):
-    project_slug: str
+    project_id: UUID
 
 
 class OnboardingOrganizationRequest(BaseModel):
@@ -217,7 +215,7 @@ async def _serialize_session_response(
     *,
     db: AsyncSession,
     user: User,
-    organization: Tenant | None,
+    organization: Organization | None,
     project: Project | None,
     effective_scopes: list[str],
     authenticated: bool = True,
@@ -407,7 +405,6 @@ async def get_session(
         user=bundle.user,
         organization_id=bundle.organization.id,
         project_id=bundle.project.id,
-        organization_permissions=bundle.permissions,
     )
     return await _serialize_session_response(
         db=db,
@@ -435,7 +432,6 @@ async def create_onboarding_organization(
             user=bundle.user,
             organization_id=bundle.organization.id,
             project_id=bundle.project.id,
-            organization_permissions=bundle.permissions,
         )
         return await _serialize_session_response(
             db=db,
@@ -448,15 +444,10 @@ async def create_onboarding_organization(
     name = str(payload.name or "").strip()
     if not name:
         raise HTTPException(status_code=400, detail="Organization name is required")
-    slug = _slugify_organization_name(name)
-    existing = (await db.execute(select(Tenant).where(Tenant.slug == slug))).scalar_one_or_none()
-    if existing is not None:
-        raise HTTPException(status_code=400, detail="Organization slug already exists")
 
     bundle = await service.create_organization_for_user(
         local_user=user,
         name=name,
-        slug=slug,
         request=request,
         response=response,
         return_to=payload.return_to,
@@ -468,7 +459,6 @@ async def create_onboarding_organization(
         user=bundle.user,
         organization_id=bundle.organization.id,
         project_id=bundle.project.id,
-        organization_permissions=bundle.permissions,
     )
     return await _serialize_session_response(
         db=db,
@@ -511,10 +501,10 @@ async def switch_active_organization(
 
     organization = (
         await db.execute(
-            select(Tenant)
-            .join(OrgMembership, OrgMembership.tenant_id == Tenant.id)
+            select(Organization)
+            .join(OrgMembership, OrgMembership.organization_id == Organization.id)
             .where(
-                Tenant.slug == payload.organization_slug,
+                Organization.id == payload.organization_id,
                 OrgMembership.user_id == user.id,
             )
             .limit(1)
@@ -542,7 +532,6 @@ async def switch_active_organization(
         user=bundle.user,
         organization_id=bundle.organization.id,
         project_id=bundle.project.id,
-        organization_permissions=bundle.permissions,
     )
     return await _serialize_session_response(
         db=db,
@@ -569,7 +558,7 @@ async def switch_active_project(
         await db.execute(
             select(Project).where(
                 Project.organization_id == bundle.organization.id,
-                Project.slug == payload.project_slug,
+                Project.id == payload.project_id,
             )
         )
     ).scalar_one_or_none()
@@ -582,7 +571,6 @@ async def switch_active_project(
         user=bundle.user,
         organization_id=bundle.organization.id,
         project_id=project.id,
-        organization_permissions=bundle.permissions,
     )
     return await _serialize_session_response(
         db=db,

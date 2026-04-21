@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react"
 import { useRouter, useParams, useSearchParams } from "next/navigation"
-import { useTenant } from "@/contexts/TenantContext"
+import { useOrganization } from "@/contexts/OrganizationContext"
 import { ragAdminService, VisualPipeline, OperatorCatalog, OperatorSpec, CompileResult, PipelineStepExecution, PipelineToolBinding } from "@/services"
 import { CustomBreadcrumb } from "@/components/ui/custom-breadcrumb"
 import { AdminPageHeader } from "@/components/admin/AdminPageHeader"
@@ -52,7 +52,7 @@ interface PipelineNodeData {
 }
 
 export default function PipelineEditorPage() {
-    const { currentTenant } = useTenant()
+    const { currentOrganization } = useOrganization()
     const router = useRouter()
     const params = useParams()
     const searchParams = useSearchParams()
@@ -105,7 +105,7 @@ export default function PipelineEditorPage() {
     const loadToolBinding = useCallback(async (targetPipelineId: string) => {
         setToolBindingLoading(true)
         try {
-            const binding = await ragAdminService.getPipelineToolBinding(targetPipelineId, currentTenant?.slug)
+            const binding = await ragAdminService.getPipelineToolBinding(targetPipelineId, currentOrganization?.id)
             setToolBinding(binding)
             setToolName(binding.tool_name || "")
             setToolDescription(binding.description || "")
@@ -116,31 +116,31 @@ export default function PipelineEditorPage() {
         } finally {
             setToolBindingLoading(false)
         }
-    }, [currentTenant?.slug])
+    }, [currentOrganization?.id])
 
     useEffect(() => {
-        if (!currentTenant) return
+        if (!currentOrganization) return
 
         const fetchData = async () => {
             setLoading(true)
             try {
                 // Always fetch catalog and specs
                 const [catalogRes, specsRes] = await Promise.all([
-                    ragAdminService.getOperatorCatalog(currentTenant.slug),
-                    ragAdminService.listOperatorSpecs(currentTenant.slug),
+                    ragAdminService.getOperatorCatalog(currentOrganization.id),
+                    ragAdminService.listOperatorSpecs(currentOrganization.id),
                 ])
                 setCatalog(catalogRes)
                 setOperatorSpecs(specsRes)
 
                 // If editing existing pipeline, fetch it
                 if (!isNew) {
-                    const pipelinesRes = await ragAdminService.listVisualPipelines(currentTenant.slug, { view: "full", limit: 100 })
+                    const pipelinesRes = await ragAdminService.listVisualPipelines(currentOrganization.id, { view: "full", limit: 100 })
                     let foundPipeline = pipelinesRes.items.find(p => p.id === pipelineId)
 
                     // If not found, it might be an executable_pipeline_id
                     if (!foundPipeline) {
                         try {
-                            const execPipeline = await ragAdminService.getExecutablePipeline(pipelineId, currentTenant.slug)
+                            const execPipeline = await ragAdminService.getExecutablePipeline(pipelineId, currentOrganization.id)
                             if (execPipeline?.visual_pipeline_id) {
                                 foundPipeline = pipelinesRes.items.find(p => p.id === execPipeline.visual_pipeline_id)
                             }
@@ -201,7 +201,7 @@ export default function PipelineEditorPage() {
         }
 
         fetchData()
-    }, [currentTenant, currentTenant?.slug, loadToolBinding, pipelineId, isNew, router])
+    }, [currentOrganization, currentOrganization?.id, loadToolBinding, pipelineId, isNew, router])
 
     // Polling for execution steps
     useEffect(() => {
@@ -211,8 +211,8 @@ export default function PipelineEditorPage() {
         const poll = async () => {
             try {
                 const [stepsRes, jobRes] = await Promise.all([
-                    ragAdminService.getJobSteps(runningJobId, currentTenant?.slug),
-                    ragAdminService.getPipelineJob(runningJobId, currentTenant?.slug)
+                    ragAdminService.getJobSteps(runningJobId, currentOrganization?.id),
+                    ragAdminService.getPipelineJob(runningJobId, currentOrganization?.id)
                 ])
 
                 if (isMounted) {
@@ -238,7 +238,7 @@ export default function PipelineEditorPage() {
             isMounted = false
             clearInterval(interval)
         }
-    }, [runningJobId, currentTenant?.slug])
+    }, [runningJobId, currentOrganization?.id])
 
     const handleRunPipeline = async (inputParams: Record<string, Record<string, unknown>>) => {
         if (!compileResult?.executable_pipeline_id) return
@@ -246,7 +246,7 @@ export default function PipelineEditorPage() {
             const res = await ragAdminService.createPipelineJob({
                 executable_pipeline_id: compileResult.executable_pipeline_id,
                 input_params: inputParams
-            }, currentTenant?.slug)
+            }, currentOrganization?.id)
             setActionError(null)
 
             // Update URL with jobId for persistence
@@ -331,7 +331,7 @@ export default function PipelineEditorPage() {
                         nodes: nodesPayload,
                         edges: edgesPayload,
                     },
-                    currentTenant?.slug
+                    currentOrganization?.id
                 )
                 // Navigate to edit mode of the created pipeline
                 router.push(`/admin/pipelines/${created.id}`)
@@ -345,10 +345,10 @@ export default function PipelineEditorPage() {
                         nodes: nodesPayload,
                         edges: edgesPayload,
                     },
-                    currentTenant?.slug
+                    currentOrganization?.id
                 )
                 // Refresh pipeline data
-                const pipelinesRes = await ragAdminService.listVisualPipelines(currentTenant?.slug, { view: "full", limit: 100 })
+                const pipelinesRes = await ragAdminService.listVisualPipelines(currentOrganization?.id, { view: "full", limit: 100 })
                 const updatedPipeline = pipelinesRes.items.find(p => p.id === pipeline.id)
                 if (updatedPipeline) {
                     setPipeline(updatedPipeline)
@@ -373,7 +373,7 @@ export default function PipelineEditorPage() {
         try {
             const result = await ragAdminService.compilePipeline(
                 pipeline.id,
-                currentTenant?.slug
+                currentOrganization?.id
             )
             setCompileResult(result)
             await loadToolBinding(pipeline.id)
@@ -409,7 +409,7 @@ export default function PipelineEditorPage() {
                     description: toolDescription,
                     input_schema: parsedInputSchema,
                 },
-                currentTenant?.slug
+                currentOrganization?.id
             )
             setToolBinding(binding)
             setToolName(binding.tool_name || "")
@@ -421,7 +421,7 @@ export default function PipelineEditorPage() {
         } finally {
             setToolBindingSaving(false)
         }
-    }, [currentTenant?.slug, pipeline, toolDescription, toolInputSchemaText, toolName])
+    }, [currentOrganization?.id, pipeline, toolDescription, toolInputSchemaText, toolName])
 
     const ensureExecutableForRun = useCallback(async (): Promise<CompileResult | null> => {
         if (compileResult?.executable_pipeline_id) {
@@ -431,7 +431,7 @@ export default function PipelineEditorPage() {
             return null
         }
         try {
-            const versionsRes = await ragAdminService.listPipelineVersions(pipeline.id, currentTenant?.slug)
+            const versionsRes = await ragAdminService.listPipelineVersions(pipeline.id, currentOrganization?.id)
             const versions = versionsRes.versions || []
             const latest = versions.find((v) => v.is_valid) || versions[0]
             if (!latest) {
@@ -457,7 +457,7 @@ export default function PipelineEditorPage() {
             setActionError(formatHttpErrorMessage(error, "Failed to resolve the latest executable pipeline."))
             return null
         }
-    }, [compileResult, pipeline, currentTenant?.slug])
+    }, [compileResult, pipeline, currentOrganization?.id])
 
     const handleOpenRunDialog = useCallback(async () => {
         const resolved = await ensureExecutableForRun()

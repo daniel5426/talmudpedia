@@ -27,6 +27,7 @@ sqlite3.register_adapter(UUID, lambda value: str(value))
 os.environ.setdefault("APPS_BUILDER_BUILD_AUTOMATION_ENABLED", "0")
 os.environ.setdefault("APPS_PUBLISH_JOB_EAGER", "1")
 os.environ.setdefault("APPS_PUBLISH_MOCK_MODE", "1")
+os.environ.setdefault("APPS_SANDBOX_BACKEND", "local")
 
 from app.db.postgres.base import Base
 from app.db.postgres.session import get_db
@@ -164,9 +165,9 @@ async def client(db_session):
 
 
 async def _resolve_tenant_id(engine) -> UUID:
-    tenant_id = os.getenv("TEST_TENANT_ID")
-    if tenant_id:
-        return UUID(tenant_id)
+    organization_id = os.getenv("TEST_TENANT_ID")
+    if organization_id:
+        return UUID(organization_id)
 
     email = os.getenv("TEST_TENANT_EMAIL")
     if not email:
@@ -191,7 +192,7 @@ async def _resolve_tenant_id(engine) -> UUID:
         if not membership:
             raise RuntimeError(f"No org membership found for user {email}")
 
-        return membership.tenant_id
+        return membership.organization_id
 
 
 @pytest_asyncio.fixture(scope="session")

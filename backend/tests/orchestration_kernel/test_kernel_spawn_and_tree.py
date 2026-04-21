@@ -4,26 +4,26 @@ import pytest
 
 from app.db.postgres.models.agent_threads import AgentThread, AgentThreadSurface
 from app.db.postgres.models.agents import Agent, AgentRun, AgentStatus, RunStatus
-from app.db.postgres.models.identity import Tenant, User
+from app.db.postgres.models.identity import Organization, User
 from app.db.postgres.models.orchestration import OrchestratorPolicy, OrchestratorTargetAllowlist
 from app.services.orchestration_kernel_service import OrchestrationKernelService
 
 
 async def _setup_orchestration_fixture(db_session):
-    tenant = Tenant(name="Orch Tenant", slug=f"orch-tenant-{uuid4().hex[:8]}")
+    tenant = Organization(name="Orch Organization", slug=f"orch-tenant-{uuid4().hex[:8]}")
     user = User(email=f"orch-admin-{uuid4().hex[:8]}@example.com", role="admin")
     db_session.add_all([tenant, user])
     await db_session.flush()
 
     orchestrator = Agent(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name="Orchestrator",
         slug=f"orchestrator-{uuid4().hex[:8]}",
         status=AgentStatus.published,
         graph_definition={"nodes": [], "edges": []},
     )
     target = Agent(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name="Target",
         slug=f"target-{uuid4().hex[:8]}",
         status=AgentStatus.published,
@@ -33,7 +33,7 @@ async def _setup_orchestration_fixture(db_session):
     await db_session.flush()
 
     root_thread = AgentThread(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         agent_id=orchestrator.id,
         surface=AgentThreadSurface.internal,
@@ -43,7 +43,7 @@ async def _setup_orchestration_fixture(db_session):
     await db_session.flush()
 
     root_run = AgentRun(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         agent_id=orchestrator.id,
         user_id=user.id,
         initiator_user_id=user.id,
@@ -57,7 +57,7 @@ async def _setup_orchestration_fixture(db_session):
     root_run.root_run_id = root_run.id
 
     policy = OrchestratorPolicy(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         orchestrator_agent_id=orchestrator.id,
         allowed_scope_subset=["agents.execute"],
         max_depth=3,
@@ -67,7 +67,7 @@ async def _setup_orchestration_fixture(db_session):
         enforce_published_only=True,
     )
     allow = OrchestratorTargetAllowlist(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         orchestrator_agent_id=orchestrator.id,
         target_agent_id=target.id,
     )
@@ -130,7 +130,7 @@ async def test_spawn_run_denies_non_allowlisted_target(db_session):
     kernel = OrchestrationKernelService(db_session)
 
     denied_target = Agent(
-        tenant_id=fx["tenant"].id,
+        organization_id=fx["tenant"].id,
         name="Denied",
         slug=f"denied-{uuid4().hex[:8]}",
         status=AgentStatus.published,

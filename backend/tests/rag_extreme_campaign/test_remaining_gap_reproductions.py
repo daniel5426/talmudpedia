@@ -48,7 +48,7 @@ def _compile_retrieval_shell(graph: dict):
     return PipelineCompiler().compile(
         VisualPipeline(
             id=uuid.uuid4(),
-            tenant_id=uuid.uuid4(),
+            organization_id=uuid.uuid4(),
             name="Seeded Retrieval Shell",
             description=None,
             nodes=graph["nodes"],
@@ -83,7 +83,7 @@ async def test_pipeline_input_validator_accepts_runtime_top_k_for_query_input():
     validator = PipelineInputValidator(
         _retrieval_dag(),
         OperatorRegistry.get_instance(),
-        tenant_id=None,
+        organization_id=None,
         storage=PipelineInputStorage(),
     )
 

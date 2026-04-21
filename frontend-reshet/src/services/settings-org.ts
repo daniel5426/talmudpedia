@@ -3,7 +3,6 @@ import { httpClient } from "./http"
 export interface SettingsOrganization {
   id: string
   name: string
-  slug: string
   status: string
   default_chat_model_id: string | null
   default_embedding_model_id: string | null

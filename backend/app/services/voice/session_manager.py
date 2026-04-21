@@ -19,10 +19,10 @@ from app.db.postgres.engine import sessionmaker as async_sessionmaker
 class VoiceSessionManager:
     """Manages voice session state and persistence to PostgreSQL."""
     
-    def __init__(self, db: AsyncSession, user_id: UUID, tenant_id: UUID, chat_id: Optional[UUID] = None):
+    def __init__(self, db: AsyncSession, user_id: UUID, organization_id: UUID, chat_id: Optional[UUID] = None):
         self.db = db
         self.user_id = user_id
-        self.tenant_id = tenant_id
+        self.organization_id = organization_id
         self.chat_id = chat_id
         self.buffered_messages: List[Dict[str, Any]] = []
 
@@ -35,7 +35,7 @@ class VoiceSessionManager:
             query = select(Chat).where(
                 Chat.id == self.chat_id,
                 Chat.user_id == self.user_id,
-                Chat.tenant_id == self.tenant_id
+                Chat.organization_id == self.organization_id
             )
             result = await self.db.execute(query)
             chat = result.scalar_one_or_none()
@@ -70,7 +70,7 @@ class VoiceSessionManager:
             query = select(Chat).where(
                 Chat.id == self.chat_id,
                 Chat.user_id == self.user_id,
-                Chat.tenant_id == self.tenant_id
+                Chat.organization_id == self.organization_id
             )
             result = await self.db.execute(query)
             existing = result.scalar_one_or_none()
@@ -79,7 +79,7 @@ class VoiceSessionManager:
 
         # Create new chat
         chat = Chat(
-            tenant_id=self.tenant_id,
+            organization_id=self.organization_id,
             user_id=self.user_id,
             title="Voice Conversation",
         )
@@ -179,10 +179,10 @@ class VoiceSessionManager:
 # Factory function for creating session manager with its own db session
 async def create_voice_session_manager(
     user_id: UUID,
-    tenant_id: UUID,
+    organization_id: UUID,
     chat_id: Optional[UUID] = None
 ) -> VoiceSessionManager:
     """Create a VoiceSessionManager with a new database session."""
     db = async_sessionmaker()
     session = await db.__aenter__()
-    return VoiceSessionManager(session, user_id, tenant_id, chat_id)
+    return VoiceSessionManager(session, user_id, organization_id, chat_id)

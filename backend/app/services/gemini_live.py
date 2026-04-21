@@ -91,12 +91,12 @@ GEMINI_TOOLS = [
 class GeminiLiveSession:
     """Manages a live voice session with Gemini, using PostgreSQL for persistence."""
     
-    def __init__(self, chat_id: Optional[UUID] = None, tenant_id: Optional[UUID] = None, user_id: Optional[UUID] = None):
+    def __init__(self, chat_id: Optional[UUID] = None, organization_id: Optional[UUID] = None, user_id: Optional[UUID] = None):
         self.ws = None
         self.retriever = VectorRetriever()
         self.is_connected = False
         self.chat_id = chat_id
-        self.tenant_id = tenant_id
+        self.organization_id = organization_id
         self.user_id = user_id
         self.frontend_ws = None
         self.current_ai_text = ""

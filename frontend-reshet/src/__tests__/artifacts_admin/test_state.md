@@ -1,4 +1,4 @@
-Last Updated: 2026-04-16
+Last Updated: 2026-04-21
 
 # Test State
 
@@ -86,6 +86,9 @@ Artifact admin editor payload, dependency authoring, and form-state handling.
 - Command: `pnpm --dir frontend-reshet test -- --runInBand src/__tests__/files_domain/file_space_workspace_editor.test.tsx src/__tests__/artifacts_admin/artifact_workspace_editor.test.tsx`
 - Date: 2026-04-17 15:20:33 EEST
 - Result: Pass (2 suites, 6 tests)
+- Command: `cd frontend-reshet && npm exec pnpm -- test -- --runTestsByPath src/__tests__/artifacts_admin/artifact_routes.test.ts`
+- Date: 2026-04-21 Asia/Hebron
+- Result: pass (`1 suite`)
 
 ## Known Gaps
 
@@ -95,3 +98,7 @@ Artifact admin editor payload, dependency authoring, and form-state handling.
 - no browser-level coverage with the real Monaco editor; the artifact test panel regression uses a focused editor mock
 - no browser-level coverage yet for the config-tab clipboard shortcuts
 - no browser-level coverage yet for the artifact tree action menu
+
+## 2026-04-21 tenant-to-organization validation
+- Command: `cd frontend-reshet && npm exec pnpm -- test -- --runTestsByPath src/__tests__/artifacts_admin/artifact_test_panel.test.tsx src/__tests__/pipeline_builder/pipeline_run_stale_executable.test.tsx src/__tests__/agent_builder_v3/config_panel_value_ref_contracts.test.tsx src/__tests__/agent_builder_v3/config_panel_artifact_contracts.test.tsx src/__tests__/pipeline_tool_bindings/pipeline_tool_settings_page.test.tsx src/__tests__/auth_session_bootstrap/auth_service.test.ts src/__tests__/settings_api_keys/settings_api_keys_service.test.ts`
+- Result: PASS (`7 suites passed, 14 tests passed`)

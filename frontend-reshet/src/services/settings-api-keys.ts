@@ -21,35 +21,35 @@ export interface SettingsApiKeyCreateResponse {
 }
 
 class SettingsApiKeysService {
-  async listApiKeys(input: { owner_scope: "organization" | "project"; project_slug?: string }): Promise<SettingsApiKey[]> {
+  async listApiKeys(input: { owner_scope: "organization" | "project"; project_id?: string }): Promise<SettingsApiKey[]> {
     const params = new URLSearchParams({ owner_scope: input.owner_scope })
-    if (input.project_slug) params.set("project_slug", input.project_slug)
+    if (input.project_id) params.set("project_id", input.project_id)
     return httpClient.get(`/api/settings/api-keys?${params.toString()}`)
   }
 
   async createApiKey(input: {
     owner_scope: "organization" | "project"
-    project_slug?: string
+    project_id?: string
     name: string
     scopes?: string[]
   }): Promise<SettingsApiKeyCreateResponse> {
     return httpClient.post("/api/settings/api-keys", {
       owner_scope: input.owner_scope,
-      project_slug: input.project_slug,
+      project_id: input.project_id,
       name: input.name,
       scopes: input.scopes ?? ["agents.embed"],
     })
   }
 
-  async revokeApiKey(keyId: string, input: { owner_scope: "organization" | "project"; project_slug?: string }): Promise<{ api_key: SettingsApiKey }> {
+  async revokeApiKey(keyId: string, input: { owner_scope: "organization" | "project"; project_id?: string }): Promise<{ api_key: SettingsApiKey }> {
     const params = new URLSearchParams({ owner_scope: input.owner_scope })
-    if (input.project_slug) params.set("project_slug", input.project_slug)
+    if (input.project_id) params.set("project_id", input.project_id)
     return httpClient.post(`/api/settings/api-keys/${keyId}/revoke?${params.toString()}`)
   }
 
-  async deleteApiKey(keyId: string, input: { owner_scope: "organization" | "project"; project_slug?: string }): Promise<void> {
+  async deleteApiKey(keyId: string, input: { owner_scope: "organization" | "project"; project_id?: string }): Promise<void> {
     const params = new URLSearchParams({ owner_scope: input.owner_scope })
-    if (input.project_slug) params.set("project_slug", input.project_slug)
+    if (input.project_id) params.set("project_id", input.project_id)
     return httpClient.delete(`/api/settings/api-keys/${keyId}?${params.toString()}`)
   }
 }

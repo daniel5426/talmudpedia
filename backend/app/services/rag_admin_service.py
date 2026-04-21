@@ -54,15 +54,15 @@ class RAGAdminService:
         """Delete an index from the vector store."""
         return await self.vector_store.delete_index(name)
 
-    async def get_stats(self, tenant_id: Optional[uuid.UUID] = None) -> RAGStats:
+    async def get_stats(self, organization_id: Optional[uuid.UUID] = None) -> RAGStats:
         """Get aggregated RAG statistics."""
         # DB Stats
         pipe_stmt = select(func.count(RAGPipeline.id))
         job_stmt = select(func.count(PipelineJob.id))
         
-        if tenant_id:
-            pipe_stmt = pipe_stmt.where(RAGPipeline.tenant_id == tenant_id)
-            job_stmt = job_stmt.where(PipelineJob.tenant_id == tenant_id)
+        if organization_id:
+            pipe_stmt = pipe_stmt.where(RAGPipeline.organization_id == organization_id)
+            job_stmt = job_stmt.where(PipelineJob.organization_id == organization_id)
             
         total_pipelines = (await self.db.execute(pipe_stmt)).scalar() or 0
         total_jobs = (await self.db.execute(job_stmt)).scalar() or 0

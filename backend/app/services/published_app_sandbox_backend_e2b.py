@@ -230,7 +230,7 @@ class E2BSandboxBackend(E2BSandboxRuntimeMixin, E2BSandboxWorkspaceMixin, Publis
         *,
         session_id: str,
         runtime_generation: int,
-        tenant_id: str,
+        organization_id: str,
         app_id: str,
         user_id: str,
         revision_id: str,
@@ -245,7 +245,7 @@ class E2BSandboxBackend(E2BSandboxRuntimeMixin, E2BSandboxWorkspaceMixin, Publis
         workspace_root = self._workspace_root(self.config.e2b_workspace_path)
         metadata = {
             "runtime_profile": "app_builder_preview",
-            "tenant_id": tenant_id,
+            "organization_id": organization_id,
             "app_id": app_id,
             "user_id": user_id,
             "revision_id": revision_id,

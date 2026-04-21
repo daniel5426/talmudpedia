@@ -18,7 +18,7 @@ from app.agent.execution.types import ExecutionMode
 from app.db.postgres.engine import sessionmaker
 from app.db.postgres.models.agent_threads import AgentThread, AgentThreadSurface, AgentThreadStatus
 from app.db.postgres.models.agents import Agent, AgentRun, AgentStatus, RunStatus
-from app.db.postgres.models.identity import Tenant, User
+from app.db.postgres.models.identity import Organization, User
 from app.db.postgres.models.registry import (
     ToolDefinitionScope,
     ToolImplementationType,
@@ -50,7 +50,7 @@ class FakeToolChildRunEmitter:
 
 async def _seed_tenant_and_user(db_session):
     suffix = uuid4().hex[:8]
-    tenant = Tenant(name=f"Tenant {suffix}", slug=f"tenant-{suffix}")
+    tenant = Organization(name=f"Organization {suffix}", slug=f"tenant-{suffix}")
     user = User(email=f"owner-{suffix}@example.com", role="user")
     db_session.add_all([tenant, user])
     await db_session.commit()
@@ -62,14 +62,14 @@ async def _seed_tenant_and_user(db_session):
 async def _create_agent(
     db_session,
     *,
-    tenant_id: UUID,
+    organization_id: UUID,
     user_id: UUID,
     slug: str,
     status: AgentStatus,
     graph_definition: dict | None = None,
 ) -> Agent:
     agent = Agent(
-        tenant_id=tenant_id,
+        organization_id=organization_id,
         name=f"Agent {slug}",
         slug=slug,
         description="agent_call target",
@@ -89,14 +89,11 @@ async def _create_agent(
 async def _create_agent_call_tool(
     db_session,
     *,
-    tenant_id: UUID,
-    target_agent_slug: str | None = None,
+    organization_id: UUID,
     target_agent_id: UUID | None = None,
     timeout_s: int | None = None,
 ) -> ToolRegistry:
     implementation: dict[str, object] = {"type": "agent_call"}
-    if target_agent_slug:
-        implementation["target_agent_slug"] = target_agent_slug
     if target_agent_id:
         implementation["target_agent_id"] = str(target_agent_id)
 
@@ -105,7 +102,7 @@ async def _create_agent_call_tool(
         config_schema["execution"] = {"timeout_s": timeout_s}
 
     tool = ToolRegistry(
-        tenant_id=tenant_id,
+        organization_id=organization_id,
         name=f"Agent Call {uuid4().hex[:6]}",
         slug=f"agent-call-{uuid4().hex[:8]}",
         description="call another agent",
@@ -129,12 +126,12 @@ async def test_agent_call_tool_success_uses_fresh_child_session_and_returns_comp
     tenant, user = await _seed_tenant_and_user(db_session)
     target = await _create_agent(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         slug=f"child-{uuid4().hex[:8]}",
         status=AgentStatus.published,
     )
-    tool = await _create_agent_call_tool(db_session, tenant_id=tenant.id, target_agent_slug=target.slug)
+    tool = await _create_agent_call_tool(db_session, organization_id=tenant.id, target_agent_id=target.id)
 
     original_start_run = AgentExecutorService.start_run
     start_session_ids: set[int] = set()
@@ -162,7 +159,7 @@ async def test_agent_call_tool_success_uses_fresh_child_session_and_returns_comp
     monkeypatch.setattr(AgentExecutorService, "start_run", wrapped_start_run)
     monkeypatch.setattr(AgentExecutorService, "run_and_stream", fake_run_and_stream)
 
-    executor = ToolNodeExecutor(tenant_id=tenant.id, db=db_session)
+    executor = ToolNodeExecutor(organization_id=tenant.id, db=db_session)
     result = await executor.execute(
         state={"context": {"input": "hello child"}},
         config={"tool_id": str(tool.id)},
@@ -172,7 +169,7 @@ async def test_agent_call_tool_success_uses_fresh_child_session_and_returns_comp
     payload = result["context"]
     assert payload["mode"] == "sync"
     assert payload["status"] == "completed"
-    assert payload["target_agent_slug"] == target.slug
+    assert payload["target_agent_id"] == str(target.id)
     assert payload["output"] == {"answer": "child-ok"}
     assert payload["context"] == {"source": "child"}
     assert UUID(payload["run_id"])
@@ -186,12 +183,12 @@ async def test_agent_call_tool_emits_hidden_child_run_started_with_target_agent_
     tenant, user = await _seed_tenant_and_user(db_session)
     target = await _create_agent(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         slug=f"named-child-{uuid4().hex[:8]}",
         status=AgentStatus.published,
     )
-    tool = await _create_agent_call_tool(db_session, tenant_id=tenant.id, target_agent_slug=target.slug)
+    tool = await _create_agent_call_tool(db_session, organization_id=tenant.id, target_agent_id=target.id)
 
     emitter = FakeToolChildRunEmitter()
 
@@ -211,7 +208,7 @@ async def test_agent_call_tool_emits_hidden_child_run_started_with_target_agent_
 
     token = active_emitter.set(emitter)
     try:
-        executor = ToolNodeExecutor(tenant_id=tenant.id, db=db_session)
+        executor = ToolNodeExecutor(organization_id=tenant.id, db=db_session)
         await executor.execute(
             state={"context": {"input": "hello child"}},
             config={"tool_id": str(tool.id)},
@@ -236,14 +233,14 @@ async def test_agent_call_tool_rejects_unpublished_target(db_session):
     tenant, user = await _seed_tenant_and_user(db_session)
     target = await _create_agent(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         slug=f"draft-child-{uuid4().hex[:8]}",
         status=AgentStatus.draft,
     )
-    tool = await _create_agent_call_tool(db_session, tenant_id=tenant.id, target_agent_slug=target.slug)
+    tool = await _create_agent_call_tool(db_session, organization_id=tenant.id, target_agent_id=target.id)
 
-    executor = ToolNodeExecutor(tenant_id=tenant.id, db=db_session)
+    executor = ToolNodeExecutor(organization_id=tenant.id, db=db_session)
     with pytest.raises(PermissionError, match="published"):
         await executor.execute(
             state={"context": {"input": "hello"}},
@@ -257,15 +254,15 @@ async def test_agent_call_tool_timeout_returns_failed_payload(db_session, monkey
     tenant, user = await _seed_tenant_and_user(db_session)
     target = await _create_agent(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         slug=f"slow-child-{uuid4().hex[:8]}",
         status=AgentStatus.published,
     )
     tool = await _create_agent_call_tool(
         db_session,
-        tenant_id=tenant.id,
-        target_agent_slug=target.slug,
+        organization_id=tenant.id,
+        target_agent_id=target.id,
         timeout_s=1,
     )
 
@@ -276,7 +273,7 @@ async def test_agent_call_tool_timeout_returns_failed_payload(db_session, monkey
 
     monkeypatch.setattr(AgentExecutorService, "run_and_stream", slow_run_and_stream)
 
-    executor = ToolNodeExecutor(tenant_id=tenant.id, db=db_session)
+    executor = ToolNodeExecutor(organization_id=tenant.id, db=db_session)
     result = await executor.execute(
         state={"context": {"input": "slow call"}},
         config={"tool_id": str(tool.id)},
@@ -297,15 +294,15 @@ async def test_agent_call_tool_rejects_cancelled_parent_run(db_session):
     tenant, user = await _seed_tenant_and_user(db_session)
     target = await _create_agent(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         slug=f"cancelled-parent-child-{uuid4().hex[:8]}",
         status=AgentStatus.published,
     )
-    tool = await _create_agent_call_tool(db_session, tenant_id=tenant.id, target_agent_slug=target.slug)
+    tool = await _create_agent_call_tool(db_session, organization_id=tenant.id, target_agent_id=target.id)
 
     parent_run = AgentRun(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         agent_id=target.id,
         user_id=user.id,
         initiator_user_id=user.id,
@@ -317,7 +314,7 @@ async def test_agent_call_tool_rejects_cancelled_parent_run(db_session):
     await db_session.commit()
     await db_session.refresh(parent_run)
 
-    executor = ToolNodeExecutor(tenant_id=tenant.id, db=db_session)
+    executor = ToolNodeExecutor(organization_id=tenant.id, db=db_session)
     with pytest.raises(RuntimeError, match="cancelled"):
         await executor.execute(
             state={"context": {"input": "should not execute"}},
@@ -331,14 +328,14 @@ async def test_start_run_rechecks_parent_status_from_db_when_session_is_stale(db
     tenant, user = await _seed_tenant_and_user(db_session)
     target = await _create_agent(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         slug=f"stale-parent-child-{uuid4().hex[:8]}",
         status=AgentStatus.published,
     )
 
     parent_run = AgentRun(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         agent_id=target.id,
         user_id=user.id,
         initiator_user_id=user.id,
@@ -376,15 +373,15 @@ async def test_reasoning_node_stops_after_tool_if_run_was_cancelled(db_session, 
     tenant, user = await _seed_tenant_and_user(db_session)
     target = await _create_agent(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         slug=f"reasoning-cancel-child-{uuid4().hex[:8]}",
         status=AgentStatus.published,
     )
-    tool = await _create_agent_call_tool(db_session, tenant_id=tenant.id, target_agent_slug=target.slug)
+    tool = await _create_agent_call_tool(db_session, organization_id=tenant.id, target_agent_id=target.id)
 
     current_run = AgentRun(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         agent_id=target.id,
         user_id=user.id,
         initiator_user_id=user.id,
@@ -405,7 +402,7 @@ async def test_reasoning_node_stops_after_tool_if_run_was_cancelled(db_session, 
             if self.calls == 1:
                 yield AIMessageChunk(
                     content="",
-                    tool_call_chunks=[{"id": "call-1", "name": tool.slug, "args": '{"input":"ask child"}'}],
+                    tool_call_chunks=[{"id": "call-1", "name": tool.name, "args": '{"input":"ask child"}'}],
                 )
                 return
             yield AIMessageChunk(content="parent final output should not happen")
@@ -430,7 +427,7 @@ async def test_reasoning_node_stops_after_tool_if_run_was_cancelled(db_session, 
         return {
             "context": {
                 "mode": "sync",
-                "target_agent_slug": target.slug,
+                "target_agent_id": str(target.id),
                 "status": "completed",
                 "output": "child final output",
             }
@@ -439,7 +436,7 @@ async def test_reasoning_node_stops_after_tool_if_run_was_cancelled(db_session, 
     monkeypatch.setattr(ModelResolver, "resolve_for_execution", fake_resolve_for_execution)
     monkeypatch.setattr(ToolNodeExecutor, "execute", fake_tool_execute)
 
-    executor = ReasoningNodeExecutor(tenant_id=tenant.id, db=db_session)
+    executor = ReasoningNodeExecutor(organization_id=tenant.id, db=db_session)
     state_update = await executor.execute(
         state={"messages": [{"role": "user", "content": "call child"}], "state": {}},
         config={
@@ -465,15 +462,15 @@ async def test_agent_call_tool_rechecks_current_run_before_spawning_child(db_ses
     tenant, user = await _seed_tenant_and_user(db_session)
     target = await _create_agent(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         slug=f"tool-gate-child-{uuid4().hex[:8]}",
         status=AgentStatus.published,
     )
-    tool = await _create_agent_call_tool(db_session, tenant_id=tenant.id, target_agent_slug=target.slug)
+    tool = await _create_agent_call_tool(db_session, organization_id=tenant.id, target_agent_id=target.id)
 
     current_run = AgentRun(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         agent_id=target.id,
         user_id=user.id,
         initiator_user_id=user.id,
@@ -505,7 +502,7 @@ async def test_agent_call_tool_rechecks_current_run_before_spawning_child(db_ses
     monkeypatch.setattr(ToolNodeExecutor, "_resolve_agent_target", wrapped_resolve_target)
     monkeypatch.setattr(AgentExecutorService, "execute_sync_with_new_session", fail_if_called)
 
-    executor = ToolNodeExecutor(tenant_id=tenant.id, db=db_session)
+    executor = ToolNodeExecutor(organization_id=tenant.id, db=db_session)
     with pytest.raises(RuntimeError, match="cancelled"):
         await executor.execute(
             state={"context": {"input": "call child"}},
@@ -521,15 +518,15 @@ async def test_agent_call_tool_blocks_descendant_spawn_when_root_cancel_requeste
     tenant, user = await _seed_tenant_and_user(db_session)
     target = await _create_agent(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         slug=f"root-cancel-child-{uuid4().hex[:8]}",
         status=AgentStatus.published,
     )
-    tool = await _create_agent_call_tool(db_session, tenant_id=tenant.id, target_agent_slug=target.slug)
+    tool = await _create_agent_call_tool(db_session, organization_id=tenant.id, target_agent_id=target.id)
 
     root_run = AgentRun(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         agent_id=target.id,
         user_id=user.id,
         initiator_user_id=user.id,
@@ -540,7 +537,7 @@ async def test_agent_call_tool_blocks_descendant_spawn_when_root_cancel_requeste
     db_session.add(root_run)
     await db_session.flush()
     child_run = AgentRun(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         agent_id=target.id,
         user_id=user.id,
         initiator_user_id=user.id,
@@ -570,7 +567,7 @@ async def test_agent_call_tool_blocks_descendant_spawn_when_root_cancel_requeste
     monkeypatch.setattr(ToolNodeExecutor, "_resolve_agent_target", wrapped_resolve_target)
     monkeypatch.setattr(AgentExecutorService, "execute_sync_with_new_session", fail_if_called)
 
-    executor = ToolNodeExecutor(tenant_id=tenant.id, db=db_session)
+    executor = ToolNodeExecutor(organization_id=tenant.id, db=db_session)
     with pytest.raises(RuntimeError, match="cancelled"):
         await executor.execute(
             state={"context": {"input": "call child"}},
@@ -592,12 +589,12 @@ async def test_agent_call_tool_concurrent_runs_use_distinct_child_sessions(db_se
     tenant, user = await _seed_tenant_and_user(db_session)
     target = await _create_agent(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         slug=f"parallel-child-{uuid4().hex[:8]}",
         status=AgentStatus.published,
     )
-    tool = await _create_agent_call_tool(db_session, tenant_id=tenant.id, target_agent_slug=target.slug)
+    tool = await _create_agent_call_tool(db_session, organization_id=tenant.id, target_agent_id=target.id)
 
     active_session_ids: set[int] = set()
 
@@ -618,7 +615,7 @@ async def test_agent_call_tool_concurrent_runs_use_distinct_child_sessions(db_se
 
     monkeypatch.setattr(AgentExecutorService, "run_and_stream", fake_run_and_stream)
 
-    executor = ToolNodeExecutor(tenant_id=tenant.id, db=db_session)
+    executor = ToolNodeExecutor(organization_id=tenant.id, db=db_session)
     results = await asyncio.gather(
         executor.execute(
             state={"context": {"input": "hello child 1"}},
@@ -641,7 +638,7 @@ async def test_execute_sync_with_new_session_cleans_up_child_task_on_cancellatio
     tenant, user = await _seed_tenant_and_user(db_session)
     target = await _create_agent(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         slug=f"cancel-cleanup-child-{uuid4().hex[:8]}",
         status=AgentStatus.published,
@@ -689,12 +686,12 @@ async def test_agent_call_tool_derives_child_lineage_from_current_run(db_session
     tenant, user = await _seed_tenant_and_user(db_session)
     target = await _create_agent(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         slug=f"lineage-child-{uuid4().hex[:8]}",
         status=AgentStatus.published,
     )
-    tool = await _create_agent_call_tool(db_session, tenant_id=tenant.id, target_agent_slug=target.slug)
+    tool = await _create_agent_call_tool(db_session, organization_id=tenant.id, target_agent_id=target.id)
 
     captured: dict[str, object] = {}
     original_start_run = AgentExecutorService.start_run
@@ -721,7 +718,7 @@ async def test_agent_call_tool_derives_child_lineage_from_current_run(db_session
     current_root_run_id = uuid4()
     current_run_id = uuid4()
     shared_thread = AgentThread(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         agent_id=target.id,
         published_app_id=None,
@@ -736,7 +733,7 @@ async def test_agent_call_tool_derives_child_lineage_from_current_run(db_session
         AgentRun(
             id=current_root_run_id,
             agent_id=target.id,
-            tenant_id=tenant.id,
+            organization_id=tenant.id,
             user_id=user.id,
             thread_id=shared_thread.id,
             status=RunStatus.running,
@@ -751,7 +748,7 @@ async def test_agent_call_tool_derives_child_lineage_from_current_run(db_session
         AgentRun(
             id=current_run_id,
             agent_id=target.id,
-            tenant_id=tenant.id,
+            organization_id=tenant.id,
             user_id=user.id,
             thread_id=shared_thread.id,
             status=RunStatus.running,
@@ -764,7 +761,7 @@ async def test_agent_call_tool_derives_child_lineage_from_current_run(db_session
     )
     await db_session.commit()
 
-    executor = ToolNodeExecutor(tenant_id=tenant.id, db=db_session)
+    executor = ToolNodeExecutor(organization_id=tenant.id, db=db_session)
     await executor.execute(
         state={"context": {"input": "hello child"}},
         config={"tool_id": str(tool.id)},
@@ -789,12 +786,12 @@ async def test_agent_call_tool_emits_hidden_child_run_started_event_for_overlay(
     tenant, user = await _seed_tenant_and_user(db_session)
     target = await _create_agent(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         slug=f"agent-call-overlay-{uuid4().hex[:8]}",
         status=AgentStatus.published,
     )
-    tool = await _create_agent_call_tool(db_session, tenant_id=tenant.id, target_agent_slug=target.slug)
+    tool = await _create_agent_call_tool(db_session, organization_id=tenant.id, target_agent_id=target.id)
 
     async def fake_run_and_stream(self, run_id, db, resume_payload=None, mode=None):
         run = await db.get(AgentRun, run_id)
@@ -810,7 +807,7 @@ async def test_agent_call_tool_emits_hidden_child_run_started_event_for_overlay(
     fake_emitter = FakeToolChildRunEmitter()
     token = active_emitter.set(fake_emitter)
     try:
-        executor = ToolNodeExecutor(tenant_id=tenant.id, db=db_session)
+        executor = ToolNodeExecutor(organization_id=tenant.id, db=db_session)
         await executor.execute(
             state={"context": {"input": "hello child"}},
             config={"tool_id": str(tool.id)},
@@ -828,24 +825,24 @@ async def test_agent_call_tool_emits_hidden_child_run_started_event_for_overlay(
 
 
 @pytest.mark.asyncio
-async def test_agent_call_tool_denies_cross_tenant_target(db_session):
-    tenant_a, user_a = await _seed_tenant_and_user(db_session)
-    tenant_b, user_b = await _seed_tenant_and_user(db_session)
+async def test_agent_call_tool_denies_cross_organization_target(db_session):
+    organization_a, user_a = await _seed_tenant_and_user(db_session)
+    organization_b, user_b = await _seed_tenant_and_user(db_session)
     target = await _create_agent(
         db_session,
-        tenant_id=tenant_b.id,
+        organization_id=organization_b.id,
         user_id=user_b.id,
-        slug=f"other-tenant-{uuid4().hex[:8]}",
+        slug=f"other-organization-{uuid4().hex[:8]}",
         status=AgentStatus.published,
     )
     tool = await _create_agent_call_tool(
         db_session,
-        tenant_id=tenant_a.id,
+        organization_id=organization_a.id,
         target_agent_id=target.id,
     )
 
-    executor = ToolNodeExecutor(tenant_id=tenant_a.id, db=db_session)
-    with pytest.raises(ValueError, match="tenant scope"):
+    executor = ToolNodeExecutor(organization_id=organization_a.id, db=db_session)
+    with pytest.raises(ValueError, match="organization scope"):
         await executor.execute(
             state={"context": {"input": "hello"}},
             config={"tool_id": str(tool.id)},
@@ -858,7 +855,7 @@ async def test_agent_call_tool_maps_payload_into_child_state_and_modalities(db_s
     tenant, user = await _seed_tenant_and_user(db_session)
     target = await _create_agent(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         slug=f"structured-child-{uuid4().hex[:8]}",
         status=AgentStatus.published,
@@ -879,9 +876,9 @@ async def test_agent_call_tool_maps_payload_into_child_state_and_modalities(db_s
             "edges": [],
         },
     )
-    tool = await _create_agent_call_tool(db_session, tenant_id=tenant.id, target_agent_slug=target.slug)
+    tool = await _create_agent_call_tool(db_session, organization_id=tenant.id, target_agent_id=target.id)
 
-    executor = ToolNodeExecutor(tenant_id=tenant.id, db=db_session)
+    executor = ToolNodeExecutor(organization_id=tenant.id, db=db_session)
     input_params = executor._map_agent_contract_input(
         target=target,
         input_data={

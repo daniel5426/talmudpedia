@@ -279,7 +279,7 @@ const cases: {
     description: "Jumpstart app development",
   },
   {
-    title: "Multi-tenant Platforms",
+    title: "Multi-organization Platforms",
     href: "#",
     icon: <Network strokeWidth={2} />,
     description: "Scale apps with one codebase",

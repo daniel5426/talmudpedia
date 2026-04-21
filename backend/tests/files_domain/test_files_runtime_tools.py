@@ -6,7 +6,7 @@ import pytest
 
 from app.db.postgres.models.agents import Agent, AgentRun, RunStatus
 from app.db.postgres.models.files import FileAccessMode
-from app.db.postgres.models.identity import Tenant, User
+from app.db.postgres.models.identity import Organization, User
 from app.db.postgres.models.workspace import Project, ProjectStatus
 from app.agent.executors.standard import _file_space_prompt_preamble_from_state
 from app.services.control_plane.agents_admin_service import AgentAdminService, StartAgentRunInput
@@ -17,7 +17,7 @@ from app.services.file_space_tools import files_list, files_read, files_write
 
 
 async def _seed_runtime_workspace(db_session):
-    tenant = Tenant(name="Runtime Tenant", slug=f"runtime-tenant-{uuid4().hex[:8]}")
+    tenant = Organization(name="Runtime Organization", slug=f"runtime-tenant-{uuid4().hex[:8]}")
     user = User(email=f"runtime-{uuid4().hex[:8]}@example.com", hashed_password="x", role="admin")
     db_session.add_all([tenant, user])
     await db_session.flush()
@@ -31,7 +31,7 @@ async def _seed_runtime_workspace(db_session):
         created_by=user.id,
     )
     agent = Agent(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name="Runtime Workflow",
         slug=f"runtime-workflow-{uuid4().hex[:8]}",
         graph_definition={"nodes": [], "edges": []},
@@ -44,14 +44,14 @@ async def _seed_runtime_workspace(db_session):
 
     file_service = FileSpaceService(db_session)
     space = await file_service.create_space(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         project_id=project.id,
         name="Runtime Space",
         description=None,
         created_by=user.id,
     )
     await file_service.upsert_agent_link(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         project_id=project.id,
         agent_id=agent.id,
         space_id=space.id,
@@ -74,7 +74,7 @@ async def test_agent_admin_run_start_injects_file_space_grants(db_session, monke
         self.db.add(
             AgentRun(
                 id=run_id,
-                tenant_id=tenant.id,
+                organization_id=tenant.id,
                 agent_id=agent_id,
                 initiator_user_id=user.id,
                 status=RunStatus.queued,
@@ -88,12 +88,12 @@ async def test_agent_admin_run_start_injects_file_space_grants(db_session, monke
 
     service = AgentAdminService(db_session)
     await service.start_run(
-        ctx=ControlPlaneContext(tenant_id=tenant.id, project_id=project.id, user=user, user_id=user.id, auth_token="token"),
+        ctx=ControlPlaneContext(organization_id=tenant.id, project_id=project.id, user=user, user_id=user.id, auth_token="token"),
         agent_id=agent.id,
         params=StartAgentRunInput(input="hello", context={}),
     )
 
-    assert captured_context["tenant_id"] == str(tenant.id)
+    assert captured_context["organization_id"] == str(tenant.id)
     assert captured_context["project_id"] == str(project.id)
     assert captured_context["file_spaces"] == [
         {"id": str(space.id), "name": space.name, "access_mode": "read_write"}
@@ -109,7 +109,7 @@ async def test_file_tools_enforce_workflow_access_modes(db_session):
         "path": "notes.md",
         "content": "hello",
         "__tool_runtime_context__": {
-            "tenant_id": str(tenant.id),
+            "organization_id": str(tenant.id),
             "project_id": str(project.id),
             "initiator_user_id": str(user.id),
             "run_id": str(uuid4()),
@@ -120,7 +120,7 @@ async def test_file_tools_enforce_workflow_access_modes(db_session):
     assert denied["code"] == "FILE_SPACE_FORBIDDEN"
 
     read_write_context = {
-        "tenant_id": str(tenant.id),
+        "organization_id": str(tenant.id),
         "project_id": str(project.id),
         "initiator_user_id": str(user.id),
         "run_id": str(uuid4()),
@@ -187,7 +187,7 @@ async def test_files_list_strips_runtime_metadata_before_strict_validation(db_se
             "file_spaces": [{"id": str(space.id), "name": space.name, "access_mode": "read"}],
         },
         node_context={
-            "tenant_id": str(tenant.id),
+            "organization_id": str(tenant.id),
             "project_id": str(project.id),
             "initiator_user_id": str(user.id),
             "run_id": str(uuid4()),
@@ -208,7 +208,7 @@ async def test_files_list_strips_runtime_metadata_before_strict_validation(db_se
 async def test_files_list_accepts_default_space_alias(db_session):
     tenant, project, user, _agent, space = await _seed_runtime_workspace(db_session)
     read_write_context = {
-        "tenant_id": str(tenant.id),
+        "organization_id": str(tenant.id),
         "project_id": str(project.id),
         "initiator_user_id": str(user.id),
         "run_id": str(uuid4()),

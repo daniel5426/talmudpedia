@@ -419,7 +419,7 @@ def test_additional_action_parity(
     out = handler.execute(
         state={},
         config={},
-        context={"inputs": {"action": action, "tenant_id": "tenant-1", "token": "token", "payload": payload}},
+        context={"inputs": {"action": action, "organization_id": "tenant-1", "token": "token", "payload": payload}},
     )
 
     assert out["context"]["errors"] == []
@@ -445,7 +445,7 @@ def test_orchestration_query_tree_alias_action_parity(monkeypatch):
         context={
             "inputs": {
                 "action": "query_tree",
-                "tenant_id": "tenant-1",
+                "organization_id": "tenant-1",
                 "token": "token",
                 "payload": {"run_id": "run-1"},
             }
@@ -475,7 +475,7 @@ def test_agents_run_tests_canonical_action_parity(monkeypatch):
         context={
             "inputs": {
                 "action": "agents.run_tests",
-                "tenant_id": "tenant-1",
+                "organization_id": "tenant-1",
                 "token": "token",
                 "tests": [
                     {
@@ -504,10 +504,10 @@ def test_rag_create_visual_pipeline_translates_graph_definition_payload(monkeypa
         context={
             "inputs": {
                 "action": "rag.create_visual_pipeline",
-                "tenant_id": "tenant-1",
+                "organization_id": "tenant-1",
                 "token": "token",
                 "payload": {
-                    "tenant_id": "tenant-1",
+                    "organization_id": "tenant-1",
                     "tenant_slug": "tenant-a",
                     "name": "FAQ Pipeline",
                     "graph_definition": {
@@ -526,7 +526,7 @@ def test_rag_create_visual_pipeline_translates_graph_definition_payload(monkeypa
     assert "graph_definition" not in request_payload
     assert request_payload["nodes"] == [{"id": "n1", "category": "input", "operator": "query_input", "position": {"x": 0, "y": 0}, "config": {}}]
     assert request_payload["edges"] == []
-    assert "tenant_id" not in request_payload
+    assert "organization_id" not in request_payload
 
 
 def test_rag_create_pipeline_shell_builds_minimal_retrieval_graph(monkeypatch):
@@ -540,10 +540,10 @@ def test_rag_create_pipeline_shell_builds_minimal_retrieval_graph(monkeypatch):
         context={
             "inputs": {
                 "action": "rag.create_pipeline_shell",
-                "tenant_id": "tenant-1",
+                "organization_id": "tenant-1",
                 "token": "token",
                 "payload": {
-                    "tenant_id": "tenant-1",
+                    "organization_id": "tenant-1",
                     "tenant_slug": "tenant-a",
                     "name": "FAQ Pipeline",
                 },
@@ -580,10 +580,10 @@ def test_agents_create_shell_builds_minimal_graph(monkeypatch):
         context={
             "inputs": {
                 "action": "agents.create_shell",
-                "tenant_id": "tenant-1",
+                "organization_id": "tenant-1",
                 "token": "token",
                 "payload": {
-                    "tenant_id": "tenant-1",
+                    "organization_id": "tenant-1",
                     "name": "FAQ Agent",
                     "slug": "faq-agent",
                 },
@@ -612,10 +612,10 @@ def test_rag_update_visual_pipeline_translates_graph_definition_patch(monkeypatc
         context={
             "inputs": {
                 "action": "rag.update_visual_pipeline",
-                "tenant_id": "tenant-1",
+                "organization_id": "tenant-1",
                 "token": "token",
                 "payload": {
-                    "tenant_id": "tenant-1",
+                    "organization_id": "tenant-1",
                     "tenant_slug": "tenant-a",
                     "pipeline_id": "pipe-1",
                     "patch": {

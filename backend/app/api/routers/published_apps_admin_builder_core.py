@@ -255,7 +255,7 @@ def _promote_revision_dist_artifacts(
 
     storage = PublishedAppBundleStorage.from_env()
     destination_prefix = PublishedAppBundleStorage.build_revision_dist_prefix(
-        tenant_id=str(app.tenant_id),
+        organization_id=str(app.organization_id),
         app_id=str(app.id),
         revision_id=str(destination_revision.id),
     )

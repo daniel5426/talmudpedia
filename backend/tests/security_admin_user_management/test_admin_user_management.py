@@ -1,28 +1,41 @@
 from uuid import uuid4
 
 import pytest
+import jwt
 from sqlalchemy import select
 
-from app.core.security import create_access_token, get_password_hash
-from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Tenant, User
+from app.core.security import ALGORITHM, SECRET_KEY, create_access_token, get_password_hash
+from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Organization, User
 from app.services.security_bootstrap_service import SecurityBootstrapService
 
 
-def _auth_headers(user_id: str, tenant_id: str, org_unit_id: str, org_role: str = "owner") -> dict[str, str]:
-    token = create_access_token(
+def _auth_headers(
+    user_id: str,
+    organization_id: str,
+    org_unit_id: str,
+    org_role: str = "owner",
+    scopes: list[str] | None = None,
+) -> dict[str, str]:
+    payload = jwt.decode(
+        create_access_token(
         subject=user_id,
-        tenant_id=tenant_id,
+        organization_id=organization_id,
         org_unit_id=org_unit_id,
         org_role=org_role,
+        ),
+        SECRET_KEY,
+        algorithms=[ALGORITHM],
     )
+    payload["scope"] = scopes if scopes is not None else (["*"] if org_role == "owner" else [])
+    token = jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
     return {
         "Authorization": f"Bearer {token}",
-        "X-Tenant-ID": tenant_id,
+        "X-Organization-ID": organization_id,
     }
 
 
 async def _seed_admin_user_setup(db_session):
-    tenant = Tenant(name=f"Tenant {uuid4().hex[:6]}", slug=f"tenant-{uuid4().hex[:8]}")
+    tenant = Organization(name=f"Organization {uuid4().hex[:6]}", slug=f"tenant-{uuid4().hex[:8]}")
     owner = User(
         email=f"owner-{uuid4().hex[:8]}@example.com",
         hashed_password=get_password_hash("secret123"),
@@ -42,7 +55,7 @@ async def _seed_admin_user_setup(db_session):
     await db_session.flush()
 
     org_unit = OrgUnit(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name="Root",
         slug=f"root-{uuid4().hex[:6]}",
         type=OrgUnitType.org,
@@ -53,7 +66,7 @@ async def _seed_admin_user_setup(db_session):
     for user, role in ((owner, OrgRole.owner), (target_user, OrgRole.member), (unscoped_user, OrgRole.member)):
         db_session.add(
             OrgMembership(
-                tenant_id=tenant.id,
+                organization_id=tenant.id,
                 user_id=user.id,
                 org_unit_id=org_unit.id,
                 role=role,
@@ -64,8 +77,8 @@ async def _seed_admin_user_setup(db_session):
 
     bootstrap = SecurityBootstrapService(db_session)
     await bootstrap.ensure_default_roles(tenant.id)
-    await bootstrap.ensure_owner_assignment(tenant_id=tenant.id, user_id=owner.id, assigned_by=owner.id)
-    await bootstrap.ensure_member_assignment(tenant_id=tenant.id, user_id=target_user.id, assigned_by=owner.id)
+    await bootstrap.ensure_organization_owner_assignment(organization_id=tenant.id, user_id=owner.id, assigned_by=owner.id)
+    await bootstrap.ensure_organization_reader_assignment(organization_id=tenant.id, user_id=target_user.id, assigned_by=owner.id)
     # Intentionally no role assignment for unscoped_user.
 
     await db_session.commit()

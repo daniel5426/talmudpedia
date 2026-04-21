@@ -2,7 +2,7 @@ from uuid import uuid4
 
 import pytest
 
-from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Tenant, User
+from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Organization, User
 from app.db.postgres.models.registry import IntegrationCredential, IntegrationCredentialCategory
 from app.services.artifact_runtime.runtime_secret_service import (
     ArtifactRuntimeSecretError,
@@ -15,18 +15,18 @@ from types import SimpleNamespace
 
 
 async def _seed_tenant_context(db_session):
-    tenant = Tenant(id=uuid4(), name="Runtime Secret Tenant", slug=f"runtime-secret-{uuid4().hex[:8]}")
+    tenant = Organization(id=uuid4(), name="Runtime Secret Organization", slug=f"runtime-secret-{uuid4().hex[:8]}")
     user = User(id=uuid4(), email=f"runtime-secret-{uuid4().hex[:6]}@example.com", role="admin")
     org_unit = OrgUnit(
         id=uuid4(),
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name="Runtime Secret Org",
         slug=f"runtime-secret-org-{uuid4().hex[:6]}",
         type=OrgUnitType.org,
     )
     membership = OrgMembership(
         id=uuid4(),
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         org_unit_id=org_unit.id,
         role=OrgRole.owner,
@@ -86,7 +86,7 @@ def test_validate_runtime_credential_references_rejects_unsupported_usage(conten
 async def test_resolve_runtime_secret_values_uses_default_scalar_field(db_session):
     tenant, _user = await _seed_tenant_context(db_session)
     credential = IntegrationCredential(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         category=IntegrationCredentialCategory.LLM_PROVIDER,
         provider_key="openai",
         display_name="OpenAI Runtime",
@@ -100,7 +100,7 @@ async def test_resolve_runtime_secret_values_uses_default_scalar_field(db_sessio
     revision = SimpleNamespace(manifest_json={"credential_refs": [str(credential.id)]})
     resolved = await resolve_runtime_credentials(
         db=db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         revision=revision,
     )
 
@@ -111,7 +111,7 @@ async def test_resolve_runtime_secret_values_uses_default_scalar_field(db_sessio
 async def test_resolve_runtime_secret_values_rejects_missing_or_disabled_or_non_scalar(db_session):
     tenant, _user = await _seed_tenant_context(db_session)
     disabled = IntegrationCredential(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         category=IntegrationCredentialCategory.LLM_PROVIDER,
         provider_key="openai",
         display_name="Disabled Key",
@@ -120,7 +120,7 @@ async def test_resolve_runtime_secret_values_rejects_missing_or_disabled_or_non_
         is_default=False,
     )
     nonscalar = IntegrationCredential(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         category=IntegrationCredentialCategory.CUSTOM,
         provider_key="custom",
         display_name="Non Scalar",
@@ -134,14 +134,14 @@ async def test_resolve_runtime_secret_values_rejects_missing_or_disabled_or_non_
     with pytest.raises(ArtifactRuntimeSecretError, match="disabled"):
         await resolve_runtime_credentials(
             db=db_session,
-            tenant_id=tenant.id,
+            organization_id=tenant.id,
             revision=SimpleNamespace(manifest_json={"credential_refs": [str(disabled.id)]}),
         )
 
     with pytest.raises(ArtifactRuntimeSecretError, match="default scalar"):
         await resolve_runtime_credentials(
             db=db_session,
-            tenant_id=tenant.id,
+            organization_id=tenant.id,
             revision=SimpleNamespace(manifest_json={"credential_refs": [str(nonscalar.id)]}),
         )
 

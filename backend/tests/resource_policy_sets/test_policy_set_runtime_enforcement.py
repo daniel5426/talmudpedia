@@ -23,15 +23,15 @@ async def test_default_internal_run_attaches_resource_policy_snapshot(
 ):
     tenant = tenant_context["tenant"]
     user = tenant_context["user"]
-    agent = await resource_factory.agent(tenant_id=tenant.id, created_by=user.id, name="Default Agent")
-    policy_set = await resource_factory.policy_set(tenant_id=tenant.id, created_by=user.id, name="user-policy")
+    agent = await resource_factory.agent(organization_id=tenant.id, created_by=user.id, name="Default Agent")
+    policy_set = await resource_factory.policy_set(organization_id=tenant.id, created_by=user.id, name="user-policy")
     await resource_factory.allow_rule(
         policy_set_id=policy_set.id,
         resource_type=ResourcePolicyResourceType.AGENT,
         resource_id=agent.id,
     )
     await resource_factory.assignment(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         policy_set_id=policy_set.id,
         created_by=user.id,
         principal_type=ResourcePolicyPrincipalType.TENANT_USER,
@@ -92,12 +92,12 @@ async def test_start_run_denies_restricted_agents_for_all_principal_types(
 ):
     tenant = tenant_context["tenant"]
     user = tenant_context["user"]
-    allowed_agent = await resource_factory.agent(tenant_id=tenant.id, created_by=user.id, name="Allowed Agent")
-    blocked_agent = await resource_factory.agent(tenant_id=tenant.id, created_by=user.id, name="Blocked Agent")
-    app_agent = await resource_factory.agent(tenant_id=tenant.id, created_by=user.id, name="App Agent")
-    published_app = await resource_factory.published_app(tenant_id=tenant.id, agent_id=app_agent.id)
+    allowed_agent = await resource_factory.agent(organization_id=tenant.id, created_by=user.id, name="Allowed Agent")
+    blocked_agent = await resource_factory.agent(organization_id=tenant.id, created_by=user.id, name="Blocked Agent")
+    app_agent = await resource_factory.agent(organization_id=tenant.id, created_by=user.id, name="App Agent")
+    published_app = await resource_factory.published_app(organization_id=tenant.id, agent_id=app_agent.id)
     app_account = await resource_factory.published_app_account(published_app=published_app)
-    policy_set = await resource_factory.policy_set(tenant_id=tenant.id, created_by=user.id, name=f"{principal_type.value}-policy")
+    policy_set = await resource_factory.policy_set(organization_id=tenant.id, created_by=user.id, name=f"{principal_type.value}-policy")
     await resource_factory.allow_rule(
         policy_set_id=policy_set.id,
         resource_type=ResourcePolicyResourceType.AGENT,
@@ -107,7 +107,7 @@ async def test_start_run_denies_restricted_agents_for_all_principal_types(
     if principal_type == ResourcePolicyPrincipalType.EMBEDDED_EXTERNAL_USER:
         blocked_agent.default_embed_policy_set_id = policy_set.id
     await resource_factory.assignment(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         policy_set_id=policy_set.id,
         created_by=user.id,
         principal_type=principal_type,
@@ -138,15 +138,15 @@ async def test_top_level_run_ignores_malformed_snapshot_and_re_resolves_from_ass
 ):
     tenant = tenant_context["tenant"]
     user = tenant_context["user"]
-    agent = await resource_factory.agent(tenant_id=tenant.id, created_by=user.id, name="Malformed Snapshot Agent")
-    policy_set = await resource_factory.policy_set(tenant_id=tenant.id, created_by=user.id, name="malformed-fallback")
+    agent = await resource_factory.agent(organization_id=tenant.id, created_by=user.id, name="Malformed Snapshot Agent")
+    policy_set = await resource_factory.policy_set(organization_id=tenant.id, created_by=user.id, name="malformed-fallback")
     await resource_factory.allow_rule(
         policy_set_id=policy_set.id,
         resource_type=ResourcePolicyResourceType.AGENT,
         resource_id=agent.id,
     )
     await resource_factory.assignment(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         policy_set_id=policy_set.id,
         created_by=user.id,
         principal_type=ResourcePolicyPrincipalType.TENANT_USER,
@@ -156,7 +156,7 @@ async def test_top_level_run_ignores_malformed_snapshot_and_re_resolves_from_ass
 
     run_id = await AgentExecutorService(db_session).start_run(
         agent_id=agent.id,
-        input_params={"input": "hello", "context": {"resource_policy_snapshot": {"principal": {"tenant_id": "bad"}}}},
+        input_params={"input": "hello", "context": {"resource_policy_snapshot": {"principal": {"organization_id": "bad"}}}},
         user_id=user.id,
         background=False,
     )
@@ -174,14 +174,14 @@ async def test_model_tool_and_knowledge_store_boundaries_enforce_snapshot(
 ):
     tenant = tenant_context["tenant"]
     user = tenant_context["user"]
-    model = await resource_factory.model(tenant_id=tenant.id, name="Allowed Model")
-    tool = await resource_factory.tool(tenant_id=tenant.id, name="Blocked Tool")
-    knowledge_store = await resource_factory.knowledge_store(tenant_id=tenant.id, name="Blocked Store")
+    model = await resource_factory.model(organization_id=tenant.id, name="Allowed Model")
+    tool = await resource_factory.tool(organization_id=tenant.id, name="Blocked Tool")
+    knowledge_store = await resource_factory.knowledge_store(organization_id=tenant.id, name="Blocked Store")
 
     snapshot = make_snapshot(
         principal=ResourcePolicyPrincipalRef(
             principal_type=ResourcePolicyPrincipalType.TENANT_USER,
-            tenant_id=tenant.id,
+            organization_id=tenant.id,
             user_id=user.id,
         ),
         restricted_resource_types={"tool", "knowledge_store", "model"},
@@ -191,7 +191,7 @@ async def test_model_tool_and_knowledge_store_boundaries_enforce_snapshot(
     with pytest.raises(ModelResolverError, match="access denied"):
         await ModelResolver(db_session, tenant.id).resolve_for_execution(str(uuid4()), policy_snapshot=snapshot)
 
-    tool_executor = ToolNodeExecutor(db=db_session, tenant_id=tenant.id)
+    tool_executor = ToolNodeExecutor(db=db_session, organization_id=tenant.id)
     with pytest.raises(PermissionError, match="access denied"):
         tool_executor._assert_runtime_policy(
             resource_factory.tool_stub(tool_id=str(tool.id), is_active=True),
@@ -220,9 +220,9 @@ async def test_start_run_enforces_graph_derived_model_quota_without_requested_mo
 ):
     tenant = tenant_context["tenant"]
     user = tenant_context["user"]
-    model = await resource_factory.model(tenant_id=tenant.id, name="Quota Guard Model")
+    model = await resource_factory.model(organization_id=tenant.id, name="Quota Guard Model")
     agent = await resource_factory.agent(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         created_by=user.id,
         name="Quota Guard Agent",
         graph_definition={
@@ -237,7 +237,7 @@ async def test_start_run_enforces_graph_derived_model_quota_without_requested_mo
             ],
         },
     )
-    policy_set = await resource_factory.policy_set(tenant_id=tenant.id, created_by=user.id, name="quota-guard")
+    policy_set = await resource_factory.policy_set(organization_id=tenant.id, created_by=user.id, name="quota-guard")
     await resource_factory.allow_rule(
         policy_set_id=policy_set.id,
         resource_type=ResourcePolicyResourceType.AGENT,
@@ -249,7 +249,7 @@ async def test_start_run_enforces_graph_derived_model_quota_without_requested_mo
         quota_limit=5,
     )
     await resource_factory.assignment(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         policy_set_id=policy_set.id,
         created_by=user.id,
         principal_type=ResourcePolicyPrincipalType.TENANT_USER,
@@ -280,12 +280,12 @@ async def test_nested_agent_call_propagates_frozen_policy_snapshot_even_if_assig
     tenant = tenant_context["tenant"]
     user = tenant_context["user"]
     child_agent = await resource_factory.agent(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         created_by=user.id,
         name="Child Agent",
         status=AgentStatus.published,
     )
-    tool_executor = ToolNodeExecutor(db=db_session, tenant_id=tenant.id)
+    tool_executor = ToolNodeExecutor(db=db_session, organization_id=tenant.id)
     captured: dict[str, object] = {}
 
     async def fake_start_run(self, *, agent_id, input_params, user_id=None, **kwargs):  # noqa: ANN001
@@ -293,7 +293,7 @@ async def test_nested_agent_call_propagates_frozen_policy_snapshot_even_if_assig
         captured["agent_id"] = agent_id
         captured["context"] = input_params["context"]
         await resource_factory.run(
-            tenant_id=tenant.id,
+            organization_id=tenant.id,
             agent_id=agent_id,
             user_id=user_id,
             id=run_id,
@@ -311,16 +311,16 @@ async def test_nested_agent_call_propagates_frozen_policy_snapshot_even_if_assig
     frozen_snapshot = make_snapshot(
         principal=ResourcePolicyPrincipalRef(
             principal_type=ResourcePolicyPrincipalType.TENANT_USER,
-            tenant_id=tenant.id,
+            organization_id=tenant.id,
             user_id=user.id,
         ),
         restricted_resource_types={"agent"},
         allowed_agents={str(child_agent.id)},
     )
 
-    replacement_set = await resource_factory.policy_set(tenant_id=tenant.id, created_by=user.id, name="replacement")
+    replacement_set = await resource_factory.policy_set(organization_id=tenant.id, created_by=user.id, name="replacement")
     await resource_factory.assignment(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         policy_set_id=replacement_set.id,
         created_by=user.id,
         principal_type=ResourcePolicyPrincipalType.TENANT_USER,

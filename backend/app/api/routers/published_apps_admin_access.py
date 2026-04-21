@@ -1,4 +1,5 @@
 import os
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 from uuid import UUID
@@ -8,8 +9,8 @@ from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import load_only
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.postgres.models.agents import Agent, AgentRun, AgentStatus, RunStatus
-from app.db.postgres.models.identity import OrgMembership, OrgRole
+from app.db.postgres.models.agents import Agent, AgentRun, RunStatus
+from app.db.postgres.models.identity import OrgMembership
 from app.db.postgres.models.published_apps import (
     PublishedApp,
     PublishedAppCustomDomain,
@@ -18,7 +19,7 @@ from app.db.postgres.models.published_apps import (
     PublishedAppPublishJobStatus,
     PublishedAppRevision,
 )
-from .published_apps_admin_shared import APP_SLUG_PATTERN, _slugify
+from .published_apps_admin_shared import _slugify
 
 CODING_AGENT_SURFACE = "published_app_coding_agent"
 
@@ -84,51 +85,44 @@ async def _expire_stale_publish_job_if_needed(
     return True
 
 
-async def _resolve_tenant_admin_context(
+async def _resolve_organization_admin_context(
     request: Request,
     principal: Dict[str, Any],
     db: AsyncSession,
 ) -> Dict[str, Any]:
     if principal.get("type") == "workload":
-        tenant_id = principal.get("tenant_id")
-        if not tenant_id:
-            raise HTTPException(status_code=403, detail="Tenant context required")
+        organization_id= principal.get("organization_id")
+        if not organization_id:
+            raise HTTPException(status_code=403, detail="Organization context required")
         return {
-            "tenant_id": UUID(str(tenant_id)),
+            "organization_id": UUID(str(organization_id)),
             "user": None,
             "is_system_admin": False,
-            "org_role": None,
         }
 
     user = principal.get("user")
     if user is None:
         raise HTTPException(status_code=403, detail="Not authorized")
 
-    header_tenant = request.headers.get("X-Tenant-ID")
+    header_tenant = request.headers.get("X-Organization-ID")
     if header_tenant:
         try:
-            tenant_uuid = UUID(str(header_tenant))
+            organization_uuid = UUID(str(header_tenant))
         except Exception:
-            raise HTTPException(status_code=400, detail="Invalid X-Tenant-ID header")
+            raise HTTPException(status_code=400, detail="Invalid X-Organization-ID header")
         membership_result = await db.execute(
             select(OrgMembership).where(
                 OrgMembership.user_id == user.id,
-                OrgMembership.tenant_id == tenant_uuid,
+                OrgMembership.organization_id == organization_uuid,
             ).limit(1)
         )
         membership = membership_result.scalar_one_or_none()
         if membership is None and user.role != "admin":
-            raise HTTPException(status_code=403, detail="Not a member of the requested tenant")
-        org_role = (
-            str(getattr(membership.role, "value", membership.role))
-            if membership
-            else OrgRole.owner.value
-        )
+            raise HTTPException(status_code=403, detail="Not a member of the requested organization")
         return {
-            "tenant_id": tenant_uuid,
+            "organization_id": organization_uuid,
             "user": user,
             "is_system_admin": user.role == "admin",
-            "org_role": org_role,
         }
 
     membership_result = await db.execute(
@@ -137,63 +131,49 @@ async def _resolve_tenant_admin_context(
     membership = membership_result.scalar_one_or_none()
     if membership is not None:
         return {
-            "tenant_id": membership.tenant_id,
+            "organization_id": membership.organization_id,
             "user": user,
             "is_system_admin": user.role == "admin",
-            "org_role": str(getattr(membership.role, "value", membership.role)),
         }
 
-    tenant_id = principal.get("tenant_id")
-    if user.role == "admin" and tenant_id:
+    organization_id= principal.get("organization_id")
+    if user.role == "admin" and organization_id:
         return {
-            "tenant_id": UUID(str(tenant_id)),
+            "organization_id": UUID(str(organization_id)),
             "user": user,
             "is_system_admin": True,
-            "org_role": OrgRole.owner.value,
         }
-    raise HTTPException(status_code=403, detail="Tenant context required")
+    raise HTTPException(status_code=403, detail="Organization context required")
 
 
 def _assert_can_manage_apps(ctx: Dict[str, Any]) -> None:
     if ctx.get("is_system_admin"):
         return
-    role = str(ctx.get("org_role") or "")
-    if role not in {OrgRole.owner.value, OrgRole.admin.value}:
-        raise HTTPException(status_code=403, detail="Insufficient permissions for apps management")
 
 
-async def _validate_agent(db: AsyncSession, tenant_id: UUID, agent_id: UUID) -> Agent:
+async def _validate_agent(db: AsyncSession, organization_id: UUID, agent_id: UUID) -> Agent:
     result = await db.execute(
-        select(Agent).where(and_(Agent.id == agent_id, Agent.tenant_id == tenant_id)).limit(1)
+        select(Agent).where(and_(Agent.id == agent_id, Agent.organization_id == organization_id)).limit(1)
     )
     agent = result.scalar_one_or_none()
     if agent is None:
         raise HTTPException(status_code=404, detail="Agent not found")
-    if agent.status != AgentStatus.published:
-        raise HTTPException(status_code=400, detail="Only published agents can be attached to apps")
     return agent
 
 
-async def _generate_unique_slug(db: AsyncSession, base: str) -> str:
-    candidate = _slugify(base)
-    if APP_SLUG_PATTERN.match(candidate):
-        result = await db.execute(select(PublishedApp.id).where(PublishedApp.slug == candidate).limit(1))
+async def _generate_public_id(db: AsyncSession) -> str:
+    for _ in range(200):
+        candidate = f"app_{uuid.uuid4().hex[:24]}"
+        result = await db.execute(select(PublishedApp.id).where(PublishedApp.public_id == candidate).limit(1))
         if result.scalar_one_or_none() is None:
             return candidate
-
-    for idx in range(2, 200):
-        next_candidate = f"{candidate[:58]}-{idx}"
-        result = await db.execute(select(PublishedApp.id).where(PublishedApp.slug == next_candidate).limit(1))
-        if result.scalar_one_or_none() is None:
-            return next_candidate
-
-    raise HTTPException(status_code=409, detail="Could not generate a unique app slug")
+    raise HTTPException(status_code=409, detail="Could not generate a unique app public id")
 
 
-async def _get_app_for_tenant(db: AsyncSession, tenant_id: UUID, app_id: UUID) -> PublishedApp:
+async def _get_app_for_tenant(db: AsyncSession, organization_id: UUID, app_id: UUID) -> PublishedApp:
     result = await db.execute(
         select(PublishedApp).where(
-            and_(PublishedApp.id == app_id, PublishedApp.tenant_id == tenant_id)
+            and_(PublishedApp.id == app_id, PublishedApp.organization_id == organization_id)
         ).limit(1)
     )
     app = result.scalar_one_or_none()

@@ -20,7 +20,7 @@ from app.db.postgres.models.agent_threads import (
     AgentThreadTurnStatus,
 )
 from app.db.postgres.models.agents import Agent, AgentRun, AgentStatus, RunStatus
-from app.db.postgres.models.identity import Tenant
+from app.db.postgres.models.identity import Organization
 
 
 class _BoomExecutor(BaseNodeExecutor):
@@ -35,7 +35,7 @@ async def test_node_factory_returns_recoverable_error_update_instead_of_reraisin
     AgentExecutorRegistry.register(node_type, _BoomExecutor)
     try:
         node = GraphIRNode(id="boom-node", type=node_type, config={})
-        node_fn = build_node_fn(node=node, tenant_id=None, db=None)
+        node_fn = build_node_fn(node=node, organization_id=None, db=None)
         state = {"state": {"foo": "bar"}}
 
         update = await node_fn(state, config={"configurable": {}})
@@ -56,7 +56,7 @@ async def test_node_factory_returns_recoverable_error_update_instead_of_reraisin
 @pytest.mark.asyncio
 async def test_run_and_stream_setup_error_emits_error_event_and_persists_failed_turn(db_session, monkeypatch):
     suffix = uuid4().hex[:8]
-    tenant = Tenant(name=f"Tenant {suffix}", slug=f"tenant-{suffix}")
+    tenant = Organization(name=f"Organization {suffix}", slug=f"tenant-{suffix}")
     db_session.add(tenant)
     await db_session.commit()
     await db_session.refresh(tenant)
@@ -70,7 +70,7 @@ async def test_run_and_stream_setup_error_emits_error_event_and_persists_failed_
         "edges": [{"id": "e1", "source": "start", "target": "end"}],
     }
     agent = Agent(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name=f"agent-{suffix}",
         slug=f"agent-{suffix}",
         description="runtime recovery test",
@@ -83,7 +83,7 @@ async def test_run_and_stream_setup_error_emits_error_event_and_persists_failed_
     await db_session.refresh(agent)
 
     thread = AgentThread(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         agent_id=agent.id,
         surface=AgentThreadSurface.internal,
         status=AgentThreadStatus.active,
@@ -95,7 +95,7 @@ async def test_run_and_stream_setup_error_emits_error_event_and_persists_failed_
     await db_session.refresh(thread)
 
     run = AgentRun(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         agent_id=agent.id,
         status=RunStatus.queued,
         input_params={

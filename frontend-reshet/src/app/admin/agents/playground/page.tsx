@@ -30,7 +30,7 @@ import {
 import { Badge } from "@/components/ui/badge"
 import { useReactArtifactPanel } from "@/lib/react-artifacts/useReactArtifactPanel"
 import { parseReactArtifact } from "@/lib/react-artifacts/parseReactArtifact"
-import { useTenant } from "@/contexts/TenantContext"
+import { useOrganization } from "@/contexts/OrganizationContext"
 import { useAuthStore } from "@/lib/store/useAuthStore"
 import { ExecutionHistoryDropdown } from "@/components/agent-builder/ExecutionHistoryDropdown"
 import { FloatingPanel } from "@/components/builder"
@@ -63,12 +63,12 @@ function PlaygroundContent() {
     const pendingUrlThreadIdRef = useRef<string | null>(null)
     const clearingThreadRef = useRef(false)
 
-    const controller = useAgentRunController(agentId || undefined, agent?.graph_definition, agent?.slug)
+    const controller = useAgentRunController(agentId || undefined, agent?.graph_definition, agent?.system_key)
     const { executionSteps, currentThreadId, inspectedTraceCopyText } = controller
     const { direction } = useDirection()
-    const { currentTenant } = useTenant()
+    const { currentOrganization } = useOrganization()
     const authUser = useAuthStore((state) => state.user)
-    const tenantKey = currentTenant?.slug ?? authUser?.tenant_id ?? "unknown-tenant"
+    const organizationKey = currentOrganization?.id ?? authUser?.organization_id ?? "unknown-organization"
     const {
         artifact,
         openFromMessage,
@@ -78,7 +78,7 @@ function PlaygroundContent() {
         closePanel,
     } = useReactArtifactPanel({
         messages: controller.messages,
-        tenantKey,
+        tenantKey: organizationKey,
         chatId: agentId ?? "agent-playground",
     })
     const isArtifactMessage = (content: string) => Boolean(parseReactArtifact(content))

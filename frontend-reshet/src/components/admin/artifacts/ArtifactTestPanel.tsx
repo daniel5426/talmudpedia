@@ -33,7 +33,7 @@ import {
 } from "lucide-react"
 
 interface ArtifactTestPanelProps {
-  tenantSlug?: string
+  organizationId?: string
   artifactId?: string
   sourceFiles?: ArtifactSourceFile[]
   entryModulePath?: string
@@ -90,7 +90,7 @@ function summarizeFailure(run: ArtifactRun | null): string {
 }
 
 export function ArtifactTestPanel({
-  tenantSlug,
+  organizationId,
   artifactId,
   sourceFiles,
   entryModulePath,
@@ -179,8 +179,8 @@ export function ArtifactTestPanel({
     const poll = async () => {
       try {
         const [nextRun, nextEvents] = await Promise.all([
-          artifactsService.getRun(runId, tenantSlug),
-          artifactsService.getRunEvents(runId, tenantSlug),
+          artifactsService.getRun(runId, organizationId),
+          artifactsService.getRunEvents(runId, organizationId),
         ])
         if (cancelled) return
         setEvents(nextEvents.events)
@@ -221,7 +221,7 @@ export function ArtifactTestPanel({
         window.clearTimeout(pollTimerRef.current)
       }
     }
-  }, [isTesting, runId, tenantSlug])
+  }, [isTesting, runId, organizationId])
 
   let parsedInputData: unknown = null
   let inputParseError: string | null = null
@@ -310,7 +310,7 @@ export function ArtifactTestPanel({
           rag_contract: ragContract || undefined,
           tool_contract: toolContract || undefined,
         },
-        tenantSlug
+        organizationId
       )
       setRunId(created.run_id)
     } catch (error) {

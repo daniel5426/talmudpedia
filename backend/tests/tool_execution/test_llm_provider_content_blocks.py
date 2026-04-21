@@ -156,7 +156,7 @@ def test_extract_usage_payload_from_message_supports_gemini_usage_metadata():
 
 
 def test_build_langchain_tool_rejects_null_property_schema():
-    executor = ReasoningNodeExecutor(tenant_id=None, db=None)
+    executor = ReasoningNodeExecutor(organization_id=None, db=None)
     tool = type(
         "Tool",
         (),
@@ -195,7 +195,7 @@ async def test_llm_provider_adapter_adds_missing_tool_call_id():
 
 
 def test_build_langchain_tool_builds_nested_args_schema():
-    executor = ReasoningNodeExecutor(tenant_id=None, db=None)
+    executor = ReasoningNodeExecutor(organization_id=None, db=None)
     tool = type(
         "Tool",
         (),

@@ -214,25 +214,25 @@ def _operator_schema_payload(spec: Any) -> Dict[str, Any]:
 @router.post("/operators/schema", response_model=Dict[str, Any])
 async def get_operator_schemas(
     request: OperatorSchemaRequest,
-    tenant_slug: Optional[str] = None,
+    organization_id: Optional[str] = None,
     context: Dict[str, Any] = Depends(get_current_principal),
     _: Dict[str, Any] = Depends(require_scopes("pipelines.catalog.read")),
     db: AsyncSession = Depends(get_db),
 ):
-    tenant, _user, _db = await get_pipeline_context(
-        tenant_slug,
+    organization, _user, _db = await get_pipeline_context(
+        organization_id,
         current_user=context.get("user"),
         db=db,
         context=context,
     )
-    if tenant is None:
+    if organization is None:
         registry = OperatorRegistry.get_instance()
-        tenant_id: Optional[str] = None
+        organization_id: Optional[str] = None
         operator_ids = [str(item).strip() for item in (request.operator_ids or []) if str(item).strip()]
         schemas: Dict[str, Dict[str, Any]] = {}
         unknown: list[str] = []
         for operator_id in operator_ids:
-            spec = registry.get(operator_id, tenant_id=tenant_id)
+            spec = registry.get(operator_id, organization_id=organization_id)
             if spec is None:
                 unknown.append(operator_id)
                 continue
@@ -241,13 +241,12 @@ async def get_operator_schemas(
     try:
         result = await RagAdminService(db).operators_schema(
             ctx=ControlPlaneContext(
-                tenant_id=tenant.id,
+                organization_id=organization.id,
                 user=context.get("user"),
                 user_id=getattr(context.get("user"), "id", None),
                 auth_token=context.get("auth_token"),
                 scopes=tuple(context.get("scopes") or ()),
                 is_service=bool(context.get("type") == "workload"),
-                tenant_slug=tenant.slug,
             ),
             operator_ids=list(request.operator_ids or []),
         )

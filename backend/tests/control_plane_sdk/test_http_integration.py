@@ -10,11 +10,11 @@ from talmudpedia_control_sdk import ControlPlaneClient, ControlPlaneSDKError
 def _require_env() -> tuple[ControlPlaneClient, str | None]:
     base_url = os.getenv("TEST_BASE_URL")
     token = os.getenv("TEST_API_KEY")
-    tenant_id = os.getenv("TEST_TENANT_ID")
+    organization_id = os.getenv("TEST_TENANT_ID")
     tenant_slug = os.getenv("TEST_TENANT_SLUG")
-    if not base_url or not token or not tenant_id:
+    if not base_url or not token or not organization_id:
         pytest.skip("Set TEST_BASE_URL, TEST_API_KEY, and TEST_TENANT_ID for control SDK HTTP integration tests.")
-    client = ControlPlaneClient(base_url=base_url, token=token, tenant_id=tenant_id)
+    client = ControlPlaneClient(base_url=base_url, token=token, organization_id=organization_id)
     return client, tenant_slug
 
 

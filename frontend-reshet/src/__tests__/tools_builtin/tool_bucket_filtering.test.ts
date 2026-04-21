@@ -5,7 +5,7 @@ const now = "2026-02-10T00:00:00Z"
 const tools = [
   {
     id: "builtin-1",
-    tenant_id: "tenant-1",
+    organization_id: "organization-1",
     name: "Builtin Retrieval",
     slug: "builtin-retrieval",
     description: "built in",
@@ -31,7 +31,7 @@ const tools = [
   },
   {
     id: "mcp-1",
-    tenant_id: "tenant-1",
+    organization_id: "organization-1",
     name: "MCP Tool",
     slug: "mcp-tool",
     description: "mcp",
@@ -54,7 +54,7 @@ const tools = [
   },
   {
     id: "custom-1",
-    tenant_id: "tenant-1",
+    organization_id: "organization-1",
     name: "Custom Tool",
     slug: "custom-tool",
     description: "custom",

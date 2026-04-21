@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState, useCallback } from "react"
-import { useTenant } from "@/contexts/TenantContext"
+import { useOrganization } from "@/contexts/OrganizationContext"
 import { ragAdminService, PipelineStepData } from "@/services"
 import { ChevronLeft, ChevronRight, Loader2, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -22,7 +22,7 @@ export function PaginatedJsonView({
     type,
     className,
 }: PaginatedJsonViewProps) {
-    const { currentTenant } = useTenant()
+    const { currentOrganization } = useOrganization()
 
     // State for normal view (small)
     const [data, setData] = useState<PipelineStepData | null>(null)
@@ -46,7 +46,7 @@ export function PaginatedJsonView({
     } | null>(null)
 
     const fetchData = useCallback(async (p: number, l: number, isExpanded: boolean) => {
-        if (!currentTenant) return
+        if (!currentOrganization) return
         const setter = isExpanded ? setExpandedLoading : setLoading
         const dataSetter = isExpanded ? setExpandedData : setData
 
@@ -58,7 +58,7 @@ export function PaginatedJsonView({
                 type,
                 p,
                 l,
-                currentTenant.slug
+                currentOrganization.id
             )
             dataSetter(res)
         } catch (error) {
@@ -66,7 +66,7 @@ export function PaginatedJsonView({
         } finally {
             setter(false)
         }
-    }, [jobId, stepId, type, currentTenant])
+    }, [jobId, stepId, type, currentOrganization])
 
     // Reset state when job or step changes
     useEffect(() => {
@@ -99,7 +99,7 @@ export function PaginatedJsonView({
     }, [expandedPage, expandedLimit, expandedData, fetchData])
 
     const loadFieldContent = async (path: string, offset: number = 0, append: boolean = false) => {
-        if (!currentTenant) return
+        if (!currentOrganization) return
 
         setViewingField(prev => ({
             path,
@@ -117,7 +117,7 @@ export function PaginatedJsonView({
                 path,
                 offset,
                 50000,
-                currentTenant.slug
+                currentOrganization.id
             )
 
             setViewingField(prev => ({

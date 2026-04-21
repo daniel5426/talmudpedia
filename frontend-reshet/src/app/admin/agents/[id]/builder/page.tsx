@@ -348,7 +348,7 @@ export default function AgentBuilderPage() {
                 ) : (
                     <AgentBuilder
                         agentId={id as string}
-                        agentSlug={agent.slug}
+                        agentSystemKey={agent.system_key}
                         initialGraphDefinition={graphRef.current}
                         onSave={handleGraphChange}
                         mode={builderMode}

@@ -7,7 +7,7 @@ import pytest
 from sqlalchemy import func, select
 
 from app.db.postgres.models.agents import Agent, AgentRun, AgentStatus
-from app.db.postgres.models.identity import Tenant, TenantStatus, User
+from app.db.postgres.models.identity import Organization, OrganizationStatus, User
 from app.db.postgres.models.usage_quota import (
     UsageQuotaCounter,
     UsageQuotaPeriodType,
@@ -20,10 +20,10 @@ from app.services.usage_quota_service import QuotaExceededError, UsageQuotaServi
 
 
 async def _seed_tenant_user_agent(db_session):
-    tenant = Tenant(
-        name="Quota Tenant",
+    tenant = Organization(
+        name="Quota Organization",
         slug=f"quota-tenant-{uuid4().hex[:8]}",
-        status=TenantStatus.active,
+        status=OrganizationStatus.active,
         settings={},
     )
     user = User(
@@ -36,7 +36,7 @@ async def _seed_tenant_user_agent(db_session):
     await db_session.flush()
 
     agent = Agent(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         name="Quota Agent",
         slug=f"quota-agent-{uuid4().hex[:8]}",
         graph_definition={"nodes": [], "edges": []},
@@ -47,9 +47,9 @@ async def _seed_tenant_user_agent(db_session):
     return tenant, user, agent
 
 
-async def _add_policy(db_session, *, tenant_id, user_id, scope_type, limit_tokens: int):
+async def _add_policy(db_session, *, organization_id, user_id, scope_type, limit_tokens: int):
     policy = UsageQuotaPolicy(
-        tenant_id=tenant_id,
+        organization_id=organization_id,
         user_id=user_id,
         scope_type=scope_type,
         period_type=UsageQuotaPeriodType.monthly,
@@ -69,14 +69,14 @@ async def test_reserve_for_run_success_both_scopes(db_session, monkeypatch):
 
     await _add_policy(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=None,
         scope_type=UsageQuotaScopeType.tenant,
         limit_tokens=10_000,
     )
     await _add_policy(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         scope_type=UsageQuotaScopeType.user,
         limit_tokens=10_000,
@@ -87,7 +87,7 @@ async def test_reserve_for_run_success_both_scopes(db_session, monkeypatch):
     run_id = uuid4()
     metadata = await service.reserve_for_run(
         run_id=run_id,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         input_params={"input": "hello world " * 40, "context": {"max_output_cap": 64}},
     )
@@ -127,14 +127,14 @@ async def test_reserve_for_run_rejects_user_scope_when_over_limit(db_session, mo
 
     await _add_policy(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=None,
         scope_type=UsageQuotaScopeType.tenant,
         limit_tokens=10_000,
     )
     await _add_policy(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         scope_type=UsageQuotaScopeType.user,
         limit_tokens=10,
@@ -146,7 +146,7 @@ async def test_reserve_for_run_rejects_user_scope_when_over_limit(db_session, mo
     with pytest.raises(QuotaExceededError) as exc_info:
         await service.reserve_for_run(
             run_id=run_id,
-            tenant_id=tenant.id,
+            organization_id=tenant.id,
             user_id=user.id,
             input_params={"input": "x" * 200, "context": {"max_output_cap": 40}},
         )
@@ -168,14 +168,14 @@ async def test_reserve_for_run_rejects_tenant_scope_when_over_limit(db_session, 
 
     await _add_policy(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=None,
         scope_type=UsageQuotaScopeType.tenant,
         limit_tokens=20,
     )
     await _add_policy(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         scope_type=UsageQuotaScopeType.user,
         limit_tokens=10_000,
@@ -186,7 +186,7 @@ async def test_reserve_for_run_rejects_tenant_scope_when_over_limit(db_session, 
     with pytest.raises(QuotaExceededError) as exc_info:
         await service.reserve_for_run(
             run_id=uuid4(),
-            tenant_id=tenant.id,
+            organization_id=tenant.id,
             user_id=user.id,
             input_params={"input": "y" * 200, "context": {"max_output_cap": 40}},
         )
@@ -203,14 +203,14 @@ async def test_settle_for_run_is_idempotent_and_moves_reserved_to_used(db_sessio
 
     await _add_policy(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=None,
         scope_type=UsageQuotaScopeType.tenant,
         limit_tokens=10_000,
     )
     await _add_policy(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         scope_type=UsageQuotaScopeType.user,
         limit_tokens=10_000,
@@ -221,7 +221,7 @@ async def test_settle_for_run_is_idempotent_and_moves_reserved_to_used(db_sessio
     run_id = uuid4()
     metadata = await service.reserve_for_run(
         run_id=run_id,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         input_params={"input": "settle" * 30, "context": {"max_output_cap": 50}},
     )
@@ -272,14 +272,14 @@ async def test_release_and_expire_clear_reserved_tokens(db_session, monkeypatch)
 
     await _add_policy(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=None,
         scope_type=UsageQuotaScopeType.tenant,
         limit_tokens=10_000,
     )
     await _add_policy(
         db_session,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         scope_type=UsageQuotaScopeType.user,
         limit_tokens=10_000,
@@ -291,7 +291,7 @@ async def test_release_and_expire_clear_reserved_tokens(db_session, monkeypatch)
     run_release = uuid4()
     await service.reserve_for_run(
         run_id=run_release,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         input_params={"input": "release" * 20, "context": {"max_output_cap": 20}},
     )
@@ -310,7 +310,7 @@ async def test_release_and_expire_clear_reserved_tokens(db_session, monkeypatch)
     run_expire = uuid4()
     await service.reserve_for_run(
         run_id=run_expire,
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         user_id=user.id,
         input_params={"input": "expire" * 20, "context": {"max_output_cap": 20}},
     )
@@ -341,7 +341,7 @@ async def test_reconcile_counter_from_ledger_updates_used_tokens(db_session):
     period_start, period_end = service._month_bounds_utc(tz_name="UTC")
 
     run_one = AgentRun(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         agent_id=agent.id,
         user_id=user.id,
         status="completed",
@@ -349,7 +349,7 @@ async def test_reconcile_counter_from_ledger_updates_used_tokens(db_session):
         created_at=datetime.now(timezone.utc),
     )
     run_two = AgentRun(
-        tenant_id=tenant.id,
+        organization_id=tenant.id,
         agent_id=agent.id,
         user_id=user.id,
         status="completed",

@@ -21,7 +21,7 @@ class AuthorizedFileSpaceContext:
     db: AsyncSession
     service: FileSpaceService
     space_id: UUID
-    tenant_id: UUID
+    organization_id: UUID
     project_id: UUID
     user_id: UUID | None
     run_id: UUID | None
@@ -115,7 +115,7 @@ async def resolve_authorized_file_space(
 ) -> AuthorizedFileSpaceContext:
     space_id = resolve_space_id(payload)
     runtime_context = tool_runtime_context(payload)
-    tenant_id = _parse_uuid(runtime_context.get("tenant_id"), field="tenant_id")
+    organization_id= _parse_uuid(runtime_context.get("organization_id"), field="organization_id")
     project_id = _parse_uuid(runtime_context.get("project_id"), field="project_id")
     raw_run_id = runtime_context.get("run_id")
     raw_user_id = runtime_context.get("initiator_user_id") or runtime_context.get("user_id")
@@ -130,7 +130,7 @@ async def resolve_authorized_file_space(
         db=db,
         service=service,
         space_id=space_id,
-        tenant_id=tenant_id,
+        organization_id=organization_id,
         project_id=project_id,
         user_id=user_id,
         run_id=run_id,
@@ -145,7 +145,7 @@ async def resolve_authorized_file_reference(
     path: str,
 ) -> AuthorizedFileReference:
     entry, revision = await ctx.service.read_entry(
-        tenant_id=ctx.tenant_id,
+        organization_id=ctx.organization_id,
         project_id=ctx.project_id,
         space_id=ctx.space_id,
         path=path,
@@ -159,7 +159,7 @@ async def read_authorized_text_reference(
     path: str,
 ) -> tuple[AuthorizedFileReference, str]:
     entry, revision, content = await ctx.service.read_text_file(
-        tenant_id=ctx.tenant_id,
+        organization_id=ctx.organization_id,
         project_id=ctx.project_id,
         space_id=ctx.space_id,
         path=path,
@@ -173,7 +173,7 @@ async def read_authorized_bytes_reference(
     path: str,
 ) -> tuple[AuthorizedFileReference, bytes]:
     entry, revision, payload = await ctx.service.read_file_bytes(
-        tenant_id=ctx.tenant_id,
+        organization_id=ctx.organization_id,
         project_id=ctx.project_id,
         space_id=ctx.space_id,
         path=path,
@@ -196,7 +196,7 @@ async def with_authorized_file_space(
                 service=ctx.service,
                 tool_payload=tool_payload,
                 space_id=ctx.space_id,
-                tenant_id=ctx.tenant_id,
+                organization_id=ctx.organization_id,
                 project_id=ctx.project_id,
                 user_id=ctx.user_id,
                 run_id=ctx.run_id,

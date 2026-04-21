@@ -58,7 +58,7 @@ describe("agents page delete action", () => {
       items: [
         {
           id: "agent-1",
-          tenant_id: "tenant-1",
+          organization_id: "organization-1",
           name: "Delete Candidate",
           slug: "delete-candidate",
           status: "draft",

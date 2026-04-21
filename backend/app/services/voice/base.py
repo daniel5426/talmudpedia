@@ -8,9 +8,9 @@ class BaseVoiceSession(ABC):
     Abstract base class for all speech-to-speech voice providers.
     """
     
-    def __init__(self, chat_id: Optional[str] = None, tenant_id: Optional[UUID] = None, user_id: Optional[UUID] = None):
+    def __init__(self, chat_id: Optional[str] = None, organization_id: Optional[UUID] = None, user_id: Optional[UUID] = None):
         self.chat_id = chat_id
-        self.tenant_id = tenant_id
+        self.organization_id = organization_id
         self.user_id = user_id
         self.frontend_ws: Optional[WebSocket] = None
 

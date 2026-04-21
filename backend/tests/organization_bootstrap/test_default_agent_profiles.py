@@ -7,9 +7,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.db.postgres.models.agents import Agent
-from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Tenant, User
+from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgRole, OrgUnit, OrgUnitType, Organization, User
 from app.db.postgres.models.registry import ModelCapabilityType, ModelRegistry, ModelStatus
 from app.db.postgres.models.workspace import Project
+from app.services.agent_service import AgentService
+from app.services.architect_mode_service import ArchitectMode, ArchitectModeService
 from app.services.organization_bootstrap_service import OrganizationBootstrapService
 
 
@@ -23,7 +25,7 @@ async def _seed_owner_and_default_chat_model(db_session):
     existing_defaults = (
         await db_session.execute(
             select(ModelRegistry).where(
-                ModelRegistry.tenant_id.is_(None),
+                ModelRegistry.organization_id.is_(None),
                 ModelRegistry.capability_type == ModelCapabilityType.CHAT,
                 ModelRegistry.is_default.is_(True),
             )
@@ -33,8 +35,9 @@ async def _seed_owner_and_default_chat_model(db_session):
         item.is_default = False
 
     model = ModelRegistry(
-        tenant_id=None,
+        organization_id=None,
         name="Bootstrap Chat Model",
+        system_key=f"bootstrap-chat-{suffix}",
         capability_type=ModelCapabilityType.CHAT,
         status=ModelStatus.ACTIVE,
         is_active=True,
@@ -53,7 +56,6 @@ async def test_create_organization_with_default_project_materializes_default_age
     organization, project = await OrganizationBootstrapService(db_session).create_organization_with_default_project(
         owner=owner,
         name="Bootstrap Org",
-        slug=f"bootstrap-org-{uuid4().hex[:8]}",
     )
     await db_session.commit()
 
@@ -62,13 +64,19 @@ async def test_create_organization_with_default_project_materializes_default_age
 
     agents = (
         await db_session.execute(
-            select(Agent).where(Agent.tenant_id == organization.id).order_by(Agent.slug.asc())
+            select(Agent).where(Agent.organization_id == organization.id).order_by(Agent.system_key.asc())
         )
     ).scalars().all()
-    slugs = [agent.slug for agent in agents]
-    assert "platform-architect" in slugs
-    assert "artifact-coding-agent" in slugs
-    assert "published-app-coding-agent" in slugs
+    system_keys = [agent.system_key for agent in agents]
+    assert "platform_architect" in system_keys
+    assert "artifact_coding_agent" in system_keys
+    assert "published_app_coding_agent" in system_keys
+    service = AgentService(db=db_session, organization_id=organization.id)
+    for agent in agents:
+        if agent.system_key == "published_app_coding_agent":
+            continue
+        validation = await service.validate_agent(agent.id)
+        assert validation.valid, f"{agent.system_key} validation failed: {validation.errors}"
 
 
 @pytest.mark.asyncio
@@ -79,13 +87,11 @@ async def test_create_project_bootstrap_keeps_default_agent_profiles_idempotent(
     organization, _default_project = await service.create_organization_with_default_project(
         owner=owner,
         name="Idempotent Org",
-        slug=f"idempotent-org-{uuid4().hex[:8]}",
     )
     second_project = await service.create_project(
         organization=organization,
         created_by=owner.id,
         name="Second Project",
-        slug="second-project",
         owner_user_id=owner.id,
     )
     await db_session.commit()
@@ -94,26 +100,26 @@ async def test_create_project_bootstrap_keeps_default_agent_profiles_idempotent(
 
     agents = (
         await db_session.execute(
-            select(Agent).where(Agent.tenant_id == organization.id).order_by(Agent.slug.asc())
+            select(Agent).where(Agent.organization_id == organization.id).order_by(Agent.system_key.asc())
         )
     ).scalars().all()
     counts: dict[str, int] = {}
     for agent in agents:
-        counts[agent.slug] = counts.get(agent.slug, 0) + 1
+        counts[agent.system_key] = counts.get(agent.system_key, 0) + 1
 
-    assert counts["platform-architect"] == 1
-    assert counts["artifact-coding-agent"] == 1
-    assert counts["published-app-coding-agent"] == 1
+    assert counts["platform_architect"] == 1
+    assert counts["artifact_coding_agent"] == 1
+    assert counts["published_app_coding_agent"] == 1
 
 
 @pytest.mark.asyncio
 async def test_backfill_helpers_materialize_profiles_for_existing_org_without_startup_scan(db_session):
     owner = await _seed_owner_and_default_chat_model(db_session)
-    organization = Tenant(name="Backfill Org", slug=f"backfill-org-{uuid4().hex[:8]}")
+    organization = Organization(name="Backfill Org", slug=f"backfill-org-{uuid4().hex[:8]}")
     project = Project(
         organization_id=organization.id,
         name="Default Project",
-        slug="default",
+        slug=f"project-{uuid4().hex[:12]}",
         is_default=True,
         created_by=owner.id,
     )
@@ -137,13 +143,13 @@ async def test_backfill_helpers_materialize_profiles_for_existing_org_without_st
 
     agents = (
         await db_session.execute(
-            select(Agent.slug).where(Agent.tenant_id == organization.id).order_by(Agent.slug.asc())
+            select(Agent.system_key).where(Agent.organization_id == organization.id).order_by(Agent.system_key.asc())
         )
     ).scalars().all()
     assert list(agents) == [
-        "artifact-coding-agent",
-        "platform-architect",
-        "published-app-coding-agent",
+        "artifact_coding_agent",
+        "platform_architect",
+        "published_app_coding_agent",
     ]
 
 
@@ -152,14 +158,15 @@ async def test_agents_list_backfill_persists_seeded_profiles_across_requests(db_
     from app.api.routers.agents import list_agents
 
     owner = await _seed_owner_and_default_chat_model(db_session)
-    organization = Tenant(name="Router Backfill Org", slug=f"router-backfill-org-{uuid4().hex[:8]}")
+    organization = Organization(name="Router Backfill Org", slug=f"router-backfill-org-{uuid4().hex[:8]}")
     db_session.add(organization)
     await db_session.flush()
 
     root_unit = OrgUnit(
-        tenant_id=organization.id,
+        organization_id=organization.id,
         name=organization.name,
         slug="root",
+        system_key="root",
         type=OrgUnitType.org,
     )
     db_session.add(root_unit)
@@ -167,7 +174,7 @@ async def test_agents_list_backfill_persists_seeded_profiles_across_requests(db_
 
     db_session.add(
         OrgMembership(
-            tenant_id=organization.id,
+            organization_id=organization.id,
             user_id=owner.id,
             org_unit_id=root_unit.id,
             role=OrgRole.owner,
@@ -178,7 +185,7 @@ async def test_agents_list_backfill_persists_seeded_profiles_across_requests(db_
     project = Project(
         organization_id=organization.id,
         name="Default Project",
-        slug="default",
+        slug=f"project-{uuid4().hex[:12]}",
         is_default=True,
         created_by=owner.id,
     )
@@ -191,29 +198,38 @@ async def test_agents_list_backfill_persists_seeded_profiles_across_requests(db_
         limit=50,
         view="full",
         context={
-            "tenant_id": organization.id,
+            "organization_id": organization.id,
+            "organization_id": organization.id,
             "project_id": project.id,
             "user": owner,
         },
         db=db_session,
     )
 
-    response_slugs = sorted(item["slug"] for item in response["items"])
-    assert response_slugs == [
-        "artifact-coding-agent",
-        "platform-architect",
-        "published-app-coding-agent",
+    response_names = sorted(item["name"] for item in response["items"])
+    assert response_names == [
+        "Artifact Coding Agent",
+        "Platform Architect",
+        "Published App Coding Agent",
     ]
 
     verify_session_factory = async_sessionmaker(bind=db_session.bind, expire_on_commit=False)
     async with verify_session_factory() as verify_session:
-        persisted_slugs = (
+        persisted_system_keys = (
             await verify_session.execute(
-                select(Agent.slug).where(Agent.tenant_id == organization.id).order_by(Agent.slug.asc())
+                select(Agent.system_key).where(Agent.organization_id == organization.id).order_by(Agent.system_key.asc())
             )
         ).scalars().all()
 
-    assert list(persisted_slugs) == response_slugs
+    assert sorted(persisted_system_keys) == [
+        "artifact_coding_agent",
+        "platform_architect",
+        "published_app_coding_agent",
+    ]
+
+
+def test_platform_architect_mode_defaults_to_default():
+    assert ArchitectModeService.parse_mode(None) == ArchitectMode.DEFAULT
 
 
 @pytest.mark.asyncio
@@ -225,7 +241,6 @@ async def test_agents_list_skips_backfill_when_default_profiles_already_exist(db
     organization, project = await service.create_organization_with_default_project(
         owner=owner,
         name="No Rebootstrap Org",
-        slug=f"no-rebootstrap-org-{uuid4().hex[:8]}",
     )
     await db_session.commit()
 
@@ -251,17 +266,18 @@ async def test_agents_list_skips_backfill_when_default_profiles_already_exist(db
         limit=50,
         view="full",
         context={
-            "tenant_id": organization.id,
+            "organization_id": organization.id,
+            "organization_id": organization.id,
             "project_id": project.id,
             "user": owner,
         },
         db=db_session,
     )
 
-    assert sorted(item["slug"] for item in response["items"]) == [
-        "artifact-coding-agent",
-        "platform-architect",
-        "published-app-coding-agent",
+    assert sorted(item["name"] for item in response["items"]) == [
+        "Artifact Coding Agent",
+        "Platform Architect",
+        "Published App Coding Agent",
     ]
     assert org_calls["count"] == 0
     assert project_calls["count"] == 0

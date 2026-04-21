@@ -357,7 +357,7 @@ export const AGENT_NODE_SPECS: AgentNodeSpec[] = [
     outputType: "context",
     icon: "Mic",
     configFields: [
-      { name: "model_id", label: "STT Model", fieldType: "model", required: false, description: "Defaults to the tenant/global speech-to-text model" },
+      { name: "model_id", label: "STT Model", fieldType: "model", required: false, description: "Defaults to the organization/global speech-to-text model" },
       { name: "source", label: "Audio Source", fieldType: "value_ref", required: true, description: "Select workflow_input.audio or another audio attachment value" },
       { name: "language_hints", label: "Language Hints", fieldType: "text", required: false, description: "Optional comma-separated language codes" },
       { name: "prompt", label: "Prompt", fieldType: "text", required: false, description: "Optional provider hint text" },
@@ -454,8 +454,7 @@ export const AGENT_NODE_SPECS: AgentNodeSpec[] = [
     outputType: "context",
     icon: "GitBranch",
     configFields: [
-      { name: "target_agent_slug", label: "Target Agent", fieldType: "agent_select", required: false, visibility: "simple", group: "what_to_run" },
-      { name: "target_agent_id", label: "Target Agent (ID)", fieldType: "agent_select", required: false, visibility: "advanced", group: "what_to_run", helpKind: "runtime-internal" },
+      { name: "target_agent_id", label: "Target Agent", fieldType: "agent_select", required: false, visibility: "simple", group: "what_to_run" },
       { name: "scope_subset", label: "Scope Subset", fieldType: "scope_subset", required: true, visibility: "simple", group: "permissions", helpKind: "required-for-compile", description: "Scopes delegated to spawned child run(s)." },
       { name: "idempotency_key", label: "Idempotency Key", fieldType: "string", required: false, visibility: "advanced", group: "reliability", helpKind: "runtime-internal" },
       {

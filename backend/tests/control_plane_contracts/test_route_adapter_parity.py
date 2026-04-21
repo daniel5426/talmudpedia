@@ -14,7 +14,7 @@ from app.api.schemas.artifacts import ArtifactLanguage, ArtifactRuntimeConfig, T
 from app.api.routers.rag_pipelines import create_visual_pipeline
 from app.api.schemas.agents import CreateAgentRequest, GraphDefinitionSchema
 from app.db.postgres.models.agents import Agent
-from app.db.postgres.models.identity import Tenant, User
+from app.db.postgres.models.identity import Organization, User
 from app.services import platform_native_tools
 from app.services.control_plane.agents_admin_service import AgentAdminService
 from app.services.control_plane.contracts import ListQuery
@@ -22,13 +22,13 @@ from app.services.control_plane.contracts import ListQuery
 
 @pytest.mark.asyncio
 async def test_agents_list_matches_service_route_and_native_tool(db_session, monkeypatch):
-    tenant = Tenant(name="Agents Tenant", slug=f"agents-{uuid4().hex[:8]}")
+    tenant = Organization(name="Agents Organization", slug=f"agents-{uuid4().hex[:8]}")
     user = User(email=f"agents-{uuid4().hex[:8]}@example.com", hashed_password="x", role="admin")
     db_session.add_all([tenant, user])
     await db_session.flush()
     db_session.add(
         Agent(
-            tenant_id=tenant.id,
+            organization_id=tenant.id,
             name="Route Agent",
             slug="route-agent",
             graph_definition={
@@ -54,7 +54,7 @@ async def test_agents_list_matches_service_route_and_native_tool(db_session, mon
         _no_backfill,
     )
 
-    ctx = {"tenant_id": tenant.id, "user": user, "auth_token": None, "scopes": ["*"], "is_service": False}
+    ctx = {"organization_id": tenant.id, "user": user, "auth_token": None, "scopes": ["*"], "is_service": False}
     service_page = await AgentAdminService(db_session).list_agents(
         ctx=list_agents.__globals__["_control_plane_ctx_from_agent_context"](ctx),
         query=ListQuery(limit=20, skip=0, view="summary"),
@@ -73,7 +73,7 @@ async def test_agents_list_matches_service_route_and_native_tool(db_session, mon
         {
             "action": "agents.list",
             "payload": {"limit": 20, "view": "summary"},
-            "__tool_runtime_context__": {"tenant_id": str(tenant.id), "user_id": str(user.id), "scopes": ["*"]},
+            "__tool_runtime_context__": {"organization_id": str(tenant.id), "user_id": str(user.id), "scopes": ["*"]},
         }
     )
 
@@ -88,11 +88,11 @@ async def test_agents_list_matches_service_route_and_native_tool(db_session, mon
 
 @pytest.mark.asyncio
 async def test_create_agent_route_uses_service_validation(db_session):
-    tenant = Tenant(name="Create Tenant", slug=f"create-{uuid4().hex[:8]}")
+    tenant = Organization(name="Create Organization", slug=f"create-{uuid4().hex[:8]}")
     user = User(email=f"create-{uuid4().hex[:8]}@example.com", hashed_password="x", role="admin")
     db_session.add_all([tenant, user])
     await db_session.flush()
-    ctx = {"tenant_id": tenant.id, "user": user, "auth_token": None, "scopes": ["*"], "is_service": False}
+    ctx = {"organization_id": tenant.id, "user": user, "auth_token": None, "scopes": ["*"], "is_service": False}
 
     with pytest.raises(HTTPException) as exc_info:
         await create_agent(
@@ -119,7 +119,7 @@ async def test_artifact_create_route_delegates_to_admin_service(monkeypatch):
     captured = {}
 
     async def fake_create(self, *, ctx, params):
-        captured["tenant_id"] = ctx.tenant_id
+        captured["organization_id"] = ctx.organization_id
         captured["display_name"] = params.display_name
         return {
             "id": str(uuid4()),
@@ -176,7 +176,7 @@ async def test_artifact_create_route_delegates_to_admin_service(monkeypatch):
         artifact_ctx=(tenant, user, _FakeDb()),
     )
 
-    assert captured["tenant_id"] == tenant.id
+    assert captured["organization_id"] == tenant.id
     assert response.display_name == "Artifact A"
 
 
@@ -189,11 +189,11 @@ async def test_orchestration_join_route_unwraps_service_operation(monkeypatch):
 
     class _Kernel:
         async def _require_run(self, run_id):
-            return SimpleNamespace(tenant_id=uuid4())
+            return SimpleNamespace(organization_id=uuid4())
 
     monkeypatch.setattr("app.api.routers.orchestration_internal.OrchestrationKernelService", lambda db: _Kernel())
-    monkeypatch.setattr("app.api.routers.orchestration_internal._assert_tenant", lambda principal, tenant_id: None)
-    monkeypatch.setattr("app.api.routers.orchestration_internal._assert_option_b_enabled", lambda tenant_id: None)
+    monkeypatch.setattr("app.api.routers.orchestration_internal._assert_tenant", lambda principal, organization_id: None)
+    monkeypatch.setattr("app.api.routers.orchestration_internal._assert_option_b_enabled", lambda organization_id: None)
 
     result = await orchestration_internal.join(
         request=orchestration_internal.JoinRequest(
@@ -203,7 +203,7 @@ async def test_orchestration_join_route_unwraps_service_operation(monkeypatch):
             quorum_threshold=None,
             timeout_s=None,
         ),
-        principal={"tenant_id": str(uuid4()), "scopes": ["*"]},
+        principal={"organization_id": str(uuid4()), "scopes": ["*"]},
         _={},
         db=object(),
     )
@@ -218,7 +218,7 @@ async def test_rag_create_route_delegates_to_admin_service(monkeypatch):
     captured = {}
 
     async def fake_create(self, *, ctx, params):
-        captured["tenant_id"] = ctx.tenant_id
+        captured["organization_id"] = ctx.organization_id
         captured["name"] = params.name
         return {"id": "pipe-1", "status": "created"}
 
@@ -250,5 +250,5 @@ async def test_rag_create_route_delegates_to_admin_service(monkeypatch):
         db=object(),
     )
 
-    assert captured["tenant_id"] == tenant.id
+    assert captured["organization_id"] == tenant.id
     assert result == {"id": "pipe-1", "status": "created"}

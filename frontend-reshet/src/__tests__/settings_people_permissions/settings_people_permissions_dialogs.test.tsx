@@ -2,6 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/react"
 
 import { MemberRoleAssignmentsDialog } from "@/app/admin/settings/components/MemberRoleAssignmentsDialog"
 import { RolePermissionDialog, RoleFormState } from "@/app/admin/settings/components/RolePermissionDialog"
+import { DirectionProvider } from "@/components/direction-provider"
 
 const organizationForm: RoleFormState = {
   id: "",
@@ -11,9 +12,11 @@ const organizationForm: RoleFormState = {
   permissions: [],
 }
 
+const renderWithDirection = (ui: React.ReactElement) => render(<DirectionProvider>{ui}</DirectionProvider>)
+
 describe("settings people permissions dialogs", () => {
   it("renders organization-only permission resources for organization custom roles", () => {
-    render(
+    renderWithDirection(
       <RolePermissionDialog
         open
         form={organizationForm}
@@ -31,7 +34,7 @@ describe("settings people permissions dialogs", () => {
   })
 
   it("renders project-only permission resources for project custom roles", () => {
-    render(
+    renderWithDirection(
       <RolePermissionDialog
         open
         form={{ ...organizationForm, family: "project", name: "Workflow Builder" }}
@@ -48,10 +51,11 @@ describe("settings people permissions dialogs", () => {
     expect(screen.queryByText("Organization Settings")).not.toBeInTheDocument()
   })
 
-  it("keeps member organization-role assignment single-select", () => {
-    const onSelectedRoleIdChange = jest.fn()
+  it("renders combined member access editing with org role and project access", () => {
+    const onSelectedOrganizationRoleIdChange = jest.fn()
+    const onProjectAccessRowsChange = jest.fn()
 
-    render(
+    renderWithDirection(
       <MemberRoleAssignmentsDialog
         open
         member={{
@@ -65,7 +69,7 @@ describe("settings people permissions dialogs", () => {
           org_unit_name: "Root",
           joined_at: new Date().toISOString(),
         }}
-        roles={[
+        organizationRoles={[
           {
             id: "r-reader",
             family: "organization",
@@ -87,16 +91,46 @@ describe("settings people permissions dialogs", () => {
             created_at: new Date().toISOString(),
           },
         ]}
-        selectedRoleId="r-reader"
+        projectRoles={[
+          {
+            id: "p-member",
+            family: "project",
+            name: "Member",
+            description: "Standard project access",
+            permissions: ["apps.read", "apps.write"],
+            is_system: true,
+            is_preset: true,
+            created_at: new Date().toISOString(),
+          },
+        ]}
+        projects={[
+          {
+            id: "proj-1",
+            organization_id: "org-1",
+            name: "Project One",
+            description: null,
+            status: "active",
+            is_default: false,
+            created_at: new Date().toISOString(),
+            member_count: 1,
+          },
+        ]}
+        selectedOrganizationRoleId="r-reader"
+        projectAccessRows={[]}
+        orgOwnerImplicit={false}
         saving={false}
-        onSelectedRoleIdChange={onSelectedRoleIdChange}
+        onSelectedOrganizationRoleIdChange={onSelectedOrganizationRoleIdChange}
+        onProjectAccessRowsChange={onProjectAccessRowsChange}
         onOpenChange={() => undefined}
         onSave={() => undefined}
       />
     )
 
+    expect(screen.getByText("Organization role")).toBeInTheDocument()
+    expect(screen.getByText("Project access")).toBeInTheDocument()
     fireEvent.click(screen.getByRole("button", { name: /Support Admin/ }))
-    expect(onSelectedRoleIdChange).toHaveBeenCalledWith("r-support")
-    expect(screen.getByRole("button", { name: "Save role" })).toBeInTheDocument()
+    expect(onSelectedOrganizationRoleIdChange).toHaveBeenCalledWith("r-support")
+    fireEvent.click(screen.getByRole("button", { name: /Add Project/ }))
+    expect(onProjectAccessRowsChange).toHaveBeenCalledWith([{ projectId: "", roleId: "p-member" }])
   })
 })
