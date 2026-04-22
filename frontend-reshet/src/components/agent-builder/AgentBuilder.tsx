@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useState, useRef, useEffect, useMemo } from "react"
+import { useCallback, useState, useRef, useEffect, useLayoutEffect, useMemo } from "react"
 import {
     ReactFlow,
     Controls,
@@ -396,7 +396,7 @@ function AgentBuilderInner({
     }, [mode, isCatalogVisible, getViewport, setViewport, getNodes])
 
     // Auto-save on changes
-    useEffect(() => {
+    useLayoutEffect(() => {
         if (onSave && mode === "build") {
             onSave(
                 normalizeGraphSpecForSave(nodes as Node<AgentNodeData>[], edges, {

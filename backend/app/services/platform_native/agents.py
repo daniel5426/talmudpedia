@@ -9,6 +9,16 @@ from app.services.control_plane.errors import not_found, validation
 from app.services.platform_native.runtime import NativePlatformToolRuntime, parse_uuid
 
 
+_AGENT_UPDATE_FIELDS = (
+    "name",
+    "description",
+    "graph_definition",
+    "memory_config",
+    "execution_constraints",
+    "show_in_playground",
+)
+
+
 def _shell_graph() -> dict[str, Any]:
     return {
         "nodes": [
@@ -60,6 +70,8 @@ async def agents_create_shell(rt: NativePlatformToolRuntime) -> Any:
 async def agents_create(rt: NativePlatformToolRuntime) -> Any:
     if rt.dry_run:
         return {"status": "skipped", "dry_run": True, "name": str(rt.payload.get("name") or "")}
+    if not isinstance(rt.payload.get("graph_definition"), dict):
+        raise validation("graph_definition is required", field="graph_definition")
     return await AgentAdminService(rt.db).create_agent(
         ctx=await rt.build_control_plane_context(),
         params=CreateAgentInput(
@@ -78,16 +90,47 @@ async def agents_update(rt: NativePlatformToolRuntime) -> Any:
         raise not_found("Agent not found")
     if rt.dry_run:
         return {"status": "skipped", "dry_run": True, "agent_id": str(agent_id)}
-    patch = dict(rt.payload.get("patch") or rt.payload)
+    if "patch" in rt.payload:
+        raise validation(
+            "patch is not supported; send direct top-level update fields",
+            field="patch",
+            errors=[
+                {
+                    "code": "LEGACY_FIELD_NOT_ALLOWED",
+                    "path": "/patch",
+                    "message": "Use direct top-level update fields instead of patch.",
+                }
+            ],
+        )
+    if not any(field in rt.payload for field in _AGENT_UPDATE_FIELDS):
+        raise validation(
+            "At least one update field is required.",
+            errors=[
+                {
+                    "code": "MISSING_UPDATE_FIELDS",
+                    "path": "/",
+                    "message": "Provide at least one of name, description, graph_definition, memory_config, execution_constraints, or show_in_playground.",
+                }
+            ],
+        )
+    if "graph_definition" in rt.payload and not isinstance(rt.payload.get("graph_definition"), dict):
+        raise validation("graph_definition must be an object", field="graph_definition")
+    if "memory_config" in rt.payload and not isinstance(rt.payload.get("memory_config"), dict):
+        raise validation("memory_config must be an object", field="memory_config")
+    if "execution_constraints" in rt.payload and not isinstance(rt.payload.get("execution_constraints"), dict):
+        raise validation("execution_constraints must be an object", field="execution_constraints")
+    if "show_in_playground" in rt.payload and not isinstance(rt.payload.get("show_in_playground"), bool):
+        raise validation("show_in_playground must be a boolean", field="show_in_playground")
     return await AgentAdminService(rt.db).update_agent(
         ctx=await rt.build_control_plane_context(),
         agent_id=agent_id,
         params=UpdateAgentInput(
-            name=patch.get("name"),
-            description=patch.get("description"),
-            graph_definition=patch.get("graph_definition"),
-            memory_config=patch.get("memory_config"),
-            execution_constraints=patch.get("execution_constraints"),
+            name=rt.payload.get("name"),
+            description=rt.payload.get("description"),
+            graph_definition=rt.payload.get("graph_definition"),
+            memory_config=rt.payload.get("memory_config"),
+            execution_constraints=rt.payload.get("execution_constraints"),
+            show_in_playground=rt.payload.get("show_in_playground"),
         ),
     )
 
@@ -222,6 +265,18 @@ async def agents_validate(rt: NativePlatformToolRuntime) -> Any:
     agent_id = parse_uuid(rt.payload.get("agent_id") or rt.payload.get("id"))
     if agent_id is None:
         raise not_found("Agent not found")
+    if "validation" in rt.payload:
+        raise validation(
+            "validation is not supported here; validate by agent id only",
+            field="validation",
+            errors=[
+                {
+                    "code": "LEGACY_FIELD_NOT_ALLOWED",
+                    "path": "/validation",
+                    "message": "Use agents.validate with only agent_id or id.",
+                }
+            ],
+        )
     return await AgentAdminService(rt.db).validate_agent(ctx=await rt.build_control_plane_context(), agent_id=agent_id)
 
 

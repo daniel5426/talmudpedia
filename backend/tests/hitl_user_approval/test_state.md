@@ -1,5 +1,7 @@
 # Test State: HITL User Approval
 
+Last Updated: 2026-04-22
+
 **Scope**
 Human input approval/rejection behavior and gating for pause/resume paths.
 
@@ -10,9 +12,12 @@ Human input approval/rejection behavior and gating for pause/resume paths.
 - `user_approval` can_execute gating
 - Approve/reject branch resolution
 - Invalid approval payload handling
-- Legacy `human_input` input/message acceptance
+- Non-interaction nodes bypass approval gating
 
 **Last Run**
+- Command: `SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest -q backend/tests/graph_authoring/test_agent_authoring.py backend/tests/hitl_user_approval/test_hitl_user_approval.py backend/tests/node_inventory/test_node_surface_inventory.py`
+- Date: 2026-04-22 Asia/Hebron
+- Result: Pass (`12 passed`)
 - Command: `TEST_USE_REAL_DB=0 pytest -q`
 - Date: 2026-02-04 16:59 EET
 - Result: Pass

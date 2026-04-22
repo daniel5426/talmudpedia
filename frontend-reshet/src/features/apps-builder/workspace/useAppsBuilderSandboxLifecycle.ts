@@ -270,7 +270,6 @@ export function useAppsBuilderSandboxLifecycle({
     setDraftDevError(null);
     setPreviewAssetUrl(null);
     setPreviewTransportGeneration(null);
-    setPreviewAuthToken(null);
     setPhase("idle");
     onSessionChange?.(null);
   }, [onSessionChange]);
@@ -506,7 +505,6 @@ export function useAppsBuilderSandboxLifecycle({
     setDraftDevError(null);
     setPreviewAssetUrl(null);
     setPreviewTransportGeneration(null);
-    setPreviewAuthToken(null);
     setPublishLockMessage(null);
     setRecoveryExhausted(false);
     syncFingerprintRef.current = "";

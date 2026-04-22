@@ -1,6 +1,6 @@
 # Test State: Agent Builder Large Agents
 
-Last Updated: 2026-02-05
+Last Updated: 2026-04-22
 
 **Scope**
 Full-stack, multi-node agent graphs that mirror real UI flows (guardrails, classify, tools, RAG, approvals).
@@ -11,7 +11,7 @@ Full-stack, multi-node agent graphs that mirror real UI flows (guardrails, class
 **Scenarios Covered**
 - Customer support router with guardrail, classify, RAG + vector search, tool, and approval
 - Query triage with rewrite, classify, RAG + vector search, tool, and deterministic routing
-- Document compare flow with human input, RAG + vector search, tool, approval/rejection agents
+- Document compare flow with typed state setup, RAG + vector search, tool, approval/rejection agents
 
 **Destructive Setup**
 - Purges all agents for the test tenant at the start of each test (user-approved).

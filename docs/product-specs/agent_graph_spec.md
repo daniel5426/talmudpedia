@@ -1,6 +1,6 @@
 # Agent Graph Spec
 
-Last Updated: 2026-04-01
+Last Updated: 2026-04-22
 
 This document is the canonical graph-definition contract for the agent builder, persistence layer, and backend compiler.
 
@@ -191,8 +191,6 @@ Current baseline output contracts:
   - `provider_metadata`
 - `transform`
   - `output`
-- `human_input`
-  - `input_text`
 - `user_approval`
   - `approved`
   - `comment`
@@ -200,6 +198,11 @@ Current baseline output contracts:
   - output fields derived from artifact metadata
 
 `set_state` is state-writing, not output-primary.
+
+Legacy note:
+
+- `human_input` is removed from the standard agent-node surface and should not appear in new graphs
+- `conditional` is also removed; `if_else` is the canonical branching node
 
 Current STT node rules:
 - `speech_to_text.config.source` is a required `ValueRef`

@@ -11,11 +11,16 @@ Last Updated: 2026-04-22
 
 ## Key scenarios covered
 - Agent write-path normalization applies backend schema defaults and canonical contract shaping before persistence.
+- Agent write-path strips removed per-node `name` config and drops empty `if_else` conditions.
 - Agent validation returns path-specific authoring issues for unknown config fields and missing required fields.
+- Removed legacy agent nodes stay out of the registered discovery surface.
 - RAG graph normalization applies canonical operator defaults without frontend help.
 - RAG authoring issues are path-specific and direct write-path normalization rejects unknown operators.
 
 ## Last run command + date/time + result
+- Command: `SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest -q backend/tests/graph_authoring/test_agent_authoring.py backend/tests/hitl_user_approval/test_hitl_user_approval.py backend/tests/node_inventory/test_node_surface_inventory.py`
+- Date/Time: 2026-04-22 Asia/Hebron
+- Result: pass (`12 passed`)
 - Command: `SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest -q backend/tests/graph_authoring/test_agent_authoring.py backend/tests/graph_authoring/test_rag_authoring.py backend/tests/graph_mutation_agents/test_agent_graph_mutation_service.py backend/tests/graph_mutation_rag/test_rag_graph_mutation_service.py`
 - Date/Time: 2026-04-22 Asia/Hebron
 - Result: pass (`11 passed`)

@@ -59,7 +59,6 @@ class PromptReferenceResolver:
         "vector_search": {"query": "vector_search.query"},
         "end": {"output_message": "end.output_message"},
         "user_approval": {"message": "user_approval.message"},
-        "human_input": {"prompt": "human_input.prompt"},
     }
 
     def __init__(self, db: AsyncSession, organization_id: UUID | None, project_id: UUID | None = None):

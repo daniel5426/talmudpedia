@@ -15,7 +15,7 @@ from tests.agent_builder_helpers import (
 
 @pytest.mark.asyncio
 @pytest.mark.real_db
-async def test_node_events_emitted_for_start_human_end(
+async def test_node_events_emitted_for_start_approval_end(
     db_session,
     test_tenant_id,
     test_user_id,
@@ -24,12 +24,12 @@ async def test_node_events_emitted_for_start_human_end(
     graph = graph_def(
         [
             node_def("start", "start"),
-            node_def("human", "human_input"),
+            node_def("approval", "user_approval"),
             node_def("end", "end", minimal_config_for("end")),
         ],
         [
-            edge_def("e1", "start", "human"),
-            edge_def("e2", "human", "end"),
+            edge_def("e1", "start", "approval"),
+            edge_def("e2", "approval", "end", source_handle="approve"),
         ],
     )
 
@@ -46,7 +46,7 @@ async def test_node_events_emitted_for_start_human_end(
         executor = AgentExecutorService(db=db_session)
         run_id = await executor.start_run(
             agent_id=agent.id,
-            input_params={"input": "hello"},
+            input_params={"approval": "approve"},
             background=False,
             mode=ExecutionMode.DEBUG,
         )
@@ -56,7 +56,7 @@ async def test_node_events_emitted_for_start_human_end(
             if event.event in {"node_start", "node_end"}:
                 events.append((event.event, event.span_id))
 
-        for node_id in ("start", "human", "end"):
+        for node_id in ("start", "approval", "end"):
             assert ("node_start", node_id) in events
             assert ("node_end", node_id) in events
     finally:

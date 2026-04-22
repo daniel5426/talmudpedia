@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/select"
 import { modelsService, LogicalModel } from "@/services"
 import type { AuthoringFieldSpec } from "@/services/graph-authoring"
+import type { ExecutablePipelineInputField } from "./types"
 import { KnowledgeStoreSelect } from "../shared/KnowledgeStoreSelect"
 import { RetrievalPipelineSelect } from "../shared/RetrievalPipelineSelect"
 
@@ -82,18 +83,58 @@ export type FileInputRendererProps = {
 
 export type FileInputRenderer = (props: FileInputRendererProps) => React.ReactNode
 
+type ConfigurableField = AuthoringFieldSpec | ExecutablePipelineInputField
+
+function resolveFieldType(field: ConfigurableField) {
+  if ("fieldType" in field) {
+    return field.fieldType
+  }
+
+  switch (field.field_type) {
+    case "integer":
+    case "float":
+      return "number"
+    case "model_select":
+      return "model"
+    default:
+      return field.field_type
+  }
+}
+
+function resolveFieldOptions(field: ConfigurableField): Array<{ value: string; label: string }> | undefined {
+  const options = field.options
+  if (Array.isArray(options)) {
+    if (options.every((option): option is string => typeof option === "string")) {
+      return options.map((option) => ({ value: option, label: option }))
+    }
+    if (
+      options.every(
+        (option): option is { value: string; label: string } =>
+          Boolean(option)
+          && typeof option === "object"
+          && typeof option.value === "string"
+          && typeof option.label === "string",
+      )
+    ) {
+      return options
+    }
+  }
+  return undefined
+}
+
 export function ConfigFieldInput({
   field,
   value,
   onChange,
   renderFileInput,
 }: {
-  field: AuthoringFieldSpec
+  field: ConfigurableField
   value: unknown
   onChange: (value: unknown) => void
   renderFileInput?: FileInputRenderer
 }) {
-  const fieldType = field.fieldType
+  const fieldType = resolveFieldType(field)
+  const fieldOptions = resolveFieldOptions(field)
   const isSecret = fieldType === "secret"
   const isSelect = fieldType === "select"
   const isNumber = fieldType === "number"
@@ -140,7 +181,7 @@ export function ConfigFieldInput({
     )
   }
 
-  if (isSelect && field.options) {
+  if (isSelect && fieldOptions) {
     return (
       <select
         className={cn(
@@ -151,7 +192,7 @@ export function ConfigFieldInput({
         onChange={(e) => onChange(e.target.value)}
       >
         <option value="">Select...</option>
-        {(field.options || []).map((opt) => (
+        {fieldOptions.map((opt) => (
           <option key={opt.value} value={opt.value}>
             {opt.label}
           </option>

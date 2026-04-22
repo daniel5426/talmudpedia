@@ -1,16 +1,14 @@
 """
-Logic Executors - If/Else, While, Conditional
+Logic Executors - If/Else, While, Parallel
 
 Provides executors for logic/control flow operators:
 - IfElseNodeExecutor: Multi-condition branching with CEL expressions
 - WhileNodeExecutor: Loop execution with safety limits
-- ConditionalNodeExecutor: Legacy conditional (kept for backward compatibility)
 - ParallelNodeExecutor: Parallel branch execution
 """
 
-import re
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from app.agent.executors.base import BaseNodeExecutor, ValidationResult
 from app.agent.cel_engine import evaluate_cel, validate_cel
@@ -250,67 +248,6 @@ class WhileNodeExecutor(BaseNodeExecutor):
                 "loop_counters": {**loop_counters, node_id: current_iteration},
                 "error": str(e)
             }
-
-
-class ConditionalNodeExecutor(BaseNodeExecutor):
-    """
-    Legacy Conditional node executor.
-    Kept for backward compatibility with existing agents.
-    
-    For new workflows, use IfElseNodeExecutor instead.
-    """
-    
-    async def validate_config(self, config: Dict[str, Any]) -> ValidationResult:
-        if not config.get("condition_type"):
-            return ValidationResult(valid=False, errors=["Missing 'condition_type'"])
-        return ValidationResult(valid=True)
-
-    async def execute(
-        self,
-        state: Dict[str, Any],
-        config: Dict[str, Any],
-        context: Dict[str, Any] = None
-    ) -> Dict[str, Any]:
-        """
-        Evaluate condition and return routing key.
-        LangGraph uses this routing key to determine the next edge.
-        """
-        condition_type = config.get("condition_type")
-        value_to_check = config.get("condition_value")
-        
-        # Determine target text to check
-        target_text = ""
-        messages = state.get("messages", [])
-        if messages:
-            last_msg = messages[-1]
-            if isinstance(last_msg, dict):
-                target_text = str(last_msg.get("content", ""))
-            elif hasattr(last_msg, "content"):
-                target_text = str(last_msg.content)
-            else:
-                target_text = str(last_msg)
-
-        result = False
-        
-        if condition_type == "contains":
-            result = value_to_check in target_text
-        elif condition_type == "regex":
-            result = bool(re.search(value_to_check, target_text))
-        elif condition_type == "llm_decision":
-            result = state.get("next") == value_to_check
-        elif condition_type == "cel":
-            # New: Support CEL expressions in legacy node
-            try:
-                result = evaluate_cel(value_to_check, state, context)
-            except Exception as e:
-                logger.error(f"CEL evaluation in conditional: {e}")
-                result = False
-
-        return {
-            "next": "true" if result else "false",
-            "branch_taken": "true" if result else "false",
-            "condition_result": result
-        }
 
 
 class ParallelNodeExecutor(BaseNodeExecutor):

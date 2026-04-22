@@ -633,3 +633,51 @@ async def test_strict_platform_tool_rejects_raw_scalar_args_with_compile_error(m
 
     assert result["context"]["code"] == "TOOL_ARGUMENT_COMPILE_FAILED"
     assert any(item["code"] == "unexpected_field" for item in result["context"]["validation_errors"])
+
+
+@pytest.mark.asyncio
+async def test_strict_action_level_platform_tool_rejects_wrapper_payloads(monkeypatch):
+    tool_id = uuid4()
+    tool = SimpleNamespace(
+        id=tool_id,
+        name="agents.update",
+        slug="agents.update",
+        description="",
+        builtin_key="agents.update",
+        schema={
+            "input": {
+                "type": "object",
+                "properties": {
+                    "agent_id": {"type": "string"},
+                    "description": {"type": "string"},
+                },
+                "required": ["agent_id"],
+                "additionalProperties": False,
+            }
+        },
+        config_schema={
+            "implementation": {"type": "function", "function_name": "platform_action_agents_update"},
+            "execution": {"validation_mode": "strict"},
+        },
+        is_active=True,
+        is_system=False,
+        artifact_id=None,
+        artifact_version=None,
+        implementation_type="FUNCTION",
+    )
+    db = FakeDB(tool)
+    executor = ToolNodeExecutor(organization_id=None, db=db)
+
+    async def has_columns(_self):
+        return True
+
+    monkeypatch.setattr(ToolNodeExecutor, "_has_artifact_columns", has_columns)
+
+    result = await executor.execute(
+        {"context": {"query": '{"agent_id":"agent-1","description":"updated"}'}},
+        {"tool_id": str(tool_id)},
+        {"node_id": "tool-node"},
+    )
+
+    assert result["context"]["code"] == "TOOL_ARGUMENT_COMPILE_FAILED"
+    assert any(item["code"] == "unexpected_field" for item in result["context"]["validation_errors"])

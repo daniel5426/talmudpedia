@@ -1,6 +1,6 @@
 # Canonical Docs Guide
 
-Last Updated: 2026-04-19
+Last Updated: 2026-04-22
 
 This guide lists the current canonical documentation entry points after the first documentation-system refactor.
 
@@ -45,6 +45,10 @@ This guide lists the current canonical documentation entry points after the firs
   - Current direct artifact usage model in coding-agent flows.
 - `docs/design-docs/prompt_library_shared_resource_design.md`
   - Shared-resource design for the new reusable prompt library domain and cross-surface prompt references.
+- `docs/design-docs/agent_node_authoring_current.md`
+  - Current canonical authoring model for agent nodes and the discovery/normalization surface used by builders and architect tooling.
+- `docs/design-docs/platform_architect_graph_authoring_direction.md`
+  - Current platform-architect direction and first-pass implementation status for graph-first action-level tool authoring.
 
 ## Current Canonical Product Specs
 

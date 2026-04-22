@@ -50,6 +50,8 @@ This section is for architecture and design documents that explain system shape,
   - Current architect artifact delegation model and responsibilities.
 - `artifact_coding_agent_direct_use_current.md`
   - Current direct artifact-usage model in coding-agent flows.
+- `agent_node_authoring_current.md`
+  - Current canonical authoring model for agent nodes, including discovery, normalization, special editors, removed legacy nodes, and hidden orchestration runtime nodes.
 - `tool_invocation_layer_current.md`
   - Current unified tool invocation envelope, validation model, compile path, and trace anatomy.
 - `voice_runtime_current.md`

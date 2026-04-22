@@ -364,8 +364,6 @@ class AgentCompiler:
             return ["loop", "exit"]
         if node_type == "user_approval":
             return ["approve", "reject"]
-        if node_type == "conditional":
-            return ["true", "false"]
         if node_type == "router":
             routes = node.config.get("routes", []) if isinstance(node.config, dict) else []
             route_names: List[Any] = []
@@ -971,16 +969,12 @@ class AgentCompiler:
         output_nodes = graph.get_output_nodes()
 
         if input_params is None:
-            interrupt_before = [n.id for n in graph.nodes if n.type in ("human_input", "user_approval")]
+            interrupt_before = [n.id for n in graph.nodes if n.type == "user_approval"]
         else:
             interrupt_before = []
             for node in graph.nodes:
-                if node.type == "user_approval":
-                    if "approval" not in input_params:
-                        interrupt_before.append(node.id)
-                elif node.type == "human_input":
-                    if "input" not in input_params and "message" not in input_params:
-                        interrupt_before.append(node.id)
+                if node.type == "user_approval" and "approval" not in input_params:
+                    interrupt_before.append(node.id)
 
         return GraphIR(
             schema_version=graph.spec_version or GRAPH_SPEC_V1,

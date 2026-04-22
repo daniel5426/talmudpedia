@@ -12,7 +12,7 @@ Execution event emission coverage for core nodes in debug streaming runs.
 - `test_tool_event_metadata.py`
 
 **Scenarios Covered**
-- `start`, `human_input`, and `end` emit `node_start` and `node_end` events in debug mode
+- `start`, `user_approval`, and `end` emit `node_start` and `node_end` events in debug mode
 - Graph Spec 3.0 workflow-contract runs emit inventory snapshot, start seeding, set-state write, node output publication, and End materialization events
 - Node executor exceptions are converted into recoverable state updates (no node re-raise)
 - Run setup failures emit stream error events and persist failed thread turns/output text

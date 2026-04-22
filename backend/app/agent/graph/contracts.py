@@ -361,8 +361,6 @@ def get_node_output_contract(
                 {"key": "attachments", "type": "list", "semantic_type": "audio"},
                 {"key": "provider_metadata", "type": "object"},
             ]
-        elif node_type == "human_input":
-            fields = [{"key": "input_text", "type": "string"}]
         elif node_type == "user_approval":
             fields = [{"key": "approved", "type": "boolean"}, {"key": "comment", "type": "string"}]
         else:
@@ -1074,17 +1072,6 @@ def extract_runtime_node_output(
         stt_output = state_update.get("stt_output")
         if isinstance(stt_output, dict):
             raw_output = dict(stt_output)
-        else:
-            raw_output = {}
-
-    elif node_type == "human_input":
-        messages = state_update.get("messages")
-        if isinstance(messages, list) and messages:
-            last = messages[-1]
-            if isinstance(last, dict):
-                raw_output = {"input_text": last.get("content")}
-            else:
-                raw_output = {}
         else:
             raw_output = {}
 

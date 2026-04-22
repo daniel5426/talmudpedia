@@ -15,7 +15,7 @@ Scale, stress, and fuzz testing for large graphs and concurrent executions.
 - Concurrency and dense-edge compile (gated by `TEST_STRESS=1`)
 
 **Last Run**
-- Command: `TEST_USE_REAL_DB=1 TEST_TENANT_EMAIL=danielbenassaya2626@gmail.com pytest backend/tests/agent_builder_graphs/test_graph_topologies.py::test_parallel_fanout_exec backend/tests/agent_builder_nodes/test_nodes_execute.py::test_parallel_execute backend/tests/agent_builder_limits/test_limits.py::test_50_node_execution backend/tests/agent_builder_limits/test_limits.py::test_invalid_model_fails backend/tests/agent_builder_nodes/test_nodes_execute.py::test_user_approval_and_human_input_execute -vv`
+- Command: `TEST_USE_REAL_DB=1 TEST_TENANT_EMAIL=danielbenassaya2626@gmail.com pytest backend/tests/agent_builder_graphs/test_graph_topologies.py::test_parallel_fanout_exec backend/tests/agent_builder_nodes/test_nodes_execute.py::test_parallel_execute backend/tests/agent_builder_limits/test_limits.py::test_50_node_execution backend/tests/agent_builder_limits/test_limits.py::test_invalid_model_fails backend/tests/agent_builder_nodes/test_nodes_execute.py::test_user_approval_execute -vv`
 - Date: 2026-02-04
 - Result: Pass (for `test_50_node_execution`, `test_invalid_model_fails`)
 

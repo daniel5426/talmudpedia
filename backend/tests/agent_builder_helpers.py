@@ -94,8 +94,6 @@ def routing_handles(node_type: str, config: Dict[str, Any]) -> List[str]:
         return ["loop", "exit"]
     if node_type == "user_approval":
         return ["approve", "reject"]
-    if node_type == "conditional":
-        return ["true", "false"]
     return []
 
 
@@ -124,11 +122,6 @@ def minimal_config_for(
         return {
             "condition": "!has(loop_counters, \"while_node\")",
             "max_iterations": 3,
-        }
-    if node_type == "conditional":
-        return {
-            "condition_type": "contains",
-            "condition_value": "yes",
         }
     if node_type == "transform":
         return {"mode": "object", "mappings": [{"key": "status", "value": "ok"}]}

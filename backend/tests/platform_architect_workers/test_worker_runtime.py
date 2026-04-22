@@ -447,20 +447,15 @@ def test_architect_graph_instructions_include_async_worker_flow():
     graph = build_architect_graph_definition(
         model_id="model-1",
         tool_ids=[
-            "platform-rag",
-            "platform-agents",
-            "platform-assets",
-            "platform-governance",
+            "agents.create",
+            "rag.create_visual_pipeline",
+            "artifacts.create",
+            "tools.create_or_update",
             "architect-worker-binding-prepare",
-            "architect-worker-binding-get-state",
             "architect-worker-binding-persist-artifact",
             "architect-worker-spawn",
-            "architect-worker-spawn-group",
-            "architect-worker-get-run",
             "architect-worker-await",
             "architect-worker-respond",
-            "architect-worker-join",
-            "architect-worker-cancel",
         ],
     )
     runtime_node = next(node for node in graph["nodes"] if node["id"] == "architect_runtime")
@@ -471,13 +466,11 @@ def test_architect_graph_instructions_include_async_worker_flow():
     assert "architect-worker-binding-persist-artifact" in instructions
     assert "architect-worker-await" in instructions
     assert "architect-worker-respond" in instructions
-    assert "platform-governance does not expose raw orchestration" in instructions
-    assert "must not end the run after spawn/join alone" in instructions
+    assert "must not end the run after spawn alone" in instructions
     assert "Do not treat successful worker completion as task completion by itself" in instructions
-    assert "Never burn tool iterations on repeated immediate architect-worker-get-run calls" in instructions
     assert "Do not invent nested fields like task.instructions" in instructions
-    assert "agents.create_shell" in instructions
-    assert "rag.create_pipeline_shell" in instructions
+    assert "agents.create for first agent creation" in instructions
+    assert "rag.create_visual_pipeline for first pipeline creation" in instructions
     assert "draft_seed.kind" in instructions
     assert "draft_seed.language" in instructions
     assert "Language selection belongs to create flow only" in instructions
@@ -486,6 +479,13 @@ def test_architect_graph_instructions_include_async_worker_flow():
     assert "create or update a tool_impl artifact" in instructions
     assert "publish the tool so it pins artifact_revision_id" in instructions
     assert "Do not invent non-canonical binding fields such as create, files, entrypoint, or text." in instructions
+    assert "platform-rag" in instructions
+    assert "platform-governance" in instructions
+    assert "architect-worker-binding-get-state" not in instructions
+    assert "architect-worker-spawn-group" not in instructions
+    assert "architect-worker-get-run" not in instructions
+    assert "architect-worker-join" not in instructions
+    assert "architect-worker-cancel" not in instructions
     assert "artifact-coding-agent-call" not in instructions
     assert "artifact-coding-session-prepare" not in instructions
 

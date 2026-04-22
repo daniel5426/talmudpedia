@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Any, Dict
 
 
@@ -117,15 +118,13 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
                         "pipeline_type": {"type": "string", "enum": ["ingestion", "retrieval"]},
                         "nodes": {"type": "array", "items": {"type": "object"}},
                         "edges": {"type": "array", "items": {"type": "object"}},
-                        # Backward compatibility shim: wrappers map graph_definition -> nodes/edges.
-                        "graph_definition": {"type": "object"},
                     },
-                    required=["name"],
-                    additional_properties=True,
+                    required=["name", "nodes", "edges"],
+                    additional_properties=False,
                 ),
                 "contract": {
                     "summary": "Create a draft visual RAG pipeline.",
-                    "required_fields": ["name", "nodes|graph_definition"],
+                    "required_fields": ["name", "nodes", "edges"],
                     "example_payload": {
                         "organization_id": "acme",
                         "name": "FAQ Pipeline",
@@ -145,22 +144,40 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
             },
             "rag.update_visual_pipeline": {
                 "mutation": True,
-                "payload_schema": _payload_schema(
-                    properties={
-                        "pipeline_id": {"type": "string"},
-                        "id": {"type": "string"},
-                        "organization_id": {"type": "string"},
-                        "patch": {"type": "object"},
-                    },
-                    additional_properties=True,
-                ),
+                "payload_schema": {
+                    **_payload_schema(
+                        properties={
+                            "pipeline_id": {"type": "string"},
+                            "id": {"type": "string"},
+                            "organization_id": {"type": "string"},
+                            "name": {"type": "string"},
+                            "description": {"type": "string"},
+                            "pipeline_type": {"type": "string", "enum": ["ingestion", "retrieval"]},
+                            "nodes": {"type": "array", "items": {"type": "object"}},
+                            "edges": {"type": "array", "items": {"type": "object"}},
+                        },
+                        additional_properties=False,
+                    ),
+                    "allOf": [
+                        {"anyOf": [{"required": ["pipeline_id"]}, {"required": ["id"]}]},
+                        {
+                            "anyOf": [
+                                {"required": ["name"]},
+                                {"required": ["description"]},
+                                {"required": ["pipeline_type"]},
+                                {"required": ["nodes", "edges"]},
+                            ]
+                        },
+                    ],
+                    "dependentRequired": {"nodes": ["edges"], "edges": ["nodes"]},
+                },
                 "contract": {
-                    "summary": "Patch an existing visual RAG pipeline.",
-                    "required_fields": ["pipeline_id|id", "patch"],
+                    "summary": "Update an existing visual RAG pipeline through direct graph-first fields.",
+                    "required_fields": ["pipeline_id|id", "name|description|pipeline_type|nodes+edges"],
                     "example_payload": {
                         "pipeline_id": "pipe-123",
                         "organization_id": "acme",
-                        "patch": {"description": "patched"},
+                        "description": "patched",
                     },
                     "failure_codes": ["NOT_FOUND", "VALIDATION_ERROR"],
                 },
@@ -271,14 +288,17 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
             },
             "rag.compile_visual_pipeline": {
                 "mutation": True,
-                "payload_schema": _payload_schema(
-                    properties={
-                        "pipeline_id": {"type": "string"},
-                        "id": {"type": "string"},
-                        "organization_id": {"type": "string"},
-                    },
-                    additional_properties=False,
-                ),
+                "payload_schema": {
+                    **_payload_schema(
+                        properties={
+                            "pipeline_id": {"type": "string"},
+                            "id": {"type": "string"},
+                            "organization_id": {"type": "string"},
+                        },
+                        additional_properties=False,
+                    ),
+                    "anyOf": [{"required": ["pipeline_id"]}, {"required": ["id"]}],
+                },
                 "contract": {
                     "summary": "Compile a visual pipeline and return validation results.",
                     "required_fields": ["pipeline_id|id"],
@@ -420,7 +440,7 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
                         "description": {"type": "string"},
                     },
                     required=["name", "graph_definition"],
-                    additional_properties=True,
+                    additional_properties=False,
                 ),
                 "contract": {
                     "summary": "Create a draft agent with a valid non-empty graph_definition.",
@@ -445,18 +465,38 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
             },
             "agents.update": {
                 "mutation": True,
-                "payload_schema": _payload_schema(
-                    properties={
-                        "agent_id": {"type": "string"},
-                        "id": {"type": "string"},
-                        "patch": {"type": "object"},
-                    },
-                    additional_properties=True,
-                ),
+                "payload_schema": {
+                    **_payload_schema(
+                        properties={
+                            "agent_id": {"type": "string"},
+                            "id": {"type": "string"},
+                            "name": {"type": "string"},
+                            "description": {"type": "string"},
+                            "graph_definition": {"type": "object"},
+                            "memory_config": {"type": "object"},
+                            "execution_constraints": {"type": "object"},
+                            "show_in_playground": {"type": "boolean"},
+                        },
+                        additional_properties=False,
+                    ),
+                    "allOf": [
+                        {"anyOf": [{"required": ["agent_id"]}, {"required": ["id"]}]},
+                        {
+                            "anyOf": [
+                                {"required": ["name"]},
+                                {"required": ["description"]},
+                                {"required": ["graph_definition"]},
+                                {"required": ["memory_config"]},
+                                {"required": ["execution_constraints"]},
+                                {"required": ["show_in_playground"]},
+                            ]
+                        },
+                    ],
+                },
                 "contract": {
-                    "summary": "Patch an existing agent.",
-                    "required_fields": ["agent_id|id", "patch"],
-                    "example_payload": {"agent_id": "agent-123", "patch": {"description": "updated"}},
+                    "summary": "Update an existing agent through direct graph-first fields.",
+                    "required_fields": ["agent_id|id", "name|description|graph_definition|memory_config|execution_constraints|show_in_playground"],
+                    "example_payload": {"agent_id": "agent-123", "description": "updated"},
                     "failure_codes": ["NOT_FOUND", "VALIDATION_ERROR"],
                 },
             },
@@ -606,18 +646,20 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
             },
             "agents.validate": {
                 "mutation": False,
-                "payload_schema": _payload_schema(
-                    properties={
-                        "agent_id": {"type": "string"},
-                        "id": {"type": "string"},
-                        "validation": {"type": "object"},
-                    },
-                    additional_properties=True,
-                ),
+                "payload_schema": {
+                    **_payload_schema(
+                        properties={
+                            "agent_id": {"type": "string"},
+                            "id": {"type": "string"},
+                        },
+                        additional_properties=False,
+                    ),
+                    "anyOf": [{"required": ["agent_id"]}, {"required": ["id"]}],
+                },
                 "contract": {
                     "summary": "Analyze an agent definition and return advisory compiler/runtime diagnostics.",
                     "required_fields": ["agent_id|id"],
-                    "example_payload": {"agent_id": "agent-123", "validation": {"strict": True}},
+                    "example_payload": {"agent_id": "agent-123"},
                     "failure_codes": ["VALIDATION_ERROR"],
                 },
             },
@@ -999,6 +1041,73 @@ PLATFORM_ARCHITECT_DOMAIN_TOOLS: Dict[str, Dict[str, Any]] = {
     },
 }
 
+PLATFORM_ARCHITECT_CANONICAL_ACTION_TOOL_KEYS: tuple[str, ...] = (
+    "agents.list",
+    "agents.get",
+    "agents.create",
+    "agents.update",
+    "agents.graph.get",
+    "agents.validate",
+    "agents.nodes.catalog",
+    "agents.nodes.schema",
+    "agents.execute",
+    "agents.get_run",
+    "agents.publish",
+    "rag.list_visual_pipelines",
+    "rag.operators.catalog",
+    "rag.operators.schema",
+    "rag.create_visual_pipeline",
+    "rag.update_visual_pipeline",
+    "rag.graph.get",
+    "rag.compile_visual_pipeline",
+    "rag.get_executable_pipeline",
+    "rag.get_executable_input_schema",
+    "rag.create_job",
+    "rag.get_job",
+    "tools.list",
+    "tools.get",
+    "tools.create_or_update",
+    "tools.publish",
+    "artifacts.list",
+    "artifacts.get",
+    "artifacts.create",
+    "artifacts.update",
+    "artifacts.create_test_run",
+    "artifacts.publish",
+    "models.list",
+    "credentials.list",
+    "knowledge_stores.list",
+    "knowledge_stores.create_or_update",
+)
+
+PLATFORM_ARCHITECT_CANONICAL_WORKER_TOOL_KEYS: tuple[str, ...] = (
+    "architect-worker-binding-prepare",
+    "architect-worker-binding-persist-artifact",
+    "architect-worker-spawn",
+    "architect-worker-await",
+    "architect-worker-respond",
+)
+
+PLATFORM_ARCHITECT_ACTION_DOMAIN_BY_ID: Dict[str, str] = {}
+PLATFORM_ARCHITECT_ACTION_SPECS: Dict[str, Dict[str, Any]] = {}
+for _domain_builtin_key, _domain_spec in PLATFORM_ARCHITECT_DOMAIN_TOOLS.items():
+    for _action_id, _action_spec in _domain_spec["actions"].items():
+        PLATFORM_ARCHITECT_ACTION_DOMAIN_BY_ID[_action_id] = _domain_builtin_key
+        PLATFORM_ARCHITECT_ACTION_SPECS[_action_id] = _action_spec
+
+
+def _request_metadata_schema() -> Dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            "trace_id": {"type": "string"},
+            "request_id": {"type": "string"},
+            "reason": {"type": "string"},
+            "source": {"type": "string"},
+        },
+        "additionalProperties": True,
+    }
+
 
 def build_platform_domain_tool_schema(builtin_key: str, tool_spec: Dict[str, Any]) -> Dict[str, Any]:
     actions = tool_spec["actions"]
@@ -1014,16 +1123,7 @@ def build_platform_domain_tool_schema(builtin_key: str, tool_spec: Dict[str, Any
                 "dry_run": {"type": "boolean"},
                 "validate_only": {"type": "boolean"},
                 "idempotency_key": {"type": "string"},
-                "request_metadata": {
-                    "type": "object",
-                    "properties": {
-                        "trace_id": {"type": "string"},
-                        "request_id": {"type": "string"},
-                        "reason": {"type": "string"},
-                        "source": {"type": "string"},
-                    },
-                    "additionalProperties": True,
-                },
+                "request_metadata": _request_metadata_schema(),
                 "builtin_key": {"const": builtin_key},
                 "organization_id": {"type": "string"},
             },
@@ -1045,7 +1145,7 @@ def build_platform_domain_tool_schema(builtin_key: str, tool_spec: Dict[str, Any
             "dry_run": {"type": "boolean"},
             "validate_only": {"type": "boolean"},
             "idempotency_key": {"type": "string"},
-            "request_metadata": {"type": "object"},
+            "request_metadata": _request_metadata_schema(),
             "builtin_key": {"type": "string", "const": builtin_key},
             "organization_id": {"type": "string"},
         },
@@ -1077,116 +1177,94 @@ def build_platform_domain_tool_schema(builtin_key: str, tool_spec: Dict[str, Any
     return {"input": input_schema, "output": output_schema}
 
 
+def build_platform_action_tool_schema(action_id: str) -> Dict[str, Any]:
+    action_spec = PLATFORM_ARCHITECT_ACTION_SPECS[action_id]
+    input_schema = deepcopy(action_spec["payload_schema"])
+    input_properties = dict(input_schema.get("properties") or {})
+    input_properties.update(
+        {
+            "dry_run": {"type": "boolean"},
+            "validate_only": {"type": "boolean"},
+            "idempotency_key": {"type": "string"},
+            "request_metadata": _request_metadata_schema(),
+        }
+    )
+    input_schema["properties"] = input_properties
+    input_schema["x-action-contract"] = {
+        "action": action_id,
+        **(action_spec.get("contract") or {}),
+        "requires_mutation_controls": bool(action_spec.get("mutation")),
+    }
+    output_schema = {
+        "type": "object",
+        "properties": {
+            "result": {"type": "object"},
+            "errors": {"type": "array", "items": {"type": "object"}},
+            "action": {"type": "string"},
+            "dry_run": {"type": "boolean"},
+            "meta": {
+                "type": "object",
+                "properties": {
+                    "trace_id": {"type": ["string", "null"]},
+                    "request_id": {"type": ["string", "null"]},
+                    "idempotency_key": {"type": ["string", "null"]},
+                    "idempotency_provided": {"type": "boolean"},
+                    "builtin_key": {"type": ["string", "null"]},
+                },
+                "additionalProperties": True,
+            },
+        },
+        "additionalProperties": True,
+    }
+    return {"input": input_schema, "output": output_schema}
+
+
 def build_architect_graph_definition(model_id: str, tool_ids: list[str] | None = None) -> dict:
     instructions = (
-        "You are Platform Architect v1.2. "
-        "You must plan and execute directly through visible domain tools only: platform-rag, platform-agents, "
-        "platform-assets, platform-governance, architect-worker-binding-prepare, architect-worker-binding-get-state, architect-worker-binding-persist-artifact, "
-        "architect-worker-spawn, architect-worker-spawn-group, architect-worker-get-run, architect-worker-await, "
-        "architect-worker-respond, architect-worker-join, architect-worker-cancel. "
-        "The platform domain builtin keys are containers, not the user-facing tool inventory. "
-        "When the user asks what platform tools are available, answer with canonical action ids under each domain, not just platform-rag/platform-agents/platform-assets/platform-governance. "
-        "Never call architect.run or any meta action. "
-        "Use only exact canonical action IDs from tool schemas (for example: agents.create_shell, rag.create_pipeline_shell, "
-        "artifacts.create, artifacts.update, artifacts.create_test_run). Never invent aliases like create_agent/register_asset. "
-        "Every Platform SDK call must use canonical top-level action and payload fields. "
-        "For new resource creation, prefer canonical shell/create_or_update actions over invented *.create aliases. "
-        "For new agent shells, RAG pipeline shells, organization tool rows, and knowledge stores, default the resource label field to payload.name unless the schema explicitly requires another field. "
-        "Do not default to display_name for these canonical create actions. "
-        "For agents.create_shell, payload.name is sufficient; the platform generates the internal identity automatically. "
-        "For rag.create_pipeline_shell, use payload.name and optional payload.pipeline_type=retrieval only; do not send kind, template, display_name, nodes, edges, or graph_definition on the shell action. "
-        "For knowledge_stores.create_or_update create flows, payload.name and payload.embedding_model_id are required; if embedding_model_id is missing, call models.list and choose an active embedding-capable model before creating the store. "
-        "For new artifact draft bindings, create_new_draft requires title_prompt plus draft_seed; do not send null draft_snapshot or omit draft_seed. "
-        "Never wrap a tool call inside query, text, value, or markdown. "
-        "Workflow policy: extract intent and constraints, build a step plan, prefer direct deterministic domain mutations "
-        "for local work, use dedicated architect-worker tools for async or long-running delegated work, validate after "
-        "each mutation, and stop after repeated identical failures instead of looping on the same broken branch. "
-        "Prefer semantic graph helpers first (agents.graph.add_tool_to_agent_node, agents.graph.set_agent_model, "
-        "agents.graph.set_agent_instructions, rag.graph.attach_knowledge_store_to_node, "
-        "rag.graph.set_pipeline_node_config). Use agents.graph.apply_patch or rag.graph.apply_patch only when a helper "
-        "does not cover the requested mutation. "
-        "For agents.graph.add_tool_to_agent_node, payload.tool_id must be the actual tool row UUID, not a display label; if the user references a tool by name, resolve the row first with tools.list or tools.get and then attach by id. "
-        "For agents.graph.set_agent_model, send payload.node_id plus a concrete payload.model_id chosen from models.list. "
-        "For agents.graph.apply_patch and rag.graph.apply_patch, the array field is payload.operations, not payload.patch. "
-        "For runtime agent execution, use canonical agents.execute or agents.start_run, never invented aliases like agents.runs.create or agents.create_run. "
-        "After starting an agent run, poll agents.get_run until the target run reaches a terminal state before you report status or summarize output. "
-        "Queued or running is not a completed execution result unless the user explicitly asked for a non-terminal snapshot. "
-        "Do not use architect-worker-await for ordinary agent run ids or pipeline job ids returned by platform tools; keep polling the canonical get_run/get_job actions directly. "
-        "For first-time agent creation, prefer agents.create_shell over agents.create unless you intentionally need to supply a full graph_definition. "
-        "For first-time RAG pipeline creation, prefer rag.create_pipeline_shell over rag.create_visual_pipeline unless you intentionally need to supply a full nodes/edges graph. "
-        "For rag.create_visual_pipeline, pass nodes/edges at payload top-level (graph_definition is backward-compatible only). "
-        "For runtime pipeline execution, use rag.create_job with payload.executable_pipeline_id plus payload.input_params only; do not use payload.pipeline_id, payload.id, payload.input, or stale aliases like jobs.create. "
-        "If the executable input shape is not obvious or includes optional fields like filters or top_k, call rag.get_executable_input_schema first and map payload.input_params to the returned step-id shape. "
-        "After creating a pipeline job, poll rag.get_job until the job reaches a terminal state before you report final job status. "
+        "You are Platform Architect v2.0. "
+        "Visible agent tools: agents.list, agents.get, agents.create, agents.update, agents.graph.get, agents.validate, agents.nodes.catalog, agents.nodes.schema, agents.execute, agents.get_run, agents.publish. "
+        "Visible RAG tools: rag.list_visual_pipelines, rag.operators.catalog, rag.operators.schema, rag.create_visual_pipeline, rag.update_visual_pipeline, rag.graph.get, rag.compile_visual_pipeline, rag.get_executable_pipeline, rag.get_executable_input_schema, rag.create_job, rag.get_job. "
+        "Visible asset tools: tools.list, tools.get, tools.create_or_update, tools.publish, artifacts.list, artifacts.get, artifacts.create, artifacts.update, artifacts.create_test_run, artifacts.publish, models.list, credentials.list, knowledge_stores.list, knowledge_stores.create_or_update. "
+        "Visible worker tools: architect-worker-binding-prepare, architect-worker-binding-persist-artifact, architect-worker-spawn, architect-worker-await, architect-worker-respond. "
+        "The legacy domain container tools platform-rag, platform-agents, platform-assets, and platform-governance are not available here. "
+        "Never call architect.run or invent meta actions. "
+        "Each visible platform tool already fixes the action id. Send only the direct input fields for that tool. Do not send action, payload, query, text, or value wrappers. "
+        "Use only exact visible tool names. Never invent aliases like create_agent, jobs.create, register_asset, or list-schema helpers. "
+        "Workflow policy: extract intent and constraints, build a short plan, discover node/operator contracts when needed, author the full graph, rely on backend normalization/defaulting for mechanical fields, validate or compile, repair from structured errors, then run or publish only when the objective requires it. "
         "For agent graph discovery use agents.nodes.catalog and agents.nodes.schema only. "
-        "For RAG pipeline operator discovery use rag.operators.catalog and rag.operators.schema only. "
-        "For platform tool inventory questions, treat platform tools as canonical action ids, not just the domain container slugs. "
-        "If the user asks to list platform tools available right now or tool names grouped by domain, return canonical action ids grouped under each platform domain from the seeded tool schemas already in context. "
-        "Do not answer with only domain builtin keys, and do not include architect-worker tools unless the user explicitly asks about worker or orchestration tools. "
-        "Do not invent help/list-schema actions against platform domains just to describe available actions. "
-        "Never use agents.nodes.* to discover RAG operators and never invent unsupported actions like rag.nodes.catalog. "
-        "Never create empty graphs: agents and pipelines must include a minimal working node/edge skeleton. "
-        "For agents.create specifically, graph_definition must include exactly one start node, at least one end node, "
-        "and at least one control edge from start to a downstream node. "
-        "Before introducing unfamiliar agent node types, call agents.nodes.catalog first and agents.nodes.schema for all node_types[] in one call. "
-        "Before introducing unfamiliar RAG operators, call rag.operators.catalog first and rag.operators.schema for all operator_ids[] in one call. "
-        "After each draft graph mutation, call agents.nodes.validate on the target agent id and repair based on "
-        "returned structured errors/warnings. "
-        "platform-governance does not expose raw orchestration.spawn_* actions to the architect; use the dedicated architect-worker tools for worker delegation. "
-        "For artifact metadata/runtime/contract lifecycle work, use platform-assets canonical artifact actions directly. "
-        "For prompt library discovery, use platform-assets with action prompts.list. Prompt library records are not artifacts. "
-        "If the user says prompt assets, prompt templates, or prompt library entries, treat that as prompt library discovery and use prompts.list. "
-        "Do not query artifacts.list for fake kinds like prompt or prompt_template when the user is asking about prompts or prompt templates. "
-        "For code-heavy or multi-file artifact authoring, prepare an artifact_shared_draft binding with architect-worker-binding-prepare using only canonical top-level fields for the selected mode. "
-        "The normal new-binding flow is prepare_mode=create_new_draft with title_prompt plus draft_seed.kind, and optionally draft_seed.language when the create flow should start in javascript instead of python. "
-        "Language selection belongs to create flow only; do not try to mutate artifact language after persistence. "
-        "Do not construct a full draft_snapshot for normal artifact creation; full draft_snapshot is reserved for the advanced seed_snapshot mode only. "
-        "spawn the artifact worker asynchronously with architect-worker-spawn or architect-worker-spawn-group using objective as a top-level field, then wait with architect-worker-await. "
-        "Use architect-worker-get-run only for one-off inspection/debugging, not as a tight polling loop. "
-        "If architect-worker-await returns waiting_for_input, answer the child with architect-worker-respond or explicitly surface the blocker to the user. "
-        "architect-worker-respond may also continue a completed worker thread when you want the same worker to make further changes or corrections. "
-        "That continuation stays on the worker's native session/thread history; do not restate the entire original objective unless genuinely needed. "
-        "If you continue the same worker with architect-worker-respond, do not persist yet; wait for the continued child run to reach a terminal accepted state first. "
-        "If architect-worker-await returns completed, failed, or cancelled, then decide the next step from worker state. "
-        "Artifact-coding delegated workers edit the shared draft only; they do not persist artifacts themselves. "
-        "Use architect-worker-binding-persist-artifact for the persistence step when create/save/update is required. "
-        "Use architect-worker-binding-get-state only when inspection, export, or debugging is specifically needed. "
-        "Do not invent nested fields like task.instructions, task.title, task.worker_agent, or generic binding_payload wrappers. "
-        "Do not invent non-canonical binding fields such as create, files, entrypoint, or text. "
-        "Artifact-coding workers may mutate their binding-backed draft and run tests, but persistence remains architect-owned. "
-        "Do not ask a worker to mutate runtime-owned fields like persistence_readiness or platform_assets_* payloads. "
-        "If artifact code needs an existing credential reference, the worker should discover it through artifact_coding_list_credentials and then use only exact @{credential-id} string literals in source. "
-        "Do not author mixed or embedded credential strings such as Bearer @{id}. "
-        "If you used an artifact worker binding for a create/update task, you must not end the run after spawn/join alone: before final completion "
-        "you must persist through architect-worker-binding-persist-artifact yourself or return an explicit blocker explaining why persistence could not be completed. "
+        "For RAG operator discovery use rag.operators.catalog and rag.operators.schema only. "
+        "Never use agents.nodes.* for RAG discovery and never invent unsupported actions like rag.nodes.catalog. "
+        "Before introducing unfamiliar agent node types, call agents.nodes.catalog first and then agents.nodes.schema for all needed node_types in one call. "
+        "Before introducing unfamiliar RAG operators, call rag.operators.catalog first and then rag.operators.schema for all needed operator_ids in one call. "
+        "Graph-first authoring is the default path. Use agents.create for first agent creation and agents.update for graph updates. Use rag.create_visual_pipeline for first pipeline creation and rag.update_visual_pipeline for graph updates. "
+        "Do not use shell or helper authoring patterns. Author the actual graph and let the backend normalize defaults. "
+        "Never create empty graphs: agents and pipelines must include a minimal working node and edge skeleton. "
+        "For agents.create and agents.update, send graph_definition and then use agents.validate as the repair checkpoint. "
+        "For rag.create_visual_pipeline and rag.update_visual_pipeline, send nodes and edges at top level and use rag.compile_visual_pipeline as the repair checkpoint. "
+        "If validation or compile returns structured errors, repair the graph from those exact paths instead of guessing. "
+        "For runtime agent execution, use agents.execute and poll agents.get_run until the run reaches a terminal state. Queued or running is not a completed result unless the user explicitly asked for a non-terminal snapshot. "
+        "For runtime pipeline execution, use rag.create_job with executable_pipeline_id plus input_params only. If the executable input shape is unclear, call rag.get_executable_input_schema first and map input_params to the returned step-id shape. Poll rag.get_job until terminal state before reporting completion. "
+        "If a graph node requires model_id and it is missing or rejected, call models.list, choose a valid active model, and retry. Do not ask the user for model_id unless models.list returns no usable models. "
+        "For knowledge store creation flows, use knowledge_stores.create_or_update. If an embedding-capable model is needed and missing, resolve it through models.list first. "
+        "When the user asks what platform tools are available, answer with the visible canonical tool ids above, grouped by family. Do not answer with only old domain container names. "
+        "For code-heavy or multi-file artifact authoring, prepare an artifact_shared_draft binding with architect-worker-binding-prepare using canonical top-level fields only. The normal new-binding flow is prepare_mode=create_new_draft with title_prompt plus draft_seed.kind, and optionally draft_seed.language when the create flow should start in javascript instead of python. "
+        "Language selection belongs to create flow only. Do not mutate artifact language after persistence and do not construct a full draft_snapshot for normal artifact creation. "
+        "Spawn the artifact worker asynchronously with architect-worker-spawn using objective as a top-level field, then wait with architect-worker-await. "
+        "If architect-worker-await returns waiting_for_input, continue the same worker with architect-worker-respond or surface the blocker to the user. That continuation stays on the worker's native thread; do not respawn a fresh worker just to send another turn. "
+        "Artifact-coding delegated workers edit the shared draft only; they do not persist artifacts themselves. Use architect-worker-binding-persist-artifact for the persistence step when create or update is required. "
+        "Do not invent nested fields like task.instructions, task.title, task.worker_agent, or generic binding_payload wrappers. Do not invent non-canonical binding fields such as create, files, entrypoint, or text. "
+        "Do not ask a worker to mutate runtime-owned fields like persistence_readiness or platform asset payloads. "
+        "If artifact code needs an existing credential reference, the worker should discover it through artifact_coding_list_credentials and then use only exact @{credential-id} string literals in source. Do not author mixed or embedded credential strings such as Bearer @{id}. "
+        "If you used an artifact worker binding for a create or update task, you must not end the run after spawn alone. Before final completion you must persist through architect-worker-binding-persist-artifact yourself or return an explicit blocker explaining why persistence could not be completed. "
         "Do not treat successful worker completion as task completion by itself. "
-        "Never burn tool iterations on repeated immediate architect-worker-get-run calls; architect-worker-await is the normal waiting primitive. "
-        "Do not repeatedly respawn a worker on the same writable artifact binding unless the prior run is terminal and you have a concrete reason to retry. "
-        "If the worker is waiting for input, the next required step is architect-worker-respond or an explicit user-facing blocker. "
-        "If the worker finished but you need further changes from the same worker, use architect-worker-respond to continue that worker conversation on the same binding/session/thread context. "
-        "Do not respawn a fresh worker just to send another conversational turn to the same binding-backed artifact worker. "
-        "After architect-worker-respond starts a continued worker run, the next required step is architect-worker-await on that latest child before any persistence decision. "
-        "If the worker finished and no further changes are needed, the next required step is to decide whether architect-worker-binding-persist-artifact can be called safely. "
-        "If binding state says persistence_readiness.ready=false, do not call architect-worker-binding-persist-artifact; continue the worker or return a blocker instead. "
-        "After delegated artifact changes, ensure the artifact is persisted exactly once, optionally run artifacts.create_test_run, "
-        "and only then publish if explicit publish intent is present. "
+        "If the worker finished but you need more changes, use architect-worker-respond to continue that same worker conversation and then await the latest child before any persistence decision. "
+        "After delegated artifact changes, ensure the artifact is persisted exactly once, optionally run artifacts.create_test_run, and only then publish if explicit publish intent is present. "
         "If the requested output is an agent-callable tool, the normal lifecycle is: create or update a tool_impl artifact, persist the artifact, publish the artifact when required, create or update the bound tool row, and publish the tool so it pins artifact_revision_id. "
-        "Do not stop at artifact persistence alone when the requested outcome is a callable tool. "
-        "For RAG shell creation, use rag.create_pipeline_shell first, then refine the pipeline through graph helpers or canonical update actions. "
-        "If the same mutation action fails twice with the same normalized error, stop mutating, summarize the blocker, "
-        "and report the target resource, attempted action, normalized failure code, last validation details, whether any "
-        "mutation succeeded, and the recommended next repair action. "
-        "If a Platform SDK call fails due to non-canonical input or unsupported action, do not keep retrying the same malformed branch. "
-        "If a node you are creating/updating requires model_id (for example agent/classify) and model_id is "
-        "missing or rejected, call platform-assets with action models.list first, select a valid active chat-capable "
-        "model id from the response, and retry the mutation. Do not ask the user for model_id unless models.list "
-        "returns no usable models. "
-        "Draft-first is mandatory: do not call publish/promote actions unless objective_flags.allow_publish=true "
-        "in user-provided input. "
-        "Runtime organization context is authoritative for platform mutations. Never ask the user for organization_id, "
-        "never rely on a user-supplied organization override, and operate only inside the current runtime organization. "
-        "Idempotency keys and request metadata should be autogenerated from runtime context when absent; "
-        "do not block on asking the user for them unless a caller explicitly requires custom values. "
+        "If the same mutation action fails twice with the same normalized error, stop mutating, summarize the blocker, and report the target resource, attempted action, normalized failure code, last validation details, whether any mutation succeeded, and the recommended next repair action. "
+        "If a platform call fails due to non-canonical input or unsupported action, do not keep retrying the same malformed branch. "
+        "Draft-first is mandatory: do not call publish actions unless objective_flags.allow_publish=true in user-provided input. "
+        "Runtime organization context is authoritative for platform mutations. Never ask the user for organization_id, never rely on a user-supplied organization override, and operate only inside the current runtime organization. "
+        "Idempotency keys and request metadata should be autogenerated from runtime context when absent; do not block on asking the user for them unless a caller explicitly requires custom values. "
     )
 
     return {

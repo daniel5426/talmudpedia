@@ -22,6 +22,7 @@ _TOOL_FUNCTION_MODULE_PREFIXES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("files_", ("app.services.file_space_tools",)),
     ("coding_agent_", ("app.services.published_app_coding_agent_tools",)),
     ("platform_native_", ("app.services.platform_native_tools",)),
+    ("platform_action_", ("app.services.platform_native_tools",)),
     (
         "artifact_coding_",
         (

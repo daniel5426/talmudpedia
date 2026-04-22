@@ -274,6 +274,10 @@ export function normalizeIfElseConditions(value: unknown): Array<Record<string, 
 export function normalizeNodeContractConfig(nodeType: string, value: unknown): Record<string, unknown> {
   const config = value && typeof value === "object" ? { ...(value as Record<string, unknown>) } : {}
 
+  if (["classify", "transform", "set_state", "while", "user_approval"].includes(nodeType)) {
+    delete config.name
+  }
+
   if (nodeType === "start") {
     config.state_variables = normalizeStateVariables(config.state_variables)
   }

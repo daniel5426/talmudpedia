@@ -1,6 +1,6 @@
 # Tool Execution Tests
 
-Last Updated: 2026-04-21
+Last Updated: 2026-04-22
 
 ## Scope
 Validate MCP/function/agent-call execution paths in the `ToolNodeExecutor`.
@@ -54,6 +54,7 @@ Validate MCP/function/agent-call execution paths in the `ToolNodeExecutor`.
 - Strict function-tool execution now validates canonical model-authored payloads before dispatch, rejects unknown fields deterministically, and strips executor-owned runtime metadata from schema validation.
 - Strict function-tool validation errors now return explicit, agent-friendly summaries for missing required fields, wrong types, unexpected fields, and schema-union mismatches instead of raw JSON Schema-only wording.
 - Strict local `platform-*` function tools now execute through native backend control-plane dispatch while still receiving executor-owned auth/runtime context through `__tool_runtime_context__`.
+- Strict action-level platform tools now reject wrapper-shaped inputs the same way as the old container tools, so the architect hard cut does not reopen `query` / `text` / `value` compile loopholes.
 - Reasoning tool-call normalization now preserves direct argument fields when no `input/args/parameters` wrapper is present.
 - Reasoning executor now emits internal trace events when it infers a tool call from assistant JSON fallback instead of a native provider tool call.
 - `agent_call` success returns compact sync payload with child output/context
@@ -197,6 +198,9 @@ Validate MCP/function/agent-call execution paths in the `ToolNodeExecutor`.
 - Command: `SECRET_KEY=explicit-test-secret PYTHONPATH=backend backend/.venv/bin/python -m pytest -q backend/tests/tool_execution/test_artifact_runtime_tool_execution.py::test_tool_executor_rejects_non_uuid_artifact_bindings`
 - Date/Time: 2026-04-21 Asia/Hebron
 - Result: PASS (`1 passed, 7 warnings`)
+- Command: `SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest -q backend/tests/tool_execution/test_function_tool_execution.py -k 'strict_platform or strict_action_level_platform_tool'`
+- Date/Time: 2026-04-22 Asia/Hebron
+- Result: PASS (`7 passed, 12 deselected`)
 
 ## Known Gaps / Follow-ups
 - Add coverage for `agent_call` payload mode variants beyond sync (`spawn`/future orchestration modes).

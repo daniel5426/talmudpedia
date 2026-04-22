@@ -7,6 +7,8 @@ from app.agent.graph.schema import AgentGraph
 from app.graph_authoring.normalizers.base import apply_schema_defaults
 from app.graph_authoring.registry import get_agent_authoring_spec, normalize_agent_node_type
 
+LEGACY_NAME_CONFIG_NODE_TYPES = {"classify", "transform", "set_state", "while", "user_approval"}
+
 
 def normalize_agent_graph_definition(graph_definition: dict[str, Any]) -> dict[str, Any]:
     payload = dict(graph_definition or {})
@@ -33,8 +35,22 @@ def _normalize_agent_node_config(node_type: str, config: dict[str, Any]) -> dict
     spec = get_agent_authoring_spec(node_type)
     normalized = apply_schema_defaults(spec.config_schema if spec else None, config)
 
+    if node_type in LEGACY_NAME_CONFIG_NODE_TYPES:
+        normalized.pop("name", None)
+
     if node_type == "classify" and isinstance(normalized.get("input_source"), dict):
         normalized["input_source"] = normalize_value_ref(normalized.get("input_source"))
+
+    if node_type == "transform":
+        mappings = normalized.get("mappings")
+        normalized["mappings"] = [
+            {
+                "key": str(item.get("key") or "").strip(),
+                "value": item.get("value"),
+            }
+            for item in (mappings if isinstance(mappings, list) else [])
+            if isinstance(item, dict) and str(item.get("key") or "").strip()
+        ]
 
     if node_type == "set_state":
         assignments = normalized.get("assignments")
@@ -45,6 +61,18 @@ def _normalize_agent_node_config(node_type: str, config: dict[str, Any]) -> dict
                 for item in (assignments if isinstance(assignments, list) else [])
             )
             if str(assignment.get("key") or "").strip()
+        ]
+
+    if node_type == "if_else":
+        conditions = normalized.get("conditions")
+        normalized["conditions"] = [
+            {
+                "id": item.get("id"),
+                "name": str(item.get("name") or "").strip(),
+                "expression": str(item.get("expression") or "").strip(),
+            }
+            for item in (conditions if isinstance(conditions, list) else [])
+            if isinstance(item, dict) and str(item.get("expression") or "").strip()
         ]
 
     if node_type == "end":

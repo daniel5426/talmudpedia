@@ -26,7 +26,11 @@ from app.services.builtin_tools import BUILTIN_TEMPLATE_SPECS, is_builtin_tools_
 from app.services.artifact_runtime.registry_service import ArtifactRegistryService
 from app.services.artifact_runtime.revision_service import ArtifactRevisionService
 from app.services.platform_architect_contracts import (
+    PLATFORM_ARCHITECT_ACTION_SPECS,
+    PLATFORM_ARCHITECT_CANONICAL_ACTION_TOOL_KEYS,
+    PLATFORM_ARCHITECT_CANONICAL_WORKER_TOOL_KEYS,
     PLATFORM_ARCHITECT_DOMAIN_TOOLS,
+    build_platform_action_tool_schema,
     build_architect_graph_definition,
     build_platform_domain_tool_schema,
 )
@@ -34,12 +38,13 @@ from app.services.platform_architect_worker_tools import (
     ensure_platform_architect_worker_orchestration_policy,
     ensure_platform_architect_worker_tools,
 )
-from app.services.platform_native_tools import PLATFORM_NATIVE_FUNCTIONS
+from app.services.platform_native_tools import PLATFORM_ACTION_FUNCTIONS, PLATFORM_NATIVE_FUNCTIONS
 from app.services.file_space_tools import ensure_file_space_tools
 from app.services.artifact_coding_agent_profile import ensure_artifact_coding_agent_profile
 
 # Backward-compatible exports for tests and internal callers.
 _build_architect_graph_definition = build_architect_graph_definition
+_build_platform_action_tool_schema = build_platform_action_tool_schema
 _build_platform_domain_tool_schema = build_platform_domain_tool_schema
 
 DEFAULT_PLATFORM_ARCHITECT_MODEL_SYSTEM_KEY = "grok-4-1-fast-reasoning"
@@ -610,6 +615,108 @@ async def seed_platform_architect_domain_tools(db) -> dict[str, str]:
     return seeded
 
 
+async def seed_platform_architect_action_tools(db) -> dict[str, str]:
+    required_cols = {
+        "id",
+        "organization_id",
+        "name",
+        "slug",
+        "builtin_key",
+        "description",
+        "scope",
+        "schema",
+        "config_schema",
+        "status",
+        "version",
+        "implementation_type",
+        "published_at",
+        "artifact_id",
+        "artifact_version",
+        "is_active",
+        "is_system",
+    }
+    tool_columns = await _get_table_columns(db, "tool_registry")
+    if not required_cols.issubset(tool_columns):
+        print("tool_registry missing required columns; skipping platform architect action tool seed.")
+        return {}
+
+    seeded: dict[str, str] = {}
+    for builtin_key in PLATFORM_ARCHITECT_CANONICAL_ACTION_TOOL_KEYS:
+        action_spec = PLATFORM_ARCHITECT_ACTION_SPECS[builtin_key]
+        schema = build_platform_action_tool_schema(builtin_key)
+        config_schema = {
+            "implementation": {
+                "type": "function",
+                "function_name": PLATFORM_ACTION_FUNCTIONS[builtin_key],
+            },
+            "execution": {
+                "timeout_s": 60,
+                "is_pure": False,
+                "concurrency_group": "platform_sdk_local",
+                "max_concurrency": 4,
+                "validation_mode": "strict",
+            },
+        }
+
+        result = await db.execute(
+            select(ToolRegistry).where(
+                ToolRegistry.builtin_key == builtin_key,
+                ToolRegistry.organization_id == None,
+            )
+        )
+        tool = result.scalars().first()
+        description = (action_spec.get("contract") or {}).get("summary") or builtin_key
+        if tool is None:
+            tool = ToolRegistry(
+                organization_id=None,
+                name=builtin_key,
+                slug=_system_row_key("sys-tool", builtin_key),
+                description=description,
+                scope=ToolDefinitionScope.GLOBAL,
+                schema=schema,
+                config_schema=config_schema,
+                status=ToolStatus.PUBLISHED,
+                version="1.0.0",
+                implementation_type=ToolImplementationType.FUNCTION,
+                artifact_id=None,
+                artifact_version=None,
+                artifact_revision_id=None,
+                builtin_key=builtin_key,
+                builtin_template_id=None,
+                is_builtin_template=False,
+                is_active=True,
+                is_system=True,
+                published_at=datetime.utcnow(),
+            )
+            set_tool_management_metadata(tool, ownership="system")
+            db.add(tool)
+        else:
+            tool.name = builtin_key
+            tool.slug = _system_row_key("sys-tool", builtin_key)
+            tool.description = description
+            tool.scope = ToolDefinitionScope.GLOBAL
+            tool.schema = schema
+            tool.config_schema = config_schema
+            tool.status = ToolStatus.PUBLISHED
+            tool.version = "1.0.0"
+            tool.implementation_type = ToolImplementationType.FUNCTION
+            tool.artifact_id = None
+            tool.artifact_version = None
+            tool.artifact_revision_id = None
+            tool.builtin_key = builtin_key
+            tool.builtin_template_id = None
+            tool.is_builtin_template = False
+            tool.is_active = True
+            tool.is_system = True
+            tool.published_at = tool.published_at or datetime.utcnow()
+            set_tool_management_metadata(tool, ownership="system")
+        await db.flush()
+        seeded[builtin_key] = str(tool.id)
+
+    await db.commit()
+    return seeded
+
+
 async def ensure_platform_architect_agent(
     db,
     organization_id,
@@ -630,10 +737,10 @@ async def ensure_platform_architect_agent(
         print(f"Organization {organization_id} not found; skipping Platform Architect agent seed.")
         return None
 
-    tool_ids = await seed_platform_architect_domain_tools(db)
-    expected_builtin_keys = tuple(PLATFORM_ARCHITECT_DOMAIN_TOOLS.keys())
+    tool_ids = await seed_platform_architect_action_tools(db)
+    expected_builtin_keys = PLATFORM_ARCHITECT_CANONICAL_ACTION_TOOL_KEYS
     if not all(tool_ids.get(key) for key in expected_builtin_keys):
-        print("Platform architect domain tools missing; skipping Platform Architect agent seed.")
+        print("Platform architect action tools missing; skipping Platform Architect agent seed.")
         return None
 
     agent_columns = await _get_table_columns(db, "agents")
@@ -668,10 +775,22 @@ async def ensure_platform_architect_agent(
         "created_by",
     }
 
-    worker_tool_ids = await ensure_platform_architect_worker_tools(
+    await ensure_platform_architect_worker_tools(
         db,
         organization_id=organization.id,
     )
+    worker_tool_rows = (
+        await db.execute(
+            select(ToolRegistry.builtin_key, ToolRegistry.id).where(
+                ToolRegistry.organization_id == None,
+                ToolRegistry.builtin_key.in_(PLATFORM_ARCHITECT_CANONICAL_WORKER_TOOL_KEYS),
+            )
+        )
+    ).all()
+    worker_tool_id_map = {str(builtin_key): str(tool_id) for builtin_key, tool_id in worker_tool_rows}
+    if not all(worker_tool_id_map.get(key) for key in PLATFORM_ARCHITECT_CANONICAL_WORKER_TOOL_KEYS):
+        print("Platform architect worker tools missing; skipping Platform Architect agent seed.")
+        return None
     model_id = await _resolve_platform_architect_model_id(db, organization.id)
     if not model_id:
         print(f"No chat model available; skipping Platform Architect agent seed for organization {organization.id}.")
@@ -679,7 +798,7 @@ async def ensure_platform_architect_agent(
 
     architect_tool_ids = [
         *[tool_ids[key] for key in expected_builtin_keys],
-        *worker_tool_ids,
+        *[worker_tool_id_map[key] for key in PLATFORM_ARCHITECT_CANONICAL_WORKER_TOOL_KEYS],
     ]
     graph_definition = build_architect_graph_definition(
         model_id=model_id,
@@ -709,7 +828,7 @@ async def ensure_platform_architect_agent(
                 name="Platform Architect",
                 system_key=PLATFORM_ARCHITECT_AGENT_SYSTEM_KEY,
                 slug=_system_row_key("sys-agent", PLATFORM_ARCHITECT_AGENT_SYSTEM_KEY),
-                description="Dynamic single-agent platform architect runtime using Control Plane SDK domain tools.",
+                description="Dynamic single-agent platform architect runtime using canonical action-level control-plane tools.",
                 graph_definition=graph_definition,
                 tools=architect_tool_ids,
                 referenced_tool_ids=architect_tool_ids,
@@ -722,7 +841,7 @@ async def ensure_platform_architect_agent(
         else:
             agent.project_id = project_id
             agent.name = "Platform Architect"
-            agent.description = "Dynamic single-agent platform architect runtime using Control Plane SDK domain tools."
+            agent.description = "Dynamic single-agent platform architect runtime using canonical action-level control-plane tools."
             agent.graph_definition = graph_definition
             agent.tools = architect_tool_ids
             agent.referenced_tool_ids = architect_tool_ids

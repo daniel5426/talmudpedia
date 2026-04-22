@@ -52,13 +52,11 @@ class NodeType(str, Enum):
     OUTPUT = "output"
     END = "end" # Alias for OUTPUT
     TOOL_CALL = "tool_call"
-    CONDITIONAL = "conditional"
     LOOP = "loop"
     PARALLEL = "parallel"
     TRANSFORM = "transform"
     SPEECH_TO_TEXT = "speech_to_text"
     RAG_PIPELINE = "rag_pipeline"
-    HUMAN_INPUT = "human_input"
     SPAWN_RUN = "spawn_run"
     SPAWN_GROUP = "spawn_group"
     JOIN = "join"

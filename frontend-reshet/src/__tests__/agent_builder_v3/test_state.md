@@ -38,10 +38,17 @@ Graph Spec 4.0 frontend serialization defaults, Start-as-projection contract edi
 - Start state-variable modal blocks duplicate state-variable keys before save and shows an inline validation error
 - ConfigPanel renders artifact field-mapping inputs from backend-provided artifact operator contracts
 - The frontend node registry is derived from the canonical built-in node specs, so renderer coverage cannot drift for built-in nodes like `speech_to_text`
+- Removed legacy nodes such as `conditional` and `human_input` no longer appear as built-in authoring defaults
 - ConfigPanel resource loaders now consume canonical control-plane list envelopes for models, tools, pipelines, and agents.
 - Schema-default mirroring now supports nested object defaults without inventing fields that the backend does not own.
 
 **Last Run**
+- Command: `cd frontend-reshet && ./node_modules/.bin/jest --runInBand src/__tests__/agent_builder_v3/node_types_registry.test.ts src/__tests__/agent_builder_v3/graphspec_v3_serialization.test.ts src/__tests__/agent_builder_v3/graph_authoring_defaults.test.ts`
+- Date: 2026-04-22 Asia/Hebron
+- Result: Pass (3 suites, 9 tests)
+- Command: `cd frontend-reshet && ./node_modules/.bin/jest --runInBand src/__tests__/agent_builder_v3/node_types_registry.test.ts src/__tests__/agent_builder_v3/graph_authoring_defaults.test.ts`
+- Date: 2026-04-22 Asia/Hebron
+- Result: Pass (2 suites, 3 tests)
 - Command: `pnpm exec jest src/__tests__/agent_builder_v3/config_panel_value_ref_contracts.test.tsx src/__tests__/agent_builder_v3/config_panel_artifact_contracts.test.tsx --runInBand`
 - Date: 2026-04-14 23:18 EEST
 - Result: Pass (2 suites, 3 tests)

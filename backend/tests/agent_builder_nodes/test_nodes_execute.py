@@ -118,37 +118,35 @@ async def test_classify_and_if_else_execute(db_session, test_tenant_id, test_use
 
 @pytest.mark.asyncio
 @pytest.mark.real_db
-async def test_while_and_conditional_execute(db_session, test_tenant_id, test_user_id, run_prefix):
-    while_config = {
-        "condition": "!has(loop_counters, \"while_node\")",
-        "max_iterations": 3,
-    }
-    conditional_config = minimal_config_for("conditional")
-
+async def test_while_and_user_approval_execute(db_session, test_tenant_id, test_user_id, run_prefix):
     graph = graph_def(
         [
             node_def("start", "start"),
-            node_def("while_node", "while", while_config),
+            node_def("while_node", "while", minimal_config_for("while")),
             node_def("transform", "transform", minimal_config_for("transform")),
-            node_def("conditional", "conditional", conditional_config),
+            node_def("approval", "user_approval"),
             node_def("end", "end", minimal_config_for("end")),
         ],
         [
             edge_def("e1", "start", "while_node"),
             edge_def("e2", "while_node", "transform", source_handle="loop"),
             edge_def("e3", "transform", "while_node"),
-            edge_def("e4", "while_node", "conditional", source_handle="exit"),
-            edge_def("e5", "conditional", "end", source_handle="true"),
-            edge_def("e6", "conditional", "end", source_handle="false"),
+            edge_def("e4", "while_node", "approval", source_handle="exit"),
+            edge_def("e5", "approval", "end", source_handle="approve"),
+            edge_def("e6", "approval", "end", source_handle="reject"),
         ],
     )
 
     agent = await create_agent(db_session, test_tenant_id, test_user_id, f"{run_prefix}-loop", f"{run_prefix}-loop", graph)
     try:
-        result = await execute_agent_via_service(db_session, test_tenant_id, agent.id, test_user_id, input_text="yes")
-        run = await db_session.get(AgentRun, result.run_id)
+        run = await execute_agent_with_input_params(
+            db_session,
+            agent.id,
+            {"input": "yes", "approval": "approve"},
+        )
         assert run.status == RunStatus.completed
         assert "loop_counters" in run.output_result
+        assert run.output_result.get("approval_status") == "approved"
     finally:
         await delete_agent(db_session, test_tenant_id, agent.id)
 
@@ -186,19 +184,17 @@ async def test_parallel_execute(db_session, test_tenant_id, test_user_id, run_pr
 
 @pytest.mark.asyncio
 @pytest.mark.real_db
-async def test_user_approval_and_human_input_execute(db_session, test_tenant_id, test_user_id, run_prefix):
+async def test_user_approval_execute(db_session, test_tenant_id, test_user_id, run_prefix):
     graph = graph_def(
         [
             node_def("start", "start"),
             node_def("approval", "user_approval"),
-            node_def("human", "human_input"),
             node_def("end", "end", minimal_config_for("end")),
         ],
         [
             edge_def("e1", "start", "approval"),
-            edge_def("e2", "approval", "human", source_handle="approve"),
-            edge_def("e3", "approval", "human", source_handle="reject"),
-            edge_def("e4", "human", "end"),
+            edge_def("e2", "approval", "end", source_handle="approve"),
+            edge_def("e3", "approval", "end", source_handle="reject"),
         ],
     )
 

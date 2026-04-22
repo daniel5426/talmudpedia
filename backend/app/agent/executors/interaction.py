@@ -7,26 +7,22 @@ logger = logging.getLogger(__name__)
 class HumanInputNodeExecutor(BaseNodeExecutor):
     async def can_execute(self, state: Dict[str, Any], config: Dict[str, Any], context: Dict[str, Any] = None) -> bool:
         """
-        Check if we have received input.
-        If state contains the expected input for this node ID, proceed.
-        Otherwise return False to suspend execution.
+        Wait until the approval payload is present.
         """
         node_type = context.get("node_type") if context else None
         if node_type == "user_approval":
             return "approval" in state
-        if node_type == "human_input":
-            return "input" in state or "message" in state
         return True
 
     async def execute(self, state: Dict[str, Any], config: Dict[str, Any], context: Dict[str, Any] = None) -> Dict[str, Any]:
         node_type = context.get("node_type") if context else None
         from app.agent.execution.emitter import active_emitter
         emitter = active_emitter.get()
-        node_id = context.get("node_id", node_type or "human_input") if context else (node_type or "human_input")
-        node_name = context.get("node_name", node_type or "Human Input") if context else (node_type or "Human Input")
+        node_id = context.get("node_id", node_type or "user_approval") if context else (node_type or "user_approval")
+        node_name = context.get("node_name", node_type or "User Approval") if context else (node_type or "User Approval")
 
         if emitter:
-            emitter.emit_node_start(node_id, node_name, node_type or "human_input")
+            emitter.emit_node_start(node_id, node_name, node_type or "user_approval")
 
         if node_type == "user_approval":
             approval = state.get("approval")
@@ -52,18 +48,7 @@ class HumanInputNodeExecutor(BaseNodeExecutor):
                 emitter.emit_node_end(node_id, node_name, "user_approval", {"branch_taken": branch})
             return result
 
-        if node_type == "human_input":
-            message = state.get("input") or state.get("message")
-            if message is None:
-                raise ValueError("Missing human input payload")
-            result = {
-                "messages": [{"role": "user", "content": str(message)}]
-            }
-            if emitter:
-                emitter.emit_node_end(node_id, node_name, "human_input", {"has_message": True})
-            return result
-
-        logger.info("Executed Human Input Node (default)")
+        logger.info("Executed User Approval Node (default)")
         if emitter:
-            emitter.emit_node_end(node_id, node_name, node_type or "human_input")
+            emitter.emit_node_end(node_id, node_name, node_type or "user_approval")
         return {}

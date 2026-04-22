@@ -2175,11 +2175,22 @@ def register_standard_operators():
         config_schema={
             "type": "object",
             "properties": {
-                "name": {"type": "string"},
                 "model_id": {"type": "string"},
                 "instructions": {"type": "string"},
                 "input_source": {"type": "object", "additionalProperties": True},
-                "categories": {"type": "array", "items": {"type": "object", "additionalProperties": True}},
+                "categories": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "string"},
+                            "name": {"type": "string"},
+                            "description": {"type": "string"},
+                        },
+                        "required": ["name"],
+                        "additionalProperties": True,
+                    },
+                },
             },
             "required": ["model_id", "categories"],
         },
@@ -2199,7 +2210,6 @@ def register_standard_operators():
             "outputType": "decision",
             "dynamicHandles": True,
             "configFields": [
-                {"name": "name", "label": "Name", "fieldType": "string", "required": False},
                 {"name": "model_id", "label": "Model", "fieldType": "model", "required": True, "description": "Model used for classification"},
                 {"name": "input_source", "label": "Input Source", "fieldType": "value_ref", "required": False, "description": "Pick a value to classify"},
                 {"name": "instructions", "label": "Instructions", "fieldType": "text", "required": False, "description": "Additional context for classification", "prompt_capable": True, "prompt_surface": "classify.instructions"},
@@ -2224,6 +2234,30 @@ def register_standard_operators():
         description="Reshape data using expressions",
         reads=[AgentStateField.STATE_VARIABLES, AgentStateField.CONTEXT],
         writes=[AgentStateField.STATE_VARIABLES, AgentStateField.TRANSFORM_OUTPUT],
+        config_schema={
+            "type": "object",
+            "properties": {
+                "mode": {
+                    "type": "string",
+                    "enum": ["expressions", "object"],
+                    "default": "expressions",
+                },
+                "mappings": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "key": {"type": "string"},
+                            "value": {},
+                        },
+                        "required": ["key", "value"],
+                        "additionalProperties": True,
+                    },
+                },
+            },
+            "required": ["mappings"],
+            "additionalProperties": True,
+        },
         output_contract={
             "fields": [
                 {"key": "output", "type": "unknown", "label": "Output"},
@@ -2235,7 +2269,6 @@ def register_standard_operators():
             "inputType": "any",
             "outputType": "any",
             "configFields": [
-                {"name": "name", "label": "Name", "fieldType": "string", "required": False},
                 {"name": "mode", "label": "Mode", "fieldType": "select", "required": False, "default": "expressions",
                  "options": [
                     {"value": "expressions", "label": "Expressions (CEL)"},
@@ -2259,7 +2292,6 @@ def register_standard_operators():
         config_schema={
             "type": "object",
             "properties": {
-                "name": {"type": "string"},
                 "assignments": {
                     "type": "array",
                     "items": {
@@ -2288,7 +2320,6 @@ def register_standard_operators():
             "inputType": "any",
             "outputType": "any",
             "configFields": [
-                {"name": "name", "label": "Name", "fieldType": "string", "required": False},
                 {"name": "assignments", "label": "Assignments", "fieldType": "assignment_list", "required": True,
                  "description": "Typed state assignments with literal/expression or ValueRef sources"},
                 {"name": "is_expression", "label": "Values are Expressions", "fieldType": "boolean", "required": False, "default": True}
@@ -2355,7 +2386,7 @@ def register_standard_operators():
     # Logic Operators
     # =========================================================================
     
-    from app.agent.executors.logic import IfElseNodeExecutor, WhileNodeExecutor, ConditionalNodeExecutor, ParallelNodeExecutor
+    from app.agent.executors.logic import IfElseNodeExecutor, WhileNodeExecutor, ParallelNodeExecutor
     
     # If/Else Node (New)
     AgentOperatorRegistry.register(AgentOperatorSpec(
@@ -2365,6 +2396,26 @@ def register_standard_operators():
         description="Multi-condition branching with CEL expressions",
         reads=[AgentStateField.STATE_VARIABLES, AgentStateField.MESSAGE_HISTORY],
         writes=[AgentStateField.ROUTING_KEY, AgentStateField.BRANCH_TAKEN],
+        config_schema={
+            "type": "object",
+            "properties": {
+                "conditions": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "string"},
+                            "name": {"type": "string"},
+                            "expression": {"type": "string"},
+                        },
+                        "required": ["expression"],
+                        "additionalProperties": True,
+                    },
+                    "default": [],
+                },
+            },
+            "additionalProperties": True,
+        },
         ui={
             "icon": "GitBranch",
             "color": "#f59e0b",
@@ -2387,6 +2438,15 @@ def register_standard_operators():
         description="Loop while condition is true",
         reads=[AgentStateField.STATE_VARIABLES, AgentStateField.LOOP_COUNTERS],
         writes=[AgentStateField.ROUTING_KEY, AgentStateField.LOOP_COUNTERS],
+        config_schema={
+            "type": "object",
+            "properties": {
+                "condition": {"type": "string"},
+                "max_iterations": {"type": "number", "default": 10},
+            },
+            "required": ["condition"],
+            "additionalProperties": True,
+        },
         ui={
             "icon": "RefreshCw",
             "color": "#f59e0b",
@@ -2394,7 +2454,6 @@ def register_standard_operators():
             "outputType": "decision",
             "staticHandles": ["loop", "exit"],  # Fixed output handles
             "configFields": [
-                {"name": "name", "label": "Name", "fieldType": "string", "required": False},
                 {"name": "condition", "label": "Condition", "fieldType": "expression", "required": True,
                  "description": "CEL expression - loop while true"},
                 {"name": "max_iterations", "label": "Max Iterations", "fieldType": "number", "required": False, "default": 10,
@@ -2403,33 +2462,6 @@ def register_standard_operators():
         }
     ))
     AgentExecutorRegistry.register("while", WhileNodeExecutor)
-
-    # Conditional (Legacy - kept for backward compatibility)
-    AgentOperatorRegistry.register(AgentOperatorSpec(
-        type="conditional",
-        category="logic",
-        display_name="Conditional (Legacy)",
-        description="Legacy conditional. Use If/Else for new workflows.",
-        reads=[AgentStateField.MESSAGE_HISTORY, AgentStateField.ROUTING_KEY],
-        writes=[AgentStateField.ROUTING_KEY, AgentStateField.BRANCH_TAKEN],
-        ui={
-            "icon": "GitBranch",
-            "color": "#d97706",  # Darker orange to indicate legacy
-            "inputType": "any",
-            "outputType": "decision",
-            "configFields": [
-                {"name": "condition_type", "label": "Condition Type", "fieldType": "select", "required": True,
-                 "options": [
-                    {"value": "llm_decision", "label": "LLM Decision"},
-                    {"value": "contains", "label": "Output Contains"},
-                    {"value": "regex", "label": "Regex Match"},
-                    {"value": "cel", "label": "CEL Expression"}
-                 ], "description": "How to evaluate the condition"},
-                {"name": "condition_value", "label": "Condition Value", "fieldType": "string", "required": False, "description": "Value to check against"}
-            ]
-        }
-    ))
-    AgentExecutorRegistry.register("conditional", ConditionalNodeExecutor)
 
     # Parallel
     AgentOperatorRegistry.register(AgentOperatorSpec(
@@ -2817,7 +2849,7 @@ def register_standard_operators():
     
     from app.agent.executors.interaction import HumanInputNodeExecutor
 
-    # User Approval (renamed from Human Input)
+    # User Approval
     AgentOperatorRegistry.register(AgentOperatorSpec(
         type="user_approval",
         category="interaction",
@@ -2825,6 +2857,15 @@ def register_standard_operators():
         description="Pause for user approval or rejection",
         reads=[AgentStateField.STATE_VARIABLES],
         writes=[AgentStateField.MESSAGE_HISTORY, AgentStateField.APPROVAL_STATUS, AgentStateField.ROUTING_KEY],
+        config_schema={
+            "type": "object",
+            "properties": {
+                "message": {"type": "string"},
+                "timeout_seconds": {"type": "number", "default": 300},
+                "require_comment": {"type": "boolean", "default": False},
+            },
+            "additionalProperties": True,
+        },
         output_contract={
             "fields": [
                 {"key": "approved", "type": "boolean", "label": "Approved"},
@@ -2838,7 +2879,6 @@ def register_standard_operators():
             "outputType": "decision",
             "staticHandles": ["approve", "reject"],
             "configFields": [
-                {"name": "name", "label": "Name", "fieldType": "string", "required": False},
                 {"name": "message", "label": "Message", "fieldType": "template_string", "required": False, 
                  "description": "Message shown to user with @variable support", "prompt_capable": True, "prompt_surface": "user_approval.message"},
                 {"name": "timeout_seconds", "label": "Timeout (seconds)", "fieldType": "number", "required": False, "default": 300},
@@ -2847,32 +2887,6 @@ def register_standard_operators():
         }
     ))
     AgentExecutorRegistry.register("user_approval", HumanInputNodeExecutor)
-    
-    # Human Input (Legacy)
-    AgentOperatorRegistry.register(AgentOperatorSpec(
-        type="human_input",
-        category="interaction",
-        display_name="Human Input (Legacy)",
-        description="Legacy human input. Use User Approval for new workflows.",
-        reads=[],
-        writes=[AgentStateField.MESSAGE_HISTORY],
-        output_contract={
-            "fields": [
-                {"key": "input_text", "type": "string", "label": "Input Text"},
-            ]
-        },
-        ui={
-            "icon": "UserCheck",
-            "color": "#059669",  # Darker green to indicate legacy
-            "inputType": "any",
-            "outputType": "message",
-            "configFields": [
-                {"name": "prompt", "label": "Prompt", "fieldType": "text", "required": False, "description": "Message shown to the human reviewer", "prompt_capable": True, "prompt_surface": "human_input.prompt"},
-                {"name": "timeout_seconds", "label": "Timeout (seconds)", "fieldType": "number", "required": False, "default": 300, "description": "Max wait time"}
-            ]
-        }
-    ))
-    AgentExecutorRegistry.register("human_input", HumanInputNodeExecutor)
     
     # =========================================================================
     # Artifacts (Dynamic Registration)

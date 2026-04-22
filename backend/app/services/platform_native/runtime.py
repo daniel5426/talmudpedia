@@ -45,6 +45,16 @@ def serialize_value(value: Any) -> Any:
     return value
 
 
+def _request_metadata_from_inputs(inputs: dict[str, Any]) -> dict[str, Any]:
+    top_level = inputs.get("request_metadata")
+    if isinstance(top_level, dict):
+        return top_level
+    payload = inputs.get("payload")
+    if isinstance(payload, dict) and isinstance(payload.get("request_metadata"), dict):
+        return payload["request_metadata"]
+    return {}
+
+
 class NativePlatformToolRuntime:
     def __init__(self, *, db: AsyncSession, builtin_key: str, inputs: dict[str, Any]):
         self.db = db
@@ -169,7 +179,7 @@ class NativePlatformToolRuntime:
 
 
 def _finalize_success(*, action: str, builtin_key: str, result: Any, inputs: dict[str, Any]) -> dict[str, Any]:
-    request_metadata = inputs.get("payload", {}).get("request_metadata") if isinstance(inputs.get("payload"), dict) else {}
+    request_metadata = _request_metadata_from_inputs(inputs)
     return {
         "result": serialize_value(result),
         "errors": [],
@@ -196,7 +206,7 @@ def _finalize_error(*, action: str, builtin_key: str, error: ControlPlaneError |
         payload.setdefault("retryable", False)
     else:
         payload = {"code": "INTERNAL_ERROR", "message": str(error), "http_status": 500, "retryable": False}
-    request_metadata = inputs.get("payload", {}).get("request_metadata") if isinstance(inputs.get("payload"), dict) else {}
+    request_metadata = _request_metadata_from_inputs(inputs)
     return {
         "result": {
             "status": "validation_error" if int(payload.get("http_status") or 500) < 500 else "failed",

@@ -6,6 +6,8 @@ Last Updated: 2026-04-22
 
 Define the canonical authoring surface shared by agent graphs and RAG pipelines while keeping execution/runtime layers separate.
 
+For the current agent-specific node authoring surface and node inventory, see `agent_node_authoring_current.md`.
+
 ## Core Decision
 
 All builder and discovery surfaces should consume one canonical backend model:

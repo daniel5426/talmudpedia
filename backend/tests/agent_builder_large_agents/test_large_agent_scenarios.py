@@ -429,7 +429,6 @@ async def test_document_compare_fullstack_agent(
     graph = graph_def(
         [
             node_def("start", "start"),
-            node_def("human_input", "human_input"),
             node_def("request_state", "set_state", {
                 "assignments": [{"variable": "request_type", "value": "compare"}],
                 "is_expression": False,
@@ -484,22 +483,21 @@ async def test_document_compare_fullstack_agent(
             node_def("end_else", "end", {"output_message": "Fallback: {{ state.request_type }}"}),
         ],
         [
-            edge_def("e1", "start", "human_input"),
-            edge_def("e2", "human_input", "request_state"),
-            edge_def("e3", "request_state", "triage"),
-            edge_def("e4", "triage", "propose_reconciliation", source_handle="compare"),
-            edge_def("e5", "triage", "provide_explanation", source_handle="answer_question"),
-            edge_def("e6", "triage", "retry_agent", source_handle="else"),
-            edge_def("e7", "propose_reconciliation", "rag_lookup"),
-            edge_def("e8", "rag_lookup", "vector_lookup"),
-            edge_def("e9", "vector_lookup", "tool_respond"),
-            edge_def("e10", "tool_respond", "approval"),
-            edge_def("e11", "approval", "approval_agent", source_handle="approve"),
-            edge_def("e12", "approval", "rejection_agent", source_handle="reject"),
-            edge_def("e13", "approval_agent", "end_approved"),
-            edge_def("e14", "rejection_agent", "end_rejected"),
-            edge_def("e15", "provide_explanation", "end_else"),
-            edge_def("e16", "retry_agent", "end_else"),
+            edge_def("e1", "start", "request_state"),
+            edge_def("e2", "request_state", "triage"),
+            edge_def("e3", "triage", "propose_reconciliation", source_handle="compare"),
+            edge_def("e4", "triage", "provide_explanation", source_handle="answer_question"),
+            edge_def("e5", "triage", "retry_agent", source_handle="else"),
+            edge_def("e6", "propose_reconciliation", "rag_lookup"),
+            edge_def("e7", "rag_lookup", "vector_lookup"),
+            edge_def("e8", "vector_lookup", "tool_respond"),
+            edge_def("e9", "tool_respond", "approval"),
+            edge_def("e10", "approval", "approval_agent", source_handle="approve"),
+            edge_def("e11", "approval", "rejection_agent", source_handle="reject"),
+            edge_def("e12", "approval_agent", "end_approved"),
+            edge_def("e13", "rejection_agent", "end_rejected"),
+            edge_def("e14", "provide_explanation", "end_else"),
+            edge_def("e15", "retry_agent", "end_else"),
         ],
     )
 
@@ -535,7 +533,6 @@ async def test_document_compare_fullstack_agent(
         assert run.status == RunStatus.completed
 
         outputs = run.output_result.get("_node_outputs", {})
-        assert "human_input" in outputs
         assert "request_state" in outputs
         assert outputs["request_state"].get("state", {}).get("request_type") == "compare"
         assert "propose_reconciliation" in outputs

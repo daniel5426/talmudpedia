@@ -88,7 +88,6 @@ const CATEGORY_ICONS: Record<string, React.ElementType> = {
     agent: Bot,
     tool: Wrench,
     rag: Search,
-    conditional: GitBranch,
     if_else: GitBranch,
     while: RefreshCw,
     parallel: GitFork,
@@ -99,15 +98,12 @@ const CATEGORY_ICONS: Record<string, React.ElementType> = {
     judge: Scale,
     replan: RefreshCw,
     cancel_subtree: Ban,
-    human_input: UserCheck,
     user_approval: UserCheck,
     speech_to_text: Mic,
     transform: Sparkles,
     set_state: Database,
     classify: ListFilter,
 }
-
-const nodeSchemaCache = new Map<string, NodeAuthoringSpec>()
 
 interface ConfigPanelProps {
     nodeId: string
@@ -1853,16 +1849,11 @@ export function ConfigPanel({
 
     useEffect(() => {
         let cancelled = false
-        const cached = nodeSchemaCache.get(data.nodeType)
-        if (cached) {
-            setNodeAuthoringSpec(cached)
-            return
-        }
+        setNodeAuthoringSpec(null)
         agentService.getNodeSchemas([data.nodeType])
             .then((response) => {
                 const nextSpec = response.specs?.[data.nodeType] || null
                 if (!cancelled && nextSpec) {
-                    nodeSchemaCache.set(data.nodeType, nextSpec)
                     setNodeAuthoringSpec(nextSpec)
                 }
             })

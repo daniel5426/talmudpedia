@@ -5,6 +5,8 @@ from uuid import uuid4
 
 import pytest
 
+from app.agent.executors.standard import register_standard_operators
+from app.agent.registry import AgentOperatorRegistry
 from app.services.agent_service import AgentService
 from app.services.prompt_reference_resolver import PromptReferenceResolver
 
@@ -86,6 +88,75 @@ async def test_agent_write_normalizes_schema_defaults_and_contract_nodes(monkeyp
 
 
 @pytest.mark.asyncio
+async def test_agent_write_strips_legacy_node_config_and_if_else_noise(monkeypatch):
+    service = AgentService(db=SimpleNamespace(), organization_id=uuid4(), project_id=uuid4())
+
+    async def _noop_prompt_validation(self, graph_definition):
+        return None
+
+    async def _no_runtime_issues(_graph_definition):
+        return []
+
+    monkeypatch.setattr(PromptReferenceResolver, "validate_graph_definition", _noop_prompt_validation)
+    monkeypatch.setattr(service, "_collect_runtime_reference_issues", _no_runtime_issues)
+
+    normalized = await service._validate_graph_for_write(
+        {
+            "nodes": [
+                {
+                    "id": "start",
+                    "type": "start",
+                    "position": {"x": 0, "y": 0},
+                    "config": {},
+                },
+                {
+                    "id": "decision",
+                    "type": "if_else",
+                    "position": {"x": 200, "y": 0},
+                    "config": {
+                        "conditions": [
+                            {"name": "ready", "expression": "true"},
+                            {"name": "blank", "expression": "   "},
+                        ],
+                    },
+                },
+                {
+                    "id": "state",
+                    "type": "set_state",
+                    "position": {"x": 400, "y": 0},
+                    "config": {
+                        "name": "Legacy name",
+                        "assignments": [{"variable": "flag", "value": True, "value_type": "boolean"}],
+                    },
+                },
+                {
+                    "id": "end",
+                    "type": "end",
+                    "position": {"x": 600, "y": 0},
+                    "config": {},
+                },
+            ],
+            "edges": [
+                {"id": "e1", "source": "start", "target": "decision"},
+                {"id": "e2", "source": "decision", "target": "state", "source_handle": "ready"},
+                {"id": "e3", "source": "decision", "target": "end", "source_handle": "else"},
+                {"id": "e4", "source": "state", "target": "end"},
+            ],
+        }
+    )
+
+    decision = next(node for node in normalized["nodes"] if node["id"] == "decision")
+    state = next(node for node in normalized["nodes"] if node["id"] == "state")
+
+    assert len(decision["config"]["conditions"]) == 1
+    assert decision["config"]["conditions"][0]["name"] == "ready"
+    assert decision["config"]["conditions"][0]["expression"] == "true"
+    assert decision["config"]["conditions"][0]["id"].startswith("branch_")
+    assert "name" not in state["config"]
+    assert state["config"]["assignments"] == [{"key": "flag", "type": "boolean", "value": True}]
+
+
+@pytest.mark.asyncio
 async def test_agent_validation_surfaces_authoring_issues_with_paths(monkeypatch):
     service = AgentService(db=SimpleNamespace(), organization_id=uuid4(), project_id=uuid4())
 
@@ -121,3 +192,10 @@ async def test_agent_validation_surfaces_authoring_issues_with_paths(monkeypatch
     codes_by_path = {(item.get("code"), item.get("path")) for item in result.errors}
     assert ("UNKNOWN_CONFIG_FIELD", "/nodes/1/config/bogus_field") in codes_by_path
     assert ("MISSING_REQUIRED_CONFIG", "/nodes/1/config/model_id") in codes_by_path
+
+
+def test_removed_legacy_nodes_are_not_registered():
+    register_standard_operators()
+
+    assert AgentOperatorRegistry.get("human_input") is None
+    assert AgentOperatorRegistry.get("conditional") is None

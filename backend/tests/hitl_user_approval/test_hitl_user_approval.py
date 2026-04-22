@@ -36,14 +36,8 @@ async def test_user_approval_rejects_invalid_payload():
 
 
 @pytest.mark.asyncio
-async def test_human_input_accepts_message_or_input():
+async def test_user_approval_allows_non_interaction_nodes_to_continue():
     executor = HumanInputNodeExecutor(organization_id=None, db=None)
 
-    can_execute = await executor.can_execute({}, {}, {"node_type": "human_input"})
-    assert can_execute is False
-
-    can_execute = await executor.can_execute({"input": "hello"}, {}, {"node_type": "human_input"})
-    assert can_execute is True
-
-    can_execute = await executor.can_execute({"message": "hello"}, {}, {"node_type": "human_input"})
+    can_execute = await executor.can_execute({}, {}, {"node_type": "agent"})
     assert can_execute is True

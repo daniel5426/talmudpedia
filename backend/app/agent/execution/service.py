@@ -793,14 +793,6 @@ class AgentExecutorService:
                 "timeout_seconds": config.get("timeout_seconds"),
             }
             return payload
-        if node_type == "human_input":
-            prompt = str(config.get("prompt") or "")
-            payload["interaction"] = {
-                "kind": "human_input",
-                "prompt": evaluate_template(prompt, state) if prompt else "",
-                "timeout_seconds": config.get("timeout_seconds"),
-            }
-            return payload
         return payload
 
     async def start_run(

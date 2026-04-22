@@ -115,6 +115,27 @@ For the next phase, the main effort should be:
 4. tighten validation and repair signals
 5. upgrade the contracts node by node / operator by operator
 
+## Implementation Status
+
+The first architect-facing hard cut has now landed in the backend:
+
+- the architect no longer mounts the legacy `platform-rag`, `platform-agents`, `platform-assets`, or `platform-governance` container tools
+- the architect now mounts `36` action-level platform tools plus `5` worker tools
+- platform action tools are now real tool rows with direct-field schemas instead of `action + payload` container contracts
+- the architect prompt is now graph-first and no longer teaches shell/helper authoring paths
+
+The current implemented authoring surface is therefore:
+
+- discovery via `agents.nodes.catalog`, `agents.nodes.schema`, `rag.operators.catalog`, `rag.operators.schema`
+- graph-first creation/update via `agents.create`, `agents.update`, `rag.create_visual_pipeline`, `rag.update_visual_pipeline`
+- repair checkpoints via `agents.validate` and `rag.compile_visual_pipeline`
+
+The remaining deferred work is still deferred:
+
+- toolset partitioning and dynamic loading
+- broader public/MCP exposure strategy
+- further node-by-node contract simplification on top of the new graph normalization work
+
 ## Non-Goals For This Doc
 
 This document does not finalize:

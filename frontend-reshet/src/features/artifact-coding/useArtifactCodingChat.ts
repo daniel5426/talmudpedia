@@ -24,8 +24,7 @@ import {
 } from "./stream-parsers";
 
 type UseArtifactCodingChatOptions = {
-  tenantSlug?: string;
-  tenantId?: string | null;
+  organizationId?: string | null;
   artifactId?: string | null;
   draftKey: string;
   isCreateMode: boolean;
@@ -59,8 +58,7 @@ function buildTimelineFromDetail(detail: ArtifactCodingChatSessionDetail): Timel
 }
 
 export function useArtifactCodingChat({
-  tenantSlug,
-  tenantId,
+  organizationId,
   artifactId,
   draftKey,
   isCreateMode,
@@ -124,10 +122,10 @@ export function useArtifactCodingChat({
         draftKey: draftKey || undefined,
         limit: 25,
       },
-      tenantSlug,
+      organizationId || undefined,
     );
     setChatSessions(sessions);
-  }, [artifactId, draftKey, tenantSlug]);
+  }, [artifactId, draftKey, organizationId]);
 
   const applySessionDetail = useCallback((detail: ArtifactCodingChatSessionDetail, beforeMessageId?: string | null) => {
     onApplyDraftSnapshot(detail.draft_snapshot || {});
@@ -163,10 +161,10 @@ export function useArtifactCodingChat({
     const detail = await artifactsService.getCodingAgentChatSession(sessionId, {
       limit: 12,
       before_message_id: beforeMessageId,
-      tenantSlug,
+      organizationId: organizationId || undefined,
     });
     applySessionDetail(detail, beforeMessageId);
-  }, [applySessionDetail, tenantSlug]);
+  }, [applySessionDetail, organizationId]);
 
   const refreshDraftSnapshot = useCallback(async (sessionId: string) => {
     const normalizedSessionId = String(sessionId || "").trim();
@@ -177,7 +175,7 @@ export function useArtifactCodingChat({
       return;
     }
     const request = artifactsService
-      .getCodingAgentChatSessionDraftSnapshot(normalizedSessionId, tenantSlug)
+      .getCodingAgentChatSessionDraftSnapshot(normalizedSessionId, organizationId || undefined)
       .then((response) => {
         if (activeSessionRef.current === normalizedSessionId) {
           onApplyDraftSnapshot(response.draft_snapshot || {});
@@ -188,13 +186,13 @@ export function useArtifactCodingChat({
       });
     draftSnapshotRefreshMapRef.current.set(normalizedSessionId, request);
     await request;
-  }, [onApplyDraftSnapshot, tenantSlug]);
+  }, [onApplyDraftSnapshot, organizationId]);
 
   const stopCurrentRun = useCallback(async () => {
     if (!activeRunId) return;
     setIsStopping(true);
     try {
-      await artifactsService.cancelCodingAgentRun(activeRunId, tenantSlug, {
+      await artifactsService.cancelCodingAgentRun(activeRunId, organizationId || undefined, {
         assistant_output_text: buildAbortAssistantText(timeline, activeRunId) || undefined,
       });
       const reader = abortReaderMapRef.current.get(activeSessionKey) || null;
@@ -206,11 +204,11 @@ export function useArtifactCodingChat({
     } finally {
       setIsStopping(false);
     }
-  }, [activeRunId, activeSessionKey, tenantSlug, timeline]);
+  }, [activeRunId, activeSessionKey, organizationId, timeline]);
 
   const consumeRunStream = useCallback(async (runId: string, sessionId: string) => {
     const sessionKey = sessionId || DRAFT_SESSION_KEY;
-    const response = await artifactsService.streamCodingAgentRun(runId, tenantId);
+    const response = await artifactsService.streamCodingAgentRun(runId, organizationId);
     if (!response.ok || !response.body) {
       throw new Error("Failed to open artifact coding stream");
     }
@@ -341,7 +339,7 @@ export function useArtifactCodingChat({
     if (activeSessionRef.current === sessionId) {
       await loadSessionDetail(sessionId);
     }
-  }, [loadSessionDetail, refreshDraftSnapshot, refreshSessions, tenantId, updateTimelineForSession]);
+  }, [loadSessionDetail, refreshDraftSnapshot, refreshSessions, organizationId, updateTimelineForSession]);
 
   const sendMessage = useCallback(async (text: string) => {
     const prompt = String(text || "").trim();
@@ -362,7 +360,7 @@ export function useArtifactCodingChat({
         client_message_id: clientMessageId,
         draft_snapshot: getDraftSnapshot(),
       },
-      tenantSlug,
+      organizationId || undefined,
     );
     setActiveChatSessionId(response.chat_session_id);
     activeSessionRef.current = response.chat_session_id;
@@ -383,7 +381,7 @@ export function useArtifactCodingChat({
     });
     await refreshSessions();
     await consumeRunStream(response.run.run_id, response.chat_session_id);
-  }, [activeChatSessionId, artifactId, consumeRunStream, draftKey, getDraftSnapshot, isCreateMode, refreshSessions, selectedRunModelId, tenantSlug, updateTimelineForSession]);
+  }, [activeChatSessionId, artifactId, consumeRunStream, draftKey, getDraftSnapshot, isCreateMode, organizationId, refreshSessions, selectedRunModelId, updateTimelineForSession]);
 
   const loadOlderHistory = useCallback(async () => {
     const historyPage = historyPagesBySession[activeSessionKey] || { hasMore: false, nextBeforeMessageId: null };
@@ -403,7 +401,7 @@ export function useArtifactCodingChat({
       await artifactsService.answerCodingAgentRunQuestion(
         activeRunId,
         { question_id: pendingQuestion.requestId, answers },
-        tenantSlug,
+        organizationId || undefined,
       );
       setPendingQuestionsBySession((current) => ({ ...current, [activeSessionKey]: null }));
       if (activeSessionRef.current) {
@@ -412,7 +410,7 @@ export function useArtifactCodingChat({
     } finally {
       setIsAnsweringQuestion(false);
     }
-  }, [activeRunId, activeSessionKey, consumeRunStream, pendingQuestion, tenantSlug]);
+  }, [activeRunId, activeSessionKey, consumeRunStream, organizationId, pendingQuestion]);
 
   const revertToRun = useCallback(async (runId: string) => {
     if (!activeChatSessionId) return;
@@ -421,14 +419,14 @@ export function useArtifactCodingChat({
       const detail = await artifactsService.revertCodingAgentSession(
         activeChatSessionId,
         { run_id: runId },
-        tenantSlug,
+        organizationId || undefined,
       );
       applySessionDetail(detail);
       await refreshSessions();
     } finally {
       setRevertingRunId(null);
     }
-  }, [activeChatSessionId, applySessionDetail, refreshSessions, tenantSlug]);
+  }, [activeChatSessionId, applySessionDetail, organizationId, refreshSessions]);
 
   useEffect(() => {
     void refreshSessions().then(async () => {

@@ -24,7 +24,6 @@ export type AgentNodeType =
   | "rag"
   | "if_else"
   | "while"
-  | "conditional"
   | "parallel"
   | "spawn_run"
   | "spawn_group"
@@ -34,7 +33,6 @@ export type AgentNodeType =
   | "replan"
   | "cancel_subtree"
   | "user_approval"
-  | "human_input"
   | "transform"
   | "speech_to_text"
   | "set_state"
@@ -166,7 +164,6 @@ const BUILTIN_NODE_DEFAULTS: Partial<Record<AgentNodeType, NodeUiDefaults>> = {
   if_else: { category: "logic", displayName: "If/Else", inputType: "any", outputType: "decision" },
   while: { category: "logic", displayName: "While", inputType: "any", outputType: "decision" },
   parallel: { category: "logic", displayName: "Parallel", inputType: "any", outputType: "context" },
-  conditional: { category: "logic", displayName: "Conditional", inputType: "any", outputType: "decision" },
   spawn_run: { category: "orchestration", displayName: "Spawn Run", inputType: "context", outputType: "context" },
   spawn_group: { category: "orchestration", displayName: "Spawn Group", inputType: "context", outputType: "context" },
   join: { category: "orchestration", displayName: "Join", inputType: "context", outputType: "decision" },
@@ -175,7 +172,6 @@ const BUILTIN_NODE_DEFAULTS: Partial<Record<AgentNodeType, NodeUiDefaults>> = {
   replan: { category: "orchestration", displayName: "Replan", inputType: "context", outputType: "decision" },
   cancel_subtree: { category: "orchestration", displayName: "Cancel Subtree", inputType: "context", outputType: "context" },
   user_approval: { category: "interaction", displayName: "User Approval", inputType: "any", outputType: "decision" },
-  human_input: { category: "interaction", displayName: "Human Input", inputType: "any", outputType: "message" },
 }
 
 export function getNodeUiDefaults(nodeType: AgentNodeType): NodeUiDefaults | undefined {

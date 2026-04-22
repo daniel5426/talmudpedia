@@ -54,6 +54,7 @@ from app.services.published_app_coding_agent_tools import (
     normalize_coding_agent_tool_exception,
     validate_coding_agent_required_fields,
 )
+from app.services.platform_architect_contracts import PLATFORM_ARCHITECT_CANONICAL_ACTION_TOOL_KEYS
 from app.services.resource_policy_service import ResourcePolicySnapshot
 from app.services.tool_function_registry import ensure_tool_functions_registered, get_tool_function, run_tool_function
 from app.services.ui_blocks import UI_BLOCKS_BUILTIN_KEY, normalize_ui_blocks_tool_input
@@ -68,6 +69,7 @@ STRICT_PLATFORM_BUILTIN_KEYS = frozenset(
         "platform-agents",
         "platform-rag",
         "platform-governance",
+        *PLATFORM_ARCHITECT_CANONICAL_ACTION_TOOL_KEYS,
     }
 )
 def _trace_safe_value(value: Any, *, max_string: int = 800, max_items: int = 12) -> Any:

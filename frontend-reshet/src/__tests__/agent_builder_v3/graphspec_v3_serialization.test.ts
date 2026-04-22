@@ -67,6 +67,19 @@ describe("graphspec v4 serialization", () => {
     expect(Array.isArray(config.output_bindings)).toBe(true)
   })
 
+  it("drops removed per-node name fields during hydration and save", () => {
+    const normalized = normalizeBuilderNode(buildNode("classify_1", "classify", {
+      name: "Legacy label",
+      model_id: "model-1",
+      categories: [{ name: "support" }],
+    }))
+
+    expect((normalized.data.config as Record<string, unknown>).name).toBeUndefined()
+
+    const saved = normalizeGraphSpecForSave([normalized], [], {})
+    expect((saved.nodes[0].config as Record<string, unknown>).name).toBeUndefined()
+  })
+
   it("roundtrips saved v4 contract nodes without serialization drift", () => {
     const rawGraph = normalizeGraphDefinition({
       spec_version: "4.0",

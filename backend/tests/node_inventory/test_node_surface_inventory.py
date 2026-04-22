@@ -15,7 +15,9 @@ def test_inventory_reports_executor_coverage_for_registered_agent_nodes():
     assert by_type["start"]["has_executor"] is True
     assert by_type["tool"]["has_executor"] is True
     assert by_type["agent"]["has_executor"] is True
-    assert by_type["human_input"]["has_executor"] is True
+    assert by_type["user_approval"]["has_executor"] is True
+    assert "human_input" not in by_type
+    assert "conditional" not in by_type
 
 
 def test_inventory_exposes_schema_registry_drift_explicitly():

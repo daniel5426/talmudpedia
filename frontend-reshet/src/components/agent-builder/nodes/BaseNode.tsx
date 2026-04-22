@@ -15,7 +15,6 @@ const NODE_ICONS: Record<AgentNodeType, React.ElementType> = {
     tool: Wrench,
     rag: Search,
     vector_search: Database,
-    conditional: GitBranch,
     if_else: GitBranch,
     while: RefreshCw,
     parallel: GitFork,
@@ -26,7 +25,6 @@ const NODE_ICONS: Record<AgentNodeType, React.ElementType> = {
     judge: Scale,
     replan: RefreshCw,
     cancel_subtree: Ban,
-    human_input: UserCheck,
     user_approval: UserCheck,
     speech_to_text: Mic,
     transform: Sparkles,
@@ -86,7 +84,6 @@ function BaseNodeComponent(props: NodeProps) {
 
     const isStartNode = data.nodeType === "start"
     const isEndNode = data.nodeType === "end"
-    const isConditional = data.nodeType === "conditional"
     const isSpecialNode = ["if_else", "while", "user_approval", "classify", "join", "router", "judge", "replan"].includes(data.nodeType)
     const isAgent = data.nodeType === "agent"
     const modelId = typeof data.config?.model_id === "string" ? data.config.model_id : undefined
@@ -99,13 +96,6 @@ function BaseNodeComponent(props: NodeProps) {
 
     // Prepare handles for shared node
     let outputHandles: SharedNodeHandle[] | undefined = undefined
-
-    if (isConditional) {
-        outputHandles = [
-            { id: "true", label: "T", color: "#22c55e" },
-            { id: "false", label: "F", color: "#ef4444" }
-        ]
-    }
 
     // Specialized content for nodes with explicit branch handles
     let specializedContent: React.ReactNode = null
@@ -249,7 +239,7 @@ function BaseNodeComponent(props: NodeProps) {
             data={{
                 ...data,
                 inputType: isStartNode ? "none" : data.inputType,
-                outputType: (isEndNode || isConditional || isSpecialNode) ? "none" : data.outputType,
+                outputType: (isEndNode || isSpecialNode) ? "none" : data.outputType,
                 outputHandles,
             } as SharedNodeData}
             icon={Icon}

@@ -3,8 +3,8 @@
 Last Updated: 2026-04-22
 
 ## Scope
-- Platform Architect v1.2 direct domain-tool loop runtime (no `architect.run` path).
-- Success, repair, approval-blocked, tenant/scope-denied, and replay idempotency behaviors.
+- Platform Architect action-level tool surface and native backend dispatch wiring.
+- Success, repair, approval-blocked, tenant/scope-denied, replay idempotency, and seeded architect tool-surface behaviors.
 
 ## Test files present
 - test_platform_architect_runtime.py
@@ -13,6 +13,14 @@ Last Updated: 2026-04-22
 - test_native_platform_assets_actions.py
 
 ## Key scenarios covered
+- Canonical architect surface is now a hard cut to `36` action-level platform tools plus `5` worker tools, with no architect-mounted `platform-rag` / `platform-agents` / `platform-assets` / `platform-governance` container tools.
+- Seeded architect prompt is graph-first: discover nodes/operators, author full graphs, rely on normalization/defaulting, validate/compile, then run/publish.
+- Seeded architect prompt now forbids `action` / `payload` wrappers for platform action tools because each mounted tool fixes its own action id.
+- Action-tool schemas are direct-field tool contracts and no longer require model-authored `action` or nested `payload`.
+- Canonical graph-authoring actions are now clean-cut contracts: `agents.update` and `rag.update_visual_pipeline` no longer expose `patch`, `rag.create_visual_pipeline` no longer accepts `graph_definition`, and `agents.validate` no longer accepts a loose `validation` bag.
+- Native adapter coverage now rejects legacy `patch` / `graph_definition` inputs directly and enforces top-level update-field requirements plus `nodes+edges` pairing for RAG graph updates.
+- Canonical action-tool rows seed as real global system tools whose `builtin_key` is the canonical action id and whose function binding is a generated `platform_action_*` wrapper.
+- Action-level wrapper functions reconstruct the fixed canonical action id and dispatch through the shared native platform runtime.
 - Happy path executes direct `rag.*` and `agents.*` calls for create/compile/validate/execute.
 - Recovery path handles first compile failure, applies patch action, and succeeds on retry.
 - Repeated identical architect mutation failures now stop with a blocker instead of looping indefinitely.
@@ -28,9 +36,8 @@ Last Updated: 2026-04-22
 - Platform SDK tool output meta now includes redacted auth context for runtime debugging without leaking bearer tokens.
 - Replay path reuses existing resources rather than duplicating them.
 - `agents.create` propagates structured SDK validation details (including normalized `validation_errors`) for deterministic repair.
-- Platform architect domain schema includes `agents.nodes.catalog/schema/validate` action contracts.
-- Platform architect domain schema now includes `rag.operators.catalog/schema` action contracts for RAG-native discovery.
-- Platform architect domain schema now includes `agents.create_shell` and `rag.create_pipeline_shell` as the preferred lightweight creation actions.
+- Platform architect domain schema still serves as the internal action catalog source of truth, while architect-facing seeded rows now expose the kept actions directly.
+- Platform architect action schema includes `agents.nodes.catalog/schema` and `rag.operators.catalog/schema` for graph discovery.
 - Platform SDK bootstrap seeding now locks to canonical `builtin_key=platform_sdk` plus system artifact binding metadata and is covered directly.
 - Seeded architect runtime no longer forces JSON-only output in prompt or node config.
 - Seeded architect runtime now defaults `temperature` to `1`.
@@ -38,15 +45,15 @@ Last Updated: 2026-04-22
 - Seeded architect prompt now instructs artifact binding creation through `title_prompt + draft_seed.kind` and explicitly forbids low-level guesses like `create`, `files`, `entrypoint`, and `text`.
 - Seeded architect prompt now treats artifact-coding delegated workers as draft-mutation-only workers and keeps persistence architect-owned through `architect-worker-binding-persist-artifact`.
 - Seeded architect prompt now forbids asking artifact-coding workers to mutate runtime-owned readiness fields like `persistence_readiness`.
-- Seeded architect prompt now treats ambiguous read-surface prompts more explicitly: prompt/template discovery must use `prompts.list`, and platform tool inventory must treat tools as canonical action ids by domain, not domain container slugs, without inventing `help` actions or leaking architect-worker tools.
-- Seeded architect prompt now makes shell-create payload contracts explicit: `agents.create_shell` must use `name` only, `rag.create_pipeline_shell` must use only `name` plus optional `pipeline_type=retrieval`, and knowledge-store create flows must resolve an embedding-capable model before create.
+- Seeded architect prompt now treats platform tool inventory as the mounted canonical action ids by family rather than the old domain container slugs.
+- Seeded architect prompt now makes graph-first create/update the normal path and removes shell/helper authoring guidance.
 - Direct guardrail tests now call the live guardrail contract shape with `builtin_key` and `state_context.agent_system_key`, matching runtime tool execution.
 - Seeded artifact-coding worker instructions now spell out the required draft fields for a new artifact before the architect can persist it.
 - Architect domain tools now bind to native backend control-plane function dispatch instead of the runtime SDK shim.
 - Native `platform-*` dispatch preserves runtime auth/tenant context and rejects cross-domain action mismatch before execution.
 - Native `platform-*` list actions now default to bounded `view=summary` responses with the shared `items/total/has_more/skip/limit/view` envelope.
 - Native `platform-assets` now exposes canonical `prompts.list` reads backed by the prompt library service.
-- Seeded architect domain-tool registry schema now matches the shared list contract, including `view`, `limit<=100`, and removal of stale `agents.list.compact`.
+- Seeded architect action-tool registry schema now matches the shared list contract, including `view`, `limit<=100`, and removal of stale `agents.list.compact`.
 
 ## Last run command + date/time + result
 - Command: `cd backend && PYTHONPATH=. pytest -q tests/platform_architect_runtime/test_architect_seeding.py`
@@ -151,3 +158,13 @@ Last Updated: 2026-04-22
 ## 2026-04-22 system bootstrap validation
 - Command: `TEST_USE_REAL_DB=0 SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest -q backend/tests/platform_architect_runtime/test_architect_seeding.py::test_seed_platform_sdk_tool_creates_published_system_artifact_binding`
 - Result: PASS (`1 passed`)
+
+## 2026-04-22 architect action-tool hard-cut validation
+- Command: `SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest -q backend/tests/platform_architect_runtime/test_architect_seeding.py backend/tests/platform_architect_runtime/test_native_platform_tools.py backend/tests/tool_execution/test_function_tool_execution.py -k 'strict_platform or test_architect_seeding or test_native_platform_tools'`
+- Result: PASS (`19 passed, 12 deselected`)
+- Command: `SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest -q backend/tests/graph_authoring`
+- Result: PASS (`7 passed`)
+
+## 2026-04-22 graph-first contract tightening validation
+- Command: `SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest -q backend/tests/platform_architect_runtime/test_architect_seeding.py backend/tests/platform_architect_runtime/test_native_platform_tools.py`
+- Result: PASS (`23 passed`)

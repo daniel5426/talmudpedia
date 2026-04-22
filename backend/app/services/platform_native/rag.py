@@ -4,7 +4,7 @@ import asyncio
 from typing import Any
 
 from app.services.control_plane.contracts import ListQuery
-from app.services.control_plane.errors import not_found
+from app.services.control_plane.errors import not_found, validation
 from app.services.control_plane.rag_admin_service import (
     CreatePipelineInput,
     RagAdminService,
@@ -31,16 +31,17 @@ def _pipeline_shell_graph() -> dict[str, Any]:
     }
 
 
-def _normalize_graph_definition(payload: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    nodes = list(payload.get("nodes") or [])
-    edges = list(payload.get("edges") or [])
-    graph_definition = payload.get("graph_definition")
-    if isinstance(graph_definition, dict):
-        if not nodes and isinstance(graph_definition.get("nodes"), list):
-            nodes = list(graph_definition.get("nodes") or [])
-        if not edges and isinstance(graph_definition.get("edges"), list):
-            edges = list(graph_definition.get("edges") or [])
-    return nodes, edges
+_RAG_UPDATE_FIELDS = ("name", "description", "pipeline_type", "nodes", "edges")
+
+
+def _graph_nodes_and_edges(payload: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    nodes = payload.get("nodes")
+    edges = payload.get("edges")
+    if not isinstance(nodes, list):
+        raise validation("nodes must be an array", field="nodes")
+    if not isinstance(edges, list):
+        raise validation("edges must be an array", field="edges")
+    return list(nodes), list(edges)
 
 
 async def rag_list_visual_pipelines(rt: NativePlatformToolRuntime) -> Any:
@@ -65,7 +66,7 @@ async def rag_operators_schema(rt: NativePlatformToolRuntime) -> Any:
 async def rag_create_pipeline_shell(rt: NativePlatformToolRuntime) -> Any:
     if rt.dry_run:
         return {"status": "skipped", "dry_run": True, "name": str(rt.payload.get("name") or "")}
-    nodes, edges = _normalize_graph_definition(_pipeline_shell_graph())
+    nodes, edges = _graph_nodes_and_edges(_pipeline_shell_graph())
     return await RagAdminService(rt.db).create_pipeline(
         ctx=await rt.build_control_plane_context(),
         params=CreatePipelineInput(
@@ -81,7 +82,19 @@ async def rag_create_pipeline_shell(rt: NativePlatformToolRuntime) -> Any:
 async def rag_create_visual_pipeline(rt: NativePlatformToolRuntime) -> Any:
     if rt.dry_run:
         return {"status": "skipped", "dry_run": True, "name": str(rt.payload.get("name") or "")}
-    nodes, edges = _normalize_graph_definition(rt.payload)
+    if "graph_definition" in rt.payload:
+        raise validation(
+            "graph_definition is not supported; send nodes and edges at top level",
+            field="graph_definition",
+            errors=[
+                {
+                    "code": "LEGACY_FIELD_NOT_ALLOWED",
+                    "path": "/graph_definition",
+                    "message": "Use top-level nodes and edges instead of graph_definition.",
+                }
+            ],
+        )
+    nodes, edges = _graph_nodes_and_edges(rt.payload)
     return await RagAdminService(rt.db).create_pipeline(
         ctx=await rt.build_control_plane_context(),
         params=CreatePipelineInput(
@@ -101,15 +114,53 @@ async def rag_update_visual_pipeline(rt: NativePlatformToolRuntime) -> Any:
         raise not_found("Pipeline not found")
     if rt.dry_run:
         return {"status": "skipped", "dry_run": True, "pipeline_id": str(pipeline_id)}
-    patch = dict(rt.payload.get("patch") or {})
-    nodes, edges = _normalize_graph_definition(patch)
+    if "patch" in rt.payload:
+        raise validation(
+            "patch is not supported; send direct top-level update fields",
+            field="patch",
+            errors=[
+                {
+                    "code": "LEGACY_FIELD_NOT_ALLOWED",
+                    "path": "/patch",
+                    "message": "Use direct top-level update fields instead of patch.",
+                }
+            ],
+        )
+    if not any(field in rt.payload for field in _RAG_UPDATE_FIELDS):
+        raise validation(
+            "At least one update field is required.",
+            errors=[
+                {
+                    "code": "MISSING_UPDATE_FIELDS",
+                    "path": "/",
+                    "message": "Provide at least one of name, description, pipeline_type, or nodes+edges.",
+                }
+            ],
+        )
+    has_nodes = "nodes" in rt.payload
+    has_edges = "edges" in rt.payload
+    if has_nodes != has_edges:
+        raise validation(
+            "nodes and edges must be provided together",
+            errors=[
+                {
+                    "code": "PARTIAL_GRAPH_UPDATE_NOT_ALLOWED",
+                    "path": "/nodes" if has_nodes else "/edges",
+                    "message": "Provide both nodes and edges together for graph updates.",
+                }
+            ],
+        )
+    nodes = None
+    edges = None
+    if has_nodes and has_edges:
+        nodes, edges = _graph_nodes_and_edges(rt.payload)
     return await RagAdminService(rt.db).update_pipeline(
         ctx=await rt.build_control_plane_context(),
         pipeline_id=pipeline_id,
         params=UpdatePipelineInput(
-            name=patch.get("name"),
-            description=patch.get("description"),
-            pipeline_type=patch.get("pipeline_type"),
+            name=rt.payload.get("name"),
+            description=rt.payload.get("description"),
+            pipeline_type=rt.payload.get("pipeline_type"),
             nodes=nodes or None,
             edges=edges or None,
         ),
