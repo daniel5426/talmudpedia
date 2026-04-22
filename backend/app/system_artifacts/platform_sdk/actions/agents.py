@@ -19,10 +19,12 @@ def _agent_shell_graph_definition() -> Dict[str, Any]:
         "spec_version": "2.0",
         "nodes": [
             {"id": "start", "type": "start", "position": {"x": 0, "y": 0}, "config": {}},
-            {"id": "end", "type": "end", "position": {"x": 240, "y": 0}, "config": {}},
+            {"id": "agent", "type": "agent", "position": {"x": 240, "y": 0}, "config": {}},
+            {"id": "end", "type": "end", "position": {"x": 480, "y": 0}, "config": {}},
         ],
         "edges": [
-            {"id": "e_start_end", "source": "start", "target": "end", "type": "control"},
+            {"id": "e_start_agent", "source": "start", "target": "agent", "type": "control"},
+            {"id": "e_agent_end", "source": "agent", "target": "end", "type": "control"},
         ],
     }
 

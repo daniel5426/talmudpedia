@@ -31,6 +31,7 @@ from app.rag.pipeline.registry import (
     ConfigFieldType,
     DataType,
 )
+from app.graph_authoring import rag_catalog_item, rag_node_spec
 from app.rag.pipeline.custom_operator_sync import sync_custom_operators as sync_organization_custom_operators
 from app.db.postgres.models.rbac import Action, ResourceType, ActorType
 from app.api.routers.auth import get_current_user
@@ -428,27 +429,28 @@ async def get_operator_catalog(
     _: Dict[str, Any] = Depends(require_scopes("pipelines.catalog.read")),
     db: AsyncSession = Depends(get_db),
 ):
-    """Get operator catalog."""
-    registry = OperatorRegistry.get_instance()
-    
-    if organization_id:
-        result = await db.execute(select(Organization).where(Organization.id == UUID(str(organization_id))))
-        organization = result.scalar_one_or_none()
-        if organization:
-             await sync_custom_operators(db, organization.id)
-             return registry.get_catalog(str(organization.id))
-    if context.get("type") == "workload" and context.get("organization_id"):
-        organization_id= context.get("organization_id")
-        try:
-            organization_uuid = UUID(str(organization_id))
-        except Exception:
-            organization_uuid = None
-        if organization_uuid:
-            await sync_custom_operators(db, organization_uuid)
-            return registry.get_catalog(str(organization_uuid))
-        return registry.get_catalog(str(organization_id))
-
-    return registry.get_catalog()
+    organization, _user, _db = await get_pipeline_context(
+        organization_id,
+        current_user=context.get("user"),
+        db=db,
+        context=context,
+    )
+    resolved_org_id = organization.id if organization is not None else context.get("organization_id")
+    if resolved_org_id is None:
+        items = [rag_catalog_item(spec).model_dump(mode="json") for spec in OperatorRegistry.get_instance().list_all()]
+        return {"operators": items}
+    control_ctx = ControlPlaneContext(
+        organization_id=UUID(str(resolved_org_id)),
+        user=context.get("user"),
+        user_id=getattr(context.get("user"), "id", None),
+        auth_token=context.get("auth_token"),
+        scopes=tuple(context.get("scopes") or ()),
+        is_service=bool(context.get("type") == "workload"),
+    )
+    try:
+        return await RagAdminService(db).operators_catalog(ctx=control_ctx)
+    except ControlPlaneError as exc:
+        raise exc.to_http_exception() from exc
 
 
 
@@ -459,21 +461,19 @@ async def get_operator_spec(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Get operator specification."""
+    del current_user
     registry = OperatorRegistry.get_instance()
-    organization_id= None
-    
+    resolved_organization_id: str | None = None
     if organization_id:
         result = await db.execute(select(Organization).where(Organization.id == UUID(str(organization_id))))
         organization = result.scalar_one_or_none()
         if organization:
-             await sync_custom_operators(db, organization.id)
-             organization_id= str(organization.id)
-    
-    spec = registry.get(operator_id, organization_id)
+            await sync_custom_operators(db, organization.id)
+            resolved_organization_id = str(organization.id)
+    spec = registry.get(operator_id, resolved_organization_id)
     if not spec:
         raise HTTPException(status_code=404, detail="Operator not found")
-    return spec.model_dump()
+    return rag_node_spec(spec).model_dump(mode="json", exclude_none=True)
 
 
 @router.get("/operators")
@@ -482,19 +482,20 @@ async def list_operator_specs(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Get all operator specifications."""
+    del current_user
     registry = OperatorRegistry.get_instance()
-    organization_id= None
-    
+    resolved_organization_id: str | None = None
     if organization_id:
         result = await db.execute(select(Organization).where(Organization.id == UUID(str(organization_id))))
         organization = result.scalar_one_or_none()
         if organization:
-             await sync_custom_operators(db, organization.id)
-             organization_id= str(organization.id)
-    
-    specs = registry.list_all(organization_id)
-    return {spec.operator_id: spec.model_dump() for spec in specs}
+            await sync_custom_operators(db, organization.id)
+            resolved_organization_id = str(organization.id)
+    specs = registry.list_all(resolved_organization_id)
+    return {
+        spec.operator_id: rag_node_spec(spec).model_dump(mode="json", exclude_none=True)
+        for spec in specs
+    }
 
 
 @router.get("/visual-pipelines", response_model=Dict[str, Any])
@@ -503,11 +504,16 @@ async def list_visual_pipelines(
     skip: int = 0,
     limit: int = 20,
     view: str = "summary",
-    current_user: User = Depends(get_current_user),
+    context: Dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ):
     """List all visual pipelines."""
-    organization, user, db = await get_pipeline_context(organization_id, current_user, db)
+    organization, user, db = await get_pipeline_context(
+        organization_id,
+        current_user=context.get("user"),
+        db=db,
+        context=context,
+    )
     list_query = ListQuery.from_payload({"skip": skip, "limit": limit, "view": view})
 
     if not await require_pipeline_permission(organization, user, Action.READ, db=db):
@@ -527,7 +533,7 @@ async def list_visual_pipelines(
         }
     try:
         page = await RagAdminService(db).list_visual_pipelines(
-            ctx=_pipeline_control_plane_ctx(organization=organization, user=user),
+            ctx=_pipeline_control_plane_ctx(organization=organization, user=user, context=context),
             query=list_query,
         )
         return page.to_payload()
@@ -584,11 +590,16 @@ async def create_visual_pipeline(
 async def get_visual_pipeline(
     pipeline_id: UUID,
     organization_id: Optional[str] = None,
-    current_user: User = Depends(get_current_user),
+    context: Dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ):
     """Get a visual pipeline by ID."""
-    organization, user, db = await get_pipeline_context(organization_id, current_user, db)
+    organization, user, db = await get_pipeline_context(
+        organization_id,
+        current_user=context.get("user"),
+        db=db,
+        context=context,
+    )
 
     if not await require_pipeline_permission(organization, user, Action.READ, pipeline_id=pipeline_id, db=db):
         raise HTTPException(status_code=403, detail="Permission denied")
@@ -596,6 +607,8 @@ async def get_visual_pipeline(
     query = select(VisualPipeline).where(VisualPipeline.id == pipeline_id)
     if organization:
         query = query.where(VisualPipeline.organization_id == organization.id)
+    if context.get("project_id"):
+        query = query.where(VisualPipeline.project_id == UUID(str(context["project_id"])))
 
     result = await db.execute(query)
     pipeline = result.scalar_one_or_none()
@@ -610,10 +623,15 @@ async def get_visual_pipeline(
 async def get_visual_pipeline_tool_binding(
     pipeline_id: UUID,
     organization_id: Optional[str] = None,
-    current_user: User = Depends(get_current_user),
+    context: Dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ):
-    organization, user, db = await get_pipeline_context(organization_id, current_user, db)
+    organization, user, db = await get_pipeline_context(
+        organization_id,
+        current_user=context.get("user"),
+        db=db,
+        context=context,
+    )
 
     if not await require_pipeline_permission(organization, user, Action.READ, pipeline_id=pipeline_id, db=db):
         raise HTTPException(status_code=403, detail="Permission denied")
@@ -621,6 +639,8 @@ async def get_visual_pipeline_tool_binding(
     query = select(VisualPipeline).where(VisualPipeline.id == pipeline_id)
     if organization:
         query = query.where(VisualPipeline.organization_id == organization.id)
+    if context.get("project_id"):
+        query = query.where(VisualPipeline.project_id == UUID(str(context["project_id"])))
     pipeline = (await db.execute(query)).scalar_one_or_none()
     if not pipeline:
         raise HTTPException(status_code=404, detail="Pipeline not found")
@@ -800,11 +820,16 @@ async def compile_pipeline(
 async def list_pipeline_versions(
     pipeline_id: UUID,
     organization_id: Optional[str] = None,
-    current_user: User = Depends(get_current_user),
+    context: Dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ):
     """List all compiled versions of a visual pipeline."""
-    organization, user, db = await get_pipeline_context(organization_id, current_user, db)
+    organization, user, db = await get_pipeline_context(
+        organization_id,
+        current_user=context.get("user"),
+        db=db,
+        context=context,
+    )
 
     if not await require_pipeline_permission(organization, user, Action.READ, pipeline_id=pipeline_id, db=db):
         raise HTTPException(status_code=403, detail="Permission denied")
@@ -812,6 +837,8 @@ async def list_pipeline_versions(
     query = select(ExecutablePipeline).where(ExecutablePipeline.visual_pipeline_id == pipeline_id)
     if organization:
         query = query.where(ExecutablePipeline.organization_id == organization.id)
+    if context.get("project_id"):
+        query = query.where(ExecutablePipeline.project_id == UUID(str(context["project_id"])))
     query = query.order_by(ExecutablePipeline.version.desc())
 
     result = await db.execute(query)
@@ -835,11 +862,16 @@ async def list_pipeline_versions(
 async def get_executable_pipeline(
     exec_id: UUID,
     organization_id: Optional[str] = None,
-    current_user: User = Depends(get_current_user),
+    context: Dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ):
     """Get an executable pipeline by ID."""
-    organization, user, db = await get_pipeline_context(organization_id, current_user, db)
+    organization, user, db = await get_pipeline_context(
+        organization_id,
+        current_user=context.get("user"),
+        db=db,
+        context=context,
+    )
     if organization is None:
         query = select(ExecutablePipeline).where(ExecutablePipeline.id == exec_id)
         result = await db.execute(query)
@@ -849,7 +881,7 @@ async def get_executable_pipeline(
         return exec_pipeline_to_dict(exec_pipeline)
     try:
         return await RagAdminService(db).get_executable_pipeline(
-            ctx=_pipeline_control_plane_ctx(organization=organization, user=user),
+            ctx=_pipeline_control_plane_ctx(organization=organization, user=user, context=context),
             executable_pipeline_id=exec_id,
         )
     except ControlPlaneError as exc:
@@ -1108,17 +1140,22 @@ class PipelineInputValidator:
 async def get_executable_pipeline_input_schema(
     exec_id: UUID,
     organization_id: Optional[str] = None,
-    current_user: User = Depends(get_current_user),
+    context: Dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ):
-    organization, user, db = await get_pipeline_context(organization_id, current_user, db)
+    organization, user, db = await get_pipeline_context(
+        organization_id,
+        current_user=context.get("user"),
+        db=db,
+        context=context,
+    )
     if not await require_pipeline_permission(organization, user, Action.READ, db=db):
         raise HTTPException(status_code=403, detail="Permission denied")
     if organization is None:
         raise HTTPException(status_code=400, detail="Organization context required")
     try:
         return await RagAdminService(db).get_executable_input_schema(
-            ctx=_pipeline_control_plane_ctx(organization=organization, user=user),
+            ctx=_pipeline_control_plane_ctx(organization=organization, user=user, context=context),
             executable_pipeline_id=exec_id,
         )
     except ControlPlaneError as exc:

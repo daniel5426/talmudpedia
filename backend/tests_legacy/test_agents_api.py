@@ -43,27 +43,23 @@ def mock_registry():
 
 
 @pytest.mark.asyncio
-async def test_list_operators(authorized_client):
-    """Test the /agents/operators endpoint returns properly serialized operators."""
-    response = await authorized_client.get("/agents/operators")
+async def test_list_node_catalog(authorized_client):
+    """Test the /agents/nodes/catalog endpoint returns canonical catalog items."""
+    response = await authorized_client.get("/agents/nodes/catalog")
     assert response.status_code == 200
     
-    data = response.json()
+    data = response.json()["nodes"]
     assert isinstance(data, list)
     assert len(data) > 0
     
-    # Verify structure of first operator
+    # Verify structure of first catalog item
     op = data[0]
     assert "type" in op
     assert "category" in op
-    assert "display_name" in op
-    assert "reads" in op
-    assert "writes" in op
-    assert "ui" in op
-    
-    # Verify enum values are serialized as strings (not objects)
-    for write in op.get("writes", []):
-        assert isinstance(write, str), f"Expected string, got {type(write)}"
+    assert "title" in op
+    assert "input_type" in op
+    assert "output_type" in op
+    assert "required_config_fields" in op
 
 @pytest_asyncio.fixture
 async def setup_api_env(db_session):

@@ -11,13 +11,11 @@ import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import {
     AgentNodeCategory,
-    AgentNodeType,
     CATEGORY_COLORS,
     CATEGORY_LABELS,
-    AgentNodeSpec,
-    AGENT_NODE_SPECS,
 } from "./types"
-import { agentService, AgentOperatorSpec } from "@/services/agent"
+import type { NodeCatalogItem } from "@/services/graph-authoring"
+import { agentService } from "@/services/agent"
 
 const ICON_MAP: Record<string, React.ElementType> = {
     Play, Square, Brain, Wrench, Search, GitBranch, GitFork, UserCheck, Circle,
@@ -63,7 +61,7 @@ const renderCatalogIcon = (iconName: string) => {
 }
 
 interface NodeCatalogProps {
-    onDragStart: (event: React.DragEvent, spec: AgentNodeSpec) => void
+    onDragStart: (event: React.DragEvent, item: NodeCatalogItem) => void
     onClose?: () => void
 }
 
@@ -71,10 +69,10 @@ function CatalogItem({
     spec,
     onDragStart
 }: {
-    spec: AgentNodeSpec
+    spec: NodeCatalogItem
     onDragStart: (event: React.DragEvent) => void
 }) {
-    const color = CATEGORY_COLORS[spec.category]
+    const color = CATEGORY_COLORS[spec.category as AgentNodeCategory] || spec.color || CATEGORY_COLORS.data
 
     return (
         <div
@@ -88,14 +86,14 @@ function CatalogItem({
             title={spec.description}
         >
             <div
-                className="shrink-0 p-1.5 rounded-md transition-transform group-hover:scale-105"
+                className="shrink-0 h-7 w-7 rounded-lg flex items-center justify-center shadow-sm transition-transform group-hover:scale-105"
                 style={{ backgroundColor: color }}
             >
-                {renderCatalogIcon(spec.icon)}
+                {renderCatalogIcon(spec.icon || "Circle")}
             </div>
             <div className="flex-1 min-w-0">
                 <span className="text-[13px] font-medium text-foreground/80 truncate block">
-                    {spec.displayName}
+                    {spec.title}
                 </span>
             </div>
             <GripVertical className="h-3.5 w-3.5 text-muted-foreground/10 group-hover:text-muted-foreground/30 transition-colors" />
@@ -109,8 +107,8 @@ function CategorySection({
     onDragStart
 }: {
     category: AgentNodeCategory
-    specs: AgentNodeSpec[]
-    onDragStart: (event: React.DragEvent, spec: AgentNodeSpec) => void
+    specs: NodeCatalogItem[]
+    onDragStart: (event: React.DragEvent, spec: NodeCatalogItem) => void
 }) {
     const label = CATEGORY_LABELS[category]
 
@@ -126,7 +124,7 @@ function CategorySection({
             <div className="space-y-1">
                 {specs.map((spec) => (
                     <CatalogItem
-                        key={spec.nodeType}
+                        key={spec.type}
                         spec={spec}
                         onDragStart={(e) => onDragStart(e, spec)}
                     />
@@ -137,90 +135,52 @@ function CategorySection({
 }
 
 export function NodeCatalog({ onDragStart, onClose }: NodeCatalogProps) {
-    const [operators, setOperators] = useState<AgentOperatorSpec[]>([])
+    const [operators, setOperators] = useState<NodeCatalogItem[]>([])
     const [isLoading, setIsLoading] = useState(true)
     const [search, setSearch] = useState("")
 
     useEffect(() => {
-        agentService.listOperators()
-            .then(setOperators)
+        agentService.listNodeCatalog()
+            .then((response) => setOperators(response.nodes || []))
             .catch(err => {
-                console.error("Failed to fetch operators:", err)
-                // Fallback to static specs if API fails
+                console.error("Failed to fetch node catalog:", err)
                 setOperators([])
             })
             .finally(() => setIsLoading(false))
     }, [])
 
-    // Convert API operators to specs, falling back to static specs if API fails
-    const nodeSpecs: AgentNodeSpec[] = useMemo(() => {
-        if (operators.length === 0) {
-            // Fallback to static specs
-            return AGENT_NODE_SPECS
-        }
-        return operators
-            .filter(op => op.type !== "conditional") // Remove legacy node
-            .map(op => {
-                // Clean up legacy display names if any
-                let displayName = op.display_name
-                let description = op.description
-                if (op.type === "human_input") {
-                    displayName = "Human Input"
-                    if (description.toLowerCase().includes("legacy")) {
-                        description = "Wait for human text input."
-                    }
-                }
-                return {
-                    nodeType: op.type as AgentNodeType,
-                    displayName,
-                    description,
-                    category: op.category as AgentNodeCategory,
-                    inputType: op.ui.inputType || "any",
-                    outputType: op.ui.outputType || "any",
-                    icon: op.ui.icon || "Circle",
-                    configFields: (op.ui.configFields && op.ui.configFields.length > 0)
-                        ? op.ui.configFields
-                        : (AGENT_NODE_SPECS.find((spec) => spec.nodeType === (op.type as AgentNodeType))?.configFields || []),
-                    inputs: op.ui.inputs || [],
-                    outputs: op.ui.outputs || [],
-                    isArtifact: op.ui.isArtifact || false,
-                    artifactId: op.ui.artifactId,
-                    artifactVersion: op.ui.artifactVersion,
-                }
-            })
-    }, [operators])
-
     // Filter specs by search
     const filteredSpecs = useMemo(() => {
-        if (!search) return nodeSpecs
+        if (!search) return operators
         const lowerSearch = search.toLowerCase()
-        return nodeSpecs.filter(spec =>
-            spec.displayName.toLowerCase().includes(lowerSearch) ||
-            spec.description.toLowerCase().includes(lowerSearch)
+        return operators.filter(spec =>
+            spec.title.toLowerCase().includes(lowerSearch) ||
+            (spec.description || "").toLowerCase().includes(lowerSearch)
         )
-    }, [nodeSpecs, search])
+    }, [operators, search])
 
     const groupedSpecs = useMemo(() => {
-        const groups: Record<AgentNodeCategory, AgentNodeSpec[]> = {
+        const groups: Record<AgentNodeCategory, NodeCatalogItem[]> = {
             control: [],
             reasoning: [],
             action: [],
             logic: [],
-            orchestration: [],
             interaction: [],
             data: [],
+            orchestration: [],
         }
 
         filteredSpecs.forEach(spec => {
-            if (groups[spec.category]) {
-                groups[spec.category].push(spec)
+            const category = spec.category as AgentNodeCategory
+            if (groups[category]) {
+                groups[category].push(spec)
             }
         })
 
         return groups
     }, [filteredSpecs])
 
-    const categories: AgentNodeCategory[] = ["control", "reasoning", "action", "logic", "orchestration", "interaction", "data"]
+    const categories: AgentNodeCategory[] = ["control", "reasoning", "action", "logic", "interaction", "data"]
 
     return (
         <div className="flex flex-col h-full">

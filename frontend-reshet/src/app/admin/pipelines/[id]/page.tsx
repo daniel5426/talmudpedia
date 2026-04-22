@@ -3,7 +3,8 @@
 import { useEffect, useState, useCallback } from "react"
 import { useRouter, useParams, useSearchParams } from "next/navigation"
 import { useOrganization } from "@/contexts/OrganizationContext"
-import { ragAdminService, VisualPipeline, OperatorCatalog, OperatorSpec, CompileResult, PipelineStepExecution, PipelineToolBinding } from "@/services"
+import { ragAdminService, VisualPipeline, CompileResult, PipelineStepExecution, PipelineToolBinding } from "@/services"
+import type { NodeCatalogItem, NodeAuthoringSpec } from "@/services/graph-authoring"
 import { CustomBreadcrumb } from "@/components/ui/custom-breadcrumb"
 import { AdminPageHeader } from "@/components/admin/AdminPageHeader"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -63,8 +64,8 @@ export default function PipelineEditorPage() {
 
     const [loading, setLoading] = useState(true)
     const [pipeline, setPipeline] = useState<VisualPipeline | null>(null)
-    const [catalog, setCatalog] = useState<OperatorCatalog | null>(null)
-    const [operatorSpecs, setOperatorSpecs] = useState<Record<string, OperatorSpec>>({})
+    const [catalog, setCatalog] = useState<NodeCatalogItem[] | null>(null)
+    const [operatorSpecs, setOperatorSpecs] = useState<Record<string, NodeAuthoringSpec>>({})
 
     const [pipelineName, setPipelineName] = useState("")
     const [pipelineDescription, setPipelineDescription] = useState("")
@@ -125,12 +126,11 @@ export default function PipelineEditorPage() {
             setLoading(true)
             try {
                 // Always fetch catalog and specs
-                const [catalogRes, specsRes] = await Promise.all([
-                    ragAdminService.getOperatorCatalog(currentOrganization.id),
-                    ragAdminService.listOperatorSpecs(currentOrganization.id),
-                ])
-                setCatalog(catalogRes)
-                setOperatorSpecs(specsRes)
+                const catalogRes = await ragAdminService.getOperatorCatalog(currentOrganization.id)
+                setCatalog(catalogRes.operators || [])
+                const operatorIds = (catalogRes.operators || []).map((item) => item.type)
+                const specsRes = await ragAdminService.listOperatorSpecs(operatorIds, currentOrganization.id)
+                setOperatorSpecs(specsRes.specs || {})
 
                 // If editing existing pipeline, fetch it
                 if (!isNew) {
@@ -158,7 +158,7 @@ export default function PipelineEditorPage() {
                         // Convert pipeline data to editor format
                         const nodes: Node<PipelineNodeData>[] = foundPipeline.nodes.map((n: any) => {
                             // Use specsRes for reliable input/output type resolution (handles custom operators)
-                            const spec = specsRes[n.operator]
+                            const spec = specsRes.specs?.[n.operator]
                             return {
                                 id: n.id,
                                 type: n.category,
@@ -166,7 +166,7 @@ export default function PipelineEditorPage() {
                                 data: {
                                     operator: n.operator,
                                     category: n.category,
-                                    displayName: spec?.display_name || n.operator,
+                                    displayName: spec?.title || n.operator,
                                     config: n.config,
                                     inputType: spec?.input_type || "none",
                                     outputType: spec?.output_type || "none",

@@ -120,10 +120,10 @@ def list_agent_operators(
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     try:
         sdk_client = control_client_factory(client)
-        response = sdk_client.catalog.list_agent_operators()
+        response = sdk_client.catalog.list_agent_nodes()
         data = response.get("data")
-        if isinstance(data, list):
-            return data, []
+        if isinstance(data, dict) and isinstance(data.get("nodes"), list):
+            return data["nodes"], []
         return [], []
     except ControlPlaneSDKError as exc:
         return [], [{
@@ -143,19 +143,21 @@ def _summarize_rag_catalog(rag_catalog: Any) -> Dict[str, Any]:
     categories: Dict[str, int] = {}
     total = 0
     examples: Dict[str, List[str]] = {}
-    for category, specs in rag_catalog.items():
-        if not isinstance(specs, list):
+    for spec in list(rag_catalog.get("operators") or []):
+        if not isinstance(spec, dict):
             continue
-        count = len(specs)
-        total += count
-        categories[category] = count
-        examples[category] = [item.get("operator_id") for item in specs[:3] if isinstance(item, dict)]
+        category = str(spec.get("category") or "custom")
+        total += 1
+        categories[category] = categories.get(category, 0) + 1
+        examples.setdefault(category, [])
+        if len(examples[category]) < 3:
+            examples[category].append(str(spec.get("type") or ""))
 
     return {
         "total": total,
         "categories": categories,
         "examples": examples,
-        "fields": ["operator_id", "display_name", "category", "input_type", "output_type", "version", "scope"],
+        "fields": ["type", "title", "category", "input_type", "output_type"],
     }
 
 

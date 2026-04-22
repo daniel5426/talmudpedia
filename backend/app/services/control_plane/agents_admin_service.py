@@ -11,7 +11,9 @@ from app.agent.execution.service import AgentExecutorService
 from app.agent.registry import AgentOperatorRegistry
 from app.agent.executors.standard import register_standard_operators
 from app.db.postgres.models.agents import AgentRun
+from app.db.postgres.models.artifact_runtime import ArtifactKind
 from app.db.postgres.models.registry import ToolRegistry
+from app.graph_authoring import agent_catalog_item, agent_instance_contract, agent_node_spec, artifact_node_spec
 from app.services.context_window_service import ContextWindowService
 from app.services.file_spaces.service import FileSpaceService
 from app.services.agent_service import (
@@ -29,6 +31,7 @@ from app.services.control_plane.contracts import ListPage, ListQuery, OperationR
 from app.services.control_plane.errors import conflict, not_found, validation
 from app.services.tool_binding_service import ToolBindingService
 from app.services.model_accounting import usage_payload_from_run
+from app.services.artifact_runtime.registry_service import ArtifactRegistryService
 
 
 @dataclass(frozen=True)
@@ -239,63 +242,73 @@ class AgentAdminService:
             },
         ).to_dict()
 
-    async def list_node_catalog(self) -> dict[str, Any]:
+    async def list_node_catalog(self, *, ctx: ControlPlaneContext) -> dict[str, Any]:
         register_standard_operators()
-        catalog = []
-        for spec in AgentOperatorRegistry.list_operators():
-            config_schema = spec.config_schema if isinstance(spec.config_schema, dict) else {}
-            required_fields = config_schema.get("required") if isinstance(config_schema.get("required"), list) else []
-            catalog.append(
-                {
-                    "type": spec.type,
-                    "name": spec.display_name,
-                    "description": spec.description,
-                    "reads": list(spec.reads or []),
-                    "writes": list(spec.writes or []),
-                    "config_schema": config_schema,
-                    "ui_schema": spec.ui if isinstance(spec.ui, dict) else {},
-                    "required_fields": [str(item) for item in required_fields],
-                }
-            )
+        catalog = [
+            agent_catalog_item(spec).model_dump(mode="json")
+            for spec in AgentOperatorRegistry.list_operators()
+            if str(getattr(spec, "category", "")) != "orchestration"
+        ]
+        catalog.extend(await self._artifact_catalog_items(ctx))
         return {"nodes": catalog}
 
-    async def get_node_schemas(self, *, node_types: list[str]) -> dict[str, Any]:
+    async def get_node_schemas(self, *, ctx: ControlPlaneContext, node_types: list[str]) -> dict[str, Any]:
         normalized = [str(item).strip() for item in node_types if str(item).strip()]
         if not normalized:
             raise validation("node_types must be a non-empty array", field="node_types")
         register_standard_operators()
         schemas: dict[str, Any] = {}
         unknown: list[str] = []
+        artifact_specs = await self._artifact_node_specs(ctx)
         for node_type in normalized:
             spec = AgentOperatorRegistry.get(node_type)
-            if spec is None:
-                unknown.append(node_type)
+            if spec is not None:
+                schemas[node_type] = agent_node_spec(spec).model_dump(mode="json", exclude_none=True)
                 continue
-            config_schema = spec.config_schema if isinstance(spec.config_schema, dict) else {}
-            required_fields = config_schema.get("required") if isinstance(config_schema.get("required"), list) else []
-            schemas[node_type] = {
-                "config_schema": config_schema,
-                "ui_schema": spec.ui if isinstance(spec.ui, dict) else {},
-                "required_fields": [str(item) for item in required_fields],
-                "reads": list(spec.reads or []),
-                "writes": list(spec.writes or []),
-                "graph_node_contract": {
-                    "required_fields": ["id", "type", "position"],
-                    "field_shapes": {
-                        "id": {"type": "string"},
-                        "type": {"type": "string", "const": spec.type},
-                        "position": {
-                            "type": "object",
-                            "properties": {"x": {"type": "number"}, "y": {"type": "number"}},
-                            "required": ["x", "y"],
-                        },
-                        "config": config_schema,
-                    },
-                },
-            }
+            artifact_spec = artifact_specs.get(node_type)
+            if artifact_spec is not None:
+                schemas[node_type] = artifact_spec.model_dump(mode="json", exclude_none=True)
+                continue
+            unknown.append(node_type)
         if unknown:
             raise validation("Unknown node types", field="node_types", unknown=unknown)
-        return {"schemas": schemas}
+        return {"specs": schemas, "instance_contract": agent_instance_contract()}
+
+    async def _artifact_catalog_items(self, ctx: ControlPlaneContext) -> list[dict[str, Any]]:
+        return [entry["item"].model_dump(mode="json") for entry in (await self._artifact_specs_with_catalog(ctx)).values()]
+
+    async def _artifact_node_specs(self, ctx: ControlPlaneContext) -> dict[str, Any]:
+        return {node_type: pair["spec"] for node_type, pair in (await self._artifact_specs_with_catalog(ctx)).items()}
+
+    async def _artifact_specs_with_catalog(self, ctx: ControlPlaneContext) -> dict[str, dict[str, Any]]:
+        artifacts = await ArtifactRegistryService(self.db).list_accessible_artifacts(
+            organization_id=ctx.organization_id,
+            kind=ArtifactKind.AGENT_NODE,
+        )
+        result: dict[str, dict[str, Any]] = {}
+        for artifact in artifacts:
+            revision = artifact.latest_draft_revision or artifact.latest_published_revision
+            if revision is None:
+                continue
+            agent_contract = dict(revision.agent_contract or {}) if revision.agent_contract is not None else {}
+            node_ui = dict(agent_contract.get("node_ui") or {}) if isinstance(agent_contract.get("node_ui"), dict) else {}
+            input_schema = dict(agent_contract.get("input_schema") or {}) if isinstance(agent_contract.get("input_schema"), dict) else {}
+            output_schema = dict(agent_contract.get("output_schema") or {}) if isinstance(agent_contract.get("output_schema"), dict) else {}
+            config_schema = dict(revision.config_schema or {}) if revision.config_schema is not None else {}
+            spec, item = artifact_node_spec(
+                artifact_id=str(artifact.id),
+                artifact_revision_id=str(revision.id),
+                display_name=str(revision.display_name or artifact.display_name),
+                description=str(revision.description or artifact.description or "Artifact-backed node"),
+                config_schema=config_schema,
+                input_schema=input_schema,
+                output_schema=output_schema,
+                node_ui=node_ui,
+                reads=list(agent_contract.get("state_reads") or []),
+                writes=list(agent_contract.get("state_writes") or []),
+            )
+            result[spec.type] = {"spec": spec, "item": item}
+        return result
 
     @staticmethod
     def serialize_agent(agent: Any, *, view: str = "full", tool_binding: ToolRegistry | None = None) -> dict[str, Any]:

@@ -13,7 +13,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { modelsService, LogicalModel } from "@/services"
-import { ConfigFieldSpec } from "./types"
+import type { AuthoringFieldSpec } from "@/services/graph-authoring"
 import { KnowledgeStoreSelect } from "../shared/KnowledgeStoreSelect"
 import { RetrievalPipelineSelect } from "../shared/RetrievalPipelineSelect"
 
@@ -88,19 +88,20 @@ export function ConfigFieldInput({
   onChange,
   renderFileInput,
 }: {
-  field: ConfigFieldSpec
+  field: AuthoringFieldSpec
   value: unknown
   onChange: (value: unknown) => void
   renderFileInput?: FileInputRenderer
 }) {
-  const isSecret = field.field_type === "secret"
-  const isSelect = field.field_type === "select"
-  const isNumber = field.field_type === "integer" || field.field_type === "float"
-  const isBoolean = field.field_type === "boolean"
-  const isFilePath = field.field_type === "file_path"
-  const isTextarea = field.field_type === "json" || field.field_type === "code"
-  const isKnowledgeStoreSelect = field.field_type === "knowledge_store_select"
-  const isRetrievalPipelineSelect = field.field_type === "retrieval_pipeline_select"
+  const fieldType = field.fieldType
+  const isSecret = fieldType === "secret"
+  const isSelect = fieldType === "select"
+  const isNumber = fieldType === "number"
+  const isBoolean = fieldType === "boolean"
+  const isFilePath = fieldType === "file_path"
+  const isTextarea = fieldType === "json" || fieldType === "text" || fieldType === "code"
+  const isKnowledgeStoreSelect = fieldType === "knowledge_store_select"
+  const isRetrievalPipelineSelect = fieldType === "retrieval_pipeline_select"
 
   if (isFilePath && renderFileInput) {
     return renderFileInput({
@@ -129,10 +130,10 @@ export function ConfigFieldInput({
     )
   }
 
-  if (field.field_type === "model_select") {
+  if (fieldType === "model") {
     return (
       <ModelSelectField
-        capability={field.required_capability}
+        capability={undefined}
         value={value as string}
         onChange={onChange}
       />
@@ -150,9 +151,9 @@ export function ConfigFieldInput({
         onChange={(e) => onChange(e.target.value)}
       >
         <option value="">Select...</option>
-        {field.options.map((opt) => (
-          <option key={opt} value={opt}>
-            {opt}
+        {(field.options || []).map((opt) => (
+          <option key={opt.value} value={opt.value}>
+            {opt.label}
           </option>
         ))}
       </select>

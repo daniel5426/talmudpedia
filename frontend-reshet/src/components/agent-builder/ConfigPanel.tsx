@@ -41,10 +41,8 @@ import { Textarea } from "@/components/ui/textarea"
 import { cn } from "@/lib/utils"
 import {
     AgentNodeData,
-    AgentNodeSpec,
     ConfigFieldSpec,
     CATEGORY_COLORS,
-    getNodeSpec,
     normalizeRouteTableRows,
     routeTableRowsToOutcomes,
     routeTableRowsToRouterRoutes,
@@ -56,8 +54,10 @@ import {
     SelectTrigger,
     SelectValue,
 } from "@/components/ui/select"
-import { modelsService, toolsService, ragAdminService, agentService, AgentOperatorSpec, LogicalModel, ToolDefinition } from "@/services"
+import { modelsService, toolsService, ragAdminService, agentService, LogicalModel, ToolDefinition } from "@/services"
 import type { AgentGraphAnalysis, AgentGraphDefinition, ModelCapabilityType } from "@/services/agent"
+import type { NodeAuthoringSpec } from "@/services/graph-authoring"
+import { applySchemaDefaults, authoringFieldsFromSchema } from "@/services/graph-authoring"
 import { ToolPicker } from "./ToolPicker"
 import { useOrganization } from "@/contexts/OrganizationContext"
 import { KnowledgeStoreSelect } from "../shared/KnowledgeStoreSelect"
@@ -106,6 +106,8 @@ const CATEGORY_ICONS: Record<string, React.ElementType> = {
     set_state: Database,
     classify: ListFilter,
 }
+
+const nodeSchemaCache = new Map<string, NodeAuthoringSpec>()
 
 interface ConfigPanelProps {
     nodeId: string
@@ -1425,7 +1427,7 @@ function ConfigField({
             if (field.prompt_capable && field.fieldType !== "expression") {
                 return (
                     <PromptMentionInput
-                        value={(value as string) ?? field.default ?? ""}
+                        value={typeof value === "string" ? value : typeof field.default === "string" ? field.default : ""}
                         onChange={(val) => onChange(val)}
                         surface={field.prompt_surface}
                         availableVariables={availableVariables}
@@ -1440,7 +1442,7 @@ function ConfigField({
             }
             return (
                 <SmartInput
-                    value={(value as string) ?? field.default ?? ""}
+                    value={typeof value === "string" ? value : typeof field.default === "string" ? field.default : ""}
                     onChange={(val) => onChange(val)}
                     placeholder={field.description}
                     multiline={true} // SmartInput fields (text, expression, template) should usually be multiline
@@ -1776,7 +1778,7 @@ export function ConfigPanel({
     const [toolCatalog, setToolCatalog] = useState<ToolDefinition[]>([])
     const [agentOptions, setAgentOptions] = useState<ResourceOption[]>([])
     const [namespaces, setNamespaces] = useState<ResourceOption[]>([])
-    const [operatorSpecs, setOperatorSpecs] = useState<AgentOperatorSpec[]>([])
+    const [nodeAuthoringSpec, setNodeAuthoringSpec] = useState<NodeAuthoringSpec | null>(null)
     const [loading, setLoading] = useState(true)
     const [advancedMode, setAdvancedMode] = useState(false)
     const [endSchemaConfigured, setEndSchemaConfigured] = useState(
@@ -1850,13 +1852,43 @@ export function ConfigPanel({
     }, [currentOrganization?.id, currentProject?.id, data.nodeType])
 
     useEffect(() => {
-        agentService.listOperators()
-            .then(setOperatorSpecs)
-            .catch((error) => {
-                console.error("Failed to load agent operators:", error)
-                setOperatorSpecs([])
+        let cancelled = false
+        const cached = nodeSchemaCache.get(data.nodeType)
+        if (cached) {
+            setNodeAuthoringSpec(cached)
+            return
+        }
+        agentService.getNodeSchemas([data.nodeType])
+            .then((response) => {
+                const nextSpec = response.specs?.[data.nodeType] || null
+                if (!cancelled && nextSpec) {
+                    nodeSchemaCache.set(data.nodeType, nextSpec)
+                    setNodeAuthoringSpec(nextSpec)
+                }
             })
-    }, [])
+            .catch((error) => {
+                console.error("Failed to load node schema:", error)
+                if (!cancelled) {
+                    setNodeAuthoringSpec(null)
+                }
+            })
+        return () => {
+            cancelled = true
+        }
+    }, [data.nodeType])
+
+    useEffect(() => {
+        if (!nodeAuthoringSpec?.config_schema) return
+        const withDefaults = normalizeNodeContractConfig(
+            data.nodeType,
+            applySchemaDefaults(nodeAuthoringSpec.config_schema, localConfig)
+        )
+        if (JSON.stringify(withDefaults) === JSON.stringify(localConfig)) {
+            return
+        }
+        setLocalConfig(withDefaults)
+        onConfigChange(nodeId, withDefaults)
+    }, [data.nodeType, localConfig, nodeAuthoringSpec, nodeId, onConfigChange])
 
     useEffect(() => {
         const currentModelId = localConfig["model_id"]
@@ -1925,35 +1957,10 @@ export function ConfigPanel({
         [handleFieldChange, localConfig, promptMentionModal.context]
     )
 
-    const dynamicSpec = operatorSpecs.length
-        ? operatorSpecs.find((op) => op.type === data.nodeType)
-        : undefined
-
-    const resolvedSpec: AgentNodeSpec | undefined = dynamicSpec
-        ? {
-            nodeType: dynamicSpec.type as AgentNodeSpec["nodeType"],
-            displayName: dynamicSpec.display_name,
-            description: dynamicSpec.description,
-            category: dynamicSpec.category as AgentNodeSpec["category"],
-            inputType: (dynamicSpec.ui?.inputType as AgentNodeSpec["inputType"]) || "any",
-            outputType: (dynamicSpec.ui?.outputType as AgentNodeSpec["outputType"]) || "any",
-            icon: (dynamicSpec.ui?.icon as string) || "Circle",
-            configFields: ((dynamicSpec.ui?.configFields as ConfigFieldSpec[]) || []).length > 0
-                ? (dynamicSpec.ui?.configFields as ConfigFieldSpec[])
-                : (getNodeSpec(data.nodeType)?.configFields || []),
-            inputs: Array.isArray(dynamicSpec.ui?.inputs) ? dynamicSpec.ui.inputs as AgentNodeSpec["inputs"] : undefined,
-            outputs: Array.isArray(dynamicSpec.ui?.outputs) ? dynamicSpec.ui.outputs as AgentNodeSpec["outputs"] : undefined,
-            isArtifact: Boolean(dynamicSpec.ui?.isArtifact),
-            artifactId: dynamicSpec.ui?.artifactId as string | undefined,
-            artifactVersion: dynamicSpec.ui?.artifactVersion as string | undefined,
-        }
-        : undefined
-
-    const nodeSpec = resolvedSpec || getNodeSpec(data.nodeType)
-    const fieldContracts = dynamicSpec?.field_contracts && typeof dynamicSpec.field_contracts === "object"
-        ? dynamicSpec.field_contracts as Record<string, Record<string, unknown>>
+    const fieldContracts = nodeAuthoringSpec?.field_contracts && typeof nodeAuthoringSpec.field_contracts === "object"
+        ? nodeAuthoringSpec.field_contracts as Record<string, Record<string, unknown>>
         : {}
-    let configFields = ((data as any).configFields as ConfigFieldSpec[]) || nodeSpec?.configFields || []
+    let configFields = authoringFieldsFromSchema(nodeAuthoringSpec?.config_schema) as ConfigFieldSpec[]
     if (data.nodeType === "start" || data.nodeType === "end") {
         configFields = []
     } else if (data.nodeType === "set_state") {
@@ -1963,7 +1970,10 @@ export function ConfigPanel({
             (field) => !["name", "input_source", "categories", "model_id", "instructions"].includes(field.name)
         )
     }
-    if (nodeSpec?.inputs && nodeSpec.inputs.length > 0) {
+    const artifactInputs = Array.isArray(nodeAuthoringSpec?.config_schema?.["x-ui"]?.artifactInputs)
+        ? nodeAuthoringSpec?.config_schema?.["x-ui"]?.artifactInputs as ConfigFieldSpec["artifactInputs"]
+        : undefined
+    if (artifactInputs && artifactInputs.length > 0) {
         configFields = [
             ...configFields,
             {
@@ -1972,7 +1982,7 @@ export function ConfigPanel({
                 fieldType: "field_mapping",
                 required: false,
                 description: "Map artifact inputs to state or upstream outputs",
-                artifactInputs: nodeSpec.inputs,
+                artifactInputs,
             } as ConfigFieldSpec,
         ]
     }
@@ -2012,8 +2022,8 @@ export function ConfigPanel({
         return sections
     }, [visibleConfigFields])
 
-    const displayName = data.displayName || nodeSpec?.displayName || data.nodeType
-    const category = data.category || nodeSpec?.category || "data"
+    const displayName = data.displayName || nodeAuthoringSpec?.title || data.nodeType
+    const category = data.category || nodeAuthoringSpec?.category || "data"
     const hasSpecialEditor =
         data.nodeType === "start" ||
         data.nodeType === "end" ||

@@ -350,6 +350,11 @@ async def test_nodes_catalog_and_schema_endpoints(client, db_session):
     nodes = catalog_payload.get("nodes") or []
     assert isinstance(nodes, list)
     assert any(item.get("type") == "agent" for item in nodes)
+    assert all(item.get("category") != "orchestration" for item in nodes)
+    assert all(
+        item.get("type") not in {"spawn_run", "spawn_group", "join", "router", "judge", "replan", "cancel_subtree"}
+        for item in nodes
+    )
 
     schema_response = await client.post(
         "/agents/nodes/schema",
@@ -358,8 +363,8 @@ async def test_nodes_catalog_and_schema_endpoints(client, db_session):
     )
     assert schema_response.status_code == 200
     schema_payload = schema_response.json()
-    assert "agent" in schema_payload.get("schemas", {})
-    assert "tool" in schema_payload.get("schemas", {})
+    assert "agent" in schema_payload.get("specs", {})
+    assert "tool" in schema_payload.get("specs", {})
     assert schema_payload.get("unknown", []) == []
 
 

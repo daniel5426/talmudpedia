@@ -43,16 +43,16 @@ def _client_with_session(session: _RecordingSession) -> ControlPlaneClient:
     )
 
 
-def test_catalog_list_agent_operators_uses_agents_operators_route() -> None:
-    session = _RecordingSession(_FakeResponse(payload=[{"type": "start"}]))
+def test_catalog_list_agent_nodes_uses_nodes_catalog_route() -> None:
+    session = _RecordingSession(_FakeResponse(payload={"nodes": [{"type": "start"}]}))
     client = _client_with_session(session)
 
-    envelope = client.catalog.list_agent_operators()
+    envelope = client.catalog.list_agent_nodes()
 
-    assert envelope["data"] == [{"type": "start"}]
+    assert envelope["data"] == {"nodes": [{"type": "start"}]}
     call = session.calls[0]
     assert call["method"] == "GET"
-    assert call["url"].endswith("/agents/operators")
+    assert call["url"].endswith("/agents/nodes/catalog")
 
 
 def test_agents_nodes_routes_use_expected_paths() -> None:

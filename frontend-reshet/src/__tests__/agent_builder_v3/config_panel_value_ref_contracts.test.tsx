@@ -17,28 +17,38 @@ jest.mock("@/services", () => ({
   },
   agentService: {
     listAgents: jest.fn(async () => ({ items: [], total: 0, has_more: false, skip: 0, limit: 100, view: "summary" })),
-    listOperators: jest.fn(async () => ([
-      {
-        type: "classify",
-        category: "reasoning",
-        display_name: "Classify",
-        description: "Classify input",
-        reads: [],
-        writes: [],
-        config_schema: {},
-        field_contracts: {
-          input_source: { type: "value_ref", allowed_types: ["string"] },
+    getNodeSchemas: jest.fn(async (nodeTypes: string[]) => ({
+      specs: Object.fromEntries(nodeTypes.map((nodeType) => [
+        nodeType,
+        {
+          type: nodeType,
+          title: nodeType === "classify" ? "Classify" : nodeType,
+          category: nodeType === "classify" ? "reasoning" : "control",
+          input_type: nodeType === "classify" ? "message" : "any",
+          output_type: nodeType === "classify" ? "decision" : "any",
+          config_schema: nodeType === "classify"
+            ? {
+                type: "object",
+                properties: {
+                  input_source: {
+                    type: "object",
+                    title: "Input Source",
+                    "x-ui": { widget: "value_ref" },
+                  },
+                },
+              }
+            : { type: "object", properties: {} },
+          field_contracts: nodeType === "classify"
+            ? {
+                input_source: { type: "value_ref", allowed_types: ["string"] },
+              }
+            : {},
+          graph_hints: { editor: nodeType === "start" || nodeType === "end" ? nodeType : "generic" },
         },
-        ui: {
-          icon: "ListFilter",
-          inputType: "message",
-          outputType: "decision",
-          configFields: [
-            { name: "input_source", label: "Input Source", fieldType: "value_ref", required: false },
-          ],
-        },
-      },
-    ])),
+      ])),
+      unknown: [],
+      instance_contract: {},
+    })),
   },
 }))
 

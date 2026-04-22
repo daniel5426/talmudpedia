@@ -1,6 +1,6 @@
 # Architecture Tree (Curated)
 
-Last Updated: 2026-04-21
+Last Updated: 2026-04-22
 
 This file is a backend-only architecture map optimized for agent context efficiency.
 
@@ -100,6 +100,12 @@ backend/app/agent/executors/speech.py
 backend/app/agent/runtime/
 backend/app/agent/components/
 backend/app/agent/workflows/
+
+backend/app/graph_authoring/
+backend/app/graph_authoring/types.py
+backend/app/graph_authoring/schema.py
+backend/app/graph_authoring/agent_specs.py
+backend/app/graph_authoring/rag_specs.py
 
 backend/app/rag/
 backend/app/rag/factory.py

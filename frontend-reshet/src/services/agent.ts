@@ -1,4 +1,5 @@
 import { httpClient } from "./http";
+import type { NodeCatalogItem, NodeSchemaResponse } from "./graph-authoring";
 import type { ControlPlaneListResponse, ControlPlaneListView } from "./types";
 import type { FileUIPart } from "ai";
 
@@ -396,19 +397,6 @@ export interface AgentRunEventsResponse {
   events: Record<string, unknown>[]
 }
 
-export interface AgentOperatorSpec {
-  type: string;
-  category: string;
-  display_name: string;
-  description: string;
-  reads: string[];
-  writes: string[];
-  config_schema: Record<string, any>;
-  field_contracts?: Record<string, any>;
-  output_contract?: Record<string, any>;
-  ui: Record<string, any>;
-}
-
 async function filePartToFile(file: FileUIPart): Promise<File> {
   const response = await fetch(file.url);
   const blob = await response.blob();
@@ -423,8 +411,12 @@ async function filePartToFile(file: FileUIPart): Promise<File> {
 
 export const agentService = {
   // Catalog / Metadata
-  async listOperators(): Promise<AgentOperatorSpec[]> {
-    return httpClient.get<AgentOperatorSpec[]>("/agents/operators");
+  async listNodeCatalog(): Promise<{ nodes: NodeCatalogItem[] }> {
+    return httpClient.get<{ nodes: NodeCatalogItem[] }>("/agents/nodes/catalog");
+  },
+
+  async getNodeSchemas(nodeTypes: string[]): Promise<NodeSchemaResponse> {
+    return httpClient.post<NodeSchemaResponse>("/agents/nodes/schema", { node_types: nodeTypes });
   },
 
   async listAgents(params?: { status?: string, skip?: number, limit?: number, view?: ControlPlaneListView }) {

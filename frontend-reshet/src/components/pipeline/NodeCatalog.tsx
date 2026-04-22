@@ -15,7 +15,6 @@ import {
   SortAsc,
   Code,
   Plus,
-  PanelLeftClose,
   PanelLeft
 } from "lucide-react"
 import { cn } from "@/lib/utils"
@@ -25,22 +24,12 @@ import {
   OperatorCategory,
   CATEGORY_COLORS,
   CATEGORY_LABELS,
-  DataType,
   PipelineType
 } from "./types"
-
-interface OperatorCatalogItem {
-  operator_id: string
-  display_name: string
-  input_type: DataType
-  output_type: DataType
-  dimension?: number
-}
-
-type OperatorCatalog = Partial<Record<OperatorCategory, OperatorCatalogItem[]>>
+import type { NodeCatalogItem } from "@/services/graph-authoring"
 
 interface NodeCatalogProps {
-  catalog: OperatorCatalog
+  catalog: NodeCatalogItem[]
   onDragStart: (event: React.DragEvent, operatorId: string, category: OperatorCategory) => void
   onAddCustomOperator?: () => void
   onClose?: () => void
@@ -67,7 +56,7 @@ function CatalogItem({
   category,
   onDragStart
 }: {
-  item: OperatorCatalogItem
+  item: NodeCatalogItem
   category: OperatorCategory
   onDragStart: (event: React.DragEvent) => void
 }) {
@@ -92,7 +81,7 @@ function CatalogItem({
       </div>
       <div className="flex-1 min-w-0">
         <span className="text-[13px] font-medium text-foreground/80 truncate block">
-          {item.display_name}
+          {item.title}
         </span>
       </div>
       <GripVertical className="h-3.5 w-3.5 text-muted-foreground/10 group-hover:text-muted-foreground/30 transition-colors" />
@@ -106,7 +95,7 @@ function CategorySection({
   onDragStart
 }: {
   category: OperatorCategory
-  items: OperatorCatalogItem[]
+  items: NodeCatalogItem[]
   onDragStart: (event: React.DragEvent, operatorId: string, category: OperatorCategory) => void
 }) {
   const label = CATEGORY_LABELS[category]
@@ -123,10 +112,10 @@ function CategorySection({
       <div className="space-y-1">
         {items.map((item) => (
           <CatalogItem
-            key={item.operator_id}
+            key={item.type}
             item={item}
             category={category}
-            onDragStart={(e) => onDragStart(e, item.operator_id, category)}
+            onDragStart={(e) => onDragStart(e, item.type, category)}
           />
         ))}
       </div>
@@ -199,8 +188,9 @@ export function NodeCatalog({ catalog, onDragStart, onAddCustomOperator, onClose
           <CategorySection
             key={category}
             category={category}
-            items={(catalog[category] || []).filter(item =>
-              item.display_name.toLowerCase().includes(search.toLowerCase())
+            items={catalog.filter(item =>
+              item.category === category &&
+              item.title.toLowerCase().includes(search.toLowerCase())
             )}
             onDragStart={onDragStart}
           />

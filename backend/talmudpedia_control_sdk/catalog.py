@@ -31,5 +31,5 @@ class CatalogAPI:
             params["organization_id"] = organization_id
         return self._client.request("GET", "/admin/pipelines/operators", params=params)
 
-    def list_agent_operators(self) -> ResponseEnvelope:
-        return self._client.request("GET", "/agents/operators")
+    def list_agent_nodes(self) -> ResponseEnvelope:
+        return self._client.request("GET", "/agents/nodes/catalog")

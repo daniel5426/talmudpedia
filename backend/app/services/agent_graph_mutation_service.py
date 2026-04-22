@@ -17,10 +17,11 @@ logger = logging.getLogger(__name__)
 
 
 class AgentGraphMutationService:
-    def __init__(self, db: AsyncSession, organization_id: UUID):
+    def __init__(self, db: AsyncSession, organization_id: UUID, project_id: UUID | None = None):
         self.db = db
         self.organization_id = organization_id
-        self.agent_service = AgentService(db=db, organization_id=organization_id)
+        self.project_id = project_id
+        self.agent_service = AgentService(db=db, organization_id=organization_id, project_id=project_id)
 
     async def get_graph(self, agent_id: UUID) -> dict[str, Any]:
         agent = await self.agent_service.get_agent(agent_id)

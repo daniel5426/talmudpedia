@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from app.api.routers.agents import NodeSchemaRequest, get_node_schemas
-from app.api.routers.rag_operator_contracts import _operator_schema_payload, _pipeline_create_contract
+from app.graph_authoring import rag_instance_contract, rag_node_spec
 from app.agent.executors.standard import register_standard_operators
 from app.rag.pipeline.registry import (
     ConfigFieldSpec,
@@ -14,7 +14,7 @@ from app.rag.pipeline.registry import (
 )
 
 
-def test_rag_operator_schema_payload_exposes_visual_node_and_create_contract_details():
+def test_rag_operator_schema_payload_exposes_canonical_authoring_contract():
     spec = OperatorSpec(
         operator_id="model_embedder",
         display_name="Model Embedder",
@@ -43,41 +43,50 @@ def test_rag_operator_schema_payload_exposes_visual_node_and_create_contract_det
         ],
     )
 
-    payload = _operator_schema_payload(spec)
+    payload = rag_node_spec(spec).model_dump(mode="json", exclude_none=True)
     model_schema = payload["config_schema"]["properties"]["model_id"]
 
-    assert payload["required_config_fields"] == ["model_id"]
-    assert payload["optional_config_fields"] == ["batch_size"]
-    assert payload["input_schema"]["type"] == "array"
-    assert payload["output_schema"]["type"] == ["array", "object"]
-    assert payload["terminal_output_schema"]["type"] == ["array", "object"]
-    assert payload["visual_node_contract"]["required_fields"] == ["id", "category", "operator", "position"]
-    assert payload["visual_node_contract"]["field_shapes"]["operator"]["const"] == "model_embedder"
-    assert payload["visual_node_contract"]["example_node"]["operator"] == "model_embedder"
-    assert model_schema["anyOf"][0]["type"] == "string"
-    assert model_schema["anyOf"][1]["required"] == ["runtime"]
-
-    create_contract = _pipeline_create_contract()
-    assert create_contract["required_fields"] == ["name", "nodes", "edges"]
-    assert create_contract["edge_contract"]["required_fields"] == ["id", "source", "target"]
+    assert payload["type"] == "model_embedder"
+    assert payload["title"] == "Model Embedder"
+    assert payload["input_type"] == "chunks"
+    assert payload["output_type"] == "embeddings"
+    assert payload["config_schema"]["required"] == ["model_id"]
+    assert payload["config_schema"]["x-ui"]["order"] == ["model_id", "batch_size"]
+    assert model_schema["x-ui"]["widget"] == "model"
+    assert rag_instance_contract()["required_fields"] == ["name", "nodes", "edges"]
 
 
 @pytest.mark.asyncio
-async def test_agents_nodes_schema_exposes_graph_create_contract_details():
+async def test_agents_nodes_schema_exposes_canonical_instance_contract(monkeypatch):
     register_standard_operators()
+
+    async def _empty_artifacts(self, ctx):
+        return {}
+
+    monkeypatch.setattr(
+        "app.services.control_plane.agents_admin_service.AgentAdminService._artifact_specs_with_catalog",
+        _empty_artifacts,
+    )
 
     response = await get_node_schemas(
         NodeSchemaRequest(node_types=["agent"]),
         _={},
-        context={},
+        context={
+            "organization_id": "00000000-0000-0000-0000-000000000001",
+            "project_id": None,
+            "user": None,
+            "auth_token": None,
+            "scopes": [],
+            "is_service": False,
+        },
         db=None,
     )
 
-    agent_schema = response["schemas"]["agent"]
-    graph_node_contract = agent_schema["graph_node_contract"]
+    agent_schema = response["specs"]["agent"]
 
-    assert response["graph_create_contract"]["required_fields"] == ["nodes", "edges"]
-    assert response["graph_create_contract"]["edge_required_fields"] == ["id", "source", "target"]
-    assert graph_node_contract["required_fields"] == ["id", "type", "position"]
-    assert graph_node_contract["field_shapes"]["type"]["const"] == "agent"
-    assert graph_node_contract["example_node"]["type"] == "agent"
+    assert response["instance_contract"]["required_fields"] == ["nodes", "edges"]
+    assert response["instance_contract"]["edge_required_fields"] == ["id", "source", "target"]
+    assert agent_schema["type"] == "agent"
+    assert agent_schema["title"] == "Agent"
+    assert agent_schema["graph_hints"]["editor"] == "generic"
+    assert "model_id" in agent_schema["config_schema"]["required"]

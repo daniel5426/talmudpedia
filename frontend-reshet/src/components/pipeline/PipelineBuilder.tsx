@@ -34,23 +34,16 @@ import {
 import {
   PipelineNodeData,
   OperatorCategory,
-  OperatorSpec,
   DataType,
   canConnect,
   PipelineStepExecution,
 } from "./types"
-
-type OperatorCatalog = Record<string, Array<{
-  operator_id: string
-  display_name: string
-  input_type: DataType
-  output_type: DataType
-  dimension?: number
-}>>
+import type { NodeCatalogItem, NodeAuthoringSpec } from "@/services/graph-authoring"
+import { applySchemaDefaults } from "@/services/graph-authoring"
 
 interface PipelineBuilderProps {
-  catalog: OperatorCatalog
-  operatorSpecs: Record<string, OperatorSpec>
+  catalog: NodeCatalogItem[]
+  operatorSpecs: Record<string, NodeAuthoringSpec>
   initialNodes?: Node<PipelineNodeData>[]
   initialEdges?: Edge[]
   onChange?: (nodes: Node<PipelineNodeData>[], edges: Edge[]) => void
@@ -224,11 +217,8 @@ function PipelineBuilderInner({
 
       if (!operatorId || !category) return
 
-      const categoryItems = catalog[category]
-      if (!categoryItems) return
-
-      const catalogItem = categoryItems.find(
-        (item: any) => item.operator_id === operatorId
+      const catalogItem = catalog.find(
+        (item) => item.type === operatorId && item.category === category
       )
 
       if (!catalogItem) return
@@ -247,11 +237,11 @@ function PipelineBuilderInner({
         data: {
           operator: operatorId,
           category,
-          displayName: catalogItem.display_name,
-          config: {},
-          inputType: catalogItem.input_type,
-          outputType: catalogItem.output_type,
-          isConfigured: false,
+          displayName: catalogItem.title,
+          config: applySchemaDefaults(operatorSpecs[operatorId]?.config_schema, {}),
+          inputType: catalogItem.input_type as DataType,
+          outputType: catalogItem.output_type as DataType,
+          isConfigured: (catalogItem.required_config_fields || []).length === 0,
           hasErrors: false,
         },
       }
@@ -290,9 +280,9 @@ function PipelineBuilderInner({
           if (node.id === nodeId) {
             const data = node.data as PipelineNodeData
             const spec = operatorSpecs[data.operator]
-            const requiredFields = spec?.required_config || []
-            const isConfigured = requiredFields.every((f) => {
-              const val = config[f.name]
+            const requiredFields = Array.isArray(spec?.config_schema?.required) ? spec.config_schema.required : []
+            const isConfigured = requiredFields.every((fieldName) => {
+              const val = config[String(fieldName)]
               return val !== undefined && val !== ""
             })
 

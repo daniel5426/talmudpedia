@@ -100,7 +100,7 @@ class Client:
             # Prefix from main.py: /agents
             request_headers = self._build_headers()
             print(f"[sdk.client] fetching Agent catalog headers={request_headers} base_url={self.base_url}")
-            agent_resp = requests.get(f"{self.base_url}/agents/operators", headers=request_headers)
+            agent_resp = requests.get(f"{self.base_url}/agents/nodes/catalog", headers=request_headers)
             agent_resp.raise_for_status()
             agent_catalog = agent_resp.json()
         except Exception as e:
@@ -109,7 +109,7 @@ class Client:
 
         # 3. Initialize Node Factories
         self._nodes = NodeFactory(rag_catalog, mode="rag")
-        self._agent_nodes = NodeFactory(agent_catalog, mode="agent")
+        self._agent_nodes = NodeFactory(agent_catalog.get("nodes", []) if isinstance(agent_catalog, dict) else agent_catalog, mode="agent")
         
         print(f"Connected to {self.base_url}")
         print(f"Loaded RAG operators")

@@ -5,6 +5,14 @@ export { chatService } from "./chat";
 export { adminService } from "./admin";
 export { ragAdminService } from "./rag-admin";
 export type {
+  NodeCatalogItem,
+  NodeAuthoringSpec,
+  NodeSchemaResponse,
+  GraphHints,
+  BranchingHint,
+  AuthoringFieldSpec,
+} from "./graph-authoring";
+export type {
   RAGIndex, 
   RAGStats,
   RAGPipeline, 
@@ -22,9 +30,6 @@ export type {
 } from "./rag-admin";
 
 export type {
-  OperatorCatalog,
-  OperatorCatalogItem,
-  OperatorSpec,
   ConfigFieldSpec,
   PipelineStepExecution,
 } from "@/components/pipeline/types";
@@ -121,7 +126,6 @@ export type {
   AgentRunTreeGroup,
   AgentRunTreeGroupMember,
   AgentExecutionEvent,
-  AgentOperatorSpec,
   LogicalModel,
   ModelCapabilityType,
   ModelProviderType,

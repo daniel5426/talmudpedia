@@ -12,11 +12,11 @@ import { Label } from "@/components/ui/label"
 import { Button } from "@/components/ui/button"
 import {
   PipelineNodeData,
-  OperatorSpec,
   CATEGORY_COLORS,
-  ConfigFieldSpec,
 } from "./types"
 import { ConfigFieldInput } from "./ConfigFieldInput"
+import type { NodeAuthoringSpec } from "@/services/graph-authoring"
+import { authoringFieldsFromSchema, schemaRows } from "@/services/graph-authoring"
 
 const CATEGORY_ICONS: Record<string, React.ElementType> = {
   source: FolderInput,
@@ -28,7 +28,7 @@ const CATEGORY_ICONS: Record<string, React.ElementType> = {
 interface ConfigPanelProps {
   nodeId: string
   data: PipelineNodeData
-  operatorSpec?: OperatorSpec
+  operatorSpec?: NodeAuthoringSpec
   onConfigChange: (nodeId: string, config: Record<string, unknown>) => void
   onClose: () => void
 }
@@ -46,21 +46,14 @@ export function ConfigPanel({
     onConfigChange(nodeId, newConfig)
   }
 
-  const allFields = [
-    ...(operatorSpec?.required_config || []),
-    ...(operatorSpec?.optional_config || []),
-  ]
+  const allFields = authoringFieldsFromSchema(operatorSpec?.config_schema)
 
   const fieldsByName = new Map(allFields.map((field) => [field.name, field]))
-  const webCrawlerFieldRows = [
-    ["max_depth", "max_pages", "page_timeout_ms"],
-    ["respect_robots_txt", "scan_full_page"],
-    ["content_preference", "wait_until"],
-  ]
+  const webCrawlerFieldRows = schemaRows(operatorSpec?.config_schema)
   const webCrawlerGroupedFieldNames = new Set(webCrawlerFieldRows.flat())
   const shouldUseWebCrawlerLayout = data.operator === "web_crawler"
 
-  const renderField = (field: ConfigFieldSpec) => (
+  const renderField = (field: ReturnType<typeof authoringFieldsFromSchema>[number]) => (
     <div key={field.name} className="space-y-1.5 px-0.5">
       <Label className="flex items-center justify-between">
         <span className="text-[11px] font-bold uppercase tracking-tight text-foreground/50">
@@ -86,7 +79,7 @@ export function ConfigPanel({
   const renderFieldRow = (fieldNames: string[]) => {
     const rowFields = fieldNames
       .map((fieldName) => fieldsByName.get(fieldName))
-      .filter((field): field is ConfigFieldSpec => Boolean(field))
+      .filter((field): field is ReturnType<typeof authoringFieldsFromSchema>[number] => Boolean(field))
 
     if (rowFields.length === 0) {
       return null

@@ -25,6 +25,7 @@ import { normalizeGraphDefinition } from "@/components/agent-builder/graphspec"
 import { HeaderConfigEditor } from "@/components/builder"
 import { INTEGRATION_CATALOG, matchServerToCatalog, pickPreferredCatalogServer } from "@/services/integration-catalog"
 import { useAuthStore } from "@/lib/store/useAuthStore"
+import { RequireActiveProject } from "@/components/admin/RequireActiveProject"
 
 function AgentBuilderContent() {
     const { id } = useParams()
@@ -522,5 +523,9 @@ function AgentBuilderContent() {
 export default function AgentBuilderPage() {
     const currentProjectId = useAuthStore((state) => state.activeProject?.id ?? null)
 
-    return <AgentBuilderContent key={currentProjectId ?? "no-project"} />
+    return (
+        <RequireActiveProject>
+            <AgentBuilderContent key={currentProjectId ?? "no-project"} />
+        </RequireActiveProject>
+    )
 }

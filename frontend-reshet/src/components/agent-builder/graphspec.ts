@@ -3,7 +3,7 @@ import { Edge, Node } from "@xyflow/react"
 import {
     AgentNodeData,
     AgentNodeType,
-    getNodeSpec,
+    getNodeUiDefaults,
     routeTableRowsToOutcomes,
     routeTableRowsToRouterRoutes,
 } from "./types"
@@ -235,7 +235,7 @@ export function normalizeBuilderNode(node: Node | BuilderNode): Node<AgentNodeDa
     const raw = node as BuilderNode
     const existing = (raw.data || {}) as Partial<AgentNodeData>
     const nodeType = (raw.type || raw.nodeType || existing.nodeType || "transform") as AgentNodeType
-    const spec = getNodeSpec(nodeType)
+    const defaults = getNodeUiDefaults(nodeType)
     const rawConfig = raw.config ?? {}
     const config = normalizeNodeContractConfig(nodeType, rawConfig)
     const resolvedInputMappings = existing.inputMappings ?? raw.input_mappings
@@ -244,15 +244,15 @@ export function normalizeBuilderNode(node: Node | BuilderNode): Node<AgentNodeDa
     }
     const category =
         existing.category ??
-        spec?.category ??
+        defaults?.category ??
         (typeof nodeType === "string" && nodeType.startsWith("artifact:") ? "action" : "data")
     const displayName =
         existing.displayName ??
-        spec?.displayName ??
+        defaults?.displayName ??
         (config?.label as string) ??
         nodeType
-    const inputType = existing.inputType ?? spec?.inputType ?? "any"
-    const outputType = existing.outputType ?? spec?.outputType ?? "any"
+    const inputType = existing.inputType ?? defaults?.inputType ?? "any"
+    const outputType = existing.outputType ?? defaults?.outputType ?? "any"
 
     const normalizedNode: BuilderNode = {
         ...node,

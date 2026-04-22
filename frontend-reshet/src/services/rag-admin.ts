@@ -1,12 +1,10 @@
 import { httpClient } from "./http";
+import type { NodeCatalogItem, NodeSchemaResponse, NodeAuthoringSpec } from "./graph-authoring";
 import type { ControlPlaneListResponse, ControlPlaneListView } from "./types";
 import {
   ExecutablePipelineInputField,
   ExecutablePipelineInputSchema,
   ExecutablePipelineInputStep,
-  OperatorCatalog,
-  OperatorCatalogItem,
-  OperatorSpec,
   PipelineStepExecution,
 } from "@/components/pipeline/types";
 
@@ -301,25 +299,25 @@ class RAGAdminService {
     return httpClient.post(url, data);
   }
 
-  async getOperatorCatalog(organizationId?: string): Promise<OperatorCatalog> {
+  async getOperatorCatalog(organizationId?: string): Promise<{ operators: NodeCatalogItem[] }> {
     const url = organizationId 
       ? `/admin/pipelines/catalog?organization_id=${organizationId}` 
       : "/admin/pipelines/catalog";
-    return httpClient.get<OperatorCatalog>(url);
+    return httpClient.get<{ operators: NodeCatalogItem[] }>(url);
   }
 
-  async getOperatorSpec(operatorId: string, organizationId?: string): Promise<OperatorSpec> {
+  async getOperatorSpec(operatorId: string, organizationId?: string): Promise<NodeAuthoringSpec> {
     const url = organizationId
       ? `/admin/pipelines/operators/${operatorId}?organization_id=${organizationId}`
       : `/admin/pipelines/operators/${operatorId}`;
-    return httpClient.get<OperatorSpec>(url);
+    return httpClient.get<NodeAuthoringSpec>(url);
   }
 
-  async listOperatorSpecs(organizationId?: string): Promise<Record<string, OperatorSpec>> {
+  async listOperatorSpecs(operatorIds: string[], organizationId?: string): Promise<NodeSchemaResponse> {
     const url = organizationId
-      ? `/admin/pipelines/operators?organization_id=${organizationId}`
-      : "/admin/pipelines/operators";
-    return httpClient.get<Record<string, OperatorSpec>>(url);
+      ? `/admin/pipelines/operators/schema?organization_id=${organizationId}`
+      : "/admin/pipelines/operators/schema";
+    return httpClient.post<NodeSchemaResponse>(url, { operator_ids: operatorIds });
   }
 
   async listVisualPipelines(

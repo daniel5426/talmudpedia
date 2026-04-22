@@ -32,7 +32,7 @@ def test_control_sdk_read_surface_smoke() -> None:
     catalog = _call_or_skip("catalog.get_rag_operator_catalog", lambda: client.catalog.get_rag_operator_catalog())
     assert "data" in catalog
 
-    agent_ops = _call_or_skip("catalog.list_agent_operators", lambda: client.catalog.list_agent_operators())
+    agent_ops = _call_or_skip("catalog.list_agent_nodes", lambda: client.catalog.list_agent_nodes())
     assert "data" in agent_ops
 
     agents = _call_or_skip("agents.list", lambda: client.agents.list(limit=5))

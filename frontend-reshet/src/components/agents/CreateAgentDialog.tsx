@@ -4,7 +4,7 @@ import { useEffect, useState } from "react"
 import { Bot, Loader2, Save } from "lucide-react"
 import { useRouter } from "next/navigation"
 
-import { buildDefaultEndOutputBindings, buildDefaultEndOutputSchema } from "@/components/agent-builder/graph-contract"
+import { buildDefaultAgentGraph } from "@/components/agent-builder/default-graph"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -18,35 +18,6 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { agentService } from "@/services"
-
-const STARTER_GRAPH = {
-  spec_version: "3.0",
-  nodes: [
-    {
-      id: "start",
-      type: "start",
-      position: { x: 0, y: 0 },
-      config: {},
-    },
-    {
-      id: "end",
-      type: "end",
-      position: { x: 240, y: 0 },
-      config: {
-        output_schema: buildDefaultEndOutputSchema(),
-        output_bindings: buildDefaultEndOutputBindings(),
-      },
-    },
-  ],
-  edges: [
-    {
-      id: "e1",
-      source: "start",
-      target: "end",
-      type: "control",
-    },
-  ],
-}
 
 interface CreateAgentDialogProps {
   open: boolean
@@ -80,7 +51,7 @@ export function CreateAgentDialog({ open, onOpenChange }: CreateAgentDialogProps
         name: name.trim(),
         description: description.trim(),
         status: "draft",
-        graph_definition: STARTER_GRAPH,
+        graph_definition: buildDefaultAgentGraph(),
       })
       onOpenChange(false)
       router.push(`/admin/agents/${newAgent.id}/builder`)

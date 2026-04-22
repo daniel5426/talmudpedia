@@ -1,6 +1,6 @@
 # Test State: Agent Builder SDK
 
-Last Updated: 2026-04-01
+Last Updated: 2026-04-22
 
 **Scope**
 SDK + HTTP integration for catalog parity, agent creation, execution, and validation helpers.
@@ -9,7 +9,7 @@ SDK + HTTP integration for catalog parity, agent creation, execution, and valida
 - `test_sdk_http.py`
 
 **Scenarios Covered**
-- SDK catalog parity with `/agents/operators`
+- SDK catalog parity with `/agents/nodes/catalog`
 - SDK create + execute agent via HTTP
 - GraphSpecValidator catches invalid configs
 

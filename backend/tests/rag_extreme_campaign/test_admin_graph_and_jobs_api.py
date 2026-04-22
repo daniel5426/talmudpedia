@@ -107,6 +107,74 @@ async def _seed_knowledge_store(db_session, organization_id, project_id, user_id
 
 
 @pytest.mark.asyncio
+async def test_rag_admin_list_visual_pipelines_uses_active_project_context(client, db_session, monkeypatch):
+    tenant, user, project = await _seed_context(db_session)
+    other_project = Project(
+        id=uuid.uuid4(),
+        organization_id=tenant.id,
+        name="Other Project",
+        slug=f"project-{uuid.uuid4().hex[:8]}",
+        is_default=False,
+        created_by=user.id,
+    )
+    db_session.add(other_project)
+    await db_session.commit()
+
+    app.dependency_overrides[get_current_principal] = _override_principal(
+        tenant.id,
+        project.id,
+        user,
+        ["pipelines.read", "pipelines.write"],
+    )
+    app.dependency_overrides[get_current_user] = _override_current_user(user)
+
+    async def fake_log_simple_action(**kwargs):
+        return None
+
+    monkeypatch.setattr("app.api.routers.rag_pipelines.log_simple_action", fake_log_simple_action)
+
+    active_pipeline = VisualPipeline(
+        id=uuid.uuid4(),
+        organization_id=tenant.id,
+        project_id=project.id,
+        name="Active Project Pipeline",
+        description="visible",
+        pipeline_type="retrieval",
+        nodes=[],
+        edges=[],
+        version=1,
+        is_published=False,
+        created_by=user.id,
+    )
+    other_pipeline = VisualPipeline(
+        id=uuid.uuid4(),
+        organization_id=tenant.id,
+        project_id=other_project.id,
+        name="Other Project Pipeline",
+        description="hidden",
+        pipeline_type="retrieval",
+        nodes=[],
+        edges=[],
+        version=1,
+        is_published=False,
+        created_by=user.id,
+    )
+    db_session.add_all([active_pipeline, other_pipeline])
+    await db_session.commit()
+
+    try:
+        response = await client.get(
+            f"/admin/pipelines/visual-pipelines?organization_id={tenant.id}&skip=0&limit=100&view=summary"
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert [item["id"] for item in payload["items"]] == [str(active_pipeline.id)]
+    finally:
+        app.dependency_overrides.pop(get_current_principal, None)
+        app.dependency_overrides.pop(get_current_user, None)
+
+
+@pytest.mark.asyncio
 async def test_rag_admin_graph_apply_patch_persists_and_bumps_version(client, db_session, monkeypatch):
     tenant, user, project = await _seed_context(db_session)
     embed_model_id = await _seed_embed_model(db_session, tenant.id)

@@ -11,8 +11,8 @@ import {
   RAGIndex,
   VisualPipeline,
   PipelineJob,
-  OperatorCatalog,
 } from "@/services"
+import type { NodeCatalogItem } from "@/services/graph-authoring"
 import { CustomBreadcrumb } from "@/components/ui/custom-breadcrumb"
 import { AdminPageHeader } from "@/components/admin/AdminPageHeader"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -300,7 +300,7 @@ export default function RAGAdminPage() {
   const [indices, setIndices] = useState<RAGIndex[]>([])
   const [pipelines, setPipelines] = useState<VisualPipeline[]>([])
   const [pipelineJobs, setPipelineJobs] = useState<PipelineJob[]>([])
-  const [operatorCatalog, setOperatorCatalog] = useState<OperatorCatalog | null>(null)
+  const [operatorCatalog, setOperatorCatalog] = useState<NodeCatalogItem[] | null>(null)
   const [orgUnits, setOrgUnits] = useState<OrgUnit[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -324,7 +324,7 @@ export default function RAGAdminPage() {
       setPipelines(pipelinesData.items)
       setPipelineJobs(pipelineJobsData.jobs)
 
-      setOperatorCatalog(catalogData)
+      setOperatorCatalog(catalogData.operators || [])
     } catch (error) {
       console.error("Failed to fetch RAG data", error)
     } finally {
@@ -586,11 +586,11 @@ export default function RAGAdminPage() {
                           </CardHeader>
                           <CardContent>
                             <div className="grid gap-2">
-                              {(operatorCatalog.source || []).map((op: any) => (
-                                <div key={op.operator_id} className="p-3 border rounded-lg flex items-center justify-between">
+                              {operatorCatalog.filter((op) => op.category === "source").map((op) => (
+                                <div key={op.type} className="p-3 border rounded-lg flex items-center justify-between">
                                   <div>
-                                    <div className="font-medium">{op.display_name}</div>
-                                    <div className="text-xs text-muted-foreground">ID: {op.operator_id} | Output: {op.output_type}</div>
+                                    <div className="font-medium">{op.title}</div>
+                                    <div className="text-xs text-muted-foreground">ID: {op.type} | Output: {op.output_type}</div>
                                   </div>
                                   <Badge variant="outline">Source</Badge>
                                 </div>
@@ -610,16 +610,11 @@ export default function RAGAdminPage() {
                           <CardContent>
                             <div className="grid gap-2">
                               {[
-                                ...(operatorCatalog.transform || []),
-                                ...(operatorCatalog.normalization || []),
-                                ...(operatorCatalog.enrichment || []),
-                                ...(operatorCatalog.chunking || []),
-                                ...(operatorCatalog.reranking || []),
-                                ...(operatorCatalog.custom || [])
-                              ].map((op: any) => (
-                                <div key={op.operator_id} className="p-3 border rounded-lg flex items-center justify-between">
+                                ...operatorCatalog.filter((op) => ["transform", "normalization", "enrichment", "chunking", "reranking", "custom"].includes(op.category)),
+                              ].map((op) => (
+                                <div key={op.type} className="p-3 border rounded-lg flex items-center justify-between">
                                   <div>
-                                    <div className="font-medium">{op.display_name}</div>
+                                    <div className="font-medium">{op.title}</div>
                                     <div className="text-xs text-muted-foreground">Input: {op.input_type} | Output: {op.output_type}</div>
                                   </div>
                                   <Badge variant="outline">{op.category || "Transform"}</Badge>
@@ -639,11 +634,11 @@ export default function RAGAdminPage() {
                           </CardHeader>
                           <CardContent>
                             <div className="grid gap-2">
-                              {(operatorCatalog.embedding || []).map((op: any) => (
-                                <div key={op.operator_id} className="p-3 border rounded-lg flex items-center justify-between">
+                              {operatorCatalog.filter((op) => op.category === "embedding").map((op) => (
+                                <div key={op.type} className="p-3 border rounded-lg flex items-center justify-between">
                                   <div>
-                                    <div className="font-medium">{op.display_name}</div>
-                                    <div className="text-xs text-muted-foreground">Dimensions: {op.dimension || "Dynamic"}</div>
+                                    <div className="font-medium">{op.title}</div>
+                                    <div className="text-xs text-muted-foreground">Output: {op.output_type}</div>
                                   </div>
                                   <Badge variant="outline">Embedder</Badge>
                                 </div>
@@ -662,10 +657,10 @@ export default function RAGAdminPage() {
                           </CardHeader>
                           <CardContent>
                             <div className="grid gap-2">
-                              {(operatorCatalog.storage || []).map((op: any) => (
-                                <div key={op.operator_id} className="p-3 border rounded-lg flex items-center justify-between">
+                              {operatorCatalog.filter((op) => op.category === "storage").map((op) => (
+                                <div key={op.type} className="p-3 border rounded-lg flex items-center justify-between">
                                   <div>
-                                    <div className="font-medium">{op.display_name}</div>
+                                    <div className="font-medium">{op.title}</div>
                                     <div className="text-xs text-muted-foreground">Target: {op.input_type}</div>
                                   </div>
                                   <Badge variant="outline">Store</Badge>

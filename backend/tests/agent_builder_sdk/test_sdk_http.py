@@ -9,9 +9,10 @@ from sdk import Client, AgentGraphBuilder, GraphSpecValidator
 
 def _require_http(base_url: str, headers: dict) -> list[dict]:
     try:
-        resp = requests.get(f"{base_url.rstrip('/')}/agents/operators", headers=headers, timeout=10)
+        resp = requests.get(f"{base_url.rstrip('/')}/agents/nodes/catalog", headers=headers, timeout=10)
         resp.raise_for_status()
-        return resp.json()
+        payload = resp.json()
+        return list(payload.get("nodes") or []) if isinstance(payload, dict) else []
     except Exception:
         pytest.skip("HTTP API not reachable for SDK tests. Set TEST_BASE_URL and ensure server is running.")
 

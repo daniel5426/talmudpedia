@@ -120,26 +120,8 @@ def operators_catalog(
         sdk_client = control_client_factory(client)
         response = sdk_client.rag.get_operator_catalog(organization_id=payload.get("organization_id"))
         data = response.get("data")
-        operators: list[dict[str, Any]] = []
-        if isinstance(data, dict):
-            for category, items in data.items():
-                if not isinstance(items, list):
-                    continue
-                for item in items:
-                    if not isinstance(item, dict):
-                        continue
-                    entry = dict(item)
-                    entry.setdefault("category", category)
-                    required_fields = []
-                    if isinstance(entry.get("required_config"), list):
-                        required_fields = [
-                            str(field.get("name"))
-                            for field in entry["required_config"]
-                            if isinstance(field, dict) and field.get("name")
-                        ]
-                    entry["required_fields"] = required_fields
-                    operators.append(entry)
-        return {"operators": operators, "categories": data}, []
+        operators = list(data.get("operators") or []) if isinstance(data, dict) else []
+        return {"operators": operators}, []
     except ControlPlaneSDKError as exc:
         return None, [_sdk_error_payload("get_operator_catalog_failed", exc)]
     except Exception as exc:

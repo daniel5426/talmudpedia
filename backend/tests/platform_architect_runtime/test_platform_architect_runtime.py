@@ -38,12 +38,15 @@ class _FakeRagAPI:
         self.calls.append({"method": "get_operator_catalog", "tenant_slug": tenant_slug})
         return {
             "data": {
-                "input": [
+                "operators": [
                     {
-                        "operator_id": "query_input",
-                        "display_name": "Query Input",
+                        "type": "query_input",
+                        "title": "Query Input",
                         "category": "input",
                         "description": "Accept a runtime query.",
+                        "input_type": "none",
+                        "output_type": "query",
+                        "required_config_fields": [],
                     }
                 ]
             }
@@ -53,11 +56,14 @@ class _FakeRagAPI:
         self.calls.append({"method": "get_operator_schemas", "operator_ids": list(operator_ids or []), "tenant_slug": tenant_slug})
         return {
             "data": {
-                "schemas": {
+                "specs": {
                     str(operator_id): {
-                        "operator_id": str(operator_id),
-                        "required_config": [],
-                        "optional_config": [],
+                        "type": str(operator_id),
+                        "title": str(operator_id),
+                        "category": "input",
+                        "input_type": "none",
+                        "output_type": "query",
+                        "config_schema": {"type": "object", "properties": {}, "additionalProperties": True},
                     }
                     for operator_id in list(operator_ids or [])
                 },

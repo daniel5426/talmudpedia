@@ -12,6 +12,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { agentService, adminService, Agent } from "@/services"
 import { AgentCard } from "@/components/agent-card"
 import { CreateAgentDialog } from "@/components/agents/CreateAgentDialog"
+import { RequireActiveProject } from "@/components/admin/RequireActiveProject"
 import { useAuthStore } from "@/lib/store/useAuthStore"
 
 function AgentCardSkeleton() {
@@ -125,6 +126,7 @@ export default function AgentsPage() {
     }
 
     return (
+        <RequireActiveProject>
         <div className="flex w-full flex-col h-screen bg-background overflow-hidden">
             {/* Header */}
             <AdminPageHeader>
@@ -213,5 +215,6 @@ export default function AgentsPage() {
 
             <CreateAgentDialog open={isCreateDialogOpen} onOpenChange={setCreateDialogOpen} />
         </div>
+        </RequireActiveProject>
     )
 }

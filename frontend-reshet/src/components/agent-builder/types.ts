@@ -1,39 +1,31 @@
-import { Node, Edge } from "@xyflow/react"
+import { Edge, Node } from "@xyflow/react"
 
-// Node categories for the agent builder
-export type AgentNodeCategory = 
-  | "control"     // Start, End
-  | "reasoning"   // Agent, Classify
-  | "action"      // Tool, RAG
-  | "logic"       // If/Else, While, Parallel
-  | "orchestration" // GraphSpec v2 orchestration nodes
-  | "interaction" // User Approval
-  | "data"        // Transform, Set State
+export type AgentNodeCategory =
+  | "control"
+  | "reasoning"
+  | "action"
+  | "logic"
+  | "orchestration"
+  | "interaction"
+  | "data"
 
-// Data types that flow between nodes
-export type AgentDataType = 
-  | "any"         // Accepts any input
-  | "message"     // Chat messages
-  | "context"     // Structured context object
-  | "decision"    // Boolean or branch selection
-  | "result"      // Tool/RAG result
+export type AgentDataType =
+  | "any"
+  | "message"
+  | "context"
+  | "decision"
+  | "result"
 
-// Specific node types
-export type AgentNodeType = 
-  // Control
+export type AgentNodeType =
   | "start"
   | "end"
-  // Reasoning
   | "agent"
-  // Actions  
   | "tool"
   | "rag"
-  // Logic
   | "if_else"
   | "while"
   | "conditional"
   | "parallel"
-  // Orchestration
   | "spawn_run"
   | "spawn_group"
   | "join"
@@ -41,16 +33,14 @@ export type AgentNodeType =
   | "judge"
   | "replan"
   | "cancel_subtree"
-  // Interaction
   | "user_approval"
   | "human_input"
-  // Data
   | "transform"
   | "speech_to_text"
   | "set_state"
   | "classify"
   | "vector_search"
-  | (string & {}) // Allow dynamic artifact types
+  | (string & {})
 
 export interface AgentNodeData {
   nodeType: AgentNodeType
@@ -61,42 +51,13 @@ export interface AgentNodeData {
   outputType: AgentDataType
   isConfigured: boolean
   hasErrors: boolean
-  // For nodes with multiple output handles (If/Else, While, User Approval)
   outputHandles?: string[]
-  // For dynamic handles generated from config (If/Else conditions)
   dynamicHandles?: boolean
-  // Static handles that are always present (While: loop/exit, User Approval: approve/reject)
   staticHandles?: string[]
-  // Field mappings for artifact nodes: maps input field names to expressions
-  // Example: { "documents": "@upstream.ingest_node.output", "query": "@messages[-1].content" }
   inputMappings?: Record<string, string>
-  // Index signature for ReactFlow compatibility
   [key: string]: unknown
 }
 
-// Catalog item shown in the node palette
-export interface AgentNodeSpec {
-  nodeType: AgentNodeType
-  displayName: string
-  description: string
-  category: AgentNodeCategory
-  inputType: AgentDataType
-  outputType: AgentDataType
-  icon: string // Lucide icon name
-  configFields: ConfigFieldSpec[]
-  // UI hints
-  dynamicHandles?: boolean
-  staticHandles?: string[]
-  // Artifact-specific: explicit input/output field definitions for field mapping
-  inputs?: ArtifactInputField[]
-  outputs?: ArtifactOutputField[]
-  // Artifact metadata (populated for artifact nodes)
-  isArtifact?: boolean
-  artifactId?: string
-  artifactVersion?: string
-}
-
-// Artifact input field definition
 export interface ArtifactInputField {
   name: string
   type: string
@@ -105,46 +66,37 @@ export interface ArtifactInputField {
   description?: string
 }
 
-// Artifact output field definition
-export interface ArtifactOutputField {
-  name: string
-  type: string
-  description?: string
-}
-
-// Extended field types for new operators
 export interface ConfigFieldSpec {
   name: string
   label: string
-  fieldType: 
-    | "string" 
-    | "text" 
-    | "number" 
-    | "boolean" 
-    | "select" 
-    | "model" 
-    | "tool" 
+  fieldType:
+    | "string"
+    | "text"
+    | "number"
+    | "boolean"
+    | "select"
+    | "model"
+    | "tool"
     | "rag"
     | "agent_select"
     | "knowledge_store"
     | "knowledge_store_select"
     | "retrieval_pipeline_select"
-    // New field types for enhanced operators
-    | "variable_list"      // List of variable definitions (name, type, default)
-    | "variable_selector"  // Dropdown to select from defined state variables
-    | "template_string"    // Text with @variable interpolation
-    | "expression"         // CEL expression input
-    | "condition_list"     // List of conditions for If/Else
-    | "mapping_list"       // Key-value mappings for Transform
-    | "assignment_list"    // Variable assignments for Set State
-    | "tool_list"          // Multi-select for tools
-    | "category_list"      // Categories for Classify
-    | "field_mapping"      // Field mapping editor for artifacts
-    | "scope_subset"       // Orchestration scope subset list
-    | "spawn_targets"      // Orchestration spawn-group targets
-    | "route_table"        // Router/Judge visual branch rows
-    | "advanced_toggle"    // Optional advanced UX toggle
-    | "value_ref"          // Typed runtime value selector
+    | "variable_list"
+    | "variable_selector"
+    | "template_string"
+    | "expression"
+    | "condition_list"
+    | "mapping_list"
+    | "assignment_list"
+    | "tool_list"
+    | "category_list"
+    | "field_mapping"
+    | "scope_subset"
+    | "spawn_targets"
+    | "route_table"
+    | "advanced_toggle"
+    | "value_ref"
   required: boolean
   default?: unknown
   description?: string
@@ -157,9 +109,7 @@ export interface ConfigFieldSpec {
   }
   helpKind?: "runtime-internal" | "required-for-compile" | "recommended"
   group?: "what_to_run" | "permissions" | "routing" | "reliability"
-  // Artifact-specific metadata for field mapping UI
   artifactInputs?: ArtifactInputField[]
-  // Prompt library: field supports @prompt mentions
   prompt_capable?: boolean
   prompt_surface?: string
 }
@@ -167,7 +117,6 @@ export interface ConfigFieldSpec {
 export type AgentNode = Node<AgentNodeData, string>
 export type AgentEdge = Edge
 
-// Category styling
 export const CATEGORY_COLORS: Record<AgentNodeCategory, string> = {
   control: "var(--agent-control)",
   reasoning: "var(--agent-reasoning)",
@@ -196,497 +145,57 @@ export const DATA_TYPE_COLORS: Record<AgentDataType, string> = {
   result: "var(--agent-interaction)",
 }
 
-// Node specifications for the catalog (static fallback)
-// NOTE: The backend provides the authoritative list via API
-export const AGENT_NODE_SPECS: AgentNodeSpec[] = [
-  // ==========================================================================
-  // Control
-  // ==========================================================================
-  {
-    nodeType: "start",
-    displayName: "Start",
-    description: "Entry point. Initialize variables here.",
-    category: "control",
-    inputType: "any",
-    outputType: "message",
-    icon: "Play",
-    configFields: [
-      { name: "state_variables", label: "State Variables", fieldType: "variable_list", required: false, description: "Initialize persistent state variables" },
-    ],
-  },
-  {
-    nodeType: "end",
-    displayName: "End",
-    description: "Exit point. Specify what to return.",
-    category: "control",
-    inputType: "any",
-    outputType: "any",
-    icon: "Square",
-    configFields: [],
-  },
-  
-  // ==========================================================================
-  // Reasoning
-  // ==========================================================================
-  {
-    nodeType: "agent",
-    displayName: "Agent",
-    description: "Primary reasoning node with tools and structured output.",
-    category: "reasoning",
-    inputType: "message",
-    outputType: "message",
-    icon: "Bot",
-    configFields: [
-      { name: "name", label: "Name", fieldType: "string", required: false, description: "Agent display name" },
-      { name: "model_id", label: "Model", fieldType: "model", required: true, description: "Select a chat model" },
-      { name: "instructions", label: "Instructions", fieldType: "text", required: false, description: "System prompt with @variable support", prompt_capable: true, prompt_surface: "agent.instructions" },
-      { name: "include_chat_history", label: "Include Chat History", fieldType: "boolean", required: false, default: true },
-      { name: "reasoning_effort", label: "Reasoning Effort", fieldType: "select", required: false, default: "medium",
-        options: [
-          { value: "low", label: "Low" },
-          { value: "medium", label: "Medium" },
-          { value: "high", label: "High" },
-        ]
-      },
-      { name: "output_format", label: "Output Format", fieldType: "select", required: false, default: "text",
-        options: [
-          { value: "text", label: "Text" },
-          { value: "json", label: "JSON" },
-        ]
-      },
-      { name: "generative_ui_mode", label: "Generative UI", fieldType: "select", required: false, default: "off",
-        options: [
-          { value: "off", label: "Off" },
-          { value: "openui", label: "OpenUI" },
-        ]
-      },
-      { name: "generative_ui_component_library_id", label: "OpenUI Library", fieldType: "select", required: false, default: "openui-default-v1",
-        dependsOn: { field: "generative_ui_mode", equals: "openui" },
-        options: [
-          { value: "openui-default-v1", label: "Default V1" },
-        ]
-      },
-      { name: "generative_ui_surface", label: "OpenUI Surface", fieldType: "select", required: false, default: "chat_inline",
-        dependsOn: { field: "generative_ui_mode", equals: "openui" },
-        options: [
-          { value: "chat_inline", label: "Chat Inline" },
-          { value: "app_canvas", label: "App Canvas" },
-        ]
-      },
-      { name: "generative_ui_max_blocks", label: "OpenUI Max Blocks", fieldType: "number", required: false, default: 6,
-        dependsOn: { field: "generative_ui_mode", equals: "openui" }
-      },
-      { name: "tools", label: "Tools", fieldType: "tool_list", required: false, description: "Attach tools to the agent" },
-      { name: "temperature", label: "Temperature", fieldType: "number", required: false, description: "Override reasoning effort temperature" },
-    ],
-  },
-  // ==========================================================================
-  // Actions
-  // ==========================================================================
-  {
-    nodeType: "tool",
-    displayName: "Tool",
-    description: "Invoke a registered tool.",
-    category: "action",
-    inputType: "context",
-    outputType: "result",
-    icon: "Wrench",
-    configFields: [
-      { name: "tool_id", label: "Tool", fieldType: "tool", required: true, description: "Select a tool to invoke" },
-    ],
-  },
-  {
-    nodeType: "rag",
-    displayName: "Retrieval",
-    description: "Execute a Retrieval Pipeline.",
-    category: "action",
-    inputType: "message",
-    outputType: "context",
-    icon: "Search",
-    configFields: [
-      { name: "pipeline_id", label: "Retrieval Pipeline", fieldType: "retrieval_pipeline_select", required: true, description: "Select a Retrieval Pipeline" },
-      { name: "query", label: "Query Template", fieldType: "template_string", required: false, description: "Query with @variable interpolation" },
-      { name: "top_k", label: "Max Results", fieldType: "number", required: false, default: 10, description: "Number of results to retrieve" },
-    ],
-  },
-  {
-    nodeType: "vector_search",
-    displayName: "Vector Search",
-    description: "Search a Knowledge Store directly.",
-    category: "action",
-    inputType: "message",
-    outputType: "context",
-    icon: "Database", // Using Database icon
-    configFields: [
-      { name: "knowledge_store_id", label: "Knowledge Store", fieldType: "knowledge_store_select", required: true, description: "Select the Knowledge Store to search." },
-      { name: "query", label: "Query Template", fieldType: "template_string", required: false, description: "Query with @variable interpolation" },
-      { name: "top_k", label: "Max Results", fieldType: "number", required: false, default: 10, description: "Number of results to retrieve" },
-    ],
-  },
-  
-  // ==========================================================================
-  // Reasoning
-  // ==========================================================================
-  {
-    nodeType: "classify",
-    displayName: "Classify",
-    description: "Classify input into categories using LLM.",
-    category: "reasoning",
-    inputType: "message",
-    outputType: "decision",
-    icon: "ListFilter",
-    dynamicHandles: true,
-    configFields: [
-      { name: "name", label: "Name", fieldType: "string", required: false },
-      { name: "model_id", label: "Model", fieldType: "model", required: true, description: "Model used for classification" },
-      { name: "input_source", label: "Input Source", fieldType: "value_ref", required: false, description: "Pick a value to classify" },
-      { name: "instructions", label: "Instructions", fieldType: "text", required: false, description: "Additional context for classification", prompt_capable: true, prompt_surface: "classify.instructions" },
-      { name: "categories", label: "Categories", fieldType: "category_list", required: true, description: "Define classification categories", prompt_capable: true, prompt_surface: "classify.categories.description" },
-    ],
-  },
-  
-  // ==========================================================================
-  // Data
-  // ==========================================================================
-  {
-    nodeType: "speech_to_text",
-    displayName: "Speech to Text",
-    description: "Transcribe audio inputs with a speech-to-text model.",
-    category: "data",
-    inputType: "any",
-    outputType: "context",
-    icon: "Mic",
-    configFields: [
-      { name: "model_id", label: "STT Model", fieldType: "model", required: false, description: "Defaults to the organization/global speech-to-text model" },
-      { name: "source", label: "Audio Source", fieldType: "value_ref", required: true, description: "Select workflow_input.audio or another audio attachment value" },
-      { name: "language_hints", label: "Language Hints", fieldType: "text", required: false, description: "Optional comma-separated language codes" },
-      { name: "prompt", label: "Prompt", fieldType: "text", required: false, description: "Optional provider hint text" },
-    ],
-  },
-  {
-    nodeType: "transform",
-    displayName: "Transform",
-    description: "Reshape data using expressions.",
-    category: "data",
-    inputType: "any",
-    outputType: "any",
-    icon: "Sparkles",
-    configFields: [
-      { name: "name", label: "Name", fieldType: "string", required: false },
-      { name: "mode", label: "Mode", fieldType: "select", required: false, default: "expressions",
-        options: [
-          { value: "expressions", label: "Expressions (CEL)" },
-          { value: "object", label: "Literal Values" },
-        ]
-      },
-      { name: "mappings", label: "Mappings", fieldType: "mapping_list", required: true, description: "Key-value mappings" },
-    ],
-  },
-  {
-    nodeType: "set_state",
-    displayName: "Set State",
-    description: "Explicitly set state variables.",
-    category: "data",
-    inputType: "any",
-    outputType: "any",
-    icon: "Database",
-    configFields: [
-      { name: "name", label: "Name", fieldType: "string", required: false },
-      { name: "assignments", label: "Assignments", fieldType: "assignment_list", required: true, description: "Typed state assignments with literal/expression or ValueRef sources" },
-      { name: "is_expression", label: "Values are Expressions", fieldType: "boolean", required: false, default: true },
-    ],
-  },
-  
-  // ==========================================================================
-  // Logic
-  // ==========================================================================
-  {
-    nodeType: "if_else",
-    displayName: "If/Else",
-    description: "Multi-condition branching with CEL expressions.",
-    category: "logic",
-    inputType: "any",
-    outputType: "decision",
-    icon: "GitBranch",
-    dynamicHandles: true,
-    configFields: [
-      { name: "conditions", label: "Conditions", fieldType: "condition_list", required: false, description: "Conditions evaluated in order" },
-    ],
-  },
-  {
-    nodeType: "while",
-    displayName: "While",
-    description: "Loop while condition is true.",
-    category: "logic",
-    inputType: "any",
-    outputType: "decision",
-    icon: "RefreshCw",
-    staticHandles: ["loop", "exit"],
-    configFields: [
-      { name: "name", label: "Name", fieldType: "string", required: false },
-      { name: "condition", label: "Condition", fieldType: "expression", required: true, description: "CEL expression - loop while true" },
-      { name: "max_iterations", label: "Max Iterations", fieldType: "number", required: false, default: 10, description: "Safety limit" },
-    ],
-  },
+type NodeUiDefaults = {
+  category: AgentNodeCategory
+  displayName: string
+  inputType: AgentDataType
+  outputType: AgentDataType
+}
 
-  {
-    nodeType: "parallel",
-    displayName: "Parallel",
-    description: "Execute multiple branches concurrently.",
-    category: "logic",
-    inputType: "any",
-    outputType: "context",
-    icon: "GitFork",
-    configFields: [
-      { name: "wait_all", label: "Wait for All", fieldType: "boolean", required: false, default: true, description: "Wait for all branches" },
-    ],
-  },
+const BUILTIN_NODE_DEFAULTS: Partial<Record<AgentNodeType, NodeUiDefaults>> = {
+  start: { category: "control", displayName: "Start", inputType: "any", outputType: "message" },
+  end: { category: "control", displayName: "End", inputType: "any", outputType: "any" },
+  agent: { category: "reasoning", displayName: "Agent", inputType: "message", outputType: "message" },
+  tool: { category: "action", displayName: "Tool", inputType: "context", outputType: "result" },
+  rag: { category: "action", displayName: "Retrieval", inputType: "message", outputType: "context" },
+  vector_search: { category: "action", displayName: "Vector Search", inputType: "message", outputType: "context" },
+  classify: { category: "reasoning", displayName: "Classify", inputType: "message", outputType: "decision" },
+  speech_to_text: { category: "data", displayName: "Speech to Text", inputType: "any", outputType: "context" },
+  transform: { category: "data", displayName: "Transform", inputType: "any", outputType: "any" },
+  set_state: { category: "data", displayName: "Set State", inputType: "any", outputType: "any" },
+  if_else: { category: "logic", displayName: "If/Else", inputType: "any", outputType: "decision" },
+  while: { category: "logic", displayName: "While", inputType: "any", outputType: "decision" },
+  parallel: { category: "logic", displayName: "Parallel", inputType: "any", outputType: "context" },
+  conditional: { category: "logic", displayName: "Conditional", inputType: "any", outputType: "decision" },
+  spawn_run: { category: "orchestration", displayName: "Spawn Run", inputType: "context", outputType: "context" },
+  spawn_group: { category: "orchestration", displayName: "Spawn Group", inputType: "context", outputType: "context" },
+  join: { category: "orchestration", displayName: "Join", inputType: "context", outputType: "decision" },
+  router: { category: "orchestration", displayName: "Router", inputType: "context", outputType: "decision" },
+  judge: { category: "orchestration", displayName: "Judge", inputType: "context", outputType: "decision" },
+  replan: { category: "orchestration", displayName: "Replan", inputType: "context", outputType: "decision" },
+  cancel_subtree: { category: "orchestration", displayName: "Cancel Subtree", inputType: "context", outputType: "context" },
+  user_approval: { category: "interaction", displayName: "User Approval", inputType: "any", outputType: "decision" },
+  human_input: { category: "interaction", displayName: "Human Input", inputType: "any", outputType: "message" },
+}
 
-  // ==========================================================================
-  // Orchestration (GraphSpec v2)
-  // ==========================================================================
-  {
-    nodeType: "spawn_run",
-    displayName: "Spawn Run",
-    description: "Spawn a single child run through the orchestration kernel.",
-    category: "orchestration",
-    inputType: "context",
-    outputType: "context",
-    icon: "GitBranch",
-    configFields: [
-      { name: "target_agent_id", label: "Target Agent", fieldType: "agent_select", required: false, visibility: "simple", group: "what_to_run" },
-      { name: "scope_subset", label: "Scope Subset", fieldType: "scope_subset", required: true, visibility: "simple", group: "permissions", helpKind: "required-for-compile", description: "Scopes delegated to spawned child run(s)." },
-      { name: "idempotency_key", label: "Idempotency Key", fieldType: "string", required: false, visibility: "advanced", group: "reliability", helpKind: "runtime-internal" },
-      {
-        name: "failure_policy",
-        label: "Failure Policy",
-        fieldType: "select",
-        required: false,
-        default: "best_effort",
-        visibility: "advanced",
-        group: "reliability",
-        helpKind: "runtime-internal",
-        options: [
-          { value: "best_effort", label: "Best Effort" },
-          { value: "fail_fast", label: "Fail Fast" },
-        ],
-      },
-      { name: "timeout_s", label: "Timeout (seconds)", fieldType: "number", required: false, visibility: "advanced", group: "reliability" },
-      { name: "start_background", label: "Start in Background", fieldType: "boolean", required: false, default: true, visibility: "advanced", group: "reliability", helpKind: "runtime-internal" },
-    ],
-  },
-  {
-    nodeType: "spawn_group",
-    displayName: "Spawn Group",
-    description: "Spawn a fanout group of child runs through the orchestration kernel.",
-    category: "orchestration",
-    inputType: "context",
-    outputType: "context",
-    icon: "GitMerge",
-    configFields: [
-      { name: "targets", label: "Targets", fieldType: "spawn_targets", required: true, visibility: "simple", group: "what_to_run", helpKind: "required-for-compile", description: "One or more target agents and optional payload mappings." },
-      { name: "scope_subset", label: "Scope Subset", fieldType: "scope_subset", required: true, visibility: "simple", group: "permissions", helpKind: "required-for-compile", description: "Scopes delegated to all spawned child runs." },
-      {
-        name: "join_mode",
-        label: "Join Mode",
-        fieldType: "select",
-        required: false,
-        default: "all",
-        visibility: "simple",
-        group: "routing",
-        options: [
-          { value: "all", label: "All" },
-          { value: "best_effort", label: "Best Effort" },
-          { value: "fail_fast", label: "Fail Fast" },
-          { value: "quorum", label: "Quorum" },
-          { value: "first_success", label: "First Success" },
-        ],
-      },
-      {
-        name: "quorum_threshold",
-        label: "Quorum Threshold",
-        fieldType: "number",
-        required: false,
-        visibility: "simple",
-        group: "routing",
-        dependsOn: { field: "join_mode", equals: "quorum" },
-      },
-      { name: "timeout_s", label: "Timeout (seconds)", fieldType: "number", required: false, visibility: "advanced", group: "reliability" },
-      { name: "idempotency_key_prefix", label: "Idempotency Key Prefix", fieldType: "string", required: false, visibility: "advanced", group: "reliability", helpKind: "runtime-internal" },
-      {
-        name: "failure_policy",
-        label: "Failure Policy",
-        fieldType: "select",
-        required: false,
-        default: "best_effort",
-        visibility: "advanced",
-        group: "reliability",
-        helpKind: "runtime-internal",
-        options: [
-          { value: "best_effort", label: "Best Effort" },
-          { value: "fail_fast", label: "Fail Fast" },
-        ],
-      },
-      { name: "start_background", label: "Start in Background", fieldType: "boolean", required: false, default: true, visibility: "advanced", group: "reliability", helpKind: "runtime-internal" },
-    ],
-  },
-  {
-    nodeType: "join",
-    displayName: "Join",
-    description: "Join an orchestration group and route by completion status.",
-    category: "orchestration",
-    inputType: "context",
-    outputType: "decision",
-    icon: "Link",
-    dynamicHandles: true,
-    configFields: [
-      { name: "orchestration_group_id", label: "Group ID", fieldType: "string", required: false, visibility: "advanced", group: "what_to_run", helpKind: "runtime-internal" },
-      {
-        name: "mode",
-        label: "Mode",
-        fieldType: "select",
-        required: false,
-        default: "all",
-        visibility: "simple",
-        group: "routing",
-        options: [
-          { value: "all", label: "All" },
-          { value: "best_effort", label: "Best Effort" },
-          { value: "fail_fast", label: "Fail Fast" },
-          { value: "quorum", label: "Quorum" },
-          { value: "first_success", label: "First Success" },
-        ],
-      },
-      {
-        name: "quorum_threshold",
-        label: "Quorum Threshold",
-        fieldType: "number",
-        required: false,
-        visibility: "simple",
-        group: "routing",
-        dependsOn: { field: "mode", equals: "quorum" },
-      },
-      { name: "timeout_s", label: "Timeout (seconds)", fieldType: "number", required: false, visibility: "advanced", group: "reliability" },
-    ],
-  },
-  {
-    nodeType: "router",
-    displayName: "Router",
-    description: "Route orchestration payload to named branches.",
-    category: "orchestration",
-    inputType: "context",
-    outputType: "decision",
-    icon: "Route",
-    dynamicHandles: true,
-    configFields: [
-      { name: "route_key", label: "Route Key", fieldType: "string", required: false, default: "status", visibility: "simple", group: "routing" },
-      { name: "routes", label: "Routes", fieldType: "route_table", required: false, visibility: "simple", group: "routing", description: "Named branch routes and match values." },
-    ],
-  },
-  {
-    nodeType: "judge",
-    displayName: "Judge",
-    description: "Decide orchestration pass/fail branches.",
-    category: "orchestration",
-    inputType: "context",
-    outputType: "decision",
-    icon: "Scale",
-    dynamicHandles: true,
-    configFields: [
-      { name: "outcomes", label: "Outcomes", fieldType: "route_table", required: false, visibility: "simple", group: "routing", description: "Outcome branch names (pass/fail by default)." },
-      { name: "pass_outcome", label: "Pass Branch Label", fieldType: "string", required: false, default: "pass", visibility: "advanced", group: "routing", helpKind: "runtime-internal" },
-      { name: "fail_outcome", label: "Fail Branch Label", fieldType: "string", required: false, default: "fail", visibility: "advanced", group: "routing", helpKind: "runtime-internal" },
-    ],
-  },
-  {
-    nodeType: "replan",
-    displayName: "Replan",
-    description: "Evaluate subtree and decide replan vs continue.",
-    category: "orchestration",
-    inputType: "context",
-    outputType: "decision",
-    icon: "RefreshCw",
-    dynamicHandles: true,
-    configFields: [
-      { name: "run_id", label: "Run ID", fieldType: "string", required: false, visibility: "advanced", group: "what_to_run", helpKind: "runtime-internal" },
-    ],
-  },
-  {
-    nodeType: "cancel_subtree",
-    displayName: "Cancel Subtree",
-    description: "Cancel a child run subtree through the orchestration kernel.",
-    category: "orchestration",
-    inputType: "context",
-    outputType: "context",
-    icon: "Ban",
-    configFields: [
-      { name: "run_id", label: "Run ID", fieldType: "string", required: false, visibility: "advanced", group: "what_to_run", helpKind: "runtime-internal" },
-      { name: "include_root", label: "Include Root Run", fieldType: "boolean", required: false, default: true, visibility: "advanced", group: "reliability", helpKind: "runtime-internal" },
-      { name: "reason", label: "Reason", fieldType: "string", required: false, visibility: "advanced", group: "reliability" },
-    ],
-  },
-  
-  // ==========================================================================
-  // Interaction
-  // ==========================================================================
-  {
-    nodeType: "user_approval",
-    displayName: "User Approval",
-    description: "Pause for user approval or rejection.",
-    category: "interaction",
-    inputType: "any",
-    outputType: "decision",
-    icon: "UserCheck",
-    staticHandles: ["approve", "reject"],
-    configFields: [
-      { name: "name", label: "Name", fieldType: "string", required: false },
-      { name: "message", label: "Message", fieldType: "template_string", required: false, description: "Message with @variable support" },
-      { name: "timeout_seconds", label: "Timeout (seconds)", fieldType: "number", required: false, default: 300 },
-      { name: "require_comment", label: "Require Comment", fieldType: "boolean", required: false, default: false },
-    ],
-  },
-  {
-    nodeType: "human_input",
-    displayName: "Human Input",
-    description: "Wait for human text input.",
-    category: "interaction",
-    inputType: "any",
-    outputType: "message",
-    icon: "UserCheck",
-    configFields: [
-      { name: "prompt", label: "Prompt", fieldType: "text", required: false, description: "Message shown to the human reviewer" },
-      { name: "timeout_seconds", label: "Timeout (seconds)", fieldType: "number", required: false, default: 300, description: "Max wait time" },
-    ],
-  },
-]
+export function getNodeUiDefaults(nodeType: AgentNodeType): NodeUiDefaults | undefined {
+  return BUILTIN_NODE_DEFAULTS[nodeType]
+}
 
-// Connection validation
 export function canConnect(sourceType: AgentDataType, targetType: AgentDataType): boolean {
-  // "any" accepts anything
-  if (targetType === "any") return true
-  if (sourceType === "any") return true
-  
-  // Same types can connect
-  if (sourceType === targetType) return true
-  
-  // Specific allowed conversions
+  if (targetType === "any" || sourceType === "any" || sourceType === targetType) return true
   const allowedConnections: Record<AgentDataType, AgentDataType[]> = {
     message: ["context", "any"],
     context: ["message", "any"],
     result: ["context", "message", "any"],
-    decision: ["message", "context", "result", "any"], // Allow connecting decision branches to anything
+    decision: ["message", "context", "result", "any"],
     any: ["message", "context", "result", "decision", "any"],
   }
-  
   return allowedConnections[sourceType]?.includes(targetType) ?? false
 }
 
 export function getHandleColor(dataType: AgentDataType): string {
   return DATA_TYPE_COLORS[dataType] || "#6b7280"
-}
-
-export function getNodeSpec(nodeType: AgentNodeType): AgentNodeSpec | undefined {
-  return AGENT_NODE_SPECS.find(spec => spec.nodeType === nodeType)
 }
 
 function getStableBranchHandles(items: Array<{ id?: string; name?: string }>, fallbackPrefix: string): string[] {
@@ -760,23 +269,6 @@ export function routeTableRowsToOutcomes(rows: unknown): string[] {
     .filter((name) => name.length > 0)
 }
 
-function dedupeNamedHandles(items: Array<{ name?: string }>, fallbackPrefix: string): string[] {
-  const used = new Set<string>()
-  return (items || []).map((c, i) => {
-    const base = (c?.name ?? "").trim()
-    const fallback = `${fallbackPrefix}_${i}`
-    const rawId = base || fallback
-    let uniqueId = rawId
-    let suffix = 1
-    while (used.has(uniqueId)) {
-      uniqueId = `${rawId}_${suffix}`
-      suffix += 1
-    }
-    used.add(uniqueId)
-    return uniqueId
-  })
-}
-
 function getRouterHandleIds(routes: unknown): string[] {
   const used = new Set<string>()
   const handles = (Array.isArray(routes) ? routes : []).map((route, idx) => {
@@ -803,24 +295,18 @@ function getRouterHandleIds(routes: unknown): string[] {
   return handles
 }
 
-// Helper to get output handles for a node based on its config
 export function getNodeOutputHandles(nodeType: AgentNodeType, config: Record<string, unknown>): string[] {
-  const spec = getNodeSpec(nodeType)
-  
-  // Static handles are always present
-  if (spec?.staticHandles) {
-    return spec.staticHandles
-  }
-  
-  // Dynamic handles from config (If/Else)
-  if (spec?.dynamicHandles && nodeType === "if_else") {
+  if (nodeType === "while") return ["loop", "exit"]
+  if (nodeType === "user_approval") return ["approve", "reject"]
+
+  if (nodeType === "if_else") {
     const conditions = (config.conditions as Array<{ id?: string; name?: string }>) || []
     const handles = getStableBranchHandles(conditions, "condition")
-    handles.push("else") // Always have else
+    handles.push("else")
     return handles
   }
 
-  if (spec?.dynamicHandles && nodeType === "classify") {
+  if (nodeType === "classify") {
     const categories = (config.categories as Array<{ id?: string; name?: string }>) || []
     return getClassifyHandleIds(categories)
   }
@@ -838,11 +324,9 @@ export function getNodeOutputHandles(nodeType: AgentNodeType, config: Record<str
     const outcomes = outcomesFromTable.length > 0
       ? outcomesFromTable
       : Array.isArray(config.outcomes)
-      ? config.outcomes.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
-      : []
-    if (outcomes.length > 0) {
-      return outcomes
-    }
+        ? config.outcomes.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+        : []
+    if (outcomes.length > 0) return outcomes
     const passOutcome = typeof config.pass_outcome === "string" && config.pass_outcome.trim()
       ? config.pass_outcome.trim()
       : "pass"
@@ -858,7 +342,6 @@ export function getNodeOutputHandles(nodeType: AgentNodeType, config: Record<str
       : config.routes
     return getRouterHandleIds(routes)
   }
-  
-  // Default: single output
+
   return []
 }

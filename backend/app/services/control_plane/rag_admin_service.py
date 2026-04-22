@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.postgres.engine import sessionmaker
 from app.db.postgres.models.rag import ExecutablePipeline, PipelineJob, PipelineJobStatus, PipelineType, VisualPipeline
+from app.graph_authoring import rag_catalog_item, rag_instance_contract, rag_node_spec
 from app.rag.pipeline.compiler import PipelineCompiler, VisualPipeline as CompilerVisualPipeline
 from app.rag.pipeline.custom_operator_sync import sync_custom_operators
 from app.rag.pipeline.executor import PipelineExecutor
@@ -84,13 +85,8 @@ class RagAdminService:
 
     async def operators_catalog(self, *, ctx: ControlPlaneContext) -> dict[str, Any]:
         await sync_custom_operators(self.db, ctx.organization_id)
-        operator_map: dict[str, dict[str, Any]] = {}
-        operators: list[dict[str, Any]] = []
-        for spec in self.registry.list_all(str(ctx.organization_id)):
-            payload = spec.model_dump() if hasattr(spec, "model_dump") else self._dump(spec)
-            operator_map[str(spec.operator_id)] = payload
-            operators.append(payload)
-        return {"operators": operators, "operator_map": operator_map}
+        items = [rag_catalog_item(spec).model_dump(mode="json") for spec in self.registry.list_all(str(ctx.organization_id))]
+        return {"operators": items}
 
     async def operators_schema(self, *, ctx: ControlPlaneContext, operator_ids: list[str]) -> dict[str, Any]:
         await sync_custom_operators(self.db, ctx.organization_id)
@@ -104,10 +100,10 @@ class RagAdminService:
             if spec is None:
                 unknown.append(operator_id)
                 continue
-            schemas[operator_id] = self._operator_schema_payload(spec)
+            schemas[operator_id] = rag_node_spec(spec).model_dump(mode="json", exclude_none=True)
         if unknown:
             raise validation("Unknown operator ids", field="operator_ids", unknown=unknown)
-        return {"schemas": schemas}
+        return {"specs": schemas, "instance_contract": rag_instance_contract()}
 
     async def create_pipeline(self, *, ctx: ControlPlaneContext, params: CreatePipelineInput) -> dict[str, Any]:
         name = str(params.name or "").strip()
@@ -480,70 +476,6 @@ class RagAdminService:
             if storage.is_managed_path(value) and not storage.path_exists(value):
                 errors.append({"step_id": step_id, "field": name, "message": "Uploaded file not found"})
         return errors
-
-    def _operator_schema_payload(self, spec: Any) -> dict[str, Any]:
-        required = [self._config_field_payload(field) for field in list(getattr(spec, "required_config", []) or [])]
-        optional = [self._config_field_payload(field) for field in list(getattr(spec, "optional_config", []) or [])]
-        properties = {
-            field["name"]: field["value_schema"]
-            for field in required + optional
-            if field.get("name")
-        }
-        return {
-            "operator_id": getattr(spec, "operator_id", None),
-            "display_name": getattr(spec, "display_name", None),
-            "category": getattr(getattr(spec, "category", None), "value", getattr(spec, "category", None)),
-            "description": getattr(spec, "description", None),
-            "version": getattr(spec, "version", None),
-            "input_type": getattr(getattr(spec, "input_type", None), "value", getattr(spec, "input_type", None)),
-            "output_type": getattr(getattr(spec, "output_type", None), "value", getattr(spec, "output_type", None)),
-            "is_custom": bool(getattr(spec, "is_custom", False)),
-            "deprecated": bool(getattr(spec, "deprecated", False)),
-            "tags": list(getattr(spec, "tags", []) or []),
-            "required_config": required,
-            "optional_config": optional,
-            "required_config_fields": [str(field.get("name")) for field in required if field.get("name")],
-            "optional_config_fields": [str(field.get("name")) for field in optional if field.get("name")],
-            "input_schema": getattr(spec, "resolved_input_schema", lambda: getattr(spec, "input_schema", None))() or {},
-            "output_schema": getattr(spec, "resolved_output_schema", lambda: getattr(spec, "output_schema", None))() or {},
-            "config_schema": {
-                "type": "object",
-                "properties": properties,
-                "required": [str(field.get("name")) for field in required if field.get("name")],
-                "additionalProperties": True,
-            },
-        }
-
-    def _config_field_payload(self, field: Any) -> dict[str, Any]:
-        raw = self._dump(field)
-        raw["value_schema"] = self._field_value_schema(field)
-        return raw
-
-    @staticmethod
-    def _field_value_schema(field: Any) -> dict[str, Any]:
-        raw = field.model_dump() if hasattr(field, "model_dump") else dict(field)
-        field_type = getattr(field, "field_type", None)
-        if field_type == ConfigFieldType.INTEGER:
-            schema: dict[str, Any] = {"type": "integer"}
-        elif field_type == ConfigFieldType.FLOAT:
-            schema = {"type": "number"}
-        elif field_type == ConfigFieldType.BOOLEAN:
-            schema = {"type": "boolean"}
-        elif field_type == ConfigFieldType.JSON:
-            schema = dict(raw.get("json_schema") or {}) or {"type": ["object", "array"]}
-        elif field_type == ConfigFieldType.SELECT:
-            schema = {"type": "string"}
-            if raw.get("options"):
-                schema["enum"] = list(raw.get("options") or [])
-        else:
-            schema = {"type": "string"}
-        if raw.get("runtime"):
-            schema = {"anyOf": [schema, {"type": "object", "properties": {"runtime": {"type": "boolean", "const": True}}, "required": ["runtime"], "additionalProperties": False}]}
-        if raw.get("min_value") is not None:
-            schema["minimum"] = raw["min_value"]
-        if raw.get("max_value") is not None:
-            schema["maximum"] = raw["max_value"]
-        return schema
 
     @staticmethod
     def _normalize_pipeline_type(value: str | None) -> PipelineType:

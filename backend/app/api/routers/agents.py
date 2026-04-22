@@ -33,7 +33,6 @@ from app.services.agent_service import (
 )
 from app.services.resource_policy_quota_service import ResourcePolicyQuotaExceeded
 from app.services.usage_quota_service import QuotaExceededError
-from app.agent.graph.contracts import contract_fields_from_schema, schema_to_value_type
 from app.api.schemas.agents import (
     CreateAgentRequest,
     UpdateAgentRequest,
@@ -227,147 +226,14 @@ def handle_service_error(e: AgentServiceError):
 
 
 
-# =============================================================================
-# Catalog Endpoint
-# =============================================================================
-
-def _artifact_field_type(json_type: str) -> str:
-    mapping = {
-        "string": "string",
-        "integer": "number",
-        "number": "number",
-        "boolean": "boolean",
-        "array": "text",
-        "object": "text",
-    }
-    return mapping.get(str(json_type or "").strip().lower(), "string")
-
-
-def _artifact_config_fields_from_schema(config_schema: dict[str, Any]) -> list[dict[str, Any]]:
-    properties = config_schema.get("properties") if isinstance(config_schema.get("properties"), dict) else {}
-    required = set(config_schema.get("required") or []) if isinstance(config_schema.get("required"), list) else set()
-    fields: list[dict[str, Any]] = []
-    for key, value in properties.items():
-        if not isinstance(value, dict):
-            value = {}
-        field: dict[str, Any] = {
-            "name": key,
-            "label": str(value.get("title") or key),
-            "fieldType": _artifact_field_type(value.get("type")),
-            "required": key in required,
-            "description": value.get("description"),
-        }
-        enum_values = value.get("enum")
-        if isinstance(enum_values, list) and enum_values:
-            field["fieldType"] = "select"
-            field["options"] = [{"value": str(item), "label": str(item)} for item in enum_values]
-        if "default" in value:
-            field["default"] = value.get("default")
-        fields.append(field)
-    return fields
-
-
-def _artifact_input_specs(input_schema: dict[str, Any], node_ui: dict[str, Any]) -> list[dict[str, Any]]:
-    properties = input_schema.get("properties") if isinstance(input_schema.get("properties"), dict) else {}
-    required = set(input_schema.get("required") or []) if isinstance(input_schema.get("required"), list) else set()
-    ui_inputs = node_ui.get("inputs") if isinstance(node_ui.get("inputs"), list) else []
-    input_labels = {
-        str(item.get("name") or "").strip(): str(item.get("label") or item.get("title") or item.get("name") or "").strip()
-        for item in ui_inputs
-        if isinstance(item, dict) and str(item.get("name") or "").strip()
-    }
-    specs: list[dict[str, Any]] = []
-    for key, value in properties.items():
-        if not isinstance(value, dict):
-            value = {}
-        specs.append(
-            {
-                "name": str(key),
-                "type": schema_to_value_type(value),
-                "required": key in required,
-                "default": value.get("default"),
-                "description": value.get("description"),
-                "label": input_labels.get(str(key)) or str(value.get("title") or key),
-            }
-        )
-    return specs
-
-
-async def _organization_artifact_operator_specs(*, db: AsyncSession, organization_id: UUID) -> list[dict[str, Any]]:
-    from app.db.postgres.models.artifact_runtime import ArtifactKind
-    from app.services.artifact_runtime.registry_service import ArtifactRegistryService
-
-    artifacts = await ArtifactRegistryService(db).list_accessible_artifacts(
-        organization_id=organization_id,
-        kind=ArtifactKind.AGENT_NODE,
-    )
-    specs: list[dict[str, Any]] = []
-    for artifact in artifacts:
-        revision = artifact.latest_draft_revision or artifact.latest_published_revision
-        if revision is None:
-            continue
-        agent_contract = dict(revision.agent_contract or {}) if revision.agent_contract is not None else {}
-        node_ui = dict(agent_contract.get("node_ui") or {}) if isinstance(agent_contract.get("node_ui"), dict) else {}
-        input_schema = dict(agent_contract.get("input_schema") or {}) if isinstance(agent_contract.get("input_schema"), dict) else {}
-        output_schema = dict(agent_contract.get("output_schema") or {}) if isinstance(agent_contract.get("output_schema"), dict) else {}
-        config_schema = dict(revision.config_schema or {}) if revision.config_schema is not None else {}
-        outputs = contract_fields_from_schema(output_schema, fallback_key="result")
-        specs.append(
-            {
-                "type": str(artifact.id),
-                "category": "action",
-                "display_name": str(revision.display_name or artifact.display_name),
-                "description": str(revision.description or artifact.description or "Artifact-backed node"),
-                "reads": list(agent_contract.get("state_reads") or []),
-                "writes": list(agent_contract.get("state_writes") or []),
-                "config_schema": config_schema,
-                "field_contracts": {},
-                "output_contract": {"fields": outputs},
-                "ui": {
-                    "icon": str(node_ui.get("icon") or "Package"),
-                    "color": str(node_ui.get("color") or "#64748b"),
-                    "inputType": str(node_ui.get("inputType") or "any"),
-                    "outputType": str(node_ui.get("outputType") or "context"),
-                    "configFields": _artifact_config_fields_from_schema(config_schema),
-                    "inputs": _artifact_input_specs(input_schema, node_ui),
-                    "outputs": outputs,
-                    "isArtifact": True,
-                    "artifactId": str(artifact.id),
-                    "artifactRevisionId": str(revision.id),
-                },
-            }
-        )
-    return specs
-
-@router.get("/operators")
-async def list_operators(
-    context: Dict[str, Any] = Depends(get_agent_context),
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    List all available agent operators including artifacts.
-    """
-    from app.agent.registry import AgentOperatorRegistry
-    
-    # Ensure artifacts are registered (lazy load if needed)
-    from app.agent.executors.standard import register_standard_operators
-    register_standard_operators()
-    
-    operators = AgentOperatorRegistry.list_operators()
-    payload = [op.model_dump() for op in operators]
-    payload.extend(await _organization_artifact_operator_specs(db=db, organization_id=context["organization_id"]))
-    return payload
-
-
 @router.get("/nodes/catalog")
 async def list_node_catalog(
     _: Dict[str, Any] = Depends(require_scopes("agents.read")),
     context: Dict[str, Any] = Depends(get_agent_context),
     db: AsyncSession = Depends(get_db),
 ):
-    del context
     try:
-        return await AgentAdminService(db).list_node_catalog()
+        return await AgentAdminService(db).list_node_catalog(ctx=_control_plane_ctx_from_agent_context(context))
     except ControlPlaneError as exc:
         raise exc.to_http_exception() from exc
 
@@ -379,27 +245,15 @@ async def get_node_schemas(
     context: Dict[str, Any] = Depends(get_agent_context),
     db: AsyncSession = Depends(get_db),
 ):
-    del context
     try:
-        result = await AgentAdminService(db).get_node_schemas(node_types=list(request.node_types or []))
+        result = await AgentAdminService(db).get_node_schemas(
+            ctx=_control_plane_ctx_from_agent_context(context),
+            node_types=list(request.node_types or []),
+        )
         return {
-            "schemas": result["schemas"],
+            "specs": result["specs"],
             "unknown": [],
-            "graph_create_contract": {
-                "required_fields": ["nodes", "edges"],
-                "node_required_fields": ["id", "type", "position"],
-                "edge_required_fields": ["id", "source", "target"],
-                "edge_field_shapes": {
-                    "id": {"type": "string"},
-                    "source": {"type": "string"},
-                    "target": {"type": "string"},
-                    "type": {"type": "string", "enum": ["control", "data"]},
-                    "source_handle": {"type": "string"},
-                    "target_handle": {"type": "string"},
-                    "label": {"type": "string"},
-                    "condition": {"type": "string"},
-                },
-            },
+            "instance_contract": result["instance_contract"],
         }
     except ControlPlaneError as exc:
         raise exc.to_http_exception() from exc

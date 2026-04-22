@@ -1,6 +1,6 @@
 # Agent Graph Validation Test State
 
-Last Updated: 2026-04-14
+Last Updated: 2026-04-22
 
 ## Scope of the feature
 Draft-legal agent graph persistence on write paths (`create_agent`, `update_agent`, `update_graph`) with compiler validation moved to explicit analysis/execution flows.
@@ -15,6 +15,7 @@ Draft-legal agent graph persistence on write paths (`create_agent`, `update_agen
 - API persists incomplete drafts on create/update and only rejects illegal graph documents.
 - Service validation (`validate_agent`) now runs real compiler + runtime reference checks and returns structured errors/warnings.
 - Node intelligence endpoints are covered: `/agents/nodes/catalog` and bulk `/agents/nodes/schema`.
+- The public agent node catalog excludes orchestration nodes while schema access/runtime support remain intact.
 - Runtime config inside `node.data.config` is rejected; top-level `node.config` is the only accepted source of truth.
 - Route tests now use explicit scoped bearer tokens because `/agents` read/write endpoints enforce `principal.scopes` directly.
 - Create-validation assertions now match the shared `VALIDATION_ERROR` envelope with nested `details.errors`.
@@ -27,6 +28,10 @@ Draft-legal agent graph persistence on write paths (`create_agent`, `update_agen
 - Command: `PYTHONPATH=backend python3 -m pytest -q backend/tests/graph_mutation_agents/test_agent_graph_mutation_service.py backend/tests/graph_mutation_agents/test_agent_graph_mutation_routes.py backend/tests/agent_graph_validation/test_agent_graph_validation.py backend/tests/platform_architect_runtime/test_platform_architect_runtime.py backend/tests/platform_sdk_tool/test_platform_sdk_sdk_parity_additional_actions.py -k 'agents or graph or validate or publish or create_shell'`
 - Date/Time: 2026-04-14 Asia/Hebron
 - Result: pass (`47 passed, 55 deselected, 8 warnings`)
+- Command: `SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest -q backend/tests/agent_graph_validation/test_agent_graph_validation.py -k nodes_catalog_and_schema_endpoints`
+- Date/Time: 2026-04-22 Asia/Hebron
+- Result: pass (`1 passed, 12 deselected`). Node catalog coverage now asserts orchestration nodes are hidden from the public authoring catalog.
 
 ## Known gaps or follow-ups
 - No dedicated frontend unit test yet for new-agent starter graph payload wiring.
+- The full `test_agent_graph_validation.py` file currently has unrelated pre-existing failures from `CreateAgentData.slug` drift and project-scoped validation assumptions; this change only re-verified the node-catalog slice.

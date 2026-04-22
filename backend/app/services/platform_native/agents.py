@@ -13,9 +13,13 @@ def _shell_graph() -> dict[str, Any]:
     return {
         "nodes": [
             {"id": "start", "type": "start", "position": {"x": 0, "y": 0}, "config": {}},
-            {"id": "end", "type": "end", "position": {"x": 240, "y": 0}, "config": {}},
+            {"id": "agent", "type": "agent", "position": {"x": 240, "y": 0}, "config": {}},
+            {"id": "end", "type": "end", "position": {"x": 480, "y": 0}, "config": {}},
         ],
-        "edges": [{"id": "e_start_end", "source": "start", "target": "end", "type": "control"}],
+        "edges": [
+            {"id": "e_start_agent", "source": "start", "target": "agent", "type": "control"},
+            {"id": "e_agent_end", "source": "agent", "target": "end", "type": "control"},
+        ],
         "spec_version": "2.0",
     }
 
@@ -93,7 +97,11 @@ async def agents_graph_get(rt: NativePlatformToolRuntime) -> Any:
     if agent_id is None:
         raise not_found("Agent not found")
     ctx = await rt.build_control_plane_context()
-    return await AgentGraphMutationService(db=rt.db, organization_id=ctx.organization_id).get_graph(agent_id)
+    return await AgentGraphMutationService(
+        db=rt.db,
+        organization_id=ctx.organization_id,
+        project_id=ctx.project_id,
+    ).get_graph(agent_id)
 
 
 async def agents_graph_validate_patch(rt: NativePlatformToolRuntime) -> Any:
@@ -101,7 +109,11 @@ async def agents_graph_validate_patch(rt: NativePlatformToolRuntime) -> Any:
     if agent_id is None:
         raise not_found("Agent not found")
     ctx = await rt.build_control_plane_context()
-    return await AgentGraphMutationService(db=rt.db, organization_id=ctx.organization_id).validate_patch(
+    return await AgentGraphMutationService(
+        db=rt.db,
+        organization_id=ctx.organization_id,
+        project_id=ctx.project_id,
+    ).validate_patch(
         agent_id,
         list(rt.payload.get("operations") or []),
     )
@@ -114,7 +126,11 @@ async def agents_graph_apply_patch(rt: NativePlatformToolRuntime) -> Any:
     if rt.dry_run:
         return {"status": "skipped", "dry_run": True, "agent_id": str(agent_id)}
     ctx = await rt.build_control_plane_context()
-    return await AgentGraphMutationService(db=rt.db, organization_id=ctx.organization_id).apply_patch(
+    return await AgentGraphMutationService(
+        db=rt.db,
+        organization_id=ctx.organization_id,
+        project_id=ctx.project_id,
+    ).apply_patch(
         agent_id,
         list(rt.payload.get("operations") or []),
         user_id=ctx.user_id,
@@ -130,7 +146,11 @@ async def agents_graph_add_tool(rt: NativePlatformToolRuntime) -> Any:
     if not node_id or not tool_id:
         raise validation("node_id and tool_id are required")
     ctx = await rt.build_control_plane_context()
-    return await AgentGraphMutationService(db=rt.db, organization_id=ctx.organization_id).add_tool_to_agent_node(
+    return await AgentGraphMutationService(
+        db=rt.db,
+        organization_id=ctx.organization_id,
+        project_id=ctx.project_id,
+    ).add_tool_to_agent_node(
         agent_id,
         node_id=node_id,
         tool_id=tool_id,
@@ -143,7 +163,11 @@ async def agents_graph_remove_tool(rt: NativePlatformToolRuntime) -> Any:
     if agent_id is None:
         raise not_found("Agent not found")
     ctx = await rt.build_control_plane_context()
-    return await AgentGraphMutationService(db=rt.db, organization_id=ctx.organization_id).remove_tool_from_agent_node(
+    return await AgentGraphMutationService(
+        db=rt.db,
+        organization_id=ctx.organization_id,
+        project_id=ctx.project_id,
+    ).remove_tool_from_agent_node(
         agent_id,
         node_id=str(rt.payload.get("node_id") or ""),
         tool_id=str(rt.payload.get("tool_id") or ""),
@@ -156,7 +180,11 @@ async def agents_graph_set_model(rt: NativePlatformToolRuntime) -> Any:
     if agent_id is None:
         raise not_found("Agent not found")
     ctx = await rt.build_control_plane_context()
-    return await AgentGraphMutationService(db=rt.db, organization_id=ctx.organization_id).set_agent_model(
+    return await AgentGraphMutationService(
+        db=rt.db,
+        organization_id=ctx.organization_id,
+        project_id=ctx.project_id,
+    ).set_agent_model(
         agent_id,
         node_id=str(rt.payload.get("node_id") or ""),
         model_id=str(rt.payload.get("model_id") or ""),
@@ -169,7 +197,11 @@ async def agents_graph_set_instructions(rt: NativePlatformToolRuntime) -> Any:
     if agent_id is None:
         raise not_found("Agent not found")
     ctx = await rt.build_control_plane_context()
-    return await AgentGraphMutationService(db=rt.db, organization_id=ctx.organization_id).set_agent_instructions(
+    return await AgentGraphMutationService(
+        db=rt.db,
+        organization_id=ctx.organization_id,
+        project_id=ctx.project_id,
+    ).set_agent_instructions(
         agent_id,
         node_id=str(rt.payload.get("node_id") or ""),
         instructions=str(rt.payload.get("instructions") or ""),

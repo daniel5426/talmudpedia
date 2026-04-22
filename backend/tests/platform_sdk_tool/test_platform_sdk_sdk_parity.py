@@ -167,9 +167,9 @@ class _FakeCatalogAPI:
         self.calls.append({"method": "get_rag_operator_catalog", "tenant_slug": tenant_slug})
         return {"data": {"ingest": [{"operator_id": "ingest.parse"}]}}
 
-    def list_agent_operators(self):
-        self.calls.append({"method": "list_agent_operators"})
-        return {"data": [{"type": "start", "category": "core"}]}
+    def list_agent_nodes(self):
+        self.calls.append({"method": "list_agent_nodes"})
+        return {"data": {"nodes": [{"type": "start", "category": "core"}]}}
 
 
 class _FakeRagAPI:

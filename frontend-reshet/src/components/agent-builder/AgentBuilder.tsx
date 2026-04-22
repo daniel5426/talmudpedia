@@ -36,18 +36,17 @@ import {
     InteractionMode,
 } from "@/components/builder"
 import {
-    AgentNodeSpec,
     AgentNodeData,
     AgentNodeCategory,
     AgentNodeType,
     canConnect,
-    getNodeSpec,
 } from "./types"
 import { normalizeBuilderNode, normalizeBuilderEdges, normalizeGraphDefinition, normalizeGraphSpecForSave } from "./graphspec"
 import { getRenderGraphForMode } from "./runtime-merge"
 import { useAgentGraphAnalysis } from "./useAgentGraphAnalysis"
 import { getTemplateSuggestionsForNode } from "./template-suggestions"
 import { AgentExecutionEvent, AgentGraphDefinition } from "@/services"
+import type { NodeCatalogItem } from "@/services/graph-authoring"
 import { AlertTriangle, LayoutGrid, Trash2 } from "lucide-react"
 import { AgentBuilderUiContext } from "./agent-builder-ui-context"
 import { useAgentBuilderCanvasResources } from "./hooks/useAgentBuilderCanvasResources"
@@ -657,12 +656,12 @@ function AgentBuilderInner({
 
             const nodeType = event.dataTransfer.getData("application/node-type") as AgentNodeType
             const category = event.dataTransfer.getData("application/node-category") as AgentNodeCategory
-            const specString = event.dataTransfer.getData("application/node-spec")
+            const catalogItemString = event.dataTransfer.getData("application/node-catalog-item")
 
             if (!nodeType || !category) return
 
-            const spec = specString ? JSON.parse(specString) as AgentNodeSpec : getNodeSpec(nodeType)
-            if (!spec) return
+            const catalogItem = catalogItemString ? JSON.parse(catalogItemString) as NodeCatalogItem : null
+            if (!catalogItem) return
 
             const position = screenToFlowPosition({
                 x: event.clientX,
@@ -677,11 +676,12 @@ function AgentBuilderInner({
                 data: {
                     nodeType,
                     category,
-                    displayName: spec.displayName,
+                    displayName: catalogItem.title,
                     config: {},
-                    inputType: spec.inputType,
-                    outputType: spec.outputType,
-                    isConfigured: (spec.configFields || []).length === 0,
+                    inputType: catalogItem.input_type as AgentNodeData["inputType"],
+                    outputType: catalogItem.output_type as AgentNodeData["outputType"],
+                    isConfigured: (catalogItem.required_config_fields || []).length === 0,
+                    requiredConfigFields: catalogItem.required_config_fields || [],
                     hasErrors: false,
                 },
             } as Node<AgentNodeData>
@@ -695,11 +695,11 @@ function AgentBuilderInner({
     const handleDragStart = useCallback(
         (
             event: React.DragEvent,
-            spec: AgentNodeSpec
+            catalogItem: NodeCatalogItem
         ) => {
-            event.dataTransfer.setData("application/node-type", spec.nodeType)
-            event.dataTransfer.setData("application/node-category", spec.category)
-            event.dataTransfer.setData("application/node-spec", JSON.stringify(spec))
+            event.dataTransfer.setData("application/node-type", catalogItem.type)
+            event.dataTransfer.setData("application/node-category", catalogItem.category)
+            event.dataTransfer.setData("application/node-catalog-item", JSON.stringify(catalogItem))
             event.dataTransfer.effectAllowed = "move"
         },
         []
@@ -728,10 +728,11 @@ function AgentBuilderInner({
                 nds.map((node) => {
                     if (node.id === nodeId) {
                         const data = node.data as AgentNodeData
-                        const spec = getNodeSpec(data.nodeType)
-                        const requiredFields = spec?.configFields.filter(f => f.required) || []
-                        const isConfigured = requiredFields.every((f) => {
-                            const val = config[f.name]
+                        const requiredFields = Array.isArray((data as any).requiredConfigFields)
+                            ? ((data as any).requiredConfigFields as string[])
+                            : []
+                        const isConfigured = requiredFields.every((fieldName) => {
+                            const val = config[fieldName]
                             if (Array.isArray(val)) {
                                 return val.length > 0
                             }

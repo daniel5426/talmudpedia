@@ -36,6 +36,7 @@ import { ExecutionHistoryDropdown } from "@/components/agent-builder/ExecutionHi
 import { FloatingPanel } from "@/components/builder"
 import { cn } from "@/lib/utils"
 import type { AgentChatHistoryItem } from "@/hooks/useAgentThreadHistory"
+import { RequireActiveProject } from "@/components/admin/RequireActiveProject"
 
 const ReactArtifactPane = dynamic(
     () => import("@/components/ai-elements/ReactArtifactPane").then((mod) => mod.ReactArtifactPane),
@@ -517,12 +518,14 @@ function PlaygroundContent() {
 export default function PlaygroundPage() {
     const currentProjectId = useAuthStore((state) => state.activeProject?.id ?? null)
     return (
-        <Suspense fallback={
-            <div className="flex w-full flex-col items-center justify-center min-h-screen">
-                <Loader2 className="h-8 w-8 animate-spin text-primary" />
-            </div>
-        }>
-            <PlaygroundContent key={currentProjectId ?? "no-project"} />
-        </Suspense>
+        <RequireActiveProject>
+            <Suspense fallback={
+                <div className="flex w-full flex-col items-center justify-center min-h-screen">
+                    <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                </div>
+            }>
+                <PlaygroundContent key={currentProjectId ?? "no-project"} />
+            </Suspense>
+        </RequireActiveProject>
     )
 }

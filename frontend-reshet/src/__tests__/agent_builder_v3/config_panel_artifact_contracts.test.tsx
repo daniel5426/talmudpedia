@@ -16,30 +16,37 @@ jest.mock("@/services", () => ({
   },
   agentService: {
     listAgents: jest.fn(async () => ({ items: [], total: 0, has_more: false, skip: 0, limit: 100, view: "summary" })),
-    listOperators: jest.fn(async () => ([
-      {
-        type: artifactType,
-        category: "action",
-        display_name: "Organization Artifact",
-        description: "Artifact-backed node",
-        reads: [],
-        writes: [],
-        config_schema: {},
-        output_contract: {
-          fields: [{ key: "answer", type: "string", label: "Answer" }],
-        },
-        ui: {
-          icon: "Package",
-          inputType: "any",
-          outputType: "context",
-          configFields: [],
-          inputs: [
-            { name: "query", type: "string", required: true, description: "Question to answer" },
-            { name: "user_id", type: "string", required: false, description: "Optional user id" },
-          ],
+    getNodeSchemas: jest.fn(async () => ({
+      specs: {
+        [artifactType]: {
+          type: artifactType,
+          title: "Organization Artifact",
+          category: "action",
+          input_type: "any",
+          output_type: "context",
+          config_schema: {
+            type: "object",
+            properties: {},
+            "x-ui": {
+              artifactInputs: [
+                { name: "query", type: "string", required: true, description: "Question to answer" },
+                { name: "user_id", type: "string", required: false, description: "Optional user id" },
+              ],
+            },
+          },
+          output_schema: {
+            type: "object",
+            properties: {
+              answer: { type: "string", title: "Answer" },
+            },
+          },
+          field_contracts: {},
+          graph_hints: { editor: "generic" },
         },
       },
-    ])),
+      unknown: [],
+      instance_contract: {},
+    })),
   },
 }))
 
