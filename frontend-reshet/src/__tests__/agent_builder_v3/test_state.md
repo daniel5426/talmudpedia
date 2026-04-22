@@ -1,6 +1,6 @@
 # Test State: Agent Builder v3
 
-Last Updated: 2026-04-21
+Last Updated: 2026-04-22
 
 **Scope**
 Graph Spec 4.0 frontend serialization defaults, Start-as-projection contract editing, canonical workflow modality toggles, graph-analysis hook behavior, scoped ValueRef picker behavior, and ConfigPanel contract-driven filtering for the agent builder.
@@ -14,6 +14,7 @@ Graph Spec 4.0 frontend serialization defaults, Start-as-projection contract edi
 - `config_panel_artifact_contracts.test.tsx`
 - `node_types_registry.test.ts`
 - `state_variable_modal.test.tsx`
+- `graph_authoring_defaults.test.ts`
 
 **Scenarios Covered**
 - Builder save always persists `spec_version: "4.0"` plus top-level `workflow_contract` and `state_contract`
@@ -38,11 +39,15 @@ Graph Spec 4.0 frontend serialization defaults, Start-as-projection contract edi
 - ConfigPanel renders artifact field-mapping inputs from backend-provided artifact operator contracts
 - The frontend node registry is derived from the canonical built-in node specs, so renderer coverage cannot drift for built-in nodes like `speech_to_text`
 - ConfigPanel resource loaders now consume canonical control-plane list envelopes for models, tools, pipelines, and agents.
+- Schema-default mirroring now supports nested object defaults without inventing fields that the backend does not own.
 
 **Last Run**
 - Command: `pnpm exec jest src/__tests__/agent_builder_v3/config_panel_value_ref_contracts.test.tsx src/__tests__/agent_builder_v3/config_panel_artifact_contracts.test.tsx --runInBand`
 - Date: 2026-04-14 23:18 EEST
 - Result: Pass (2 suites, 3 tests)
+- Command: `cd frontend-reshet && ./node_modules/.bin/jest --runInBand src/__tests__/agent_builder_v3/graph_authoring_defaults.test.ts src/__tests__/agent_builder_v3/graphspec_v3_serialization.test.ts`
+- Date: 2026-04-22 Asia/Hebron
+- Result: Pass (2 suites, 6 tests)
 - Command: `pnpm -C frontend-reshet test -- --runTestsByPath src/__tests__/agent_builder_v3/graphspec_v3_serialization.test.ts --watch=false`
 - Date: 2026-03-31 Asia/Hebron
 - Result: Pass (1 suite, 5 tests)

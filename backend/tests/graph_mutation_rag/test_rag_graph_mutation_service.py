@@ -105,4 +105,4 @@ async def test_rag_apply_patch_persists_incomplete_graph_and_returns_advisory_di
 
     assert calls["committed"] is True
     assert result["validation"]["valid"] is False
-    assert result["validation"]["errors"][0]["code"] == "VALIDATION_ERROR"
+    assert {item["code"] for item in result["validation"]["errors"]} >= {"MISSING_REQUIRED_CONFIG", "VALIDATION_ERROR"}

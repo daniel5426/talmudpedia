@@ -20,6 +20,14 @@ from app.services.prompt_reference_resolver import PromptReferenceError, PromptR
 from app.agent.graph.compiler import AgentCompiler
 from app.agent.graph.schema import AgentGraph
 from app.agent.registry import AgentOperatorRegistry
+from app.graph_authoring import (
+    build_authoring_issue,
+    collect_agent_authoring_issues,
+    critical_agent_write_issues,
+    dedupe_issues,
+    normalize_agent_graph_definition,
+    normalize_agent_node_type,
+)
 # from ..agent.graph.compiler import AgentCompiler # Mocking compiler for now if not ready, or use it
 # from ..agent.graph.schema import AgentGraph
 
@@ -136,16 +144,7 @@ class AgentService:
 
     @staticmethod
     def _normalize_node_type(node_type: Any) -> str:
-        mapping = {
-            "input": "start",
-            "start": "start",
-            "output": "end",
-            "end": "end",
-            "tool_call": "tool",
-            "rag_retrieval": "rag",
-            "rag_pipeline": "rag",
-        }
-        return mapping.get(str(node_type), str(node_type))
+        return normalize_agent_node_type(node_type)
 
     @staticmethod
     def _build_rich_validation_issue(
@@ -159,18 +158,22 @@ class AgentService:
         expected: Any = None,
         actual: Any = None,
         suggestions: Optional[List[str]] = None,
+        suggested_value: Any = None,
+        repair_hint: Optional[str] = None,
     ) -> Dict[str, Any]:
-        return {
-            "code": str(code),
-            "message": str(message),
-            "severity": str(severity),
-            "node_id": node_id,
-            "edge_id": edge_id,
-            "path": path,
-            "expected": expected,
-            "actual": actual,
-            "suggestions": suggestions if isinstance(suggestions, list) else None,
-        }
+        return build_authoring_issue(
+            code=code,
+            message=message,
+            severity=severity,
+            node_id=node_id,
+            edge_id=edge_id,
+            path=path,
+            expected=expected,
+            actual=actual,
+            suggestions=suggestions if isinstance(suggestions, list) else None,
+            suggested_value=suggested_value,
+            repair_hint=repair_hint,
+        )
 
     @staticmethod
     def _derive_error_code(message: str) -> str:
@@ -299,49 +302,55 @@ class AgentService:
         if not isinstance(graph_definition, dict):
             raise AgentGraphValidationError(
                 [
-                    {
-                        "node_id": None,
-                        "edge_id": None,
-                        "message": "graph_definition must be an object",
-                        "severity": "error",
-                    }
+                    self._build_rich_validation_issue(
+                        code="INVALID_GRAPH_DEFINITION",
+                        message="graph_definition must be an object",
+                        severity="error",
+                        expected="object",
+                        actual=type(graph_definition).__name__,
+                    )
                 ]
             )
 
         try:
-            graph = AgentGraph(**graph_definition)
+            normalized_graph = normalize_agent_graph_definition(graph_definition)
         except PydanticValidationError as exc:
             raise AgentGraphValidationError(
                 [
-                    {
-                        "node_id": None,
-                        "edge_id": None,
-                        "message": f"Invalid graph schema: {exc}",
-                        "severity": "error",
-                    }
+                    self._build_rich_validation_issue(
+                        code="INVALID_GRAPH_SCHEMA",
+                        message=f"Invalid graph schema: {exc}",
+                        severity="error",
+                        expected="AgentGraph schema compliant object",
+                        actual="schema_validation_failed",
+                    )
                 ]
             ) from exc
 
+        write_issues = critical_agent_write_issues(collect_agent_authoring_issues(normalized_graph))
+        if write_issues:
+            raise AgentGraphValidationError(write_issues)
+
         try:
-            await PromptReferenceResolver(self.db, self.organization_id).validate_graph_definition(graph.model_dump())
+            await PromptReferenceResolver(self.db, self.organization_id).validate_graph_definition(normalized_graph)
         except PromptReferenceError as exc:
             raise AgentGraphValidationError(
                 [
-                    {
-                        "node_id": None,
-                        "edge_id": None,
-                        "message": str(exc),
-                        "severity": "error",
-                    }
+                    self._build_rich_validation_issue(
+                        code="PROMPT_REFERENCE_INVALID",
+                        message=str(exc),
+                        severity="error",
+                        repair_hint="Fix the prompt reference or remove it from the graph before saving.",
+                    )
                 ]
             ) from exc
 
         # Persistence rejects only illegal graph documents and explicit bad references.
-        reference_issues = await self._collect_runtime_reference_issues(graph.model_dump())
+        reference_issues = await self._collect_runtime_reference_issues(normalized_graph)
         critical_errors = [item for item in reference_issues if item.get("severity") == "error"]
         if critical_errors:
             raise AgentGraphValidationError(critical_errors)
-        return graph.model_dump()
+        return normalized_graph
 
     async def _build_validation_result_for_graph(
         self,
@@ -371,7 +380,8 @@ class AgentService:
 
         issues: List[Dict[str, Any]] = []
         try:
-            graph = AgentGraph(**graph_definition)
+            normalized_graph = normalize_agent_graph_definition(graph_definition)
+            graph = AgentGraph(**normalized_graph)
         except PydanticValidationError as exc:
             issues.append(
                 self._build_rich_validation_issue(
@@ -383,6 +393,8 @@ class AgentService:
                 )
             )
             return AgentValidationResult(valid=False, errors=issues, warnings=[])
+
+        issues.extend(collect_agent_authoring_issues(normalized_graph))
 
         compiler = AgentCompiler(db=self.db, organization_id=self.organization_id)
         try:
@@ -431,10 +443,13 @@ class AgentService:
                     expected=expected,
                     actual=actual,
                     suggestions=suggestions,
+                    suggested_value=suggestions[0] if suggestions else None,
+                    repair_hint="Fix the graph node type or config and validate again." if code != "GRAPH_ANALYSIS_FAILED" else None,
                 )
             )
 
-        issues.extend(await self._collect_runtime_reference_issues(graph_definition))
+        issues.extend(await self._collect_runtime_reference_issues(normalized_graph))
+        issues = dedupe_issues(issues)
 
         errors = [item for item in issues if str(item.get("severity") or "").lower() == "error"]
         warnings = [item for item in issues if str(item.get("severity") or "").lower() != "error"]

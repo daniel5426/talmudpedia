@@ -51,14 +51,19 @@ def rag_catalog_item(spec: OperatorSpec) -> NodeCatalogItem:
 
 
 def _rag_field_payload(field: ConfigFieldSpec) -> dict[str, Any]:
-    raw = field.model_dump() if hasattr(field, "model_dump") else dict(field)
+    if hasattr(field, "model_dump"):
+        raw = field.model_dump()
+    elif hasattr(field, "__dict__"):
+        raw = dict(getattr(field, "__dict__") or {})
+    else:
+        raw = {}
     payload: dict[str, Any] = {
-        "name": field.name,
-        "label": field.name.replace("_", " ").title(),
-        "fieldType": _widget_for_rag_field(field.field_type),
-        "required": bool(field.required),
-        "default": field.default,
-        "description": field.description,
+        "name": str(getattr(field, "name", "") or ""),
+        "label": str(getattr(field, "name", "") or "").replace("_", " ").title(),
+        "fieldType": _widget_for_rag_field(getattr(field, "field_type", ConfigFieldType.STRING)),
+        "required": bool(getattr(field, "required", False)),
+        "default": getattr(field, "default", None),
+        "description": getattr(field, "description", None),
     }
     if raw.get("options"):
         payload["options"] = [{"value": option, "label": option} for option in list(raw.get("options") or [])]

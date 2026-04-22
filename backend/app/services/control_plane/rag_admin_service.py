@@ -10,7 +10,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.postgres.engine import sessionmaker
 from app.db.postgres.models.rag import ExecutablePipeline, PipelineJob, PipelineJobStatus, PipelineType, VisualPipeline
-from app.graph_authoring import rag_catalog_item, rag_instance_contract, rag_node_spec
+from app.graph_authoring import (
+    collect_rag_authoring_issues,
+    critical_rag_write_issues,
+    dedupe_issues,
+    normalize_rag_graph_definition,
+    rag_catalog_item,
+    rag_instance_contract,
+    rag_node_spec,
+)
 from app.rag.pipeline.compiler import PipelineCompiler, VisualPipeline as CompilerVisualPipeline
 from app.rag.pipeline.custom_operator_sync import sync_custom_operators
 from app.rag.pipeline.executor import PipelineExecutor
@@ -109,14 +117,21 @@ class RagAdminService:
         name = str(params.name or "").strip()
         if not name:
             raise validation("name is required", field="name")
+        project_id = self._require_project_id(ctx)
+        await sync_custom_operators(self.db, ctx.organization_id)
+        normalized_graph = self._normalize_graph_for_write(
+            nodes=params.nodes,
+            edges=params.edges,
+            organization_id=str(ctx.organization_id),
+        )
         pipeline = VisualPipeline(
             organization_id=ctx.organization_id,
-            project_id=ctx.project_id,
+            project_id=project_id,
             org_unit_id=params.org_unit_id,
             name=name,
             description=params.description,
-            nodes=list(params.nodes or []),
-            edges=list(params.edges or []),
+            nodes=list(normalized_graph["nodes"]),
+            edges=list(normalized_graph["edges"]),
             version=1,
             is_published=False,
             pipeline_type=self._normalize_pipeline_type(params.pipeline_type),
@@ -125,13 +140,14 @@ class RagAdminService:
         self.db.add(pipeline)
         await self.db.commit()
         await self.db.refresh(pipeline)
-        return {"id": str(pipeline.id), "status": "created"}
+        return {"id": str(pipeline.id), "status": "created", "pipeline": self.serialize_pipeline(pipeline)}
 
     async def update_pipeline(self, *, ctx: ControlPlaneContext, pipeline_id: UUID, params: UpdatePipelineInput) -> dict[str, Any]:
         pipeline = await self._get_pipeline(ctx, pipeline_id)
         previous_name = pipeline.name
         previous_description = pipeline.description
         was_published = bool(pipeline.is_published)
+        await sync_custom_operators(self.db, ctx.organization_id)
         if was_published:
             pipeline.version = int(pipeline.version or 0) + 1
             pipeline.is_published = False
@@ -143,9 +159,21 @@ class RagAdminService:
         if params.description is not None:
             pipeline.description = params.description
         if params.nodes is not None:
-            pipeline.nodes = list(params.nodes)
-        if params.edges is not None:
-            pipeline.edges = list(params.edges)
+            normalized_graph = self._normalize_graph_for_write(
+                nodes=params.nodes,
+                edges=params.edges if params.edges is not None else pipeline.edges,
+                organization_id=str(ctx.organization_id),
+            )
+            pipeline.nodes = list(normalized_graph["nodes"])
+            pipeline.edges = list(normalized_graph["edges"])
+        elif params.edges is not None:
+            normalized_graph = self._normalize_graph_for_write(
+                nodes=pipeline.nodes,
+                edges=params.edges,
+                organization_id=str(ctx.organization_id),
+            )
+            pipeline.nodes = list(normalized_graph["nodes"])
+            pipeline.edges = list(normalized_graph["edges"])
         if params.pipeline_type is not None:
             pipeline.pipeline_type = self._normalize_pipeline_type(params.pipeline_type)
         pipeline.updated_at = datetime.utcnow()
@@ -159,7 +187,7 @@ class RagAdminService:
             await binding_service.demote_pipeline_tool_binding(pipeline)
         await self.db.commit()
         await self.db.refresh(pipeline)
-        return {"status": "updated", "version": pipeline.version}
+        return {"status": "updated", "version": pipeline.version, "pipeline": self.serialize_pipeline(pipeline)}
 
     async def get_executable_pipeline(self, *, ctx: ControlPlaneContext, executable_pipeline_id: UUID) -> dict[str, Any]:
         executable = await self._get_executable_pipeline(ctx, executable_pipeline_id)
@@ -168,6 +196,11 @@ class RagAdminService:
     async def compile_pipeline(self, *, ctx: ControlPlaneContext, pipeline_id: UUID) -> dict[str, Any]:
         pipeline = await self._get_pipeline(ctx, pipeline_id)
         await sync_custom_operators(self.db, ctx.organization_id)
+        normalized_graph = normalize_rag_graph_definition(
+            {"nodes": list(pipeline.nodes or []), "edges": list(pipeline.edges or [])},
+            organization_id=str(ctx.organization_id),
+            registry=self.registry,
+        )
         compile_result = PipelineCompiler().compile(
             CompilerVisualPipeline(
                 id=pipeline.id,
@@ -175,8 +208,8 @@ class RagAdminService:
                 org_unit_id=pipeline.org_unit_id,
                 name=pipeline.name,
                 description=pipeline.description,
-                nodes=list(pipeline.nodes or []),
-                edges=list(pipeline.edges or []),
+                nodes=list(normalized_graph["nodes"]),
+                edges=list(normalized_graph["edges"]),
                 version=pipeline.version,
                 pipeline_type=pipeline.pipeline_type,
                 is_published=pipeline.is_published,
@@ -186,9 +219,17 @@ class RagAdminService:
             require_published_artifacts=True,
         )
         if not getattr(compile_result, "success", False):
+            authoring_issues = collect_rag_authoring_issues(
+                normalized_graph,
+                organization_id=str(ctx.organization_id),
+                registry=self.registry,
+            )
             return {
                 "success": False,
-                "errors": [self._dump(item) for item in list(getattr(compile_result, "errors", []) or [])],
+                "errors": dedupe_issues(
+                    authoring_issues
+                    + [self._dump(item) for item in list(getattr(compile_result, "errors", []) or [])]
+                ),
                 "warnings": [self._dump(item) for item in list(getattr(compile_result, "warnings", []) or [])],
             }
         executable = ExecutablePipeline(
@@ -217,6 +258,29 @@ class RagAdminService:
             "version": pipeline.version,
             "warnings": [self._dump(item) for item in list(getattr(compile_result, "warnings", []) or [])],
         }
+
+    def _normalize_graph_for_write(
+        self,
+        *,
+        nodes: list[dict[str, Any]] | None,
+        edges: list[dict[str, Any]] | None,
+        organization_id: str,
+    ) -> dict[str, Any]:
+        normalized_graph = normalize_rag_graph_definition(
+            {"nodes": list(nodes or []), "edges": list(edges or [])},
+            organization_id=organization_id,
+            registry=self.registry,
+        )
+        issues = critical_rag_write_issues(
+            collect_rag_authoring_issues(
+                normalized_graph,
+                organization_id=organization_id,
+                registry=self.registry,
+            )
+        )
+        if issues:
+            raise validation("Pipeline write rejected", errors=issues)
+        return normalized_graph
 
     async def get_executable_input_schema(self, *, ctx: ControlPlaneContext, executable_pipeline_id: UUID) -> dict[str, Any]:
         executable = await self._get_executable_pipeline(ctx, executable_pipeline_id)

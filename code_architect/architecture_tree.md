@@ -104,8 +104,11 @@ backend/app/agent/workflows/
 backend/app/graph_authoring/
 backend/app/graph_authoring/types.py
 backend/app/graph_authoring/schema.py
+backend/app/graph_authoring/registry.py
 backend/app/graph_authoring/agent_specs.py
 backend/app/graph_authoring/rag_specs.py
+backend/app/graph_authoring/normalizers/
+backend/app/graph_authoring/validators/
 
 backend/app/rag/
 backend/app/rag/factory.py

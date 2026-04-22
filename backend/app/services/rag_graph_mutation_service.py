@@ -8,6 +8,12 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.graph_authoring import (
+    collect_rag_authoring_issues,
+    dedupe_issues,
+    get_rag_authoring_spec,
+    normalize_rag_graph_definition,
+)
 from app.db.postgres.models.rag import VisualPipeline
 from app.rag.pipeline.compiler import PipelineCompiler, VisualPipeline as CompilerVisualPipeline
 from app.rag.pipeline.registry import OperatorRegistry
@@ -17,9 +23,10 @@ logger = logging.getLogger(__name__)
 
 
 class RagGraphMutationService:
-    def __init__(self, db: AsyncSession, organization_id: UUID):
+    def __init__(self, db: AsyncSession, organization_id: UUID, project_id: UUID | None = None):
         self.db = db
         self.organization_id = organization_id
+        self.project_id = project_id
         self.registry = OperatorRegistry.get_instance()
 
     async def get_graph(self, pipeline_id: UUID) -> dict[str, Any]:
@@ -41,10 +48,15 @@ class RagGraphMutationService:
             operations,
             validate_node_config_path=self._validate_node_config_path,
         )
-        compile_result = self._compile_preview(pipeline, mutation.graph)
+        normalized_graph = normalize_rag_graph_definition(
+            mutation.graph,
+            organization_id=str(self.organization_id),
+            registry=self.registry,
+        )
+        compile_result = self._compile_preview(pipeline, normalized_graph)
         return self._build_result(
             pipeline=pipeline,
-            graph_definition=mutation.graph,
+            graph_definition=normalized_graph,
             mutation=mutation,
             compile_result=compile_result,
         )
@@ -130,10 +142,15 @@ class RagGraphMutationService:
         )
 
     async def _get_pipeline(self, pipeline_id: UUID) -> VisualPipeline:
+        if self.project_id is None:
+            raise GraphMutationError(
+                [{"code": "ACTIVE_PROJECT_REQUIRED", "message": "Active project context is required"}]
+            )
         result = await self.db.execute(
             select(VisualPipeline).where(
                 VisualPipeline.id == pipeline_id,
                 VisualPipeline.organization_id == self.organization_id,
+                VisualPipeline.project_id == self.project_id,
             )
         )
         pipeline = result.scalar_one_or_none()
@@ -165,8 +182,8 @@ class RagGraphMutationService:
 
     def _validate_node_config_path(self, node: dict[str, Any], segments: list[str | int]) -> None:
         operator_id = str(node.get("operator") or "").strip()
-        spec = self.registry.get(operator_id, organization_id=str(self.organization_id))
-        if spec is None or not segments:
+        raw_spec = self.registry.get(operator_id, organization_id=str(self.organization_id))
+        if raw_spec is None or not segments:
             return
         first_segment = segments[0]
         if isinstance(first_segment, int):
@@ -179,7 +196,16 @@ class RagGraphMutationService:
                     }
                 ]
             )
-        allowed = {field.name for field in list(spec.required_config or []) + list(spec.optional_config or [])}
+        if hasattr(raw_spec, "operator_id"):
+            spec = get_rag_authoring_spec(operator_id, organization_id=str(self.organization_id), registry=self.registry)
+            config_schema = spec.config_schema if spec and isinstance(spec.config_schema, dict) else {}
+            allowed = set(config_schema.get("properties", {}).keys()) if isinstance(config_schema.get("properties"), dict) else set()
+        else:
+            allowed = {
+                str(getattr(field, "name", "") or "").strip()
+                for field in list(getattr(raw_spec, "required_config", []) or []) + list(getattr(raw_spec, "optional_config", []) or [])
+                if str(getattr(field, "name", "") or "").strip()
+            }
         existing = set((node.get("config") or {}).keys()) if isinstance(node.get("config"), dict) else set()
         if allowed and first_segment not in allowed and first_segment not in existing:
             raise GraphMutationError(
@@ -211,11 +237,24 @@ class RagGraphMutationService:
                 "warnings": list(getattr(mutation, "warnings", []) or []),
             },
             "validation": {
-                "valid": bool(getattr(compile_result, "success", False)),
-                "errors": [
-                    item.model_dump() if hasattr(item, "model_dump") else dict(item)
-                    for item in list(getattr(compile_result, "errors", []) or [])
-                ],
+                "valid": bool(getattr(compile_result, "success", False))
+                and not any(
+                    str(issue.get("severity") or "").lower() == "error"
+                    for issue in collect_rag_authoring_issues(
+                        graph_definition,
+                        organization_id=str(pipeline.organization_id),
+                    )
+                ),
+                "errors": dedupe_issues(
+                    collect_rag_authoring_issues(
+                        graph_definition,
+                        organization_id=str(pipeline.organization_id),
+                    )
+                    + [
+                        item.model_dump() if hasattr(item, "model_dump") else dict(item)
+                        for item in list(getattr(compile_result, "errors", []) or [])
+                    ]
+                ),
                 "warnings": [
                     item.model_dump() if hasattr(item, "model_dump") else dict(item)
                     for item in list(getattr(compile_result, "warnings", []) or [])

@@ -114,7 +114,8 @@ async def _resolve_service(
         raise HTTPException(status_code=400, detail="Organization context required")
     if not await require_pipeline_permission(organization, user, Action.WRITE, pipeline_id=pipeline_id, db=db):
         raise HTTPException(status_code=403, detail="Permission denied")
-    return RagGraphMutationService(db=db, organization_id=organization.id)
+    project_id = context.get("project_id")
+    return RagGraphMutationService(db=db, organization_id=organization.id, project_id=UUID(str(project_id)) if project_id else None)
 
 
 @router.get("/visual-pipelines/{pipeline_id}/graph", response_model=Dict[str, Any])

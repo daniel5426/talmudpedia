@@ -71,6 +71,7 @@ def agent_node_spec(spec: AgentOperatorSpec) -> NodeAuthoringSpec:
         spec.config_schema if isinstance(spec.config_schema, dict) else {},
         list(ui.get("configFields") or []) if isinstance(ui.get("configFields"), list) else [],
     )
+    config_schema = _canonicalize_route_table_fields(spec.type, config_schema)
     graph_hints = GraphHints(
         editor=_editor_for_type(spec.type),
         branching=_branching_for_agent(spec),
@@ -235,3 +236,32 @@ def agent_instance_contract() -> dict[str, Any]:
             "condition": {"type": "string"},
         },
     }
+
+
+def _canonicalize_route_table_fields(node_type: str, config_schema: dict[str, Any]) -> dict[str, Any]:
+    if node_type not in {"router", "judge"}:
+        return config_schema
+    properties = config_schema.get("properties")
+    if not isinstance(properties, dict):
+        return config_schema
+    original_key = "routes" if node_type == "router" else "outcomes"
+    if original_key not in properties or "route_table" in properties:
+        return config_schema
+
+    properties = dict(properties)
+    properties["route_table"] = properties.pop(original_key)
+    config_schema = dict(config_schema)
+    config_schema["properties"] = properties
+
+    required = config_schema.get("required")
+    if isinstance(required, list):
+        config_schema["required"] = ["route_table" if item == original_key else item for item in required]
+
+    root_ui = config_schema.get("x-ui")
+    if isinstance(root_ui, dict):
+        next_ui = dict(root_ui)
+        order = next_ui.get("order")
+        if isinstance(order, list):
+            next_ui["order"] = ["route_table" if item == original_key else item for item in order]
+        config_schema["x-ui"] = next_ui
+    return config_schema

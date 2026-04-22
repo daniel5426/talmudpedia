@@ -152,16 +152,66 @@ export function schemaRows(configSchema?: Record<string, any> | null): string[][
 }
 
 export function applySchemaDefaults(configSchema?: Record<string, any> | null, currentConfig?: Record<string, unknown>): Record<string, unknown> {
-  const next = { ...(currentConfig || {}) }
-  if (!configSchema || typeof configSchema !== "object") return next
-  const properties = configSchema.properties && typeof configSchema.properties === "object"
-    ? configSchema.properties as Record<string, Record<string, any>>
-    : {}
-  Object.entries(properties).forEach(([name, propertySchema]) => {
-    if (next[name] !== undefined) return
-    if (Object.prototype.hasOwnProperty.call(propertySchema, "default")) {
-      next[name] = propertySchema.default
-    }
-  })
-  return next
+  if (!configSchema || typeof configSchema !== "object") {
+    return { ...(currentConfig || {}) }
+  }
+  const normalized = applyNestedSchemaDefaults(configSchema as Record<string, any>, currentConfig ?? MISSING)
+  return normalized && typeof normalized === "object" && !Array.isArray(normalized)
+    ? normalized as Record<string, unknown>
+    : { ...(currentConfig || {}) }
+}
+
+const MISSING = Symbol("missing-schema-default")
+
+function schemaHasDefaults(schema?: Record<string, any> | null): boolean {
+  if (!schema || typeof schema !== "object") return false
+  if (Object.prototype.hasOwnProperty.call(schema, "default")) return true
+  const properties = schema.properties && typeof schema.properties === "object"
+    ? schema.properties as Record<string, Record<string, any>>
+    : null
+  if (properties) {
+    return Object.values(properties).some((value) => schemaHasDefaults(value))
+  }
+  return Boolean(schema.items && typeof schema.items === "object" && schemaHasDefaults(schema.items))
+}
+
+function cloneValue<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return value.map((item) => cloneValue(item)) as T
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([key, item]) => [key, cloneValue(item)])) as T
+  }
+  return value
+}
+
+function applyNestedSchemaDefaults(schema: Record<string, any>, currentValue: unknown): unknown {
+  if (currentValue === MISSING && Object.prototype.hasOwnProperty.call(schema, "default")) {
+    return cloneValue(schema.default)
+  }
+
+  const properties = schema.properties && typeof schema.properties === "object"
+    ? schema.properties as Record<string, Record<string, any>>
+    : null
+  if (properties || schema.type === "object") {
+    const next: Record<string, unknown> = currentValue && typeof currentValue === "object" && !Array.isArray(currentValue)
+      ? { ...(currentValue as Record<string, unknown>) }
+      : {}
+    Object.entries(properties || {}).forEach(([name, propertySchema]) => {
+      const hadExistingValue = Object.prototype.hasOwnProperty.call(next, name)
+      const normalized = applyNestedSchemaDefaults(propertySchema, hadExistingValue ? next[name] : MISSING)
+      if (normalized === MISSING) return
+      if (!hadExistingValue && normalized && typeof normalized === "object" && !Array.isArray(normalized) && Object.keys(normalized as Record<string, unknown>).length === 0 && !Object.prototype.hasOwnProperty.call(propertySchema, "default") && !schemaHasDefaults(propertySchema)) {
+        return
+      }
+      next[name] = normalized
+    })
+    return next
+  }
+
+  if (schema.type === "array" && Array.isArray(currentValue) && schema.items && typeof schema.items === "object") {
+    return currentValue.map((item) => applyNestedSchemaDefaults(schema.items as Record<string, any>, item))
+  }
+
+  return currentValue === MISSING ? MISSING : cloneValue(currentValue)
 }

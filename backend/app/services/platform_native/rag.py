@@ -121,7 +121,7 @@ async def rag_graph_get(rt: NativePlatformToolRuntime) -> Any:
     if pipeline_id is None:
         raise not_found("Pipeline not found")
     ctx = await rt.build_control_plane_context()
-    return await RagGraphMutationService(rt.db, organization_id=ctx.organization_id).get_graph(pipeline_id)
+    return await RagGraphMutationService(rt.db, organization_id=ctx.organization_id, project_id=ctx.project_id).get_graph(pipeline_id)
 
 
 async def rag_graph_validate_patch(rt: NativePlatformToolRuntime) -> Any:
@@ -129,7 +129,7 @@ async def rag_graph_validate_patch(rt: NativePlatformToolRuntime) -> Any:
     if pipeline_id is None:
         raise not_found("Pipeline not found")
     ctx = await rt.build_control_plane_context()
-    return await RagGraphMutationService(rt.db, organization_id=ctx.organization_id).validate_patch(
+    return await RagGraphMutationService(rt.db, organization_id=ctx.organization_id, project_id=ctx.project_id).validate_patch(
         pipeline_id,
         list(rt.payload.get("operations") or []),
     )
@@ -142,7 +142,7 @@ async def rag_graph_apply_patch(rt: NativePlatformToolRuntime) -> Any:
     if rt.dry_run:
         return {"status": "skipped", "dry_run": True, "pipeline_id": str(pipeline_id)}
     ctx = await rt.build_control_plane_context()
-    return await RagGraphMutationService(rt.db, organization_id=ctx.organization_id).apply_patch(
+    return await RagGraphMutationService(rt.db, organization_id=ctx.organization_id, project_id=ctx.project_id).apply_patch(
         pipeline_id,
         list(rt.payload.get("operations") or []),
     )
@@ -155,7 +155,7 @@ async def rag_graph_attach_knowledge_store(rt: NativePlatformToolRuntime) -> Any
     if rt.dry_run:
         return {"status": "skipped", "dry_run": True, "pipeline_id": str(pipeline_id)}
     ctx = await rt.build_control_plane_context()
-    return await RagGraphMutationService(rt.db, organization_id=ctx.organization_id).attach_knowledge_store_to_node(
+    return await RagGraphMutationService(rt.db, organization_id=ctx.organization_id, project_id=ctx.project_id).attach_knowledge_store_to_node(
         pipeline_id,
         node_id=str(rt.payload.get("node_id") or ""),
         knowledge_store_id=str(rt.payload.get("knowledge_store_id") or ""),
@@ -169,7 +169,7 @@ async def rag_graph_set_pipeline_node_config(rt: NativePlatformToolRuntime) -> A
     if rt.dry_run:
         return {"status": "skipped", "dry_run": True, "pipeline_id": str(pipeline_id)}
     ctx = await rt.build_control_plane_context()
-    return await RagGraphMutationService(rt.db, organization_id=ctx.organization_id).set_pipeline_node_config(
+    return await RagGraphMutationService(rt.db, organization_id=ctx.organization_id, project_id=ctx.project_id).set_pipeline_node_config(
         pipeline_id,
         node_id=str(rt.payload.get("node_id") or ""),
         path=str(rt.payload.get("path") or ""),
