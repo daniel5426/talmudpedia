@@ -361,7 +361,7 @@ class ThreadService:
             )
         if organization_id is not None:
             query = query.where(AgentThread.organization_id == organization_id)
-        if project_id is not None or organization_id is not None:
+        if project_id is not None:
             query = query.where(AgentThread.project_id == project_id)
         thread = (await self.db.execute(query)).scalar_one_or_none()
         if thread is None:

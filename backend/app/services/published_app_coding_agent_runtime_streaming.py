@@ -321,15 +321,6 @@ class PublishedAppCodingAgentRuntimeStreamingMixin:
                 result_revision_id=str(getattr(run, "result_revision_id", None) or "") or None,
                 run_status=run.status.value if hasattr(run.status, "value") else str(run.status),
             )
-            if not bool(getattr(run, "has_workspace_writes", False)):
-                apps_builder_trace(
-                    "runtime_stream.schedule_terminal_revision_finalize_skipped",
-                    domain="coding_agent.runtime",
-                    run_id=str(run.id),
-                    app_id=str(app.id),
-                    reason="no_workspace_writes",
-                )
-                return
             if getattr(run, "result_revision_id", None) is not None:
                 apps_builder_trace(
                     "runtime_stream.schedule_terminal_revision_finalize_skipped",

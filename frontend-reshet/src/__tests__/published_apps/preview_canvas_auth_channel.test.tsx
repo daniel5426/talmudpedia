@@ -3,8 +3,8 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { PreviewCanvas } from "@/features/apps-builder/preview/PreviewCanvas";
 
 describe("PreviewCanvas transport behavior", () => {
-  it("posts proxy-only preview auth bridge messages on load and route changes", async () => {
-    const { rerender } = render(
+  it("renders the preview iframe without posting a preview auth bridge message", async () => {
+    render(
       <PreviewCanvas
         previewUrl="https://preview.local/sandbox/session-1/"
         transportKey="session-1:1"
@@ -22,32 +22,9 @@ describe("PreviewCanvas transport behavior", () => {
     fireEvent.load(frame);
 
     await waitFor(() => {
-      expect(postMessage).toHaveBeenCalledWith(
-        expect.objectContaining({
-          type: "talmudpedia.preview-auth.v1",
-          token: null,
-        }),
-        "https://preview.local",
-      );
+      expect(screen.getByTestId("preview-iframe")).toBeInTheDocument();
     });
-
-    rerender(
-      <PreviewCanvas
-        previewUrl="https://preview.local/sandbox/session-1/?preview_route=%2Fchat"
-        transportKey="session-1:1"
-        transportStatus="ready"
-      />,
-    );
-
-    await waitFor(() => {
-      expect(postMessage).toHaveBeenCalledWith(
-        expect.objectContaining({
-          type: "talmudpedia.preview-auth.v1",
-          token: null,
-        }),
-        "https://preview.local",
-      );
-    });
+    expect(postMessage).not.toHaveBeenCalled();
   });
 
   it("keeps iframe src stable when only the same-session preview route changes", async () => {
@@ -106,7 +83,7 @@ describe("PreviewCanvas transport behavior", () => {
     });
   });
 
-  it("keeps the iframe mounted during same-session reconnecting states", async () => {
+  it("keeps the iframe mounted without a reconnect overlay during same-session reconnecting states", async () => {
     const { rerender } = render(
       <PreviewCanvas
         previewUrl="https://preview.local/sandbox/session-1/"
@@ -130,7 +107,7 @@ describe("PreviewCanvas transport behavior", () => {
 
     expect(screen.getByTestId("preview-iframe")).toBeInTheDocument();
     expect(screen.queryByTestId("preview-warmup-overlay")).not.toBeInTheDocument();
-    expect(screen.getByText("Recovering preview sandbox...")).toBeInTheDocument();
+    expect(screen.queryByText("Recovering preview sandbox...")).not.toBeInTheDocument();
   });
 
   it("renders staged loading steps during cold preview boot", () => {

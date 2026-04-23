@@ -1,6 +1,6 @@
 # Auth Session Bootstrap Tests
 
-Last Updated: 2026-04-21
+Last Updated: 2026-04-23
 
 ## Scope
 Frontend coverage for mount-time browser session bootstrap, specifically stalled `/auth/session` requests and duplicate session refresh calls.
@@ -14,6 +14,7 @@ Frontend coverage for mount-time browser session bootstrap, specifically stalled
 ## Key Scenarios Covered
 - Concurrent `authService.getCurrentSession()` callers share a single in-flight `/auth/session` request.
 - Stalled `/auth/session` requests time out instead of hanging forever.
+- Redirect-style `/auth/session` recovery responses trigger browser navigation instead of falling through to local onboarding/session hydration.
 - Frontend permission gating treats backend `effective_scopes` as canonical and does not translate legacy permission names.
 - `AuthRefresher` preserves the current auth snapshot and flips `sessionChecked` after a session-bootstrap timeout.
 - Generic non-session `401` responses no longer force a global logout.
@@ -23,6 +24,9 @@ Frontend coverage for mount-time browser session bootstrap, specifically stalled
 - Command: `cd frontend-reshet && npm exec pnpm -- test -- --runTestsByPath src/__tests__/auth_session_bootstrap/auth_service.test.ts`
 - Date: 2026-04-20 Asia/Hebron
 - Result: PASS (`1 suite, 3 tests`)
+- Command: `cd frontend-reshet && npm exec pnpm -- test -- --runTestsByPath src/__tests__/auth_session_bootstrap/auth_refresher.test.tsx src/__tests__/auth_session_bootstrap/auth_service.test.ts src/__tests__/auth_session_bootstrap/admin_layout_auth_gate.test.tsx`
+- Date: 2026-04-23 Asia/Hebron
+- Result: PASS (`3 suites passed, 6 tests passed`)
 
 ## Known Gaps / Follow-ups
 - No browser-level integration test yet for `/admin` redirect behavior after a timed-out bootstrap.

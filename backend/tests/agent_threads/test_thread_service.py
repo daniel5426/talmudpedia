@@ -8,6 +8,7 @@ import pytest
 from app.db.postgres.models.agent_threads import AgentThread, AgentThreadSurface, AgentThreadTurn, AgentThreadTurnStatus
 from app.db.postgres.models.agents import Agent, AgentRun
 from app.db.postgres.models.identity import Organization, User
+from app.db.postgres.models.workspace import Project
 from app.services.thread_service import ThreadAccessError, ThreadService
 
 
@@ -27,6 +28,18 @@ async def _seed_thread_context(db_session):
     db_session.add(agent)
     await db_session.flush()
     return tenant, user, agent
+
+
+async def _seed_project(db_session, tenant: Organization) -> Project:
+    project = Project(
+        organization_id=tenant.id,
+        name=f"Thread Project {uuid4().hex[:8]}",
+        slug=f"thread-project-{uuid4().hex[:8]}",
+        is_default=True,
+    )
+    db_session.add(project)
+    await db_session.flush()
+    return project
 
 
 @pytest.mark.asyncio
@@ -513,3 +526,52 @@ async def test_resolve_or_create_thread_rejects_existing_child_thread_from_diffe
             input_text="Reuse from other root",
             parent_run_id=parent_run_two.id,
         )
+
+
+@pytest.mark.asyncio
+async def test_get_thread_turn_page_allows_org_scoped_read_for_project_thread(db_session):
+    tenant, user, agent = await _seed_thread_context(db_session)
+    project = await _seed_project(db_session, tenant)
+    thread = AgentThread(
+        organization_id=tenant.id,
+        project_id=project.id,
+        user_id=user.id,
+        agent_id=agent.id,
+        surface=AgentThreadSurface.internal,
+        title="Project scoped thread",
+    )
+    db_session.add(thread)
+    await db_session.flush()
+
+    run = AgentRun(
+        organization_id=tenant.id,
+        project_id=project.id,
+        agent_id=agent.id,
+        user_id=user.id,
+        initiator_user_id=user.id,
+        thread_id=thread.id,
+        input_params={"input": "hello"},
+    )
+    db_session.add(run)
+    await db_session.flush()
+    db_session.add(
+        AgentThreadTurn(
+            thread_id=thread.id,
+            run_id=run.id,
+            turn_index=0,
+            user_input_text="hello",
+            assistant_output_text="world",
+        )
+    )
+    await db_session.commit()
+
+    service = ThreadService(db_session)
+    page_result = await service.get_thread_turn_page(
+        organization_id=tenant.id,
+        thread_id=thread.id,
+        limit=20,
+    )
+
+    assert page_result is not None
+    assert page_result.thread.id == thread.id
+    assert len(page_result.page.turns) == 1

@@ -1,4 +1,4 @@
-Last Updated: 2026-04-21
+Last Updated: 2026-04-23
 
 # WorkOS Native Auth Test State
 
@@ -16,6 +16,10 @@ Last Updated: 2026-04-21
 - Auth code exchange uses the native typed `authenticate_with_code()` API and passes session sealing config.
 - Concurrent expired-session requests coalesce to a single native refresh and share the rotated cookie result.
 - `/auth/session` resolves the same local `effective_scopes` even when WorkOS permission payloads vary.
+- `/auth/session` auto-switches into the only accessible org when WorkOS session auth succeeds without an active org.
+- `/auth/session` returns a redirect recovery response when multiple accessible orgs exist but no org is active.
+- `/auth/session` only marks onboarding required when the signed-in user has no accessible orgs.
+- Membership-deletion webhook handling is idempotent and local membership removal revokes org access.
 
 ## Last Run
 - 2026-04-21: `SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest -q backend/tests/settings_people_permissions/test_settings_people_permissions_api.py backend/tests/workos_native_auth/test_auth_session_effective_scopes.py backend/tests/security_route_enforcement/test_route_scope_enforcement.py backend/tests/settings_api_keys/test_settings_api_keys_api.py backend/tests/admin_monitoring/test_admin_monitoring_api.py` -> `14 passed`
@@ -23,6 +27,7 @@ Last Updated: 2026-04-21
 - 2026-04-19: `SECRET_KEY=explicit-test-secret-0123456789abcdef TEST_USE_REAL_DB=0 /Library/Frameworks/Python.framework/Versions/3.12/bin/python3.12 -m pytest -q backend/tests/workos_native_auth/test_workos_native_auth_service.py` -> `2 passed`
 - 2026-04-19: `SECRET_KEY=explicit-test-secret-0123456789abcdef TEST_USE_REAL_DB=0 /Library/Frameworks/Python.framework/Versions/3.12/bin/python3.12 -m pytest -q backend/tests/workos_native_auth/test_workos_native_auth_service.py` -> `3 passed`
 - 2026-04-20: `SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest backend/tests/workos_native_auth/test_workos_native_auth_service.py backend/tests/workos_native_auth/test_auth_session_effective_scopes.py` -> `4 passed`
+- 2026-04-23: `SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest -q backend/tests/workos_native_auth/test_workos_native_auth_service.py backend/tests/workos_native_auth/test_auth_session_effective_scopes.py backend/tests/security_route_enforcement/test_route_scope_enforcement.py` -> `15 passed`
 
 ## Known Gaps
 - Does not hit live WorkOS.

@@ -112,29 +112,9 @@ async def test_admin_app_create_materializes_first_draft_revision(client, db_ses
 
 
 @pytest.mark.asyncio
-async def test_admin_app_create_fails_when_initial_materialization_fails(client, db_session, monkeypatch):
+async def test_admin_app_create_returns_provisional_initial_revision_without_bootstrap(client, db_session):
     tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
     headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
-
-    async def _provision_workspace_from_files(self, *, app, user_id, files, entry_file, trace_source=None):
-        _ = self, app, user_id, files, entry_file, trace_source
-        return None
-
-    monkeypatch.setattr(
-        "app.services.published_app_draft_dev_runtime.PublishedAppDraftDevRuntimeService.provision_workspace_from_files",
-        _provision_workspace_from_files,
-    )
-
-    async def _materialize_fail(self, *, app, **kwargs):
-        _ = self, app, kwargs
-        from app.services.published_app_draft_revision_materializer import PublishedAppDraftRevisionMaterializerError
-
-        raise PublishedAppDraftRevisionMaterializerError("watcher never became ready")
-
-    monkeypatch.setattr(
-        "app.services.published_app_draft_revision_materializer.PublishedAppDraftRevisionMaterializerService.materialize_live_workspace",
-        _materialize_fail,
-    )
 
     create_resp = await client.post(
         "/admin/apps",
@@ -147,10 +127,20 @@ async def test_admin_app_create_fails_when_initial_materialization_fails(client,
             "auth_providers": ["password"],
         },
     )
-    assert create_resp.status_code == 409
-    detail = create_resp.json()["detail"]
-    assert detail["code"] == "APP_INIT_MATERIALIZATION_FAILED"
-    assert "watcher never became ready" in detail["reason"]
+    assert create_resp.status_code == 200
+    app_id = create_resp.json()["id"]
+
+    state_resp = await client.get(f"/admin/apps/{app_id}/builder/state", headers=headers)
+    assert state_resp.status_code == 200
+    payload = state_resp.json()
+    assert payload["draft_dev"] is None
+    revision_id = payload["current_draft_revision"]["id"]
+    revision = await db_session.get(PublishedAppRevision, UUID(revision_id))
+    assert revision is not None
+    assert revision.build_status == PublishedAppRevisionBuildStatus.queued
+    assert revision.origin_kind == "app_init"
+    assert revision.dist_storage_prefix is None
+    assert revision.dist_manifest is None
 
 
 @pytest.mark.asyncio

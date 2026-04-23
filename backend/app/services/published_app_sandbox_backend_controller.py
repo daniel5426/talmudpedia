@@ -104,7 +104,6 @@ class ControllerSandboxBackend(PublishedAppSandboxBackend):
         files: Dict[str, str],
         idle_timeout_seconds: int,
         dependency_hash: str,
-        draft_dev_token: str,
         preview_base_path: str,
     ) -> Dict[str, Any]:
         payload: Dict[str, Any] = {
@@ -118,7 +117,6 @@ class ControllerSandboxBackend(PublishedAppSandboxBackend):
             "files": files,
             "idle_timeout_seconds": idle_timeout_seconds,
             "dependency_hash": dependency_hash,
-            "draft_dev_token": draft_dev_token,
             "preview_base_path": preview_base_path,
         }
         start_timeout_seconds = self._operation_timeout_seconds(

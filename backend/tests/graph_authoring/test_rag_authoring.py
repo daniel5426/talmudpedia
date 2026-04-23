@@ -8,6 +8,7 @@ from app.services.control_plane.rag_admin_service import RagAdminService
 from app.services.control_plane.errors import ControlPlaneError
 from app.graph_authoring.normalizers.rag import normalize_rag_graph_definition
 from app.graph_authoring.validators.rag import collect_rag_authoring_issues
+from app.rag.pipeline.registry import OperatorRegistry
 
 
 def test_rag_normalizer_applies_backend_schema_defaults():
@@ -63,6 +64,33 @@ def test_rag_authoring_issues_are_path_specific():
     codes_by_path = {(item.get("code"), item.get("path")) for item in issues}
     assert ("UNKNOWN_CONFIG_FIELD", "/nodes/0/config/temperature") in codes_by_path
     assert ("MISSING_REQUIRED_CONFIG", "/nodes/0/config/knowledge_store_id") in codes_by_path
+
+
+def test_rag_authoring_does_not_require_runtime_query_input_text():
+    issues = collect_rag_authoring_issues(
+        {
+            "nodes": [
+                {
+                    "id": "query",
+                    "category": "input",
+                    "operator": "query_input",
+                    "position": {"x": 0, "y": 0},
+                    "config": {},
+                }
+            ],
+            "edges": [],
+        }
+    )
+
+    assert not any(item.get("code") == "MISSING_REQUIRED_CONFIG" for item in issues)
+
+
+def test_web_crawler_operator_contract_accepts_string_or_list_start_urls():
+    spec = OperatorRegistry.get_instance().get("web_crawler")
+    assert spec is not None
+
+    assert spec.validate_config({"start_urls": "https://example.com"}) == []
+    assert spec.validate_config({"start_urls": ["https://example.com", "https://openai.com"]}) == []
 
 
 def test_rag_write_rejects_unknown_operator_and_unknown_fields():

@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from "react"
 import { useAuthStore } from "@/lib/store/useAuthStore"
-import { authService } from "@/services/auth"
+import { authService, isAuthSessionRedirectResponse, navigateToAuthRedirect } from "@/services/auth"
 import { HttpRequestError, HttpRequestTimeoutError } from "@/services/http"
 import { applyAuthSession, clearAuthSession } from "@/lib/auth-session"
 
@@ -18,6 +18,10 @@ export function AuthRefresher() {
             try {
                 hasRefreshed.current = true
                 const session = await authService.getCurrentSession()
+                if (isAuthSessionRedirectResponse(session)) {
+                    navigateToAuthRedirect(session.redirect_url)
+                    return
+                }
                 applyAuthSession(session)
             } catch (error) {
                 if (error instanceof HttpRequestError && error.status === 401) {

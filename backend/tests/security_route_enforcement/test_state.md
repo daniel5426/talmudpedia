@@ -1,6 +1,6 @@
 # Security Route Enforcement Test State
 
-Last Updated: 2026-04-21
+Last Updated: 2026-04-23
 
 ## Scope
 Validate control-plane route scope enforcement and organization-context strictness.
@@ -11,12 +11,17 @@ Validate control-plane route scope enforcement and organization-context strictne
 ## Key Scenarios Covered
 - `X-Organization-ID` required for organization-bound model routes
 - Models list allowed with correct scope
+- Cross-org `X-Organization-ID` overrides are rejected for non-platform-admin bearer principals
 - Knowledge-store write denied for member without write scope
+- `/api/organizations/{organization_id}` routes reject cross-org reads and mutations when the path org differs from the principal org
 
 ## Last Run
 - Command: `pytest -q backend/tests/security_scope_registry backend/tests/role_assignments_model backend/tests/security_bootstrap_defaults backend/tests/security_workload_provisioning backend/tests/security_route_enforcement backend/tests/security_admin_user_management`
 - Date/Time: 2026-03-05
 - Result: pass
+- Command: `SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest -q backend/tests/workos_native_auth/test_workos_native_auth_service.py backend/tests/workos_native_auth/test_auth_session_effective_scopes.py backend/tests/security_route_enforcement/test_route_scope_enforcement.py`
+- Date/Time: 2026-04-23 Asia/Hebron
+- Result: PASS (`15 passed`)
 
 ## Known Gaps
 - Does not yet cover all models/knowledge-stores mutation endpoints.

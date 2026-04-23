@@ -1,6 +1,6 @@
 # App Versions Test State
 
-Last Updated: 2026-04-16
+Last Updated: 2026-04-23
 
 ## Scope
 Watcher-owned builder versioning, restore, version preview, and pointer-only publish behavior.
@@ -17,12 +17,16 @@ Watcher-owned builder versioning, restore, version preview, and pointer-only pub
 - Publish-by-version rejects non-materialized revisions with `REVISION_NOT_MATERIALIZED`.
 - Stale queued/running publish jobs are timed out and no longer block subsequent publish requests.
 - Version preview runtime returns `409 VERSION_BUILD_NOT_READY` when dist artifacts are missing.
+- Version preview runtime returns a bootstrap-ready `preview_url` and no separate token field.
 - Cross-app version access returns `404`.
 
 ## Last Run
-- Command: `cd backend && PYTHONPATH=. pytest -q tests/app_versions/test_versions_endpoints.py`
-- Date: 2026-04-16
-- Result: Not run after rewrite in this change set.
+- Command: `SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest -q backend/tests/app_versions/test_versions_endpoints.py`
+- Date: 2026-04-23 Asia/Hebron
+- Result: PASS (`8 passed`)
+- Command: `SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest -q backend/tests/published_apps/test_admin_apps_crud.py backend/tests/app_versions/test_versions_endpoints.py`
+- Date: 2026-04-23 Asia/Hebron
+- Result: PASS (`12 passed`). Version restore/publish guards still hold after the provisional `app_init` create flow hard cut.
 
 ## Known Gaps / Follow-ups
 - Add deeper assertions for `version_seq` ordering under concurrent version writes.

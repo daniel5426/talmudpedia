@@ -6,6 +6,8 @@ from sqlalchemy import select
 from app.api.dependencies import get_current_principal
 from app.db.postgres.models.artifact_runtime import ArtifactCodingSession, ArtifactCodingSharedDraft
 from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgUnit, OrgUnitType, Organization, User
+from app.db.postgres.models.registry import ModelCapabilityType, ModelRegistry, ModelStatus
+from app.db.postgres.models.workspace import Project
 from app.services.artifact_coding_agent_profile import ensure_artifact_coding_agent_profile
 from app.services.artifact_coding_runtime_service import ArtifactCodingRuntimeService
 from app.services.artifact_coding_shared_draft_service import ArtifactCodingSharedDraftService
@@ -30,7 +32,34 @@ async def _seed_tenant_context(db_session):
         org_unit_id=org_unit.id,
         status=MembershipStatus.active,
     )
-    db_session.add_all([tenant, user, org_unit, membership])
+    project = Project(
+        id=uuid.uuid4(),
+        organization_id=tenant.id,
+        name="Artifact Project",
+        slug=f"artifact-project-{uuid.uuid4().hex[:8]}",
+        is_default=True,
+        created_by=user.id,
+    )
+    existing_model = await db_session.scalar(
+        select(ModelRegistry).where(
+            ModelRegistry.organization_id.is_(None),
+            ModelRegistry.capability_type == ModelCapabilityType.CHAT,
+            ModelRegistry.is_active.is_(True),
+            ModelRegistry.is_default.is_(True),
+        )
+    )
+    db_session.add_all([tenant, user, org_unit, membership, project])
+    if existing_model is None:
+        db_session.add(
+            ModelRegistry(
+                organization_id=None,
+                name="Artifact Working Draft Test Model",
+                capability_type=ModelCapabilityType.CHAT,
+                status=ModelStatus.ACTIVE,
+                is_active=True,
+                is_default=True,
+            )
+        )
     bootstrap = SecurityBootstrapService(db_session)
     await bootstrap.ensure_default_roles(tenant.id)
     await bootstrap.ensure_organization_owner_assignment(
@@ -39,16 +68,17 @@ async def _seed_tenant_context(db_session):
         assigned_by=user.id,
     )
     await db_session.commit()
-    return tenant, user
+    return tenant, user, project
 
 
-def _override_principal(organization_id, user):
+def _override_principal(organization_id, project_id, user):
     async def _inner():
         return {
             "type": "user",
             "user": user,
             "user_id": str(user.id),
             "organization_id": str(organization_id),
+            "project_id": str(project_id),
             "scopes": ["artifacts.read", "artifacts.write"],
             "auth_token": "test-token",
         }
@@ -58,8 +88,8 @@ def _override_principal(organization_id, user):
 
 @pytest.mark.asyncio
 async def test_artifact_working_draft_endpoints_persist_unsaved_snapshot(client, db_session):
-    tenant, user = await _seed_tenant_context(db_session)
-    app.dependency_overrides[get_current_principal] = _override_principal(tenant.id, user)
+    tenant, user, project = await _seed_tenant_context(db_session)
+    app.dependency_overrides[get_current_principal] = _override_principal(tenant.id, project.id, user)
 
     try:
         create_response = await client.post(
@@ -132,8 +162,8 @@ async def test_artifact_working_draft_endpoints_persist_unsaved_snapshot(client,
 
 @pytest.mark.asyncio
 async def test_artifact_working_draft_update_keeps_artifact_scope_isolated_from_draft_key_scope(client, db_session):
-    tenant, user = await _seed_tenant_context(db_session)
-    app.dependency_overrides[get_current_principal] = _override_principal(tenant.id, user)
+    tenant, user, project = await _seed_tenant_context(db_session)
+    app.dependency_overrides[get_current_principal] = _override_principal(tenant.id, project.id, user)
 
     try:
         create_response = await client.post(
@@ -168,6 +198,7 @@ async def test_artifact_working_draft_update_keeps_artifact_scope_isolated_from_
         draft_key = f"draft-{uuid.uuid4().hex[:8]}"
         await ArtifactCodingSharedDraftService(db_session).get_or_create_for_scope(
             organization_id=tenant.id,
+            project_id=project.id,
             artifact_id=None,
             draft_key=draft_key,
             initial_snapshot={
@@ -209,7 +240,10 @@ async def test_artifact_working_draft_update_keeps_artifact_scope_isolated_from_
 
         rows = (
             await db_session.execute(
-                select(ArtifactCodingSharedDraft).where(ArtifactCodingSharedDraft.organization_id == tenant.id)
+                select(ArtifactCodingSharedDraft).where(
+                    ArtifactCodingSharedDraft.organization_id == tenant.id,
+                    ArtifactCodingSharedDraft.project_id == project.id,
+                )
             )
         ).scalars().all()
         assert len(rows) == 2
@@ -227,15 +261,16 @@ async def test_artifact_working_draft_update_keeps_artifact_scope_isolated_from_
 
 @pytest.mark.asyncio
 async def test_artifact_create_links_existing_coding_sessions_by_draft_key(client, db_session):
-    tenant, user = await _seed_tenant_context(db_session)
-    app.dependency_overrides[get_current_principal] = _override_principal(tenant.id, user)
+    tenant, user, project = await _seed_tenant_context(db_session)
+    app.dependency_overrides[get_current_principal] = _override_principal(tenant.id, project.id, user)
 
     try:
         draft_key = f"draft-{uuid.uuid4().hex[:8]}"
-        agent = await ensure_artifact_coding_agent_profile(db_session, tenant.id, actor_user_id=user.id)
+        agent = await ensure_artifact_coding_agent_profile(db_session, tenant.id, project_id=project.id, actor_user_id=user.id)
         runtime = ArtifactCodingRuntimeService(db_session)
         prepared = await runtime.prepare_session(
             organization_id=tenant.id,
+            project_id=project.id,
             user_id=user.id,
             agent_id=agent.id,
             title_prompt="Create artifact from coding session",
@@ -293,7 +328,10 @@ async def test_artifact_create_links_existing_coding_sessions_by_draft_key(clien
 
         shared_rows = (
             await db_session.execute(
-                select(ArtifactCodingSharedDraft).where(ArtifactCodingSharedDraft.organization_id == tenant.id)
+                select(ArtifactCodingSharedDraft).where(
+                    ArtifactCodingSharedDraft.organization_id == tenant.id,
+                    ArtifactCodingSharedDraft.project_id == project.id,
+                )
             )
         ).scalars().all()
         linked_row = next(item for item in shared_rows if item.draft_key == draft_key)
@@ -305,8 +343,8 @@ async def test_artifact_create_links_existing_coding_sessions_by_draft_key(clien
 
 @pytest.mark.asyncio
 async def test_artifact_working_draft_rejects_wrapped_tool_contract(client, db_session):
-    tenant, user = await _seed_tenant_context(db_session)
-    app.dependency_overrides[get_current_principal] = _override_principal(tenant.id, user)
+    tenant, user, project = await _seed_tenant_context(db_session)
+    app.dependency_overrides[get_current_principal] = _override_principal(tenant.id, project.id, user)
 
     try:
         create_response = await client.post(

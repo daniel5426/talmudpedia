@@ -1,6 +1,6 @@
 # Apps Builder Current
 
-Last Updated: 2026-04-18
+Last Updated: 2026-04-23
 
 This document is the canonical current-state overview for the Apps Builder system.
 
@@ -79,9 +79,9 @@ Apps Builder covers draft editing, preview runtime, coding-agent execution, revi
   - `PATCH /admin/apps/{app_id}/builder/draft-dev/session/sync`
   - `POST /admin/apps/{app_id}/builder/draft-dev/session/heartbeat`
   - `DELETE /admin/apps/{app_id}/builder/draft-dev/session`
-- Draft preview responses carry off-URL auth fields such as `preview_auth_token`.
-- Preview/runtime URLs use explicit runtime query context such as `runtime_mode`, `runtime_base_path`, and `runtime_token`.
-- The preview iframe is expected to keep a stable URL across routine auth-token refreshes; token rotation should not force full iframe reloads.
+- Draft preview and version preview now share one canonical preview-auth contract: one `published_app_preview` token shape, one `published_app_preview_token` cookie, and query-once bootstrap through `preview_url`.
+- Admin/session responses expose preview auth only through bootstrap-ready `preview_url`; they do not return separate preview-token fields.
+- Builder preview keeps a stable iframe/document flow while treating the server-provided preview URL as opaque auth state.
 - The builder preview UI now shows a structured warmup/loading state during draft-dev bootstrap instead of a plain unavailable message while no preview URL is attached yet.
 - Draft preview session responses now expose `workspace_revision_token` instead of preview-build ids/sequences.
 - Draft preview session responses keep `live_preview`, `live_workspace_snapshot`, and `workspace_revision_token` as separate contracts; revision-token changes are no longer preview rebuild triggers.
@@ -106,6 +106,7 @@ Apps Builder covers draft editing, preview runtime, coding-agent execution, revi
 - `docs/product-specs/published_apps_spec.md`
 - `docs/product-specs/runtime_sdk_host_anywhere_spec.md`
 - `docs/design-docs/coding_agent_runtime_current.md`
+- `docs/design-docs/unified_preview_auth_contract.md`
 - `docs/references/classic_chat_template_reference.md`
 
 ## Historical Context

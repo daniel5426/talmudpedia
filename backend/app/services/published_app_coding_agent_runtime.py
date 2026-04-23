@@ -712,6 +712,79 @@ class PublishedAppCodingAgentRuntimeService(
         )
         return run
 
+    async def create_prompt_async_bookkeeping_run(
+        self,
+        *,
+        app: PublishedApp,
+        base_revision: PublishedAppRevision,
+        actor_id: UUID | None,
+        user_prompt: str,
+        requested_model_id: str | None,
+        chat_session_id: UUID,
+        opencode_session_id: str,
+        sandbox_id: str | None,
+        workspace_path: str | None,
+        message_id: str,
+    ) -> AgentRun:
+        requested_model_id, resolved_model_id = self._resolve_requested_opencode_model_id(requested_model_id)
+        profile, _ = await self._resolve_cached_coding_agent_profile(
+            organization_id=app.organization_id,
+            actor_user_id=actor_id,
+        )
+        input_params = {
+            "input": user_prompt,
+            "messages": [{"role": "user", "content": user_prompt}],
+            "context": {
+                "surface": CODING_AGENT_SURFACE,
+                "published_app_id": str(app.id),
+                "app_id": str(app.id),
+                "base_revision_id": str(base_revision.id),
+                "entry_file": base_revision.entry_file,
+                "requested_model_id": requested_model_id,
+                "resolved_model_id": resolved_model_id,
+                "execution_engine": CODING_AGENT_ENGINE_OPENCODE,
+                "chat_session_id": str(chat_session_id),
+                "opencode_submission_mode": "session_prompt_async",
+                "opencode_session_id": str(opencode_session_id or "").strip() or None,
+                "opencode_sandbox_id": str(sandbox_id or "").strip() or None,
+                "opencode_workspace_path": str(workspace_path or "").strip() or None,
+                "preview_sandbox_id": str(sandbox_id or "").strip() or None,
+                "preview_workspace_live_path": str(workspace_path or "").strip() or None,
+                "prompt_async_message_id": str(message_id or "").strip() or None,
+            },
+        }
+        run_id = await self.executor.start_run(
+            profile.id,
+            input_params,
+            user_id=actor_id,
+            background=False,
+            mode=ExecutionMode.DEBUG,
+        )
+        run = await self.db.get(AgentRun, run_id)
+        if run is None:
+            raise RuntimeError("Failed to load created prompt-async bookkeeping run")
+        run.surface = CODING_AGENT_SURFACE
+        run.published_app_id = app.id
+        run.base_revision_id = base_revision.id
+        run.result_revision_id = None
+        run.has_workspace_writes = False
+        run.batch_finalized_at = None
+        run.execution_engine = CODING_AGENT_ENGINE_OPENCODE
+        run.requested_model_id = None
+        run.resolved_model_id = None
+        run.engine_run_ref = None
+        await self.db.commit()
+        await self.db.refresh(run)
+        self._trace(
+            "runtime.prompt_async_bookkeeping_run.created",
+            app_id=str(app.id),
+            run_id=str(run.id),
+            chat_session_id=str(chat_session_id),
+            base_revision_id=str(base_revision.id),
+            opencode_session_id=str(opencode_session_id or "") or None,
+        )
+        return run
+
     async def list_runs(self, *, app_id: UUID, limit: int = 25) -> list[AgentRun]:
         result = await self.db.execute(
             select(AgentRun)

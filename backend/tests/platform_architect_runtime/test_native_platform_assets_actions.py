@@ -97,7 +97,7 @@ async def test_native_platform_assets_tools_get_requires_tool_id(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_native_platform_assets_tools_create_or_update_create_builds_request(monkeypatch):
+async def test_native_platform_assets_tools_create_builds_request(monkeypatch):
     captured = {}
 
     async def fake_create_tool(self, *, ctx, request):
@@ -114,12 +114,12 @@ async def test_native_platform_assets_tools_create_or_update_create_builds_reque
 
     result = await platform_native_tools.platform_native_platform_assets(
         {
-                "action": "tools.create_or_update",
-                "payload": {
-                    "name": "Native Tool",
-                    "description": "desc",
-                    "scope": "tenant",
-                    "input_schema": {"type": "object"},
+            "action": "tools.create",
+            "payload": {
+                "name": "Native Tool",
+                "description": "desc",
+                "scope": "tenant",
+                "input_schema": {"type": "object"},
                 "output_schema": {"type": "object"},
                 "implementation_type": "function",
                 "execution_config": {"validation_mode": "strict"},
@@ -139,6 +139,57 @@ async def test_native_platform_assets_tools_create_or_update_create_builds_reque
     assert request.output_schema == {"type": "object"}
     assert request.implementation_type == "function"
     assert request.execution_config == {"validation_mode": "strict"}
+
+
+@pytest.mark.asyncio
+async def test_native_platform_assets_tools_update_builds_request(monkeypatch):
+    captured = {}
+    tool_id = uuid4()
+
+    async def fake_update_tool(self, *, ctx, tool_id, request):
+        captured["organization_id"] = str(ctx.organization_id)
+        captured["tool_id"] = str(tool_id)
+        captured["request"] = request
+        return SimpleNamespace(id=tool_id, name=request.name or "Existing Tool")
+
+    monkeypatch.setattr(platform_native_tools, "get_session", lambda: _FakeSession())
+    monkeypatch.setattr("app.services.platform_native.assets.ToolRegistryAdminService.update_tool", fake_update_tool)
+    monkeypatch.setattr(
+        "app.services.platform_native.assets.serialize_tool",
+        lambda tool: {"id": str(tool.id), "name": tool.name},
+    )
+
+    result = await platform_native_tools.platform_native_platform_assets(
+        {
+            "action": "tools.update",
+            "payload": {
+                "tool_id": str(tool_id),
+                "description": "desc",
+                "execution_config": {"validation_mode": "strict"},
+            },
+            "__tool_runtime_context__": {"organization_id": str(uuid4()), "user_id": str(uuid4()), "scopes": ["*"]},
+        }
+    )
+
+    request = captured["request"]
+    assert result["errors"] == []
+    assert captured["tool_id"] == str(tool_id)
+    assert request.description == "desc"
+    assert request.execution_config == {"validation_mode": "strict"}
+
+
+@pytest.mark.asyncio
+async def test_native_platform_assets_tools_update_requires_update_fields(monkeypatch):
+    result = await platform_native_tools.platform_native_platform_assets(
+        {
+            "action": "tools.update",
+            "payload": {"tool_id": str(uuid4())},
+            "__tool_runtime_context__": {"organization_id": str(uuid4()), "user_id": str(uuid4()), "scopes": ["*"]},
+        }
+    )
+
+    assert result["errors"][0]["code"] == "VALIDATION_ERROR"
+    assert result["errors"][0]["message"] == "At least one update field is required."
 
 
 @pytest.mark.asyncio
@@ -337,10 +388,12 @@ async def test_native_platform_assets_knowledge_stores_list_paginates(monkeypatc
         ),
     ]
 
-    async def fake_list_stores(self, *, ctx, organization_id):
-        assert str(ctx.organization_id) == str(organization_id)
-        assert organization_id == str(ctx.organization_id)
+    async def fake_list_stores(self, *, ctx, organization_id=None):
+        assert str(ctx.organization_id) == str(organization_id_ctx)
+        assert organization_id is None
         return stores
+
+    organization_id_ctx = organization_id
 
     monkeypatch.setattr(platform_native_tools, "get_session", lambda: _FakeSession())
     monkeypatch.setattr("app.services.platform_native.assets.KnowledgeStoreAdminService.list_stores", fake_list_stores)
@@ -348,7 +401,7 @@ async def test_native_platform_assets_knowledge_stores_list_paginates(monkeypatc
     result = await platform_native_tools.platform_native_platform_assets(
         {
             "action": "knowledge_stores.list",
-            "payload": {"organization_id": str(organization_id), "limit": 1, "skip": 0, "view": "summary"},
+            "payload": {"limit": 1, "skip": 0, "view": "summary"},
             "__tool_runtime_context__": {"organization_id": str(organization_id), "user_id": str(uuid4()), "scopes": ["*"]},
         }
     )
@@ -384,9 +437,9 @@ async def test_native_platform_assets_knowledge_store_create_passes_expected_fie
         credentials_ref,
     ):
         captured.update(
-                {
-                    "ctx_organization_id": str(ctx.organization_id),
-                    "organization_id": organization_id,
+            {
+                "ctx_organization_id": str(ctx.organization_id),
+                "organization_id": organization_id,
                 "name": name,
                 "description": description,
                 "embedding_model_id": embedding_model_id,
@@ -404,9 +457,8 @@ async def test_native_platform_assets_knowledge_store_create_passes_expected_fie
 
     result = await platform_native_tools.platform_native_platform_assets(
         {
-            "action": "knowledge_stores.create_or_update",
+            "action": "knowledge_stores.create",
             "payload": {
-                "organization_id": str(organization_id),
                 "name": "Customer Docs",
                 "description": "primary store",
                 "embedding_model_id": "embed-1",
@@ -423,6 +475,51 @@ async def test_native_platform_assets_knowledge_store_create_passes_expected_fie
     assert result["errors"] == []
     assert result["result"] == {"id": str(store_id), "name": "Customer Docs"}
     assert captured["ctx_organization_id"] == str(organization_id)
-    assert captured["organization_id"] == str(organization_id)
+    assert captured["organization_id"] is None
     assert captured["embedding_model_id"] == "embed-1"
     assert captured["backend_config"] == {"index_name": "customer-docs"}
+
+
+@pytest.mark.asyncio
+async def test_native_platform_assets_knowledge_store_update_passes_expected_fields(monkeypatch):
+    captured = {}
+    organization_id = uuid4()
+    store_id = uuid4()
+
+    async def fake_update_store(self, *, ctx, store_id, organization_id, patch):
+        captured["ctx_organization_id"] = str(ctx.organization_id)
+        captured["store_id"] = str(store_id)
+        captured["organization_id"] = organization_id
+        captured["patch"] = patch
+        return SimpleNamespace(id=store_id, name="Customer Docs")
+
+    monkeypatch.setattr(platform_native_tools, "get_session", lambda: _FakeSession())
+    monkeypatch.setattr("app.services.platform_native.assets.KnowledgeStoreAdminService.update_store", fake_update_store)
+
+    result = await platform_native_tools.platform_native_platform_assets(
+        {
+            "action": "knowledge_stores.update",
+            "payload": {"store_id": str(store_id), "description": "updated"},
+            "__tool_runtime_context__": {"organization_id": str(organization_id), "user_id": str(uuid4()), "scopes": ["*"]},
+        }
+    )
+
+    assert result["errors"] == []
+    assert result["result"] == {"id": str(store_id), "name": "Customer Docs"}
+    assert captured["ctx_organization_id"] == str(organization_id)
+    assert captured["organization_id"] is None
+    assert captured["patch"] == {"description": "updated"}
+
+
+@pytest.mark.asyncio
+async def test_native_platform_assets_knowledge_store_update_requires_update_fields():
+    result = await platform_native_tools.platform_native_platform_assets(
+        {
+            "action": "knowledge_stores.update",
+            "payload": {"store_id": str(uuid4())},
+            "__tool_runtime_context__": {"organization_id": str(uuid4()), "user_id": str(uuid4()), "scopes": ["*"]},
+        }
+    )
+
+    assert result["errors"][0]["code"] == "VALIDATION_ERROR"
+    assert result["errors"][0]["message"] == "At least one update field is required."

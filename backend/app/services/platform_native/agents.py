@@ -281,11 +281,14 @@ async def agents_validate(rt: NativePlatformToolRuntime) -> Any:
 
 
 async def agents_nodes_catalog(rt: NativePlatformToolRuntime) -> Any:
-    return await AgentAdminService(rt.db).list_node_catalog()
+    return await AgentAdminService(rt.db).list_node_catalog(ctx=await rt.build_control_plane_context())
 
 
 async def agents_nodes_schema(rt: NativePlatformToolRuntime) -> Any:
-    return await AgentAdminService(rt.db).get_node_schemas(node_types=list(rt.payload.get("node_types") or []))
+    return await AgentAdminService(rt.db).get_node_schemas(
+        ctx=await rt.build_control_plane_context(),
+        node_types=list(rt.payload.get("node_types") or []),
+    )
 
 
 async def agents_nodes_validate(rt: NativePlatformToolRuntime) -> Any:

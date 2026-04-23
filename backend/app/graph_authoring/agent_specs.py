@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.agent.graph.contracts import normalize_end_output_config, schema_to_value_type
 from app.agent.registry import AgentOperatorSpec
 from app.graph_authoring.schema import enrich_schema_with_ui, required_config_fields, schema_for_value_type
 from app.graph_authoring.types import BranchingHint, GraphHints, NodeAuthoringSpec, NodeCatalogItem
-from app.agent.graph.contracts import contract_fields_from_schema, schema_to_value_type
 
 
 def _editor_for_type(node_type: str) -> str:
@@ -84,9 +84,12 @@ def agent_node_spec(spec: AgentOperatorSpec) -> NodeAuthoringSpec:
         input_type=str(ui.get("inputType") or "any"),
         output_type=str(ui.get("outputType") or "any"),
         config_schema=config_schema,
+        input_schema=_input_schema_for_agent(spec),
         output_schema=_output_schema_from_contract(spec),
         field_contracts=spec.field_contracts or None,
         graph_hints=graph_hints,
+        node_template=_agent_node_template(spec.type, config_schema),
+        normalization_defaults=_agent_normalization_defaults(spec.type, config_schema),
     )
 
 
@@ -100,7 +103,7 @@ def agent_catalog_item(spec: AgentOperatorSpec) -> NodeCatalogItem:
         category=authoring.category,
         input_type=authoring.input_type,
         output_type=authoring.output_type,
-        required_config_fields=required_config_fields(authoring.config_schema),
+        required_config_fields=required_config_fields(authoring.config_schema, include_runtime=False),
         icon=str(ui.get("icon") or "Circle"),
         color=str(ui.get("color") or "#64748b"),
         editor=authoring.graph_hints.editor if authoring.graph_hints else "generic",
@@ -139,9 +142,12 @@ def artifact_node_spec(
         input_type=str(node_ui.get("inputType") or "any"),
         output_type=str(node_ui.get("outputType") or "context"),
         config_schema=schema,
+        input_schema=input_schema or None,
         output_schema=output_schema or None,
         field_contracts=None,
         graph_hints=GraphHints(editor="generic"),
+        node_template=_artifact_node_template(artifact_id, schema),
+        normalization_defaults=_apply_schema_defaults(schema, {}),
     )
     item = NodeCatalogItem(
         type=spec.type,
@@ -150,7 +156,7 @@ def artifact_node_spec(
         category=spec.category,
         input_type=spec.input_type,
         output_type=spec.output_type,
-        required_config_fields=required_config_fields(schema),
+        required_config_fields=required_config_fields(schema, include_runtime=False),
         icon=str(node_ui.get("icon") or "Package"),
         color=str(node_ui.get("color") or "#64748b"),
         editor="generic",
@@ -223,7 +229,35 @@ def _artifact_input_specs(input_schema: dict[str, Any], node_ui: dict[str, Any])
 def agent_instance_contract() -> dict[str, Any]:
     return {
         "required_fields": ["nodes", "edges"],
+        "top_level_schema": {
+            "type": "object",
+            "properties": {
+                "nodes": {"type": "array", "items": {"type": "object"}},
+                "edges": {"type": "array", "items": {"type": "object"}},
+            },
+            "required": ["nodes", "edges"],
+            "additionalProperties": False,
+        },
         "node_required_fields": ["id", "type", "position"],
+        "node_field_shapes": {
+            "id": {"type": "string"},
+            "type": {"type": "string"},
+            "position": {
+                "type": "object",
+                "properties": {
+                    "x": {"type": "number"},
+                    "y": {"type": "number"},
+                },
+                "required": ["x", "y"],
+                "additionalProperties": False,
+            },
+            "label": {"type": "string"},
+            "config": {"type": "object"},
+            "input_mappings": {
+                "type": "object",
+                "additionalProperties": {"type": "string"},
+            },
+        },
         "edge_required_fields": ["id", "source", "target"],
         "edge_field_shapes": {
             "id": {"type": "string"},
@@ -265,3 +299,67 @@ def _canonicalize_route_table_fields(node_type: str, config_schema: dict[str, An
             next_ui["order"] = ["route_table" if item == original_key else item for item in order]
         config_schema["x-ui"] = next_ui
     return config_schema
+
+
+def _input_schema_for_agent(spec: AgentOperatorSpec) -> dict[str, Any] | None:
+    ui = spec.ui if isinstance(spec.ui, dict) else {}
+    workflow_inputs = ui.get("workflowInputs") if isinstance(ui.get("workflowInputs"), list) else None
+    if isinstance(workflow_inputs, list) and workflow_inputs:
+        properties: dict[str, Any] = {}
+        required: list[str] = []
+        for raw_field in workflow_inputs:
+            if not isinstance(raw_field, dict):
+                continue
+            key = str(raw_field.get("key") or "").strip()
+            if not key:
+                continue
+            field_schema = schema_for_value_type(str(raw_field.get("type") or ""))
+            if not field_schema:
+                field_schema = {}
+            label = str(raw_field.get("label") or key).strip()
+            if label:
+                field_schema.setdefault("title", label)
+            properties[key] = field_schema
+            if bool(raw_field.get("required")):
+                required.append(key)
+        if properties:
+            payload: dict[str, Any] = {
+                "type": "object",
+                "properties": properties,
+                "additionalProperties": True,
+            }
+            if required:
+                payload["required"] = required
+            return payload
+    return None
+
+
+def _agent_normalization_defaults(node_type: str, config_schema: dict[str, Any]) -> dict[str, Any]:
+    normalized = _apply_schema_defaults(config_schema, {})
+    if node_type == "end":
+        normalized = normalize_end_output_config(normalized)
+    return normalized
+
+
+def _agent_node_template(node_type: str, config_schema: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": "node_id",
+        "type": node_type,
+        "position": {"x": 0, "y": 0},
+        "config": _agent_normalization_defaults(node_type, config_schema),
+    }
+
+
+def _artifact_node_template(artifact_id: str, config_schema: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": "node_id",
+        "type": f"artifact:{artifact_id}",
+        "position": {"x": 0, "y": 0},
+        "config": _apply_schema_defaults(config_schema, {}),
+    }
+
+
+def _apply_schema_defaults(config_schema: dict[str, Any] | None, current_config: dict[str, Any] | None) -> dict[str, Any]:
+    from app.graph_authoring.normalizers.base import apply_schema_defaults
+
+    return apply_schema_defaults(config_schema, current_config)

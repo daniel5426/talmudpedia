@@ -8,6 +8,7 @@ from uuid import UUID
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.db.postgres.models.agents import RunStatus
 from app.db.postgres.models.published_apps import (
     PublishedApp,
     PublishedAppCodingChatSession,
@@ -17,6 +18,7 @@ from app.db.postgres.models.published_apps import (
 from app.services.opencode_server_client import OpenCodeServerClient
 from app.services.published_app_agent_integration_contract import build_published_app_agent_integration_contract
 from app.services.published_app_coding_chat_history_service import PublishedAppCodingChatHistoryService
+from app.services.published_app_coding_agent_runtime import PublishedAppCodingAgentRuntimeService
 from app.services.published_app_draft_dev_runtime import (
     PublishedAppDraftDevRuntimeDisabled,
     PublishedAppDraftDevRuntimeService,
@@ -287,6 +289,22 @@ class PublishedAppCodingChatSessionService:
             chat_session=chat_session,
             requested_model_id=requested_model_id,
         )
+        user_prompt = self._text_from_parts(normalized_parts)
+        if not user_prompt:
+            raise HTTPException(status_code=400, detail="message parts must include text content")
+        runtime = PublishedAppCodingAgentRuntimeService(self.db)
+        run = await runtime.create_prompt_async_bookkeeping_run(
+            app=app,
+            base_revision=base_revision,
+            actor_id=actor_id,
+            user_prompt=user_prompt,
+            requested_model_id=requested_model_id,
+            chat_session_id=chat_session.id,
+            opencode_session_id=str(context["session_id"]),
+            sandbox_id=str(context["sandbox_id"]),
+            workspace_path=str(context["workspace_path"]),
+            message_id=normalized_message_id,
+        )
         try:
             await self.client.prompt_async(
                 session_id=context["session_id"],
@@ -299,30 +317,39 @@ class PublishedAppCodingChatSessionService:
                 selected_agent_contract=context["selected_agent_contract"],
             )
         except Exception as exc:
-            if not self._is_invalid_session_error(exc):
+            if self._is_invalid_session_error(exc):
+                chat_session.opencode_session_id = None
+                chat_session.opencode_sandbox_id = None
+                chat_session.opencode_workspace_path = None
+                chat_session.opencode_session_closed_at = datetime.now(timezone.utc)
+                await self.db.commit()
+                context = await self._ensure_remote_session(
+                    app=app,
+                    base_revision=base_revision,
+                    actor_id=actor_id,
+                    chat_session=chat_session,
+                    requested_model_id=requested_model_id,
+                )
+                await self.client.prompt_async(
+                    session_id=context["session_id"],
+                    app_id=str(app.id),
+                    message_id=normalized_message_id,
+                    parts=normalized_parts,
+                    model_id=context["model_id"],
+                    sandbox_id=context["sandbox_id"],
+                    workspace_path=context["workspace_path"],
+                    selected_agent_contract=context["selected_agent_contract"],
+                )
+            else:
+                run.status = RunStatus.failed
+                run.error_message = str(exc)
+                run.completed_at = datetime.now(timezone.utc)
+                await self.db.commit()
                 raise
-            chat_session.opencode_session_id = None
-            chat_session.opencode_sandbox_id = None
-            chat_session.opencode_workspace_path = None
-            chat_session.opencode_session_closed_at = datetime.now(timezone.utc)
-            await self.db.commit()
-            context = await self._ensure_remote_session(
-                app=app,
-                base_revision=base_revision,
-                actor_id=actor_id,
-                chat_session=chat_session,
-                requested_model_id=requested_model_id,
-            )
-            await self.client.prompt_async(
-                session_id=context["session_id"],
-                app_id=str(app.id),
-                message_id=normalized_message_id,
-                parts=normalized_parts,
-                model_id=context["model_id"],
-                sandbox_id=context["sandbox_id"],
-                workspace_path=context["workspace_path"],
-                selected_agent_contract=context["selected_agent_contract"],
-            )
+        run.status = RunStatus.running
+        run.started_at = run.started_at or datetime.now(timezone.utc)
+        run.error_message = None
+        await self.db.commit()
         await self.history.touch_session(session_id=chat_session.id)
         return {
             "submission_status": "accepted",

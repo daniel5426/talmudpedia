@@ -9,7 +9,6 @@ import {
 } from "@/services";
 import type { SandboxLifecyclePhase } from "@/features/apps-builder/workspace/useAppsBuilderSandboxLifecycle";
 import {
-  appendPreviewRuntimeToken,
   buildBuilderPreviewDocumentUrl,
   logBuilderPreviewDebug,
   type PreviewTransportStatus,

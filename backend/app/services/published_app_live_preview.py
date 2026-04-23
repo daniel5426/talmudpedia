@@ -73,6 +73,19 @@ def build_live_preview_overlay_workspace_fingerprint(
     )
 
 
+def build_canonical_workspace_fingerprint(
+    *,
+    entry_file: str,
+    files: Dict[str, str],
+    runtime_context: TemplateRuntimeContext | Dict[str, Any] | None = None,
+) -> str:
+    return build_live_preview_overlay_workspace_fingerprint(
+        entry_file=entry_file,
+        files=files,
+        runtime_context=runtime_context,
+    )
+
+
 def normalize_live_preview_payload(raw: object) -> dict[str, Any]:
     payload = dict(raw or {}) if isinstance(raw, dict) else {}
     current_build_id = str(payload.get("current_build_id") or "").strip() or None

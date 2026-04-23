@@ -2,8 +2,16 @@ import { render, waitFor } from "@testing-library/react"
 
 import { AuthRefresher } from "@/components/auth-refresher"
 import { useAuthStore } from "@/lib/store/useAuthStore"
-import { authService } from "@/services/auth"
+import { authService, navigateToAuthRedirect } from "@/services/auth"
 import { HttpRequestTimeoutError } from "@/services/http"
+
+jest.mock("@/services/auth", () => {
+  const actual = jest.requireActual("@/services/auth")
+  return {
+    ...actual,
+    navigateToAuthRedirect: jest.fn(),
+  }
+})
 
 describe("AuthRefresher", () => {
   beforeEach(() => {
@@ -19,6 +27,7 @@ describe("AuthRefresher", () => {
       sessionChecked: false,
     })
     jest.restoreAllMocks()
+    ;(navigateToAuthRedirect as jest.Mock).mockReset()
   })
 
   it("keeps the current auth state and marks the session checked after a timeout", async () => {
@@ -32,6 +41,19 @@ describe("AuthRefresher", () => {
       const state = useAuthStore.getState()
       expect(state.sessionChecked).toBe(true)
       expect(state.user?.id).toBe("user-1")
+    })
+  })
+
+  it("redirects through the browser when session bootstrap returns a redirect_url", async () => {
+    jest.spyOn(authService, "getCurrentSession").mockResolvedValue({
+      redirect_url: "https://example.com/workos/select-org",
+    } as any)
+
+    render(<AuthRefresher />)
+
+    await waitFor(() => {
+      expect(navigateToAuthRedirect).toHaveBeenCalledWith("https://example.com/workos/select-org")
+      expect(useAuthStore.getState().sessionChecked).toBe(true)
     })
   })
 })

@@ -21,7 +21,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.core.security import decode_published_app_preview_token
 from app.db.postgres.models.agent_threads import AgentThreadSurface
 from app.db.postgres.models.published_apps import PublishedApp, PublishedAppDraftDevSession, PublishedAppRevision
 from app.db.postgres.session import get_db
@@ -67,11 +66,19 @@ from .published_apps_public import (
     _stream_chat_for_app,
     _upload_published_app_attachments,
 )
+from .published_apps_preview_auth import (
+    PREVIEW_COOKIE_NAME,
+    PREVIEW_TARGET_DRAFT_DEV_SESSION,
+    clear_preview_cookie,
+    decode_preview_token,
+    resolve_preview_token,
+    set_preview_cookie as _set_canonical_preview_cookie,
+    token_matches_target,
+)
 
 
 router = APIRouter(tags=["published-apps-builder-preview-proxy"])
 
-PREVIEW_COOKIE_NAME = "published_app_preview_token"
 _PREVIEW_WEBSOCKET_OPEN_TIMEOUT_SECONDS = 20.0
 _PREVIEW_WEBSOCKET_CONNECT_ATTEMPTS = 3
 _PREVIEW_HTTP_RETRY_DELAYS_SECONDS = (0.0, 0.35, 0.75, 1.5)
@@ -412,43 +419,48 @@ def _resolve_preview_token_for_session(
     request: Request | None = None,
     websocket: WebSocket | None = None,
 ) -> tuple[str, dict[str, Any], str]:
-    query_params = request.query_params if request is not None else websocket.query_params
-    cookies = request.cookies if request is not None else websocket.cookies
-    cookie_token = str(cookies.get(PREVIEW_COOKIE_NAME) or "").strip()
-    query_token = str(query_params.get("runtime_token") or "").strip()
+    if request is not None:
+        return resolve_preview_token(
+            request=request,
+            matcher=lambda payload: token_matches_target(
+                payload,
+                app_id=str(session.published_app_id),
+                preview_target_type=PREVIEW_TARGET_DRAFT_DEV_SESSION,
+                preview_target_id=str(session.id),
+                revision_id=str(session.revision_id) if session.revision_id else None,
+            ),
+        )
+    query_params = websocket.query_params
+    cookies = websocket.cookies
     first_auth_error: HTTPException | None = None
     scope_mismatch_seen = False
-
-    for source, token in (("cookie", cookie_token), ("query", query_token)):
+    for source, token in (
+        ("cookie", str(cookies.get(PREVIEW_COOKIE_NAME) or "").strip()),
+        ("query", str(query_params.get("runtime_token") or "").strip()),
+    ):
         if not token:
             continue
         try:
-            payload = _validate_preview_token(token)
+            payload = decode_preview_token(token)
         except HTTPException as exc:
             if first_auth_error is None:
                 first_auth_error = exc
             continue
-        if str(payload.get("app_id") or "").strip() != str(session.published_app_id):
+        if not token_matches_target(
+            payload,
+            app_id=str(session.published_app_id),
+            preview_target_type=PREVIEW_TARGET_DRAFT_DEV_SESSION,
+            preview_target_id=str(session.id),
+            revision_id=str(session.revision_id) if session.revision_id else None,
+        ):
             scope_mismatch_seen = True
             continue
         return token, payload, source
-
     if first_auth_error is not None:
         raise first_auth_error
     if scope_mismatch_seen:
-        raise HTTPException(status_code=403, detail="Preview token does not match draft session app scope")
+        raise HTTPException(status_code=403, detail="Preview token does not match preview target scope")
     raise HTTPException(status_code=401, detail="Preview authentication required")
-
-
-def _validate_preview_token(token: str) -> dict[str, Any]:
-    try:
-        payload = decode_published_app_preview_token(token)
-    except Exception as exc:
-        raise HTTPException(status_code=401, detail="Invalid published app preview token") from exc
-    scopes = payload.get("scope") or []
-    if "apps.preview" not in scopes:
-        raise HTTPException(status_code=403, detail="Preview token is missing apps.preview scope")
-    return payload
 
 
 async def _load_session(*, db: AsyncSession, session_id: str) -> PublishedAppDraftDevSession:
@@ -663,46 +675,21 @@ async def _refresh_preview_target(
     session: PublishedAppDraftDevSession,
     current_target: dict[str, str],
 ) -> dict[str, str] | None:
-    sandbox_id = str(getattr(session, "sandbox_id", "") or "").strip()
-    if not sandbox_id:
+    _ = db
+    refreshed_target = await _resolve_preview_target(session)
+    if refreshed_target is None or refreshed_target == current_target:
         return None
-    client = PublishedAppDraftDevRuntimeClient.from_env()
-    try:
-        refreshed = await client.heartbeat_session(sandbox_id=sandbox_id, idle_timeout_seconds=0)
-    except Exception as exc:
-        apps_builder_trace(
-            "preview.proxy.refresh_failed",
-            domain="preview.proxy",
-            session_id=str(session.id),
-            app_id=str(session.published_app_id),
-            revision_id=str(session.revision_id or ""),
-            sandbox_id=sandbox_id,
-            error=str(exc),
-            error_type=exc.__class__.__name__,
-        )
-        return None
-    metadata = refreshed.get("backend_metadata") if isinstance(refreshed, dict) else None
-    if not isinstance(metadata, dict):
-        return None
-    preview = metadata.get("preview") if isinstance(metadata.get("preview"), dict) else None
-    if not isinstance(preview, dict):
-        return None
-    preview["base_path"] = _merge_preview_base_path(target=current_target, session_id=str(session.id))
-    workspace = getattr(session, "draft_workspace", None)
-    if workspace is not None:
-        workspace.backend_metadata = dict(metadata)
-    session.backend_metadata = dict(metadata)
-    await db.commit()
     apps_builder_trace(
         "preview.proxy.refreshed",
         domain="preview.proxy",
         session_id=str(session.id),
         app_id=str(session.published_app_id),
         revision_id=str(session.revision_id or ""),
-        sandbox_id=sandbox_id,
-        upstream_base_url=str(preview.get("upstream_base_url") or ""),
+        sandbox_id=str(getattr(session, "sandbox_id", "") or "") or None,
+        upstream_base_url=str(refreshed_target.get("upstream_base_url") or ""),
+        refresh_source="stored_metadata",
     )
-    return await _resolve_preview_target(session)
+    return refreshed_target
 
 
 async def _request_preview_upstream(
@@ -813,9 +800,14 @@ def _preview_rewrite_summary(
 
 
 def _assert_preview_scope_matches_session(payload: dict[str, Any], session: PublishedAppDraftDevSession) -> None:
-    token_app_id = str(payload.get("app_id") or "").strip()
-    if token_app_id != str(session.published_app_id):
-        raise HTTPException(status_code=403, detail="Preview token does not match draft session app scope")
+    if not token_matches_target(
+        payload,
+        app_id=str(session.published_app_id),
+        preview_target_type=PREVIEW_TARGET_DRAFT_DEV_SESSION,
+        preview_target_id=str(session.id),
+        revision_id=str(session.revision_id) if session.revision_id else None,
+    ):
+        raise HTTPException(status_code=403, detail="Preview token does not match preview target scope")
 
 
 def _compose_upstream_path(*, path: str, target: dict[str, str]) -> str:
@@ -1127,14 +1119,7 @@ def _websocket_proxy_connect_options(
 
 
 def _set_preview_cookie(response: Response, *, request: Request, token: str) -> None:
-    response.set_cookie(
-        key=PREVIEW_COOKIE_NAME,
-        value=token,
-        httponly=True,
-        secure=request.url.scheme == "https",
-        samesite="lax",
-        path="/",
-    )
+    _set_canonical_preview_cookie(response=response, request=request, token=token)
 
 
 async def _load_preview_request_context(
@@ -1147,7 +1132,7 @@ async def _load_preview_request_context(
     token = _extract_preview_token(request=request)
     if not token:
         raise HTTPException(status_code=401, detail="Preview authentication required")
-    payload = _validate_preview_token(token)
+    payload = decode_preview_token(token)
     _assert_preview_scope_matches_session(payload, session)
     app, revision = await _load_preview_app_and_revision(db=db, session=session)
     return session, app, revision, payload, token
@@ -1166,15 +1151,19 @@ async def builder_preview_status(
         reason="status_poll",
         throttle_seconds=15,
     )
-    runtime_service = PublishedAppDraftDevRuntimeService(db)
-    session = await runtime_service.heartbeat_session(session=session)
     await db.commit()
-    backend_metadata = dict(session.backend_metadata or {}) if isinstance(session.backend_metadata, dict) else {}
+    workspace = getattr(session, "draft_workspace", None)
+    backend_metadata = (
+        dict(workspace.backend_metadata or {})
+        if workspace is not None and isinstance(workspace.backend_metadata, dict)
+        else dict(session.backend_metadata or {}) if isinstance(session.backend_metadata, dict) else {}
+    )
     live_preview = (
         dict(backend_metadata.get("live_preview") or {})
         if isinstance(backend_metadata.get("live_preview"), dict)
         else {"mode": "build_watch_static", "status": "booting"}
     )
+    requested_build_id = str(request.query_params.get("__build") or "").strip() or None
     apps_builder_trace(
         "preview.status.responded",
         domain="preview.proxy",
@@ -1184,6 +1173,12 @@ async def builder_preview_status(
         status=str(live_preview.get("status") or "").strip() or None,
         current_build_id=str(live_preview.get("current_build_id") or "").strip() or None,
         last_successful_build_id=str(live_preview.get("last_successful_build_id") or "").strip() or None,
+        requested_build_id=requested_build_id,
+        requested_build_matches_last_successful=(
+            requested_build_id == (str(live_preview.get("last_successful_build_id") or "").strip() or None)
+            if requested_build_id is not None
+            else None
+        ),
         updated_at=live_preview.get("updated_at"),
         debug_build_sequence=live_preview.get("debug_build_sequence"),
         debug_last_trigger_reason=str(live_preview.get("debug_last_trigger_reason") or "").strip() or None,
@@ -1528,6 +1523,7 @@ async def builder_preview_list_threads(
     threads, total = await RuntimeSurfaceService(db).list_threads(
         scope=RuntimeSurfaceContext(
             organization_id=app.organization_id,
+            project_id=app.project_id,
             surface=AgentThreadSurface.published_host_runtime,
             event_view=RuntimeEventView.public_safe,
             app_account_id=UUID(principal["app_account_id"]),
@@ -1573,6 +1569,7 @@ async def builder_preview_get_thread(
             await RuntimeSurfaceService(db).get_thread_detail(
                 scope=RuntimeSurfaceContext(
                     organization_id=app.organization_id,
+                    project_id=app.project_id,
                     surface=AgentThreadSurface.published_host_runtime,
                     event_view=RuntimeEventView.public_safe,
                     app_account_id=UUID(principal["app_account_id"]),
@@ -1614,7 +1611,14 @@ async def proxy_builder_preview(
     session = await _load_session(db=db, session_id=session_id)
     query_token = str(request.query_params.get("runtime_token") or "").strip()
     cookie_token = str(request.cookies.get(PREVIEW_COOKIE_NAME) or "").strip()
-    token, payload, token_source = _resolve_preview_token_for_session(session=session, request=request)
+    try:
+        token, payload, token_source = _resolve_preview_token_for_session(session=session, request=request)
+    except HTTPException as exc:
+        if cookie_token and exc.status_code in {401, 403}:
+            response = JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+            clear_preview_cookie(response=response)
+            return response
+        raise
     await _touch_preview_session_activity(
         db=db,
         session=session,
@@ -1628,6 +1632,13 @@ async def proxy_builder_preview(
         query_params=request.query_params,
         target=target,
     )
+    backend_metadata = dict(session.backend_metadata or {}) if isinstance(session.backend_metadata, dict) else {}
+    live_preview = (
+        dict(backend_metadata.get("live_preview") or {})
+        if isinstance(backend_metadata.get("live_preview"), dict)
+        else {}
+    )
+    requested_build_id = str(request.query_params.get("__build") or "").strip() or None
     apps_builder_trace(
         "preview.proxy.requested",
         domain="preview.proxy",
@@ -1641,6 +1652,14 @@ async def proxy_builder_preview(
         token_source=token_source,
         query_keys=sorted(str(key) for key in request.query_params.keys()),
         preview_route=str(request.query_params.get("preview_route") or ""),
+        requested_build_id=requested_build_id,
+        live_preview_current_build_id=str(live_preview.get("current_build_id") or "").strip() or None,
+        live_preview_last_successful_build_id=str(live_preview.get("last_successful_build_id") or "").strip() or None,
+        requested_build_matches_last_successful=(
+            requested_build_id == (str(live_preview.get("last_successful_build_id") or "").strip() or None)
+            if requested_build_id is not None
+            else None
+        ),
         upstream_url=upstream_url,
         upstream_base_url=str(target.get("upstream_base_url") or ""),
         target_base_path=str(target.get("base_path") or ""),

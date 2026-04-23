@@ -99,10 +99,16 @@ async def test_native_platform_dispatch_rejects_tool_action_mismatch(monkeypatch
             {"kind": "tool_impl", "title_prompt": "Create a tool"},
         ),
         (
-            "platform_action_tools_create_or_update",
+            "platform_action_tools_create",
             "platform-assets",
-            "tools.create_or_update",
+            "tools.create",
             {"name": "Demo Tool"},
+        ),
+        (
+            "platform_action_knowledge_stores_create",
+            "platform-assets",
+            "knowledge_stores.create",
+            {"name": "Demo Store", "embedding_model_id": "embed-1"},
         ),
     ],
 )
@@ -233,6 +239,40 @@ async def test_agents_validate_rejects_legacy_validation_bag():
         )
 
     assert exc_info.value.to_payload()["details"]["errors"][0]["code"] == "LEGACY_FIELD_NOT_ALLOWED"
+
+
+@pytest.mark.asyncio
+async def test_agents_nodes_catalog_passes_control_plane_context(monkeypatch):
+    captured = {}
+
+    async def fake_list_node_catalog(self, *, ctx):
+        captured["ctx"] = ctx
+        return {"nodes": []}
+
+    monkeypatch.setattr(native_agents.AgentAdminService, "list_node_catalog", fake_list_node_catalog)
+
+    result = await native_agents.agents_nodes_catalog(_runtime({}))
+
+    assert result == {"nodes": []}
+    assert captured["ctx"].organization_id is not None
+
+
+@pytest.mark.asyncio
+async def test_agents_nodes_schema_passes_control_plane_context(monkeypatch):
+    captured = {}
+
+    async def fake_get_node_schemas(self, *, ctx, node_types):
+        captured["ctx"] = ctx
+        captured["node_types"] = node_types
+        return {"specs": {}, "instance_contract": {}}
+
+    monkeypatch.setattr(native_agents.AgentAdminService, "get_node_schemas", fake_get_node_schemas)
+
+    result = await native_agents.agents_nodes_schema(_runtime({"node_types": ["agent"]}))
+
+    assert result == {"specs": {}, "instance_contract": {}}
+    assert captured["ctx"].organization_id is not None
+    assert captured["node_types"] == ["agent"]
 
 
 @pytest.mark.asyncio

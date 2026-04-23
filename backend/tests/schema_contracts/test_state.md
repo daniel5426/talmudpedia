@@ -1,6 +1,6 @@
 # Schema Contract Surface Tests
 
-Last Updated: 2026-03-08
+Last Updated: 2026-04-22
 
 ## Scope
 - Contract surfaces that teach the architect the exact create-time wrapper shape for RAG operators and agent graph nodes.
@@ -10,13 +10,18 @@ Last Updated: 2026-03-08
 - test_schema_contract_surfaces.py
 
 ## Key scenarios covered
-- `rag.operators.schema` exposes config schema, runtime-binding-aware field contracts, visual node contract, and shared pipeline create contract details.
-- `agents.nodes.schema` exposes per-node graph wrapper contract and shared graph create contract details.
+- `rag.operators.schema` exposes config schema plus canonical `node_template`, `normalization_defaults`, shared pipeline instance contract details, and preserved numeric/JSON/runtime field constraints.
+- `rag.operators.schema` now excludes runtime-only fields from authoring-required catalog hints, removes stale `org_unit_id` from the canonical pipeline wrapper contract, and exposes union-shaped config like `web_crawler.start_urls` when the runtime accepts multiple input forms.
+- `agents.nodes.schema` exposes per-node graph wrapper contract plus canonical `node_template`, `normalization_defaults`, and richer shared graph instance contract details.
+- Artifact-backed agent nodes and custom RAG operators use the same enriched schema shape as built-in nodes/operators.
 
 ## Last run command + date/time + result
-- Command: `cd backend && pytest -q tests/schema_contracts/test_schema_contract_surfaces.py tests/platform_architect_runtime/test_architect_seeding.py tests/platform_sdk_tool/test_platform_sdk_actions.py tests/platform_sdk_tool/test_platform_sdk_sdk_parity_additional_actions.py`
-- Date/Time: 2026-03-08
-- Result: passed (`83 passed, 5 warnings`)
+- Command: `SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest -q backend/tests/schema_contracts/test_schema_contract_surfaces.py`
+- Date/Time: 2026-04-22 Asia/Hebron
+- Result: passed (`5 passed`)
+- Command: `SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest -q backend/tests/schema_contracts/test_schema_contract_surfaces.py backend/tests/platform_architect_runtime/test_architect_seeding.py backend/tests/platform_architect_runtime/test_native_platform_tools.py`
+- Date/Time: 2026-04-22 Asia/Hebron
+- Result: passed (`32 passed, 6 warnings`)
 
 ## Known gaps or follow-ups
 - Add integration coverage that exercises the live HTTP routes and Platform SDK action envelopes for these enriched schema responses.

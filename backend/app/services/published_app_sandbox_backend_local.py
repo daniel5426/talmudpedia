@@ -64,7 +64,6 @@ class LocalSandboxBackend(PublishedAppSandboxBackend):
         files: Dict[str, str],
         idle_timeout_seconds: int,
         dependency_hash: str,
-        draft_dev_token: str,
         preview_base_path: str,
     ) -> Dict[str, Any]:
         _ = (
@@ -83,7 +82,6 @@ class LocalSandboxBackend(PublishedAppSandboxBackend):
                 session_id=session_id,
                 files=files,
                 dependency_hash=dependency_hash,
-                draft_dev_token=draft_dev_token,
                 preview_base_path=preview_base_path,
             )
         except LocalDraftDevRuntimeError as exc:

@@ -1,6 +1,6 @@
 # Published Apps Frontend Tests
 
-Last Updated: 2026-04-21
+Last Updated: 2026-04-23
 
 ## Scope
 Frontend coverage for published-apps admin and public runtime surfaces outside the new versions module.
@@ -32,7 +32,7 @@ Frontend coverage for published-apps admin and public runtime surfaces outside t
 - Coding-agent direct SSE URL resolution preserves the browser's active loopback hostname, preventing local auth/cookie mismatches between `localhost` and `127.0.0.1`.
 - Coding-agent stream consumer rejects non-`text/event-stream` responses instead of silently retrying forever on HTML/auth/error bodies.
 - Chat history timeline rebuilds tool rows from official message parts instead of legacy run events.
-- Preview auth token channel updates and iframe src stability across token refreshes.
+- Preview relies on the server-provided bootstrap URL without a client-side auth-token channel, while keeping iframe src stable across same-session route changes.
 - Public runtime service omits ambient browser cookies and disables caching for auth and bearer-stream fetches.
 - Preview keeps the iframe mounted during same-session transient pending/recovering states instead of immediately blanking it.
 - Preview stages same-session route changes behind the current iframe and swaps only after the new document loads.
@@ -91,3 +91,13 @@ Frontend coverage for published-apps admin and public runtime surfaces outside t
 ## 2026-04-21 tenant-to-organization validation
 - Command: `cd frontend-reshet && npm exec pnpm -- test -- --runTestsByPath src/__tests__/published_apps/preview_canvas_auth_channel.test.tsx src/__tests__/auth_session_bootstrap/auth_service.test.ts src/__tests__/settings_api_keys/settings_api_keys_service.test.ts src/__tests__/admin_threads/threads_table.test.ts src/__tests__/admin_threads/admin_thread_page.test.tsx src/__tests__/admin_monitoring/users_table_monitoring.test.tsx src/__tests__/artifacts_admin/artifact_test_panel.test.tsx src/__tests__/pipeline_builder/pipeline_run_stale_executable.test.tsx src/__tests__/agent_builder_v3/config_panel_value_ref_contracts.test.tsx src/__tests__/agent_builder_v3/config_panel_artifact_contracts.test.tsx src/__tests__/pipeline_tool_bindings/pipeline_tool_settings_page.test.tsx`
 - Result: PASS (`11 suites passed, 25 tests passed`)
+
+## 2026-04-23 unified preview auth contract
+- Command: `cd /Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet && ./node_modules/.bin/jest --runInBand src/__tests__/published_apps/preview_canvas_auth_channel.test.tsx src/__tests__/apps_builder_versions/versions_hook.test.tsx`
+- Date: 2026-04-23 Asia/Hebron
+- Result: PASS (`2 suites, 10 tests`)
+
+## 2026-04-23 apps-builder reconnect quieting
+- Command: `cd /Users/danielbenassaya/Code/personal/talmudpedia/frontend-reshet && ./node_modules/.bin/jest --runInBand src/__tests__/published_apps/preview_canvas_auth_channel.test.tsx`
+- Date: 2026-04-23 Asia/Hebron
+- Result: PASS (`1 suite, 6 tests`). Same-session reconnecting preview states now keep the iframe mounted without showing the small reconnect overlay.

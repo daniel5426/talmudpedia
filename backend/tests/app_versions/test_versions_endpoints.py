@@ -19,13 +19,13 @@ from app.services.published_app_versioning import create_app_version
 from tests.published_apps._helpers import admin_headers, seed_admin_tenant_and_agent
 
 
-def _template_files(*, app_id: UUID, slug: str, agent_id: UUID, template_key: str = "classic-chat") -> tuple[str, dict[str, str]]:
+def _template_files(*, app_id: UUID, public_id: str, agent_id: UUID, template_key: str = "classic-chat") -> tuple[str, dict[str, str]]:
     template = get_template(template_key)
     files = build_template_files(
         template_key,
         runtime_context={
             "app_id": str(app_id),
-            "app_slug": slug,
+            "app_slug": public_id,
             "agent_id": str(agent_id),
         },
     )
@@ -33,15 +33,28 @@ def _template_files(*, app_id: UUID, slug: str, agent_id: UUID, template_key: st
 
 
 def _install_app_create_stub(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def _provision_workspace_from_files(self, *, app, user_id, files, entry_file, trace_source=None):
-        _ = self, app, user_id, files, entry_file, trace_source
-        return None
-
-    async def _materialize_live_workspace(self, *, app, entry_file, source_revision_id, created_by, origin_kind, **kwargs):
-        _ = kwargs
-        _, files = _template_files(app_id=app.id, slug=app.slug, agent_id=app.agent_id, template_key=app.template_key)
+    async def _create_initial_revision(
+        db,
+        *,
+        app,
+        kind,
+        template_key,
+        entry_file,
+        files,
+        created_by,
+        source_revision_id,
+        origin_kind,
+        **kwargs,
+    ):
+        _ = db, kind, template_key, entry_file, files, source_revision_id, kwargs
+        _, files = _template_files(
+            app_id=app.id,
+            public_id=app.public_id,
+            agent_id=app.agent_id,
+            template_key=app.template_key,
+        )
         revision = await create_app_version(
-            self.db,
+            db,
             app=app,
             kind=PublishedAppRevisionKind.draft,
             template_key=app.template_key,
@@ -57,21 +70,9 @@ def _install_app_create_stub(monkeypatch: pytest.MonkeyPatch) -> None:
             template_runtime="vite_static",
         )
         app.current_draft_revision_id = revision.id
-        return SimpleNamespace(
-            revision=revision,
-            reused=False,
-            source_fingerprint=f"fp-{app.id}",
-            workspace_revision_token=None,
-        )
+        return revision
 
-    monkeypatch.setattr(
-        "app.services.published_app_draft_dev_runtime.PublishedAppDraftDevRuntimeService.provision_workspace_from_files",
-        _provision_workspace_from_files,
-    )
-    monkeypatch.setattr(
-        "app.services.published_app_draft_revision_materializer.PublishedAppDraftRevisionMaterializerService.materialize_live_workspace",
-        _materialize_live_workspace,
-    )
+    monkeypatch.setattr("app.api.routers.published_apps_admin_routes_apps.create_app_version", _create_initial_revision)
 
 
 async def _create_app(
@@ -331,7 +332,7 @@ async def test_get_active_publish_job_expires_stale_job(db_session, monkeypatch)
         organization_id=tenant.id,
         agent_id=agent.id,
         name="Publish Stale Timeout App",
-        slug=f"publish-stale-timeout-app-{uuid4().hex[:8]}",
+        public_id=f"publish-stale-timeout-app-{uuid4().hex[:8]}",
     )
     db_session.add(app)
     await db_session.flush()

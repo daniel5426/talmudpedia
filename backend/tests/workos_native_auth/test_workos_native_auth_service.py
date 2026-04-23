@@ -1,12 +1,18 @@
 import asyncio
+import json
 import time
 from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
 from fastapi import Response
+from sqlalchemy import select
 from starlette.requests import Request
 
+from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgUnit, OrgUnitType, Organization, User
+from app.db.postgres.models.rbac import RoleAssignment
 from app.services.workos_auth_service import WorkOSAuthService
+from app.services.security_bootstrap_service import SecurityBootstrapService
 
 
 def _request_with_session_cookie(value: str) -> Request:
@@ -171,3 +177,131 @@ async def test_authenticate_request_coalesces_concurrent_refresh(monkeypatch):
     assert refreshed_b.authenticated is True
     assert "wos_session=rotated-session" in response_a.headers["set-cookie"]
     assert "wos_session=rotated-session" in response_b.headers["set-cookie"]
+
+
+@pytest.mark.asyncio
+async def test_remove_workos_membership_revokes_local_access(db_session, monkeypatch):
+    monkeypatch.setenv("WORKOS_API_KEY", "sk_test")
+    monkeypatch.setenv("WORKOS_CLIENT_ID", "client_test")
+    tenant = Organization(
+        name=f"Organization {uuid4().hex[:6]}",
+        slug=f"tenant-{uuid4().hex[:8]}",
+        workos_organization_id=f"wos_org_{uuid4().hex[:8]}",
+    )
+    user = User(
+        email=f"user-{uuid4().hex[:8]}@example.com",
+        hashed_password="x",
+        role="user",
+        workos_user_id=f"wos_user_{uuid4().hex[:8]}",
+    )
+    db_session.add_all([tenant, user])
+    await db_session.flush()
+
+    root = OrgUnit(organization_id=tenant.id, name="Root", slug=f"root-{uuid4().hex[:6]}", type=OrgUnitType.org)
+    db_session.add(root)
+    await db_session.flush()
+
+    membership = OrgMembership(
+        organization_id=tenant.id,
+        user_id=user.id,
+        org_unit_id=root.id,
+        status=MembershipStatus.active,
+    )
+    db_session.add(membership)
+    bootstrap = SecurityBootstrapService(db_session)
+    await bootstrap.ensure_default_roles(tenant.id)
+    await bootstrap.ensure_organization_reader_assignment(
+        organization_id=tenant.id,
+        user_id=user.id,
+        assigned_by=user.id,
+    )
+    await db_session.commit()
+
+    service = WorkOSAuthService(db_session)
+    await service.remove_workos_membership(
+        workos_user_id=user.workos_user_id,
+        workos_organization_id=tenant.workos_organization_id,
+    )
+    await db_session.commit()
+
+    remaining_membership = await db_session.scalar(
+        select(OrgMembership).where(
+            OrgMembership.organization_id == tenant.id,
+            OrgMembership.user_id == user.id,
+        )
+    )
+    assert remaining_membership is None
+    remaining_assignments = (
+        await db_session.execute(
+            select(RoleAssignment).where(
+                RoleAssignment.organization_id == tenant.id,
+                RoleAssignment.user_id == user.id,
+            )
+        )
+    ).scalars().all()
+    assert remaining_assignments == []
+
+
+@pytest.mark.asyncio
+async def test_remove_workos_membership_is_idempotent_when_local_records_missing(db_session, monkeypatch):
+    monkeypatch.setenv("WORKOS_API_KEY", "sk_test")
+    monkeypatch.setenv("WORKOS_CLIENT_ID", "client_test")
+    tenant = Organization(
+        name=f"Organization {uuid4().hex[:6]}",
+        slug=f"tenant-{uuid4().hex[:8]}",
+        workos_organization_id=f"wos_org_{uuid4().hex[:8]}",
+    )
+    user = User(
+        email=f"user-{uuid4().hex[:8]}@example.com",
+        hashed_password="x",
+        role="user",
+        workos_user_id=f"wos_user_{uuid4().hex[:8]}",
+    )
+    db_session.add_all([tenant, user])
+    await db_session.commit()
+
+    service = WorkOSAuthService(db_session)
+    await service.remove_workos_membership(
+        workos_user_id=user.workos_user_id,
+        workos_organization_id=tenant.workos_organization_id,
+    )
+
+
+@pytest.mark.asyncio
+async def test_workos_membership_deleted_webhook_is_idempotent(client, db_session, monkeypatch):
+    calls: list[tuple[str, str]] = []
+
+    def fake_verify_webhook_signature(self, *, payload, sig_header):
+        return None
+
+    async def fake_remove_workos_membership(self, *, workos_user_id, workos_organization_id):
+        calls.append((workos_user_id, workos_organization_id))
+
+    monkeypatch.setattr(WorkOSAuthService, "verify_webhook_signature", fake_verify_webhook_signature)
+    monkeypatch.setattr(WorkOSAuthService, "remove_workos_membership", fake_remove_workos_membership)
+
+    payload = {
+        "id": f"evt_membership_deleted_{uuid4().hex[:8]}",
+        "event": "organization_membership.deleted",
+        "data": {
+            "organization_id": "org_workos_123",
+            "user_id": "user_workos_123",
+        },
+    }
+
+    first = await client.post(
+        "/webhooks/workos",
+        content=json.dumps(payload),
+        headers={"workos-signature": "t=1,v1=signature", "content-type": "application/json"},
+    )
+    second = await client.post(
+        "/webhooks/workos",
+        content=json.dumps(payload),
+        headers={"workos-signature": "t=1,v1=signature", "content-type": "application/json"},
+    )
+
+    assert first.status_code == 200
+    assert first.json() == {"status": "ok"}
+    assert second.status_code == 200
+    assert second.json() == {"status": "duplicate"}
+    assert calls == [("user_workos_123", "org_workos_123")]

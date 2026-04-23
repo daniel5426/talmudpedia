@@ -22,7 +22,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 artifact_scope_enum = postgresql.ENUM("rag", "agent", "both", "tool", name="artifactscope", create_type=False)
 artifact_kind_enum = postgresql.ENUM("agent_node", "rag_operator", "tool_impl", name="artifactkind", create_type=False)
-artifact_owner_type_enum = postgresql.ENUM("tenant", "system", name="artifactownertype", create_type=False)
+artifact_owner_type_enum = postgresql.ENUM("organization", "system", name="artifactownertype", create_type=False)
 
 
 def _column_names(table_name: str) -> set[str]:
@@ -245,7 +245,7 @@ def _ensure_artifact_domain_columns() -> None:
     if "owner_type" not in artifact_columns:
         op.add_column(
             "artifacts",
-            sa.Column("owner_type", artifact_owner_type_enum, nullable=True, server_default="tenant"),
+            sa.Column("owner_type", artifact_owner_type_enum, nullable=True, server_default="organization"),
         )
     if "system_key" not in artifact_columns:
         op.add_column("artifacts", sa.Column("system_key", sa.String(), nullable=True))
@@ -408,7 +408,7 @@ def _backfill_artifacts_to_kind_model() -> None:
             .where(artifact_table.c.id == row["id"])
             .values(
                 kind=kind,
-                owner_type="tenant",
+                owner_type="organization",
                 system_key=None,
             )
         )

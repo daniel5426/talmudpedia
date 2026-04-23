@@ -91,7 +91,6 @@ class LocalDraftDevRuntimeManager:
         session_id: str,
         files: Dict[str, str],
         dependency_hash: str,
-        draft_dev_token: str,
         preview_base_path: str = "/",
     ) -> Dict[str, str]:
         async with self._lock:
@@ -109,7 +108,7 @@ class LocalDraftDevRuntimeManager:
             if current and current.process.poll() is None:
                 return {
                     "sandbox_id": session_id,
-                    "preview_url": self._preview_url(current.port, draft_dev_token),
+                    "preview_url": self._preview_url(current.port),
                     "preview_upstream_url": self._preview_upstream_url(current.port),
                     "status": "running",
                     "workspace_path": str(current.project_dir),
@@ -131,7 +130,7 @@ class LocalDraftDevRuntimeManager:
             )
             return {
                 "sandbox_id": session_id,
-                "preview_url": self._preview_url(port, draft_dev_token),
+                "preview_url": self._preview_url(port),
                 "preview_upstream_url": self._preview_upstream_url(port),
                 "status": "running",
                 "workspace_path": str(project_dir),
@@ -835,8 +834,8 @@ class LocalDraftDevRuntimeManager:
             "revision_token": revision_token,
         }
 
-    def _preview_url(self, port: int, draft_dev_token: str) -> str:
-        return f"http://{self._host}:{port}/?draft_dev_token={draft_dev_token}"
+    def _preview_url(self, port: int) -> str:
+        return f"http://{self._host}:{port}/"
 
     def _preview_upstream_url(self, port: int) -> str:
         return f"http://{self._host}:{port}/"

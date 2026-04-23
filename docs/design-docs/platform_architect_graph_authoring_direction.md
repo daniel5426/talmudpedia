@@ -120,7 +120,7 @@ For the next phase, the main effort should be:
 The first architect-facing hard cut has now landed in the backend:
 
 - the architect no longer mounts the legacy `platform-rag`, `platform-agents`, `platform-assets`, or `platform-governance` container tools
-- the architect now mounts `36` action-level platform tools plus `5` worker tools
+- the architect now mounts `38` action-level platform tools plus `5` worker tools
 - platform action tools are now real tool rows with direct-field schemas instead of `action + payload` container contracts
 - the architect prompt is now graph-first and no longer teaches shell/helper authoring paths
 
@@ -130,11 +130,80 @@ The current implemented authoring surface is therefore:
 - graph-first creation/update via `agents.create`, `agents.update`, `rag.create_visual_pipeline`, `rag.update_visual_pipeline`
 - repair checkpoints via `agents.validate` and `rag.compile_visual_pipeline`
 
+The mounted architect surface is now explicitly runtime-scoped and project-owned:
+
+- mounted architect tools do not ask the model for `organization_id` or `project_id`
+- runtime control-plane context is authoritative for tenant/project scope
+- the mounted asset surface now prefers explicit create/update actions where mixed contracts caused repair-loop failures, including:
+  - `tools.create` / `tools.update`
+  - `knowledge_stores.create` / `knowledge_stores.update`
+
+The discovery surface is now richer on the schema side:
+
+- `*.catalog` stays thin and is only for fast candidate selection
+- `agents.nodes.schema` and `rag.operators.schema` now return:
+  - full `config_schema` constraints
+  - `input_schema` when there is a meaningful input contract
+  - canonical `node_template`
+  - omit-safe `normalization_defaults`
+  - richer shared `instance_contract` details for the surrounding graph payload
+
+This means the architect can now discover not only which nodes/operators exist, but also the minimal canonical node object it should author and which config defaults the backend will safely fill in.
+
 The remaining deferred work is still deferred:
 
 - toolset partitioning and dynamic loading
 - broader public/MCP exposure strategy
 - further node-by-node contract simplification on top of the new graph normalization work
+
+## Debugging Principle
+
+When evaluating `platform-architect` runs, do not assume every failure belongs to the architect tool surface itself.
+
+Architect run failures can come from several different layers:
+
+- architect behavior or repair policy
+- action-tool contract design
+- discovery/read-surface quality
+- graph normalizers/defaulting
+- node/operator authoring spec quality
+- compiler/validator rules
+- node/operator runtime implementation
+
+The intended debugging approach is therefore:
+
+1. inspect the exact tool call and error
+2. identify the true failing layer
+3. apply the fix at that layer instead of forcing a prompt-only workaround
+
+This matters because the agreed direction is broader than “make the architect better at calling tools”.
+As the architect is used to author graphs end to end, it is also a pressure test for:
+
+- node/operator config contracts
+- omit-safe defaults
+- compiler semantics
+- runtime behavior parity
+- schema/discovery usefulness
+
+So architect debugging is part of the node/operator polishing process, not a separate effort.
+
+Recent examples from live runs already show this distinction:
+
+- `query_input.text` being treated as compile-time required for retrieval graph authoring is a node/spec or validator issue, not primarily an architect tool issue
+- `web_crawler.start_urls` behaving differently between compile-time config validation and runtime execution is a node contract/runtime parity issue, not primarily an architect tool issue
+- repeated empty `rag.update_visual_pipeline` calls are architect repair-behavior issues
+
+Those two node/operator issues have now been fixed in the current code:
+
+- runtime-only RAG config fields no longer appear as authoring-required fields in discovery/catalog or authoring validation
+- `web_crawler.start_urls` now accepts the same string-or-list contract in operator validation that the runtime executor already accepted
+
+The fix policy should follow the real root cause:
+
+- fix architect prompts/guardrails when the agent ignores a valid contract
+- fix tool contracts when the model-facing schema is misleading
+- fix node/operator specs, normalizers, or validators when the contract itself is wrong
+- fix runtime node implementation when execution behavior disagrees with the published contract
 
 ## Non-Goals For This Doc
 

@@ -8,7 +8,7 @@ from pydantic import BaseModel, EmailStr
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import get_current_principal, require_scopes
+from app.api.dependencies import ensure_principal_organization_access, get_current_principal, require_scopes
 from app.api.routers.auth import get_current_user
 from app.db.postgres.models.identity import OrgMembership, Organization, User
 from app.db.postgres.models.rbac import Role, RoleAssignment
@@ -67,6 +67,10 @@ def _require_org_scope(principal: dict, *scopes: str) -> None:
     raise HTTPException(status_code=403, detail=f"Missing required scope: {' or '.join(scopes)}")
 
 
+def _require_active_organization(principal: dict, organization: Organization) -> None:
+    ensure_principal_organization_access(principal, organization.id)
+
+
 async def _get_org_or_404(db: AsyncSession, organization_id: UUID) -> Organization:
     organization = await db.get(Organization, organization_id)
     if organization is None:
@@ -115,8 +119,7 @@ async def get_organization(
     db: AsyncSession = Depends(get_db),
 ):
     organization = await _get_org_or_404(db, organization_id)
-    if str(organization.id) != str(principal.get("organization_id")) and "*" not in set(principal.get("scopes") or []):
-        raise HTTPException(status_code=403, detail="Organization is outside active session context")
+    _require_active_organization(principal, organization)
     return serialize_organization_summary(organization)
 
 
@@ -129,6 +132,7 @@ async def update_organization(
 ):
     _require_org_scope(principal, "organizations.write")
     organization = await _get_org_or_404(db, organization_id)
+    _require_active_organization(principal, organization)
     if payload.name is not None:
         organization.name = payload.name
     await db.commit()
@@ -143,6 +147,7 @@ async def list_projects(
 ):
     _require_org_scope(principal, "projects.read", "organizations.read")
     organization = await _get_org_or_404(db, organization_id)
+    _require_active_organization(principal, organization)
     projects = await list_organization_projects(db=db, organization_id=organization.id)
     return [serialize_project_summary(item) for item in projects]
 
@@ -156,6 +161,7 @@ async def create_project(
 ):
     _require_org_scope(principal, "projects.write")
     organization = await _get_org_or_404(db, organization_id)
+    _require_active_organization(principal, organization)
     actor_user_id = UUID(str(principal["user_id"])) if principal.get("user_id") else None
     project = await OrganizationBootstrapService(db).create_project(
         organization=organization,
@@ -177,6 +183,7 @@ async def update_project(
     db: AsyncSession = Depends(get_db),
 ):
     organization = await _get_org_or_404(db, organization_id)
+    _require_active_organization(principal, organization)
     project = (
         await db.execute(
             select(Project).where(
@@ -217,6 +224,7 @@ async def list_members(
 ):
     _require_org_scope(principal, "organization_members.read")
     organization = await _get_org_or_404(db, organization_id)
+    _require_active_organization(principal, organization)
     memberships = (
         await db.execute(
             select(OrgMembership).where(
@@ -262,6 +270,7 @@ async def list_invites(
 ):
     _require_org_scope(principal, "organization_invites.read")
     organization = await _get_org_or_404(db, organization_id)
+    _require_active_organization(principal, organization)
     if not organization.workos_organization_id:
         raise HTTPException(status_code=400, detail="Organization is not linked to WorkOS")
     service = WorkOSAuthService(db)
@@ -290,6 +299,7 @@ async def create_invite(
 ):
     _require_org_scope(principal, "organization_invites.write")
     organization = await _get_org_or_404(db, organization_id)
+    _require_active_organization(principal, organization)
     if not organization.workos_organization_id:
         raise HTTPException(status_code=400, detail="Organization is not linked to WorkOS")
     service = WorkOSAuthService(db)
@@ -317,6 +327,7 @@ async def revoke_invite(
 ):
     _require_org_scope(principal, "organization_invites.delete")
     organization = await _get_org_or_404(db, organization_id)
+    _require_active_organization(principal, organization)
     if not organization.workos_organization_id:
         raise HTTPException(status_code=400, detail="Organization is not linked to WorkOS")
     WorkOSAuthService(db).client.user_management.revoke_invitation(invite_id)
@@ -330,8 +341,8 @@ async def create_workos_admin_portal_link(
     principal: dict = Depends(require_scopes("organizations.write")),
     db: AsyncSession = Depends(get_db),
 ):
-    del principal
     organization = await _get_org_or_404(db, organization_id)
+    _require_active_organization(principal, organization)
     if not organization.workos_organization_id:
         raise HTTPException(status_code=400, detail="Organization is not linked to WorkOS")
     service = WorkOSAuthService(db)

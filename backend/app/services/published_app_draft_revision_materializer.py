@@ -247,10 +247,30 @@ class PublishedAppDraftRevisionMaterializerService:
         source_revision_id: UUID | None,
         created_by: UUID | None,
     ) -> PublishedAppRevision | None:
+        self._trace(
+            "finalize_run_materialization.begin",
+            app_id=app.id,
+            run_id=str(run.id),
+            source_revision_id=str(source_revision_id or "") or None,
+            has_workspace_writes=bool(getattr(run, "has_workspace_writes", False)),
+            result_revision_id=str(getattr(run, "result_revision_id", None) or "") or None,
+        )
         if not bool(getattr(run, "has_workspace_writes", False)):
+            self._trace(
+                "finalize_run_materialization.skipped",
+                app_id=app.id,
+                run_id=str(run.id),
+                reason="no_workspace_writes",
+            )
             return None
         if getattr(run, "result_revision_id", None) is not None:
             revision = await self.db.get(PublishedAppRevision, run.result_revision_id)
+            self._trace(
+                "finalize_run_materialization.reused_existing_result",
+                app_id=app.id,
+                run_id=str(run.id),
+                revision_id=str(getattr(revision, "id", None) or "") or None,
+            )
             return revision
         result = await self.materialize_live_workspace(
             app=app,
@@ -259,5 +279,14 @@ class PublishedAppDraftRevisionMaterializerService:
             created_by=created_by,
             origin_kind="coding_run",
             origin_run_id=run.id,
+        )
+        self._trace(
+            "finalize_run_materialization.done",
+            app_id=app.id,
+            run_id=str(run.id),
+            revision_id=str(result.revision.id),
+            reused=result.reused,
+            source_fingerprint=result.source_fingerprint,
+            workspace_revision_token=str(result.workspace_revision_token or "") or None,
         )
         return result.revision

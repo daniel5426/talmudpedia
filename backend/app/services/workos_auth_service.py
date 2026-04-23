@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 import hashlib
 import hmac
 import json
+import logging
 import os
 import re
 from dataclasses import dataclass
@@ -30,9 +31,11 @@ from app.db.postgres.models.identity import (
 )
 from app.db.postgres.models.rbac import Role, RoleAssignment
 from app.db.postgres.models.workspace import Project
-from app.services.auth_context_service import list_organization_projects
+from app.services.auth_context_service import list_organization_projects, list_user_organizations
 from app.services.organization_bootstrap_service import OrganizationBootstrapService
 from app.services.security_bootstrap_service import SecurityBootstrapService
+
+logger = logging.getLogger(__name__)
 
 WORKOS_SESSION_COOKIE_NAME = os.getenv("WORKOS_SESSION_COOKIE_NAME", "wos_session").strip() or "wos_session"
 WORKOS_PROJECT_COOKIE_NAME = os.getenv("WORKOS_PROJECT_COOKIE_NAME", "talmudpedia_active_project").strip() or "talmudpedia_active_project"
@@ -768,8 +771,43 @@ class WorkOSAuthService:
         )
         items = _iter_collection(memberships)
         if not items:
+            membership = (
+                await self.db.execute(
+                    select(OrgMembership).where(
+                        OrgMembership.organization_id == local_org.id,
+                        OrgMembership.user_id == local_user.id,
+                    )
+                )
+            ).scalar_one_or_none()
+            if membership is not None:
+                await self._remove_local_membership(membership=membership)
             return None
         return await self._upsert_local_membership(local_user, local_org, items[0])
+
+    async def remove_workos_membership(
+        self,
+        *,
+        workos_user_id: str,
+        workos_organization_id: str,
+    ) -> None:
+        local_org = await self._read_local_organization(workos_organization_id)
+        if local_org is None:
+            return
+        local_user = (
+            await self.db.execute(select(User).where(User.workos_user_id == workos_user_id).limit(1))
+        ).scalar_one_or_none()
+        if local_user is None:
+            return
+        memberships = (
+            await self.db.execute(
+                select(OrgMembership).where(
+                    OrgMembership.organization_id == local_org.id,
+                    OrgMembership.user_id == local_user.id,
+                )
+            )
+        ).scalars().all()
+        for membership in memberships:
+            await self._remove_local_membership(membership=membership)
 
     async def sync_workos_organization_by_id(
         self,
@@ -819,6 +857,50 @@ class WorkOSAuthService:
             if project.is_default:
                 return project
         return await self._ensure_default_project(organization, None)
+
+    async def recover_no_active_organization(
+        self,
+        *,
+        auth_response: Any,
+        request: Request,
+        response: Response,
+        return_to: str | None = None,
+    ) -> LocalSessionBundle | dict[str, str] | None:
+        local_user = await self.sync_local_user(auth_response)
+        await self._sync_user_memberships(local_user)
+        organizations = await list_user_organizations(db=self.db, user_id=local_user.id)
+        if not organizations:
+            return None
+
+        if len(organizations) == 1:
+            organization = organizations[0]
+            if not organization.workos_organization_id:
+                return None
+            switched = await self.switch_organization(
+                request,
+                response,
+                organization.workos_organization_id,
+                return_to=return_to,
+            )
+            if isinstance(switched, dict):
+                return switched
+            await self.sync_current_organization(auth_response=switched, actor_user_id=local_user.id)
+            bundle = await self.ensure_local_bundle(
+                auth_response=switched,
+                request=request,
+                actor_user_id=local_user.id,
+            )
+            self.set_project_cookie(response=response, request=request, project_id=bundle.project.id)
+            return bundle
+
+        redirect_to = return_to or str(request.headers.get("referer") or "").strip() or self._request_origin(request)
+        return {
+            "redirect_url": self.build_authorization_url(
+                request,
+                screen_hint="sign-in",
+                return_to=redirect_to,
+            )
+        }
 
     async def create_organization_for_user(
         self,

@@ -6,8 +6,10 @@ from urllib.parse import parse_qs, urlparse
 from uuid import uuid4
 
 import pytest
+from fastapi import HTTPException
 
 from app.api.routers import published_apps_builder_preview_proxy as preview_proxy_router
+from app.api.routers.published_apps_preview_auth import create_preview_token
 from app.db.postgres.models.agent_threads import AgentThreadSurface
 from app.services import published_app_draft_dev_runtime_client as runtime_client_module
 from app.services.published_app_auth_service import PublishedAppAuthRateLimitError
@@ -23,7 +25,8 @@ def _fake_preview_app_and_revision():
         SimpleNamespace(
             id="app-1",
             organization_id="tenant-1",
-            slug="sefaria",
+            project_id="project-1",
+            public_id="sefaria",
             name="Sefaria",
             description=None,
             logo_url=None,
@@ -48,6 +51,17 @@ def _fake_session(preview_metadata: dict | None = None):
         revision_id="revision-1",
         backend_metadata=preview_metadata or {},
         draft_workspace=None,
+    )
+
+
+def _preview_token(*, app_id: str = "app-1", session_id: str = "session-1", revision_id: str = "revision-1") -> str:
+    return create_preview_token(
+        subject="user-1",
+        organization_id="tenant-1",
+        app_id=app_id,
+        preview_target_type="draft_dev_session",
+        preview_target_id=session_id,
+        revision_id=revision_id,
     )
 
 
@@ -94,13 +108,12 @@ async def test_runtime_client_delegates_start_session_to_selected_sprite_backend
         app_id="app-1",
         user_id="user-1",
         revision_id="revision-1",
-        app_slug="app-1",
+        app_public_id="app-1",
         agent_id="agent-1",
         entry_file="src/main.tsx",
         files={"src/main.tsx": "export default 1;"},
         idle_timeout_seconds=180,
         dependency_hash="dep-hash",
-        draft_dev_token="draft-token",
     )
 
     assert result["runtime_backend"] == "sprite"
@@ -170,10 +183,6 @@ async def test_builder_preview_proxy_accepts_valid_token_and_forwards_sprite_aut
             }
         )
 
-    def _fake_decode(token: str):
-        assert token == "preview-token-1"
-        return {"app_id": "app-1", "revision_id": "revision-1", "scope": ["apps.preview"]}
-
     captured: dict[str, object] = {}
 
     class _FakeAsyncClient:
@@ -198,11 +207,11 @@ async def test_builder_preview_proxy_accepts_valid_token_and_forwards_sprite_aut
 
     monkeypatch.setattr(preview_proxy_router, "_load_session", _fake_load_session)
     monkeypatch.setattr(preview_proxy_router, "_load_preview_app_and_revision", _fake_load_preview_app_and_revision)
-    monkeypatch.setattr(preview_proxy_router, "decode_published_app_preview_token", _fake_decode)
     monkeypatch.setattr(preview_proxy_router.httpx, "AsyncClient", _FakeAsyncClient)
+    preview_token = _preview_token()
 
     response = await client.get(
-        "/public/apps-builder/draft-dev/sessions/session-1/preview/?runtime_token=preview-token-1&v=123",
+        f"/public/apps-builder/draft-dev/sessions/session-1/preview/?runtime_token={preview_token}&v=123",
     )
 
     assert response.status_code == 200
@@ -227,13 +236,6 @@ async def test_builder_preview_proxy_prefers_cookie_token_over_stale_query_token
             }
         )
 
-    def _fake_decode(token: str):
-        if token == "stale-query-token":
-            return {"app_id": "other-app", "revision_id": "revision-1", "scope": ["apps.preview"]}
-        if token == "cookie-token":
-            return {"app_id": "app-1", "revision_id": "revision-1", "scope": ["apps.preview"]}
-        raise AssertionError(f"unexpected token {token}")
-
     class _FakeAsyncClient:
         def __init__(self, *args, **kwargs):
             _ = args, kwargs
@@ -250,12 +252,13 @@ async def test_builder_preview_proxy_prefers_cookie_token_over_stale_query_token
 
     monkeypatch.setattr(preview_proxy_router, "_load_session", _fake_load_session)
     monkeypatch.setattr(preview_proxy_router, "_load_preview_app_and_revision", _fake_load_preview_app_and_revision)
-    monkeypatch.setattr(preview_proxy_router, "decode_published_app_preview_token", _fake_decode)
     monkeypatch.setattr(preview_proxy_router.httpx, "AsyncClient", _FakeAsyncClient)
+    stale_query_token = _preview_token(app_id="other-app")
+    cookie_token = _preview_token()
 
     response = await client.get(
-        "/public/apps-builder/draft-dev/sessions/session-1/preview/?runtime_token=stale-query-token",
-        cookies={preview_proxy_router.PREVIEW_COOKIE_NAME: "cookie-token"},
+        f"/public/apps-builder/draft-dev/sessions/session-1/preview/?runtime_token={stale_query_token}",
+        cookies={preview_proxy_router.PREVIEW_COOKIE_NAME: cookie_token},
     )
 
     assert response.status_code == 200
@@ -263,7 +266,7 @@ async def test_builder_preview_proxy_prefers_cookie_token_over_stale_query_token
 
 @pytest.mark.asyncio
 async def test_builder_preview_thread_list_uses_runtime_surface(monkeypatch: pytest.MonkeyPatch, client):
-    app = SimpleNamespace(id=uuid4(), organization_id=uuid4())
+    app = SimpleNamespace(id=uuid4(), organization_id=uuid4(), project_id=uuid4())
     thread = SimpleNamespace(
         id=uuid4(),
         title="Preview thread",
@@ -305,7 +308,7 @@ async def test_builder_preview_thread_list_uses_runtime_surface(monkeypatch: pyt
 
 @pytest.mark.asyncio
 async def test_builder_preview_thread_detail_uses_runtime_surface(monkeypatch: pytest.MonkeyPatch, client):
-    app = SimpleNamespace(id=uuid4(), organization_id=uuid4())
+    app = SimpleNamespace(id=uuid4(), organization_id=uuid4(), project_id=uuid4())
     thread_id = uuid4()
     calls: list[tuple[str, int, bool, str, str]] = []
 
@@ -360,13 +363,6 @@ async def test_builder_preview_proxy_falls_back_to_query_token_when_cookie_is_fo
             }
         )
 
-    def _fake_decode(token: str):
-        if token == "stale-cookie-token":
-            return {"app_id": "other-app", "revision_id": "revision-1", "scope": ["apps.preview"]}
-        if token == "fresh-query-token":
-            return {"app_id": "app-1", "revision_id": "revision-1", "scope": ["apps.preview"]}
-        raise AssertionError(f"unexpected token {token}")
-
     class _FakeAsyncClient:
         def __init__(self, *args, **kwargs):
             _ = args, kwargs
@@ -383,15 +379,44 @@ async def test_builder_preview_proxy_falls_back_to_query_token_when_cookie_is_fo
 
     monkeypatch.setattr(preview_proxy_router, "_load_session", _fake_load_session)
     monkeypatch.setattr(preview_proxy_router, "_load_preview_app_and_revision", _fake_load_preview_app_and_revision)
-    monkeypatch.setattr(preview_proxy_router, "decode_published_app_preview_token", _fake_decode)
     monkeypatch.setattr(preview_proxy_router.httpx, "AsyncClient", _FakeAsyncClient)
+    stale_cookie_token = _preview_token(app_id="other-app")
+    fresh_query_token = _preview_token()
 
     response = await client.get(
-        "/public/apps-builder/draft-dev/sessions/session-1/preview/?runtime_token=fresh-query-token",
-        cookies={preview_proxy_router.PREVIEW_COOKIE_NAME: "stale-cookie-token"},
+        f"/public/apps-builder/draft-dev/sessions/session-1/preview/?runtime_token={fresh_query_token}",
+        cookies={preview_proxy_router.PREVIEW_COOKIE_NAME: stale_cookie_token},
     )
 
     assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_builder_preview_proxy_clears_stale_preview_cookie_on_auth_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    client,
+):
+    async def _fake_load_session(*, db, session_id):
+        _ = db, session_id
+        return _fake_session()
+
+    def _fake_resolve_preview_token_for_session(**kwargs):
+        _ = kwargs
+        raise HTTPException(status_code=401, detail="Preview token has expired")
+
+    monkeypatch.setattr(preview_proxy_router, "_load_session", _fake_load_session)
+    monkeypatch.setattr(preview_proxy_router, "_resolve_preview_token_for_session", _fake_resolve_preview_token_for_session)
+
+    response = await client.get(
+        "/public/apps-builder/draft-dev/sessions/session-1/preview/",
+        cookies={preview_proxy_router.PREVIEW_COOKIE_NAME: "stale-preview-cookie"},
+    )
+
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Preview token has expired"
+    set_cookie_header = response.headers.get("set-cookie") or ""
+    assert f"{preview_proxy_router.PREVIEW_COOKIE_NAME}=" in set_cookie_header
+    assert "Max-Age=0" in set_cookie_header or "expires=" in set_cookie_header.lower()
 
 
 @pytest.mark.asyncio
@@ -407,10 +432,6 @@ async def test_builder_preview_proxy_injects_runtime_context_and_static_route_br
                 }
             }
         )
-
-    def _fake_decode(token: str):
-        assert token == "preview-token-1"
-        return {"app_id": "app-1", "revision_id": "revision-1", "scope": ["apps.preview"]}
 
     class _FakeAsyncClient:
         def __init__(self, *args, **kwargs):
@@ -431,11 +452,11 @@ async def test_builder_preview_proxy_injects_runtime_context_and_static_route_br
 
     monkeypatch.setattr(preview_proxy_router, "_load_session", _fake_load_session)
     monkeypatch.setattr(preview_proxy_router, "_load_preview_app_and_revision", _fake_load_preview_app_and_revision)
-    monkeypatch.setattr(preview_proxy_router, "decode_published_app_preview_token", _fake_decode)
     monkeypatch.setattr(preview_proxy_router.httpx, "AsyncClient", _FakeAsyncClient)
+    preview_token = _preview_token()
 
     response = await client.get(
-        "/public/apps-builder/draft-dev/sessions/session-1/preview/?runtime_token=preview-token-1&preview_route=%2Fchat",
+        f"/public/apps-builder/draft-dev/sessions/session-1/preview/?runtime_token={preview_token}&preview_route=%2Fchat",
     )
 
     assert response.status_code == 200
@@ -459,10 +480,6 @@ async def test_builder_preview_proxy_passthroughs_static_assets(monkeypatch: pyt
             }
         )
 
-    def _fake_decode(token: str):
-        assert token == "preview-token-1"
-        return {"app_id": "app-1", "revision_id": "revision-1", "scope": ["apps.preview"]}
-
     captured: dict[str, object] = {}
 
     class _FakeAsyncClient:
@@ -485,11 +502,11 @@ async def test_builder_preview_proxy_passthroughs_static_assets(monkeypatch: pyt
 
     monkeypatch.setattr(preview_proxy_router, "_load_session", _fake_load_session)
     monkeypatch.setattr(preview_proxy_router, "_load_preview_app_and_revision", _fake_load_preview_app_and_revision)
-    monkeypatch.setattr(preview_proxy_router, "decode_published_app_preview_token", _fake_decode)
     monkeypatch.setattr(preview_proxy_router.httpx, "AsyncClient", _FakeAsyncClient)
+    preview_token = _preview_token()
 
     response = await client.get(
-        "/public/apps-builder/draft-dev/sessions/session-1/preview/assets/index-abc.js?runtime_token=preview-token-1",
+        f"/public/apps-builder/draft-dev/sessions/session-1/preview/assets/index-abc.js?runtime_token={preview_token}",
     )
 
     assert response.status_code == 200
@@ -498,7 +515,10 @@ async def test_builder_preview_proxy_passthroughs_static_assets(monkeypatch: pyt
 
 
 @pytest.mark.asyncio
-async def test_builder_preview_status_route_heartbeats_and_returns_live_preview(monkeypatch: pytest.MonkeyPatch, client):
+async def test_builder_preview_status_route_returns_stored_live_preview_without_heartbeat(
+    monkeypatch: pytest.MonkeyPatch,
+    client,
+):
     session = _fake_session(
         {
             "live_preview": {
@@ -507,46 +527,37 @@ async def test_builder_preview_status_route_heartbeats_and_returns_live_preview(
             }
         }
     )
+    session.draft_workspace = SimpleNamespace(
+        backend_metadata={
+            "live_preview": {
+                "mode": "build_watch_static",
+                "status": "ready",
+                "current_build_id": "build-2",
+                "last_successful_build_id": "build-2",
+                "workspace_fingerprint": "fp-1",
+                "supervisor": {
+                    "build_watch_status": "running",
+                    "static_server_status": "running",
+                },
+            }
+        }
+    )
 
     async def _fake_load_session(*, db, session_id):
         _ = db, session_id
         return session
 
-    def _fake_decode(token: str):
-        assert token == "preview-token-1"
-        return {"app_id": "app-1", "revision_id": "revision-1", "scope": ["apps.preview"]}
-
-    class _FakeRuntimeService:
-        def __init__(self, db):
-            _ = db
-
-        async def touch_session_activity(self, *, session, throttle_seconds):
-            _ = session, throttle_seconds
-            return False
-
-        async def heartbeat_session(self, *, session):
-            session.backend_metadata = {
-                "live_preview": {
-                    "mode": "build_watch_static",
-                    "status": "ready",
-                    "current_build_id": "build-2",
-                    "last_successful_build_id": "build-2",
-                    "workspace_fingerprint": "fp-1",
-                    "supervisor": {
-                        "build_watch_status": "running",
-                        "static_server_status": "running",
-                    },
-                }
-            }
-            return session
+    async def _fake_touch_preview_session_activity(*, db, session, **kwargs):
+        _ = db, session, kwargs
+        return False
 
     monkeypatch.setattr(preview_proxy_router, "_load_session", _fake_load_session)
     monkeypatch.setattr(preview_proxy_router, "_load_preview_app_and_revision", _fake_load_preview_app_and_revision)
-    monkeypatch.setattr(preview_proxy_router, "decode_published_app_preview_token", _fake_decode)
-    monkeypatch.setattr(preview_proxy_router, "PublishedAppDraftDevRuntimeService", _FakeRuntimeService)
+    monkeypatch.setattr(preview_proxy_router, "_touch_preview_session_activity", _fake_touch_preview_session_activity)
+    preview_token = _preview_token()
 
     response = await client.get(
-        "/public/apps-builder/draft-dev/sessions/session-1/preview/_talmudpedia/status?runtime_token=preview-token-1",
+        f"/public/apps-builder/draft-dev/sessions/session-1/preview/_talmudpedia/status?runtime_token={preview_token}",
     )
 
     assert response.status_code == 200

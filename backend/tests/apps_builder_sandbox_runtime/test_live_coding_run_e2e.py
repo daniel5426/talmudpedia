@@ -144,7 +144,6 @@ async def _ensure_draft_dev_session(
             )
         if last_payload.get("status") == "serving":
             assert last_payload.get("preview_url"), last_payload
-            assert last_payload.get("preview_auth_token"), last_payload
             return last_payload
         await asyncio.sleep(2.0)
     raise AssertionError(last_payload)
@@ -181,6 +180,14 @@ def _maybe_model_id() -> str | None:
         if value:
             return value
     return None
+
+
+def _preview_auth_token_from_url(preview_url: str) -> str:
+    parsed = urlparse(str(preview_url or ""))
+    params = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    token = str(params.get("runtime_token") or "").strip()
+    assert token, preview_url
+    return token
 
 
 async def _submit_prompt(client, app_id: str, headers: dict[str, str], *, prompt: str) -> dict[str, Any]:
@@ -310,12 +317,10 @@ async def _latest_version_preview_status(client, app_id: str, version_id: str, h
         if runtime_resp.status_code != 200:
             return {"preview_runtime_status": runtime_resp.status_code, "asset_status": None, "error": runtime_resp.text[:220]}
         preview_url = str(payload.get("preview_url") or "").strip()
-        runtime_token = str(payload.get("runtime_token") or "").strip()
-        if not preview_url or not runtime_token:
+        if not preview_url:
             return {"preview_runtime_status": 200, "asset_status": None, "error": "preview runtime payload incomplete"}
         asset_resp = await client.get(
             preview_url,
-            headers={"Authorization": f"Bearer {runtime_token}"},
             follow_redirects=True,
             timeout=20.0,
         )
@@ -449,7 +454,7 @@ async def test_live_coding_run_updates_preview_and_creates_version(client, db_se
 
     ensure_payload = await _ensure_draft_dev_session(client, app_id, headers, reporter=reporter)
     preview_url = str(ensure_payload["preview_url"])
-    preview_auth_token = str(ensure_payload["preview_auth_token"])
+    preview_auth_token = _preview_auth_token_from_url(preview_url)
     initial_state = await _builder_state(client, app_id, headers)
     initial_revision_id = str(initial_state["current_draft_revision"]["id"])
     initial_versions = await _versions(client, app_id, headers, limit=20)

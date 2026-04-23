@@ -1,6 +1,6 @@
 # Published Apps Backend Tests
 
-Last Updated: 2026-04-21
+Last Updated: 2026-04-23
 
 ## Scope of the feature
 - Admin CRUD for published apps and builder state primitives.
@@ -33,7 +33,7 @@ Last Updated: 2026-04-21
 - Public preview stream uses token auth and persists run-native thread records.
 - Public preview stream now attaches to persisted worker-owned run events instead of executing in the request path.
 - Runtime bootstrap contract includes `request_contract_version=thread.v1`.
-- Preview proxy cookie contract now uses `published_app_public_preview_token`.
+- Preview runtime/bootstrap now uses the canonical `published_app_preview_token` cookie and bootstrap-ready `preview_url`.
 - Preview HTML asset rewrites now canonicalize to absolute preview asset paths under `/public/apps/preview/revisions/{revision_id}/assets/...`.
 - App-create test setup uses the shared create/materialize stub instead of booting a real draft-dev sandbox.
 - Agent integration contract payload is exposed and validated.
@@ -46,7 +46,7 @@ Last Updated: 2026-04-21
 - Result: PASS (6 passed, 6 warnings)
 - Command: `cd backend && PYTHONPATH=. pytest -x -q tests/published_apps/test_public_app_resolve_and_config.py tests/published_apps/test_public_chat_scope_and_persistence.py tests/published_apps/test_builder_agent_integration_contract.py tests/published_apps/test_template_catalog.py`
 - Date: 2026-03-15
-- Result: FAIL (`test_preview_asset_proxy_streams_dist_asset` expects `published_app_preview_token`, but runtime now sets `published_app_public_preview_token`)
+- Result: Historical FAIL before the unified preview-auth cleanup (`test_preview_asset_proxy_streams_dist_asset` drifted on the old split preview-cookie contract)
 - Command: `cd backend && PYTHONPATH=. pytest -q tests/published_apps/test_admin_apps_page_fetch_probe.py`
 - Date: 2026-03-22
 - Result: PASS (`-k smoke`: 1 passed, 1 deselected, 7 warnings)
@@ -90,3 +90,10 @@ Last Updated: 2026-04-21
 ## 2026-04-21 published-app project scoping
 - Command: `SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest -q backend/tests/published_apps/test_admin_apps_crud.py backend/tests/published_apps/test_public_app_resolve_and_config.py backend/tests/published_apps_external_runtime/test_external_runtime_api.py backend/tests/published_apps_host_runtime/test_host_runtime_same_url_auth.py`
 - Result: PASS (`39 passed`)
+- Command: `SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest -q backend/tests/apps_builder_sandbox_runtime/test_runtime_client_and_preview_proxy.py backend/tests/published_apps/test_public_app_resolve_and_config.py backend/tests/sandbox_controller/test_dev_shim.py backend/tests/sandbox_controller/test_draft_dev_runtime_client_stream.py backend/tests/app_versions/test_versions_endpoints.py`
+- Date: 2026-04-23 Asia/Hebron
+- Result: PASS (`40 passed`). Revision preview runtime and preview asset bootstrap now match the unified preview-auth cookie/query contract.
+
+## 2026-04-23 apps-builder polish hard cut
+- Command: `SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest -q backend/tests/published_apps/test_admin_apps_crud.py backend/tests/app_versions/test_versions_endpoints.py`
+- Result: PASS (`12 passed`). App create now seeds a provisional `app_init` draft revision without synchronous bootstrap, while builder-state fetch and heartbeat no longer perform passive runtime materialization work.

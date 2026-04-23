@@ -78,13 +78,16 @@ async def receive_workos_webhook(
                 workos_organization_id=organization_id,
                 create_if_missing=False,
             )
+        elif event_type in {"organization_membership.deleted", "dsync.user.deleted"} and user_id and organization_id:
+            await service.remove_workos_membership(
+                workos_user_id=user_id,
+                workos_organization_id=organization_id,
+            )
         elif event_type in {
             "organization_membership.created",
             "organization_membership.updated",
-            "organization_membership.deleted",
             "dsync.user.created",
             "dsync.user.updated",
-            "dsync.user.deleted",
         } and user_id and organization_id:
             await service.sync_workos_membership(
                 workos_user_id=user_id,

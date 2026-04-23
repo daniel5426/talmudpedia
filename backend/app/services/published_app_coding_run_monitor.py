@@ -25,7 +25,7 @@ from app.services.published_app_draft_revision_materializer import (
     PublishedAppDraftRevisionMaterializerError,
     PublishedAppDraftRevisionMaterializerService,
 )
-from app.services.published_app_live_preview import build_live_preview_overlay_workspace_fingerprint
+from app.services.published_app_live_preview import build_canonical_workspace_fingerprint
 from app.services.published_app_templates import TemplateRuntimeContext
 from app.services.published_app_coding_run_monitor_config import (
     monitor_force_terminal_on_inactivity,
@@ -178,7 +178,7 @@ class PublishedAppCodingRunMonitor:
         actor_id: UUID | None,
         source_revision_id: UUID | None,
         entry_file: str,
-    ) -> None:
+    ) -> dict[str, Any] | None:
         if actor_id is None:
             apps_builder_trace(
                 "monitor.finalize.workspace_reconcile_skipped",
@@ -187,7 +187,7 @@ class PublishedAppCodingRunMonitor:
                 app_id=str(app.id),
                 reason="missing_actor_id",
             )
-            return
+            return None
         input_params = run.input_params if isinstance(run.input_params, dict) else {}
         context = input_params.get("context") if isinstance(input_params.get("context"), dict) else {}
         sandbox_id = str(context.get("preview_sandbox_id") or "").strip()
@@ -199,7 +199,7 @@ class PublishedAppCodingRunMonitor:
                 app_id=str(app.id),
                 reason="missing_sandbox_id",
             )
-            return
+            return None
         runtime_service = PublishedAppDraftDevRuntimeService(db)
         apps_builder_trace(
             "monitor.finalize.workspace_reconcile_begin",
@@ -220,10 +220,10 @@ class PublishedAppCodingRunMonitor:
                     app_id=str(app.id),
                     reason="snapshot_missing_files",
                 )
-                return
+                return None
             files = _filter_builder_snapshot_files(raw_files)
             revision_token = str(payload.get("revision_token") or "").strip() or None
-            workspace_fingerprint = build_live_preview_overlay_workspace_fingerprint(
+            workspace_fingerprint = build_canonical_workspace_fingerprint(
                 entry_file=entry_file,
                 files=files,
                 runtime_context=TemplateRuntimeContext(
@@ -269,9 +269,16 @@ class PublishedAppCodingRunMonitor:
                 app_id=str(app.id),
                 sandbox_id=sandbox_id,
                 file_count=len(files),
+                sample_paths=sorted(list(files.keys()))[:8],
                 revision_token=revision_token,
                 workspace_fingerprint=workspace_fingerprint,
             )
+            return {
+                "entry_file": entry_file,
+                "files": files,
+                "revision_token": revision_token,
+                "workspace_fingerprint": workspace_fingerprint,
+            }
         except Exception as exc:
             apps_builder_trace(
                 "monitor.finalize.workspace_reconcile_failed",
@@ -282,6 +289,35 @@ class PublishedAppCodingRunMonitor:
                 error=str(exc),
                 error_type=exc.__class__.__name__,
             )
+            return None
+
+    @staticmethod
+    def _template_runtime_context(*, app: PublishedApp) -> TemplateRuntimeContext:
+        return TemplateRuntimeContext(
+            app_id=str(app.id),
+            app_public_id=str(app.public_id or ""),
+            agent_id=str(app.agent_id or ""),
+        )
+
+    @classmethod
+    def _revision_source_fingerprint(
+        cls,
+        *,
+        revision: PublishedAppRevision | None,
+        app: PublishedApp,
+        entry_file: str,
+    ) -> str:
+        if revision is None:
+            return ""
+        dist_manifest = dict(revision.dist_manifest or {}) if isinstance(revision.dist_manifest, dict) else {}
+        manifest_fingerprint = str(dist_manifest.get("source_fingerprint") or "").strip()
+        if manifest_fingerprint:
+            return manifest_fingerprint
+        return build_canonical_workspace_fingerprint(
+            entry_file=str(revision.entry_file or entry_file).strip() or entry_file,
+            files=dict(revision.files or {}),
+            runtime_context=cls._template_runtime_context(app=app),
+        )
 
     @classmethod
     async def _claim_run_finalization(
@@ -351,17 +387,6 @@ class PublishedAppCodingRunMonitor:
             )
             await db.commit()
             return None, None, None, "", None
-        if not bool(getattr(run, "has_workspace_writes", False)):
-            apps_builder_trace(
-                "monitor.finalize.claim_skipped",
-                domain="coding_agent.finalizer",
-                run_id=str(run_id),
-                app_id=str(app_id),
-                reason="no_workspace_writes",
-            )
-            await db.commit()
-            return run, app, None, "", None
-
         state = cls._finalization_state(run)
         if state.get("status") == "in_progress" and not cls._is_stale_finalization_claim(state):
             apps_builder_trace(
@@ -530,12 +555,27 @@ class PublishedAppCodingRunMonitor:
                 source_revision = await read_db.get(PublishedAppRevision, source_revision_id)
                 if source_revision is not None:
                     entry_file = str(source_revision.entry_file or entry_file)
+                source_fingerprint = cls._revision_source_fingerprint(
+                    revision=source_revision,
+                    app=claimed_app,
+                    entry_file=entry_file,
+                )
+                apps_builder_trace(
+                    "monitor.finalize.source_revision_loaded",
+                    domain="coding_agent.finalizer",
+                    run_id=str(run_id),
+                    app_id=str(app_id),
+                    source_revision_id=str(source_revision_id or "") or None,
+                    source_fingerprint=source_fingerprint or None,
+                    source_entry_file=entry_file,
+                    source_file_count=len(dict(source_revision.files or {})) if source_revision is not None else None,
+                )
             cls._trace(
                 "monitor.revision_materialize_begin",
                 run_id=str(run_id),
                 app_id=str(app_id),
                 source_revision_id=str(source_revision_id or ""),
-                has_workspace_writes=True,
+                has_workspace_writes=bool(getattr(claimed_run, "has_workspace_writes", False)),
             )
             result_revision_id: str | None = None
             async with cls._session_factory() as work_db:
@@ -561,7 +601,7 @@ class PublishedAppCodingRunMonitor:
                     entry_file=entry_file,
                     attempt_id=attempt_id,
                 )
-                await cls._reconcile_live_workspace_metadata(
+                snapshot = await cls._reconcile_live_workspace_metadata(
                     db=work_db,
                     run=work_run,
                     app=work_app,
@@ -569,14 +609,51 @@ class PublishedAppCodingRunMonitor:
                     source_revision_id=source_revision_id,
                     entry_file=entry_file,
                 )
-                result_revision = await materializer.finalize_run_materialization(
-                    app=work_app,
-                    run=work_run,
-                    entry_file=entry_file,
-                    source_revision_id=source_revision_id,
-                    created_by=actor_id,
+                final_workspace_fingerprint = (
+                    str(snapshot.get("workspace_fingerprint") or "").strip() if isinstance(snapshot, dict) else ""
                 )
-                result_revision_id = str(result_revision.id) if result_revision is not None else None
+                has_workspace_writes = bool(
+                    final_workspace_fingerprint
+                    and source_fingerprint
+                    and final_workspace_fingerprint != source_fingerprint
+                )
+                work_run.has_workspace_writes = has_workspace_writes
+                apps_builder_trace(
+                    "monitor.finalize.workspace_diff_decided",
+                    domain="coding_agent.finalizer",
+                    run_id=str(run_id),
+                    app_id=str(app_id),
+                    source_revision_id=str(source_revision_id or "") or None,
+                    source_fingerprint=source_fingerprint or None,
+                    final_workspace_fingerprint=final_workspace_fingerprint or None,
+                    has_workspace_writes=has_workspace_writes,
+                    snapshot_available=bool(snapshot is not None),
+                    snapshot_revision_token=(
+                        str(snapshot.get("revision_token") or "").strip()
+                        if isinstance(snapshot, dict)
+                        else None
+                    ) or None,
+                    snapshot_file_count=len(dict(snapshot.get("files") or {})) if isinstance(snapshot, dict) else None,
+                )
+                result_revision = None
+                if has_workspace_writes:
+                    result_revision = await materializer.finalize_run_materialization(
+                        app=work_app,
+                        run=work_run,
+                        entry_file=entry_file,
+                        source_revision_id=source_revision_id,
+                        created_by=actor_id,
+                    )
+                    result_revision_id = str(result_revision.id) if result_revision is not None else None
+                else:
+                    apps_builder_trace(
+                        "monitor.finalize.materialization_skipped",
+                        domain="coding_agent.finalizer",
+                        run_id=str(run_id),
+                        app_id=str(app_id),
+                        reason="final_workspace_matches_source_revision",
+                        source_revision_id=str(source_revision_id or "") or None,
+                    )
                 apps_builder_trace(
                     "monitor.finalize.materializer_call_done",
                     domain="coding_agent.finalizer",

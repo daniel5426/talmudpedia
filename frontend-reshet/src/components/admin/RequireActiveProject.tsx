@@ -5,7 +5,7 @@ import { FolderKanban, Loader2 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { useAuthStore } from "@/lib/store/useAuthStore"
-import { authService } from "@/services/auth"
+import { authService, isAuthSessionRedirectResponse, navigateToAuthRedirect } from "@/services/auth"
 import { applyAuthSession } from "@/lib/auth-session"
 
 export function RequireActiveProject({ children }: { children: React.ReactNode }) {
@@ -25,7 +25,13 @@ export function RequireActiveProject({ children }: { children: React.ReactNode }
     setIsReconciling(true)
     void authService
       .getCurrentSession()
-      .then((session) => applyAuthSession(session))
+      .then((session) => {
+        if (isAuthSessionRedirectResponse(session)) {
+          navigateToAuthRedirect(session.redirect_url)
+          return
+        }
+        applyAuthSession(session)
+      })
       .finally(() => {
         setIsReconciling(false)
       })
@@ -60,7 +66,13 @@ export function RequireActiveProject({ children }: { children: React.ReactNode }
               setIsReconciling(true)
               void authService
                 .getCurrentSession()
-                .then((session) => applyAuthSession(session))
+                .then((session) => {
+                  if (isAuthSessionRedirectResponse(session)) {
+                    navigateToAuthRedirect(session.redirect_url)
+                    return
+                  }
+                  applyAuthSession(session)
+                })
                 .finally(() => setIsReconciling(false))
             }}>
               Retry session sync

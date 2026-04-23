@@ -1,6 +1,6 @@
 # Coding Agent API Tests
 
-Last Updated: 2026-04-18
+Last Updated: 2026-04-23
 
 ## Scope of the feature
 - v2 coding-agent admin API under `/admin/apps/{app_id}/coding-agent/v2/*`.
@@ -15,6 +15,7 @@ Last Updated: 2026-04-18
 ## Key scenarios covered
 - Chat session creation/listing uses the session-native v2 contract.
 - Message submission uses `POST /coding-agent/v2/chat-sessions/{session_id}/messages` and returns accepted user-message metadata without `run_id`.
+- Chat-session message submission keeps the direct `prompt_async` hot path, but also creates a real `published_app_coding_agent` bookkeeping run with app/base-revision/chat-session context so terminal session SSE can finalize into a version.
 - History/detail loading comes from `GET /coding-agent/v2/chat-sessions/{session_id}` and `.../messages`.
 - SSE events come from `GET /coding-agent/v2/chat-sessions/{session_id}/events` and always prepend `session.connected`.
 - Session SSE waits for remote OpenCode session initialization instead of failing with `409`, so the browser can attach before the first prompt creates the remote session.
@@ -40,6 +41,9 @@ Last Updated: 2026-04-18
 - Engine-level fake OpenCode clients in this feature folder stay compatible with explicit `sandbox_id` stream attachment used by cross-worker sandbox run streaming.
 
 ## Last run command + date/time + result
+- Command: `cd /Users/danielbenassaya/Code/personal/talmudpedia && SECRET_KEY=explicit-test-secret backend/.venv-codex-tests/bin/python -m pytest -q backend/tests/coding_agent_api/test_v2_chat_sessions_api.py -k 'submit_message_creates_coding_agent_run'`
+- Date: 2026-04-23 03:49 EEST
+- Result: PASS (`1 passed, 9 deselected`)
 - Command: `cd /Users/danielbenassaya/Code/personal/talmudpedia/backend && ./.venv-codex-tests/bin/python -m pytest -q tests/coding_agent_api/test_v2_chat_sessions_api.py`
 - Date: 2026-04-18 21:52 EEST
 - Result: PASS (`9 passed, 8 warnings`)
@@ -108,6 +112,7 @@ Last Updated: 2026-04-18
 - Result: PASS (3 passed, 46 deselected, 2 warnings)
 
 ## Known gaps / follow-ups
+- The broader `test_v2_chat_sessions_api.py` route suite currently returns `404` for several chat-session endpoints in this local environment, so this pass verified the restored run-creation contract with a focused service-level regression instead of a full route green run.
 - No migration-integration test in this feature folder yet (alembic head convergence and downgrade schema recreation should be validated in migration-focused tests).
 - The legacy `test_v2_api.py` file still contains run-route coverage that should be replaced by session-route coverage as follow-up cleanup.
 - Frontend end-to-end chat workspace test suite still needs full contract-level session-chat coverage beyond the focused stream/history tests.

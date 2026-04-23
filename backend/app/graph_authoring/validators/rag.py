@@ -79,7 +79,7 @@ def collect_rag_authoring_issues(
                 )
             )
 
-        for field_name in required_config_fields(spec.config_schema):
+        for field_name in required_config_fields(spec.config_schema, include_runtime=False):
             value = config.get(field_name)
             if _has_meaningful_value(value):
                 continue

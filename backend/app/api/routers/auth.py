@@ -351,10 +351,22 @@ async def auth_callback(
         redirect_response = RedirectResponse(url=redirect_to, status_code=status.HTTP_302_FOUND)
         service.set_project_cookie(response=redirect_response, request=request, project_id=bundle.project.id)
     else:
-        redirect_response = RedirectResponse(
-            url=_build_frontend_onboarding_url(redirect_to, request),
-            status_code=status.HTTP_302_FOUND,
+        recovered = await service.recover_no_active_organization(
+            auth_response=auth_response,
+            request=request,
+            response=response,
+            return_to=redirect_to,
         )
+        if isinstance(recovered, LocalSessionBundle):
+            redirect_response = RedirectResponse(url=redirect_to, status_code=status.HTTP_302_FOUND)
+            service.set_project_cookie(response=redirect_response, request=request, project_id=recovered.project.id)
+        elif isinstance(recovered, dict):
+            redirect_response = RedirectResponse(url=recovered["redirect_url"], status_code=status.HTTP_302_FOUND)
+        else:
+            redirect_response = RedirectResponse(
+                url=_build_frontend_onboarding_url(redirect_to, request),
+                status_code=status.HTTP_302_FOUND,
+            )
 
     sealed_session = (
         auth_response.get("sealed_session")
@@ -388,6 +400,34 @@ async def get_session(
 ):
     service, auth_response, user = await _load_workos_auth(request=request, response=response, db=db)
     if not service.current_organization_id(auth_response):
+        recovered = await service.recover_no_active_organization(
+            auth_response=auth_response,
+            request=request,
+            response=response,
+            return_to=_normalize_frontend_return_to(
+                str(request.headers.get("referer") or "").strip() or request.query_params.get("return_to"),
+                request,
+                fallback="/admin/agents/playground",
+            ),
+        )
+        if isinstance(recovered, LocalSessionBundle):
+            effective_scopes = await resolve_effective_scopes(
+                db=db,
+                user=recovered.user,
+                organization_id=recovered.organization.id,
+                project_id=recovered.project.id,
+            )
+            return await _serialize_session_response(
+                db=db,
+                user=recovered.user,
+                organization=recovered.organization,
+                project=recovered.project,
+                effective_scopes=effective_scopes,
+                authenticated=True,
+                onboarding_required=False,
+            )
+        if isinstance(recovered, dict):
+            return JSONResponse(recovered)
         return await _serialize_session_response(
             db=db,
             user=user,

@@ -81,7 +81,6 @@ class PublishedAppSandboxBackend(ABC):
         files: Dict[str, str],
         idle_timeout_seconds: int,
         dependency_hash: str,
-        draft_dev_token: str,
         preview_base_path: str,
     ) -> Dict[str, Any]:
         raise NotImplementedError

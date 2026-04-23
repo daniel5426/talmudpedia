@@ -10,6 +10,7 @@ import pytest
 from fastapi import HTTPException
 from sqlalchemy import select
 
+from app.db.postgres.models.agents import AgentRun, RunStatus
 from app.api.routers import published_apps_admin_files as builder_files_module
 from app.api.routers import published_apps_admin_routes_builder as builder_routes_module
 from app.core.security import get_password_hash
@@ -29,10 +30,15 @@ from app.db.postgres.models.published_apps import (
     PublishedAppWorkspaceBuildStatus,
 )
 from app.services import published_app_draft_dev_runtime as runtime_module
+from app.services.published_app_coding_agent_tools import CODING_AGENT_SURFACE
+from app.services.published_app_coding_run_monitor import PublishedAppCodingRunMonitor
 from app.services.published_app_draft_dev_runtime import PublishedAppDraftDevRuntimeService
 from app.services.published_app_draft_dev_runtime_client import PublishedAppDraftDevRuntimeClientError
 from app.services.published_app_draft_revision_materializer import PublishedAppDraftRevisionMaterializerService
-from app.services.published_app_live_preview import build_live_preview_overlay_workspace_fingerprint
+from app.services.published_app_live_preview import (
+    build_canonical_workspace_fingerprint,
+    build_live_preview_overlay_workspace_fingerprint,
+)
 from app.services.published_app_templates import TemplateRuntimeContext
 from app.services.published_app_versioning import create_app_version
 from app.services.security_bootstrap_service import SecurityBootstrapService
@@ -371,7 +377,7 @@ async def test_heartbeat_refreshes_workspace_preview_metadata(client, db_session
         _ = db, app_id
         return None
 
-    monkeypatch.setattr(builder_routes_module, "_resolve_tenant_admin_context", _fake_resolve_ctx)
+    monkeypatch.setattr(builder_routes_module, "_resolve_organization_admin_context", _fake_resolve_ctx)
     monkeypatch.setattr(builder_routes_module, "_assert_can_manage_apps", lambda ctx: None)
     monkeypatch.setattr(builder_routes_module, "_get_app_for_tenant", _fake_get_app_for_tenant)
     monkeypatch.setattr(builder_routes_module, "_get_draft_dev_session_for_scope", _fake_get_session_for_scope)
@@ -399,7 +405,7 @@ async def test_heartbeat_refreshes_workspace_preview_metadata(client, db_session
 
 
 @pytest.mark.asyncio
-async def test_builder_state_heartbeats_stale_degraded_session_before_serializing(
+async def test_builder_state_returns_stored_stale_session_without_heartbeat(
     client,
     db_session,
     monkeypatch: pytest.MonkeyPatch,
@@ -461,7 +467,7 @@ async def test_builder_state_heartbeats_stale_degraded_session_before_serializin
         _ = db, app_id, user_id
         return session
 
-    monkeypatch.setattr(builder_routes_module, "_resolve_tenant_admin_context", _fake_resolve_ctx)
+    monkeypatch.setattr(builder_routes_module, "_resolve_organization_admin_context", _fake_resolve_ctx)
     monkeypatch.setattr(builder_routes_module, "_assert_can_manage_apps", lambda ctx: None)
     monkeypatch.setattr(builder_routes_module, "_get_app_for_tenant", _fake_get_app_for_tenant)
     monkeypatch.setattr(builder_routes_module, "_get_revision", _fake_get_revision)
@@ -480,22 +486,20 @@ async def test_builder_state_heartbeats_stale_degraded_session_before_serializin
         db=db_session,
     )
     assert state_resp.draft_dev is not None
-    assert state_resp.draft_dev.status == "serving"
+    assert state_resp.draft_dev.status == "degraded"
 
     await db_session.refresh(session)
     await db_session.refresh(workspace)
-    assert session.status == PublishedAppDraftDevSessionStatus.serving
-    assert workspace.status == PublishedAppDraftWorkspaceStatus.serving
+    assert session.status == PublishedAppDraftDevSessionStatus.degraded
+    assert workspace.status == PublishedAppDraftWorkspaceStatus.degraded
 
 
 @pytest.mark.asyncio
 async def test_prefer_live_workspace_reuses_healthy_session_across_revision_mismatch(
-    client,
     db_session,
     monkeypatch: pytest.MonkeyPatch,
 ):
     tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
-    headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
     fake_client = _FakeSpriteRuntimeClient()
 
     monkeypatch.setattr(runtime_module.PublishedAppDraftDevRuntimeService, "_acquire_scope_lock", _noop_scope_lock)
@@ -505,18 +509,23 @@ async def test_prefer_live_workspace_reuses_healthy_session_across_revision_mism
         classmethod(lambda cls: fake_client),
     )
 
-    app_id = await _create_builder_app(
+    app, first_revision = await _seed_builder_app_and_revision(
         db_session,
         organization_id=tenant.id,
-        user_id=user.id,
         agent_id=agent.id,
+        user_id=user.id,
         name="Prefer Live Workspace App",
     )
-    ensure_resp = await client.post(f"/admin/apps/{app_id}/builder/draft-dev/session/ensure", headers=headers)
-    assert ensure_resp.status_code == 200
+    runtime_service = PublishedAppDraftDevRuntimeService(db_session)
+    await runtime_service.ensure_session(
+        app=app,
+        revision=first_revision,
+        user_id=user.id,
+        files=dict(first_revision.files or {}),
+        entry_file=first_revision.entry_file,
+    )
+    await db_session.commit()
 
-    app = await db_session.get(PublishedApp, UUID(app_id))
-    assert app is not None
     first_revision = await db_session.get(PublishedAppRevision, app.current_draft_revision_id)
     assert first_revision is not None
     next_revision = await create_app_version(
@@ -533,7 +542,6 @@ async def test_prefer_live_workspace_reuses_healthy_session_across_revision_mism
     app.current_draft_revision_id = next_revision.id
     await db_session.commit()
 
-    runtime_service = PublishedAppDraftDevRuntimeService(db_session)
     reused = await runtime_service.ensure_active_session(
         app=app,
         revision=next_revision,
@@ -545,6 +553,22 @@ async def test_prefer_live_workspace_reuses_healthy_session_across_revision_mism
     assert reused.revision_id == first_revision.id
     assert len(fake_client.start_calls) == 1
     assert len(fake_client.sync_calls) == 0
+    original_heartbeat = fake_client.heartbeat_session
+
+    async def _heartbeat_should_not_run(**kwargs):
+        _ = kwargs
+        raise AssertionError("prefer_live_workspace reuse should not heartbeat the runtime")
+
+    fake_client.heartbeat_session = _heartbeat_should_not_run
+    reused_again = await runtime_service.ensure_active_session(
+        app=app,
+        revision=next_revision,
+        user_id=user.id,
+        prefer_live_workspace=True,
+    )
+    await db_session.refresh(reused_again)
+    assert reused_again.revision_id == first_revision.id
+    fake_client.heartbeat_session = original_heartbeat
 
 
 @pytest.mark.asyncio
@@ -727,7 +751,7 @@ async def test_ensure_endpoint_reuses_live_session_without_calling_legacy_ensure
     async def _unexpected_ensure_session(*args, **kwargs):
         raise AssertionError("legacy ensure_session should not be called by the ensure route")
 
-    monkeypatch.setattr(builder_routes_module, "_resolve_tenant_admin_context", AsyncMock(return_value=ctx))
+    monkeypatch.setattr(builder_routes_module, "_resolve_organization_admin_context", AsyncMock(return_value=ctx))
     monkeypatch.setattr(builder_routes_module, "_assert_can_manage_apps", lambda resolved_ctx: None)
     monkeypatch.setattr(builder_routes_module, "_assert_no_active_coding_run_for_scope", AsyncMock(return_value=None))
     monkeypatch.setattr(builder_routes_module, "_get_app_for_tenant", AsyncMock(return_value=app))
@@ -826,7 +850,7 @@ async def test_sync_route_batches_operations_into_single_workspace_sync(
         record_live_workspace_materialization_request=AsyncMock(return_value=None),
     )
 
-    monkeypatch.setattr(builder_routes_module, "_resolve_tenant_admin_context", AsyncMock(return_value=ctx))
+    monkeypatch.setattr(builder_routes_module, "_resolve_organization_admin_context", AsyncMock(return_value=ctx))
     monkeypatch.setattr(builder_routes_module, "_assert_can_manage_apps", lambda resolved_ctx: None)
     monkeypatch.setattr(builder_routes_module, "_assert_no_active_coding_run_for_scope", AsyncMock(return_value=None))
     monkeypatch.setattr(builder_routes_module, "_get_app_for_tenant", AsyncMock(return_value=app))
@@ -912,7 +936,7 @@ async def test_sync_route_validates_operations_before_mutating_runtime(
         record_live_workspace_materialization_request=AsyncMock(return_value=None),
     )
 
-    monkeypatch.setattr(builder_routes_module, "_resolve_tenant_admin_context", AsyncMock(return_value=ctx))
+    monkeypatch.setattr(builder_routes_module, "_resolve_organization_admin_context", AsyncMock(return_value=ctx))
     monkeypatch.setattr(builder_routes_module, "_assert_can_manage_apps", lambda resolved_ctx: None)
     monkeypatch.setattr(builder_routes_module, "_assert_no_active_coding_run_for_scope", AsyncMock(return_value=None))
     monkeypatch.setattr(builder_routes_module, "_get_app_for_tenant", AsyncMock(return_value=app))
@@ -990,7 +1014,7 @@ async def test_sync_route_records_saved_workspace_fingerprint_and_pending_materi
         record_live_workspace_materialization_request=AsyncMock(return_value=None),
     )
 
-    monkeypatch.setattr(builder_routes_module, "_resolve_tenant_admin_context", AsyncMock(return_value=ctx))
+    monkeypatch.setattr(builder_routes_module, "_resolve_organization_admin_context", AsyncMock(return_value=ctx))
     monkeypatch.setattr(builder_routes_module, "_assert_can_manage_apps", lambda resolved_ctx: None)
     monkeypatch.setattr(builder_routes_module, "_assert_no_active_coding_run_for_scope", AsyncMock(return_value=None))
     monkeypatch.setattr(builder_routes_module, "_get_app_for_tenant", AsyncMock(return_value=app))
@@ -1155,7 +1179,7 @@ async def test_heartbeat_preserves_live_workspace_snapshot_metadata(
 
 
 @pytest.mark.asyncio
-async def test_heartbeat_materializes_saved_workspace_when_live_preview_ready(
+async def test_heartbeat_does_not_materialize_saved_workspace_when_live_preview_ready(
     db_session,
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -1247,9 +1271,10 @@ async def test_heartbeat_materializes_saved_workspace_when_live_preview_ready(
 
     fake_client.heartbeat_session = _heartbeat_with_ready_preview
 
+    materialize_calls: list[dict[str, object]] = []
+
     async def _materialize_stub(self, *, app, **kwargs):
-        _ = self, kwargs
-        app.current_draft_revision_id = materialized_revision.id
+        materialize_calls.append({"app_id": str(app.id), **kwargs})
         return SimpleNamespace(
             revision=materialized_revision,
             reused=False,
@@ -1264,22 +1289,21 @@ async def test_heartbeat_materializes_saved_workspace_when_live_preview_ready(
 
     session = await runtime_service.heartbeat_session(session=session)
     await db_session.commit()
-    assert session.revision_id == materialized_revision.id
+    assert session.revision_id == current_revision.id
 
     await db_session.refresh(app)
-    assert app.current_draft_revision_id == materialized_revision.id
+    assert app.current_draft_revision_id == current_revision.id
 
     session = await db_session.get(PublishedAppDraftDevSession, session_id)
     assert session is not None
     workspace = await db_session.get(PublishedAppDraftWorkspace, session.draft_workspace_id)
     assert workspace is not None
-    assert session.revision_id == materialized_revision.id
-    assert "live_workspace_materialization" not in dict(session.backend_metadata or {})
-    assert "live_workspace_materialization" not in dict(workspace.backend_metadata or {})
+    assert session.revision_id == current_revision.id
+    assert materialize_calls == []
 
 
 @pytest.mark.asyncio
-async def test_heartbeat_materializes_live_preview_without_explicit_request(
+async def test_heartbeat_does_not_materialize_live_preview_without_explicit_request(
     db_session,
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -1366,9 +1390,10 @@ async def test_heartbeat_materializes_live_preview_without_explicit_request(
 
     fake_client.heartbeat_session = _heartbeat_with_ready_preview
 
+    materialize_calls: list[dict[str, object]] = []
+
     async def _materialize_stub(self, *, app, **kwargs):
-        _ = self, kwargs
-        app.current_draft_revision_id = materialized_revision.id
+        materialize_calls.append({"app_id": str(app.id), **kwargs})
         return SimpleNamespace(
             revision=materialized_revision,
             reused=False,
@@ -1383,10 +1408,10 @@ async def test_heartbeat_materializes_live_preview_without_explicit_request(
 
     session = await runtime_service.heartbeat_session(session=session)
     await db_session.commit()
-    assert session.revision_id == materialized_revision.id
+    assert session.revision_id == current_revision.id
 
     await db_session.refresh(app)
-    assert app.current_draft_revision_id == materialized_revision.id
+    assert app.current_draft_revision_id == current_revision.id
 
     session = await db_session.get(PublishedAppDraftDevSession, session_id)
     assert session is not None
@@ -1394,6 +1419,7 @@ async def test_heartbeat_materializes_live_preview_without_explicit_request(
     assert workspace is not None
     assert "live_workspace_materialization" not in dict(session.backend_metadata or {})
     assert "live_workspace_materialization" not in dict(workspace.backend_metadata or {})
+    assert materialize_calls == []
 
 
 @pytest.mark.asyncio
@@ -1484,7 +1510,7 @@ async def test_materializer_reuses_current_revision_when_workspace_build_is_unch
 
 
 @pytest.mark.asyncio
-async def test_heartbeat_restores_missing_live_workspace_snapshot_from_runtime(
+async def test_heartbeat_does_not_restore_missing_live_workspace_snapshot_from_runtime(
     db_session,
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -1536,20 +1562,28 @@ async def test_heartbeat_restores_missing_live_workspace_snapshot_from_runtime(
     }
     await db_session.commit()
 
+    snapshot_calls: list[dict[str, object]] = []
+
+    async def _snapshot_should_not_run(**kwargs):
+        snapshot_calls.append(dict(kwargs))
+        return await _snapshot_files(**kwargs)
+
+    fake_client.snapshot_files = _snapshot_should_not_run
+
     session = await runtime_service.heartbeat_session(session=session)
     await db_session.commit()
-    assert session.backend_metadata["live_workspace_snapshot"]["files"]["src/App.tsx"].endswith("restored</div>; }")
 
     session = await db_session.get(PublishedAppDraftDevSession, session_id)
     assert session is not None
     workspace = await db_session.get(PublishedAppDraftWorkspace, session.draft_workspace_id)
     assert workspace is not None
-    assert session.backend_metadata["live_workspace_snapshot"]["revision_token"] == "restored-token"
-    assert workspace.backend_metadata["live_workspace_snapshot"]["files"]["src/App.tsx"].endswith("restored</div>; }")
+    assert "live_workspace_snapshot" not in dict(session.backend_metadata or {})
+    assert "live_workspace_snapshot" not in dict(workspace.backend_metadata or {})
+    assert snapshot_calls == []
 
 
 @pytest.mark.asyncio
-async def test_heartbeat_refreshes_stale_live_workspace_snapshot_when_preview_differs(
+async def test_heartbeat_does_not_refresh_stale_live_workspace_snapshot_when_preview_differs(
     db_session,
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -1622,30 +1656,37 @@ async def test_heartbeat_refreshes_stale_live_workspace_snapshot_when_preview_di
     workspace.backend_metadata = {**dict(workspace.backend_metadata or {}), "live_workspace_snapshot": stale_snapshot}
     await db_session.commit()
 
+    snapshot_calls: list[dict[str, object]] = []
+
+    async def _snapshot_should_not_run(**kwargs):
+        snapshot_calls.append(dict(kwargs))
+        return await _snapshot_files(**kwargs)
+
+    fake_client.snapshot_files = _snapshot_should_not_run
+
     session = await runtime_service.heartbeat_session(session=session)
     await db_session.commit()
     payload = session.backend_metadata["live_workspace_snapshot"]
 
-    assert payload["revision_token"] == "refresh-token"
-    assert payload["workspace_fingerprint"] == "refresh-fingerprint"
-    assert payload["files"]["src/App.tsx"].endswith("refreshed</div>; }")
+    assert payload["revision_token"] == "stale-token"
+    assert payload["workspace_fingerprint"] == "stale-fingerprint"
+    assert payload["files"]["src/App.tsx"].endswith("stale</div>; }")
 
     session = await db_session.get(PublishedAppDraftDevSession, session_id)
     assert session is not None
     workspace = await db_session.get(PublishedAppDraftWorkspace, session.draft_workspace_id)
     assert workspace is not None
-    assert session.backend_metadata["live_workspace_snapshot"]["revision_token"] == "refresh-token"
-    assert workspace.backend_metadata["live_workspace_snapshot"]["workspace_fingerprint"] == "refresh-fingerprint"
+    assert session.backend_metadata["live_workspace_snapshot"]["revision_token"] == "stale-token"
+    assert workspace.backend_metadata["live_workspace_snapshot"]["workspace_fingerprint"] == "stale-fingerprint"
+    assert snapshot_calls == []
 
 
 @pytest.mark.asyncio
-async def test_heartbeat_restores_live_snapshot_with_shared_builder_file_policy(
-    client,
+async def test_heartbeat_does_not_restore_live_snapshot_with_shared_builder_file_policy(
     db_session,
     monkeypatch: pytest.MonkeyPatch,
 ):
     tenant, user, org_unit, agent = await seed_admin_tenant_and_agent(db_session)
-    headers = admin_headers(str(user.id), str(tenant.id), str(org_unit.id))
     fake_client = _FakeSpriteRuntimeClient()
 
     async def _snapshot_files(**kwargs):
@@ -1669,20 +1710,24 @@ async def test_heartbeat_restores_live_snapshot_with_shared_builder_file_policy(
         classmethod(lambda cls: fake_client),
     )
 
-    app_id = await _create_builder_app(
+    app, current_revision = await _seed_builder_app_and_revision(
         db_session,
         organization_id=tenant.id,
-        user_id=user.id,
         agent_id=agent.id,
+        user_id=user.id,
         name="Heartbeat Snapshot Policy App",
     )
+    runtime_service = PublishedAppDraftDevRuntimeService(db_session)
+    session = await runtime_service.ensure_session(
+        app=app,
+        revision=current_revision,
+        user_id=user.id,
+        files=dict(current_revision.files or {}),
+        entry_file=current_revision.entry_file,
+    )
+    await db_session.commit()
+    session_id = session.id
 
-    ensure_resp = await client.post(f"/admin/apps/{app_id}/builder/draft-dev/session/ensure", headers=headers)
-    assert ensure_resp.status_code == 200
-    session_id = UUID(str(ensure_resp.json()["session_id"]))
-
-    session = await db_session.get(PublishedAppDraftDevSession, session_id)
-    assert session is not None
     workspace = await db_session.get(PublishedAppDraftWorkspace, session.draft_workspace_id)
     assert workspace is not None
     session.backend_metadata = {
@@ -1693,20 +1738,153 @@ async def test_heartbeat_restores_live_snapshot_with_shared_builder_file_policy(
     }
     await db_session.commit()
 
-    heartbeat_resp = await client.post(f"/admin/apps/{app_id}/builder/draft-dev/session/heartbeat", headers=headers)
-    assert heartbeat_resp.status_code == 200
-    payload = heartbeat_resp.json()["live_workspace_snapshot"]
-
-    assert sorted(payload["files"].keys()) == ["src/App.tsx", "src/routes.tsx"]
-    assert payload["entry_file"] == "src/App.tsx"
-    assert payload["revision_token"] == "restored-token-2"
+    session = await runtime_service.heartbeat_session(session=session)
+    await db_session.commit()
+    assert "live_workspace_snapshot" not in dict(session.backend_metadata or {})
 
     session = await db_session.get(PublishedAppDraftDevSession, session_id)
     assert session is not None
     workspace = await db_session.get(PublishedAppDraftWorkspace, session.draft_workspace_id)
     assert workspace is not None
-    assert sorted(session.backend_metadata["live_workspace_snapshot"]["files"].keys()) == ["src/App.tsx", "src/routes.tsx"]
-    assert workspace.backend_metadata["live_workspace_snapshot"]["entry_file"] == "src/App.tsx"
+    assert "live_workspace_snapshot" not in dict(session.backend_metadata or {})
+    assert "live_workspace_snapshot" not in dict(workspace.backend_metadata or {})
+
+
+@pytest.mark.asyncio
+async def test_coding_run_finalizer_creates_version_from_changed_final_workspace(
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    tenant, user, _org_unit, agent = await seed_admin_tenant_and_agent(db_session)
+    app, current_revision = await _seed_builder_app_and_revision(
+        db_session,
+        organization_id=tenant.id,
+        agent_id=agent.id,
+        user_id=user.id,
+        name="Coding Run Finalizer Changed App",
+    )
+    run = AgentRun(
+        organization_id=tenant.id,
+        agent_id=agent.id,
+        user_id=user.id,
+        initiator_user_id=user.id,
+        status=RunStatus.completed,
+        input_params={"context": {"preview_sandbox_id": "sandbox-finalizer-1"}},
+        surface=CODING_AGENT_SURFACE,
+        published_app_id=app.id,
+        base_revision_id=current_revision.id,
+        execution_engine="opencode",
+    )
+    db_session.add(run)
+    await db_session.commit()
+    await db_session.refresh(run)
+    PublishedAppCodingRunMonitor(db_session)
+
+    changed_files = {
+        **dict(current_revision.files or {}),
+        "src/main.tsx": "console.log('changed by coding run')\n",
+    }
+
+    async def _reconcile_stub(cls, *, db, run, app, actor_id, source_revision_id, entry_file):
+        _ = cls, db, run, app, actor_id, source_revision_id
+        return {
+            "entry_file": entry_file,
+            "files": changed_files,
+            "revision_token": "coding-run-final",
+            "workspace_fingerprint": "changed-final-fingerprint",
+        }
+
+    async def _materialize_stub(self, *, app, run, entry_file, source_revision_id, created_by):
+        assert run.has_workspace_writes is True
+        return await create_app_version(
+            self.db,
+            app=app,
+            kind=PublishedAppRevisionKind.draft,
+            template_key=app.template_key,
+            entry_file=entry_file,
+            files=changed_files,
+            created_by=created_by,
+            source_revision_id=source_revision_id,
+            origin_kind="coding_run",
+        )
+
+    monkeypatch.setattr(PublishedAppCodingRunMonitor, "_reconcile_live_workspace_metadata", classmethod(_reconcile_stub))
+    monkeypatch.setattr(PublishedAppDraftRevisionMaterializerService, "finalize_run_materialization", _materialize_stub)
+
+    await PublishedAppCodingRunMonitor._finalize_terminal_scope_detached(app_id=app.id, run_id=run.id)
+
+    await db_session.refresh(run)
+    refreshed_run = run
+    assert refreshed_run is not None
+    assert refreshed_run.has_workspace_writes is True
+    assert refreshed_run.result_revision_id is not None
+    assert refreshed_run.batch_finalized_at is not None
+    result_revision = await db_session.get(PublishedAppRevision, refreshed_run.result_revision_id)
+    assert result_revision is not None
+    assert result_revision.origin_kind == "coding_run"
+
+
+@pytest.mark.asyncio
+async def test_coding_run_finalizer_skips_version_when_final_workspace_is_unchanged(
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    tenant, user, _org_unit, agent = await seed_admin_tenant_and_agent(db_session)
+    app, current_revision = await _seed_builder_app_and_revision(
+        db_session,
+        organization_id=tenant.id,
+        agent_id=agent.id,
+        user_id=user.id,
+        name="Coding Run Finalizer Unchanged App",
+    )
+    run = AgentRun(
+        organization_id=tenant.id,
+        agent_id=agent.id,
+        user_id=user.id,
+        initiator_user_id=user.id,
+        status=RunStatus.completed,
+        input_params={"context": {"preview_sandbox_id": "sandbox-finalizer-2"}},
+        surface=CODING_AGENT_SURFACE,
+        published_app_id=app.id,
+        base_revision_id=current_revision.id,
+        execution_engine="opencode",
+    )
+    db_session.add(run)
+    await db_session.commit()
+    await db_session.refresh(run)
+    PublishedAppCodingRunMonitor(db_session)
+
+    async def _reconcile_stub(cls, *, db, run, app, actor_id, source_revision_id, entry_file):
+        _ = cls, db, run, app, actor_id, source_revision_id
+        return {
+            "entry_file": entry_file,
+            "files": dict(current_revision.files or {}),
+            "revision_token": "coding-run-nochange",
+            "workspace_fingerprint": build_canonical_workspace_fingerprint(
+                entry_file=entry_file,
+                files=dict(current_revision.files or {}),
+                runtime_context=TemplateRuntimeContext(
+                    app_id=str(app.id),
+                    app_public_id=str(app.public_id or ""),
+                    agent_id=str(app.agent_id or ""),
+                ),
+            ),
+        }
+
+    async def _materialize_stub(self, *, app, run, entry_file, source_revision_id, created_by):
+        raise AssertionError("unchanged final workspace should not materialize a coding_run revision")
+
+    monkeypatch.setattr(PublishedAppCodingRunMonitor, "_reconcile_live_workspace_metadata", classmethod(_reconcile_stub))
+    monkeypatch.setattr(PublishedAppDraftRevisionMaterializerService, "finalize_run_materialization", _materialize_stub)
+
+    await PublishedAppCodingRunMonitor._finalize_terminal_scope_detached(app_id=app.id, run_id=run.id)
+
+    await db_session.refresh(run)
+    refreshed_run = run
+    assert refreshed_run is not None
+    assert refreshed_run.has_workspace_writes is False
+    assert refreshed_run.result_revision_id is None
+    assert refreshed_run.batch_finalized_at is not None
 
 
 @pytest.mark.asyncio

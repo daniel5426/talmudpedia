@@ -31,7 +31,7 @@ def _pipeline_shell_graph() -> dict[str, Any]:
     }
 
 
-_RAG_UPDATE_FIELDS = ("name", "description", "pipeline_type", "nodes", "edges")
+_RAG_UPDATE_FIELDS = ("name", "description", "nodes", "edges")
 
 
 def _graph_nodes_and_edges(payload: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -103,7 +103,6 @@ async def rag_create_visual_pipeline(rt: NativePlatformToolRuntime) -> Any:
             pipeline_type=str(rt.payload.get("pipeline_type") or "retrieval"),
             nodes=nodes,
             edges=edges,
-            org_unit_id=parse_uuid(rt.payload.get("org_unit_id")),
         ),
     )
 
@@ -133,7 +132,7 @@ async def rag_update_visual_pipeline(rt: NativePlatformToolRuntime) -> Any:
                 {
                     "code": "MISSING_UPDATE_FIELDS",
                     "path": "/",
-                    "message": "Provide at least one of name, description, pipeline_type, or nodes+edges.",
+                    "message": "Provide at least one of name, description, or nodes+edges.",
                 }
             ],
         )

@@ -82,6 +82,35 @@ async def _seed_tenant_users(db_session):
     return tenant, owner, member, org_unit
 
 
+async def _seed_second_tenant_for_user(db_session, *, user: User):
+    tenant = Organization(name=f"Organization {uuid4().hex[:6]}", slug=f"tenant-{uuid4().hex[:8]}")
+    db_session.add(tenant)
+    await db_session.flush()
+
+    org_unit = OrgUnit(
+        organization_id=tenant.id,
+        name="Root",
+        slug=f"root-{uuid4().hex[:6]}",
+        type=OrgUnitType.org,
+    )
+    db_session.add(org_unit)
+    await db_session.flush()
+
+    db_session.add(
+        OrgMembership(
+            organization_id=tenant.id,
+            user_id=user.id,
+            org_unit_id=org_unit.id,
+            status=MembershipStatus.active,
+        )
+    )
+    bootstrap = SecurityBootstrapService(db_session)
+    await bootstrap.ensure_default_roles(tenant.id)
+    await bootstrap.ensure_organization_owner_assignment(organization_id=tenant.id, user_id=user.id, assigned_by=user.id)
+    await db_session.commit()
+    return tenant, org_unit
+
+
 @pytest.mark.asyncio
 async def test_models_endpoint_requires_organization_header(client, db_session):
     tenant, owner, _member, org_unit = await _seed_tenant_users(db_session)
@@ -105,6 +134,19 @@ async def test_models_list_allows_scoped_owner(client, db_session):
 
 
 @pytest.mark.asyncio
+async def test_models_reject_cross_organization_header_override(client, db_session):
+    tenant, owner, _member, org_unit = await _seed_tenant_users(db_session)
+    other_tenant, _other_org_unit = await _seed_second_tenant_for_user(db_session, user=owner)
+    headers = _auth_headers(str(owner.id), str(tenant.id), str(org_unit.id))
+    headers["X-Organization-ID"] = str(other_tenant.id)
+
+    response = await client.get("/models", headers=headers)
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Organization is outside active session context"
+
+
+@pytest.mark.asyncio
 async def test_knowledge_store_create_denied_for_member_without_write_scope(client, db_session):
     tenant, _owner, member, org_unit = await _seed_tenant_users(db_session)
     headers = _auth_headers(str(member.id), str(tenant.id), str(org_unit.id), scopes=[])
@@ -121,3 +163,22 @@ async def test_knowledge_store_create_denied_for_member_without_write_scope(clie
     )
     assert response.status_code == 403
     assert "knowledge_stores.write" in str(response.json())
+
+
+@pytest.mark.asyncio
+async def test_organization_routes_reject_cross_organization_access(client, db_session):
+    tenant, owner, _member, org_unit = await _seed_tenant_users(db_session)
+    other_tenant, _other_org_unit = await _seed_second_tenant_for_user(db_session, user=owner)
+    headers = _auth_headers(str(owner.id), str(tenant.id), str(org_unit.id))
+
+    get_response = await client.get(f"/api/organizations/{other_tenant.id}", headers=headers)
+    update_response = await client.patch(
+        f"/api/organizations/{other_tenant.id}",
+        headers=headers,
+        json={"name": "Renamed"},
+    )
+    members_response = await client.get(f"/api/organizations/{other_tenant.id}/members", headers=headers)
+
+    assert get_response.status_code == 403
+    assert update_response.status_code == 403
+    assert members_response.status_code == 403

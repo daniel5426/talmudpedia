@@ -29,18 +29,25 @@ type QueryRuntimeContext = {
 
 type RuntimeConfig = {
   app_id?: string;
+  slug?: string;
+  public_id?: string;
   app_public_id?: string;
   agent_id?: string;
   api_base_url?: string;
   bootstrap_path?: string;
 };
 
-const PREVIEW_AUTH_MESSAGE_TYPE = "talmudpedia.preview-auth.v1";
 const config = (runtimeConfig || {}) as RuntimeConfig;
+const PREVIEW_AUTH_MESSAGE_TYPE = "talmudpedia.preview-auth.v1";
 
 let bootstrapPromise: Promise<RuntimeBootstrap> | null = null;
 let previewAuthToken: string | null = null;
 let isPreviewAuthChannelBound = false;
+
+type RuntimeBootstrapWire = Partial<RuntimeBootstrap> & {
+  public_id?: string;
+  app_public_id?: string;
+};
 
 function toLegacyEvent(event: NormalizedRuntimeEvent): RuntimeEvent {
   return {
@@ -67,6 +74,11 @@ function readQueryContext(): QueryRuntimeContext {
   };
 }
 
+function normalizeApiBaseUrl(value?: string): string {
+  const raw = String(value || "").trim() || "/api/py";
+  return raw.endsWith("/") ? raw.slice(0, -1) : raw;
+}
+
 function bindPreviewAuthChannel(): void {
   if (typeof window === "undefined" || isPreviewAuthChannelBound) return;
   isPreviewAuthChannelBound = true;
@@ -80,9 +92,61 @@ function bindPreviewAuthChannel(): void {
   });
 }
 
-function normalizeApiBaseUrl(value?: string): string {
-  const raw = String(value || "").trim() || "/api/py";
-  return raw.endsWith("/") ? raw.slice(0, -1) : raw;
+function readConfiguredAppSlug(): string {
+  if (typeof window !== "undefined") {
+    const params = new URLSearchParams(window.location.search);
+    const querySlug =
+      params.get("app_slug") ||
+      params.get("public_id") ||
+      params.get("app_public_id") ||
+      "";
+    if (querySlug.trim()) {
+      return querySlug.trim();
+    }
+  }
+  return String(config.slug || config.public_id || config.app_public_id || "").trim();
+}
+
+function normalizeBootstrap(payload: RuntimeBootstrapWire): RuntimeBootstrap {
+  const streamPath =
+    typeof payload.chat_stream_path === "string" && payload.chat_stream_path.trim()
+      ? payload.chat_stream_path.trim()
+      : typeof payload.chat_stream_url === "string" && payload.chat_stream_url.trim()
+        ? new URL(
+            payload.chat_stream_url,
+            typeof window !== "undefined" ? window.location.origin : "http://localhost",
+          ).pathname
+        : "";
+
+  return {
+    version: "runtime-bootstrap.v1",
+    stream_contract_version: "run-stream.v2",
+    request_contract_version: "thread.v1",
+    app_id: String(payload.app_id || ""),
+    slug: String(payload.slug || payload.public_id || payload.app_public_id || "").trim(),
+    revision_id:
+      typeof payload.revision_id === "string" && payload.revision_id.trim()
+        ? payload.revision_id
+        : undefined,
+    mode: payload.mode === "builder-preview" ? "builder-preview" : "published-runtime",
+    api_base_path: String(payload.api_base_path || "/"),
+    api_base_url:
+      typeof payload.api_base_url === "string" && payload.api_base_url.trim()
+        ? payload.api_base_url
+        : undefined,
+    chat_stream_path: streamPath,
+    chat_stream_url:
+      typeof payload.chat_stream_url === "string" && payload.chat_stream_url.trim()
+        ? payload.chat_stream_url
+        : undefined,
+    auth: {
+      enabled: Boolean(payload.auth?.enabled),
+      providers: Array.isArray(payload.auth?.providers)
+        ? payload.auth.providers.filter((value): value is string => typeof value === "string")
+        : [],
+      exchange_enabled: Boolean(payload.auth?.exchange_enabled),
+    },
+  };
 }
 
 function buildBootstrapFromBasePath(ctx: QueryRuntimeContext, basePath: string): RuntimeBootstrap {
@@ -92,7 +156,7 @@ function buildBootstrapFromBasePath(ctx: QueryRuntimeContext, basePath: string):
     stream_contract_version: "run-stream.v2",
     request_contract_version: "thread.v1",
     app_id: String(config.app_id || ""),
-    app_public_id: String(config.app_public_id || ""),
+    slug: readConfiguredAppSlug(),
     mode: ctx.mode || "published-runtime",
     api_base_path: normalizeApiBaseUrl(config.api_base_url),
     api_base_url: normalizeApiBaseUrl(config.api_base_url),
@@ -110,24 +174,30 @@ function readInlineBootstrap(): RuntimeBootstrap | null {
   if (typeof window === "undefined") return null;
   const payload = (window as Window & { __APP_RUNTIME_CONTEXT?: unknown }).__APP_RUNTIME_CONTEXT;
   if (!payload || typeof payload !== "object") return null;
-  const context = payload as Partial<RuntimeBootstrap>;
+  const context = payload as RuntimeBootstrapWire;
   if (!context.chat_stream_path && !context.chat_stream_url) return null;
   if (!context.version || !context.mode) return null;
-  return context as RuntimeBootstrap;
+  return normalizeBootstrap(context);
 }
 
 async function fetchBootstrapFromConfig(ctx: QueryRuntimeContext): Promise<RuntimeBootstrap> {
   const isBuilderPreview =
-    Boolean((typeof window !== "undefined" && (window as Window & { __TALMUDPEDIA_BUILDER_PREVIEW_BASE_PATH?: unknown }).__TALMUDPEDIA_BUILDER_PREVIEW_BASE_PATH))
-    || Boolean(ctx.basePath && ctx.basePath.includes("/public/apps-builder/draft-dev/sessions/"))
-    || (typeof window !== "undefined" && window.location.pathname.includes("/public/apps-builder/draft-dev/sessions/"));
-  const previewHeaders = !isBuilderPreview && previewAuthToken ? { Authorization: `Bearer ${previewAuthToken}` } : undefined;
+    Boolean(
+      typeof window !== "undefined" &&
+        (window as Window & { __TALMUDPEDIA_BUILDER_PREVIEW_BASE_PATH?: unknown })
+          .__TALMUDPEDIA_BUILDER_PREVIEW_BASE_PATH,
+    ) ||
+    Boolean(ctx.basePath && ctx.basePath.includes("/public/apps-builder/draft-dev/sessions/")) ||
+    (typeof window !== "undefined" &&
+      window.location.pathname.includes("/public/apps-builder/draft-dev/sessions/"));
+  const previewHeaders =
+    !isBuilderPreview && previewAuthToken ? { Authorization: `Bearer ${previewAuthToken}` } : undefined;
   if (ctx.bootstrapUrl) {
     const response = await fetch(ctx.bootstrapUrl, { headers: previewHeaders });
     if (!response.ok) {
       throw new Error("Failed to fetch runtime bootstrap.");
     }
-    return (await response.json()) as RuntimeBootstrap;
+    return normalizeBootstrap((await response.json()) as RuntimeBootstrapWire);
   }
 
   const bootstrapPath = String(config.bootstrap_path || "").trim();
@@ -138,19 +208,20 @@ async function fetchBootstrapFromConfig(ctx: QueryRuntimeContext): Promise<Runti
     if (!response.ok) {
       throw new Error("Failed to fetch runtime bootstrap.");
     }
-    return (await response.json()) as RuntimeBootstrap;
+    return normalizeBootstrap((await response.json()) as RuntimeBootstrapWire);
   }
 
-  const appPublicId = String(config.app_public_id || "").trim();
-  if (!appPublicId) {
-    throw new Error("Runtime bootstrap is missing app public id config.");
+  const appSlug = readConfiguredAppSlug();
+  if (!appSlug) {
+    throw new Error("Runtime bootstrap is missing app slug config.");
   }
 
-  return fetchRuntimeBootstrap({
+  const bootstrap = await fetchRuntimeBootstrap({
     apiBaseUrl: normalizeApiBaseUrl(config.api_base_url),
-    appPublicId,
+    appSlug,
     previewToken: !isBuilderPreview ? (previewAuthToken || undefined) : undefined,
   });
+  return normalizeBootstrap(bootstrap);
 }
 
 async function resolveBootstrap(basePath?: string): Promise<RuntimeBootstrap> {

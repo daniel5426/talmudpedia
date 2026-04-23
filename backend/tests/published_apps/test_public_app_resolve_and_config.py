@@ -23,6 +23,8 @@ def _preview_token(*, organization_id: UUID, app_id: UUID, revision_id: UUID) ->
         subject=str(app_id),
         organization_id=str(organization_id),
         app_id=str(app_id),
+        preview_target_type="revision",
+        preview_target_id=str(revision_id),
         revision_id=str(revision_id),
     )
 
@@ -151,8 +153,8 @@ async def test_preview_asset_proxy_streams_dist_asset(client, db_session, monkey
     assert asset_resp.headers["content-type"].startswith("application/javascript")
     assert "console.log('ok');" in asset_resp.text
     set_cookie_header = asset_resp.headers.get("set-cookie") or ""
-    assert "published_app_public_preview_token=" in set_cookie_header
-    assert f"Path=/public/apps/preview/revisions/{draft_revision_id}" in set_cookie_header
+    assert "published_app_preview_token=" in set_cookie_header
+    assert "Path=/" in set_cookie_header
 
     cookie_asset_resp = await client.get(asset_path)
     assert cookie_asset_resp.status_code == 200
@@ -167,7 +169,7 @@ async def test_preview_asset_proxy_streams_dist_asset(client, db_session, monkey
     preview_url = runtime_payload["preview_url"]
     assert "/assets/index.html" in preview_url
     preview_query = parse_qs(urlparse(preview_url).query)
-    assert preview_query.get("preview_token") in (None, [])
+    assert preview_query.get("runtime_token")
     assert runtime_payload["asset_base_url"].endswith("/assets/")
 
 

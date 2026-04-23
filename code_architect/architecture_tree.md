@@ -1,6 +1,6 @@
 # Architecture Tree (Curated)
 
-Last Updated: 2026-04-22
+Last Updated: 2026-04-23
 
 This file is a backend-only architecture map optimized for agent context efficiency.
 
@@ -22,6 +22,7 @@ backend/app/api/routers/workos_webhooks.py
 backend/app/api/routers/
 backend/app/api/routers/sandbox_controller_dev_shim.py
 backend/app/api/routers/published_apps_builder_preview_proxy.py
+backend/app/api/routers/published_apps_preview_auth.py
 backend/app/api/routers/published_apps_admin_routes_stats.py
 backend/app/api/routers/published_apps_admin_routes_coding_agent_v2.py
 backend/app/api/routers/published_apps_admin_routes_export.py

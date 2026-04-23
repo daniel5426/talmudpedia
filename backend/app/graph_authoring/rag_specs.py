@@ -20,6 +20,7 @@ def rag_node_spec(spec: OperatorSpec) -> NodeAuthoringSpec:
     input_schema = spec.resolved_input_schema() or {}
     output_schema = spec.resolved_output_schema() or {}
     category = _ui_category(str(getattr(spec.category, "value", spec.category)))
+    normalization_defaults = _apply_schema_defaults(config_schema, {})
     return NodeAuthoringSpec(
         type=spec.operator_id,
         title=spec.display_name,
@@ -28,9 +29,12 @@ def rag_node_spec(spec: OperatorSpec) -> NodeAuthoringSpec:
         input_type=str(getattr(spec.input_type, "value", spec.input_type)),
         output_type=str(getattr(spec.output_type, "value", spec.output_type)),
         config_schema=config_schema,
+        input_schema=input_schema or None,
         output_schema=output_schema or None,
         field_contracts=None,
         graph_hints=GraphHints(editor="generic"),
+        node_template=_rag_node_template(spec.operator_id, category, normalization_defaults),
+        normalization_defaults=normalization_defaults,
     )
 
 
@@ -43,7 +47,7 @@ def rag_catalog_item(spec: OperatorSpec) -> NodeCatalogItem:
         category=authoring.category,
         input_type=authoring.input_type,
         output_type=authoring.output_type,
-        required_config_fields=required_config_fields(authoring.config_schema),
+        required_config_fields=required_config_fields(authoring.config_schema, include_runtime=False),
         icon=_category_icon(authoring.category),
         color=_category_color(authoring.category),
         editor="generic",
@@ -67,10 +71,16 @@ def _rag_field_payload(field: ConfigFieldSpec) -> dict[str, Any]:
     }
     if raw.get("options"):
         payload["options"] = [{"value": option, "label": option} for option in list(raw.get("options") or [])]
-    if raw.get("runtime"):
-        payload["runtime"] = True
+    if "runtime" in raw:
+        payload["runtime"] = bool(raw.get("runtime"))
     if raw.get("placeholder"):
         payload["placeholder"] = raw["placeholder"]
+    if raw.get("min_value") is not None:
+        payload["minimum"] = raw.get("min_value")
+    if raw.get("max_value") is not None:
+        payload["maximum"] = raw.get("max_value")
+    if isinstance(raw.get("json_schema"), dict) and raw.get("json_schema"):
+        payload["json_schema"] = raw["json_schema"]
     return payload
 
 
@@ -137,7 +147,7 @@ def _ui_category(category: str) -> str:
 def rag_instance_contract() -> dict[str, Any]:
     return {
         "required_fields": ["name", "nodes", "edges"],
-        "optional_fields": ["description", "pipeline_type", "org_unit_id"],
+        "optional_fields": ["description", "pipeline_type"],
         "top_level_schema": {
             "type": "object",
             "properties": {
@@ -146,10 +156,25 @@ def rag_instance_contract() -> dict[str, Any]:
                 "pipeline_type": {"type": "string", "enum": ["ingestion", "retrieval"]},
                 "nodes": {"type": "array", "items": {"type": "object"}},
                 "edges": {"type": "array", "items": {"type": "object"}},
-                "org_unit_id": {"type": "string"},
             },
-            "required": ["name"],
+            "required": ["name", "nodes", "edges"],
             "additionalProperties": False,
+        },
+        "node_required_fields": ["id", "operator", "position", "category"],
+        "node_field_shapes": {
+            "id": {"type": "string"},
+            "operator": {"type": "string"},
+            "category": {"type": "string"},
+            "position": {
+                "type": "object",
+                "properties": {
+                    "x": {"type": "number"},
+                    "y": {"type": "number"},
+                },
+                "required": ["x", "y"],
+                "additionalProperties": False,
+            },
+            "config": {"type": "object"},
         },
         "edge_contract": {
             "required_fields": ["id", "source", "target"],
@@ -162,3 +187,19 @@ def rag_instance_contract() -> dict[str, Any]:
             },
         },
     }
+
+
+def _rag_node_template(operator_id: str, category: str, normalization_defaults: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": "node_id",
+        "operator": operator_id,
+        "category": category,
+        "position": {"x": 0, "y": 0},
+        "config": normalization_defaults,
+    }
+
+
+def _apply_schema_defaults(config_schema: dict[str, Any] | None, current_config: dict[str, Any] | None) -> dict[str, Any]:
+    from app.graph_authoring.normalizers.base import apply_schema_defaults
+
+    return apply_schema_defaults(config_schema, current_config)

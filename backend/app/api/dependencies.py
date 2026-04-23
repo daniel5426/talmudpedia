@@ -16,7 +16,6 @@ from app.core.scope_registry import is_platform_admin_role
 from app.core.security import (
     ALGORITHM,
     SECRET_KEY,
-    decode_published_app_preview_token,
     decode_published_app_session_token,
 )
 from app.db.postgres.models.identity import OrgUnit, Organization, User
@@ -31,6 +30,7 @@ from app.db.postgres.session import get_db
 from app.services.auth_context_service import list_organization_projects, resolve_effective_scopes
 from app.services.organization_api_key_service import OrganizationAPIKeyAuthError, OrganizationAPIKeyService
 from app.services.workos_auth_service import WorkOSAuthService
+from app.api.routers.published_apps_preview_auth import PREVIEW_COOKIE_NAME, decode_preview_token
 
 
 class AuthContext(BaseModel):
@@ -45,40 +45,13 @@ class AuthContext(BaseModel):
 bearer_scheme = HTTPBearer(auto_error=False)
 
 
-async def get_organization_context(
-    request: Request,
-    response: Response,
-    db: AsyncSession = Depends(get_db),
-    x_organization_id: Optional[str] = Header(None, alias="X-Organization-ID"),
-) -> Dict[str, Any]:
-    organization_uuid: UUID | None = None
-    project_uuid: UUID | None = None
-
-    if x_organization_id:
-        try:
-            organization_uuid = UUID(x_organization_id)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail="Invalid X-Organization-ID header") from exc
-    elif WorkOSAuthService.is_enabled():
-        service = WorkOSAuthService(db)
-        auth_response = await service.authenticate_request(request, response)
-        if auth_response is not None and service.current_organization_id(auth_response):
-            bundle = await service.ensure_local_bundle(auth_response=auth_response, request=request)
-            organization_uuid = bundle.organization.id
-            project_uuid = bundle.project.id
-
-    if organization_uuid is None:
-        raise HTTPException(status_code=400, detail="Active organization context is required")
-
-    organization = await db.get(Organization, organization_uuid)
-    if organization is None:
-        raise HTTPException(status_code=404, detail="Organization not found")
-
-    return {
-        "organization_id": str(organization.id),
-        "organization": organization,
-        "project_id": str(project_uuid) if project_uuid else None,
-    }
+def ensure_principal_organization_access(principal: Dict[str, Any], organization_id: UUID | str) -> None:
+    principal_user = principal.get("user")
+    if principal_user is not None and is_platform_admin_role(getattr(principal_user, "role", None)):
+        return
+    principal_organization_id = principal.get("organization_id")
+    if principal_organization_id is None or str(principal_organization_id) != str(organization_id):
+        raise HTTPException(status_code=403, detail="Organization is outside active session context")
 
 
 async def get_auth_context(
@@ -162,6 +135,45 @@ async def get_current_principal(
         "project_id": str(project_id) if project_id else None,
         "scopes": sorted(scopes),
         "auth_token": token,
+    }
+
+
+async def get_organization_context(
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+    x_organization_id: Optional[str] = Header(None, alias="X-Organization-ID"),
+    principal: Dict[str, Any] = Depends(get_current_principal),
+) -> Dict[str, Any]:
+    del request, response
+    organization_uuid: UUID | None = None
+    project_uuid: UUID | None = None
+
+    if x_organization_id:
+        try:
+            organization_uuid = UUID(x_organization_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Invalid X-Organization-ID header") from exc
+        ensure_principal_organization_access(principal, organization_uuid)
+    elif principal.get("auth_mode") == "workos_session":
+        principal_organization_id = principal.get("organization_id")
+        if principal_organization_id:
+            organization_uuid = UUID(str(principal_organization_id))
+        principal_project_id = principal.get("project_id")
+        if principal_project_id:
+            project_uuid = UUID(str(principal_project_id))
+
+    if organization_uuid is None:
+        raise HTTPException(status_code=400, detail="Active organization context is required")
+
+    organization = await db.get(Organization, organization_uuid)
+    if organization is None:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    return {
+        "organization_id": str(organization.id),
+        "organization": organization,
+        "project_id": str(project_uuid) if project_uuid else None,
     }
 
 
@@ -361,11 +373,9 @@ async def get_optional_published_app_preview_principal(
     if query_token and query_token not in token_candidates:
         token_candidates.append(query_token)
 
-    cookie_names = ("published_app_public_preview_token",)
-    for cookie_name in cookie_names:
-        cookie_token = (request.cookies.get(cookie_name) or "").strip()
-        if cookie_token and cookie_token not in token_candidates:
-            token_candidates.append(cookie_token)
+    cookie_token = (request.cookies.get(PREVIEW_COOKIE_NAME) or "").strip()
+    if cookie_token and cookie_token not in token_candidates:
+        token_candidates.append(cookie_token)
 
     if not token_candidates:
         return None
@@ -374,7 +384,7 @@ async def get_optional_published_app_preview_principal(
     chosen_token: Optional[str] = None
     for candidate in token_candidates:
         try:
-            payload = decode_published_app_preview_token(candidate)
+            payload = decode_preview_token(candidate)
             chosen_token = candidate
             break
         except Exception:
@@ -387,6 +397,8 @@ async def get_optional_published_app_preview_principal(
         "type": "published_app_preview",
         "organization_id": str(payload["organization_id"]),
         "app_id": str(payload["app_id"]),
+        "preview_target_type": str(payload["preview_target_type"]),
+        "preview_target_id": str(payload["preview_target_id"]),
         "revision_id": str(payload["revision_id"]),
         "user_id": str(payload.get("sub")),
         "scopes": payload.get("scope", []),

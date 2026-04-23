@@ -25,25 +25,9 @@ export function normalizeBuilderPreviewRoute(route: string): string | null {
   return collapsed;
 }
 
-export function appendPreviewRuntimeToken(url: string, token?: string | null): string {
-  const trimmedToken = String(token || "").trim();
-  if (!trimmedToken) {
-    return url;
-  }
-  try {
-    const parsed = new URL(url);
-    parsed.searchParams.set("runtime_token", trimmedToken);
-    return parsed.toString();
-  } catch {
-    const separator = url.includes("?") ? "&" : "?";
-    return `${url}${separator}runtime_token=${encodeURIComponent(trimmedToken)}`;
-  }
-}
-
 export function buildBuilderPreviewDocumentUrl(options: {
   baseUrl: string;
   route: string;
-  runtimeToken?: string | null;
   reloadToken?: number;
   buildId?: string | null;
 }): string {
@@ -63,14 +47,11 @@ export function buildBuilderPreviewDocumentUrl(options: {
     } else {
       parsed.searchParams.delete("__build");
     }
-    return appendPreviewRuntimeToken(parsed.toString(), options.runtimeToken);
+    return parsed.toString();
   } catch {
     const separator = options.baseUrl.includes("?") ? "&" : "?";
     const reloadSuffix = reloadToken > 0 ? `&__reload=${reloadToken}` : "";
     const buildSuffix = buildId ? `&__build=${encodeURIComponent(buildId)}` : "";
-    return appendPreviewRuntimeToken(
-      `${options.baseUrl}${separator}preview_route=${encodeURIComponent(normalizedRoute)}${reloadSuffix}${buildSuffix}`,
-      options.runtimeToken,
-    );
+    return `${options.baseUrl}${separator}preview_route=${encodeURIComponent(normalizedRoute)}${reloadSuffix}${buildSuffix}`;
   }
 }

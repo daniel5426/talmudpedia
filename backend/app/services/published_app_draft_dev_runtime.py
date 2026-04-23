@@ -13,7 +13,6 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only
 
-from app.core.security import create_published_app_draft_dev_token
 from app.db.postgres.models.published_apps import (
     PublishedApp,
     PublishedAppDraftDevSession,
@@ -32,6 +31,7 @@ from app.services.published_app_draft_dev_runtime_client import (
     PublishedAppDraftDevRuntimeClient,
     PublishedAppDraftDevRuntimeClientError,
 )
+from app.services.published_app_live_preview import build_canonical_workspace_fingerprint
 from app.services.published_app_templates import TemplateRuntimeContext, apply_runtime_bootstrap_overlay
 
 
@@ -376,18 +376,30 @@ class PublishedAppDraftDevRuntimeService:
         if snapshot is not None and not should_refresh_existing_snapshot:
             return
         try:
+            app = await self.db.get(PublishedApp, app_id)
+            if app is None:
+                return
             payload = await self.client.snapshot_files(sandbox_id=sandbox_id)
             raw_files = payload.get("files") if isinstance(payload, dict) else {}
             files = filter_and_validate_builder_snapshot_files(raw_files if isinstance(raw_files, dict) else {})
             if not files:
                 return
             revision_token = str(payload.get("revision_token") or "").strip() or None
-            workspace_fingerprint = str(live_preview.get("workspace_fingerprint") or "").strip() or None
             entry_file = str(
                 (snapshot or {}).get("entry_file")
                 or revision.entry_file
                 or "src/main.tsx"
             ).strip() or "src/main.tsx"
+            runtime_context = TemplateRuntimeContext(
+                app_id=str(app.id),
+                app_public_id=str(app.public_id or ""),
+                agent_id=str(app.agent_id or ""),
+            )
+            workspace_fingerprint = build_canonical_workspace_fingerprint(
+                entry_file=entry_file,
+                files=files,
+                runtime_context=runtime_context,
+            )
             await self.record_workspace_live_snapshot(
                 app_id=app_id,
                 revision_id=revision.id,
@@ -745,13 +757,6 @@ class PublishedAppDraftDevRuntimeService:
                 files=files_payload,
                 idle_timeout_seconds=self.settings.idle_timeout_seconds,
                 dependency_hash=dependency_hash,
-                draft_dev_token=create_published_app_draft_dev_token(
-                    subject=str(user_id),
-                    organization_id=str(app.organization_id),
-                    app_id=str(app.id),
-                    user_id=str(user_id),
-                    session_id=str(workspace.id),
-                ),
                 preview_base_path=preview_base_path,
             )
             workspace.sandbox_id = self._normalize_runtime_sandbox_id(started.get("sandbox_id")) or workspace.sprite_name
@@ -881,13 +886,6 @@ class PublishedAppDraftDevRuntimeService:
                 files=files_payload,
                 idle_timeout_seconds=self.settings.idle_timeout_seconds,
                 dependency_hash=dependency_hash,
-                draft_dev_token=create_published_app_draft_dev_token(
-                    subject=str(user_id),
-                    organization_id=str(app.organization_id),
-                    app_id=str(app.id),
-                    user_id=str(user_id),
-                    session_id=str(workspace.id),
-                ),
                 preview_base_path=preview_base_path,
             )
             workspace.sandbox_id = self._normalize_runtime_sandbox_id(started.get("sandbox_id")) or workspace.sprite_name
@@ -1112,69 +1110,7 @@ class PublishedAppDraftDevRuntimeService:
             session.expires_at = self._session_expires_at(now)
             workspace.last_activity_at = now
             workspace.detached_at = None
-            try:
-                heartbeat_result = await self.client.heartbeat_session(
-                    sandbox_id=str(workspace.sandbox_id),
-                    idle_timeout_seconds=self.settings.idle_timeout_seconds,
-                )
-            except PublishedAppDraftDevRuntimeClientError as exc:
-                apps_builder_trace(
-                    "workspace.ensure_active.reuse_live.heartbeat_failed",
-                    domain="draft_dev.runtime",
-                    app_id=str(app.id),
-                    revision_id=str(revision.id),
-                    user_id=str(user_id),
-                    trace_source=str(trace_source or "").strip() or None,
-                    session_id=str(session.id),
-                    workspace_id=str(workspace.id),
-                    sandbox_id=str(workspace.sandbox_id or "") or None,
-                    error=str(exc),
-                    error_type=exc.__class__.__name__,
-                    classified_runtime_not_running=bool(self._is_runtime_not_running_error(exc)),
-                    classified_transient=bool(self._is_transient_remote_error(exc)),
-                )
-                if self._is_runtime_not_running_error(exc):
-                    return await self.ensure_session(
-                        app=app,
-                        revision=revision,
-                        user_id=user_id,
-                        files=dict(revision.files or {}),
-                        entry_file=revision.entry_file,
-                        trace_source=trace_source or "ensure_active.runtime_not_running",
-                    )
-                if self._is_transient_remote_error(exc):
-                    self._mark_workspace_degraded(workspace, exc)
-                    return self._attach_session(
-                        session=session,
-                        workspace=workspace,
-                        revision=revision,
-                        dependency_hash=str(workspace.dependency_hash or session.dependency_hash or ""),
-                        now=now,
-                        preserve_live_revision=True,
-                    )
-                self._mark_workspace_error(workspace, exc)
-                return self._attach_session(
-                    session=session,
-                    workspace=workspace,
-                    revision=revision,
-                    dependency_hash=str(workspace.dependency_hash or session.dependency_hash or ""),
-                    now=now,
-                    preserve_live_revision=True,
-                )
-
-            if isinstance(heartbeat_result.get("backend_metadata"), dict):
-                workspace.backend_metadata = self._merge_backend_metadata(
-                    existing_metadata=workspace.backend_metadata,
-                    refreshed_metadata=heartbeat_result.get("backend_metadata"),
-                    preview_base_path=str(workspace.preview_url or "").strip() or str(session.preview_url or "").strip() or "/",
-                )
             self._mark_workspace_serving(workspace)
-            await self._restore_live_workspace_snapshot_from_runtime(
-                app_id=app.id,
-                workspace=workspace,
-                session=session,
-                revision=revision,
-            )
 
             apps_builder_trace(
                 "workspace.ensure_active.reused_live",
@@ -1303,12 +1239,6 @@ class PublishedAppDraftDevRuntimeService:
                 preview_base_path=str(workspace.preview_url or "").strip() or str(session.preview_url or "").strip() or "/",
             )
         self._mark_workspace_serving(workspace)
-        await self._restore_live_workspace_snapshot_from_runtime(
-            app_id=app.id,
-            workspace=workspace,
-            session=session,
-            revision=revision,
-        )
 
         attached = self._attach_session(
             session=session,
@@ -1483,6 +1413,8 @@ class PublishedAppDraftDevRuntimeService:
             or live_preview_fingerprint != workspace_fingerprint
         ):
             return session
+        if materialization_request is None:
+            return session
 
         app = await self.db.get(PublishedApp, session.published_app_id)
         if app is None:
@@ -1538,11 +1470,7 @@ class PublishedAppDraftDevRuntimeService:
                     else None
                 )
                 or session.user_id,
-                origin_kind=(
-                    materialization_request["origin_kind"]
-                    if materialization_request is not None
-                    else "live_preview"
-                ),
+                origin_kind=materialization_request["origin_kind"],
                 origin_run_id=(
                     _parse_uuid(materialization_request.get("origin_run_id"))
                     if materialization_request is not None
@@ -1726,8 +1654,6 @@ class PublishedAppDraftDevRuntimeService:
                 workspace_id=str(session.draft_workspace_id or "") or None,
             )
             return session
-        revision = await self.db.get(PublishedAppRevision, session.revision_id) if session.revision_id is not None else None
-
         now = self._now()
         session.last_activity_at = now
         session.expires_at = self._session_expires_at(now)
@@ -1771,17 +1697,6 @@ class PublishedAppDraftDevRuntimeService:
                 ),
             )
         self._mark_workspace_serving(workspace)
-        if revision is not None:
-            await self._restore_live_workspace_snapshot_from_runtime(
-                app_id=workspace.published_app_id,
-                workspace=workspace,
-                session=session,
-                revision=revision,
-            )
-        session = await self._maybe_materialize_live_workspace(
-            session=session,
-            workspace=workspace,
-        )
         session.status = PublishedAppDraftDevSessionStatus.serving
         session.sandbox_id = self._normalize_runtime_sandbox_id(workspace.sandbox_id)
         session.backend_metadata = dict(workspace.backend_metadata or {})

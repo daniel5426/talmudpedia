@@ -43,6 +43,9 @@ class NodeAuthoringSpec(BaseModel):
     input_type: str
     output_type: str
     config_schema: dict[str, Any] = Field(default_factory=dict)
+    input_schema: dict[str, Any] | None = None
     output_schema: dict[str, Any] | None = None
     field_contracts: dict[str, Any] | None = None
     graph_hints: GraphHints | None = None
+    node_template: dict[str, Any] | None = None
+    normalization_defaults: dict[str, Any] = Field(default_factory=dict)

@@ -1,4 +1,4 @@
-Last Updated: 2026-04-21
+Last Updated: 2026-04-22
 
 # Test State
 
@@ -32,6 +32,7 @@ Artifact runtime revision, deploy, and dispatch-time credential lifecycle.
 - export an artifact into a versioned transfer JSON file
 - import a transfer JSON file into a new tenant artifact as a portable draft while retaining whether the source file came from a published artifact
 - read and update the persisted artifact working-draft snapshot through the admin API
+- require active project context for artifact working-draft API coverage and keep persisted draft rows project-scoped
 - keep saved-artifact working-draft persistence isolated from unrelated `draft_key`-scoped shared drafts
 - link draft-key-scoped artifact coding sessions and shared drafts to the saved artifact during artifact create so artifact history is queryable by `artifact_id`
 - reject wrapped legacy `tool_contract` payloads in saved artifact working drafts
@@ -155,6 +156,9 @@ Artifact runtime revision, deploy, and dispatch-time credential lifecycle.
 - Command: `SECRET_KEY=explicit-test-secret PYTHONPATH=backend backend/.venv/bin/python -m pytest -x -q backend/tests/artifact_runtime/test_execution_service.py`
 - Date: 2026-04-21 Asia/Hebron
 - Result: Fail (`invalid input value for enum artifactownertype: "organization"` from the live artifact create path after fixture bootstrap succeeded).
+- Command: `TEST_USE_REAL_DB=0 SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest -q backend/tests/artifact_runtime/test_artifact_working_draft_api.py backend/tests/artifact_coding_agent/test_runtime_service.py::test_runtime_service_relinks_draft_key_to_saved_artifact_without_new_shared_draft backend/tests/artifact_coding_agent/test_runtime_service.py::test_prepare_session_without_scope_keeps_direct_shared_draft_link backend/tests/artifact_coding_agent/test_runtime_service.py::test_artifact_tools_use_run_pinned_shared_draft_when_session_binding_changes`
+- Date: 2026-04-22 Asia/Hebron
+- Result: Pass (`7 passed, 7 warnings`)
 
 ## Known Gaps
 

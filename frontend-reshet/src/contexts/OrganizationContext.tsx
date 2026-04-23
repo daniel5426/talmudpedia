@@ -4,7 +4,7 @@ import React, { createContext, useContext, useMemo, useState } from "react"
 
 import { applyAuthSession, clearAuthSession } from "@/lib/auth-session"
 import { useAuthStore } from "@/lib/store/useAuthStore"
-import { authService } from "@/services/auth"
+import { authService, isAuthSessionRedirectResponse, navigateToAuthRedirect } from "@/services/auth"
 import { HttpRequestError } from "@/services/http"
 
 export interface Organization {
@@ -87,6 +87,10 @@ function toProject(input: {
 async function refreshSessionState(): Promise<void> {
   try {
     const session = await authService.getCurrentSession()
+    if (isAuthSessionRedirectResponse(session)) {
+      navigateToAuthRedirect(session.redirect_url)
+      return
+    }
     applyAuthSession(session)
   } catch (error) {
     if (error instanceof HttpRequestError && error.status === 401) {
@@ -131,7 +135,7 @@ export function OrganizationProvider({ children }: { children: React.ReactNode }
       .switchOrganization(organization.id, window.location.href)
       .then((result) => {
         if ("redirect_url" in result) {
-          window.location.assign(result.redirect_url)
+          navigateToAuthRedirect(result.redirect_url)
           return
         }
         setCurrentOrgUnit(null)

@@ -69,7 +69,6 @@ import { sortTemplates } from "@/features/apps-builder/templates";
 import { PreviewCanvas } from "@/features/apps-builder/preview/PreviewCanvas";
 import { buildBuilderPreviewLoadingState } from "@/features/apps-builder/preview/previewLoadingState";
 import {
-  appendPreviewRuntimeToken,
   buildBuilderPreviewDocumentUrl,
   logBuilderPreviewDebug,
 } from "@/features/apps-builder/preview/previewTransport";
@@ -669,10 +668,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
     }
     setError(null);
     try {
-      const [response, exportState] = await Promise.all([
-        publishedAppsService.getBuilderState(appId),
-        publishedAppsService.getExportOptions(appId),
-      ]);
+      const response = await publishedAppsService.getBuilderState(appId);
       logBuilderWorkspaceDebug("load_state.received", {
         appId,
         currentRevisionId: response.current_draft_revision?.id || null,
@@ -689,12 +685,11 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
           : 0,
       });
       setState(response);
-      setExportOptions(exportState);
       if (response.draft_dev?.live_workspace_snapshot?.files) {
         hydrateFromBuilderSession(response.draft_dev);
       } else {
-        hydrateWorkspaceFromRevision(response.current_draft_revision);
         hydrateFromBuilderSession(response.draft_dev);
+        hydrateWorkspaceFromRevision(response.current_draft_revision);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load builder state");
@@ -704,6 +699,15 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
       }
     }
   }, [appId, hydrateFromBuilderSession, hydrateWorkspaceFromRevision]);
+
+  const loadExportOptions = useCallback(async () => {
+    try {
+      const nextOptions = await publishedAppsService.getExportOptions(appId);
+      setExportOptions(nextOptions);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load export options");
+    }
+  }, [appId]);
 
   const loadAuthTemplates = useCallback(async () => {
     setIsAuthTemplatesLoading(true);
@@ -731,10 +735,7 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
 
   const refreshStateSilently = useCallback(async () => {
     try {
-      const [response, exportState] = await Promise.all([
-        publishedAppsService.getBuilderState(appId),
-        publishedAppsService.getExportOptions(appId),
-      ]);
+      const response = await publishedAppsService.getBuilderState(appId);
       logBuilderWorkspaceDebug("refresh_state_silently.received", {
         appId,
         currentRevisionId: response.current_draft_revision?.id || null,
@@ -751,17 +752,20 @@ export function AppsBuilderWorkspace({ appId }: WorkspaceProps) {
           : 0,
       });
       setState(response);
-      setExportOptions(exportState);
       if (response.draft_dev?.live_workspace_snapshot?.files) {
         hydrateFromBuilderSession(response.draft_dev);
       } else {
-        hydrateWorkspaceFromRevision(response.current_draft_revision);
         hydrateFromBuilderSession(response.draft_dev);
+        hydrateWorkspaceFromRevision(response.current_draft_revision);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to refresh builder state");
     }
   }, [appId, hydrateFromBuilderSession, hydrateWorkspaceFromRevision]);
+
+  useEffect(() => {
+    void loadExportOptions();
+  }, [loadExportOptions]);
 
   useEffect(() => {
     if (!postSaveRevisionPollState) {

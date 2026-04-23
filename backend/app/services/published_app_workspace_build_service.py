@@ -29,7 +29,7 @@ from app.services.apps_builder_dependency_policy import validate_builder_depende
 from app.services.published_app_builder_snapshot_filter import filter_and_validate_builder_snapshot_files
 from app.services.published_app_bundle_storage import PublishedAppBundleStorage
 from app.services.published_app_draft_dev_runtime import PublishedAppDraftDevRuntimeService
-from app.services.published_app_live_preview import build_live_preview_workspace_fingerprint
+from app.services.published_app_live_preview import build_canonical_workspace_fingerprint
 from app.services.published_app_templates import TemplateRuntimeContext, apply_runtime_bootstrap_overlay
 from app.services.published_app_draft_dev_runtime_client import PublishedAppDraftDevRuntimeClientError
 
@@ -117,8 +117,17 @@ class PublishedAppWorkspaceBuildService:
         self._trace("build.lock.acquired", app_id=app_id, dialect=dialect_name)
 
     @staticmethod
-    def _build_source_fingerprint(*, entry_file: str, files: Dict[str, str]) -> str:
-        return build_live_preview_workspace_fingerprint(entry_file=entry_file, files=files)
+    def _build_source_fingerprint(
+        *,
+        entry_file: str,
+        files: Dict[str, str],
+        runtime_context: TemplateRuntimeContext | Dict[str, Any] | None = None,
+    ) -> str:
+        return build_canonical_workspace_fingerprint(
+            entry_file=entry_file,
+            files=files,
+            runtime_context=runtime_context,
+        )
 
     @staticmethod
     def _live_preview_matches_workspace_state(
@@ -515,7 +524,11 @@ class PublishedAppWorkspaceBuildService:
                     "; ".join(item.get("message", "Build policy violation") for item in diagnostics)
                 )
 
-            source_fingerprint = self._build_source_fingerprint(entry_file=normalized_entry_file, files=build_files)
+            source_fingerprint = self._build_source_fingerprint(
+                entry_file=normalized_entry_file,
+                files=source_files,
+                runtime_context=runtime_context,
+            )
             await self.runtime_service.record_workspace_live_snapshot(
                 app_id=app.id,
                 revision_id=source_revision_id,

@@ -12,7 +12,6 @@ from app.db.postgres.models.published_apps import (
     PublishedApp,
     PublishedAppBuilderConversationTurn,
     PublishedAppDraftDevSession,
-    PublishedAppDraftDevSessionStatus,
     PublishedAppRevision,
 )
 from app.db.postgres.session import get_db
@@ -69,6 +68,11 @@ from .published_apps_admin_shared import (
     _validate_template_key,
     router,
 )
+from .published_apps_preview_auth import (
+    PREVIEW_TARGET_DRAFT_DEV_SESSION,
+    append_preview_runtime_token,
+    create_preview_token,
+)
 
 async def _decorate_draft_dev_session_response(
     *,
@@ -101,7 +105,15 @@ async def _decorate_draft_dev_session_response(
     if effective_revision_id is None:
         return response
 
-    response.preview_url = preview_url
+    preview_token = create_preview_token(
+        subject=str(actor_id),
+        organization_id=str(app.organization_id),
+        app_id=str(app.id),
+        preview_target_type=PREVIEW_TARGET_DRAFT_DEV_SESSION,
+        preview_target_id=str(session.id),
+        revision_id=str(effective_revision_id),
+    )
+    response.preview_url = append_preview_runtime_token(preview_url, preview_token)
     return response
 
 
@@ -211,41 +223,6 @@ async def get_builder_state(
             app_id=app.id,
             user_id=actor_id,
         )
-        if draft_dev_session is not None:
-            session_status = str(getattr(draft_dev_session.status, "value", draft_dev_session.status) or "").strip().lower()
-            if session_status in {
-                PublishedAppDraftDevSessionStatus.starting.value,
-                PublishedAppDraftDevSessionStatus.building.value,
-                PublishedAppDraftDevSessionStatus.serving.value,
-                PublishedAppDraftDevSessionStatus.degraded.value,
-                PublishedAppDraftDevSessionStatus.running.value,
-                PublishedAppDraftDevSessionStatus.stopping.value,
-            }:
-                runtime_service = PublishedAppDraftDevRuntimeService(db)
-                try:
-                    draft_dev_session = await runtime_service.heartbeat_session(session=draft_dev_session)
-                    await db.commit()
-                    await db.refresh(app)
-                    draft = await _get_revision(db, app.current_draft_revision_id)
-                    published = await _get_revision(db, app.current_published_revision_id)
-                    apps_builder_trace(
-                        "builder.state.draft_dev_refreshed",
-                        domain="draft_dev.api",
-                        app_id=str(app.id),
-                        user_id=str(actor_id),
-                        session_id=str(draft_dev_session.id),
-                        status=str(getattr(draft_dev_session.status, "value", draft_dev_session.status) or ""),
-                        sandbox_id=str(draft_dev_session.sandbox_id or "") or None,
-                    )
-                except PublishedAppDraftDevRuntimeDisabled:
-                    apps_builder_trace(
-                        "builder.state.draft_dev_refresh_skipped",
-                        domain="draft_dev.api",
-                        app_id=str(app.id),
-                        user_id=str(actor_id),
-                        session_id=str(draft_dev_session.id),
-                        reason="runtime_disabled",
-                    )
 
     return BuilderStateResponse(
         app=_app_to_response(app),

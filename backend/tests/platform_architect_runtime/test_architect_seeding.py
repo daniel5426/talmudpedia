@@ -44,7 +44,7 @@ def test_platform_architect_graph_is_single_agent_topology():
     instructions = runtime_node["config"]["instructions"]
     assert "Visible agent tools: agents.list, agents.get, agents.create" in instructions
     assert "Visible RAG tools: rag.list_visual_pipelines, rag.operators.catalog" in instructions
-    assert "Visible asset tools: tools.list, tools.get, tools.create_or_update" in instructions
+    assert "Visible asset tools: tools.list, tools.get, tools.create, tools.update" in instructions
     assert "Visible worker tools: architect-worker-binding-prepare, architect-worker-binding-persist-artifact, architect-worker-spawn, architect-worker-await, architect-worker-respond." in instructions
     assert "The legacy domain container tools platform-rag, platform-agents, platform-assets, and platform-governance are not available here." in instructions
     assert "Each visible platform tool already fixes the action id." in instructions
@@ -54,9 +54,15 @@ def test_platform_architect_graph_is_single_agent_topology():
     assert "Use rag.create_visual_pipeline for first pipeline creation and rag.update_visual_pipeline for graph updates." in instructions
     assert "For agents.create and agents.update, send graph_definition and then use agents.validate as the repair checkpoint." in instructions
     assert "For rag.create_visual_pipeline and rag.update_visual_pipeline, send nodes and edges at top level and use rag.compile_visual_pipeline as the repair checkpoint." in instructions
+    assert "For retrieval pipelines, include a retrieval_result output node." in instructions
+    assert "If rag.compile_visual_pipeline fails, repair that same pipeline first." in instructions
+    assert "Do not call rag.get_executable_pipeline or rag.get_executable_input_schema until rag.compile_visual_pipeline succeeds." in instructions
+    assert "Do not call rag.update_visual_pipeline with only pipeline_id or only unchanged metadata." in instructions
     assert "Spawn the artifact worker asynchronously with architect-worker-spawn using objective as a top-level field, then wait with architect-worker-await." in instructions
     assert "Use architect-worker-binding-persist-artifact for the persistence step when create or update is required." in instructions
     assert "If the requested output is an agent-callable tool, the normal lifecycle is: create or update a tool_impl artifact" in instructions
+    assert "For knowledge store creation flows, use knowledge_stores.create." in instructions
+    assert "Do not send organization_id." in instructions
     assert "Never call architect.run" in instructions
     assert "agents.create_shell" not in instructions
     assert "rag.create_pipeline_shell" not in instructions
@@ -70,15 +76,19 @@ def test_platform_architect_graph_is_single_agent_topology():
 
 
 def test_platform_architect_canonical_surface_is_hard_cut():
-    assert len(registry_seeding.PLATFORM_ARCHITECT_CANONICAL_ACTION_TOOL_KEYS) == 36
+    assert len(registry_seeding.PLATFORM_ARCHITECT_CANONICAL_ACTION_TOOL_KEYS) == 38
     assert len(registry_seeding.PLATFORM_ARCHITECT_CANONICAL_WORKER_TOOL_KEYS) == 5
 
     canonical_actions = set(registry_seeding.PLATFORM_ARCHITECT_CANONICAL_ACTION_TOOL_KEYS)
     assert "agents.create" in canonical_actions
     assert "rag.create_visual_pipeline" in canonical_actions
-    assert "tools.create_or_update" in canonical_actions
+    assert "tools.create" in canonical_actions
+    assert "tools.update" in canonical_actions
     assert "artifacts.create" in canonical_actions
-    assert "knowledge_stores.create_or_update" in canonical_actions
+    assert "knowledge_stores.create" in canonical_actions
+    assert "knowledge_stores.update" in canonical_actions
+    assert "tools.create_or_update" not in canonical_actions
+    assert "knowledge_stores.create_or_update" not in canonical_actions
     assert "agents.create_shell" not in canonical_actions
     assert "rag.create_pipeline_shell" not in canonical_actions
     assert "agents.graph.apply_patch" not in canonical_actions
@@ -126,6 +136,11 @@ def test_platform_action_schema_is_direct_field():
     assert "edges" in rag_update_schema["properties"]
     assert rag_update_schema["dependentRequired"] == {"nodes": ["edges"], "edges": ["nodes"]}
     assert len(rag_update_schema["allOf"]) == 2
+    assert rag_update_schema["allOf"][1]["anyOf"] == [
+        {"required": ["name"]},
+        {"required": ["description"]},
+        {"required": ["nodes", "edges"]},
+    ]
 
     rag_create_job_schema = registry_seeding._build_platform_action_tool_schema("rag.create_job")["input"]
     assert rag_create_job_schema["required"] == ["executable_pipeline_id"]
@@ -133,15 +148,43 @@ def test_platform_action_schema_is_direct_field():
     assert rag_create_job_schema["properties"]["input_params"]["type"] == "object"
 
     knowledge_store_list_schema = registry_seeding._build_platform_action_tool_schema("knowledge_stores.list")["input"]
-    assert knowledge_store_list_schema["required"] == ["organization_id"]
+    assert knowledge_store_list_schema["required"] == []
     assert knowledge_store_list_schema["properties"]["view"]["enum"] == ["summary", "full"]
+
+    knowledge_store_create_schema = registry_seeding._build_platform_action_tool_schema("knowledge_stores.create")["input"]
+    assert set(knowledge_store_create_schema["required"]) == {"name", "embedding_model_id"}
+    assert knowledge_store_create_schema["additionalProperties"] is False
+
+    knowledge_store_update_schema = registry_seeding._build_platform_action_tool_schema("knowledge_stores.update")["input"]
+    assert "organization_id" not in knowledge_store_update_schema["properties"]
+    assert len(knowledge_store_update_schema["allOf"]) == 2
+
+    tools_create_schema = registry_seeding._build_platform_action_tool_schema("tools.create")["input"]
+    assert tools_create_schema["required"] == ["name"]
+    assert tools_create_schema["additionalProperties"] is False
+
+    tools_update_schema = registry_seeding._build_platform_action_tool_schema("tools.update")["input"]
+    assert "patch" not in tools_update_schema["properties"]
+    assert len(tools_update_schema["allOf"]) == 2
+
+
+def test_canonical_platform_action_schemas_do_not_expose_scope_fields():
+    forbidden = {"organization_id", "project_id", "tenant_slug", "org_unit_id"}
+
+    for action_id in registry_seeding.PLATFORM_ARCHITECT_CANONICAL_ACTION_TOOL_KEYS:
+        schema = registry_seeding._build_platform_action_tool_schema(action_id)["input"]
+        properties = set(schema.get("properties") or {})
+        assert forbidden.isdisjoint(properties), action_id
 
 
 def test_platform_action_tools_bind_to_generated_action_functions():
     assert PLATFORM_ACTION_FUNCTIONS["agents.create"] == "platform_action_agents_create"
     assert PLATFORM_ACTION_FUNCTIONS["rag.create_visual_pipeline"] == "platform_action_rag_create_visual_pipeline"
     assert PLATFORM_ACTION_FUNCTIONS["artifacts.create"] == "platform_action_artifacts_create"
-    assert PLATFORM_ACTION_FUNCTIONS["tools.create_or_update"] == "platform_action_tools_create_or_update"
+    assert PLATFORM_ACTION_FUNCTIONS["tools.create"] == "platform_action_tools_create"
+    assert PLATFORM_ACTION_FUNCTIONS["tools.update"] == "platform_action_tools_update"
+    assert PLATFORM_ACTION_FUNCTIONS["knowledge_stores.create"] == "platform_action_knowledge_stores_create"
+    assert PLATFORM_ACTION_FUNCTIONS["knowledge_stores.update"] == "platform_action_knowledge_stores_update"
 
 
 @pytest.mark.asyncio

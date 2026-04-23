@@ -130,9 +130,17 @@ export interface AuthSessionResponse {
   effective_scopes: string[];
 }
 
+export interface AuthSessionRedirectResponse {
+  redirect_url: string;
+}
+
 export interface OrganizationSwitchRedirectResponse {
   redirect_url: string;
 }
+
+export type AuthSessionBootstrapResponse =
+  | AuthSessionResponse
+  | AuthSessionRedirectResponse;
 
 export type OrganizationSwitchResponse =
   | AuthSessionResponse

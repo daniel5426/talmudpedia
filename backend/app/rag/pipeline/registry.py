@@ -67,7 +67,7 @@ class ConfigFieldSpec(BaseModel):
     name: str
     field_type: ConfigFieldType
     required: bool = False
-    runtime: bool = True
+    runtime: bool = False
     default: Optional[Any] = None
     description: Optional[str] = None
     options: Optional[List[str]] = None
@@ -81,6 +81,37 @@ class ConfigFieldSpec(BaseModel):
     placeholder: Optional[str] = None
 
     model_config = ConfigDict(extra="forbid")
+
+
+def _json_schema_accepts_value(value: Any, schema: Dict[str, Any]) -> bool:
+    if not isinstance(schema, dict) or not schema:
+        return True
+    if isinstance(schema.get("oneOf"), list):
+        return any(_json_schema_accepts_value(value, option) for option in schema["oneOf"] if isinstance(option, dict))
+    if isinstance(schema.get("anyOf"), list):
+        return any(_json_schema_accepts_value(value, option) for option in schema["anyOf"] if isinstance(option, dict))
+
+    expected_type = schema.get("type")
+    if isinstance(expected_type, list):
+        return any(_json_schema_accepts_value(value, {**schema, "type": option}) for option in expected_type)
+    if expected_type == "string":
+        return isinstance(value, str)
+    if expected_type == "integer":
+        return isinstance(value, int) and not isinstance(value, bool)
+    if expected_type == "number":
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if expected_type == "boolean":
+        return isinstance(value, bool)
+    if expected_type == "object":
+        return isinstance(value, dict)
+    if expected_type == "array":
+        if not isinstance(value, list):
+            return False
+        item_schema = schema.get("items")
+        if isinstance(item_schema, dict):
+            return all(_json_schema_accepts_value(item, item_schema) for item in value)
+        return True
+    return True
 
 
 def data_type_contract_schema(data_type: DataType) -> Optional[Dict[str, Any]]:
@@ -189,6 +220,10 @@ class OperatorSpec(BaseModel):
         for field in self.required_config + self.optional_config:
             if field.name in config:
                 value = config[field.name]
+                if isinstance(field.json_schema, dict) and field.json_schema:
+                    if not _json_schema_accepts_value(value, field.json_schema):
+                        errors.append(f"Field '{field.name}' does not match the required schema")
+                    continue
                 if field.field_type == ConfigFieldType.SECRET:
                     if not isinstance(value, str) or not value.startswith("$secret:"):
                         errors.append(
@@ -408,7 +443,13 @@ SOURCE_OPERATORS: Dict[str, OperatorSpec] = {
                 name="start_urls",
                 field_type=ConfigFieldType.STRING,
                 required=True,
-                description="Comma-separated list of starting URLs",
+                description="Starting URL or URLs. Accepts a single URL string, comma-separated URLs, or a list of URL strings.",
+                json_schema={
+                    "oneOf": [
+                        {"type": "string"},
+                        {"type": "array", "items": {"type": "string"}},
+                    ]
+                },
             ),
         ],
         optional_config=[

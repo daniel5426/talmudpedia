@@ -167,7 +167,6 @@ class PublishedAppDraftDevRuntimeClient:
         files: Dict[str, str],
         idle_timeout_seconds: int,
         dependency_hash: str,
-        draft_dev_token: str,
         preview_base_path: str | None = None,
     ) -> Dict[str, Any]:
         try:
@@ -184,7 +183,6 @@ class PublishedAppDraftDevRuntimeClient:
                 files=files,
                 idle_timeout_seconds=idle_timeout_seconds,
                 dependency_hash=dependency_hash,
-                draft_dev_token=draft_dev_token,
                 preview_base_path=preview_base_path or self.build_preview_proxy_path(session_id),
             )
         except PublishedAppSandboxBackendError as exc:

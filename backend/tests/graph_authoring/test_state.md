@@ -16,6 +16,9 @@ Last Updated: 2026-04-22
 - Removed legacy agent nodes stay out of the registered discovery surface.
 - RAG graph normalization applies canonical operator defaults without frontend help.
 - RAG authoring issues are path-specific and direct write-path normalization rejects unknown operators.
+- Runtime-only RAG config fields are no longer treated as persisted authoring requirements, so nodes like `query_input` do not require runtime input text in saved graphs.
+- RAG operator config validation now matches runtime parity for `web_crawler.start_urls`, accepting both URL strings and URL lists.
+- Discovery schema contracts now align with the same backend-owned defaults exposed by the graph authoring normalizers.
 
 ## Last run command + date/time + result
 - Command: `SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest -q backend/tests/graph_authoring/test_agent_authoring.py backend/tests/hitl_user_approval/test_hitl_user_approval.py backend/tests/node_inventory/test_node_surface_inventory.py`
@@ -24,6 +27,12 @@ Last Updated: 2026-04-22
 - Command: `SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest -q backend/tests/graph_authoring/test_agent_authoring.py backend/tests/graph_authoring/test_rag_authoring.py backend/tests/graph_mutation_agents/test_agent_graph_mutation_service.py backend/tests/graph_mutation_rag/test_rag_graph_mutation_service.py`
 - Date/Time: 2026-04-22 Asia/Hebron
 - Result: pass (`11 passed`)
+- Command: `SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest -q backend/tests/graph_authoring`
+- Date/Time: 2026-04-22 Asia/Hebron
+- Result: pass (`7 passed`)
+- Command: `SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest -q backend/tests/graph_authoring backend/tests/schema_contracts/test_schema_contract_surfaces.py backend/tests/platform_architect_runtime/test_architect_seeding.py backend/tests/platform_architect_runtime/test_native_platform_tools.py`
+- Date/Time: 2026-04-22 Asia/Hebron
+- Result: pass (`42 passed, 6 warnings`)
 
 ## Known gaps or follow-ups
 - Add DB-backed assertions for full create/update persistence flows once the surrounding legacy test drift is cleaned up.

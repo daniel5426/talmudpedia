@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import asyncio
 from datetime import datetime, timezone
+from urllib.parse import parse_qsl, urlparse
 from uuid import UUID, uuid4
 
 import httpx
@@ -87,6 +88,14 @@ async def _poll_preview(client, preview_url: str, preview_auth_token: str, *, at
     return last_response
 
 
+def _preview_auth_token_from_url(preview_url: str) -> str:
+    parsed = urlparse(str(preview_url or ""))
+    params = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    token = str(params.get("runtime_token") or "").strip()
+    assert token, preview_url
+    return token
+
+
 async def _sprite_request(method: str, sprite_name: str):
     async with httpx.AsyncClient(timeout=30.0) as client:
         response = await client.request(
@@ -117,14 +126,14 @@ async def test_sprite_live_builder_preview_and_recovery(client, db_session, monk
     assert payload["status"] == "serving", payload
     assert payload["runtime_backend"] == "sprite"
     assert payload.get("preview_url")
-    assert payload.get("preview_auth_token")
+    preview_auth_token = _preview_auth_token_from_url(str(payload["preview_url"]))
 
     first_session = await db_session.get(PublishedAppDraftDevSession, UUID(payload["session_id"]))
     assert first_session is not None
     sprite_name = str(first_session.sandbox_id or "").strip()
     assert sprite_name
 
-    preview_resp = await _poll_preview(client, str(payload["preview_url"]), str(payload["preview_auth_token"]))
+    preview_resp = await _poll_preview(client, str(payload["preview_url"]), preview_auth_token)
     assert preview_resp.status_code == 200
     assert "<!doctype html" in preview_resp.text.lower() or "<html" in preview_resp.text.lower()
     assert f"/public/apps-builder/draft-dev/sessions/{payload['session_id']}/preview/@vite/client" in preview_resp.text
@@ -132,7 +141,7 @@ async def test_sprite_live_builder_preview_and_recovery(client, db_session, monk
 
     vite_client_resp = await client.get(
         f"{payload['preview_url']}@vite/client",
-        params={"runtime_token": str(payload["preview_auth_token"])},
+        params={"runtime_token": preview_auth_token},
         follow_redirects=True,
         timeout=20.0,
     )
@@ -200,7 +209,7 @@ async def test_sprite_live_builder_preview_and_recovery(client, db_session, monk
     recovered_preview_resp = await _poll_preview(
         client,
         str(recovered_payload["preview_url"]),
-        str(recovered_payload["preview_auth_token"]),
+        _preview_auth_token_from_url(str(recovered_payload["preview_url"])),
     )
     assert recovered_preview_resp.status_code == 200
 

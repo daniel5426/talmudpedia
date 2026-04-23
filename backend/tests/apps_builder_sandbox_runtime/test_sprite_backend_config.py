@@ -570,7 +570,6 @@ async def test_sprite_start_repairs_dependencies_when_preview_readiness_initiall
         files={"src/main.tsx": "console.log(1)"},
         idle_timeout_seconds=180,
         dependency_hash="dep-hash-1",
-        draft_dev_token="draft-token",
         preview_base_path="/public/apps-builder/draft-dev/sessions/session-1/preview/",
     )
 

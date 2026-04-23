@@ -7,6 +7,7 @@ from app.db.postgres.models.registry import ToolDefinitionScope
 from app.services.control_plane.artifact_admin_service import ArtifactAdminService, ArtifactRuntimeInput, CreateArtifactInput, UpdateArtifactInput
 from app.services.control_plane.contracts import ListQuery
 from app.services.control_plane.credentials_admin_service import CredentialsAdminService, serialize_credential
+from app.services.control_plane.errors import not_found, validation
 from app.services.control_plane.knowledge_store_admin_service import KnowledgeStoreAdminService
 from app.services.control_plane.models_service import CreateModelInput, ListModelsInput, ModelRegistryService, UpdateModelInput, serialize_model
 from app.services.control_plane.tool_registry_admin_service import ToolRegistryAdminService, serialize_tool
@@ -64,26 +65,53 @@ async def tools_get(rt: NativePlatformToolRuntime) -> Any:
     return serialize_tool(tool)
 
 
+def _tool_request_from_payload(payload: dict[str, Any]) -> ToolRequest:
+    return ToolRequest(
+        **{
+            key: (_normalize_tool_scope(value) if key == "scope" else value)
+            for key, value in payload.items()
+            if key in ToolRequest.__dataclass_fields__
+        }
+    )
+
+
+async def tools_create(rt: NativePlatformToolRuntime) -> Any:
+    ctx = await rt.build_control_plane_context()
+    if rt.dry_run:
+        return {"status": "skipped", "dry_run": True, "name": rt.payload.get("name")}
+    tool = await ToolRegistryAdminService(rt.db).create_tool(ctx=ctx, request=_tool_request_from_payload(rt.payload))
+    return serialize_tool(tool)
+
+
+async def tools_update(rt: NativePlatformToolRuntime) -> Any:
+    ctx = await rt.build_control_plane_context()
+    tool_id = parse_uuid(rt.payload.get("tool_id") or rt.payload.get("id"))
+    if tool_id is None:
+        raise not_found("Tool not found")
+    if rt.dry_run:
+        return {"status": "skipped", "dry_run": True, "tool_id": str(tool_id)}
+    update_fields = {
+        key
+        for key in rt.payload.keys()
+        if key in ToolRequest.__dataclass_fields__ and key not in {"tool_id", "id"}
+    }
+    if not update_fields:
+        raise validation("At least one update field is required.")
+    request = _tool_request_from_payload(rt.payload)
+    tool = await ToolRegistryAdminService(rt.db).update_tool(ctx=ctx, tool_id=tool_id, request=request)
+    return serialize_tool(tool)
+
+
 async def tools_create_or_update(rt: NativePlatformToolRuntime) -> Any:
     ctx = await rt.build_control_plane_context()
     if rt.dry_run:
         return {"status": "skipped", "dry_run": True, "name": rt.payload.get("name")}
     tool_id = parse_uuid(rt.payload.get("tool_id") or rt.payload.get("id"))
-    request = ToolRequest(**{
-        key: (_normalize_tool_scope(value) if key == "scope" else value)
-        for key, value in rt.payload.items()
-        if key in ToolRequest.__dataclass_fields__
-    })
     if tool_id is not None:
         patch = dict(rt.payload.get("patch") or rt.payload)
-        request = ToolRequest(**{
-            key: (_normalize_tool_scope(value) if key == "scope" else value)
-            for key, value in patch.items()
-            if key in ToolRequest.__dataclass_fields__
-        })
-        tool = await ToolRegistryAdminService(rt.db).update_tool(ctx=ctx, tool_id=tool_id, request=request)
+        tool = await ToolRegistryAdminService(rt.db).update_tool(ctx=ctx, tool_id=tool_id, request=_tool_request_from_payload(patch))
         return serialize_tool(tool)
-    tool = await ToolRegistryAdminService(rt.db).create_tool(ctx=ctx, request=request)
+    tool = await ToolRegistryAdminService(rt.db).create_tool(ctx=ctx, request=_tool_request_from_payload(rt.payload))
     return serialize_tool(tool)
 
 
@@ -228,7 +256,7 @@ async def credentials_create_or_update(rt: NativePlatformToolRuntime) -> Any:
 async def knowledge_stores_list(rt: NativePlatformToolRuntime) -> Any:
     ctx = await rt.build_control_plane_context()
     query = ListQuery.from_payload(rt.payload)
-    stores = await KnowledgeStoreAdminService(rt.db).list_stores(ctx=ctx, organization_id=rt.payload.get("organization_id"))
+    stores = await KnowledgeStoreAdminService(rt.db).list_stores(ctx=ctx)
     sliced = stores[query.skip: query.skip + query.limit]
     return {
         "items": [serialize_store(store, view=query.view) for store in sliced],
@@ -238,6 +266,48 @@ async def knowledge_stores_list(rt: NativePlatformToolRuntime) -> Any:
         "limit": query.limit,
         "view": query.view,
     }
+
+
+async def knowledge_stores_create(rt: NativePlatformToolRuntime) -> Any:
+    ctx = await rt.build_control_plane_context()
+    if rt.dry_run:
+        return {"status": "skipped", "dry_run": True, "name": rt.payload.get("name")}
+    store = await KnowledgeStoreAdminService(rt.db).create_store(
+        ctx=ctx,
+        organization_id=None,
+        name=rt.payload.get("name"),
+        description=rt.payload.get("description"),
+        embedding_model_id=rt.payload.get("embedding_model_id"),
+        chunking_strategy=rt.payload.get("chunking_strategy") if isinstance(rt.payload.get("chunking_strategy"), dict) else None,
+        retrieval_policy=rt.payload.get("retrieval_policy"),
+        backend=rt.payload.get("backend"),
+        backend_config=rt.payload.get("backend_config") if isinstance(rt.payload.get("backend_config"), dict) else None,
+        credentials_ref=rt.payload.get("credentials_ref"),
+    )
+    return {"id": str(store.id), "name": store.name}
+
+
+async def knowledge_stores_update(rt: NativePlatformToolRuntime) -> Any:
+    ctx = await rt.build_control_plane_context()
+    store_id = parse_uuid(rt.payload.get("store_id") or rt.payload.get("knowledge_store_id") or rt.payload.get("id"))
+    if store_id is None:
+        raise not_found("Knowledge store not found")
+    if rt.dry_run:
+        return {"status": "skipped", "dry_run": True, "store_id": str(store_id)}
+    patch = {
+        key: value
+        for key, value in rt.payload.items()
+        if key in {"name", "description", "retrieval_policy", "credentials_ref"}
+    }
+    if not patch:
+        raise validation("At least one update field is required.")
+    store = await KnowledgeStoreAdminService(rt.db).update_store(
+        ctx=ctx,
+        store_id=store_id,
+        organization_id=None,
+        patch=patch,
+    )
+    return {"id": str(store.id), "name": store.name}
 
 
 async def knowledge_stores_create_or_update(rt: NativePlatformToolRuntime) -> Any:
@@ -253,19 +323,19 @@ async def knowledge_stores_create_or_update(rt: NativePlatformToolRuntime) -> An
             organization_id=rt.payload.get("organization_id"),
             patch=patch,
         )
-    else:
-        store = await KnowledgeStoreAdminService(rt.db).create_store(
-            ctx=ctx,
-            organization_id=rt.payload.get("organization_id"),
-            name=rt.payload.get("name"),
-            description=rt.payload.get("description"),
-            embedding_model_id=rt.payload.get("embedding_model_id"),
-            chunking_strategy=rt.payload.get("chunking_strategy") if isinstance(rt.payload.get("chunking_strategy"), dict) else None,
-            retrieval_policy=rt.payload.get("retrieval_policy"),
-            backend=rt.payload.get("backend"),
-            backend_config=rt.payload.get("backend_config") if isinstance(rt.payload.get("backend_config"), dict) else None,
-            credentials_ref=rt.payload.get("credentials_ref"),
-        )
+        return {"id": str(store.id), "name": store.name}
+    store = await KnowledgeStoreAdminService(rt.db).create_store(
+        ctx=ctx,
+        organization_id=rt.payload.get("organization_id"),
+        name=rt.payload.get("name"),
+        description=rt.payload.get("description"),
+        embedding_model_id=rt.payload.get("embedding_model_id"),
+        chunking_strategy=rt.payload.get("chunking_strategy") if isinstance(rt.payload.get("chunking_strategy"), dict) else None,
+        retrieval_policy=rt.payload.get("retrieval_policy"),
+        backend=rt.payload.get("backend"),
+        backend_config=rt.payload.get("backend_config") if isinstance(rt.payload.get("backend_config"), dict) else None,
+        credentials_ref=rt.payload.get("credentials_ref"),
+    )
     return {"id": str(store.id), "name": store.name}
 
 

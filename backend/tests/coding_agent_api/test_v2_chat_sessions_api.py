@@ -18,6 +18,7 @@ from app.db.postgres.models.published_apps import (
     PublishedAppVisibility,
 )
 from app.services.opencode_server_client import OpenCodeServerClient
+from app.services.published_app_coding_agent_runtime import PublishedAppCodingAgentRuntimeService
 from app.services.published_app_coding_chat_history_service import PublishedAppCodingChatHistoryService
 from app.services.published_app_coding_chat_session_service import PublishedAppCodingChatSessionService
 from tests.published_apps._helpers import admin_headers, seed_admin_tenant_and_agent
@@ -41,7 +42,7 @@ async def _create_app_and_draft_revision(db_session, *, organization_id: UUID, u
         organization_id=organization_id,
         agent_id=agent_id,
         name=f"Coding Agent V2 App {uuid4().hex[:6]}",
-        slug=f"coding-agent-v2-{uuid4().hex[:10]}",
+        public_id=f"coding-agent-v2-{uuid4().hex[:10]}",
         status=PublishedAppStatus.draft,
         visibility=PublishedAppVisibility.public,
         auth_enabled=True,
@@ -280,6 +281,98 @@ async def test_remote_session_catchup_skips_previous_assistant_when_new_user_tur
     service.client = SimpleNamespace(list_messages=_fake_list_messages)
     events = await _build_remote_session_catchup_events(service=service, chat_session=session)
     assert events == []
+
+
+@pytest.mark.asyncio
+async def test_chat_session_submit_message_creates_coding_agent_run(db_session, monkeypatch):
+    tenant, user, _org_unit, agent = await seed_admin_tenant_and_agent(db_session)
+    app_id = await _create_app_and_draft_revision(
+        db_session,
+        organization_id=tenant.id,
+        user_id=user.id,
+        agent_id=agent.id,
+    )
+    app = await db_session.get(PublishedApp, UUID(app_id))
+    assert app is not None
+    revision = await db_session.get(PublishedAppRevision, app.current_draft_revision_id)
+    assert revision is not None
+    session = await _create_chat_session(db_session, app_id=UUID(app_id), user_id=user.id)
+    service = PublishedAppCodingChatSessionService(db_session)
+    captured: dict[str, str] = {}
+
+    prompt_calls: dict[str, str] = {}
+
+    async def _fake_create_bookkeeping_run(self, **kwargs):
+        _ = self
+        captured.update(
+            {
+                "app_id": str(kwargs["app"].id),
+                "base_revision_id": str(kwargs["base_revision"].id),
+                "actor_id": str(kwargs["actor_id"]),
+                "user_prompt": str(kwargs["user_prompt"]),
+                "requested_model_id": str(kwargs["requested_model_id"]),
+                "chat_session_id": str(kwargs["chat_session_id"]),
+                "opencode_session_id": str(kwargs["opencode_session_id"]),
+                "sandbox_id": str(kwargs["sandbox_id"]),
+                "workspace_path": str(kwargs["workspace_path"]),
+                "message_id": str(kwargs["message_id"]),
+            }
+        )
+        return SimpleNamespace(id=uuid4(), status="queued", started_at=None, error_message=None, completed_at=None)
+
+    async def _fake_prompt_async(self, **kwargs):
+        _ = self
+        prompt_calls.update(
+            {
+                "session_id": str(kwargs["session_id"]),
+                "app_id": str(kwargs["app_id"]),
+                "message_id": str(kwargs["message_id"]),
+            }
+        )
+
+    async def _fake_ensure_remote_session(self, **kwargs):
+        _ = self, kwargs
+        return {
+            "session_id": "ses-live",
+            "sandbox_id": "sandbox-1",
+            "workspace_path": "/workspace",
+            "model_id": "opencode/gpt-5",
+            "selected_agent_contract": None,
+        }
+
+    monkeypatch.setattr(PublishedAppCodingAgentRuntimeService, "create_prompt_async_bookkeeping_run", _fake_create_bookkeeping_run)
+    monkeypatch.setattr(PublishedAppCodingChatSessionService, "_ensure_remote_session", _fake_ensure_remote_session)
+    monkeypatch.setattr(OpenCodeServerClient, "prompt_async", _fake_prompt_async)
+
+    accepted = await service.submit_message(
+        app=app,
+        base_revision=revision,
+        actor_id=user.id,
+        chat_session=session,
+        message_id="msg-1",
+        parts=[{"type": "text", "text": "Change the hero copy"}],
+        requested_model_id="opencode/gpt-5",
+    )
+
+    assert accepted["submission_status"] == "accepted"
+    assert captured == {
+        "app_id": str(app.id),
+        "base_revision_id": str(revision.id),
+        "actor_id": str(user.id),
+        "user_prompt": "Change the hero copy",
+        "requested_model_id": "opencode/gpt-5",
+        "chat_session_id": str(session.id),
+        "opencode_session_id": "ses-live",
+        "sandbox_id": "sandbox-1",
+        "workspace_path": "/workspace",
+        "message_id": captured["message_id"],
+    }
+    assert captured["message_id"].startswith("msg_")
+    assert prompt_calls == {
+        "session_id": "ses-live",
+        "app_id": str(app.id),
+        "message_id": captured["message_id"],
+    }
 
 
 @pytest.mark.asyncio

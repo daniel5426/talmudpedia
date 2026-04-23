@@ -1,4 +1,4 @@
-Last Updated: 2026-04-21
+Last Updated: 2026-04-23
 
 # Apps Builder Sandbox Runtime Tests
 
@@ -22,13 +22,13 @@ Last Updated: 2026-04-21
 - The draft-dev runtime client delegates `start_session` to the selected Sprite backend and injects the stable preview proxy base path.
 - The draft-dev runtime client can also push live-preview context updates back to the selected sandbox backend after coding-run reconciliation.
 - The preview proxy enforces preview token validation before forwarding to the upstream Sprite URL.
-- The preview proxy strips `runtime_token` from upstream requests, forwards provider-neutral auth headers, and sets the preview auth cookie on successful bootstrap.
-- The preview proxy prefers the preview auth cookie over a stale `runtime_token` query param, so old iframe URLs cannot override the current session scope after bootstrap.
-- The preview proxy falls back to the query `runtime_token` when the preview cookie belongs to a different app, so stale cross-app cookies cannot block a fresh session bootstrap.
+- The preview proxy strips `runtime_token` from upstream requests, forwards provider-neutral auth headers, and sets the canonical `published_app_preview_token` cookie on successful bootstrap.
+- The preview proxy prefers the preview cookie over a stale bootstrap `runtime_token`, so old iframe URLs cannot override the current session scope after bootstrap.
+- The preview proxy falls back to the bootstrap `runtime_token` when the preview cookie belongs to a different app, so stale cross-app cookies cannot block a fresh session bootstrap.
 - The builder preview password-login route maps throttled login attempts to HTTP `429`.
 - The builder preview Google OAuth start route sets a CSRF state cookie, and callback rejects missing state cookies.
 - The preview proxy now behaves as a static builder-preview proxy: it injects runtime context plus the session-scoped route bridge into HTML, and passes built assets through without Vite/HMR rewrites.
-- The preview proxy exposes `/_talmudpedia/status` as a direct backend status contract backed by draft-dev heartbeat metadata instead of proxying preview status through the static server.
+- The preview proxy exposes `/_talmudpedia/status` as a direct backend status contract backed by stored draft-dev metadata only, without preview-side heartbeat/restart side effects.
 - The preview proxy thread list/detail routes now call the canonical runtime-surface lifecycle/query service directly instead of going through host-runtime serializer wrappers.
 - The preview proxy exposes the canonical builder preview base path to the runtime SDK and no longer depends on query-plumbed runtime bootstrap URLs for steady-state builder preview.
 - The preview proxy retries transient `404/5xx/timeout` warmup failures for GET/HEAD preview assets so Sprite wake/service warmup does not immediately white-screen the iframe.
@@ -41,8 +41,7 @@ Last Updated: 2026-04-21
 - Sprite heartbeat returns refreshed backend preview metadata, and the draft-dev runtime persists that refreshed metadata on session heartbeat.
 - Sprite heartbeat now also detects when preview is behind the current live workspace revision token and forces a watched-file rebuild trigger so stale failed watcher state can recover.
 - Sprite heartbeat preserves `live_workspace_snapshot` metadata that was recorded after coding-run reconciliation, instead of wiping it on the next refresh.
-- Sprite heartbeat can repopulate a missing `live_workspace_snapshot` from the live workspace when an older session has already lost that metadata.
-- Restored live workspace snapshots use the same builder file policy as save/materialization paths, so invalid files like no-extension roots never enter builder state.
+- Sprite heartbeat no longer repopulates or refreshes `live_workspace_snapshot`; snapshot reconciliation now belongs only to explicit save-worthy flows.
 - Stage-to-live promotion now mirrors files into the existing live workspace instead of deleting the live root and restarting preview services.
 - Sprite workspace snapshots filter generated/high-noise paths before serializing payloads back to the backend.
 - Sprite OpenCode service ensure now reuses an already-running Sprite service when the provider returns nested service-state objects.
@@ -51,14 +50,13 @@ Last Updated: 2026-04-21
 - Sprite live sync preserves `node_modules/` across no-op file syncs, and start/sync can force a dependency repair plus Vite cache rebuild when preview readiness fails.
 - Shared app-level draft workspaces are reused across multiple editors on the same app.
 - Coding-run bootstrap can reuse a healthy live workspace even when the saved draft revision has advanced, instead of forcing a revision-driven resync.
-- The public draft-dev `ensure` route reuses an already-serving live workspace via `ensure_active_session(..., prefer_live_workspace=True)` instead of falling back to the legacy full-sync path.
+- The public draft-dev `ensure` route reuses an already-serving live workspace via `ensure_active_session(..., prefer_live_workspace=True)` without issuing a runtime heartbeat first.
 - Draft-dev runtime failures now keep the editor session attached to the shared workspace instead of returning a detached zombie session with `draft_workspace_id = null`.
 - Draft-dev heartbeat can reattach a stale detached session row to the existing shared workspace before checking runtime health.
 - Builder validation now requires a root `index.html`, and incremental sync validates projected patch operations before mutating the live Sprite workspace.
 - Builder `operations` sync now projects the full next workspace and applies it through one `sync_workspace_files()` call, so the watcher never sees a half-written multi-file edit batch.
-- Manual editor sync can still record a pending materialization request, but preview-ready live workspace divergence is now the canonical durable-version trigger.
-- Draft-dev heartbeat now refreshes stale live sandbox snapshots when preview revision-token or workspace-fingerprint metadata moves ahead of the stored snapshot.
-- Draft-dev heartbeat now materializes a new durable draft revision automatically once the watcher reports a ready build for the current live workspace fingerprint, even without an explicit manual-save request.
+- Manual editor sync can still record a pending materialization request, but only explicit triggers (`manual_save`, `coding_run`, `restore`, `template_reset`) may create durable versions.
+- Coding-run finalization now snapshots the final live workspace, compares canonical fingerprints against the source draft revision, and creates at most one `coding_run` version only when the final workspace actually changed.
 - Coding-agent workspace-write detection ignores read-only `bash` probes like `git status`, while still flagging mutating shell commands and explicit write tools.
 - Live-preview build status normalization preserves the canonical `build_watch_static` contract, richer preview states (`booting`, `building`, `ready`, `failed_keep_last_good`, `failed_no_build`, `recovering`), supervisor health metadata, and stable workspace fingerprinting for build reuse.
 - Durable workspace builds can now reuse the watcher dist when the watcher fingerprint is stale but its last-trigger revision token matches the current live workspace revision token.
@@ -205,12 +203,9 @@ Last Updated: 2026-04-21
 - Command: `cd /Users/danielbenassaya/Code/personal/talmudpedia && backend/.venv-codex-tests/bin/python -m pytest -q backend/tests/apps_builder_sandbox_runtime/test_sprite_backend_config.py`
 - Date: 2026-04-17 15:58 EEST
 - Result: PASS (`16 passed, 2 warnings`)
-- Command: `cd /Users/danielbenassaya/Code/personal/talmudpedia && backend/.venv-codex-tests/bin/python -m pytest -q backend/tests/apps_builder_sandbox_runtime/test_draft_dev_runtime_lifecycle.py -k 'heartbeat_materializes_saved_workspace_when_live_preview_ready or heartbeat_materializes_live_preview_without_explicit_request or heartbeat_restores_missing_live_workspace_snapshot_from_runtime or heartbeat_refreshes_stale_live_workspace_snapshot_when_preview_differs'`
-- Date: 2026-04-18 Asia/Hebron
-- Result: PASS (`4 passed, 18 deselected, 4 warnings`)
-- Command: `cd /Users/danielbenassaya/Code/personal/talmudpedia && backend/.venv-codex-tests/bin/python -m pytest -q backend/tests/apps_builder_sandbox_runtime/test_draft_dev_runtime_lifecycle.py -k 'materializer_reuses_current_revision_when_workspace_build_is_unchanged or heartbeat_materializes_live_preview_without_explicit_request'`
-- Date: 2026-04-19 Asia/Hebron
-- Result: PASS (`2 passed, 21 deselected, 4 warnings`)
+- Command: `cd /Users/danielbenassaya/Code/personal/talmudpedia && backend/.venv/bin/python -m pytest -q backend/tests/apps_builder_sandbox_runtime/test_runtime_client_and_preview_proxy.py backend/tests/apps_builder_sandbox_runtime/test_draft_dev_runtime_lifecycle.py -k 'builder_preview_status_route_returns_stored_live_preview_without_heartbeat or builder_state_returns_stored_stale_session_without_heartbeat or prefer_live_workspace_reuses_healthy_session_across_revision_mismatch or heartbeat_does_not_materialize_saved_workspace_when_live_preview_ready or heartbeat_does_not_materialize_live_preview_without_explicit_request or heartbeat_does_not_restore_missing_live_workspace_snapshot_from_runtime or heartbeat_does_not_refresh_stale_live_workspace_snapshot_when_preview_differs or heartbeat_does_not_restore_live_snapshot_with_shared_builder_file_policy or coding_run_finalizer_'`
+- Date: 2026-04-23 Asia/Hebron
+- Result: PASS (`10 passed, 30 deselected`)
 - Command: `cd /Users/danielbenassaya/Code/personal/talmudpedia && backend/.venv-codex-tests/bin/python -m pytest -q backend/tests/apps_builder_sandbox_runtime/test_draft_dev_runtime_lifecycle.py backend/tests/apps_builder_sandbox_runtime/test_sprite_backend_config.py -k 'sync_route_batches_operations_into_single_workspace_sync or sync_route_validates_operations_before_mutating_runtime or sprite_heartbeat_rebuilds_when_preview_revision_lags_workspace or sprite_heartbeat_refreshes_preview_services_when_preview_services_are_not_running or sprite_heartbeat_does_not_refresh_when_nested_service_states_are_running'`
 - Date: 2026-04-18 Asia/Hebron
 - Result: PASS (`5 passed, 34 deselected, 4 warnings`)
@@ -226,9 +221,12 @@ Last Updated: 2026-04-21
 - Command: `SECRET_KEY=explicit-test-secret PYTHONPATH=backend backend/.venv/bin/python -m pytest -q backend/tests/artifact_runtime/test_execution_service.py backend/tests/artifact_runtime/test_runtime_secret_service.py backend/tests/artifact_runtime/test_artifact_working_draft_api.py backend/tests/artifact_runtime/test_revision_service.py backend/tests/artifact_runtime/test_artifact_versions_api.py backend/tests/tool_execution/test_artifact_runtime_tool_execution.py backend/tests/agent_artifact_runtime/test_agent_artifact_runtime.py backend/tests/artifact_test_runs/test_artifact_test_run_api.py backend/tests/apps_builder_sandbox_runtime/test_draft_dev_runtime_lifecycle.py backend/tests/coding_agent_chat_history_api/test_chat_history_endpoints.py backend/tests/rag_artifact_runtime/test_rag_artifact_runtime.py`
 - Date: 2026-04-21 Asia/Hebron
 - Result: Fail early in `backend/tests/artifact_runtime/test_execution_service.py` on live artifact creation (`invalid input value for enum artifactownertype: "organization"`). `test_sprite_live_smoke.py` also was not rerun in this pass because it requires live Sprite credentials.
+- Command: `SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest -q backend/tests/apps_builder_sandbox_runtime/test_runtime_client_and_preview_proxy.py backend/tests/published_apps/test_public_app_resolve_and_config.py backend/tests/sandbox_controller/test_dev_shim.py backend/tests/sandbox_controller/test_draft_dev_runtime_client_stream.py backend/tests/app_versions/test_versions_endpoints.py`
+- Date: 2026-04-23 Asia/Hebron
+- Result: PASS (`40 passed`). Unified preview-auth contract is covered for builder draft-dev proxy bootstrap, cookie precedence, revision preview bootstrap, and versions-route preview runtime.
 
 ## Known gaps or follow-ups
 - Run the live coding-run e2e regularly in an environment with Sprite + OpenCode credentials so timing regressions are caught before manual QA.
-- Add explicit watcher-ready materialization assertions in the live coding-run e2e once the unrelated local `403` app-create issue is resolved.
+- Add explicit live preview polling assertions that confirm ordinary preview status/request traffic does not force service restarts in a real Sprite environment.
 - Add an explicit scheduled sweeper entrypoint so orphan cleanup does not rely only on request-driven best-effort sweeps.
 - The full draft-dev runtime lifecycle suite is currently blocked in this local worktree by unrelated app-creation `403` failures before preview/runtime assertions execute.

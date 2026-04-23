@@ -13,7 +13,7 @@ Last Updated: 2026-04-22
 - test_native_platform_assets_actions.py
 
 ## Key scenarios covered
-- Canonical architect surface is now a hard cut to `36` action-level platform tools plus `5` worker tools, with no architect-mounted `platform-rag` / `platform-agents` / `platform-assets` / `platform-governance` container tools.
+- Canonical architect surface is now a hard cut to `38` action-level platform tools plus `5` worker tools, with no architect-mounted `platform-rag` / `platform-agents` / `platform-assets` / `platform-governance` container tools.
 - Seeded architect prompt is graph-first: discover nodes/operators, author full graphs, rely on normalization/defaulting, validate/compile, then run/publish.
 - Seeded architect prompt now forbids `action` / `payload` wrappers for platform action tools because each mounted tool fixes its own action id.
 - Action-tool schemas are direct-field tool contracts and no longer require model-authored `action` or nested `payload`.
@@ -33,11 +33,17 @@ Last Updated: 2026-04-22
 - Missing tenant context for mutations fails with deterministic `TENANT_REQUIRED`.
 - Runtime tenant context is sufficient for mutations even when payload omits `organization_id`.
 - Explicit payload tenant override is rejected when it conflicts with runtime tenant context.
+- Mounted architect action schemas now forbid model-authored scope selectors like `organization_id`, `project_id`, `tenant_slug`, and `org_unit_id`.
+- The mounted architect asset surface now uses explicit `tools.create` / `tools.update` and `knowledge_stores.create` / `knowledge_stores.update` actions instead of mixed `create_or_update` contracts.
 - Platform SDK tool output meta now includes redacted auth context for runtime debugging without leaking bearer tokens.
 - Replay path reuses existing resources rather than duplicating them.
 - `agents.create` propagates structured SDK validation details (including normalized `validation_errors`) for deterministic repair.
 - Platform architect domain schema still serves as the internal action catalog source of truth, while architect-facing seeded rows now expose the kept actions directly.
 - Platform architect action schema includes `agents.nodes.catalog/schema` and `rag.operators.catalog/schema` for graph discovery.
+- Discovery schema responses now expose canonical `node_template` and `normalization_defaults` hints so the architect can author graph nodes using the same omit-safe defaults the backend applies on write.
+- RAG discovery/authoring now treats runtime-only node config fields as runtime-only instead of persisted authoring requirements, and the architect prompt now explicitly distinguishes retrieval graph output nodes from runtime query input values.
+- The architect prompt now forbids calling `rag.get_executable_*` before successful compile and steers failed compile loops toward repairing the same pipeline instead of creating duplicates.
+- Native `agents.nodes.catalog` and `agents.nodes.schema` adapter coverage now verifies control-plane `ctx` is passed through, matching the live architect runtime path.
 - Platform SDK bootstrap seeding now locks to canonical `builtin_key=platform_sdk` plus system artifact binding metadata and is covered directly.
 - Seeded architect runtime no longer forces JSON-only output in prompt or node config.
 - Seeded architect runtime now defaults `temperature` to `1`.
@@ -168,3 +174,19 @@ Last Updated: 2026-04-22
 ## 2026-04-22 graph-first contract tightening validation
 - Command: `SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest -q backend/tests/platform_architect_runtime/test_architect_seeding.py backend/tests/platform_architect_runtime/test_native_platform_tools.py`
 - Result: PASS (`23 passed`)
+
+## 2026-04-22 discovery-surface validation
+- Command: `SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest -q backend/tests/schema_contracts/test_schema_contract_surfaces.py backend/tests/platform_architect_runtime/test_architect_seeding.py backend/tests/platform_architect_runtime/test_native_platform_tools.py`
+- Result: PASS (`28 passed`)
+
+## 2026-04-22 node-discovery adapter validation
+- Command: `SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest -q backend/tests/platform_architect_runtime/test_native_platform_tools.py -k 'agents_nodes_catalog or agents_nodes_schema'`
+- Result: PASS (`2 passed, 23 deselected`)
+
+## 2026-04-22 scope hard-cut validation
+- Command: `SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest -q backend/tests/platform_architect_runtime/test_architect_seeding.py backend/tests/platform_architect_runtime/test_native_platform_tools.py backend/tests/platform_architect_runtime/test_native_platform_assets_actions.py`
+- Result: PASS (`39 passed, 6 warnings`)
+
+## 2026-04-22 node-contract and architect-rag guidance validation
+- Command: `SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest -q backend/tests/graph_authoring backend/tests/schema_contracts/test_schema_contract_surfaces.py backend/tests/platform_architect_runtime/test_architect_seeding.py backend/tests/platform_architect_runtime/test_native_platform_tools.py`
+- Result: PASS (`42 passed, 6 warnings`)

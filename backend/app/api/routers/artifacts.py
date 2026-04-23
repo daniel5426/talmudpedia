@@ -652,6 +652,7 @@ async def get_artifact_working_draft(
     initial_snapshot = _artifact_form_snapshot(artifact)
     shared = await ArtifactCodingSharedDraftService(db).get_or_create_for_scope(
         organization_id=organization.id if organization is not None else artifact.organization_id,
+        project_id=project_id if organization is not None else artifact.project_id,
         artifact_id=artifact.id,
         draft_key=None,
         initial_snapshot=initial_snapshot,
@@ -687,6 +688,7 @@ async def update_artifact_working_draft(
     shared_service = ArtifactCodingSharedDraftService(db)
     shared = await shared_service.get_or_create_for_scope(
         organization_id=organization.id,
+        project_id=project_id,
         artifact_id=artifact.id,
         draft_key=None,
         initial_snapshot=_artifact_form_snapshot(artifact),

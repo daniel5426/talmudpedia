@@ -1309,10 +1309,9 @@ print(json.dumps({{
         files: Dict[str, str],
         idle_timeout_seconds: int,
         dependency_hash: str,
-        draft_dev_token: str,
         preview_base_path: str,
     ) -> Dict[str, Any]:
-        _ = organization_id, user_id, revision_id, idle_timeout_seconds, draft_dev_token
+        _ = organization_id, user_id, revision_id, idle_timeout_seconds
         sprite_name = self._sprite_name(prefix=self.config.sprite_name_prefix, app_id=app_id)
         workspace_fingerprint = build_live_preview_overlay_workspace_fingerprint(
             entry_file=entry_file,

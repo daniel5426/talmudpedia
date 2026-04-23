@@ -1,5 +1,4 @@
 from datetime import datetime, timezone
-from types import SimpleNamespace
 from uuid import uuid4
 
 import jwt
@@ -247,12 +246,20 @@ def install_stub_agent_worker(
 
 
 def install_app_create_stub(monkeypatch) -> None:
-    async def _provision_workspace_from_files(self, *, app, user_id, files, entry_file, trace_source=None):
-        _ = self, app, user_id, files, entry_file, trace_source
-        return None
-
-    async def _materialize_live_workspace(self, *, app, entry_file, source_revision_id, created_by, origin_kind, **kwargs):
-        _ = kwargs
+    async def _create_initial_revision(
+        db,
+        *,
+        app,
+        kind,
+        template_key,
+        entry_file,
+        files,
+        created_by,
+        source_revision_id,
+        origin_kind,
+        **kwargs,
+    ):
+        _ = db, kind, template_key, entry_file, files, source_revision_id, kwargs
         template = get_template(app.template_key)
         files = build_template_files(
             app.template_key,
@@ -263,7 +270,7 @@ def install_app_create_stub(monkeypatch) -> None:
             },
         )
         revision = await create_app_version(
-            self.db,
+            db,
             app=app,
             kind=PublishedAppRevisionKind.draft,
             template_key=app.template_key,
@@ -279,18 +286,9 @@ def install_app_create_stub(monkeypatch) -> None:
             template_runtime="vite_static",
         )
         app.current_draft_revision_id = revision.id
-        return SimpleNamespace(
-            revision=revision,
-            reused=False,
-            source_fingerprint=f"fp-{app.id}",
-            workspace_revision_token=None,
-        )
+        return revision
 
     monkeypatch.setattr(
-        "app.services.published_app_draft_dev_runtime.PublishedAppDraftDevRuntimeService.provision_workspace_from_files",
-        _provision_workspace_from_files,
-    )
-    monkeypatch.setattr(
-        "app.services.published_app_draft_revision_materializer.PublishedAppDraftRevisionMaterializerService.materialize_live_workspace",
-        _materialize_live_workspace,
+        "app.api.routers.published_apps_admin_routes_apps.create_app_version",
+        _create_initial_revision,
     )

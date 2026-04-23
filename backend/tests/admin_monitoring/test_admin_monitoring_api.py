@@ -11,6 +11,7 @@ from app.db.postgres.models.agents import Agent, AgentRun, AgentStatus, RunStatu
 from app.db.postgres.models.identity import MembershipStatus, OrgMembership, OrgUnit, OrgUnitType, Organization, User
 from app.db.postgres.models.registry import ModelCapabilityType, ModelRegistry, ModelStatus
 from app.db.postgres.models.published_apps import PublishedApp, PublishedAppAccount
+from app.db.postgres.models.workspace import Project
 from app.services.security_bootstrap_service import SecurityBootstrapService
 
 
@@ -53,6 +54,13 @@ async def _seed_monitoring_fixture(db_session):
         type=OrgUnitType.org,
     )
     db_session.add(org_unit)
+    project = Project(
+        organization_id=tenant.id,
+        name="Default Project",
+        slug=f"project-{uuid4().hex[:8]}",
+        is_default=True,
+    )
+    db_session.add(project)
     await db_session.flush()
 
     for user in (owner, platform_user):
@@ -115,6 +123,7 @@ async def _seed_monitoring_fixture(db_session):
     threads = [
         AgentThread(
             organization_id=tenant.id,
+            project_id=project.id,
             user_id=platform_user.id,
             agent_id=agent_primary.id,
             title="Platform Thread",
@@ -124,6 +133,7 @@ async def _seed_monitoring_fixture(db_session):
         ),
         AgentThread(
             organization_id=tenant.id,
+            project_id=project.id,
             app_account_id=mapped_account.id,
             published_app_id=app.id,
             agent_id=agent_primary.id,
@@ -134,6 +144,7 @@ async def _seed_monitoring_fixture(db_session):
         ),
         AgentThread(
             organization_id=tenant.id,
+            project_id=project.id,
             app_account_id=unmapped_account.id,
             published_app_id=app.id,
             agent_id=agent_primary.id,
@@ -144,6 +155,7 @@ async def _seed_monitoring_fixture(db_session):
         ),
         AgentThread(
             organization_id=tenant.id,
+            project_id=project.id,
             agent_id=agent_primary.id,
             external_user_id="embed-user",
             title="Embed Primary Thread",
@@ -153,6 +165,7 @@ async def _seed_monitoring_fixture(db_session):
         ),
         AgentThread(
             organization_id=tenant.id,
+            project_id=project.id,
             agent_id=agent_secondary.id,
             external_user_id="embed-user",
             title="Embed Secondary Thread",
@@ -168,6 +181,7 @@ async def _seed_monitoring_fixture(db_session):
         db_session.add(
             AgentRun(
                 organization_id=tenant.id,
+                project_id=project.id,
                 agent_id=thread.agent_id,
                 user_id=platform_user.id if thread.user_id == platform_user.id else None,
                 published_app_id=app.id if thread.published_app_id else None,
@@ -189,6 +203,7 @@ async def _seed_monitoring_fixture(db_session):
         "owner": owner,
         "platform_user": platform_user,
         "org_unit": org_unit,
+        "project": project,
         "agent_primary": agent_primary,
         "agent_secondary": agent_secondary,
         "mapped_account": mapped_account,
@@ -294,6 +309,19 @@ async def test_admin_thread_detail_joins_run_usage(client, db_session):
 
 
 @pytest.mark.asyncio
+async def test_admin_thread_detail_reads_project_scoped_thread_from_table_row(client, db_session):
+    fixture = await _seed_monitoring_fixture(db_session)
+    headers = _auth_headers(str(fixture["owner"].id), str(fixture["tenant"].id), str(fixture["org_unit"].id))
+    thread = fixture["threads"][0]
+
+    response = await client.get(f"/admin/threads/{thread.id}", headers=headers)
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["id"] == str(thread.id)
+
+
+@pytest.mark.asyncio
 async def test_admin_thread_detail_returns_lineage_and_subthread_tree_when_requested(client, db_session):
     fixture = await _seed_monitoring_fixture(db_session)
     headers = _auth_headers(str(fixture["owner"].id), str(fixture["tenant"].id), str(fixture["org_unit"].id))
@@ -313,6 +341,7 @@ async def test_admin_thread_detail_returns_lineage_and_subthread_tree_when_reque
 
     child_thread = AgentThread(
         organization_id=fixture["tenant"].id,
+        project_id=fixture["project"].id,
         user_id=fixture["platform_user"].id,
         agent_id=fixture["agent_secondary"].id,
         surface=AgentThreadSurface.internal,
@@ -327,6 +356,7 @@ async def test_admin_thread_detail_returns_lineage_and_subthread_tree_when_reque
     await db_session.flush()
     child_run = AgentRun(
         organization_id=fixture["tenant"].id,
+        project_id=fixture["project"].id,
         agent_id=fixture["agent_secondary"].id,
         user_id=fixture["platform_user"].id,
         initiator_user_id=fixture["platform_user"].id,

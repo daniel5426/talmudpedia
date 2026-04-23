@@ -141,13 +141,12 @@ async def test_start_session_uses_dedicated_start_timeout(monkeypatch: pytest.Mo
         app_id="app-1",
         user_id="user-1",
         revision_id="revision-1",
-        app_slug="app-1",
+        app_public_id="app-1",
         agent_id="agent-1",
         entry_file="src/main.tsx",
         files={"src/main.tsx": "export default 1;"},
         idle_timeout_seconds=180,
         dependency_hash="dep-hash",
-        draft_dev_token="token-1",
     )
     assert result["sandbox_id"] == "sandbox-1"
     timeout = captured.get("timeout")
@@ -190,7 +189,7 @@ async def test_sync_session_uses_dedicated_sync_timeout(monkeypatch: pytest.Monk
     result = await client.sync_session(
         sandbox_id="sandbox-1",
         app_id="app-1",
-        app_slug="app-1",
+        app_public_id="app-1",
         agent_id="agent-1",
         entry_file="src/main.tsx",
         files={"src/main.tsx": "export default 1;"},

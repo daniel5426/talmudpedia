@@ -1,6 +1,6 @@
 # Sandbox Controller Tests
 
-Last Updated: 2026-04-16
+Last Updated: 2026-04-23
 
 ## Scope of the feature
 - Backend-to-sandbox-controller endpoint discovery and local dev-shim behavior.
@@ -38,6 +38,9 @@ Last Updated: 2026-04-16
 - Command: `cd /Users/danielbenassaya/Code/personal/talmudpedia && backend/.venv-codex-tests/bin/python -m pytest -q backend/tests/sandbox_controller/test_draft_dev_runtime_client_stream.py backend/tests/sandbox_controller/test_opencode_controller_proxy.py backend/tests/sandbox_controller/test_dev_shim.py`
 - Date: 2026-04-16 18:42 Asia/Hebron
 - Result: PASS (17 passed, 8 warnings)
+- Command: `SECRET_KEY=explicit-test-secret backend/.venv/bin/python -m pytest -q backend/tests/apps_builder_sandbox_runtime/test_runtime_client_and_preview_proxy.py backend/tests/published_apps/test_public_app_resolve_and_config.py backend/tests/sandbox_controller/test_dev_shim.py backend/tests/sandbox_controller/test_draft_dev_runtime_client_stream.py backend/tests/app_versions/test_versions_endpoints.py`
+- Date: 2026-04-23 Asia/Hebron
+- Result: PASS (`40 passed`). Controller/dev-shim runtime-client coverage now reflects `app_public_id` instead of the removed slug-era session payload.
 - Command: `cd backend && set -a && source .env >/dev/null 2>&1 && PYTHONPATH=. pytest -q tests/sandbox_controller/test_opencode_controller_proxy.py tests/apps_builder_sandbox_runtime/test_sprite_backend_config.py`
 - Date: 2026-03-09 01:36 EET
 - Result: PASS (12 passed, 1 warning)

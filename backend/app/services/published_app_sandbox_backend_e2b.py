@@ -238,10 +238,9 @@ class E2BSandboxBackend(E2BSandboxRuntimeMixin, E2BSandboxWorkspaceMixin, Publis
         files: Dict[str, str],
         idle_timeout_seconds: int,
         dependency_hash: str,
-        draft_dev_token: str,
         preview_base_path: str,
     ) -> Dict[str, Any]:
-        _ = entry_file, draft_dev_token
+        _ = entry_file
         workspace_root = self._workspace_root(self.config.e2b_workspace_path)
         metadata = {
             "runtime_profile": "app_builder_preview",

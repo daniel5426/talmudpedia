@@ -48,10 +48,16 @@ from app.services.published_app_bundle_storage import (
 from app.services.published_app_auth_service import PublishedAppAuthError, PublishedAppAuthService
 from app.services.resource_policy_quota_service import ResourcePolicyQuotaExceeded
 from app.services.usage_quota_service import QuotaExceededError
+from .published_apps_preview_auth import (
+    PREVIEW_TARGET_REVISION,
+    append_preview_runtime_token,
+    create_preview_token,
+    set_preview_cookie,
+    token_matches_target,
+)
 
 
 router = APIRouter(prefix="/public/apps", tags=["published-apps-public"])
-PREVIEW_TOKEN_COOKIE_NAME = "published_app_public_preview_token"
 _PREVIEW_ASSET_URL_ATTR_PATTERN = re.compile(r"""(?P<prefix>\b(?:src|href)=["'])(?P<path>/[^"'?#]+(?:[?#][^"']*)?)""")
 _PREVIEW_RELATIVE_ASSET_URL_ATTR_PATTERN = re.compile(
     r"""(?P<prefix>\b(?:src|href)=["'])(?P<path>(?:\./)?assets/[^"'?#]+(?:[?#][^"']*)?)"""
@@ -242,7 +248,13 @@ async def _get_preview_revision_for_principal(
     principal: Dict[str, Any],
 ) -> tuple[PublishedApp, PublishedAppRevision]:
     app_id = UUID(principal["app_id"])
-    if str(principal["revision_id"]) != str(revision_id):
+    if not token_matches_target(
+        principal,
+        app_id=str(app_id),
+        preview_target_type=PREVIEW_TARGET_REVISION,
+        preview_target_id=str(revision_id),
+        revision_id=str(revision_id),
+    ):
         raise HTTPException(status_code=403, detail="Preview token does not match requested revision")
 
     app_result = await db.execute(select(PublishedApp).where(PublishedApp.id == app_id).limit(1))
@@ -402,26 +414,6 @@ def _rewrite_preview_asset_text(*, revision_id: UUID, content_type: str, content
 
     rewritten = rewritten_text.encode("utf-8")
     return rewritten, rewritten != content
-
-
-def _set_preview_auth_cookie(
-    *,
-    response: Response,
-    request: Request,
-    revision_id: UUID,
-    auth_token: Optional[str],
-) -> None:
-    token = (auth_token or "").strip()
-    if not token:
-        return
-    response.set_cookie(
-        key=PREVIEW_TOKEN_COOKIE_NAME,
-        value=token,
-        httponly=True,
-        secure=request.url.scheme == "https",
-        samesite="lax",
-        path=f"/public/apps/preview/revisions/{revision_id}",
-    )
 
 
 def _normalize_optional_user_id(raw_value: Any) -> Optional[str]:
@@ -683,12 +675,7 @@ async def get_preview_asset(
         media_type=content_type,
         headers={"Cache-Control": "no-store" if content_rewritten else "no-store"},
     )
-    _set_preview_auth_cookie(
-        response=response,
-        request=request,
-        revision_id=revision_id,
-        auth_token=principal.get("auth_token"),
-    )
+    set_preview_cookie(response=response, request=request, token=principal.get("auth_token"))
     return response
 
 
@@ -720,13 +707,16 @@ async def get_preview_runtime(
         manifest_entry = manifest.get("entry_html")
         if isinstance(manifest_entry, str) and manifest_entry.strip():
             entry_html = manifest_entry.lstrip("/")
-    preview_url = f"{asset_base_url}{entry_html}"
-    _set_preview_auth_cookie(
-        response=response,
-        request=request,
-        revision_id=revision_id,
-        auth_token=principal.get("auth_token"),
+    preview_token = create_preview_token(
+        subject=str(principal.get("user_id") or principal.get("sub") or "preview"),
+        organization_id=str(app.organization_id),
+        app_id=str(app.id),
+        preview_target_type=PREVIEW_TARGET_REVISION,
+        preview_target_id=str(revision.id),
+        revision_id=str(revision.id),
     )
+    set_preview_cookie(response=response, request=request, token=preview_token)
+    preview_url = append_preview_runtime_token(f"{asset_base_url}{entry_html}", preview_token)
     return PreviewAppRuntimeResponse(
         app_id=str(app.id),
         public_id=app.public_id,
@@ -751,12 +741,7 @@ async def get_preview_runtime_bootstrap(
         revision_id=revision_id,
         principal=principal,
     )
-    _set_preview_auth_cookie(
-        response=response,
-        request=request,
-        revision_id=revision_id,
-        auth_token=principal.get("auth_token"),
-    )
+    set_preview_cookie(response=response, request=request, token=principal.get("auth_token"))
     return _build_preview_bootstrap(
         request=request,
         app=app,

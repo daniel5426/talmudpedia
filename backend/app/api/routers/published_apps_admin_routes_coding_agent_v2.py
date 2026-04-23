@@ -3,19 +3,21 @@ from __future__ import annotations
 import asyncio
 from contextlib import suppress
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Literal, Optional
 from uuid import UUID
 
 from fastapi import Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.api.dependencies import get_current_principal, require_scopes
+from app.db.postgres.models.agents import AgentRun, RunStatus
 from app.db.postgres.session import get_db
 from app.services.published_app_coding_chat_history_service import PublishedAppCodingChatHistoryService
+from app.services.published_app_coding_run_monitor import PublishedAppCodingRunMonitor
 from app.services.published_app_coding_chat_session_service import PublishedAppCodingChatSessionService
 from app.services.opencode_server_client import OpenCodeServerClient
 
@@ -85,6 +87,53 @@ class CodingAgentCheckpointResponse(BaseModel):
     app_id: str
     revision_id: Optional[str] = None
     created_at: datetime
+
+
+async def _mark_latest_prompt_async_run_terminal(
+    *,
+    reader_factory: async_sessionmaker[AsyncSession],
+    app_id: UUID,
+    chat_session_id: UUID,
+    terminal_status: str,
+    error_message: str | None = None,
+) -> None:
+    async with reader_factory() as db:
+        result = await db.execute(
+            select(AgentRun)
+            .where(
+                AgentRun.published_app_id == app_id,
+                AgentRun.surface == "published_app_coding_agent",
+                AgentRun.status.in_([RunStatus.queued, RunStatus.running]),
+            )
+            .order_by(AgentRun.created_at.desc())
+            .limit(20)
+        )
+        runs = list(result.scalars().all())
+        target: AgentRun | None = None
+        for run in runs:
+            input_params = run.input_params if isinstance(run.input_params, dict) else {}
+            context = input_params.get("context") if isinstance(input_params.get("context"), dict) else {}
+            if str(context.get("chat_session_id") or "").strip() != str(chat_session_id):
+                continue
+            if str(context.get("opencode_submission_mode") or "").strip() != "session_prompt_async":
+                continue
+            target = run
+            break
+        if target is None:
+            return
+        target.started_at = target.started_at or target.created_at or datetime.now(timezone.utc)
+        target.completed_at = datetime.now(timezone.utc)
+        if terminal_status == RunStatus.failed.value:
+            target.status = RunStatus.failed
+            target.error_message = str(error_message or "OpenCode session failed")
+        else:
+            target.status = RunStatus.completed
+            target.error_message = None
+        await db.commit()
+        if terminal_status == RunStatus.completed.value:
+            asyncio.create_task(
+                PublishedAppCodingRunMonitor._finalize_terminal_scope_detached(app_id=app_id, run_id=target.id)
+            )
 
 
 class CodingAgentRestoreCheckpointRequest(BaseModel):
@@ -417,6 +466,28 @@ async def stream_coding_agent_chat_session_events(
                     break
                 normalized_payload = dict(payload)
                 normalized_payload["session_id"] = str(resolved_chat_session_id)
+                event_name = str(normalized_payload.get("event") or "").strip()
+                if event_name == "session.idle":
+                    asyncio.create_task(
+                        _mark_latest_prompt_async_run_terminal(
+                            reader_factory=reader_factory,
+                            app_id=app.id,
+                            chat_session_id=resolved_chat_session_id,
+                            terminal_status=RunStatus.completed.value,
+                        )
+                    )
+                elif event_name == "session.error":
+                    payload_body = normalized_payload.get("payload")
+                    payload_dict = payload_body if isinstance(payload_body, dict) else {}
+                    asyncio.create_task(
+                        _mark_latest_prompt_async_run_terminal(
+                            reader_factory=reader_factory,
+                            app_id=app.id,
+                            chat_session_id=resolved_chat_session_id,
+                            terminal_status=RunStatus.failed.value,
+                            error_message=str(payload_dict.get("error") or "").strip() or None,
+                        )
+                    )
                 yield _sse(normalized_payload)
                 await asyncio.sleep(0)
                 pending_next = asyncio.create_task(stream_iter.__anext__())

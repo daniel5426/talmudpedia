@@ -1,5 +1,6 @@
 import { httpClient } from "./http";
 import type {
+  AuthSessionBootstrapResponse,
   AuthSessionResponse,
   OnboardingOrganizationResponse,
   OrganizationSwitchResponse,
@@ -11,7 +12,7 @@ const AUTH_NAV_BASE_URL = String(process.env.NEXT_PUBLIC_BACKEND_URL || "").trim
 const AUTH_REQUEST_INIT = { cache: "no-store" as const };
 
 class AuthService {
-  private currentSessionPromise: Promise<AuthSessionResponse> | null = null;
+  private currentSessionPromise: Promise<AuthSessionBootstrapResponse> | null = null;
 
   private buildReturnTo(target: string): string {
     if (/^https?:\/\//i.test(target)) {
@@ -43,12 +44,12 @@ class AuthService {
     return `${this.getAuthNavBaseUrl()}/auth/signup?return_to=${encodeURIComponent(this.buildReturnTo(returnTo))}`;
   }
 
-  async getCurrentSession(): Promise<AuthSessionResponse> {
+  async getCurrentSession(): Promise<AuthSessionBootstrapResponse> {
     if (this.currentSessionPromise) {
       return this.currentSessionPromise;
     }
 
-    const request = httpClient.get<AuthSessionResponse>("/auth/session", {
+    const request = httpClient.get<AuthSessionBootstrapResponse>("/auth/session", {
       clearSessionOn401: true,
       timeoutMs: AUTH_SESSION_TIMEOUT_MS,
       ...AUTH_REQUEST_INIT,
@@ -94,3 +95,13 @@ class AuthService {
 }
 
 export const authService = new AuthService();
+
+export function isAuthSessionRedirectResponse(
+  response: AuthSessionBootstrapResponse,
+): response is { redirect_url: string } {
+  return "redirect_url" in response;
+}
+
+export function navigateToAuthRedirect(url: string): void {
+  window.location.assign(url);
+}

@@ -4,15 +4,12 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
-from fastapi import Depends, HTTPException, Query, Request
+from fastapi import Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_current_principal, require_scopes
-from app.core.security import (
-    PUBLISHED_APP_PREVIEW_TOKEN_EXPIRE_MINUTES,
-)
 from app.db.postgres.models.agents import AgentRun
 from app.db.postgres.models.published_apps import (
     PublishedAppStatus,
@@ -35,6 +32,7 @@ from .published_apps_admin_access import (
     _get_app_for_tenant,
     _get_revision_for_app,
     _resolve_organization_admin_context,
+    _validate_agent,
 )
 from .published_apps_admin_shared import (
     CreateBuilderRevisionRequest,
@@ -44,6 +42,12 @@ from .published_apps_admin_shared import (
     _publish_job_to_response,
     _revision_to_response,
     router,
+)
+from .published_apps_preview_auth import (
+    PREVIEW_TARGET_REVISION,
+    append_preview_runtime_token,
+    create_preview_token,
+    set_preview_cookie,
 )
 
 
@@ -243,6 +247,7 @@ async def get_version_preview_runtime(
     app_id: UUID,
     version_id: UUID,
     request: Request,
+    response: Response,
     _: Dict[str, Any] = Depends(require_scopes("apps.read")),
     principal: Dict[str, Any] = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
@@ -277,7 +282,16 @@ async def get_version_preview_runtime(
         manifest_entry = manifest.get("entry_html")
         if isinstance(manifest_entry, str) and manifest_entry.strip():
             entry_html = manifest_entry.lstrip("/")
-    preview_url = f"{asset_base_url}{entry_html}"
+    preview_token = create_preview_token(
+        subject=str(ctx["user"].id if ctx.get("user") else principal.get("user_id") or "preview"),
+        organization_id=str(app.organization_id),
+        app_id=str(app.id),
+        preview_target_type=PREVIEW_TARGET_REVISION,
+        preview_target_id=str(revision.id),
+        revision_id=str(revision.id),
+    )
+    set_preview_cookie(response=response, request=request, token=preview_token)
+    preview_url = append_preview_runtime_token(f"{asset_base_url}{entry_html}", preview_token)
     return VersionPreviewRuntimeResponse(
         revision_id=str(revision.id),
         preview_url=preview_url,

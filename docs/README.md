@@ -1,6 +1,6 @@
 # Documentation System
 
-Last Updated: 2026-04-22
+Last Updated: 2026-04-23
 
 This directory is the repo-level documentation hub for Talmudpedia.
 
@@ -57,6 +57,7 @@ Most existing long-form documentation still lives in `backend/documentations/`. 
 - `docs/design-docs/prompt_library_shared_resource_design.md`
 - `docs/design-docs/agent_node_authoring_current.md`
 - `docs/design-docs/platform_architect_graph_authoring_direction.md`
+- `docs/design-docs/unified_preview_auth_contract.md`
 - `docs/product-specs/published_apps_spec.md`
 - `docs/product-specs/embedded_agent_runtime_spec.md`
 - `docs/product-specs/settings_hub_spec.md`

@@ -22,10 +22,7 @@ type PreviewCanvasProps = {
   onFrameCleared?: ((transportKey: string | null) => void) | null;
 };
 
-type PreviewFrameState = {
-  key: string;
-  src: string;
-};
+type PreviewFrameState = { key: string; src: string };
 
 type PreviewCanvasState = {
   visibleFrame: PreviewFrameState | null;
@@ -46,7 +43,6 @@ type PreviewCanvasAction =
       type: "cleared_ack";
     };
 
-const PREVIEW_AUTH_MESSAGE_TYPE = "talmudpedia.preview-auth.v1";
 const PREVIEW_DEBUG_BRIDGE_MESSAGE_TYPE = "talmudpedia.preview-debug.v1";
 
 function PreviewWarmupState({
@@ -108,33 +104,6 @@ function PreviewWarmupState({
       </div>
     </div>
   );
-}
-
-function postPreviewAuthToken(
-  frame: HTMLIFrameElement | null,
-  targetUrl: string | null | undefined,
-): void {
-  if (!frame?.contentWindow) {
-    return;
-  }
-  let targetOrigin = "*";
-  try {
-    targetOrigin = new URL(String(targetUrl || "")).origin;
-  } catch {
-    // Keep wildcard fallback for malformed/non-URL src values.
-  }
-  frame.contentWindow.postMessage(
-    {
-      type: PREVIEW_AUTH_MESSAGE_TYPE,
-      token: null,
-    },
-    targetOrigin,
-  );
-  logBuilderPreviewDebug("preview", "auth_posted", {
-    targetOrigin,
-    previewUrl: targetUrl || null,
-    previewAuthTokenPresent: false,
-  });
 }
 
 function previewCanvasReducer(state: PreviewCanvasState, action: PreviewCanvasAction): PreviewCanvasState {
@@ -244,7 +213,7 @@ export const PreviewCanvas = forwardRef<HTMLIFrameElement, PreviewCanvasProps>(
       || transportStatus === "reconnecting"
       || Boolean(loadingState)
     );
-    const showReconnectOverlay = hasUsableFrame && Boolean(visibleFrame) && (transportStatus === "reconnecting" || Boolean(stagedFrame));
+    const showReconnectOverlay = hasUsableFrame && Boolean(visibleFrame) && Boolean(stagedFrame);
     const showInlineError = Boolean(visibleFrame) && Boolean(errorMessage) && !showFullLoading;
     const showFullError = !visibleFrame && Boolean(errorMessage) && transportStatus === "failed";
     const warmupState = loadingState || {
@@ -269,13 +238,6 @@ export const PreviewCanvas = forwardRef<HTMLIFrameElement, PreviewCanvasProps>(
       onFrameCleared?.(clearedFrameKey);
       dispatchFrameState({ type: "cleared_ack" });
     }, [clearedFrameKey, onFrameCleared]);
-
-    useEffect(() => {
-      if (!visibleFrameRef.current || !visibleFrame?.src) {
-        return;
-      }
-      postPreviewAuthToken(visibleFrameRef.current, visibleFrame.src);
-    }, [visibleFrame]);
 
     useEffect(() => {
       const handleMessage = (event: MessageEvent) => {
@@ -312,7 +274,6 @@ export const PreviewCanvas = forwardRef<HTMLIFrameElement, PreviewCanvasProps>(
       if (!visibleFrameRef.current || !visibleFrame) {
         return;
       }
-      postPreviewAuthToken(visibleFrameRef.current, visibleFrame.src);
       onFrameReady?.(visibleFrame.key);
       logBuilderPreviewDebug("preview", "frame_load.visible", {
         transportKey: visibleFrame.key,
@@ -324,7 +285,6 @@ export const PreviewCanvas = forwardRef<HTMLIFrameElement, PreviewCanvasProps>(
       if (!stagedFrameRef.current || !stagedFrame) {
         return;
       }
-      postPreviewAuthToken(stagedFrameRef.current, stagedFrame.src);
       dispatchFrameState({ type: "staged_loaded" });
       onFrameReady?.(stagedFrame.key);
       logBuilderPreviewDebug("preview", "frame_load.staged_swap", {
